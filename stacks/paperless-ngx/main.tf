@@ -20,7 +20,7 @@ resource "kubernetes_namespace" "paperless-ngx" {
   metadata {
     name = "paperless-ngx"
     labels = {
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
     # labels = {
@@ -77,7 +77,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
     annotations = {
       "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "30Gi"
+      "resize.topolvm.io/storage_limit" = "80Gi"
     }
   }
   spec {
@@ -200,6 +200,23 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_OCR_LANGUAGES"
             value = "bul eng"
           }
+          # Office/email documents (.doc/.docx/.xls/.xlsx/.ppt/.pptx/.odt/.eml/
+          # .msg) are converted via Apache Tika (text+metadata) + Gotenberg
+          # (-> PDF) so paperless can archive/OCR/index them. Needed for emo's
+          # work-PC document set (~4.9k Office files). Endpoints = the tika /
+          # gotenberg deployments defined below in this stack.
+          env {
+            name  = "PAPERLESS_TIKA_ENABLED"
+            value = "1"
+          }
+          env {
+            name  = "PAPERLESS_TIKA_ENDPOINT"
+            value = "http://tika.paperless-ngx.svc.cluster.local:9998"
+          }
+          env {
+            name  = "PAPERLESS_TIKA_GOTENBERG_ENDPOINT"
+            value = "http://gotenberg.paperless-ngx.svc.cluster.local:3000"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/usr/src/paperless/data"
@@ -260,6 +277,173 @@ resource "kubernetes_service" "paperless-ngx" {
       name        = "http"
       target_port = 8000
       port        = 80
+      protocol    = "TCP"
+    }
+  }
+}
+
+# --- Tika + Gotenberg: Office/email -> text/PDF conversion for paperless ---
+# Apache Tika extracts text+metadata; Gotenberg renders Office formats to PDF.
+# Paperless routes Office/email docs through these (PAPERLESS_TIKA_* above).
+# Stateless (no PVC), pinned images, single replica — bulk import is serial.
+resource "kubernetes_deployment" "gotenberg" {
+  metadata {
+    name      = "gotenberg"
+    namespace = kubernetes_namespace.paperless-ngx.metadata[0].name
+    labels = {
+      app  = "gotenberg"
+      tier = local.tiers.edge
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "gotenberg"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "gotenberg"
+        }
+      }
+      spec {
+        container {
+          image = "docker.io/gotenberg/gotenberg:8.25"
+          name  = "gotenberg"
+          # docker-compose `command:` == k8s `args` (overrides CMD, keeps the
+          # image's tini ENTRYPOINT). Paperless's recommended hardening flags.
+          args = [
+            "gotenberg",
+            "--chromium-disable-javascript=true",
+            "--chromium-allow-list=file:///tmp/.*",
+          ]
+          port {
+            container_port = 3000
+          }
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "256Mi"
+            }
+            limits = {
+              memory = "1536Mi"
+            }
+          }
+          readiness_probe {
+            http_get {
+              path = "/health"
+              port = 3000
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 15
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+    ]
+  }
+}
+
+resource "kubernetes_service" "gotenberg" {
+  metadata {
+    name      = "gotenberg"
+    namespace = kubernetes_namespace.paperless-ngx.metadata[0].name
+    labels = {
+      app = "gotenberg"
+    }
+  }
+  spec {
+    selector = {
+      app = "gotenberg"
+    }
+    port {
+      name        = "http"
+      port        = 3000
+      target_port = 3000
+      protocol    = "TCP"
+    }
+  }
+}
+
+resource "kubernetes_deployment" "tika" {
+  metadata {
+    name      = "tika"
+    namespace = kubernetes_namespace.paperless-ngx.metadata[0].name
+    labels = {
+      app  = "tika"
+      tier = local.tiers.edge
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "tika"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "tika"
+        }
+      }
+      spec {
+        container {
+          image = "docker.io/apache/tika:3.3.1.0"
+          name  = "tika"
+          port {
+            container_port = 9998
+          }
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "512Mi"
+            }
+            limits = {
+              memory = "1Gi"
+            }
+          }
+          readiness_probe {
+            http_get {
+              path = "/tika"
+              port = 9998
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 15
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+    ]
+  }
+}
+
+resource "kubernetes_service" "tika" {
+  metadata {
+    name      = "tika"
+    namespace = kubernetes_namespace.paperless-ngx.metadata[0].name
+    labels = {
+      app = "tika"
+    }
+  }
+  spec {
+    selector = {
+      app = "tika"
+    }
+    port {
+      name        = "http"
+      port        = 9998
+      target_port = 9998
       protocol    = "TCP"
     }
   }
