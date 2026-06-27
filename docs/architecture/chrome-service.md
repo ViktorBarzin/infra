@@ -205,6 +205,43 @@ healthy <0.3s, broken hangs). **Fix: cap `ulimit -n 65536` before x11vnc starts*
 wrapper in `main.tf` (so it applies deterministically even though the image is
 `:latest`/`IfNotPresent` and won't re-pull a rebuilt entrypoint). Same bug + fix
 as the android-emulator stack.
+
+### noVNC black after a browser-container restart (x11vnc supervision)
+
+A **distinct** failure from the fd-sweep gotcha above: the noVNC client *connects*
+but the view is **black**, and the novnc container logs spew
+`connecting to: localhost:5900` → `Failed to connect ... [Errno 111] Connection
+refused` (x11vnc is **down**, not slow). Cause: `x11vnc` and `websockify` both run
+in the **novnc** container, but x11vnc attaches to the **chrome-service** (browser)
+container's Xvfb over `localhost:6099` (shared pod network). When the browser
+container restarts — Chrome exits cleanly (exit 0, "Completed") or crashes — its
+Xvfb vanishes and x11vnc loses its X connection and exits.
+
+`entrypoint.sh` **supervises** x11vnc: it launches x11vnc and websockify as
+background children and `wait -n`s on them, exiting non-zero if **either** dies, so
+the kubelet restarts the novnc container, which re-waits for Xvfb on `:6099` and
+relaunches x11vnc — the bridge **self-heals** across browser-container restarts.
+(Before 2026-06-27, x11vnc was an unsupervised background child of an `exec`ed
+websockify; a dead x11vnc was never relaunched, leaving `:5900` dead — a
+`<defunct>` zombie — and the view black until a manual pod restart. Same
+supervision pattern as the android-emulator stack's entrypoint.)
+
+**Diagnose:** `kubectl exec -c novnc -- ps aux | grep x11vnc` (a `<defunct>`/Z
+entry = the bug); or the RFB-banner probe from a sibling container (`python3 -c
+"import socket;s=socket.socket();s.settimeout(2);s.connect(('127.0.0.1',5900));print(s.recv(12))"`
+— healthy returns `b'RFB 003.008\n'`, broken = `ConnectionRefused`). **Immediate
+recovery** (no image change): restart just the novnc container with `kubectl exec
+-n chrome-service deploy/chrome-service -c novnc -- kill 1` — re-runs its entrypoint
+and relaunches x11vnc **without** touching the browser session/in-flight CDP jobs.
+
+> **Deploying a rebuilt novnc entrypoint:** Keel is **off** for this deployment
+> (`keel.sh/policy=never`, because the browser container's playwright image is
+> version-pinned to f1-stream) and the image is `:latest`/`IfNotPresent`, so a
+> rebuilt `:latest` will **not** redeploy on its own. After the
+> `build-chrome-service-novnc.yml` GHA build pushes `:latest` + `:<sha>`,
+> **SHA-pin** the novnc `image` in `main.tf` to the new `:<sha>` to force the pull
+> and rollout (the novnc image is TF-managed — not in the deployment's
+> `lifecycle.ignore_changes`).
 - **snapshot-server sidecar** (`mcr.microsoft.com/playwright/python:v1.48.0-noble`)
   serves `GET /api/snapshot` from `/profile/snapshots/storage-state.json`,
   bearer-gated by `PW_TOKEN`. Service `chrome-snapshot` maps :8088 → :8088
