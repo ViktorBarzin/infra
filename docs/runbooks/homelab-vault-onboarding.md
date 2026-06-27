@@ -1,0 +1,121 @@
+# `homelab vault` onboarding (per-user Vaultwarden access)
+
+## Scope
+
+`homelab vault` gives each devvm roster user no-HITL access to **their own**
+Vaultwarden vault (and any Organization Collection shared with their account)
+from the command line. It shells out to the official `bw` CLI; the user's
+Vaultwarden credentials live only in their isolated Vault path
+`secret/workstation/claude-users/<os-user>` and are decrypted as that OS user —
+the admin never sees them.
+
+```text
+homelab vault setup             one-time: store VW email + master password + API key
+homelab vault status            configured / unlocked / reachable (no secrets)
+homelab vault list [--search Q]  item names (no secrets)
+homelab vault get <name> [--field password|username|uri|notes|totp] [--json]
+homelab vault code <name>       current TOTP code
+homelab vault lock              lock / log out the local bw session
+```
+
+## How auth works (why a non-admin can use it)
+
+`homelab vault` runs `vault` as the calling user. It resolves a Vault token in
+this order (`ensureVaultToken`, `cli/cmd_vault.go`):
+
+1. an explicit `$VAULT_TOKEN`, then
+2. a native `~/.vault-token` (what admins carry), then
+3. the per-user **scoped token** that `claude-auth-sync` maintains at
+   `~/.config/claude-auth-sync/vault-token` (policy `workstation-claude-<user>`).
+
+That scoped policy grants exactly `create`/`read`/`update` on the user's own
+`secret/workstation/claude-users/<user>` path — no `patch` capability — so the
+tool writes with `vault kv patch -method=rw` (read-modify-write), falling back to
+`kv put` only when the path does not exist yet. This preserves the
+`claude_ai_oauth_json` key that [claude-auth-sync](claude-auth-renew-workstation.md)
+co-locates there. (Both bugs that previously made this admin-only were fixed
+2026-06-27.)
+
+## Prerequisites (per user)
+
+- The user is in `scripts/workstation/roster.yaml` and the **vault** stack has
+  been applied → their `workstation-claude-<user>` policy exists.
+- The user's workstation was provisioned (`setup-devvm.sh`) → their scoped Vault
+  token exists at `~/.config/claude-auth-sync/vault-token`.
+- `bw` is installed **system-wide** at `/usr/bin/bw` (see below).
+- The user has a Vaultwarden account at `https://vaultwarden.viktorbarzin.me`
+  (self-service signup is open; admin panel is disabled).
+
+## One-time admin steps (devvm)
+
+`bw` must be system-wide so every user resolves it (it is a Node script, and
+`node` is already system-wide at `/usr/bin/node`). `setup-devvm.sh` installs it
+to the npm `/usr` prefix; the guard checks the **system** path, not
+`command -v bw` (an admin's own `~/.local/bin/bw` used to mask the system
+install, leaving non-admins with no backend). To install on a running box:
+
+```bash
+sudo npm install -g --prefix /usr "@bitwarden/cli@^2024"
+bw --version            # confirm /usr/bin/bw resolves
+```
+
+After landing a `cli/` change, rebuild the binary so users pick it up:
+
+```bash
+sudo bash -c 'cd /home/wizard/code/infra/cli && \
+  go build -ldflags "-X main.version=$(git -C /home/wizard/code/infra describe --tags --always 2>/dev/null || echo dev)" \
+  -o /usr/local/bin/homelab .'
+```
+
+(or just re-run `scripts/workstation/setup-devvm.sh` as root, which rebuilds it.)
+
+## User onboarding
+
+The user runs these as themselves. The master password / API key are entered
+interactively (never on the command line) and stored only in the user's Vault
+path.
+
+1. In the Vaultwarden web vault → **Settings → Security → Keys → View API key**,
+   copy the `client_id` (`user.xxxx`) and `client_secret`.
+2. Configure:
+
+   ```bash
+   homelab vault setup        # prompts: VW email, API client_id/secret, master password
+   homelab vault status       # → "vault: configured, unlocked, reachable ✓"
+   homelab vault list         # item names (own vault + any shared Collections)
+   ```
+
+## Shared-Collection access (sharing passwords with a user)
+
+`homelab vault` surfaces Organization Collection items automatically once the
+user's Vaultwarden account is a confirmed member. These steps are done by the
+vault owner in the **Vaultwarden web UI** (they need the owner's master
+password — not an infra/Terraform operation):
+
+1. Create or reuse an **Organization** and a **Collection** of shared logins.
+2. **Invite** the user's Vaultwarden account to the Organization, granting
+   **"Can view"** on that Collection (least privilege).
+3. The user accepts the email invite and confirms membership.
+4. The user runs `homelab vault list` — the shared items now appear alongside
+   their own (a `homelab vault status` sync picks them up).
+
+## Security model (the no-HITL trade)
+
+Identity is the kernel UID. Anything running as the user can decrypt the user's
+vault — this is the accepted trade for no-human-in-the-loop fetches. Secrets
+never appear in `argv` (passed via env or stdin), core dumps are disabled, TOTP
+fetches are logged to syslog/Loki, and on a TTY values go to the clipboard
+(auto-clearing) rather than scrollback. The admin's Vault token is never used by
+a non-admin: each user authenticates with their own scoped token.
+
+## Verification
+
+```bash
+# the scoped token carries the right policy
+VAULT_TOKEN="$(sudo cat /home/<user>/.config/claude-auth-sync/vault-token)" \
+  vault token lookup -format=json | jq '.data.display_name, .data.policies'
+#   → "token-devvm-claude-auth-<user>", [..., "workstation-claude-<user>"]
+
+sudo -u <user> -i bw --version        # /usr/bin/bw resolves for the user
+sudo -u <user> -i homelab vault status
+```

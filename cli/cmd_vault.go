@@ -15,7 +15,7 @@ import (
 // Identity is the kernel UID; per-user creds live in that user's isolated Vault
 // path (secret/workstation/claude-users/<user>) read via their scoped token, and
 // decryption is done by the official `bw` CLI. See
-// docs/superpowers/specs/2026-06-24-homelab-vault-design.md.
+// docs/runbooks/homelab-vault-onboarding.md.
 func vaultCommands() []Command {
 	return []Command{
 		{Path: []string{"vault", "setup"}, Tier: TierWrite,
@@ -51,7 +51,7 @@ func vaultHelp() string {
   homelab vault lock              lock / log out the local bw session
 
 Creds live only in your own Vault path; the admin never sees them. Identity is
-your unix UID. Security model: docs/superpowers/specs/2026-06-24-homelab-vault-design.md
+your unix UID. Security model: docs/runbooks/homelab-vault-onboarding.md
 (note: anything running as your user can decrypt your vault — the accepted no-HITL trade).
 `
 }
