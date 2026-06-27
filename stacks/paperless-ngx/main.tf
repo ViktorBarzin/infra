@@ -275,7 +275,10 @@ resource "kubernetes_deployment" "paperless-ngx" {
               memory = "2Gi"
             }
             limits = {
-              memory = "10Gi"
+              # 8Gi is the per-container ceiling of the tier-defaults LimitRange
+              # (shared across the edge tier — don't raise just for this). Ample
+              # for 6 workers: 4 workers measured ~1.3Gi under full OCR load.
+              memory = "8Gi"
             }
           }
 
