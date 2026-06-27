@@ -84,7 +84,12 @@ POLL_INTERVAL = 1.0
 
 
 class CFError(Exception):
-    """Cloudflare API failure -> job should exit non-zero (fail loud)."""
+    """Cloudflare API failure. Carries the HTTP status so the caller can treat a
+    429 rate-limit as a soft-skip (retry next run) instead of a hard failure."""
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 def _req(url, *, method="GET", headers=None, data=None, timeout=20):
@@ -109,7 +114,7 @@ def _cf(url, *, method="GET", payload=None, timeout=20):
             detail = e.read().decode(errors="replace")[:500]
         except Exception:
             pass
-        raise CFError(f"{method} {url} -> HTTP {e.code} {detail}") from e
+        raise CFError(f"{method} {url} -> HTTP {e.code} {detail}", status=e.code) from e
     except urllib.error.URLError as e:
         raise CFError(f"{method} {url} -> {e}") from e
     if res is not None and not res.get("success", True):
@@ -330,10 +335,22 @@ def main():
 
     print(f"[info] LAPI desired: {len(block)} block (ban-only, ip-scope)")
 
-    # 2. Reconcile the single block list. CF errors fail loud (non-zero exit).
+    # 2. Reconcile the single block list. A 429 rate-limit is a SOFT-SKIP (exit
+    # 0, retry next */2 run) — like the LAPI fail-safe above — so a transient
+    # Cloudflare Lists-API throttle never marks the job Failed or triggers a k8s
+    # retry-storm (rapid re-attempts only deepen the throttle until it stops
+    # clearing). Any OTHER CF error still fails loud (non-zero exit).
     try:
         reconcile("block", CF_BAN_LIST_ID, block)
     except CFError as e:
+        if e.status == 429:
+            print(
+                f"[skip] Cloudflare rate-limited ({e}); leaving the list "
+                f"untouched this run, will retry next cycle (fail-safe).",
+                file=sys.stderr,
+            )
+            push_metrics(len(block), ok=False)
+            return 0
         print(f"[error] Cloudflare API failure: {e}", file=sys.stderr)
         push_metrics(len(block), ok=False)
         return 1
