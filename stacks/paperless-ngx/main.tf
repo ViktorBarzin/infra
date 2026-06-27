@@ -225,11 +225,18 @@ resource "kubernetes_deployment" "paperless-ngx" {
           # it degrades. Revert both to defaults once the import is done.
           env {
             name  = "PAPERLESS_TASK_WORKERS"
-            value = "2"
+            value = "4"
           }
           env {
             name  = "PAPERLESS_THREADS_PER_WORKER"
-            value = "2"
+            value = "1"
+          }
+          # Skip the redundant OCR'd archive PDF for inputs that already carry a
+          # text layer (born-digital PDFs + office->PDF via Gotenberg). Big
+          # speed/IO saver for emo's work-doc set; scanned docs still OCR+archive.
+          env {
+            name  = "PAPERLESS_OCR_SKIP_ARCHIVE_FILE"
+            value = "with_text"
           }
           volume_mount {
             name       = "data"
@@ -242,7 +249,7 @@ resource "kubernetes_deployment" "paperless-ngx" {
               memory = "2Gi"
             }
             limits = {
-              memory = "4Gi"
+              memory = "8Gi"
             }
           }
 
@@ -299,7 +306,9 @@ resource "kubernetes_service" "paperless-ngx" {
 # --- Tika + Gotenberg: Office/email -> text/PDF conversion for paperless ---
 # Apache Tika extracts text+metadata; Gotenberg renders Office formats to PDF.
 # Paperless routes Office/email docs through these (PAPERLESS_TIKA_* above).
-# Stateless (no PVC), pinned images, single replica — bulk import is serial.
+# Stateless (no PVC), pinned images. 3 replicas during the bulk import: a
+# single LibreOffice instance 503s under concurrent paperless workers; the
+# Service load-balances office conversions across the replicas.
 resource "kubernetes_deployment" "gotenberg" {
   metadata {
     name      = "gotenberg"
@@ -310,7 +319,7 @@ resource "kubernetes_deployment" "gotenberg" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 3
     selector {
       match_labels = {
         app = "gotenberg"
@@ -395,7 +404,7 @@ resource "kubernetes_deployment" "tika" {
     }
   }
   spec {
-    replicas = 1
+    replicas = 2
     selector {
       match_labels = {
         app = "tika"
