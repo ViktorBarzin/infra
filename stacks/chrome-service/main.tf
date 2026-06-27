@@ -333,15 +333,20 @@ resource "kubernetes_deployment" "chrome_service" {
         container {
           name = "novnc"
           # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
-          image             = "ghcr.io/viktorbarzin/chrome-service-novnc:latest"
+          # SHA-pinned (not :latest): Keel is OFF for this deployment
+          # (keel.sh/policy=never, below) and :latest/IfNotPresent won't re-pull a
+          # rebuilt image, so a new noVNC entrypoint only deploys when this digest
+          # is bumped here. Bump after build-chrome-service-novnc.yml pushes a new
+          # SHA tag. 2026-06-27: bumped to land the x11vnc-supervision self-heal fix
+          # (noVNC went black after a browser-container restart; see
+          # docs/architecture/chrome-service.md "x11vnc supervision").
+          image             = "ghcr.io/viktorbarzin/chrome-service-novnc:19d0f0933a8ec75be6cfa077db88e0f8c3760f40"
           image_pull_policy = "IfNotPresent"
           # Cap RLIMIT_NOFILE before the entrypoint runs. Containerd grants pods
           # nofile=2^31; x11vnc sweeps the whole fd table on each client connect,
           # so every VNC connection hangs on "Connecting" until it times out
-          # (fd-sweep bug, same as android-emulator). entrypoint.sh now also sets
-          # this, but the image is :latest/IfNotPresent so a rebuilt entrypoint
-          # isn't guaranteed to be pulled — this wrapper applies the cap
-          # deterministically on every rollout off the cached image.
+          # (fd-sweep bug, same as android-emulator). entrypoint.sh also sets this;
+          # the wrapper keeps the cap deterministic even off a cached image.
           command = ["bash", "-c", "ulimit -n 65536; exec /entrypoint.sh"]
           port {
             name           = "http"
