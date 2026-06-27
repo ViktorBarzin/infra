@@ -1242,3 +1242,51 @@ resource "vault_kubernetes_secret_backend_role" "user_deployer" {
 # CI retrigger v5 2026-05-16T23:10:38Z
 
 # CI retrigger v6 2026-05-16T23:18:58Z
+
+# =============================================================================
+# Per-user personal secret — emo (deliberate power-user exception)
+# =============================================================================
+# emo is tier `power-user`, which by default carries NO Vault secret access
+# (only the workstation-claude-emo OAuth-state policy). The block below is a
+# NARROW, explicit exception (approved by Viktor 2026-06-27): it lets emo read
+# his own personal secret tree `secret/emo` (laptop creds + ssh key) through his
+# OIDC identity — READ-ONLY (no create/update/delete). It does NOT widen the
+# power-user tier in general; it names emo specifically. To extend this to other
+# power-users, generalise via the roster rather than copy-pasting.
+#
+# Mechanism mirrors the namespace-owner personal-secret pattern (read-only
+# variant). emo had already logged in via OIDC, so Vault auto-created his
+# entity + alias; those were ADOPTED into Terraform via one-shot `import`
+# blocks (since removed) on 2026-06-27, rather than colliding on the
+# (oidc-mount, email) alias-uniqueness constraint. Entity canonical id
+# 222f097e-…, alias id fa7162d1-… .
+
+resource "vault_policy" "personal_emo" {
+  name   = "personal-emo"
+  policy = <<-EOT
+    # Read-only access to emo's personal secret tree
+    path "secret/data/emo" {
+      capabilities = ["read"]
+    }
+    path "secret/data/emo/*" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/emo" {
+      capabilities = ["read", "list"]
+    }
+    path "secret/metadata/emo/*" {
+      capabilities = ["read", "list"]
+    }
+  EOT
+}
+
+resource "vault_identity_entity" "emo" {
+  name     = "emo"
+  policies = [vault_policy.personal_emo.name]
+}
+
+resource "vault_identity_entity_alias" "emo" {
+  name           = "emil.barzin@gmail.com"
+  mount_accessor = vault_jwt_auth_backend.oidc.accessor
+  canonical_id   = vault_identity_entity.emo.id
+}
