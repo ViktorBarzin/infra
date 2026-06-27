@@ -132,6 +132,13 @@ for the supersession history — there is no longer an inline Traefik bouncer.)
   account hard-limits to **one** list), and CAPI is already covered in-kernel on
   direct hosts and by Cloudflare's own managed protections on proxied hosts.
   Registered bouncer key: **`kvsync`**.
+- **Rate-limit resilient (2026-06-27):** Cloudflare's Lists-API *write* endpoint
+  is throttled (~per-60s; `429 retry-after`). The CronJob runs `backoff_limit=0`
+  (one POST per cycle — the `*/2` schedule IS the retry cadence) and treats a CF
+  `429` as a soft-skip (exit 0, retry next cycle), the same fail-safe pattern it
+  uses for LAPI. An earlier `backoff_limit=2` fired 3 rapid POSTs/cycle and
+  escalated the throttle into a stuck state that left the list empty — a
+  self-inflicted DoS that this change prevents.
 - **Block-only**: the single-list limit precludes a separate
   captcha/managed-challenge list, so both ban and captcha decisions are enforced
   as a plain block at the edge.
