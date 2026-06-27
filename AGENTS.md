@@ -273,8 +273,11 @@ To land a finished change from such a clone:
    Slack audit feed; a no-op CI apply on a docs-only commit is harmless.
 4. Leave the clone on clean `master` so auto-refresh keeps working.
 5. Tell the user in plain language what happened. Stack changes are
-   auto-applied by CI — verify the live result with the user's read-only
-   kubectl before saying "it's live".
+   auto-applied by CI on push — or, with apply access, applied locally yourself
+   (`scripts/tg apply`, from the main checkout, not a worktree); either path is
+   fine, but the change must always be committed here, never applied
+   uncommitted. Verify the live result with the user's read-only kubectl before
+   saying "it's live".
 
 If a push to `master` is rejected by branch protection (user not on the
 whitelist — e.g. new users before Viktor grants it), fall back to a
