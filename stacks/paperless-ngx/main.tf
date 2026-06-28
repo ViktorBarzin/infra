@@ -217,17 +217,17 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_TIKA_GOTENBERG_ENDPOINT"
             value = "http://gotenberg.paperless-ngx.svc.cluster.local:3000"
           }
-          # Processing concurrency, tuned for the bulk Emo import (~13.7k docs,
-          # mostly scanned/office => OCR/convert-bound, ~3-4 docs/min/worker).
-          # 6 workers = 6 docs in parallel; paperless is a single pod (RWO PVC)
-          # pinned to one ~8-core node, so 6 leaves headroom for system + the
-          # node's co-tenants (8 would saturate it). OCR temp stays on ephemeral
-          # scratch (fast); the consume QUEUE is on the PVC (below) so a restart
-          # never loses queued work. Watch etcd apply latency; dial back if it
-          # degrades. Revert workers/threads/mem to defaults once import is done.
+          # Processing concurrency for the bulk Emo import (~13.7k docs, mostly
+          # scanned/office => OCR/convert-bound). 4 workers: 6 OOMKilled the pod
+          # (crept past the 8Gi tier-defaults LimitRange cap over ~6h; that cap
+          # is shared across the edge tier, not worth raising for one ns). 4
+          # fits with headroom (4 workers measured ~1.3Gi). OCR temp stays on
+          # ephemeral scratch (fast); the consume QUEUE is on the PVC so a
+          # restart never loses queued work. Watch etcd apply latency. Revert
+          # workers/threads/mem to defaults once import is done.
           env {
             name  = "PAPERLESS_TASK_WORKERS"
-            value = "6"
+            value = "4"
           }
           env {
             name  = "PAPERLESS_THREADS_PER_WORKER"
