@@ -145,15 +145,19 @@ server:
 global:
   addPrometheusAnnotations: true
   image:
-    # Pin to the Keel-managed live tag. Keel (diun-annotated, keel.sh/enrolled
-    # namespace) bumps the IMAGE between chart releases, while helm defaults
-    # the tag to the chart appVersion — so any helm upgrade silently
-    # DOWNGRADES the running pods to the chart pin (2026-06-10: a values-only
-    # apply rolled live 2026.2.4 back to 2026.2.2 against a 2026.2.4-migrated
-    # DB → boot storm, see docs/post-mortems/2026-06-10-authentik-downgrade-
-    # boot-storm.md). Keep this tag in sync with what Keel has deployed when
-    # touching this chart; clear it only when bumping the chart version itself.
-    tag: "2026.2.4"
+    # CUSTOM OVERLAY (SLOW-1a): our thin patch over the official authentik server
+    # image — see stacks/authentik/Dockerfile (narrows the login-flow
+    # select_subclasses() query, ~1.4s -> ~14ms). Built by
+    # .github/workflows/build-authentik.yml to ghcr.io/viktorbarzin/authentik-server
+    # (public package, anonymous pull — no imagePullSecret needed, like the
+    # upstream goauthentik image). Keel is NO LONGER enrolled for this namespace
+    # (see main.tf) so it can't bump/downgrade the tag; helm also defaults the tag
+    # to the chart appVersion (2026.2.2) — so BOTH repository AND tag are pinned
+    # explicitly here to prevent the 2026-06-10 downgrade-boot-storm class.
+    # UPGRADE = bump the Dockerfile FROM tag + this tag together (e.g. ->
+    # 2026.3.0-patch1), let GHA rebuild, then apply.
+    repository: ghcr.io/viktorbarzin/authentik-server
+    tag: "2026.2.4-patch1"
 
 worker:
   # 2 replicas: workers handle background tasks (LDAP sync, email,
