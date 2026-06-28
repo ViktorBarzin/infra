@@ -153,8 +153,22 @@ on Goldmane's live serving cert, so no `GOLDMANE_SERVER_NAME` /
 
 ## How to query who-talks-to-whom
 
-`psql` into the DB (creds: Vault static role `static-creds/pg-goldmane-edges`, or
-exec a CNPG pod). All queries are against the single `edge` table.
+**Quickest — the `homelab edges` CLI** (the investigation helper; read-only
+SELECT against the DB via the dbaas primary pod, no creds/SQL to remember):
+
+```
+homelab edges --ns <ns>         # edges touching <ns> (either direction)
+homelab edges --peers-of <ns>   # <ns>'s distinct peer namespaces
+homelab edges --src <ns>        # <ns>'s egress peers   (--dst <ns> for ingress)
+homelab edges --new-since 24h   # edges first seen in the last day (or a date)
+homelab edges --denied          # blocked / lateral-movement attempts
+homelab edges --json [...]      # machine-readable, for agents/pipelines
+homelab edges --help            # full flag list
+```
+
+For ad-hoc SQL, `psql` into the DB (creds: Vault static role
+`static-creds/pg-goldmane-edges`, or exec a CNPG pod). All queries are against
+the single `edge` table.
 
 ```sql
 -- Everything talking to a namespace (inbound), most-active first
