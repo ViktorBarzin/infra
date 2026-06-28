@@ -29,7 +29,12 @@ resource "kubernetes_namespace" "authentik" {
     labels = {
       tier                               = var.tier
       "resource-governance/custom-quota" = "true"
-      "keel.sh/enrolled"                 = "true"
+      # Keel intentionally NOT enrolled: server+worker run our custom overlay image
+      # (ghcr.io/viktorbarzin/authentik-server — see values.yaml global.image +
+      # stacks/authentik/Dockerfile). The tag is pinned explicitly and bumped
+      # manually (rebuild the overlay FROM the new authentik version + repoint), so
+      # a Keel auto-bump would only risk re-introducing the upstream tag / the
+      # 2026-06-10 downgrade-boot-storm class. Re-enroll only if the overlay is dropped.
     }
   }
   lifecycle {
