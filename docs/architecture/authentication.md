@@ -113,11 +113,16 @@ Signin latency is dominated by screen count and round trips, not server time
   and renders a **blank login** on Safari/WebKit ≤16.3 (every iOS browser shares
   the system WebKit, so it's not browser-choice — e.g. iPadOS ≤15). The overlay
   image patches `flows/views/interface.py::compat_needs_sfe()` to also serve
-  authentik's built-in no-JS **Simplified Flow Executor** (SFE, ES5) to old
-  Safari, so those clients get the *real* authentik login (password + MFA +
-  reputation — no auth downgrade). A Traefik basic-auth fallback was rejected: it
-  would have put a single spoofable-UA password in front of `vbarzin→wizard`
-  (passwordless root on the devvm). See `stacks/authentik/patch-compat-sfe.py`.
+  authentik's built-in no-JS **Simplified Flow Executor** (SFE, ES5) to old Safari
+  **and any iOS browser** (Chrome/Firefox on iOS are WebKit skins) on iOS ≤16.3,
+  so those clients get the *real* authentik login (password + MFA + reputation —
+  no auth downgrade). The SFE can't render Identification-stage **sources**
+  (authentik limitation), so the patch also injects static social-login `<a>`
+  links into `flow-sfe.html` (→ `/source/oauth/login/<slug>/`, plain redirects) —
+  required for password-less accounts (e.g. Google-only users). A Traefik
+  basic-auth fallback was rejected: it would have put a single spoofable-UA
+  password in front of `vbarzin→wizard` (passwordless root on the devvm). See
+  `stacks/authentik/patch-compat-sfe.py`.
 - **Outpost**: 2 replicas, `log_level=info` (was 1 replica at `trace`).
 - **auth-proxy nginx**: upstream `keepalive 32` + HTTP/1.1 — no per-request
   TCP setup on the forward-auth subrequest path.
