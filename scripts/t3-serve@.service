@@ -11,6 +11,12 @@ Environment=HOME=/home/%i
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/%i/.local/bin
 Environment=NODE_ENV=production
 EnvironmentFile=/etc/t3-serve/%i.env
+# Optional per-user long-lived CLAUDE_CODE_OAUTH_TOKEN, materialized by
+# claude-auth-sync from the user's own Vault path. Non-rotating, so t3's
+# concurrent agent sessions can't race on OAuth refresh-token rotation and wipe
+# the shared ~/.claude/.credentials.json. Leading '-' = optional (absent for
+# users on the normal per-user Enterprise-SSO credential flow).
+EnvironmentFile=-/home/%i/.config/claude-auth-sync/claude-oauth.env
 WorkingDirectory=/home/%i
 ExecStart=/usr/bin/t3 serve --host 0.0.0.0 --port ${T3_PORT} --base-dir /home/%i/.t3
 Restart=on-failure

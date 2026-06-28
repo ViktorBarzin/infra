@@ -13,6 +13,10 @@ CAS_VAULT_TOKEN_FILE="${CLAUDE_AUTH_VAULT_TOKEN_FILE:-$CAS_CONFIG_DIR/vault-toke
 CAS_VAULT_PATH="${CLAUDE_AUTH_VAULT_PATH:-secret/workstation/claude-users/$CAS_USER}"
 CAS_STATE_DIR="${CLAUDE_AUTH_STATE_DIR:-$CAS_HOME/.local/state/claude-auth-sync}"
 CAS_LOG="$CAS_STATE_DIR/sync.log"
+# Where a long-lived per-user setup-token is materialized as an env file
+# (KEY=VALUE) for start-claude.sh + t3-serve@.service to load. Lives under the
+# already-ReadWritePaths config dir so the sandboxed service may write it.
+CAS_TOKEN_ENV_FILE="${CLAUDE_AUTH_TOKEN_ENV_FILE:-$CAS_CONFIG_DIR/claude-oauth.env}"
 
 cas_log() {
   mkdir -p "$CAS_STATE_DIR"
@@ -133,6 +137,41 @@ cas_restore() {
   cas_log "RECOVERED restored Claude OAuth state from Vault"
 }
 
+# A user-scoped, long-lived setup-token (`sk-ant-oat01-…`, ~1y, NON-rotating) may
+# be stored in this user's OWN Vault path (field `setup_token`). When present it
+# is the authoritative credential: it bypasses the shared
+# ~/.claude/.credentials.json OAuth refresh-token rotation entirely — the fix for
+# users running many concurrent Claude sessions (interactive + t3-serve + always-on
+# agents) that otherwise race on refresh and wipe each other's refresh token.
+# We materialize it to a user-owned env file that start-claude.sh and
+# t3-serve@.service load as CLAUDE_CODE_OAUTH_TOKEN. This is the user's OWN
+# Enterprise identity, NOT the forbidden legacy SHARED token — it never crosses
+# OS users. Returns 0 when a token is active, so the caller skips the
+# rotating-credential validate/backup/restore (probing the now-vestigial
+# credential would otherwise emit false WorkstationClaudeAuthInvalid alerts).
+cas_sync_setup_token() {
+  local token desired tmp
+  token="$(vault kv get -field=setup_token "$CAS_VAULT_PATH" 2>/dev/null)" || token=""
+  if [[ "$token" != sk-ant-oat01-* ]]; then
+    if [[ -e "$CAS_TOKEN_ENV_FILE" ]]; then
+      rm -f "$CAS_TOKEN_ENV_FILE"
+      cas_log "removed stale CLAUDE_CODE_OAUTH_TOKEN env (no setup-token in Vault)"
+    fi
+    return 1
+  fi
+  desired="CLAUDE_CODE_OAUTH_TOKEN=$token"
+  if [[ -r "$CAS_TOKEN_ENV_FILE" && "$(<"$CAS_TOKEN_ENV_FILE")" == "$desired" ]]; then
+    cas_log "OK long-lived setup-token active (CLAUDE_CODE_OAUTH_TOKEN current); credential checks skipped"
+    return 0
+  fi
+  tmp="$(mktemp "${CAS_TOKEN_ENV_FILE}.XXXXXX")" || { cas_log "FAIL could not stage token env file"; return 1; }
+  printf '%s\n' "$desired" > "$tmp"
+  chmod 0600 "$tmp"
+  mv "$tmp" "$CAS_TOKEN_ENV_FILE"
+  cas_log "OK long-lived setup-token active; CLAUDE_CODE_OAUTH_TOKEN materialized; credential checks skipped"
+  return 0
+}
+
 cas_main() {
   umask 077
   for bin in jq vault claude timeout flock; do
@@ -143,6 +182,11 @@ cas_main() {
   flock -n 9 || { cas_log "SKIP another sync is already running"; return 0; }
 
   cas_prepare_vault || return 1
+  # A long-lived per-user setup-token, if provisioned, is authoritative and
+  # non-rotating — materialize it and skip the rotating-credential dance.
+  if cas_sync_setup_token; then
+    return 0
+  fi
   if cas_live_auth_ok; then
     cas_backup
     return
