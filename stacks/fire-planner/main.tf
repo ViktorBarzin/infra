@@ -660,16 +660,53 @@ module "ingress_api" {
   auth = "none"
 }
 
-# Plan-time read of the ESO-created K8s Secret for Grafana datasource
-# password. First-apply gotcha: must
-# `terragrunt apply -target=kubernetes_manifest.db_external_secret` so
-# the Secret exists before this data source plans.
-data "kubernetes_secret" "fire_planner_db_creds" {
-  metadata {
-    name      = "fire-planner-db-creds"
-    namespace = kubernetes_namespace.fire_planner.metadata[0].name
+# ExternalSecret in the monitoring namespace mirroring the rotating
+# fire_planner DB password. Grafana mounts this via envFromSecrets in
+# monitoring/grafana_chart_values.yaml; the datasource ConfigMap below
+# references it as $__env{FIRE_PLANNER_PG_PASSWORD}. Reloader restarts
+# Grafana whenever ESO updates this secret (on the 7d static-role
+# rotation), so the provisioned datasource never goes stale — replaces
+# the old plan-time `data.kubernetes_secret` bake that broke weekly.
+# Mirrors the wealth-pg / payslips-pg pattern.
+resource "kubernetes_manifest" "grafana_fire_planner_pg_creds" {
+  field_manager {
+    force_conflicts = true
   }
-  depends_on = [kubernetes_manifest.db_external_secret]
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "grafana-fire-planner-pg-creds"
+      namespace = "monitoring"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "grafana-fire-planner-pg-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            FIRE_PLANNER_PG_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-fire-planner"
+          property = "password"
+        }
+      }]
+    }
+  }
 }
 
 # Grafana datasource for fire_planner PostgreSQL DB.
@@ -706,12 +743,15 @@ resource "kubernetes_config_map" "grafana_fire_planner_datasource" {
           timescaledb     = false
         }
         secureJsonData = {
-          password = data.kubernetes_secret.fire_planner_db_creds.data["DB_PASSWORD"]
+          # Live env from grafana-fire-planner-pg-creds (above), injected into
+          # Grafana via envFromSecrets; reloader refreshes it on rotation.
+          password = "$__env{FIRE_PLANNER_PG_PASSWORD}"
         }
         editable = true
       }]
     })
   }
+  depends_on = [kubernetes_manifest.grafana_fire_planner_pg_creds]
 }
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
