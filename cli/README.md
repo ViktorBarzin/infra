@@ -217,6 +217,23 @@ name charset) run via the dbaas primary pod — the same exec path as `k8s db`.
 | `edges --denied` | read | only `action='deny'` edges (blocked / lateral-movement) |
 | `edges --json` / `--limit N` | read | JSON array output / row cap (default 200) |
 
+### v0.10 — `vault get --all` (browse every field)
+
+`vault get <name> --all` returns the **whole item** as a normalized JSON object,
+so an agent can discover and read fields the single-field `--field` allowlist
+can't reach — notably arbitrary **custom fields**.
+
+| Command | Tier | What it does |
+| --- | --- | --- |
+| `vault get <name> --all` | read | all fields as JSON: `{name, username?, password?, uris?, totp?, notes?, fields?}` |
+
+Shape notes: present standard fields only (empty ones omitted); `fields` is a
+custom `name→value` map (duplicate names → last-wins; `linked` fields skipped).
+The TOTP **seed is never emitted** — `totp` is a presence flag (`true`), so the
+only seed-derived path stays the specially-audited `vault code`. Like
+`get --json`, the dump is all secret values, so it **refuses a terminal** — pipe
+it (`homelab vault get <name> --all | jq`).
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
