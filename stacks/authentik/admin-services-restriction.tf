@@ -49,14 +49,15 @@ resource "authentik_policy_expression" "admin_services_restriction" {
 
     host = request.context.get("host", "")
 
-    # chrome-service noVNC (chrome.viktorbarzin.me) exposes Viktor's LIVE
-    # logged-in browser sessions, so lock it to Viktor's own accounts ONLY.
-    # "Home Server Admins" is NOT sufficient — emo (emil.barzin@gmail.com) is a
-    # member. akadmin kept as break-glass. The homelab-browser CDP path is
-    # already RBAC-gated (emo = oidc-power-user-readonly, no pods/portforward),
-    # so this closes the only remaining, human, noVNC path. Match username OR
-    # email so neither attribute alone can lock Viktor out.
-    CHROME_ALLOWED = {"akadmin", "akadmin@viktorbarzin.me", "vbarzin@gmail.com"}
+    # chrome-service noVNC (chrome.viktorbarzin.me) exposes LIVE logged-in browser
+    # sessions from the SHARED persistent profile. Originally Viktor-only.
+    # 2026-06-28 (Viktor's explicit decision): emo SHARES Viktor's browser, so emo
+    # (emil.barzin / emil.barzin@gmail.com) is allowed in for noVNC form-filling +
+    # captcha solving. Trade-off accepted: emo can therefore reach Viktor's warmed
+    # sessions (the CLI half is the emo-browser ServiceAccount in
+    # stacks/chrome-service/rbac.tf). akadmin kept as break-glass. Match username OR
+    # email so neither attribute alone can lock anyone out.
+    CHROME_ALLOWED = {"akadmin", "akadmin@viktorbarzin.me", "vbarzin@gmail.com", "emil.barzin", "emil.barzin@gmail.com"}
     if host == "chrome.viktorbarzin.me":
         return request.user.username in CHROME_ALLOWED or request.user.email in CHROME_ALLOWED
 

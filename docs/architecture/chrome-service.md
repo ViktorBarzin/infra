@@ -293,6 +293,42 @@ Key facts:
   byte-identical copy of `files/stealth.js`, guarded by a drift test — so the
   CLI's stealth never diverges from the in-cluster callers'.
 
+## Multi-user access (sharing the browser)
+
+There is ONE chrome-service browser with ONE persistent profile, warmed with
+**Viktor's** logged-in sessions. CDP has no per-context auth, so anyone who can
+drive the browser — over the noVNC view OR the CDP/`homelab browser` path — can
+reach the persistent profile (`browser.contexts[0]`) and therefore Viktor's
+sessions. Access is gated accordingly, per user.
+
+**Decision (2026-06-28):** emo (`emil.barzin` / `emil.barzin@gmail.com`) SHARES
+Viktor's browser for form-filling + captcha solving, rather than getting an
+isolated instance. The session-exposure trade-off above was explicitly accepted.
+
+Two independent grants make up "browser access" for a user:
+
+1. **noVNC (interactive view, `chrome.viktorbarzin.me`)** — gated by the Authentik
+   `admin-services-restriction` policy: the `CHROME_ALLOWED` set
+   (`stacks/authentik/admin-services-restriction.tf`) matches the user's Authentik
+   username OR email. Add the user there. No kubeconfig/RBAC needed.
+2. **CLI (`homelab browser`, CDP over port-forward)** — needs `pods/portforward`
+   in `chrome-service` PLUS a non-interactive credential (a normal devvm user's
+   kubeconfig is interactive-OIDC-only and can't authenticate a headless agent
+   session). Provided by a per-user **ServiceAccount** with a long-lived token
+   (`stacks/chrome-service/rbac.tf`, e.g. `emo-browser`): `pods/portforward` in
+   this namespace + cluster read-only (`oidc-power-user-readonly`, so it can also
+   resolve the Service and doesn't regress the user's normal read). The devvm
+   provisioner (`scripts/t3-provision-users.sh` → `install_browser_kubeconfig`)
+   reads that token and installs it as the user's DEFAULT kubeconfig context
+   (`<user>-browser@homelab`), keeping their personal OIDC login as the
+   `oidc@homelab` named context. The SA's existence is the source of truth for who
+   gets the CLI — the provisioner no-ops for users without a `<user>-browser` SA.
+
+**To grant another user:** add them to `CHROME_ALLOWED` (noVNC) and/or add a
+`<user>-browser` SA + bindings mirroring `emo-browser` in `rbac.tf` (CLI), then run
+the provisioner. To revoke: remove from `CHROME_ALLOWED` and delete the SA (rotate
+a token by deleting its `<user>-browser-token` Secret).
+
 ## Limits + risks
 
 - **Anti-bot vs stealth arms race** — when an upstream beats us (DRM
