@@ -126,6 +126,12 @@ resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
 #   atomic = true
 # }
 
+# 2026-06-28: trivial touch to re-trigger a clean `terragrunt apply monitoring`
+# so TF state is persisted after CI pipeline #414 (the pfSense egress-monitoring
+# apply, commit 7fe2d978) was cancel-raced by a newer push and SIGKILLed
+# mid-helm-upgrade: the live resources applied but the state write + helm-release
+# finalize were lost (the stuck pending-upgrade release was manually unstuck).
+# See docs/runbooks/pfsense-egress.md and the Woodpecker cancel-previous gotcha.
 resource "kubernetes_config_map" "loki_alert_rules" {
   metadata {
     name      = "loki-alert-rules"
