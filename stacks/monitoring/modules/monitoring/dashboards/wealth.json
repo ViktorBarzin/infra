@@ -2317,6 +2317,1158 @@
           "rawSql": "WITH latest AS (SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value FROM dav_corrected d JOIN accounts a ON a.id=d.account_id ORDER BY d.account_id, d.valuation_date DESC), nw AS (SELECT SUM(total_value) AS pv FROM latest), hz AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years FROM nw), r AS (SELECT ord,label,(1+g)/1.03-1 AS rr FROM (VALUES (1,'No growth',0.0::float8),(2,'Inflation (3%)',0.03::float8),(3,'Market (7%)',0.07::float8)) AS s(ord,label,g)), calc AS (SELECT ord,label, CASE WHEN abs(rr)<1e-9 THEN pv/years ELSE pv*rr/(1-power(1+rr,-years)) END AS annual FROM r, hz) SELECT label AS \"Scenario\", round((annual/365.25)::numeric,0) AS \"Per day\", round((annual/12)::numeric,0) AS \"Per month\", round(annual::numeric,0) AS \"Per year\" FROM calc ORDER BY ord"
         }
       ]
+    },
+    {
+      "id": 90001,
+      "type": "text",
+      "title": "FC::intro",
+      "gridPos": {
+        "x": 0,
+        "y": 118,
+        "w": 24,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## \ud83d\udd25 FIRE Countdown \u2014 **$country**\nTarget = smallest **liquid** net worth where Guyton-Klinger hits **99%** success (Monte-Carlo), in **today's money**. Spend is your real actualbudget \u00d7 **1.5**, cost-of-living re-scaled to the country. The \u00a3139k workplace pension is excluded from current NW and joins as a tranche at ~57. _Current NW = liquid bridge pot._"
+      }
+    },
+    {
+      "id": 90002,
+      "type": "text",
+      "title": "FC::solo header",
+      "gridPos": {
+        "x": 0,
+        "y": 122,
+        "w": 24,
+        "h": 2
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "#### \u25cf Solo \u2014 Viktor \u00d7 1.5"
+      }
+    },
+    {
+      "id": 90003,
+      "type": "stat",
+      "title": "FC::solo Target NW (99%)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 124,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT ft.target_nw_gbp AS target FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='solo' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90004,
+      "type": "gauge",
+      "title": "FC::solo Progress",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 5,
+        "y": 124,
+        "w": 4,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT LEAST(100, ROUND(100.0*liq.nw/NULLIF(ft.target_nw_gbp,0),1)) AS progress FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='solo' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90005,
+      "type": "stat",
+      "title": "FC::solo Still needed",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 9,
+        "y": 124,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT GREATEST(0, ft.target_nw_gbp - liq.nw) AS still_needed FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='solo' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90006,
+      "type": "stat",
+      "title": "FC::solo Projected FIRE",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 124,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "string",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF($savings_per_year,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='solo' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90007,
+      "type": "stat",
+      "title": "FC::solo Runway (yrs)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 19,
+        "y": 124,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT ROUND(liq.nw/NULLIF(ft.annual_spend_gbp,0),1) AS runway_years FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='solo' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90008,
+      "type": "text",
+      "title": "FC::household header",
+      "gridPos": {
+        "x": 0,
+        "y": 129,
+        "w": 24,
+        "h": 2
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "#### \u25cf Household \u2014 Viktor + Anca \u00d7 1.5"
+      }
+    },
+    {
+      "id": 90009,
+      "type": "stat",
+      "title": "FC::household Target NW (99%)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 131,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT ft.target_nw_gbp AS target FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='household' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90010,
+      "type": "gauge",
+      "title": "FC::household Progress",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 5,
+        "y": 131,
+        "w": 4,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT LEAST(100, ROUND(100.0*liq.nw/NULLIF(ft.target_nw_gbp,0),1)) AS progress FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='household' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90011,
+      "type": "stat",
+      "title": "FC::household Still needed",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 9,
+        "y": 131,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT GREATEST(0, ft.target_nw_gbp - liq.nw) AS still_needed FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='household' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90012,
+      "type": "stat",
+      "title": "FC::household Projected FIRE",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 131,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "string",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF($savings_per_year,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='household' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90013,
+      "type": "stat",
+      "title": "FC::household Runway (yrs)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 19,
+        "y": 131,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT ROUND(liq.nw/NULLIF(ft.annual_spend_gbp,0),1) AS runway_years FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='household' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90014,
+      "type": "text",
+      "title": "FC::family header",
+      "gridPos": {
+        "x": 0,
+        "y": 136,
+        "w": 24,
+        "h": 2
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "#### \u25cf Family \u2014 Household + 2 kids  \u00b7  home toggle: **$with_home**"
+      }
+    },
+    {
+      "id": 90015,
+      "type": "stat",
+      "title": "FC::family Target NW (99%)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 138,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT ft.target_nw_gbp AS target FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='family' AND country_slug='$country' AND with_home=$with_home AND bar=0.99 LIMIT 1) ft",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90016,
+      "type": "gauge",
+      "title": "FC::family Progress",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 5,
+        "y": 138,
+        "w": 4,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT LEAST(100, ROUND(100.0*liq.nw/NULLIF(ft.target_nw_gbp,0),1)) AS progress FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='family' AND country_slug='$country' AND with_home=$with_home AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90017,
+      "type": "stat",
+      "title": "FC::family Still needed",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 9,
+        "y": 138,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT GREATEST(0, ft.target_nw_gbp - liq.nw) AS still_needed FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='family' AND country_slug='$country' AND with_home=$with_home AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90018,
+      "type": "stat",
+      "title": "FC::family Projected FIRE",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 138,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "string",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF($savings_per_year,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='family' AND country_slug='$country' AND with_home=$with_home AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90019,
+      "type": "stat",
+      "title": "FC::family Runway (yrs)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 19,
+        "y": 138,
+        "w": 5,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT ROUND(liq.nw/NULLIF(ft.annual_spend_gbp,0),1) AS runway_years FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='family' AND country_slug='$country' AND with_home=$with_home AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90020,
+      "type": "text",
+      "title": "FC::safety header",
+      "gridPos": {
+        "x": 0,
+        "y": 143,
+        "w": 24,
+        "h": 2
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "#### \ud83d\udedf Safety valves \u2014 engineered reversibility (the real fear is losing the salary, not running out)"
+      }
+    },
+    {
+      "id": 90021,
+      "type": "stat",
+      "title": "FC::Re-entry buffer (vs \u00a31.0M)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 145,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT liq.nw - 1000000 AS buffer FROM (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90022,
+      "type": "stat",
+      "title": "FC::Cash buffer (2.5yr, Solo)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 145,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT 2.5*ft.annual_spend_gbp AS cash_buffer FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='solo' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90023,
+      "type": "stat",
+      "title": "FC::Pension tranche @57",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 145,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "rawSql": "SELECT pension_at_unlock_gbp FROM fire_planner.fire_target WHERE country_slug='$country' AND bar=0.99 ORDER BY id LIMIT 1",
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 90024,
+      "type": "text",
+      "title": "FC::Anca bridge",
+      "gridPos": {
+        "x": 18,
+        "y": 145,
+        "w": 6,
+        "h": 5
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Anca's bridge**\n\nAnca's continued income covers the early sequence-risk years \u2014 the household never draws the full plan from day one. Plus the written **re-entry trigger**: take a contract if the portfolio is < \u00a31.0M for two quarters."
+      }
     }
   ],
   "refresh": "5m",
@@ -2328,6 +3480,63 @@
   ],
   "templating": {
     "list": [
+      {
+        "name": "country",
+        "type": "query",
+        "label": "Country",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "fire-planner-pg"
+        },
+        "definition": "fire_target countries",
+        "query": "SELECT DISTINCT country_display AS __text, country_slug AS __value FROM fire_planner.fire_target ORDER BY country_display",
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "Sofia",
+          "value": "sofia"
+        },
+        "options": []
+      },
+      {
+        "name": "with_home",
+        "type": "custom",
+        "label": "Family: buy home?",
+        "query": "false,true",
+        "current": {
+          "selected": true,
+          "text": "false",
+          "value": "false"
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "false",
+            "value": "false"
+          },
+          {
+            "selected": false,
+            "text": "true",
+            "value": "true"
+          }
+        ],
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "savings_per_year",
+        "type": "textbox",
+        "label": "Savings \u00a3/yr (for ETA)",
+        "query": "170000",
+        "current": {
+          "text": "170000",
+          "value": "170000"
+        },
+        "options": []
+      },
       {
         "name": "rate_low",
         "label": "Low rate %",
