@@ -26,7 +26,7 @@ func vaultCommands() []Command {
 		{Path: []string{"vault", "list"}, Tier: TierRead,
 			Summary: "list your item names: vault list [--search Q]", Run: vaultList},
 		{Path: []string{"vault", "get"}, Tier: TierRead,
-			Summary: "fetch one item: vault get <name> [--field password|username|uri|notes|totp] [--json]", Run: vaultGet},
+			Summary: "fetch one item: vault get <name> [--field password|username|uri|notes|totp] [--json] [--all]", Run: vaultGet},
 		{Path: []string{"vault", "search"}, Tier: TierRead,
 			Summary: "search your item names: vault search <query>", Run: vaultSearch},
 		{Path: []string{"vault", "code"}, Tier: TierRead,
@@ -48,6 +48,8 @@ func vaultHelp() string {
   homelab vault list [--search Q] list your item names (no secrets)
   homelab vault get <name> [--field password|username|uri|notes|totp] [--json]
                                   TTY → clipboard (auto-clears); piped → stdout
+  homelab vault get <name> --all  all fields (incl. custom) as JSON; piped only.
+                                  TOTP shown as presence flag — use 'vault code' for a code.
   homelab vault code <name>       current TOTP code
   homelab vault lock              lock / log out the local bw session
 
@@ -270,6 +272,7 @@ func bwSecretEnv(appdata string, c vwCreds, session string) []string {
 func bwLoginArgs() []string                 { return []string{"login", "--apikey"} }
 func bwUnlockArgs() []string                { return []string{"unlock", "--passwordenv", "BW_PASSWORD", "--raw"} }
 func bwGetArgs(field, name string) []string { return []string{"get", field, name} }
+func bwItemArgs(name string) []string       { return []string{"get", "item", name} }
 func bwStatusArgs() []string                { return []string{"status"} }
 
 // bwNeedsLogin parses `bw status` JSON and reports whether a `bw login` is
@@ -444,6 +447,7 @@ type getOpts struct {
 	name  string
 	field string
 	json  bool
+	all   bool // dump every field (incl. custom) as normalized JSON
 }
 
 var validGetFields = map[string]bool{"password": true, "username": true, "uri": true, "notes": true, "totp": true}
@@ -455,6 +459,8 @@ func parseGetArgs(args []string) (getOpts, error) {
 		switch {
 		case a == "--json":
 			o.json = true
+		case a == "--all":
+			o.all = true
 		case a == "--field" && i+1 < len(args):
 			o.field = args[i+1]
 			i++
@@ -465,9 +471,10 @@ func parseGetArgs(args []string) (getOpts, error) {
 		}
 	}
 	if o.name == "" {
-		return o, fmt.Errorf("usage: homelab vault get <name> [--field password|username|uri|notes|totp] [--json]")
+		return o, fmt.Errorf("usage: homelab vault get <name> [--field password|username|uri|notes|totp] [--json] [--all]")
 	}
-	if !validGetFields[o.field] {
+	// --all dumps the whole item, so --field is irrelevant — skip its allowlist.
+	if !o.all && !validGetFields[o.field] {
 		return o, fmt.Errorf("invalid --field %q (want password|username|uri|notes|totp)", o.field)
 	}
 	return o, nil
@@ -481,6 +488,81 @@ func getValue(run cmdRunner, user, uid string, o getOpts) (string, error) {
 		return "", err
 	}
 	return bwGet(run, s.env, o.field, o.name)
+}
+
+// getItem opens a session and returns the whole item as raw `bw get item` JSON.
+// Used by `get --all`; normalization is a separate, pure step (normalizeItem).
+func getItem(run cmdRunner, user, uid, name string) (string, error) {
+	s, err := openSession(run, user, uid)
+	if err != nil {
+		return "", err
+	}
+	return run("bw", bwItemArgs(name), s.env)
+}
+
+// normalizedItem is the browse-all-fields projection of a Vaultwarden item: the
+// standard login fields that are present, notes, and a flat map of custom field
+// name→value. bw internals (id, object, reprompt, passwordHistory) are dropped,
+// and the TOTP *seed* is reduced to a presence flag — the only seed-derived path
+// stays the specially-audited `vault code` (see the design §10/§16).
+type normalizedItem struct {
+	Name     string            `json:"name"`
+	Username string            `json:"username,omitempty"`
+	Password string            `json:"password,omitempty"`
+	URIs     []string          `json:"uris,omitempty"`
+	TOTP     bool              `json:"totp,omitempty"` // presence only, never the seed
+	Notes    string            `json:"notes,omitempty"`
+	Fields   map[string]string `json:"fields,omitempty"` // custom field name→value
+}
+
+// bwFieldLinked is the Bitwarden custom-field type for a "linked" field: it
+// references another field and carries a null value, so it is not real data.
+const bwFieldLinked = 3
+
+// normalizeItem parses a `bw get item` payload into the browse projection. It is
+// pure (no I/O), so it is the unit-tested heart of `get --all`.
+func normalizeItem(raw string) (normalizedItem, error) {
+	var it struct {
+		Name  string `json:"name"`
+		Notes string `json:"notes"`
+		Login *struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+			Totp     string `json:"totp"`
+			URIs     []struct {
+				URI string `json:"uri"`
+			} `json:"uris"`
+		} `json:"login"`
+		Fields []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+			Type  int    `json:"type"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(raw), &it); err != nil {
+		return normalizedItem{}, fmt.Errorf("parse bw item: %w", err)
+	}
+	n := normalizedItem{Name: it.Name, Notes: it.Notes}
+	if it.Login != nil {
+		n.Username = it.Login.Username
+		n.Password = it.Login.Password
+		n.TOTP = it.Login.Totp != ""
+		for _, u := range it.Login.URIs {
+			if u.URI != "" {
+				n.URIs = append(n.URIs, u.URI)
+			}
+		}
+	}
+	for _, f := range it.Fields {
+		if f.Type == bwFieldLinked {
+			continue // references another field, no value of its own
+		}
+		if n.Fields == nil {
+			n.Fields = map[string]string{}
+		}
+		n.Fields[f.Name] = f.Value // duplicate names: last-wins (rare; documented)
+	}
+	return n, nil
 }
 
 // clipboardDecision picks how to return a secret value. "stdout" prints it (a
@@ -789,6 +871,9 @@ func vaultGet(args []string) error {
 	}
 	defer unlock()
 	user := vaultCurrentUser()
+	if o.all {
+		return getAllFields(user, uid, o.name)
+	}
 	val, err := getValue(realRunner, user, uid, o)
 	if err != nil {
 		return err
@@ -802,5 +887,31 @@ func vaultGet(args []string) error {
 		return nil
 	}
 	emitSecret(val)
+	return nil
+}
+
+// getAllFields prints every field of one item as normalized JSON. Like
+// `get --json`, the payload is all secret values, so it refuses a terminal
+// (pipe it). The TOTP seed is never emitted — only a presence flag — so no extra
+// TOTP audit is needed; the op-log uses a distinct verb so a bulk dump is
+// distinguishable from a single-field get (the item name is still never logged).
+func getAllFields(user, uid, name string) error {
+	if !jsonToStdoutOK(stdoutIsTTY()) {
+		return fmt.Errorf("refusing to print all fields as JSON to a terminal; pipe it (e.g. | jq)")
+	}
+	raw, err := getItem(realRunner, user, uid, name)
+	if err != nil {
+		return err
+	}
+	item, err := normalizeItem(raw)
+	if err != nil {
+		return err
+	}
+	out, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	writeOpLog(opRecord{User: user, Verb: "get-all", PID: os.Getpid(), PPID: os.Getppid(), ParentComm: parentComm(os.Getppid()), ItemName: name})
+	fmt.Println(string(out))
 	return nil
 }

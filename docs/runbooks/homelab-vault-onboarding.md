@@ -14,6 +14,7 @@ homelab vault setup             one-time: store VW email + master password + API
 homelab vault status            configured / unlocked / reachable (no secrets)
 homelab vault list [--search Q]  item names (no secrets)
 homelab vault get <name> [--field password|username|uri|notes|totp] [--json]
+homelab vault get <name> --all  all fields (incl. custom) as JSON; pipe it (| jq)
 homelab vault code <name>       current TOTP code
 homelab vault lock              lock / log out the local bw session
 ```
