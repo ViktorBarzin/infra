@@ -18,31 +18,41 @@ import (
 // decryption is done by the official `bw` CLI. See
 // docs/runbooks/homelab-vault-onboarding.md.
 func vaultCommands() []Command {
-	return []Command{
+	cmds := []Command{
+		// Vaultwarden — your personal password manager (logins/passwords/TOTP).
 		{Path: []string{"vault", "setup"}, Tier: TierWrite,
-			Summary: "one-time: store your Vaultwarden master password + API key in your Vault path", Run: vaultSetup},
+			Summary: "[vaultwarden] one-time: store your master password + API key in your Vault path", Run: vaultSetup},
 		{Path: []string{"vault", "status"}, Tier: TierRead,
-			Summary: "show whether your vault is configured/reachable (no secrets)", Run: vaultStatus},
+			Summary: "[vaultwarden] show whether your vault is configured/reachable (no secrets)", Run: vaultStatus},
 		{Path: []string{"vault", "list"}, Tier: TierRead,
-			Summary: "list your item names: vault list [--search Q]", Run: vaultList},
+			Summary: "[vaultwarden] list your item names: vault list [--search Q]", Run: vaultList},
 		{Path: []string{"vault", "get"}, Tier: TierRead,
-			Summary: "fetch one item: vault get <name> [--field password|username|uri|notes|totp] [--json] [--all]", Run: vaultGet},
+			Summary: "[vaultwarden] fetch one login: vault get <name> [--field password|username|uri|notes|totp] [--json] [--all]", Run: vaultGet},
 		{Path: []string{"vault", "search"}, Tier: TierRead,
-			Summary: "search your item names: vault search <query>", Run: vaultSearch},
+			Summary: "[vaultwarden] search your item names: vault search <query>", Run: vaultSearch},
 		{Path: []string{"vault", "code"}, Tier: TierRead,
-			Summary: "current TOTP code for an item: vault code <name>", Run: vaultCode},
+			Summary: "[vaultwarden] current TOTP code for an item: vault code <name>", Run: vaultCode},
 		{Path: []string{"vault", "lock"}, Tier: TierWrite,
-			Summary: "lock/log out the local bw session", Run: vaultLock},
+			Summary: "[vaultwarden] lock/log out the local bw session", Run: vaultLock},
 		{Path: []string{"vault"}, Tier: TierRead,
-			Summary: "Vaultwarden access for your own vault (run `homelab vault` for help)",
+			Summary: "two stores: Vaultwarden (logins) + HashiCorp Vault/OpenBao kv (infra secrets) — run `homelab vault` for help",
 			Run:     func([]string) error { fmt.Print(vaultHelp()); return nil }},
 	}
+	// HashiCorp Vault / OpenBao — homelab INFRA secrets (the secret/… KV store).
+	return append(cmds, vaultKVCommands()...)
 }
 
-// vaultHelp is shown for bare `homelab vault`.
+// vaultHelp is shown for bare `homelab vault`. It LEADS with the distinction
+// between the two unrelated "vaults" this command fronts, because the name
+// collides: Vaultwarden (a password manager) vs HashiCorp Vault / OpenBao (the
+// infra secrets store).
 func vaultHelp() string {
-	return `homelab vault — read YOUR OWN Vaultwarden logins (no-HITL after one-time setup)
+	return `homelab vault — two different secret stores under one command:
 
+  • Vaultwarden               your personal PASSWORD MANAGER (logins / passwords / TOTP)
+  • HashiCorp Vault / OpenBao  homelab INFRA secrets (the secret/… KV store)  → 'vault kv …'
+
+── Vaultwarden  (reads YOUR OWN vault; no-HITL after one-time setup) ──
   homelab vault setup             one-time: store your master password + API key in your Vault path
   homelab vault status            configured / unlocked / reachable (no secrets)
   homelab vault list [--search Q] list your item names (no secrets)
@@ -53,8 +63,13 @@ func vaultHelp() string {
   homelab vault code <name>       current TOTP code
   homelab vault lock              lock / log out the local bw session
 
-Creds live only in your own Vault path; the admin never sees them. Identity is
-your unix UID. Security model: docs/runbooks/homelab-vault-onboarding.md
+── HashiCorp Vault / OpenBao  (infra secrets; uses your own OIDC vault token) ──
+  homelab vault kv get <path> [--field K]   read an infra KV secret
+  homelab vault kv list <path>              list sub-paths
+  homelab vault kv put <path> <key>         write one key (value via stdin)
+
+Vaultwarden creds live only in your own Vault path; the admin never sees them.
+Security model: docs/runbooks/homelab-vault-onboarding.md
 (note: anything running as your user can decrypt your vault — the accepted no-HITL trade).
 `
 }

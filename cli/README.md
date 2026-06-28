@@ -244,6 +244,27 @@ vault wouldn't show up until the next login. The sync is **best-effort**: a
 transient failure warns on stderr and falls back to the cached vault rather than
 failing the read.
 
+### v0.11 — `vault kv` (HashiCorp Vault / OpenBao infra secrets)
+
+`homelab vault` now fronts **two unrelated stores**, made explicit in the bare
+`homelab vault` help and via `[vaultwarden]` / `[hashicorp-vault]` summary tags:
+
+- **Vaultwarden** — your personal password manager (`vault get/list/code/…`, unchanged).
+- **HashiCorp Vault / OpenBao** — homelab infra secrets, the `secret/…` KV store, under `vault kv`.
+
+| Command | Tier | What it does |
+| --- | --- | --- |
+| `vault kv get <path> [--field K]` | read | read a secret: `--field K` → one value (TTY-aware clipboard/stdout); no field → all fields as JSON (refuses a bare TTY) |
+| `vault kv list <path>` | read | list sub-paths under `<path>` (no values) |
+| `vault kv put <path> <key>` | write | write one key; **value via stdin** (piped or no-echo prompt, never argv); creates the path or **merges** (never clobbers siblings) |
+
+**Different credentials:** the Vaultwarden verbs use the per-user *scoped* token
+(bound to `claude-users/<user>`); `vault kv` uses your **own** Vault token
+(`vault login -method=oidc` → `~/.vault-token`, or `$VAULT_TOKEN`) — the kv
+handlers set `VAULT_ADDR` but never inject the scoped token (which would 403 off
+its own path). Access is whatever your policy grants. Writes are merge-only;
+`put` (replace) / `delete` are out of scope — use the raw `vault` CLI.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning

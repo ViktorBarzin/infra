@@ -1,15 +1,24 @@
-# `homelab vault` onboarding (per-user Vaultwarden access)
+# `homelab vault` onboarding (Vaultwarden access + `vault kv` infra secrets)
 
 ## Scope
 
-`homelab vault` gives each devvm roster user no-HITL access to **their own**
-Vaultwarden vault (and any Organization Collection shared with their account)
-from the command line. It shells out to the official `bw` CLI; the user's
-Vaultwarden credentials live only in their isolated Vault path
-`secret/workstation/claude-users/<os-user>` and are decrypted as that OS user —
-the admin never sees them.
+`homelab vault` fronts **two unrelated secret stores** — the name collides, so
+the command keeps them clearly separated:
+
+- **Vaultwarden** — your personal *password manager* (logins/passwords/TOTP).
+  The verbs below give each devvm roster user no-HITL access to **their own**
+  Vaultwarden vault (and any Organization Collection shared with their account).
+  It shells out to the official `bw` CLI; the user's Vaultwarden credentials live
+  only in their isolated Vault path `secret/workstation/claude-users/<os-user>`
+  and are decrypted as that OS user — the admin never sees them.
+- **HashiCorp Vault / OpenBao** — the homelab *infra* secrets store (the
+  `secret/…` KV mount at `vault.viktorbarzin.me`), under `homelab vault kv`.
+  These use the caller's **own** Vault token (`vault login -method=oidc` →
+  `~/.vault-token`), **not** the scoped Vaultwarden token (which only reads the
+  `claude-users/<user>` path); access is whatever your Vault policy grants.
 
 ```text
+# Vaultwarden (password manager)
 homelab vault setup             one-time: store VW email + master password + API key
 homelab vault status            configured / unlocked / reachable (no secrets)
 homelab vault list [--search Q]  item names (no secrets)
@@ -17,6 +26,11 @@ homelab vault get <name> [--field password|username|uri|notes|totp] [--json]
 homelab vault get <name> --all  all fields (incl. custom) as JSON; pipe it (| jq)
 homelab vault code <name>       current TOTP code
 homelab vault lock              lock / log out the local bw session
+
+# HashiCorp Vault / OpenBao (infra secrets; uses your own OIDC token)
+homelab vault kv get <path> [--field K]   read an infra KV secret
+homelab vault kv list <path>              list sub-paths
+homelab vault kv put <path> <key>         write one key (value via stdin; merges)
 ```
 
 ## How auth works (why a non-admin can use it)

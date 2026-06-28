@@ -882,3 +882,176 @@ func TestReadSucceedsWhenSyncFails(t *testing.T) {
 		t.Fatalf("read must succeed despite a sync failure: val=%q err=%v", val, err)
 	}
 }
+
+// --- vault kv (HashiCorp Vault / OpenBao infra secrets) --------------------
+
+func TestVaultKVCommandsRegistered(t *testing.T) {
+	want := map[string]Tier{
+		"vault kv get":  TierRead,
+		"vault kv list": TierRead,
+		"vault kv put":  TierWrite,
+	}
+	got := map[string]Tier{}
+	for _, c := range vaultCommands() {
+		got[c.name()] = c.Tier
+	}
+	for name, tier := range want {
+		if got[name] != tier {
+			t.Errorf("command %q: tier=%q, want %q", name, got[name], tier)
+		}
+	}
+}
+
+func TestVaultKVArgs(t *testing.T) {
+	if got := vaultKVGetFieldArgs("secret/viktor", "github_pat"); !reflect.DeepEqual(got, []string{"kv", "get", "-field=github_pat", "secret/viktor"}) {
+		t.Fatalf("vaultKVGetFieldArgs = %v", got)
+	}
+	if got := vaultKVGetJSONArgs("secret/viktor"); !reflect.DeepEqual(got, []string{"kv", "get", "-format=json", "secret/viktor"}) {
+		t.Fatalf("vaultKVGetJSONArgs = %v", got)
+	}
+	if got := vaultKVListArgs("secret/"); !reflect.DeepEqual(got, []string{"kv", "list", "-format=json", "secret/"}) {
+		t.Fatalf("vaultKVListArgs = %v", got)
+	}
+	// create (path absent) → put; merge (path present) → patch -method=rw. Either
+	// way the VALUE travels via the `key=-` stdin form, never argv.
+	create := vaultKVPutArgs(false, "secret/x", "api_key")
+	if !reflect.DeepEqual(create, []string{"kv", "put", "secret/x", "api_key=-"}) {
+		t.Fatalf("vaultKVPutArgs(create) = %v", create)
+	}
+	merge := vaultKVPutArgs(true, "secret/x", "api_key")
+	if !reflect.DeepEqual(merge, []string{"kv", "patch", "-method=rw", "secret/x", "api_key=-"}) {
+		t.Fatalf("vaultKVPutArgs(merge) = %v", merge)
+	}
+	for _, args := range [][]string{create, merge} {
+		for _, a := range args {
+			if strings.Contains(a, "SECRETVALUE") || strings.HasSuffix(a, "=SECRETVALUE") {
+				t.Fatalf("value must not appear in argv: %v", args)
+			}
+		}
+	}
+}
+
+func TestExtractKVData(t *testing.T) {
+	// `vault kv get -format=json` wraps the secret in {"data":{"data":{...},"metadata":{...}}}.
+	env := `{"request_id":"x","data":{"data":{"github_pat":"ghp_abc","email":"e@x.me"},"metadata":{"version":3}}}`
+	out, err := extractKVData(env)
+	if err != nil {
+		t.Fatalf("extractKVData: %v", err)
+	}
+	// Round-trip to a map so key order doesn't matter.
+	var m map[string]string
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("result not a JSON object: %q (%v)", out, err)
+	}
+	if m["github_pat"] != "ghp_abc" || m["email"] != "e@x.me" {
+		t.Fatalf("extractKVData inner data wrong: %v", m)
+	}
+	// metadata must NOT leak into the output.
+	if strings.Contains(out, "metadata") || strings.Contains(out, "request_id") {
+		t.Fatalf("envelope internals leaked: %s", out)
+	}
+	if _, err := extractKVData("not json"); err == nil {
+		t.Fatal("malformed envelope must error")
+	}
+}
+
+func TestParseKVList(t *testing.T) {
+	keys, err := parseKVList(`["app1","app2/","viktor"]`)
+	if err != nil {
+		t.Fatalf("parseKVList: %v", err)
+	}
+	if !reflect.DeepEqual(keys, []string{"app1", "app2/", "viktor"}) {
+		t.Fatalf("parseKVList = %v", keys)
+	}
+	if _, err := parseKVList("not json"); err == nil {
+		t.Fatal("malformed list must error")
+	}
+}
+
+func TestKVGetFieldFlow(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{
+		"vault kv get -field=github_pat secret/viktor": "ghp_secret",
+	}}
+	val, err := kvGetField(f.run, "secret/viktor", "github_pat")
+	if err != nil || val != "ghp_secret" {
+		t.Fatalf("kvGetField = %q, %v", val, err)
+	}
+}
+
+func TestKVListFlow(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{
+		"vault kv list -format=json secret/": `["app1","app2/"]`,
+	}}
+	keys, err := kvList(f.run, "secret/")
+	if err != nil || !reflect.DeepEqual(keys, []string{"app1", "app2/"}) {
+		t.Fatalf("kvList = %v, %v", keys, err)
+	}
+}
+
+// kvPut creates the path on first write and merges thereafter, with the value on
+// stdin only (mirrors writeCreds). Never plain `kv patch` (needs the patch cap).
+func TestKVPutCreatesThenMerges(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		exists     bool
+		wantCreate bool
+	}{
+		{"absent path → create (put)", false, true},
+		{"present path → merge (patch -rw)", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdinCalls []recStdin
+			run := func(name string, argv, envv []string) (string, error) {
+				if len(argv) >= 2 && argv[0] == "kv" && argv[1] == "get" {
+					if tc.exists {
+						return `{"data":{"data":{}}}`, nil
+					}
+					return "", fmt.Errorf("No value found at secret/x")
+				}
+				return "", nil
+			}
+			runStdin := func(name string, argv, envv []string, stdin string) (string, error) {
+				stdinCalls = append(stdinCalls, recStdin{append([]string{name}, argv...), stdin})
+				return "", nil
+			}
+			if err := kvPut(run, runStdin, "secret/x", "api_key", "SECRETVALUE"); err != nil {
+				t.Fatalf("kvPut: %v", err)
+			}
+			if len(stdinCalls) != 1 {
+				t.Fatalf("want exactly 1 stdin write, got %d", len(stdinCalls))
+			}
+			sc := stdinCalls[0]
+			joined := strings.Join(sc.argv, " ")
+			if tc.wantCreate && !strings.Contains(joined, "kv put") {
+				t.Fatalf("absent path must use `kv put`: %v", sc.argv)
+			}
+			if !tc.wantCreate && !strings.Contains(joined, "kv patch -method=rw") {
+				t.Fatalf("present path must merge via `kv patch -method=rw`: %v", sc.argv)
+			}
+			if strings.Contains(joined, "kv patch") && !strings.Contains(joined, "-method=rw") {
+				t.Fatalf("must never use plain `kv patch`: %v", sc.argv)
+			}
+			if sc.stdin != "SECRETVALUE" {
+				t.Fatalf("value must travel via stdin, got %q", sc.stdin)
+			}
+			for _, a := range sc.argv {
+				if strings.Contains(a, "SECRETVALUE") {
+					t.Fatalf("value leaked into argv: %v", sc.argv)
+				}
+			}
+		})
+	}
+}
+
+func TestVaultHelpMentionsBothSystems(t *testing.T) {
+	h := vaultHelp()
+	for _, want := range []string{"Vaultwarden", "vault kv"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("vault help must mention %q (distinguish the two systems)", want)
+		}
+	}
+	// Must name the infra-secrets system so the distinction is unambiguous.
+	if !strings.Contains(h, "HashiCorp") && !strings.Contains(h, "OpenBao") {
+		t.Error("vault help must name HashiCorp Vault / OpenBao (the infra secrets store)")
+	}
+}
