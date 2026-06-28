@@ -500,8 +500,10 @@ resource "kubernetes_cron_job_v1" "fire_planner_fire_targets" {
             container {
               name  = "fire-targets"
               image = local.image
+              # --horizon 72: Viktor retires ~age 28 and plans to live to 100, so
+              # the portfolio must last 72 years (was the 60y default ≈ to age 88).
               command = ["python", "-m", "fire_planner", "recompute-fire-targets",
-              "--countries", "all"]
+              "--countries", "all", "--horizon", "72"]
 
               env_from {
                 secret_ref {
