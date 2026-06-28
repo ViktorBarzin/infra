@@ -819,3 +819,66 @@ func TestVaultHelpMentionsAll(t *testing.T) {
 		t.Error("vault help must document --all")
 	}
 }
+
+// --- bw sync on read (freshness) ------------------------------------------
+
+func TestBwSyncArgs(t *testing.T) {
+	if got := bwSyncArgs(); !reflect.DeepEqual(got, []string{"sync"}) {
+		t.Fatalf("bwSyncArgs = %v", got)
+	}
+}
+
+// Every read opens a session that first `bw sync`s, so reads reflect the latest
+// server-side values: `bw unlock` is local-only, so without a sync a persisted
+// (already-logged-in) session serves a stale local cache.
+func TestOpenSessionSyncsBeforeRead(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{
+		"vault kv get -field=vaultwarden_master_password secret/workstation/claude-users/emo": "pw",
+		"vault kv get -field=vaultwarden_client_id secret/workstation/claude-users/emo":       "user.x",
+		"vault kv get -field=vaultwarden_client_secret secret/workstation/claude-users/emo":   "cs",
+		"bw status":              `{"status":"locked"}`,
+		"bw unlock":              "SESS",
+		"bw sync":                "Syncing complete.",
+		"bw get password github": "p@ss",
+	}}
+	uid := fmt.Sprintf("%d", os.Getuid())
+	if _, err := getValue(f.run, "emo", uid, getOpts{name: "github", field: "password"}); err != nil {
+		t.Fatalf("getValue: %v", err)
+	}
+	idx := func(prefix string) int {
+		for i, c := range f.calls {
+			if strings.HasPrefix(strings.Join(c, " "), prefix) {
+				return i
+			}
+		}
+		return -1
+	}
+	syncAt, unlockAt, getAt := idx("bw sync"), idx("bw unlock"), idx("bw get password github")
+	if syncAt < 0 {
+		t.Fatal("expected a `bw sync` before the read")
+	}
+	if !(unlockAt < syncAt && syncAt < getAt) {
+		t.Fatalf("order wrong: unlock=%d sync=%d get=%d (want unlock<sync<get)", unlockAt, syncAt, getAt)
+	}
+}
+
+// Sync is best-effort: a transient sync failure must NOT fail the read — the
+// cached value is still returned (a stderr warning is emitted, not asserted here).
+func TestReadSucceedsWhenSyncFails(t *testing.T) {
+	f := &fakeRunner{
+		out: map[string]string{
+			"vault kv get -field=vaultwarden_master_password secret/workstation/claude-users/emo": "pw",
+			"vault kv get -field=vaultwarden_client_id secret/workstation/claude-users/emo":       "user.x",
+			"vault kv get -field=vaultwarden_client_secret secret/workstation/claude-users/emo":   "cs",
+			"bw status":              `{"status":"locked"}`,
+			"bw unlock":              "SESS",
+			"bw get password github": "p@ss",
+		},
+		err: map[string]error{"bw sync": errors.New("Failed to sync: network error")},
+	}
+	uid := fmt.Sprintf("%d", os.Getuid())
+	val, err := getValue(f.run, "emo", uid, getOpts{name: "github", field: "password"})
+	if err != nil || val != "p@ss" {
+		t.Fatalf("read must succeed despite a sync failure: val=%q err=%v", val, err)
+	}
+}

@@ -274,6 +274,7 @@ func bwUnlockArgs() []string                { return []string{"unlock", "--passw
 func bwGetArgs(field, name string) []string { return []string{"get", field, name} }
 func bwItemArgs(name string) []string       { return []string{"get", "item", name} }
 func bwStatusArgs() []string                { return []string{"status"} }
+func bwSyncArgs() []string                  { return []string{"sync"} }
 
 // bwNeedsLogin parses `bw status` JSON and reports whether a `bw login` is
 // required. Unparseable/empty output → true (safer to attempt login).
@@ -440,7 +441,16 @@ func openSession(run cmdRunner, user, uid string) (session, error) {
 	if err != nil {
 		return session{}, err
 	}
-	return session{env: bwSecretEnv(appdata, creds, sess)}, nil
+	sessEnv := bwSecretEnv(appdata, creds, sess)
+	// Pull the latest server-side state so reads reflect current values. `bw
+	// unlock` only decrypts the LOCAL cache, so a persisted (already-logged-in)
+	// session would otherwise serve stale data until the next login. Best-effort:
+	// a transient sync failure must not break a read — fall back to the cached
+	// vault and warn (status reports reachability separately).
+	if _, err := run("bw", bwSyncArgs(), sessEnv); err != nil {
+		fmt.Fprintln(os.Stderr, "homelab vault: warning: bw sync failed; using cached vault (values may be stale): "+err.Error())
+	}
+	return session{env: sessEnv}, nil
 }
 
 type getOpts struct {
@@ -702,7 +712,9 @@ func statusSummary(run cmdRunner, user, uid string) string {
 	if err != nil {
 		return "vault: configured, but unlock/login FAILED (creds stale? run `homelab vault setup`): " + err.Error()
 	}
-	if _, err := run("bw", []string{"sync"}, s.env); err != nil {
+	// openSession already did a best-effort sync; status re-runs it explicitly so
+	// a reachability failure surfaces in this report rather than only on stderr.
+	if _, err := run("bw", bwSyncArgs(), s.env); err != nil {
 		return "vault: configured + unlocked, but sync/reachability failed: " + err.Error()
 	}
 	return "vault: configured, unlocked, reachable ✓"
