@@ -5,7 +5,30 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+func TestTruncatePreviewKeepsValidUTF8(t *testing.T) {
+	// Byte-slicing a long Cyrillic string at 240 splits a 2-byte rune and emits
+	// invalid UTF-8 — the bug that crashed the recall hook. truncatePreview must
+	// cut on a rune boundary and always stay valid UTF-8.
+	long := strings.Repeat("я", 300) // 300 runes / 600 bytes
+	got := truncatePreview(long, 240)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncatePreview produced invalid UTF-8: %q", got)
+	}
+	if r := []rune(got); len(r) != 241 || string(r[:240]) != strings.Repeat("я", 240) || r[240] != '…' {
+		t.Fatalf("truncatePreview = %d runes, want 240 Cyrillic + ellipsis", len(r))
+	}
+	// Short multibyte strings pass through untouched (no ellipsis).
+	if got := truncatePreview("кратко", 240); got != "кратко" {
+		t.Fatalf("short string altered: %q", got)
+	}
+	// ASCII boundary still works.
+	if got := truncatePreview(strings.Repeat("a", 500), 240); got != strings.Repeat("a", 240)+"…" {
+		t.Fatalf("ascii truncation wrong: %q", got)
+	}
+}
 
 func TestResolveMemoryBase(t *testing.T) {
 	old1, old2 := os.Getenv("CLAUDE_MEMORY_API_URL"), os.Getenv("MEMORY_API_URL")
