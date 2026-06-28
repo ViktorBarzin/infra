@@ -459,6 +459,88 @@ resource "kubernetes_cron_job_v1" "fire_planner_recompute" {
   ]
 }
 
+# Monthly FIRE-countdown target solve on the 2nd at 10:00 UTC (an hour after
+# recompute-all, so account_snapshot is fresh). Binary-searches each Case's FIRE
+# number per country at the 99% Guyton-Klinger bar and upserts fire_target, which
+# the wealth Grafana dashboard's "FIRE Countdown" section reads.
+resource "kubernetes_cron_job_v1" "fire_planner_fire_targets" {
+  metadata {
+    name      = "fire-planner-fire-targets"
+    namespace = kubernetes_namespace.fire_planner.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 10 2 * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 5
+    starting_deadline_seconds     = 600
+
+    job_template {
+      metadata {
+        labels = local.labels
+      }
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 86400
+        # The full country sweep is CPU-bound (binary search × ~22 cities ×
+        # 3 cases). Give it room rather than letting it run forever.
+        active_deadline_seconds = 3600
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "registry-credentials"
+            }
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            container {
+              name  = "fire-targets"
+              image = local.image
+              command = ["python", "-m", "fire_planner", "recompute-fire-targets",
+              "--countries", "all"]
+
+              env_from {
+                secret_ref {
+                  name = "fire-planner-secrets"
+                }
+              }
+              env_from {
+                secret_ref {
+                  name = "fire-planner-db-creds"
+                }
+              }
+
+              resources {
+                requests = {
+                  cpu    = "500m"
+                  memory = "1Gi"
+                }
+                limits = {
+                  memory = "2Gi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+
+  depends_on = [
+    kubernetes_manifest.external_secret,
+    kubernetes_manifest.db_external_secret,
+  ]
+}
+
 # Weekly refresh of the COL cache: walks col_snapshot for rows
 # expiring within 7 days, re-scrapes Numbeo + Expatistan, upserts. With
 # the user-chosen 1-year TTL, a healthy cache has 0 stale rows on most
