@@ -483,31 +483,49 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   exit 0
                 fi
 
-                slack "K8s upgrade available: v$RUNNING → v$TARGET ($KIND)"
+                echo "K8s upgrade available: v$RUNNING -> v$TARGET ($KIND)"
 
                 if [ "$DRY_RUN" = "true" ]; then
-                  slack "DRY_RUN — not spawning preflight Job"
+                  slack "DRY_RUN — target v$TARGET detected, not spawning preflight Job"
                   exit 0
                 fi
 
                 # 7. Spawn Job 0 (preflight) via envsubst on the job-template
                 #    Idempotency: deterministic name reconciles via `apply`.
                 JOB_NAME="k8s-upgrade-preflight-$${TARGET//./-}"
+                MASTER_JOB="k8s-upgrade-master-$${TARGET//./-}"
+                ANNOUNCE=yes   # Slack the spawn? Suppressed for silent nightly re-evaluations of a standing gate refusal.
 
-                # Retry-on-failure idempotency: skip only if an existing preflight
-                # Job is Active/Complete. A *Failed* preflight (aborted on a
-                # transient gate, e.g. a spurious critical alert) is deleted and
-                # re-spawned — otherwise its deterministic name + 7d TTL wedges
-                # the entire pipeline until it ages out. (Stuck-pipeline fix
-                # 2026-06-17: a transient critical alert wedged 1.34.9 for 5 days.)
+                # Idempotency + nightly re-evaluation:
+                #   - FAILED preflight (transient gate abort, e.g. a spurious
+                #     critical alert / unhealthy node) -> delete + re-spawn, announced.
+                #   - COMPLETE preflight but NO master Job spawned -> the compat
+                #     gate REFUSED the target (blocked/held now Complete cleanly
+                #     rather than Failing). Re-spawn SILENTLY so the gate re-checks
+                #     nightly (the refusal may have cleared: addon upgraded / matrix
+                #     updated / upstream shipped) WITHOUT nightly Slack noise for a
+                #     standing refusal — the morning report (+ K8sUpgradeBlocked for
+                #     actionable) is the signal.
+                #   - Otherwise (Active, or Complete with the chain advanced) -> skip.
+                # The old "Failed-only re-spawn" left a refused-but-Complete preflight
+                # skipped until its 7d TTL — too slow now that refusals Complete
+                # instead of Failing (2026-06-28). Deterministic names; `apply`
+                # reconciles. (Stuck-pipeline history: a transient critical alert
+                # wedged 1.34.9 for 5 days, 2026-06-17 — hence Failed always re-spawns.)
                 if /usr/local/bin/kubectl -n k8s-upgrade get job "$JOB_NAME" >/dev/null 2>&1; then
                   JOB_FAILED=$(/usr/local/bin/kubectl -n k8s-upgrade get job "$JOB_NAME" \
                     -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)
+                  JOB_COMPLETE=$(/usr/local/bin/kubectl -n k8s-upgrade get job "$JOB_NAME" \
+                    -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)
                   if [ "$JOB_FAILED" = "True" ]; then
                     slack "Preflight Job $JOB_NAME exists but FAILED — deleting and re-spawning"
                     /usr/local/bin/kubectl -n k8s-upgrade delete job "$JOB_NAME" --wait=true >/dev/null 2>&1 || true
+                  elif [ "$JOB_COMPLETE" = "True" ] && ! /usr/local/bin/kubectl -n k8s-upgrade get job "$MASTER_JOB" >/dev/null 2>&1; then
+                    echo "Preflight $JOB_NAME Complete + no master Job (gate refused) — silent nightly re-evaluate"
+                    /usr/local/bin/kubectl -n k8s-upgrade delete job "$JOB_NAME" --wait=true >/dev/null 2>&1 || true
+                    ANNOUNCE=no
                   else
-                    slack "Preflight Job $JOB_NAME already exists (active/complete) — skipping"
+                    echo "Preflight Job $JOB_NAME already exists (active / chain advanced) — skipping"
                     exit 0
                   fi
                 fi
@@ -521,7 +539,9 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   < /template/job-template.yaml \
                   | /usr/local/bin/kubectl apply -f -
 
-                slack "Spawned $JOB_NAME (target=v$TARGET kind=$KIND)"
+                if [ "$ANNOUNCE" = "yes" ]; then
+                  slack "Spawned $JOB_NAME (target=v$TARGET kind=$KIND)"
+                fi
               EOT
               ]
               env {

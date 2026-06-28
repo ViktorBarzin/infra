@@ -1,5 +1,5 @@
 {
-  "_comment": "Addon -> highest k8s minor each addon version supports. The preflight compat-gate (compat-gate.py) reads the RUNNING version of each addon and blocks a k8s upgrade whose target minor exceeds what that running version supports — so the chain auto-halts + alerts instead of breaking on an unsupported addon. Keep current; sources are the addons' own k8s compat matrices (last refreshed 2026-06-19 for the 1.34->1.36 catch-up). max_k8s keys are addon-version floors (major.minor); value is the highest k8s minor that floor supports.",
+  "_comment": "Addon -> highest k8s minor each addon version supports. The preflight compat-gate (compat-gate.py) reads the RUNNING version of each addon and blocks a k8s upgrade whose target minor exceeds what that running version supports — so the chain auto-halts + alerts instead of breaking on an unsupported addon. Keep current; sources are the addons' own k8s compat matrices (last refreshed 2026-06-19 for the 1.34->1.36 catch-up). max_k8s keys are addon-version floors (major.minor); value is the highest k8s minor that floor supports. An addon entry may also set \"pinned\": true (+ \"pin_reason\") to mark it deliberately held: the gate classifies its block as PINNED/held (quiet — no alert, nightly report only) even if a supporting version exists, for upgrades coupled to other work we're not ready for (e.g. gpu-operator's NVIDIA-driver/Ubuntu coupling). A block with NO supporting version in the matrix is WAITING (also quiet); a block a newer matrix version would clear is ACTIONABLE (alerts).",
   "addons": [
     {
       "name": "calico",
@@ -48,7 +48,9 @@
       "max_k8s": {
         "25.10": "1.35",
         "26.3": "1.36"
-      }
+      },
+      "pinned": true,
+      "pin_reason": "26.3 needs a newer NVIDIA driver image + Ubuntu/kernel; held until the driver/OS path is ready. Unpin = delete pinned + pin_reason."
     }
   ],
   "containerd_min": {
