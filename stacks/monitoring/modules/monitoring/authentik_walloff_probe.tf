@@ -118,6 +118,35 @@ resource "kubernetes_config_map" "blackbox_exporter_config" {
             ]
           }
         }
+        # ICMP egress probes (added 2026-06-28 after the 2026-06-27 pfSense
+        # WAN/egress black-hole incident). Drive the wan-gateway-icmp +
+        # internet-egress-icmp scrape jobs (extraScrapeConfigs) — they probe
+        # from INSIDE the cluster, so they traverse the exact node -> pfSense NAT
+        # egress path that failed. ICMP needs CAP_NET_RAW (added to the
+        # deployment container below).
+        icmp_egress = {
+          prober  = "icmp"
+          timeout = "5s"
+          icmp = {
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+          }
+        }
+        # External DNS reachability: a UDP/53 query (cloudflare.com A) sent to a
+        # public resolver target. Fails when egress is down OR the upstream
+        # resolver is unreachable — a distinct failure surface from ICMP.
+        dns_external = {
+          prober  = "dns"
+          timeout = "5s"
+          dns = {
+            transport_protocol    = "udp"
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            query_name            = "cloudflare.com"
+            query_type            = "A"
+            valid_rcodes          = ["NOERROR"]
+          }
+        }
       }
     })
   }
@@ -173,6 +202,15 @@ resource "kubernetes_deployment" "blackbox_exporter" {
             }
             limits = {
               memory = "48Mi"
+            }
+          }
+          # The icmp_egress module needs raw sockets to send ICMP echo. NET_RAW
+          # only — NOT privileged and NOT NET_ADMIN/SYS_ADMIN — so it stays
+          # within the Kyverno wave-1 deny-privileged / restrict-sys-admin
+          # policies. (2026-06-28, pfSense egress monitoring.)
+          security_context {
+            capabilities {
+              add = ["NET_RAW"]
             }
           }
           volume_mount {
