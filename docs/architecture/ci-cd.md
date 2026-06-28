@@ -234,6 +234,38 @@ Woodpecker is **deploy + cluster-touching steps only**:
 
 **No build/test pipeline exists on any repo.** Do not (re)introduce one.
 
+### `default.yml` apply: dual-registration de-dup + reliability (2026-06-28)
+
+infra is registered in Woodpecker on **both** the canonical Forgejo repo (id 82)
+and the legacy GitHub mirror (id 1), and **both fire `default.yml` on every
+push**. Left unguarded, two `terragrunt apply` runs race each other for the
+per-stack PG state lock — historically the #1 source of `Error acquiring the
+state lock` failures and push-supersede "killed" runs.
+
+- **Forge guard** (first command in the `apply` step): the push-apply runs **only
+  on the canonical Forgejo forge**; on the GitHub mirror it logs `[forge-guard]`
+  and `exit 0`s. Detection: `CI_REPO_URL`/`CI_FORGE_URL` contains `github.com` →
+  skip. Fail-open (unknown forge still applies). The mirror keeps running the
+  **crons** (drift-detection, renew-tls, …), which live on repo 1 — only its
+  duplicate push-apply no-ops. (Crons were NOT moved; deactivating repo 1 would
+  have killed them.)
+- **Lock-skip matches both tiers**: a stack whose apply hits a lock is SKIPPED,
+  not failed. The grep now matches the Tier-0 Vault message (`is locked by`) **and**
+  the Tier-1 PG-backend message (`Error acquiring the state lock` / `already
+  locked`) — the PG case was previously miscounted as a hard failure.
+- **Transient retry** (bounded, 3 attempts): only provider-registry download
+  timeouts (`Failed to install provider` / `Client.Timeout`) and Vault 5xx are
+  retried. Config errors (missing arg, invalid index) and helm `atomic` timeouts
+  are NOT retried — they fail fast.
+
+A pre-apply off-infra validate gate was evaluated and rejected: `terraform
+validate` runs without state but catches ~0 of the observed failures (they are
+provider-config-from-Vault-data, server-side-apply conflicts, helm installs, and
+lock contention — all invisible to static validate), and `plan` cannot run
+off-infra (no Vault/PG access). `terragrunt apply` already fails at its plan
+phase without mutating on config errors, so a separate in-pipeline plan-gate was
+also dropped as redundant.
+
 ### Woodpecker API
 
 Uses **numeric repo IDs** (`/api/repos/<id>/pipelines`), NOT owner/name paths

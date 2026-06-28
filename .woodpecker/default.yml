@@ -65,6 +65,21 @@ steps:
       # don't need explicit token propagation.
       VAULT_ADDR: http://vault-active.vault.svc.cluster.local:8200
     commands:
+      # ── Forge guard: apply ONLY on the canonical Forgejo forge ──
+      # infra is registered in Woodpecker on BOTH the Forgejo canonical repo and
+      # the legacy GitHub mirror, and BOTH fire this push pipeline. Without this
+      # guard both run `terragrunt apply` on every push and race each other for
+      # the per-stack PG state lock — the dominant cause of the "Error acquiring
+      # the state lock" failures + push-supersede "killed" runs. The GitHub-mirror
+      # registration keeps running the CRONS (drift-detection, renew-tls, …) — only
+      # its duplicate push-apply no-ops here. Fail-open: an unknown forge (neither
+      # env var set) still applies, preserving prior behaviour.
+      - |
+        if echo "${CI_REPO_URL:-}${CI_FORGE_URL:-}" | grep -qi 'github\.com'; then
+          echo "[forge-guard] GitHub-mirror push — apply runs only on the Forgejo canonical repo (avoids double-apply + state-lock races). Skipping."
+          exit 0
+        fi
+
       # ── Skip CI commits ──
       - |
         if echo "$CI_COMMIT_MESSAGE" | grep -q '\[CI SKIP\]\|\[ci skip\]'; then
@@ -220,22 +235,33 @@ steps:
             # (2026-06-27 — see docs/architecture/ci-cd.md)
             if [ "$stack" = "vault" ]; then echo "[vault] SKIPPED (Tier-0, human-applied via OIDC)"; continue; fi
             echo "[$stack] Starting apply..."
-            set +e
-            OUTPUT=$(cd "stacks/$stack" && ../../scripts/tg apply --non-interactive 2>&1)
-            EXIT=$?
-            set -e
-            if [ $EXIT -ne 0 ]; then
-              if echo "$OUTPUT" | grep -q "is locked by"; then
-                echo "[$stack] SKIPPED (locked by another session)"
-              else
-                echo "$OUTPUT" | tail -50
-                echo "[$stack] FAILED (exit $EXIT)"
-                FAILED_PLATFORM_STACKS="$FAILED_PLATFORM_STACKS $stack"
+            ATTEMPT=0
+            while :; do
+              ATTEMPT=$((ATTEMPT + 1))
+              set +e
+              OUTPUT=$(cd "stacks/$stack" && ../../scripts/tg apply --non-interactive 2>&1)
+              EXIT=$?
+              set -e
+              if [ $EXIT -eq 0 ]; then
+                echo "$OUTPUT" | tail -3; echo "[$stack] OK"; break
               fi
-            else
-              echo "$OUTPUT" | tail -3
-              echo "[$stack] OK"
-            fi
+              # Lock contention → SKIP, not fail. Match BOTH the Tier-0 Vault lock
+              # ("is locked by", from scripts/tg) AND the Tier-1 PG-backend lock
+              # ("Error acquiring the state lock" / "already locked"). The PG case
+              # was previously counted as a failure — the #1 source of false reds.
+              if echo "$OUTPUT" | grep -qE 'is locked by|Error acquiring the state lock|already locked'; then
+                echo "[$stack] SKIPPED (locked by another session/run)"; break
+              fi
+              # Transient: provider-registry download timeout / Vault 5xx → bounded
+              # retry. Deliberately NOT helm atomic-timeouts or config errors
+              # (missing arg, invalid index) — those must fail fast, retry can't fix
+              # them and can worsen a stuck helm release.
+              if [ $ATTEMPT -lt 3 ] && echo "$OUTPUT" | grep -qE 'Failed to install provider|Client\.Timeout exceeded while awaiting headers|error reading from Vault.*Code: 5[0-9][0-9]'; then
+                echo "[$stack] transient error (attempt $ATTEMPT/3) — retrying in 15s..."; sleep 15; continue
+              fi
+              echo "$OUTPUT" | tail -50; echo "[$stack] FAILED (exit $EXIT)"
+              FAILED_PLATFORM_STACKS="$FAILED_PLATFORM_STACKS $stack"; break
+            done
           done < .platform_apply
         fi
         # Deferred until after app stacks so both lists get a chance to run.
@@ -248,22 +274,27 @@ steps:
           echo "=== Applying app stacks (serial, locked) ==="
           while read -r stack; do
             echo "[$stack] Starting apply..."
-            set +e
-            OUTPUT=$(cd "stacks/$stack" && ../../scripts/tg apply --non-interactive 2>&1)
-            EXIT=$?
-            set -e
-            if [ $EXIT -ne 0 ]; then
-              if echo "$OUTPUT" | grep -q "is locked by"; then
-                echo "[$stack] SKIPPED (locked by another session)"
-              else
-                echo "$OUTPUT" | tail -50
-                echo "[$stack] FAILED (exit $EXIT)"
-                FAILED_APP_STACKS="$FAILED_APP_STACKS $stack"
+            ATTEMPT=0
+            while :; do
+              ATTEMPT=$((ATTEMPT + 1))
+              set +e
+              OUTPUT=$(cd "stacks/$stack" && ../../scripts/tg apply --non-interactive 2>&1)
+              EXIT=$?
+              set -e
+              if [ $EXIT -eq 0 ]; then
+                echo "$OUTPUT" | tail -3; echo "[$stack] OK"; break
               fi
-            else
-              echo "$OUTPUT" | tail -3
-              echo "[$stack] OK"
-            fi
+              # Lock contention → SKIP, not fail (Tier-0 Vault + Tier-1 PG; see platform loop).
+              if echo "$OUTPUT" | grep -qE 'is locked by|Error acquiring the state lock|already locked'; then
+                echo "[$stack] SKIPPED (locked by another session/run)"; break
+              fi
+              # Transient provider-download / Vault 5xx → bounded retry (see platform loop).
+              if [ $ATTEMPT -lt 3 ] && echo "$OUTPUT" | grep -qE 'Failed to install provider|Client\.Timeout exceeded while awaiting headers|error reading from Vault.*Code: 5[0-9][0-9]'; then
+                echo "[$stack] transient error (attempt $ATTEMPT/3) — retrying in 15s..."; sleep 15; continue
+              fi
+              echo "$OUTPUT" | tail -50; echo "[$stack] FAILED (exit $EXIT)"
+              FAILED_APP_STACKS="$FAILED_APP_STACKS $stack"; break
+            done
           done < .app_apply
         fi
         # Fail the step loudly so the pipeline `default` workflow state
