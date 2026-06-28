@@ -93,6 +93,15 @@ ensure_onboarding() {
 }
 ensure_onboarding
 
+# Load a per-user long-lived CLAUDE_CODE_OAUTH_TOKEN if claude-auth-sync has
+# materialized one from this user's own Vault path. A non-rotating setup-token
+# sidesteps the shared ~/.claude/.credentials.json OAuth refresh-token race that
+# logs out users running many concurrent agents (interactive + t3 + always-on).
+# Absent file -> no-op (normal per-user Enterprise-SSO flow). The user's OWN
+# token; never shared between OS users.
+_oauth_env="$HOME/.config/claude-auth-sync/claude-oauth.env"
+if [ -r "$_oauth_env" ]; then set -a; . "$_oauth_env"; set +a; fi
+
 # Deliberately not `exec` so we can branch on the exit code: clean quit ends the
 # pane (ttyd closes the terminal); a crash drops to a shell so the tmux session
 # isn't destroyed-and-recreated in a ttyd auto-reconnect loop.
