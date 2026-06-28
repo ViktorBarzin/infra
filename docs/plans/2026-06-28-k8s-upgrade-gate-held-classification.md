@@ -66,6 +66,17 @@ exit code. Real failures (unhealthy nodes, kubeadm errors, crashes) still exit
   at gate start) so a standing block doesn't flap 1→0→1 and re-notify.
 - postflight also clears `held=0` alongside the existing gauge resets.
 
+### detector (`main.tf`, the `k8s-version-check` CronJob)
+- Consequence of the tidy change: refusals now **Complete** instead of Failing,
+  so the old "re-spawn only a *Failed* preflight" idempotency would skip a
+  refused-but-Complete preflight until its 7d TTL. Fix: re-spawn nightly when the
+  preflight is **Complete but no `k8s-upgrade-master-<target>` Job exists** (the
+  gate refused — chain never advanced) — **silently** (no Slack), so a standing
+  hold re-evaluates each night without noise.
+- The per-night `slack "K8s upgrade available…"` becomes an `echo`; the spawn
+  Slack fires only for a genuinely new spawn or a Failed-respawn (`ANNOUNCE`
+  flag), not for silent re-evaluations — killing the last nightly-noise source.
+
 ### `addon-compat.json`
 - Add `"pinned": true` + `"pin_reason"` to the gpu-operator entry (its
   `26.3 → 1.36` row stays; `pinned` overrides classification to held). Document

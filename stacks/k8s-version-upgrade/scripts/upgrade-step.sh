@@ -37,6 +37,12 @@ KUBECTL=kubectl
 JOB_TEMPLATE=/template/job-template.yaml
 UPDATE_K8S_SH=/scripts/update_k8s.sh
 
+# Set to 1 by record_blocked/record_held when the compat-gate refuses the
+# target. spawn_next() then declines to advance the chain — but the Job still
+# exits 0, because a gate refusal is a DECISION, not a failure (no Failed Job,
+# no K8sUpgradeChainJobFailed). Signalling is via the gauges those recorders push.
+HALT_CHAIN=0
+
 # SSH targets are node InternalIPs, resolved live from `kubectl get nodes` (see
 # ssh_target() below) — the pipeline has NO dependency on node DNS records
 # (`k8s-node<N>.viktorbarzin.lan`). This is what lets a freshly-joined node be
@@ -88,17 +94,31 @@ push() {
     | curl -sS --data-binary @- "$PG" || echo "warn: pushgateway push failed"
 }
 
-# Auto-upgrade safety: a preflight compat-gate refusal is a BLOCK, not a crash —
-# the cluster simply isn't ready for this target yet (an addon / in-use API /
-# containerd is too old). Record it (k8s_upgrade_blocked=1 -> K8sUpgradeBlocked
-# alert), Slack the reasons, and halt so a human clears the blocker (or a later
-# run proceeds once it's cleared). This is the "upgrade when we can, alert when
-# we can't" contract.
-block() {
+# Compat-gate verdict recorders. A gate refusal is a DECISION, not a crash: the
+# Job Completes cleanly and the chain simply doesn't advance (spawn_next checks
+# HALT_CHAIN). The two outcomes differ only in how they're signalled:
+#   - record_blocked: ACTIONABLE — a newer addon version would clear it.
+#       k8s_upgrade_blocked=1 -> K8sUpgradeBlocked alert (fires once via
+#       alert-on-change). "upgrade when we can, alert when we can't."
+#   - record_held:    WAITING-ON-UPSTREAM or PINNED — nothing to do but wait.
+#       k8s_upgrade_held=1 -> NO alert; the nightly report's ⏸️ line is the
+#       only signal. This is what stops the nightly cry-wolf for unactionable
+#       blocks (kyverno/ESO behind upstream, gpu-operator pinned).
+# Neither Slacks per-run: the reasons are in the nightly report (it re-runs
+# compat-gate), and per-run Slack was itself a nightly-noise source.
+record_blocked() {
   push k8s_upgrade_blocked 1
-  slack "BLOCKED preflight (target v$TARGET_VERSION) — auto-upgrade halted, needs attention:\n$1"
-  echo "BLOCKED: $1" >&2
-  exit 1
+  push k8s_upgrade_held 0
+  HALT_CHAIN=1
+  echo "BLOCKED (action needed) preflight v$TARGET_VERSION:" >&2
+  printf '%s\n' "$1" >&2
+}
+record_held() {
+  push k8s_upgrade_held 1
+  push k8s_upgrade_blocked 0
+  HALT_CHAIN=1
+  echo "HELD (not yet upgradable — waiting upstream / pinned) preflight v$TARGET_VERSION:" >&2
+  printf '%s\n' "$1" >&2
 }
 
 halt_on_alert_query() {
@@ -256,6 +276,10 @@ case "$PHASE" in
 esac
 
 spawn_next() {
+  if [ "${HALT_CHAIN:-0}" = "1" ]; then
+    echo "Chain halted by compat-gate (blocked/held) — not spawning next phase."
+    return 0
+  fi
   [ -z "$NEXT_PHASE" ] && { echo "End of chain."; return 0; }
 
   local job_name="k8s-upgrade-${NEXT_PHASE}-${TARGET_VERSION//./-}"
@@ -315,15 +339,37 @@ phase_preflight() {
   # 0. Auto-upgrade compat gate (compat-gate.py): refuse the upgrade if a critical
   #    addon, an in-use deprecated API, or a node's containerd is too old for the
   #    target. Runs FIRST — before any mutation (etcd snapshot, drains) — so a
-  #    block is cheap. Reset the blocked gauge for this run; block() sets it to 1
-  #    only on a refusal. This is what makes unattended minor upgrades safe: the
-  #    chain proceeds when the cluster supports the target and halts+alerts when
-  #    it doesn't (e.g. Calico/ESO/kyverno behind, or a removed API still in use).
-  push k8s_upgrade_blocked 0
+  #    refusal is cheap. The gate CLASSIFIES the refusal (exit code):
+  #      0 safe      -> proceed
+  #      2 actionable -> record_blocked (a newer addon version would clear it)
+  #      4 held       -> record_held (waiting on upstream / a pinned addon)
+  #      3/other err  -> fail-safe: treat as actionable block
+  #    blocked/held push the gauge DEFINITIVELY (one value per run — no pre-reset
+  #    flap that would re-notify the alert nightly) and set HALT_CHAIN so the Job
+  #    Completes cleanly without advancing the chain. This is what makes
+  #    unattended minor upgrades safe AND quiet: proceed when supported, alert
+  #    only when there's something to do, hold silently when there isn't.
   local gate_out gate_rc=0
   gate_out=$(python3 /scripts/compat-gate.py "$TARGET_VERSION" < /scripts/addon-compat.json 2>&1) || gate_rc=$?
-  if [ "$gate_rc" -ne 0 ]; then block "$gate_out"; fi
-  echo "compat-gate passed for v$TARGET_VERSION"
+  case "$gate_rc" in
+    0)
+      push k8s_upgrade_blocked 0
+      push k8s_upgrade_held 0
+      echo "compat-gate passed for v$TARGET_VERSION"
+      ;;
+    4)
+      record_held "$gate_out"
+      return 0
+      ;;
+    2)
+      record_blocked "$gate_out"
+      return 0
+      ;;
+    *)
+      record_blocked "gate ERROR (rc=$gate_rc) — failing safe as an actionable block:"$'\n'"$gate_out"
+      return 0
+      ;;
+  esac
 
   # 1. All nodes Ready + no pressure
   local bad_nodes
@@ -777,6 +823,8 @@ phase_postflight() {
   push k8s_upgrade_in_flight 0
   push k8s_upgrade_snapshot_taken 0
   push k8s_upgrade_started_timestamp 0
+  push k8s_upgrade_blocked 0
+  push k8s_upgrade_held 0
 
   slack ":white_check_mark: K8s upgrade complete: cluster on v$TARGET_VERSION (pod-ready ratio $ratio)"
 }

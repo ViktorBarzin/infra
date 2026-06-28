@@ -79,3 +79,41 @@ def test_compose_includes_recent_jobs():
     jobs = [{"name": "k8s-upgrade-preflight-1-35-6", "status": "Failed", "age_s": 3600}]
     out = nr.compose_report(LAST_RUN + 30000, NODES_UNIFORM, m, "x", jobs)
     assert "k8s-upgrade-preflight-1-35-6: Failed" in out
+
+
+# --- held (waiting-upstream / pinned) vs actionable-blocked rendering -------
+METRICS_HELD = f"""# TYPE k8s_upgrade_available gauge
+k8s_upgrade_available{{instance="",job="k8s-version-check",kind="minor",running="1.35.6",target="1.36.2"}} 1
+k8s_upgrade_held{{instance="",job="k8s-version-upgrade"}} 1
+k8s_upgrade_blocked{{instance="",job="k8s-version-upgrade"}} 0
+k8s_version_check_last_run_timestamp{{instance="",job="k8s-version-check"}} {LAST_RUN}
+"""
+NODES_135 = [(f"k8s-node{i}", "v1.35.6") for i in range(7)]
+
+
+def test_compose_held_headline_and_grouped_reasons():
+    m = nr.parse_metrics(METRICS_HELD)
+    reasons = (
+        "[WAITING] addon kyverno v1.18 supports k8s <= 1.35; target 1.36 exceeds it — no released kyverno version supports k8s 1.36 yet\n"
+        "[PINNED] addon gpu-operator v25.10 supports k8s <= 1.35; target 1.36 exceeds it — pinned (driver/OS); holding\n"
+        "[ACTIONABLE] addon calico v3.30 supports k8s <= 1.35; target 1.36 exceeds it — upgrade calico to >= 3.32"
+    )
+    out = nr.compose_report(LAST_RUN + 30000, NODES_135, m, reasons, [])
+    # held headline, NOT a red actionable block
+    assert "⏸️ HELD" in out and "1.36.2" in out
+    assert "🔴 BLOCKED" not in out
+    # grouped by class
+    assert "Waiting on upstream" in out and "kyverno" in out
+    assert "Pinned" in out and "gpu-operator" in out
+    # the lone actionable piece is still listed so eventual scope is visible
+    assert "calico" in out
+    # tags are stripped from the rendered bullets (no raw "[WAITING]")
+    assert "[WAITING]" not in out
+
+
+def test_compose_blocked_groups_actionable():
+    m = nr.parse_metrics(METRICS_BLOCKED)  # blocked=1
+    reasons = "[ACTIONABLE] addon calico v3.30 supports k8s <= 1.35; target 1.36 exceeds it — upgrade calico to >= 3.32"
+    out = nr.compose_report(LAST_RUN + 30000, NODES_UNIFORM, m, reasons, [])
+    assert "🔴 BLOCKED" in out
+    assert "Action needed" in out and "calico" in out

@@ -2308,35 +2308,38 @@ serverFiles:
           # postflight) — NOT a bare `k8s-upgrade-.*`, which would also match
           # helper jobs in the namespace like k8s-upgrade-nightly-report-* and
           # false-fire if one of those failed.
-          # `unless on() k8s_upgrade_blocked == 1` excludes the case where the
-          # preflight terminally failed because the compat gate deliberately
-          # REFUSED the target: block() exits 1 (so the Failed Job re-spawns
-          # nightly) but a refusal is not a wedge — that case is owned by
-          # K8sUpgradeBlocked below, and firing here too is a duplicate false
-          # alarm (observed 2026-06-21: a 1.35.6 block tripped BOTH). A genuine
-          # wedge / crash / halt-on-alert exits 1 WITHOUT pushing
-          # k8s_upgrade_blocked=1, so it still fires. The gauge stays 1 from the
-          # block until the next run's preflight resets it to 0, so the exclusion
-          # holds for the whole blocked period.
+          # (2026-06-28) The old `unless on() (k8s_upgrade_blocked == 1)` clause
+          # is GONE: compat-gate refusals no longer Fail the preflight Job. The
+          # preflight now records the verdict via a gauge (k8s_upgrade_blocked or
+          # k8s_upgrade_held) and exits 0 — the Job Completes, the chain just
+          # doesn't advance (HALT_CHAIN) — so a terminally-Failed chain Job again
+          # means a genuine wedge / crash / halt-on-alert, with nothing to
+          # exclude. (Previously block() exit 1'd, Failing the Job, and this alert
+          # had to exclude blocked==1 to avoid double-firing with K8sUpgradeBlocked.)
           - alert: K8sUpgradeChainJobFailed
-            expr: (kube_job_status_failed{namespace="k8s-upgrade", job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*", reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0) unless on() (k8s_upgrade_blocked == 1)
+            expr: kube_job_status_failed{namespace="k8s-upgrade", job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*", reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0
             for: 15m
             labels:
               severity: warning
               subsystem: k8s-upgrade
             annotations:
               summary: "K8s upgrade chain Job {{ $labels.job_name }} terminally failed ({{ $labels.reason }}) — pipeline wedged. kubectl -n k8s-upgrade get jobs ; kubectl -n k8s-upgrade describe job {{ $labels.job_name }}"
-          # K8sUpgradeBlocked: the k8s-version-upgrade chain pushes
-          # `k8s_upgrade_blocked=1` when the preflight compat gate REFUSES the
-          # target version — the cluster isn't ready (a critical addon lags the
-          # target's support window, an in-use API is deprecated/removed at the
-          # target, or a node's containerd predates the target's minimum). This
-          # is the designed "halt + alert" outcome, NOT a crash: the chain stops
-          # cleanly and the specific blocking reasons are posted to Slack by the
-          # upgrade chain. Same bare-metric pushgateway selector as
-          # K8sUpgradeStalled (job label "k8s-version-upgrade"). To clear: bump
-          # the named addon / migrate the deprecated API usage / upgrade the
-          # node's containerd, then the next nightly run proceeds automatically.
+          # K8sUpgradeBlocked: the chain pushes `k8s_upgrade_blocked=1` when the
+          # preflight compat gate refuses the target with an ACTIONABLE blocker —
+          # a newer version of the lagging addon EXISTS in addon-compat.json and
+          # upgrading it would clear the block (or an in-use deprecated API must be
+          # migrated / a node's containerd bumped). Designed "halt + alert", NOT a
+          # crash: the preflight Job Completes cleanly (exit 0) and the chain just
+          # doesn't advance. Specific reasons + remediation are in the morning
+          # k8s-upgrade nightly report (it re-runs compat-gate). Same bare-metric
+          # pushgateway selector as K8sUpgradeStalled (job "k8s-version-upgrade").
+          # To clear: do the named upgrade/migration; the next nightly run proceeds.
+          #
+          # DELIBERATELY no companion alert for `k8s_upgrade_held=1` — the gate's
+          # WAITING-on-upstream / PINNED verdict. Those can't be actioned now (no
+          # released addon version supports the target yet, or the addon is pinned
+          # e.g. gpu-operator), so a nightly alert would cry wolf. The held state
+          # is surfaced only in the nightly report's ⏸️ line. (2026-06-28)
           - alert: K8sUpgradeBlocked
             expr: k8s_upgrade_blocked == 1
             for: 10m
@@ -2344,8 +2347,8 @@ serverFiles:
               severity: warning
               subsystem: k8s-upgrade
             annotations:
-              summary: "K8s auto-upgrade refused by the preflight compat gate — cluster not ready for the target version. Blocking reasons were posted to Slack by the upgrade chain."
-              description: "An automated Kubernetes upgrade was REFUSED (not crashed) by the preflight compatibility gate because the cluster isn't ready for the target version — a critical addon lags the target's support window, an in-use deprecated API would be removed at the target, or a node's containerd is too old. The specific reasons were posted to Slack by the k8s-version-upgrade chain. This is the intended halt-and-alert. To clear it: bump the named addon / migrate the deprecated API usage / upgrade the node's containerd, then the next nightly run proceeds automatically."
+              summary: "K8s auto-upgrade blocked by an ACTIONABLE compat-gate refusal — a lagging addon/API/containerd can be upgraded to clear it. Reasons + remediation are in the morning k8s-upgrade nightly report."
+              description: "An automated Kubernetes upgrade was REFUSED (not crashed) by the preflight compat gate with an ACTIONABLE blocker — a newer version of the lagging addon exists and upgrading it would clear the block (or an in-use deprecated API must be migrated, or a node's containerd bumped). The preflight Job Completes cleanly; the chain just halts. Specific reasons + remediation are in the morning k8s-upgrade nightly report. To clear: do the named upgrade/migration, then the next nightly run proceeds automatically. NB the gate's WAITING-on-upstream / PINNED verdict (k8s_upgrade_held=1) deliberately does NOT alert — nothing to action until upstream ships support or the pin is lifted; see the nightly report's HELD line."
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown
