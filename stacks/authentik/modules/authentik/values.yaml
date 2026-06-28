@@ -39,6 +39,16 @@ server:
       value: "3"
     - name: AUTHENTIK_WEB__THREADS
       value: "4"
+    # Gunicorn worker recycle hardening (defaults max_requests=1000/jitter=50).
+    # A worker recycle that coincides with a transient PG/pgbouncer blip stalls
+    # in-flight requests (sessions+cache are on PostgreSQL since Redis was removed
+    # in 2026.2), and with 9 workers recycling on a tight 50-jitter window the
+    # recycles cluster — feeding the episodic all-pods-NotReady 502/504 cascade.
+    # 10x rarer recycles + 20x wider jitter (1000) decorrelate them from DB blips.
+    - name: AUTHENTIK_WEB__MAX_REQUESTS
+      value: "10000"
+    - name: AUTHENTIK_WEB__MAX_REQUESTS_JITTER
+      value: "1000"
     # Cache flow plans for 30m and policy evaluations for 15m (defaults 300s).
     # Authentik 2026.2 stores cache in Postgres, so a TTL hit is still a
     # SELECT — but a single indexed lookup beats re-planning the flow
@@ -87,11 +97,28 @@ server:
   livenessProbe:
     failureThreshold: 6
     timeoutSeconds: 5
-  strategy:
+  # Readiness widened from the chart default (3x10s/3s ~= 30s) to ~80s. The
+  # readiness probe (/-/health/ready/) queries the DB, so a sub-~60s PG/pgbouncer
+  # transient otherwise returns 503 and drops ALL 3 server pods from the Service
+  # at once -> Traefik has no healthy backend -> 502/504 (the episodic blank
+  # screen + 30s hang). 80s absorbs a full CNPG failover reconnect; liveness
+  # still reaps a truly hung pod. Partial override — the chart deep-merges the
+  # httpGet path /-/health/ready/ (same as the livenessProbe override above).
+  readinessProbe:
+    failureThreshold: 8
+    periodSeconds: 10
+    timeoutSeconds: 5
+  # RollingUpdate strategy. The chart key is `deploymentStrategy`, NOT `strategy`
+  # (authentik.server reads .Values.server.deploymentStrategy) — the old
+  # `strategy:` key was silently ignored, so live ran the chart default 25%/25%
+  # and every rolling event dropped a server pod out of rotation, amplifying the
+  # NotReady cascade. maxSurge:1 + maxUnavailable:0 keeps all 3 ready throughout
+  # a roll (PDB minAvailable:2 + ResourceQuota headroom allow the transient pod).
+  deploymentStrategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 0
-      maxUnavailable: 1
+      maxSurge: 1
+      maxUnavailable: 0
   resources:
     requests:
       cpu: 100m
@@ -166,7 +193,10 @@ worker:
         secretKeyRef:
           name: authentik-email
           key: AUTHENTIK_EMAIL__PASSWORD
-  strategy:
+  # Chart key is `deploymentStrategy`, not `strategy` (see server above). Workers
+  # serve no user traffic, so maxSurge:0/maxUnavailable:1 is fine — this is just
+  # the dead-key cleanup so the declared intent actually takes effect.
+  deploymentStrategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 0
