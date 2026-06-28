@@ -341,6 +341,33 @@ resource "kubernetes_manifest" "middleware_health_rate_limit" {
   depends_on = [helm_release.traefik]
 }
 
+# Authentik-specific rate limit. The login SPA cold-loads its flow-executor
+# JS/CSS chunks from /static (app-served, not a CDN) plus an API burst on / —
+# ~70 parallel requests on a fresh/empty-cache login. The default 10/50 limiter
+# 429s the tail, and a 429'd ES-module import aborts SPA bootstrap → blank login
+# screen for cold/incognito/cache-cleared clients and any clients sharing a NAT
+# egress IP (sixth instance of the burst pattern, after ha-sofia, ActualBudget,
+# noVNC, tripit and health). authentik was the only first-party SPA still on the
+# default limiter. Burst absorbs a couple of full cold loads back-to-back.
+resource "kubernetes_manifest" "middleware_authentik_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "authentik-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 100
+        burst   = 1000
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # Compress responses to clients at the entrypoint level (outermost).
 # Applied at websecure entrypoint so all responses get compressed.
 # Uses includedContentTypes (whitelist) instead of excludedContentTypes:
