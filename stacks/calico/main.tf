@@ -22,7 +22,7 @@ resource "kubernetes_namespace" "calico_system" {
     name = "calico-system"
     labels = {
       name = "calico-system"
-# calico-system namespace is managed by tigera-operator — auto-update is
+      # calico-system namespace is managed by tigera-operator — auto-update is
       # incompatible (operator reverts DaemonSet image from its Installation CR).
       # "keel.sh/enrolled" = "true"
     }
@@ -161,8 +161,8 @@ resource "helm_release" "tigera_operator" {
     # render before their crds/ (which helm skips on upgrade) -> "ensure CRDs
     # are installed first". We instead enable them via the operator CRs applied
     # directly below (kubectl_manifest) now that the CRDs exist — see ADR-0014.
-    goldmane  = { enabled = false }
-    whisker   = { enabled = false }
+    goldmane = { enabled = false }
+    whisker  = { enabled = false }
     # 512Mi (was 256Mi): the operator idles at ~38Mi but its STARTUP spike
     # (re-listing resources to build informer caches) exceeded 256Mi and
     # OOM-crashlooped on 2026-06-23 the first time the pod restarted (a latent
@@ -272,5 +272,122 @@ resource "kubernetes_network_policy_v1" "whisker_allow_traefik" {
         protocol = "TCP"
       }
     }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Whisker self-heal watchdog (ADR-0014; added 2026-06-28 after a live incident).
+#
+# FAILURE MODE: whisker-backend dials goldmane:7443 over a long-lived gRPC
+# stream. When that stream drops during a transient CNI/DNS blip (observed
+# 2026-06-28 right after k8s-node5's v1.35.6 upgrade settled — the pod's
+# resolver started timing out on the kube-dns ClusterIP), the Go client's
+# resolver gets WEDGED: it spams `failed to stream flows` /
+# `code = Unavailable: dns ... i/o timeout` forever and never reconnects, so
+# the Whisker UI shows EMPTY while the durable aggregator (a separate pod, same
+# Goldmane source) is unaffected. The operator ships whisker-backend with NO
+# liveness/readiness probe, so nothing restarts it — it sat broken until a
+# manual `kubectl delete pod`. Whisker is operator-managed (Whisker CR), so we
+# can't inject a probe; this watchdog is the supported-pattern alternative.
+#
+# It restarts the pod ONLY when the wedged signature is present AND Goldmane is
+# Ready (so a real Goldmane outage doesn't cause restart-thrash). A fresh pod
+# reconnects cleanly. See docs/runbooks/goldmane-flow-trail.md.
+resource "kubernetes_service_account" "whisker_watchdog" {
+  metadata {
+    name      = "whisker-watchdog"
+    namespace = kubernetes_namespace.calico_system.metadata[0].name
+  }
+}
+
+# Namespaced Role (least privilege — only calico-system): read pod logs to
+# detect the wedge, delete the whisker pod to heal it.
+resource "kubernetes_role" "whisker_watchdog" {
+  metadata {
+    name      = "whisker-watchdog"
+    namespace = kubernetes_namespace.calico_system.metadata[0].name
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get", "list", "delete"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/log"]
+    verbs      = ["get"]
+  }
+}
+
+resource "kubernetes_role_binding" "whisker_watchdog" {
+  metadata {
+    name      = "whisker-watchdog"
+    namespace = kubernetes_namespace.calico_system.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.whisker_watchdog.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.whisker_watchdog.metadata[0].name
+    namespace = kubernetes_namespace.calico_system.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "whisker_watchdog" {
+  metadata {
+    name      = "whisker-watchdog"
+    namespace = kubernetes_namespace.calico_system.metadata[0].name
+  }
+  spec {
+    schedule                      = "*/10 * * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 1
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {
+        name = "whisker-watchdog"
+      }
+      spec {
+        template {
+          metadata {
+            name = "whisker-watchdog"
+          }
+          spec {
+            service_account_name = kubernetes_service_account.whisker_watchdog.metadata[0].name
+            container {
+              name  = "watchdog"
+              image = "bitnami/kubectl:latest"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                NS=calico-system
+                # Don't thrash if Goldmane itself is down — that's not a whisker bug.
+                if ! kubectl -n "$NS" get pod -l k8s-app=goldmane \
+                     -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+                  echo "goldmane not Ready — skipping (not a whisker problem)"; exit 0
+                fi
+                ERRS=$(kubectl -n "$NS" logs -l k8s-app=whisker -c whisker-backend --since=11m --tail=500 2>/dev/null \
+                  | grep -cE 'failed to stream flows|failed to list filter hints|code = Unavailable|i/o timeout' || true)
+                ERRS=$${ERRS:-0}
+                if [ "$ERRS" -ge 10 ]; then
+                  echo "whisker-backend WEDGED: $ERRS goldmane-connection errors in 11m — restarting whisker pod"
+                  kubectl -n "$NS" delete pod -l k8s-app=whisker --ignore-not-found
+                else
+                  echo "whisker-backend healthy: $ERRS goldmane-connection errors in 11m"
+                fi
+              EOT
+              ]
+            }
+            restart_policy = "Never"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
