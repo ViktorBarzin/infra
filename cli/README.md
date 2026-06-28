@@ -234,6 +234,16 @@ only seed-derived path stays the specially-audited `vault code`. Like
 `get --json`, the dump is all secret values, so it **refuses a terminal** — pipe
 it (`homelab vault get <name> --all | jq`).
 
+### v0.10.1 — reads `bw sync` first (always fresh)
+
+Every vault read (`get`, `get --all`, `list`, `code`, `status`) now runs `bw
+sync` when opening its session, so it reflects the latest server-side values.
+`bw unlock` only decrypts the *local* cache, so without this a persisted
+(already-logged-in) session served stale data — a password changed in the web
+vault wouldn't show up until the next login. The sync is **best-effort**: a
+transient failure warns on stderr and falls back to the cached vault rather than
+failing the read.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
