@@ -33,11 +33,14 @@ RUN set -eux; \
 # PATCH #2 — old-browser BLANK LOGIN. authentik's modern flow SPA is ES2022 and
 # hard-fails (blank login) on Safari<=16.3 (e.g. iPadOS<=16.3). authentik already
 # ships a no-JS Simplified Flow Executor (SFE, ES5) but only serves it to
-# IE/old-Edge/PKeyAuth. patch-compat-sfe.py extends compat_needs_sfe() to serve
-# the SFE to old Safari too, so those clients get the REAL authentik login
-# (password + MFA + reputation, NO auth downgrade) instead of a blank page. The
-# script is guarded (asserts the upstream anchor + ast-parses) so the build fails
-# loudly if upstream moves it — re-verify on every authentik bump.
+# IE/old-Edge/PKeyAuth. patch-compat-sfe.py (a) extends compat_needs_sfe() to
+# serve the SFE to old Safari AND any iOS browser (Chrome/CriOS, Firefox/FxiOS —
+# all share the system WebKit) on iOS<=16.3, and (b) injects static social-login
+# <a> links into the SFE shell (the SFE can't render Identification-stage sources;
+# needed for password-less Google-only accounts). Clients get the REAL authentik
+# login (password + MFA + reputation, NO auth downgrade) instead of a blank page.
+# The script is guarded (asserts both upstream anchors + ast-parses) so the build
+# fails loudly if upstream moves — re-verify on every authentik bump.
 COPY patch-compat-sfe.py /tmp/patch-compat-sfe.py
 RUN python3 /tmp/patch-compat-sfe.py && rm -f /tmp/patch-compat-sfe.py
 USER authentik
