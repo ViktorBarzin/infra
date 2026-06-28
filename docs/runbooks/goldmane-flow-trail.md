@@ -43,6 +43,9 @@ small no matter how much traffic flows.
   history.
 - In-cluster: `Service goldmane:7443` (gRPC/mTLS), `Service whisker:8081`
   (HTTP), both in `calico-system`.
+- **Self-heal:** the `whisker-watchdog` CronJob (`stacks/calico`, every 10 min)
+  restarts whisker if its backend's Goldmane stream wedges (the operator gives
+  whisker-backend no liveness probe) — see Troubleshooting → "Whisker UI empty".
 
 ### CNPG `goldmane_edges` — durable
 - Postgres DB `goldmane_edges` on the CNPG cluster
@@ -258,6 +261,24 @@ brand-new ingress host is also invisible to LAN split-horizon until the hourly
 `curl -sSI --resolve whisker.viktorbarzin.me:443:10.0.20.203 https://whisker.viktorbarzin.me`
 (expect a 302 to Authentik — the gate working).
 
+**Whisker UI empty (but reachable — 302s to Authentik fine).** whisker-backend's
+gRPC stream to `goldmane:7443` wedged. A transient CNI/DNS blip (e.g. right after
+a node reboot/upgrade — observed 2026-06-28 as k8s-node5 settled post-1.35.6
+upgrade: the pod's resolver started timing out on the kube-dns ClusterIP) drops
+the stream, and the Go gRPC resolver gets STUCK — it spams `failed to stream
+flows` / `code = Unavailable: dns ... i/o timeout` forever and never reconnects.
+The operator ships whisker-backend with **no liveness probe**, so nothing
+restarts it. The **`whisker-watchdog` CronJob** (`stacks/calico`, every 10 min)
+auto-heals this — it deletes the whisker pod when it sees ≥10 such errors in 11m
+*and* Goldmane is Ready (the Goldmane-Ready guard avoids restart-thrash during a
+real Goldmane outage). To heal immediately:
+`kubectl -n calico-system delete pod -l k8s-app=whisker` (the Deployment recreates
+it; a fresh pod reconnects cleanly). The durable **aggregator is a SEPARATE pod**
+and is unaffected — only the live UI goes blank. Confirm the diagnosis with
+`kubectl -n calico-system logs -l k8s-app=whisker -c whisker-backend --tail=20`;
+the node's own DNS is usually fine (test with a throwaway pod pinned there:
+`kubectl run dns-test --image=busybox:1.36 --overrides='{"spec":{"nodeName":"<node>"}}' --rm -it -- nslookup goldmane.calico-system.svc.cluster.local`).
+
 **No new `last_seen` updates / `AggregatorDown` firing.** Check the `aggregate`
 pod logs (`kubectl logs -n goldmane-edge-aggregator deploy/goldmane-edge-aggregator`).
 Common causes, in order:
@@ -279,11 +300,12 @@ pods after a day, so check soon after a failed run. With `SLACK_WEBHOOK_URL`
 empty the binary forces a dry-run (no post) — verify the `goldmane-edges-slack`
 ExternalSecret resolved. A dry run / smoke test: run the image with `args:
 ["digest"]` + `DRY_RUN=1` to print the message instead of POSTing.
-> Known state (2026-06-25): the digest CronJob's first Job **failed** and it has
-> never successfully posted (`lastSuccessfulTime` empty) — the digest leg is the
-> live gap; `DigestFailing` is catching it. Edges still land in the DB via the
-> `aggregate` Deployment; only the `#alerts` digest notification is affected.
-> Investigation/fix belongs to the aggregator slice (#58/#60), not monitoring.
+> Resolved (2026-06-28): the digest posts cleanly to `#alerts`
+> (`lastSuccessfulTime` current, `DigestFailing` clear; e.g. the 2026-06-28 08:00
+> London run reported "8 new edges in last 24h"). The 2026-06-25 failures were
+> the `#security` channel override returning HTTP 404 — the shared
+> `alertmanager_slack_api_url` webhook's Slack app isn't a member of `#security`;
+> consolidating all Slack output to `#alerts` fixed it.
 
 **No edges at all in the table.** Confirm Goldmane is enabled
 (`kubectl get goldmane,whisker -A`) and `calico-node` rolled with the
