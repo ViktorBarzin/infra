@@ -123,6 +123,19 @@ Signin latency is dominated by screen count and round trips, not server time
   basic-auth fallback was rejected: it would have put a single spoofable-UA
   password in front of `vbarzin→wizard` (passwordless root on the devvm). See
   `stacks/authentik/patch-compat-sfe.py`.
+- **SFE + forced-WebAuthn MFA gotcha** (2026-06-28): the `default-authentication-flow`
+  MFA stage (`not_configured_action=configure`, `conf_stages=[webauthn]`) force-enrols
+  a WebAuthn passkey for any **password**-path user with no MFA device — but the SFE
+  **cannot render WebAuthn** (enrol *or* validate), so that user gets
+  `unsupported state: ak-stage-authenticator-webauthn`. Two escape hatches, **no MFA
+  downgrade**: (1) **social login** — sources run `default-source-authentication`
+  (UserLoginStage only, **no MFA stage**), so the SFE's "Continue with <provider>"
+  button always completes; (2) **enrol TOTP** — the SFE *can* validate TOTP codes, and
+  ≥1 confirmed device flips the stage from force-enrol to validate. User MFA devices are
+  runtime data (not Terraform): enrol via `ak shell`
+  (`TOTPDevice.objects.create(user=…, confirmed=True)`) and store the secret in the
+  user's own Vaultwarden item. (Done for emo — the Google-only iPadOS-15 case: TOTP in
+  his `authentik.viktorbarzin.me` Bitwarden item; e2e-verified the BW code is accepted.)
 - **Outpost**: 2 replicas, `log_level=info` (was 1 replica at `trace`).
 - **auth-proxy nginx**: upstream `keepalive 32` + HTTP/1.1 — no per-request
   TCP setup on the forward-auth subrequest path.
