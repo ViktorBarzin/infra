@@ -240,6 +240,79 @@ EOF
   log "wrote OIDC kubeconfig -> $user:~/.kube/config"
 }
 
+# Hands-off chrome-service browser credential. For a user who has a
+# `<os_user>-browser` ServiceAccount in the chrome-service namespace (created in
+# stacks/chrome-service/rbac.tf), install a DUAL-CONTEXT kubeconfig whose DEFAULT
+# context authenticates with that SA's long-lived token — so `homelab browser`
+# (which shells out to `kubectl port-forward -n chrome-service`) works
+# non-interactively, even from a headless agent session (the user's interactive
+# OIDC login can't authenticate a headless kubectl). The user's personal OIDC
+# identity is retained as the `oidc@homelab` named context
+# (`kubectl --context oidc@homelab`). TF (the SA's existence) is the source of
+# truth for WHO gets this — there is no roster flag. Idempotent (cmp-guarded; SA
+# tokens are stable) + best-effort (cluster/secret unreachable -> WARN, never aborts).
+install_browser_kubeconfig() {
+  local user="$1" home kc sa secret token server ca tmp
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -z "$home" ]] && return 0
+  sa="${user}-browser"
+  secret="${sa}-token"
+  [[ -r "$ADMIN_KUBECONFIG" ]] || return 0
+  # Gate: only users with a chrome-service browser SA (TF-driven). Best-effort read.
+  KUBECONFIG="$ADMIN_KUBECONFIG" kubectl --request-timeout=10s -n chrome-service get serviceaccount "$sa" >/dev/null 2>&1 || return 0
+  token="$(KUBECONFIG="$ADMIN_KUBECONFIG" kubectl --request-timeout=10s -n chrome-service get secret "$secret" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+  [[ -n "$token" ]] || { log "WARN: browser SA token not ready for $user (secret chrome-service/$secret) — skipped"; return 0; }
+  server="$(KUBECONFIG="$ADMIN_KUBECONFIG" kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')"
+  ca="$(KUBECONFIG="$ADMIN_KUBECONFIG" kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+  [[ -n "$server" && -n "$ca" ]] || { log "WARN: could not read cluster server/CA -> skip browser kubeconfig for $user"; return 0; }
+  kc="$home/.kube/config"
+  tmp="$(mktemp)"
+  cat > "$tmp" <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+- name: homelab
+  cluster:
+    server: $server
+    certificate-authority-data: $ca
+contexts:
+- name: ${sa}@homelab
+  context:
+    cluster: homelab
+    user: $sa
+- name: oidc@homelab
+  context:
+    cluster: homelab
+    user: oidc
+current-context: ${sa}@homelab
+users:
+- name: $sa
+  user:
+    token: $token
+- name: oidc
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: kubectl
+      args:
+      - oidc-login
+      - get-token
+      - --oidc-issuer-url=$OIDC_ISSUER
+      - --oidc-client-id=kubernetes
+      - --oidc-extra-scope=email
+      - --oidc-extra-scope=profile
+      - --oidc-extra-scope=groups
+      interactiveMode: IfAvailable
+EOF
+  if cmp -s "$tmp" "$kc" 2>/dev/null; then rm -f "$tmp"; return 0; fi   # already current -> no churn
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] dual-context (SA default + OIDC) browser kubeconfig -> $user:$kc"; rm -f "$tmp"; return 0; fi
+  install -d -o "$user" -g "$user" -m 0700 "$home/.kube"
+  install -o "$user" -g "$user" -m 0600 "$tmp" "$kc" || { log "WARN: failed to write browser kubeconfig for $user"; rm -f "$tmp"; return 0; }
+  rm -f "$tmp"
+  log "wrote dual-context browser kubeconfig (SA default + OIDC) -> $user:~/.kube/config"
+  return 0
+}
+
 # Idempotently set KEY=VALUE in a t3-serve env file, PRESERVING other lines — so writing
 # T3_PORT never clobbers an injected CLAUDE_CODE_OAUTH_TOKEN, and vice-versa. Mode 0600.
 env_set() {
@@ -594,6 +667,7 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv; do
       refresh_user_clone   "$os_user" code
     fi
     install_user_kubeconfig "$os_user"
+    install_browser_kubeconfig "$os_user"    # hands-off chrome-service CLI cred (no-op unless the user has a browser SA)
     deploy_user_launcher "$os_user"          # keep ~/start-claude.sh current (skel only seeds new accounts)
   fi
   refresh_codex_mirror "$os_user"            # all tiers — mirror of the managed claudeMd
