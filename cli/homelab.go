@@ -20,6 +20,7 @@ func buildRegistry() []Command {
 	reg = append(reg, deployCommands()...)
 	reg = append(reg, netCommands()...)
 	reg = append(reg, obsCommands()...)
+	reg = append(reg, edgesCommands()...)
 	reg = append(reg, usageCommands()...)
 	reg = append(reg, haCommands()...)
 	reg = append(reg, browserCommands()...)

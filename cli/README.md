@@ -202,6 +202,21 @@ runs on the devvm, `setInputFiles` streams local files to the remote browser ove
 CDP — no `chmod`/staging-dir workaround. See `docs/architecture/chrome-service.md`
 and `docs/adr/0013`.
 
+### v0.9 verbs — edges (east-west "who-talks-to-whom" trail)
+
+Read-only investigation helper over the `goldmane_edges` CNPG trail (ADR-0014):
+filters render to a single safe `SELECT` (namespace values validated to the k8s
+name charset) run via the dbaas primary pod — the same exec path as `k8s db`.
+
+| Command | Tier | What it does |
+| --- | --- | --- |
+| `edges --ns <ns>` | read | edges touching `<ns>` (either direction) |
+| `edges --src <ns>` / `--dst <ns>` | read | directional: `<ns>`'s egress / ingress peers |
+| `edges --peers-of <ns>` | read | distinct peer namespaces of `<ns>` (both directions) |
+| `edges --new-since <24h\|7d\|YYYY-MM-DD>` | read | edges first seen since a duration or date |
+| `edges --denied` | read | only `action='deny'` edges (blocked / lateral-movement) |
+| `edges --json` / `--limit N` | read | JSON array output / row cap (default 200) |
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning

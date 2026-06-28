@@ -54,16 +54,28 @@ func printMemories(raw []byte, jsonOut bool) error {
 		return nil
 	}
 	for _, m := range r.Memories {
-		c := strings.ReplaceAll(m.Content, "\n", " ")
-		if len(c) > 240 {
-			c = c[:240] + "…"
-		}
+		c := truncatePreview(strings.ReplaceAll(m.Content, "\n", " "), 240)
 		fmt.Printf("#%d [%s] (%.2f) %s\n", m.ID, m.Category, m.Importance, c)
 		if m.Tags != "" {
 			fmt.Printf("       tags: %s\n", m.Tags)
 		}
 	}
 	return nil
+}
+
+// truncatePreview shortens s to at most maxRunes RUNES, appending "…" when it
+// trims. Counting runes (not bytes) is load-bearing: a byte slice like s[:240]
+// can cut through the middle of a multibyte UTF-8 character (e.g. 2-byte
+// Cyrillic), leaving a dangling lead byte = invalid UTF-8. That crashed strict
+// decoders downstream — notably the homelab-memory-recall.py UserPromptSubmit
+// hook (subprocess text=True), which surfaced as a recurring "UserPromptSubmit
+// hook error" for Cyrillic-language users.
+func truncatePreview(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return string(r[:maxRunes]) + "…"
 }
 
 func memoryRecall(args []string) error {
