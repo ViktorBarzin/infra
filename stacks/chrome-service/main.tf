@@ -359,9 +359,13 @@ resource "kubernetes_deployment" "chrome_service" {
           # x11vnc connects to the chrome-service container's Xvfb over
           # localhost TCP (shared pod network). Same uid 1000 as chrome
           # container so we can read MIT-MAGIC-COOKIE if Xvfb adds one.
+          # 256Mi (was 96Mi): the 96Mi cap OOMKilled (exit 137) the sidecar under
+          # ACTIVE VNC use — x11vnc + websockify framebuffer/encode buffers spike
+          # well past idle (~37Mi) when a client streams the 1280x720 screen, so the
+          # noVNC view froze/hung on connect. Bumped 2026-06-28.
           resources {
-            requests = { cpu = "10m", memory = "32Mi" }
-            limits   = { memory = "96Mi" }
+            requests = { cpu = "10m", memory = "64Mi" }
+            limits   = { memory = "256Mi" }
           }
         }
 
