@@ -1248,14 +1248,17 @@ resource "vault_kubernetes_secret_backend_role" "user_deployer" {
 # =============================================================================
 # emo is tier `power-user`, which by default carries NO Vault secret access
 # (only the workstation-claude-emo OAuth-state policy). The block below is a
-# NARROW, explicit exception (approved by Viktor 2026-06-27): it lets emo read
-# his own personal secret tree `secret/emo` (laptop creds + ssh key) through his
-# OIDC identity — READ-ONLY (no create/update/delete). It does NOT widen the
-# power-user tier in general; it names emo specifically. To extend this to other
-# power-users, generalise via the roster rather than copy-pasting.
+# NARROW, explicit exception (approved by Viktor 2026-06-27; widened to
+# read/write on 2026-06-28): it lets emo fully manage his own personal secret
+# tree `secret/emo` (laptop creds + ssh key) through his OIDC identity — FULL
+# ACCESS (create/read/update/delete/list), so he can edit his own secrets. It
+# does NOT widen the power-user tier in general; it names emo specifically. To
+# extend this to other power-users, generalise via the roster rather than
+# copy-pasting.
 #
-# Mechanism mirrors the namespace-owner personal-secret pattern (read-only
-# variant). emo had already logged in via OIDC, so Vault auto-created his
+# Mechanism mirrors the namespace-owner personal-secret pattern (read/write
+# variant — same capabilities a namespace-owner has over their own tree). emo
+# had already logged in via OIDC, so Vault auto-created his
 # entity + alias; those were ADOPTED into Terraform via one-shot `import`
 # blocks (since removed) on 2026-06-27, rather than colliding on the
 # (oidc-mount, email) alias-uniqueness constraint. Entity canonical id
@@ -1264,18 +1267,18 @@ resource "vault_kubernetes_secret_backend_role" "user_deployer" {
 resource "vault_policy" "personal_emo" {
   name   = "personal-emo"
   policy = <<-EOT
-    # Read-only access to emo's personal secret tree
+    # Full read/write access to emo's own personal secret tree
     path "secret/data/emo" {
-      capabilities = ["read"]
+      capabilities = ["create", "read", "update", "delete", "list"]
     }
     path "secret/data/emo/*" {
-      capabilities = ["read"]
+      capabilities = ["create", "read", "update", "delete", "list"]
     }
     path "secret/metadata/emo" {
-      capabilities = ["read", "list"]
+      capabilities = ["list", "read", "delete"]
     }
     path "secret/metadata/emo/*" {
-      capabilities = ["read", "list"]
+      capabilities = ["list", "read", "delete"]
     }
   EOT
 }
