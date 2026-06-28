@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -79,7 +80,33 @@ func realRunner(name string, argv, envv []string) (string, error) {
 	out, err := cmd.Output()
 	// Trim only the trailing newline the tool appends — NOT all whitespace, so a
 	// fetched secret with significant leading/trailing spaces is preserved.
-	return strings.TrimRight(string(out), "\r\n"), err
+	return strings.TrimRight(string(out), "\r\n"), augmentErr(err, exitStderr(err))
+}
+
+// exitStderr returns the stderr captured by cmd.Output() on a failed exec (it
+// stows it on *exec.ExitError), or nil. The tools we shell out to (vault, bw)
+// write the actionable message there — "connection refused", "permission
+// denied" — which the caller would otherwise never see behind a bare
+// "exit status N".
+func exitStderr(err error) []byte {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.Stderr
+	}
+	return nil
+}
+
+// augmentErr appends captured stderr to an error so failures are diagnosable
+// (not just "exit status 2"). Returns nil when err is nil, and err unchanged
+// when there's no stderr; preserves the wrapped error for errors.Is/As.
+func augmentErr(err error, stderr []byte) error {
+	if err == nil {
+		return nil
+	}
+	if s := strings.TrimSpace(string(stderr)); s != "" {
+		return fmt.Errorf("%w: %s", err, s)
+	}
+	return err
 }
 
 // realRunnerStdin runs a command feeding `stdin` to it, for secret values that
@@ -92,7 +119,7 @@ func realRunnerStdin(name string, argv, envv []string, stdin string) (string, er
 	}
 	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.Output()
-	return strings.TrimRight(string(out), "\r\n"), err
+	return strings.TrimRight(string(out), "\r\n"), augmentErr(err, exitStderr(err))
 }
 
 func vwCredsPath(user string) string { return vwUserPathPrefix + user }
@@ -135,23 +162,55 @@ func scopedTokenPath(home string) string {
 }
 
 // vaultTokenSource decides which Vault token the `vault` child processes should
-// use. Precedence: an explicit $VAULT_TOKEN, then a native ~/.vault-token (what
-// admins carry), then the per-user scoped token claude-auth-sync maintains at
-// scopedTokenPath(HOME) (policy workstation-claude-<user>, which grants exactly
-// the create/read/update this tool needs on the user's own path). Returns the
-// token to export — "" when nothing must be exported because the vault CLI reads
-// the ambient credential natively — plus a source tag for tests/logging.
+// use. Precedence: an explicit $VAULT_TOKEN (deliberate override), then the
+// per-user scoped token claude-auth-sync maintains at scopedTokenPath(HOME)
+// (policy workstation-claude-<user>, which grants exactly the create/read/update
+// this tool needs on the user's own path), then a native ~/.vault-token.
+//
+// The scoped token MUST beat ~/.vault-token: this tool only ever touches the
+// caller's own secret/workstation/claude-users/<user> path, and a power-user who
+// ran `vault login -method=oidc` carries a read-only ~/.vault-token whose
+// capability on that path is `deny` — letting it win shadows the scoped token
+// and every op fails 403/deny (emo, 2026-06-28). ~/.vault-token is only the
+// right credential when there is no scoped token (admins). Returns the token to
+// export — "" when the vault CLI should read the ambient/native credential —
+// plus a source tag for tests/logging.
 func vaultTokenSource(envToken string, haveVaultTokenFile bool, scopedToken string) (token, source string) {
 	switch {
 	case envToken != "":
 		return "", "env"
+	case strings.TrimSpace(scopedToken) != "":
+		return strings.TrimSpace(scopedToken), "scoped"
 	case haveVaultTokenFile:
 		return "", "file"
 	default:
-		if t := strings.TrimSpace(scopedToken); t != "" {
-			return t, "scoped"
-		}
 		return "", "none"
+	}
+}
+
+// vaultAddrDefault is the cluster Vault the workstation talks to. The bw server
+// is likewise hardcoded (openSession), so a sane default here is consistent.
+const vaultAddrDefault = "https://vault.viktorbarzin.me"
+
+// vaultAddrToSet returns the VAULT_ADDR to export when the caller's environment
+// doesn't already set one, else "". homelab vault is invoked by AFK agent
+// sessions — frequently non-login shells (tmux panes, agent subprocesses) that
+// never sourced /etc/environment — so, like claude-auth-sync, the CLI must NOT
+// depend on an ambient VAULT_ADDR; otherwise every `vault` child falls back to
+// the 127.0.0.1:8200 default and fails "connection refused" (exit 2).
+func vaultAddrToSet(envAddr string) string {
+	if strings.TrimSpace(envAddr) == "" {
+		return vaultAddrDefault
+	}
+	return ""
+}
+
+// ensureVaultAddr exports the default VAULT_ADDR when none is set, so the vault
+// child processes reach the cluster Vault regardless of the caller's shell. An
+// explicit VAULT_ADDR (admins, CI) is left untouched.
+func ensureVaultAddr() {
+	if a := vaultAddrToSet(os.Getenv("VAULT_ADDR")); a != "" {
+		os.Setenv("VAULT_ADDR", a)
 	}
 }
 
@@ -167,6 +226,10 @@ func fileNonEmpty(path string) bool {
 // is idempotent and safe for admins, whose explicit $VAULT_TOKEN / ~/.vault-token
 // take precedence and are left untouched.
 func ensureVaultToken() {
+	// Every vault verb funnels through here, so this is the one place that also
+	// guarantees VAULT_ADDR is set (see vaultAddrToSet for why it can't be
+	// assumed from the caller's shell).
+	ensureVaultAddr()
 	home := os.Getenv("HOME")
 	scoped, _ := os.ReadFile(scopedTokenPath(home))
 	tok, src := vaultTokenSource(os.Getenv("VAULT_TOKEN"), home != "" && fileNonEmpty(home+"/.vault-token"), string(scoped))

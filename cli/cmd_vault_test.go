@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -269,6 +270,29 @@ func TestEnsureVaultTokenKeepsExplicitEnv(t *testing.T) {
 	}
 }
 
+func TestEnsureVaultTokenPrefersScopedOverFile(t *testing.T) {
+	// Regression: a power-user's read-only OIDC ~/.vault-token must NOT shadow the
+	// purpose-built scoped token (emo's setup hit 403 because it did, 2026-06-28).
+	dir := t.TempDir()
+	cfg := dir + "/.config/claude-auth-sync"
+	if err := os.MkdirAll(cfg, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg+"/vault-token", []byte("SCOPED-TOK"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/.vault-token", []byte("STALE-OIDC-TOK"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+	t.Setenv("VAULT_TOKEN", "")
+
+	ensureVaultToken()
+	if got := os.Getenv("VAULT_TOKEN"); got != "SCOPED-TOK" {
+		t.Fatalf("VAULT_TOKEN = %q, want the scoped token to win over a stale ~/.vault-token", got)
+	}
+}
+
 func TestScopedTokenPath(t *testing.T) {
 	if got := scopedTokenPath("/home/emo"); got != "/home/emo/.config/claude-auth-sync/vault-token" {
 		t.Fatalf("scopedTokenPath = %q", got)
@@ -276,9 +300,10 @@ func TestScopedTokenPath(t *testing.T) {
 }
 
 func TestVaultTokenSource(t *testing.T) {
-	// Precedence: explicit $VAULT_TOKEN > ~/.vault-token (vault CLI native) >
-	// the claude-auth-sync per-user scoped token. This is what lets a non-admin
-	// workstation user (no ambient token) reach their own Vault path.
+	// Precedence: explicit $VAULT_TOKEN > the claude-auth-sync per-user scoped
+	// token > a native ~/.vault-token. Scoped beats the file so a power-user's
+	// read-only OIDC ~/.vault-token can't shadow the scoped token on the user's
+	// own path (emo, 2026-06-28).
 	cases := []struct {
 		name             string
 		env              string
@@ -287,10 +312,11 @@ func TestVaultTokenSource(t *testing.T) {
 		wantTok, wantSrc string
 	}{
 		{"explicit env wins", "abc", true, "S", "", "env"},
-		{"vault-token file used natively", "", true, "S", "", "file"},
-		{"scoped fallback for non-admin", "", false, "S-TOK", "S-TOK", "scoped"},
+		{"scoped beats a stale ~/.vault-token", "", true, "S-TOK", "S-TOK", "scoped"},
+		{"scoped used when no file", "", false, "S-TOK", "S-TOK", "scoped"},
+		{"native ~/.vault-token only when no scoped", "", true, "", "", "file"},
 		{"scoped value is trimmed", "", false, "  S-TOK\n", "S-TOK", "scoped"},
-		{"whitespace-only scoped is no token", "", false, "  \n", "", "none"},
+		{"whitespace-only scoped falls back to file", "", true, "  \n", "", "file"},
 		{"nothing configured", "", false, "", "", "none"},
 	}
 	for _, c := range cases {
@@ -299,6 +325,66 @@ func TestVaultTokenSource(t *testing.T) {
 			t.Errorf("%s: vaultTokenSource(%q,%v,%q) = (%q,%q), want (%q,%q)",
 				c.name, c.env, c.haveVaultToken, c.scoped, tok, src, c.wantTok, c.wantSrc)
 		}
+	}
+}
+
+func TestVaultAddrToSet(t *testing.T) {
+	// homelab vault is invoked by AFK agent sessions (non-login shells that
+	// never sourced /etc/environment), so the CLI must self-default VAULT_ADDR
+	// rather than rely on the ambient env — else every `vault` child hits the
+	// 127.0.0.1:8200 default and fails "connection refused" (exit 2).
+	cases := []struct {
+		name, env, want string
+	}{
+		{"unset -> default", "", vaultAddrDefault},
+		{"whitespace-only -> default", "  \n", vaultAddrDefault},
+		{"explicit kept (empty = leave alone)", "https://vault.example.com", ""},
+	}
+	for _, c := range cases {
+		if got := vaultAddrToSet(c.env); got != c.want {
+			t.Errorf("%s: vaultAddrToSet(%q) = %q, want %q", c.name, c.env, got, c.want)
+		}
+	}
+}
+
+func TestEnsureVaultTokenSetsDefaultAddr(t *testing.T) {
+	dir := t.TempDir() // no scoped token, no ~/.vault-token
+	t.Setenv("HOME", dir)
+	t.Setenv("VAULT_TOKEN", "")
+	t.Setenv("VAULT_ADDR", "") // emo's non-login-shell situation
+
+	ensureVaultToken()
+	if got := os.Getenv("VAULT_ADDR"); got != vaultAddrDefault {
+		t.Fatalf("VAULT_ADDR = %q, want default %q to be exported", got, vaultAddrDefault)
+	}
+}
+
+func TestEnsureVaultTokenKeepsExplicitAddr(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("VAULT_TOKEN", "")
+	t.Setenv("VAULT_ADDR", "https://vault.example.com")
+
+	ensureVaultToken()
+	if got := os.Getenv("VAULT_ADDR"); got != "https://vault.example.com" {
+		t.Fatalf("VAULT_ADDR = %q, must not override an explicit addr", got)
+	}
+}
+
+func TestAugmentErrSurfacesStderr(t *testing.T) {
+	if got := augmentErr(nil, []byte("ignored")); got != nil {
+		t.Fatalf("augmentErr(nil, …) = %v, want nil", got)
+	}
+	base := errors.New("exit status 2")
+	got := augmentErr(base, []byte("  dial tcp 127.0.0.1:8200: connect: connection refused\n"))
+	if got == nil || !strings.Contains(got.Error(), "connection refused") || !strings.Contains(got.Error(), "exit status 2") {
+		t.Fatalf("augmentErr did not surface stderr: %v", got)
+	}
+	if !errors.Is(got, base) {
+		t.Fatal("augmentErr lost the wrapped error (errors.Is failed)")
+	}
+	if got := augmentErr(base, []byte("   ")); got != base {
+		t.Fatalf("augmentErr with blank stderr = %v, want the original error unchanged", got)
 	}
 }
 

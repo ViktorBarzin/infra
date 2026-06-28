@@ -23,18 +23,28 @@ homelab vault lock              lock / log out the local bw session
 `homelab vault` runs `vault` as the calling user. It resolves a Vault token in
 this order (`ensureVaultToken`, `cli/cmd_vault.go`):
 
-1. an explicit `$VAULT_TOKEN`, then
-2. a native `~/.vault-token` (what admins carry), then
-3. the per-user **scoped token** that `claude-auth-sync` maintains at
-   `~/.config/claude-auth-sync/vault-token` (policy `workstation-claude-<user>`).
+1. an explicit `$VAULT_TOKEN` (a deliberate override), then
+2. the per-user **scoped token** that `claude-auth-sync` maintains at
+   `~/.config/claude-auth-sync/vault-token` (policy `workstation-claude-<user>`), then
+3. a native `~/.vault-token` (admins who carry one; non-admins usually don't).
+
+**The scoped token deliberately beats `~/.vault-token`.** This tool only touches
+your own `secret/workstation/claude-users/<user>` path, and a power-user who ran
+`vault login -method=oidc` carries a read-only `~/.vault-token` (capability
+`deny` on that path); letting it win would shadow the scoped token and fail every
+op with `403 permission denied` (this is exactly what bit emo, 2026-06-28). The
+CLI also **self-defaults `VAULT_ADDR`** to `https://vault.viktorbarzin.me` when
+unset, so it works from non-login shells (tmux panes, AFK agent subprocesses)
+that never sourced `/etc/environment` — otherwise every `vault` child hits the
+`127.0.0.1:8200` default and fails `connection refused` (exit 2).
 
 That scoped policy grants exactly `create`/`read`/`update` on the user's own
 `secret/workstation/claude-users/<user>` path — no `patch` capability — so the
 tool writes with `vault kv patch -method=rw` (read-modify-write), falling back to
 `kv put` only when the path does not exist yet. This preserves the
 `claude_ai_oauth_json` key that [claude-auth-sync](claude-auth-renew-workstation.md)
-co-locates there. (Both bugs that previously made this admin-only were fixed
-2026-06-27.)
+co-locates there. (The admin-only bugs were fixed 2026-06-27; the
+`VAULT_ADDR`/token-precedence bugs above were fixed 2026-06-28.)
 
 ## Prerequisites (per user)
 
@@ -119,3 +129,20 @@ VAULT_TOKEN="$(sudo cat /home/<user>/.config/claude-auth-sync/vault-token)" \
 sudo -u <user> -i bw --version        # /usr/bin/bw resolves for the user
 sudo -u <user> -i homelab vault status
 ```
+
+## Troubleshooting
+
+**`homelab vault setup` (or any verb) fails with `exit status 2`** — older
+binaries swallowed the underlying `vault` error; the message now includes it.
+Two historical causes (both fixed in-CLI 2026-06-28, kept here for diagnosis):
+
+- `... connection refused` to `127.0.0.1:8200` → `VAULT_ADDR` wasn't set in the
+  caller's shell. The CLI now self-defaults it, but if you see this on an old
+  binary: `export VAULT_ADDR=https://vault.viktorbarzin.me`.
+- `403 permission denied` on `PUT .../secret/data/workstation/claude-users/<user>`
+  → a stale read-only `~/.vault-token` (e.g. from `vault login -method=oidc`,
+  policy `default`, capability `deny` on that path) was shadowing the scoped
+  token. The CLI now prefers the scoped token; on an old binary, `rm
+  ~/.vault-token` (or `unset VAULT_TOKEN`) and retry. Confirm with
+  `VAULT_TOKEN="$(sudo cat /home/<user>/.config/claude-auth-sync/vault-token)" vault token capabilities secret/data/workstation/claude-users/<user>`
+  → must be `create, read, update`.
