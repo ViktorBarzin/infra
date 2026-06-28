@@ -195,6 +195,31 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Egress / pfSense (added 2026-06-28 after the 2026-06-27 WAN/egress
+          # incident). Cloudflared edge-connection failures are the log canary
+          # that fired FIRST + most reliably — the cloudflared *deployment*
+          # replica metric stays GREEN during a tunnel-connection outage (pods
+          # Running, tunnels failing), so a metric alert is blind to this.
+          # Routed via Loki ruler → Alertmanager → slack by severity; inhibited
+          # under WANGatewayUnreachable/InternetEgressDown so it doesn't
+          # double-page. Calibrated against live Loki 2026-06-28: steady-state
+          # ~2 matches/6h; the incident ran 37-85 matches/5m, so >20/5m sits
+          # well clear of noise. Runbook: docs/runbooks/pfsense-egress.md.
+          name = "Egress / pfSense"
+          rules = [
+            {
+              alert  = "CloudflaredTunnelConnLoss"
+              expr   = "sum(count_over_time({namespace=\"cloudflared\"} |~ \"(?i)(lost connection with the edge|failed to dial|register tunnel error|failed to serve quic)\" [5m])) > 20"
+              for    = "2m"
+              labels = { severity = "warning", subsystem = "pfsense" }
+              annotations = {
+                summary     = "cloudflared losing edge/tunnel connections (>20/5m) — possible egress/WAN trouble"
+                description = "cloudflared edge-connection failures exceeded 20 in 5m (steady-state ~2/6h; the 2026-06-27 egress incident hit 37-85/5m). Pods usually stay Running so the replica-health alert is blind — this log canary is the early egress signal. Correlate with InternetEgressDown / EgressOnlyDivergence. Runbook: docs/runbooks/pfsense-egress.md."
+              }
+            },
+          ]
+        },
+        {
           # t3 session-auth + auto-upgrade health (devvm host scripts → journald →
           # Loki). Backstops the gated-nightly t3 tracker: the dispatch logs every
           # real-user pairing outcome (success endpoint + fallback) and the enforcer

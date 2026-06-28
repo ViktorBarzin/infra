@@ -208,6 +208,16 @@ alertmanager:
         target_matchers:
           - alertname = T3ProbeDropBurst
         equal: [leg]
+      # pfSense egress cascade (2026-06-28): a WAN-gateway-down or full
+      # internet-egress-down is the root cause; the external-DNS, egress-only
+      # divergence, cloudflared-tunnel, email-roundtrip and external-divergence
+      # alerts are downstream symptoms of the same black-hole. Suppress them so
+      # one root alert pages, not a storm (mirrors the NodeDown/PowerOutage
+      # cascades). No `equal` — these symptom alerts carry no shared label.
+      - source_matchers:
+          - alertname =~ "WANGatewayUnreachable|InternetEgressDown"
+        target_matchers:
+          - alertname =~ "ExternalDNSResolutionDown|EgressOnlyDivergence|CloudflaredTunnelConnLoss|EmailRoundtripFailing|EmailRoundtripStale|ExternalAccessDivergence"
     receivers:
       - name: slack-critical
         slack_configs:
@@ -3292,6 +3302,79 @@ serverFiles:
             annotations:
               summary: "Public path walled off by Authentik: {{ $labels.service }} ({{ $labels.instance }})"
               description: "The must-stay-public URL {{ $labels.instance }} (carve-out `{{ $labels.service }}`) is failing its blackbox probe — most likely it now 302-redirects to Authentik SSO. A path-scoped `auth = \"none\"` carve-out probably regressed (TF revert / deploy / ingress_factory auth default flipping back to \"required\"). Native-client / public / webhook / WebSocket / SPA-XHR traffic to this endpoint is broken for strangers and machines. Check the owning stack's ingress_factory `auth` + `ingress_path`, and curl the URL: `curl -sI '{{ $labels.instance }}'` — a Location to authentik.viktorbarzin.me confirms the regression. Probe config + target list: stacks/monitoring/modules/monitoring/authentik_walloff_probe.tf."
+      # pfSense / egress alerts (added 2026-06-28 after the 2026-06-27 WAN/egress
+      # black-hole incident: pfSense VMID 101 stopped passing internet egress for
+      # ~20min while internal routing + Unbound stayed up; only a reboot
+      # recovered it, and NOTHING alerted — the cloudflared replica metric stayed
+      # green and there was no egress probe). Probe metrics come from the
+      # blackbox scrape jobs wan-gateway-icmp / internet-egress-icmp /
+      # internet-egress-dns (extraScrapeConfigs). Criticals route to
+      # slack-critical via the severity=critical child route; WAN/egress-down
+      # inhibits the downstream egress symptoms (see inhibit_rules).
+      # Runbook: docs/runbooks/pfsense-egress.md.
+      - name: Egress / pfSense
+        rules:
+          - alert: WANGatewayUnreachable
+            # In-cluster ICMP to the pfSense WAN gateway (192.168.1.1). 0 = the
+            # gateway pfSense routes through is unreachable from the cluster.
+            expr: probe_success{job="wan-gateway-icmp"} == 0
+            for: 3m
+            labels:
+              severity: critical
+              subsystem: pfsense
+            annotations:
+              summary: "pfSense WAN gateway 192.168.1.1 unreachable from the cluster (>3m)"
+              description: "In-cluster blackbox ICMP to the pfSense upstream gateway (192.168.1.1) has failed for >3m. pfSense egress/NAT or the WAN path is likely down (the 2026-06-27 incident class); internal VLAN routing may still work. Check pfSense System > Routing > Gateways + dpinger; on-box `clog /var/log/gateways.log`. Runbook: docs/runbooks/pfsense-egress.md."
+          - alert: InternetEgressDown
+            # ICMP to BOTH Quad9 and Cloudflare from in-cluster (path crosses
+            # pfSense NAT). max()==0 = NEITHER answered = a true egress
+            # black-hole, not a single-provider blip.
+            expr: max(probe_success{job="internet-egress-icmp"}) == 0
+            for: 2m
+            labels:
+              severity: critical
+              subsystem: pfsense
+            annotations:
+              summary: "Internet egress DOWN — in-cluster ICMP to both 9.9.9.9 and 1.1.1.1 failing (>2m)"
+              description: "Neither 9.9.9.9 nor 1.1.1.1 is reachable via ICMP from inside the cluster for >2m — internet egress through pfSense NAT is black-holed (the 2026-06-27 incident: egress died ~20min while internal stayed up). Check pfSense WAN/gateway/NAT; recovery per docs/runbooks/pfsense-egress.md (gateway re-eval / reboot is the known fix)."
+          - alert: ExternalDNSResolutionDown
+            # UDP/53 DNS query to public resolvers — a distinct failure surface
+            # from ICMP (catches DNS-only egress breakage).
+            expr: max(probe_success{job="internet-egress-dns"}) == 0
+            for: 3m
+            labels:
+              severity: warning
+              subsystem: pfsense
+            annotations:
+              summary: "External DNS resolution failing via both 9.9.9.9 and 1.1.1.1 (>3m)"
+              description: "In-cluster DNS queries (cloudflare.com A) to both public resolvers fail for >3m — egress or external DNS is broken. If InternetEgressDown also fires it's an egress black-hole; DNS-only points at the resolver path."
+          - alert: EgressOnlyDivergence
+            # The 2026-06-27 SIGNATURE: the t3-probe cloudflare (full public path)
+            # leg is down WHILE the internal (Traefik-only) leg is up =
+            # egress-specific failure, internal healthy. Reuses the existing
+            # t3-probe (no new infra). on() joins the two single-series legs.
+            expr: t3probe_connected{job="t3-probe", leg="cloudflare"} == 0 and on() t3probe_connected{job="t3-probe", leg="internal"} == 1
+            for: 3m
+            labels:
+              severity: critical
+              subsystem: pfsense
+            annotations:
+              summary: "Egress-only failure: t3 cloudflare leg DOWN while internal leg UP (>3m)"
+              description: "The full-public-path (cloudflare) t3 probe leg is down but the internal (Traefik-only) leg is healthy — the exact 2026-06-27 egress-only signature (internet/NAT down, internal routing fine). A total outage would also drop the internal leg. Check pfSense WAN/egress; docs/runbooks/pfsense-egress.md."
+          - alert: PfSenseVMDown
+            # pfSense = Proxmox VMID 101 (proxmox-exporter pve_up). VM stopped
+            # while the host is up = total egress + inter-VLAN + DHCP + DNS loss
+            # (single point of failure, no HA). CAVEAT: a GUEST-INTERNAL reboot
+            # leaves pve_up==1 (it tracks the qemu process) — so this catches a
+            # true VM stop/crash, NOT the in-guest reboot seen on 2026-06-27.
+            expr: pve_up{id="qemu/101"} == 0 and on() pve_up{id="node/pve"} == 1
+            for: 2m
+            labels:
+              severity: critical
+              subsystem: pfsense
+            annotations:
+              summary: "pfSense VM (Proxmox VMID 101) is DOWN while the host is up"
+              description: "The pfSense VM (qemu/101) reports down while the PVE host (node/pve) is up — the cluster has lost its single-point-of-failure gateway/NAT/DHCP/DNS (no HA). Start VM 101 from Proxmox immediately. Note: an in-guest reboot does NOT trip this (pve_up tracks the qemu process)."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
@@ -3369,6 +3452,58 @@ extraScrapeConfigs: |
       - targets:
         - "t3-probe.t3code.svc.cluster.local:9108"
     metrics_path: '/metrics'
+  # --- pfSense egress / WAN probes (added 2026-06-28 after the 2026-06-27
+  # WAN/egress black-hole incident). All three probe via blackbox-exporter from
+  # INSIDE the cluster (pod 10.10.x -> node -> pfSense NAT), so they exercise the
+  # exact egress path that failed. Alerts: WANGatewayUnreachable /
+  # InternetEgressDown / ExternalDNSResolutionDown (alerting_rules.yml, group
+  # "Egress / pfSense"). Module defs (icmp_egress, dns_external) + NET_RAW:
+  # authentik_walloff_probe.tf.
+  - job_name: 'wan-gateway-icmp'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    params:
+      module: [icmp_egress]
+    static_configs:
+      - targets: ["192.168.1.1"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
+  - job_name: 'internet-egress-icmp'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    params:
+      module: [icmp_egress]
+    static_configs:
+      - targets: ["9.9.9.9", "1.1.1.1"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
+  - job_name: 'internet-egress-dns'
+    scrape_interval: 60s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    params:
+      module: [dns_external]
+    static_configs:
+      - targets: ["9.9.9.9", "1.1.1.1"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
   # rpi-sofia: external Raspberry Pi 3 at the Sofia home site (Frigate camera
   # DNAT passthrough + solar inverter path + HA MQTT sensors). node_exporter
   # installed via apt; the rpi_* metrics come from a vcgencmd textfile collector
