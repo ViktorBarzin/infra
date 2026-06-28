@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -618,5 +619,203 @@ func TestGetValueFlow(t *testing.T) {
 	val, err := getValue(f.run, "emo", uid, getOpts{name: "github", field: "password"})
 	if err != nil || val != "p@ss" {
 		t.Fatalf("getValue = %q, %v", val, err)
+	}
+}
+
+// --- vault get --all (browse all fields) ----------------------------------
+
+func TestParseGetArgsAll(t *testing.T) {
+	o, err := parseGetArgs([]string{"github", "--all"})
+	if err != nil || o.name != "github" || !o.all {
+		t.Fatalf("parseGetArgs(--all) = %+v err=%v", o, err)
+	}
+	// --all must skip --field validation (field is irrelevant for a full dump).
+	if _, err := parseGetArgs([]string{"github", "--all", "--field", "evil"}); err != nil {
+		t.Fatalf("--all must ignore an otherwise-invalid --field, got err=%v", err)
+	}
+	// A name is still required.
+	if _, err := parseGetArgs([]string{"--all"}); err == nil {
+		t.Fatal("get --all with no name must error")
+	}
+	// Without --all, the field allowlist still applies.
+	if _, err := parseGetArgs([]string{"github", "--field", "evil"}); err == nil {
+		t.Fatal("invalid --field without --all must still error")
+	}
+}
+
+func TestBwItemArgs(t *testing.T) {
+	argv := bwItemArgs("github")
+	if !reflect.DeepEqual(argv, []string{"get", "item", "github"}) {
+		t.Fatalf("bwItemArgs = %v", argv)
+	}
+	for _, a := range argv {
+		if strings.Contains(a, "SESSION") || a == "--session" {
+			t.Fatalf("session must travel via env, not argv: %v", argv)
+		}
+	}
+}
+
+// a representative `bw get item` payload: login fields, multiple URIs, a TOTP
+// seed, notes, custom fields (text/hidden/boolean), plus bw internals that MUST
+// be dropped (id/object/reprompt/passwordHistory).
+const sampleLoginItemJSON = `{
+  "object":"item","id":"abc-123","folderId":null,"type":1,"reprompt":0,
+  "name":"GitHub","notes":"my notes","favorite":false,
+  "fields":[
+    {"name":"PIN","value":"1234","type":1},
+    {"name":"endpoint","value":"https://api.gh","type":0},
+    {"name":"enabled","value":"true","type":2}
+  ],
+  "login":{
+    "username":"octocat","password":"hunter2",
+    "totp":"otpauth://totp/GitHub:octocat?secret=SEEDSEEDSEED",
+    "uris":[{"match":null,"uri":"https://github.com"},{"match":null,"uri":"https://gist.github.com"}]
+  },
+  "passwordHistory":[{"password":"OLD-PASSWORD-XYZ"}]
+}`
+
+func TestNormalizeItemLogin(t *testing.T) {
+	n, err := normalizeItem(sampleLoginItemJSON)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	if n.Name != "GitHub" || n.Username != "octocat" || n.Password != "hunter2" || n.Notes != "my notes" {
+		t.Fatalf("standard fields wrong: %+v", n)
+	}
+	if !n.TOTP {
+		t.Fatal("TOTP presence flag must be true when a seed exists")
+	}
+	if !reflect.DeepEqual(n.URIs, []string{"https://github.com", "https://gist.github.com"}) {
+		t.Fatalf("URIs = %v", n.URIs)
+	}
+	want := map[string]string{"PIN": "1234", "endpoint": "https://api.gh", "enabled": "true"}
+	if !reflect.DeepEqual(n.Fields, want) {
+		t.Fatalf("custom fields = %v want %v", n.Fields, want)
+	}
+}
+
+// The load-bearing security test: the raw TOTP seed (more powerful than a
+// one-time code) and the password history must NEVER appear in the dump.
+func TestNormalizeItemNeverLeaksSeedOrHistory(t *testing.T) {
+	n, err := normalizeItem(sampleLoginItemJSON)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	out, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, leak := range []string{"SEEDSEEDSEED", "otpauth", "OLD-PASSWORD-XYZ", "passwordHistory", "abc-123"} {
+		if strings.Contains(string(out), leak) {
+			t.Fatalf("dump leaked %q: %s", leak, out)
+		}
+	}
+}
+
+func TestNormalizeItemNoTOTP(t *testing.T) {
+	n, err := normalizeItem(`{"name":"X","type":1,"login":{"username":"u","password":"p"}}`)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	if n.TOTP {
+		t.Fatal("TOTP must be false when no seed present")
+	}
+	out, _ := json.Marshal(n)
+	if strings.Contains(string(out), "totp") {
+		t.Fatalf("no-totp item must omit the totp key entirely: %s", out)
+	}
+}
+
+func TestNormalizeItemEmptyStandardFieldsOmitted(t *testing.T) {
+	n, err := normalizeItem(`{"name":"Bare","type":1,"login":{"username":"","password":"","totp":"","uris":[]},"fields":[{"name":"only","value":"x","type":0}]}`)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	out, _ := json.Marshal(n)
+	for _, k := range []string{"username", "password", "uris", "notes", "totp"} {
+		if strings.Contains(string(out), `"`+k+`"`) {
+			t.Fatalf("empty standard field %q must be omitted: %s", k, out)
+		}
+	}
+	if !strings.Contains(string(out), `"name":"Bare"`) || !strings.Contains(string(out), `"only":"x"`) {
+		t.Fatalf("name + custom field must survive: %s", out)
+	}
+}
+
+func TestNormalizeItemSecureNoteNullLogin(t *testing.T) {
+	// type 2 (secure note): login is null — must not panic; notes + custom fields survive.
+	n, err := normalizeItem(`{"name":"SN","type":2,"notes":"secret note","login":null,"fields":[{"name":"k","value":"v","type":1}]}`)
+	if err != nil {
+		t.Fatalf("normalizeItem(null login): %v", err)
+	}
+	if n.Name != "SN" || n.Notes != "secret note" || n.Fields["k"] != "v" {
+		t.Fatalf("secure-note normalize wrong: %+v", n)
+	}
+	if n.Username != "" || n.Password != "" || n.TOTP {
+		t.Fatalf("login fields must be empty for a login-less item: %+v", n)
+	}
+}
+
+func TestNormalizeItemDuplicateCustomNames(t *testing.T) {
+	// Bitwarden permits duplicate custom-field names; a JSON object can't hold
+	// dups, so last-wins (documented).
+	n, err := normalizeItem(`{"name":"D","fields":[{"name":"k","value":"first","type":0},{"name":"k","value":"second","type":0}]}`)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	if n.Fields["k"] != "second" {
+		t.Fatalf("duplicate custom names must be last-wins, got %q", n.Fields["k"])
+	}
+}
+
+func TestNormalizeItemLinkedFieldSkipped(t *testing.T) {
+	// type 3 (linked) fields reference another field and carry a null value —
+	// they are not real data and must be skipped.
+	n, err := normalizeItem(`{"name":"L","login":{"username":"u"},"fields":[{"name":"linked","value":null,"type":3},{"name":"real","value":"r","type":0}]}`)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	if _, ok := n.Fields["linked"]; ok {
+		t.Fatalf("linked field must be skipped: %v", n.Fields)
+	}
+	if n.Fields["real"] != "r" {
+		t.Fatalf("real custom field dropped: %v", n.Fields)
+	}
+}
+
+func TestNormalizeItemMalformed(t *testing.T) {
+	if _, err := normalizeItem("not json"); err == nil {
+		t.Fatal("malformed item JSON must error")
+	}
+}
+
+// getItem opens a session and runs `bw get item <name>`, returning raw JSON.
+func TestGetItemFlow(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{
+		"vault kv get -field=vaultwarden_master_password secret/workstation/claude-users/emo": "pw",
+		"vault kv get -field=vaultwarden_client_id secret/workstation/claude-users/emo":       "user.x",
+		"vault kv get -field=vaultwarden_client_secret secret/workstation/claude-users/emo":   "cs",
+		"bw status":          `{"status":"locked"}`,
+		"bw unlock":          "SESS",
+		"bw get item github": sampleLoginItemJSON,
+	}}
+	uid := fmt.Sprintf("%d", os.Getuid())
+	raw, err := getItem(f.run, "emo", uid, "github")
+	if err != nil || !strings.Contains(raw, `"name":"GitHub"`) {
+		t.Fatalf("getItem = %q, %v", raw, err)
+	}
+	// The session key must reach bw via env, never argv.
+	for _, call := range f.calls {
+		for _, arg := range call {
+			if strings.Contains(arg, "SESS") {
+				t.Errorf("session leaked into argv: %v", call)
+			}
+		}
+	}
+}
+
+func TestVaultHelpMentionsAll(t *testing.T) {
+	if !strings.Contains(vaultHelp(), "--all") {
+		t.Error("vault help must document --all")
 	}
 }
