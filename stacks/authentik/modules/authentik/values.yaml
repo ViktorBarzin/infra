@@ -145,9 +145,11 @@ server:
 global:
   addPrometheusAnnotations: true
   image:
-    # CUSTOM OVERLAY (SLOW-1a): our thin patch over the official authentik server
-    # image — see stacks/authentik/Dockerfile (narrows the login-flow
-    # select_subclasses() query, ~1.4s -> ~14ms). Built by
+    # CUSTOM OVERLAY: two thin patches over the official authentik server image
+    # (see stacks/authentik/Dockerfile): (1) SLOW-1a — narrows the login-flow
+    # select_subclasses() query, ~1.4s -> ~14ms; (2) serve authentik's no-JS SFE
+    # login to old Safari/WebKit (<=16.3) so old devices (e.g. iPadOS<=15) get a
+    # working login (password+MFA) instead of a blank page. Built by
     # .github/workflows/build-authentik.yml to ghcr.io/viktorbarzin/authentik-server
     # (public package, anonymous pull — no imagePullSecret needed, like the
     # upstream goauthentik image). Keel is NO LONGER enrolled for this namespace
@@ -157,7 +159,7 @@ global:
     # UPGRADE = bump the Dockerfile FROM tag + this tag together (e.g. ->
     # 2026.3.0-patch1), let GHA rebuild, then apply.
     repository: ghcr.io/viktorbarzin/authentik-server
-    tag: "2026.2.4-patch1"
+    tag: "2026.2.4-patch2"
 
 worker:
   # 2 replicas: workers handle background tasks (LDAP sync, email,

@@ -109,6 +109,15 @@ Signin latency is dominated by screen count and round trips, not server time
   (the repo's old `strategy:` key was silently inert → live ran the chart-default
   25%/25% and dropped a server pod out of rotation on every roll). Now
   `maxSurge:1/maxUnavailable:0` keeps all 3 ready throughout a roll.
+- **Old-browser login (SFE)** (2026-06-28): authentik's modern flow SPA is ES2022
+  and renders a **blank login** on Safari/WebKit ≤16.3 (every iOS browser shares
+  the system WebKit, so it's not browser-choice — e.g. iPadOS ≤15). The overlay
+  image patches `flows/views/interface.py::compat_needs_sfe()` to also serve
+  authentik's built-in no-JS **Simplified Flow Executor** (SFE, ES5) to old
+  Safari, so those clients get the *real* authentik login (password + MFA +
+  reputation — no auth downgrade). A Traefik basic-auth fallback was rejected: it
+  would have put a single spoofable-UA password in front of `vbarzin→wizard`
+  (passwordless root on the devvm). See `stacks/authentik/patch-compat-sfe.py`.
 - **Outpost**: 2 replicas, `log_level=info` (was 1 replica at `trace`).
 - **auth-proxy nginx**: upstream `keepalive 32` + HTTP/1.1 — no per-request
   TCP setup on the forward-auth subrequest path.
