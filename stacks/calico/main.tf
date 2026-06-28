@@ -275,20 +275,67 @@ resource "kubernetes_network_policy_v1" "whisker_allow_traefik" {
   }
 }
 
+# Additive egress NetworkPolicy: permit whisker -> the kube-dns ClusterIP for DNS.
+#
+# ROOT CAUSE of the 2026-06-28 "Whisker UI empty" incident: the operator's own
+# `whisker` NetworkPolicy is policyTypes:[Ingress,Egress] and its egress allows
+# DNS only to the kube-dns *pods* (podSelector k8s-app=kube-dns). But
+# whisker-backend resolves `goldmane...svc` via the kube-dns *ClusterIP*
+# (10.96.0.10), and Calico drops UDP DNS to a ClusterIP under a podSelector-only
+# egress rule (verified: from whisker's netns, ClusterIP DNS = 100% timeout
+# while direct kube-dns pod-IP DNS = OK; a pod with no egress policy resolves
+# fine). whisker-backend resolves once in the brief startup window before the
+# policy programs, establishes its long-lived gRPC stream, and only re-resolves
+# when that stream breaks — at which point the blocked ClusterIP DNS wedges its
+# Go resolver and the UI goes empty (the durable aggregator, in its own
+# unrestricted namespace, is unaffected). k8s egress policies are additive, so
+# this ORs in an allow for the ClusterIP; the operator NP is left untouched.
+# (Empirically: adding this ipBlock rule flips ClusterIP DNS from 100% fail to
+# 100% ok.) See docs/runbooks/goldmane-flow-trail.md.
+resource "kubernetes_network_policy_v1" "whisker_allow_dns_clusterip" {
+  metadata {
+    name      = "whisker-allow-dns-clusterip"
+    namespace = "calico-system"
+  }
+  spec {
+    pod_selector {
+      match_labels = {
+        "app.kubernetes.io/name" = "whisker"
+      }
+    }
+    policy_types = ["Egress"]
+    egress {
+      # 10.96.0.10 is the kube-dns ClusterIP (cluster invariant — service CIDR
+      # 10.96.0.0/12, DNS always .10; the same IP CoreDNS/Technitium configs pin).
+      to {
+        ip_block {
+          cidr = "10.96.0.10/32"
+        }
+      }
+      ports {
+        port     = "53"
+        protocol = "UDP"
+      }
+      ports {
+        port     = "53"
+        protocol = "TCP"
+      }
+    }
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Whisker self-heal watchdog (ADR-0014; added 2026-06-28 after a live incident).
 #
-# FAILURE MODE: whisker-backend dials goldmane:7443 over a long-lived gRPC
-# stream. When that stream drops during a transient CNI/DNS blip (observed
-# 2026-06-28 right after k8s-node5's v1.35.6 upgrade settled — the pod's
-# resolver started timing out on the kube-dns ClusterIP), the Go client's
-# resolver gets WEDGED: it spams `failed to stream flows` /
-# `code = Unavailable: dns ... i/o timeout` forever and never reconnects, so
-# the Whisker UI shows EMPTY while the durable aggregator (a separate pod, same
-# Goldmane source) is unaffected. The operator ships whisker-backend with NO
-# liveness/readiness probe, so nothing restarts it — it sat broken until a
-# manual `kubectl delete pod`. Whisker is operator-managed (Whisker CR), so we
-# can't inject a probe; this watchdog is the supported-pattern alternative.
+# BACKSTOP. The REAL fix is kubernetes_network_policy_v1.whisker_allow_dns_clusterip
+# above (it unblocks the root-cause ClusterIP DNS). This watchdog stays as
+# defense-in-depth: whisker-backend has NO operator liveness probe, so if its
+# long-lived goldmane gRPC stream ever wedges for any OTHER reason (the Go
+# resolver spams `failed to stream flows` / `code = Unavailable` and never
+# reconnects -> empty UI, while the durable aggregator in its own namespace is
+# unaffected), nothing else would restart it. Whisker is operator-managed
+# (Whisker CR) so we can't inject a probe; this is the supported-pattern
+# alternative. With the DNS fix in place it should rarely, if ever, fire.
 #
 # It restarts the pod ONLY when the wedged signature is present AND Goldmane is
 # Ready (so a real Goldmane outage doesn't cause restart-thrash). A fresh pod

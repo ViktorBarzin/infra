@@ -45,9 +45,15 @@ def main() -> None:
     try:
         res = subprocess.run(
             [homelab, "memory", "recall", prompt, "--limit", "5"],
-            capture_output=True, text=True, timeout=4, env=os.environ,
+            capture_output=True, text=True, errors="replace", timeout=4,
+            env=os.environ,
         )
-    except (subprocess.TimeoutExpired, OSError):
+    except Exception:
+        # Best-effort: ANY failure — timeout, OSError, or a UnicodeDecodeError on
+        # truncated multibyte (Cyrillic) output — must silently skip recall this
+        # turn, exactly like the MCP being unavailable. errors="replace" above
+        # also keeps a mid-rune-truncated payload from raising here at all. Never
+        # let this hook surface a "UserPromptSubmit hook error".
         return
 
     out = (res.stdout or "").strip()
