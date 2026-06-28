@@ -86,10 +86,29 @@ Signin latency is dominated by screen count and round trips, not server time
   use the explicit-consent flow (it re-prompted every 4 weeks per app).
 - **Live tuning via `server.env`/`worker.env`** (the `authentik.*` Helm values
   are inert due to `existingSecret`): 3 gunicorn workers, 30m flow-plan cache,
-  15m policy cache, 60s persistent DB connections.
+  15m policy cache, gunicorn `max_requests=10000`/jitter=1000 (recycle
+  hardening — decorrelates the 9 workers' recycles from PG blips). **No
+  `CONN_MAX_AGE`** — persistent Django connections pin a PgBouncer server conn
+  1:1 and saturate the session-mode pool (reverted 2026-06-10).
 - **Static assets cached immutable**: `/static` ingress carve-out adds
   `Cache-Control: public, max-age=31536000, immutable` (assets are
   version-fingerprinted; authentik itself sends no max-age).
+- **Rate-limit carve-out** (2026-06-28): `/` and `/static` use a dedicated
+  `authentik-rate-limit` (100/1000) instead of the shared 10/50 default — the
+  login SPA cold-loads ~70 flow-executor chunks from `/static`; the default
+  burst 429'd the tail and a failed ES-module import left a blank login screen.
+- **Readiness tolerance** (2026-06-28): server `readinessProbe.failureThreshold:8`
+  (~80s, was the chart-default ~30s). The probe (`/-/health/ready/`) queries the
+  DB; too-tight tolerance let a sub-60s PG/pgbouncer transient return 503 on all
+  3 server pods at once → Traefik had no healthy backend → 502/503/504 (episodic
+  blank login + 30s hangs). 80s absorbs a full CNPG failover reconnect. Sessions
+  + cache are PostgreSQL-only since Redis was removed in 2026.2 (no external-cache
+  option), so request-serving is coupled to PG — this survives a short transient,
+  not a total CNPG outage.
+- **Rolling-update strategy** (2026-06-28): the chart key is `deploymentStrategy`
+  (the repo's old `strategy:` key was silently inert → live ran the chart-default
+  25%/25% and dropped a server pod out of rotation on every roll). Now
+  `maxSurge:1/maxUnavailable:0` keeps all 3 ready throughout a roll.
 - **Outpost**: 2 replicas, `log_level=info` (was 1 replica at `trace`).
 - **auth-proxy nginx**: upstream `keepalive 32` + HTTP/1.1 — no per-request
   TCP setup on the forward-auth subrequest path.
