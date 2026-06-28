@@ -4,17 +4,17 @@
 # Chart: oci://ghcr.io/gitroomhq/postiz-helmchart/charts/postiz (v1.0.5)
 # App  : ghcr.io/gitroomhq/postiz-app:v2.21.7
 #
-# Layout:
-#   - Bundled Postgres + Redis (chart subcharts) — fine for v1.
+# Layout (2026-06-16 — migrated off the bundled subcharts onto shared infra):
+#   - Postgres: shared CNPG cluster (pg-cluster-rw.dbaas). The `postiz` role
+#     uses a STATIC password in Vault KV secret/postiz (DB-engine rotation for
+#     pg-postiz was removed — see stacks/vault), so the chart carries
+#     DATABASE_URL directly with no ESO-merge race / no Reloader requirement.
+#   - Redis: shared standalone redis-master.redis on logical DB index 11.
 #   - Local file storage for uploads on a `proxmox-lvm` PVC mounted at /uploads.
-#   - JWT_SECRET is sourced from Vault via ESO. The chart's helper-templated
-#     Secret name is `<release>-secrets`; we pin `fullnameOverride: postiz` so
-#     the Secret resolves to `postiz-secrets`. The chart already mounts that
-#     Secret via `envFrom: secretRef: <fullname>-secrets`, so ESO patching the
-#     same Secret with `creationPolicy: Merge` injects `JWT_SECRET` into the
-#     pod env without forking the chart.
-#   - OAuth credentials for Meta/X/LinkedIn etc. are NOT pre-seeded — Postiz
-#     stores those in its own DB once the user adds providers via the UI.
+#   - All secret env (DATABASE_URL, JWT_SECRET, Meta OAuth app creds) is sourced
+#     from Vault and rendered into the chart's `secrets:` block. fullnameOverride
+#     pins the Secret/Service to `postiz` so the instagram-poster pipeline's
+#     internal URL (http://postiz.postiz.svc.cluster.local) keeps resolving.
 # ──────────────────────────────────────────────────────────────────────────────
 
 resource "kubernetes_namespace" "postiz" {
@@ -66,65 +66,120 @@ resource "kubernetes_persistent_volume_claim" "uploads" {
   }
 }
 
-# ExternalSecret: patches the chart-managed `postiz-secrets` Secret with
-# JWT_SECRET pulled from Vault. `creationPolicy: Merge` means ESO will not
-# take ownership — it just adds/updates the keys it manages, leaving the
-# Helm-owned Secret resource intact. The chart's deployment already wires
-# this Secret in via `envFrom: secretRef: postiz-secrets`.
-resource "kubernetes_manifest" "external_secret_jwt" {
-  field_manager {
-    force_conflicts = true
-  }
-  manifest = {
-    apiVersion = "external-secrets.io/v1"
-    kind       = "ExternalSecret"
-    metadata = {
-      name      = "postiz-jwt-secret"
-      namespace = kubernetes_namespace.postiz.metadata[0].name
-    }
-    spec = {
-      refreshInterval = "15m"
-      secretStoreRef = {
-        name = "vault-kv"
-        kind = "ClusterSecretStore"
-      }
-      target = {
-        name           = "postiz-secrets"
-        creationPolicy = "Merge"
-      }
-      data = [
-        {
-          secretKey = "JWT_SECRET"
-          remoteRef = { key = "instagram-poster", property = "postiz_jwt_secret" }
-        },
-        {
-          secretKey = "FACEBOOK_APP_ID"
-          remoteRef = { key = "instagram-poster", property = "facebook_app_id" }
-        },
-        {
-          secretKey = "FACEBOOK_APP_SECRET"
-          remoteRef = { key = "instagram-poster", property = "facebook_app_secret" }
-        },
-        {
-          secretKey = "INSTAGRAM_APP_ID"
-          remoteRef = { key = "instagram-poster", property = "instagram_app_id" }
-        },
-        {
-          secretKey = "INSTAGRAM_APP_SECRET"
-          remoteRef = { key = "instagram-poster", property = "instagram_app_secret" }
-        },
-      ]
-    }
-  }
-  depends_on = [kubernetes_namespace.postiz]
+# Vault-sourced secret env for the chart's `secrets:` block. The values are
+# static, so injecting them straight into the chart-managed Secret avoids the
+# ESO-merge-vs-helm-reset race and the Reloader requirement.
+#   secret/postiz           -> database_url (shared CNPG; postiz role, static pw)
+#   secret/instagram-poster -> JWT + Facebook/Instagram OAuth app creds (the same
+#                              Vault keys the old ESO used; shared with the
+#                              instagram-poster pipeline that drives the public API)
+data "vault_kv_secret_v2" "postiz" {
+  mount = "secret"
+  name  = "postiz"
 }
 
-# helm_release.postiz is intentionally NOT managed by Terraform (2026-05-30).
-# The release is stuck in pending-install; importing it would force a helm
-# upgrade. Left Helm-managed outside TF. The bundled PG/Redis + the postiz
-# Deployment/Service it creates therefore aren't TF resources either — only
-# the wrapper resources (namespace, PVC, ESO, ingresses, temporal Service,
-# nfs backup, backup CronJob) are TF-managed.
+data "vault_kv_secret_v2" "instagram_poster" {
+  mount = "secret"
+  name  = "instagram-poster"
+}
+
+# Postiz Helm release — Terraform-managed (2026-06-16), replacing the stuck
+# out-of-band pending-install release. Bundled PG/Redis subcharts disabled; the
+# app runs against shared CNPG + shared Redis. Chart name is `postiz-app`.
+resource "helm_release" "postiz" {
+  name       = "postiz"
+  namespace  = kubernetes_namespace.postiz.metadata[0].name
+  repository = "oci://ghcr.io/gitroomhq/postiz-helmchart/charts"
+  chart      = "postiz-app"
+  version    = var.chart_version
+  # No atomic/auto-rollback on first install so a bad boot is debuggable, not
+  # silently rolled back. wait=false so the apply doesn't block on pod readiness.
+  atomic = false
+  wait   = false
+  timeout = 600
+
+  values = [yamlencode({
+    fullnameOverride = "postiz"
+    # PARKED (2026-06-28): postiz + temporal scaled to 0 — IG-via-postiz is
+    # Meta-blocked (retired scopes); IG runs via the instagram-poster service.
+    # To revive: set this + temporal replicas back to 1 (and re-check image pins).
+    replicaCount     = 0
+    image = {
+      repository = "ghcr.io/gitroomhq/postiz-app"
+      tag        = var.image_tag
+      pullPolicy = "IfNotPresent"
+    }
+    service = {
+      type = "ClusterIP"
+      port = 80
+    }
+    # Bundled subcharts OFF — use shared CNPG + shared Redis instead.
+    postgresql = { enabled = false }
+    redis      = { enabled = false }
+
+    resources = {
+      # request lowered 2Gi->1Gi so the tier-4-aux ns requests.memory quota (3Gi)
+      # fits postiz + temporal + the new Elasticsearch; limit stays 3Gi (Burstable).
+      requests = { cpu = "100m", memory = "1Gi" }
+      limits   = { memory = "3Gi" }
+    }
+
+    # Non-secret env (chart renders these into the postiz-config ConfigMap).
+    env = {
+      MAIN_URL                     = "https://postiz.viktorbarzin.me"
+      FRONTEND_URL                 = "https://postiz.viktorbarzin.me"
+      NEXT_PUBLIC_BACKEND_URL      = "https://postiz.viktorbarzin.me/api"
+      BACKEND_INTERNAL_URL         = "http://localhost:3000"
+      TEMPORAL_ADDRESS             = "temporal:7233"
+      STORAGE_PROVIDER             = "local"
+      UPLOAD_DIRECTORY             = "/uploads"
+      NEXT_PUBLIC_UPLOAD_DIRECTORY = "/uploads"
+      IS_GENERAL                   = "true"
+      NX_ADD_PLUGINS               = "false"
+      DISABLE_REGISTRATION         = "true"
+      # Only Instagram + Facebook are enabled (shared Meta app creds); every
+      # other provider stays disabled until its own OAuth app is registered.
+      DISABLED_PROVIDERS = "x,linkedin,reddit,threads,youtube,tiktok,pinterest,dribbble,slack,discord,mastodon,bluesky,lemmy,warpcast,vk,beehiiv,telegram,wordpress,nostr,farcaster"
+
+      # Authentik OIDC ("Login with Authentik") — provider/app in authentik.tf.
+      # This Postiz version reads only the AUTH/TOKEN/USERINFO URLs + client
+      # id/secret (scope is hardcoded openid/profile/email; redirect is fixed to
+      # ${FRONTEND_URL}/settings). The NEXT_PUBLIC display name drives the login
+      # button label (best-effort: baked at image build, set here in case the
+      # image re-injects NEXT_PUBLIC vars at start).
+      POSTIZ_GENERIC_OAUTH                  = "true"
+      POSTIZ_OAUTH_AUTH_URL                 = "https://authentik.viktorbarzin.me/application/o/authorize/"
+      POSTIZ_OAUTH_TOKEN_URL                = "https://authentik.viktorbarzin.me/application/o/token/"
+      POSTIZ_OAUTH_USERINFO_URL             = "https://authentik.viktorbarzin.me/application/o/userinfo/"
+      POSTIZ_OAUTH_CLIENT_ID                = "postiz"
+      NEXT_PUBLIC_POSTIZ_OAUTH_DISPLAY_NAME = "Authentik"
+    }
+
+    # Secret env (chart renders these into the postiz-secrets Secret, envFrom).
+    secrets = {
+      DATABASE_URL              = data.vault_kv_secret_v2.postiz.data["database_url"]
+      REDIS_URL                 = "redis://redis-master.redis.svc.cluster.local:6379/11"
+      JWT_SECRET                = data.vault_kv_secret_v2.instagram_poster.data["postiz_jwt_secret"]
+      FACEBOOK_APP_ID           = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_id"]
+      FACEBOOK_APP_SECRET       = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_secret"]
+      INSTAGRAM_APP_ID          = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_id"]
+      INSTAGRAM_APP_SECRET      = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_secret"]
+      POSTIZ_OAUTH_CLIENT_SECRET = var.oauth_client_secret
+    }
+
+    # Persist uploaded media on the existing proxmox-lvm PVC.
+    extraVolumes = [{
+      name                  = "uploads-volume"
+      persistentVolumeClaim = { claimName = kubernetes_persistent_volume_claim.uploads.metadata[0].name }
+    }]
+    extraVolumeMounts = [{
+      name      = "uploads-volume"
+      mountPath = "/uploads"
+    }]
+  })]
+
+  depends_on = [kubernetes_namespace.postiz, module.tls_secret]
+}
 
 # Two ingresses on the same host. /uploads/* must be reachable WITHOUT auth
 # so Meta's IG Graph API fetcher can pull the JPEG when Postiz hands it the
@@ -167,13 +222,262 @@ module "ingress" {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Temporal — Postiz's scheduled-post backend. The Deployment is intentionally
-# NOT managed here: it was removed from the cluster and postiz currently runs
-# without it (immediate posting works; scheduled posting does not). Only the
-# Service below is retained/adopted so the in-cluster `temporal:7233` name
-# still resolves. To restore scheduled posting, re-add a temporalio/auto-setup
-# Deployment (see git history: removed 2026-05-30 during postiz state adoption).
+# Temporal — Postiz's workflow backend. RESTORED 2026-06-16 (#44). Postiz's
+# backend REFUSES to start its HTTP server unless temporal:7233 is reachable at
+# boot — so this is required for Postiz to serve ANYTHING (login + the public
+# API), not just scheduled posting. Runs temporalio/auto-setup against the shared
+# CNPG cluster with the SQL/Postgres visibility store (no Elasticsearch). The
+# `temporal` + `temporal_visibility` DBs already exist and are owned by the
+# `postiz` role, so SKIP_DB_CREATE=true + the role's static password is enough
+# (auto-setup only creates/updates schema, which the DB owner can do; it is NOT
+# superuser and must not attempt CREATE DATABASE).
 # ──────────────────────────────────────────────────────────────────────────────
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Elasticsearch — Temporal's VISIBILITY store (#44). Required: Postiz registers
+# >3 custom Text search attributes, which Temporal's Postgres visibility caps at
+# 3 ("cannot have more than 3 search attribute of type Text"). Postiz's upstream
+# docker-compose uses ES for exactly this reason. Single-node, security off.
+# `node.store.allow_mmap=false` avoids the vm.max_map_count bootstrap check so we
+# don't need a privileged sysctl init-container (blocked by Kyverno wave-1).
+# ──────────────────────────────────────────────────────────────────────────────
+
+resource "kubernetes_persistent_volume_claim" "es" {
+  wait_until_bound = false
+  metadata {
+    name      = "postiz-es-data"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "10%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "20Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm"
+    resources {
+      requests = { storage = "8Gi" }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].resources[0].requests]
+  }
+}
+
+resource "kubernetes_deployment_v1" "es" {
+  metadata {
+    name      = "elasticsearch"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+    labels    = { app = "elasticsearch" }
+  }
+  spec {
+    replicas = 1
+    selector { match_labels = { app = "elasticsearch" } }
+    strategy { type = "Recreate" }
+    template {
+      metadata { labels = { app = "elasticsearch" } }
+      spec {
+        security_context { fs_group = 1000 } # ES runs as uid 1000; make the PVC writable
+        # proxmox-lvm CSI doesn't honor fsGroup, so the PVC mounts root-owned and
+        # ES (uid 1000) can't write its data dir. Chown it via a root init-container
+        # (not privileged → passes Kyverno deny-privileged).
+        init_container {
+          name    = "fix-data-perms"
+          image   = "busybox:1.36"
+          command = ["sh", "-c", "chown -R 1000:1000 /usr/share/elasticsearch/data"]
+          security_context { run_as_user = 0 }
+          volume_mount {
+            name       = "data"
+            mount_path = "/usr/share/elasticsearch/data"
+          }
+        }
+        container {
+          name = "elasticsearch"
+          # docker.io/ prefix → matches the Kyverno-trusted `docker.io/*` allowlist
+          # (Elastic also publishes the official image to Docker Hub). ES 7.17 == Temporal ES_VERSION=v7.
+          image = "docker.io/library/elasticsearch:7.17.28"
+          env {
+            name  = "discovery.type"
+            value = "single-node"
+          }
+          env {
+            name  = "xpack.security.enabled"
+            value = "false"
+          }
+          env {
+            name  = "node.store.allow_mmap"
+            value = "false"
+          }
+          env {
+            name  = "cluster.routing.allocation.disk.threshold_enabled"
+            value = "false"
+          }
+          env {
+            name  = "ingest.geoip.downloader.enabled"
+            value = "false"
+          }
+          env {
+            name  = "ES_JAVA_OPTS"
+            value = "-Xms512m -Xmx512m"
+          }
+          port {
+            name           = "http"
+            container_port = 9200
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/usr/share/elasticsearch/data"
+          }
+          resources {
+            requests = { cpu = "100m", memory = "1Gi" }
+            limits   = { memory = "1536Mi" }
+          }
+          readiness_probe {
+            http_get {
+              path = "/_cluster/health?local=true"
+              port = 9200
+            }
+            initial_delay_seconds = 20
+            period_seconds        = 10
+            failure_threshold     = 18
+          }
+        }
+        volume {
+          name = "data"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.es.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
+
+resource "kubernetes_service" "es" {
+  metadata {
+    name      = "elasticsearch"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+  }
+  spec {
+    selector = { app = "elasticsearch" }
+    port {
+      name        = "http"
+      port        = 9200
+      target_port = 9200
+    }
+  }
+}
+
+resource "kubernetes_secret" "temporal_db" {
+  metadata {
+    name      = "temporal-db"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+  }
+  data = {
+    POSTGRES_PWD = data.vault_kv_secret_v2.postiz.data["db_password"]
+  }
+}
+
+resource "kubernetes_deployment_v1" "temporal" {
+  metadata {
+    name      = "temporal"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+    labels    = { app = "temporal" }
+  }
+  spec {
+    replicas = 0 # PARKED with postiz (2026-06-28) — revive: set to 1
+    selector { match_labels = { app = "temporal" } }
+    strategy { type = "Recreate" }
+    template {
+      metadata { labels = { app = "temporal" } }
+      spec {
+        container {
+          name  = "temporal"
+          image = "temporalio/auto-setup:1.28.1"
+
+          env {
+            name  = "DB"
+            value = "postgres12"
+          }
+          env {
+            name  = "SKIP_DB_CREATE"
+            value = "true"
+          }
+          env {
+            name  = "DBNAME"
+            value = "temporal"
+          }
+          # Visibility = Elasticsearch (Postiz needs >3 Text search attributes,
+          # which SQL visibility can't hold). Persistence stays on CNPG (DBNAME).
+          env {
+            name  = "ENABLE_ES"
+            value = "true"
+          }
+          env {
+            name  = "ES_SEEDS"
+            value = "elasticsearch.postiz.svc.cluster.local"
+          }
+          env {
+            name  = "ES_VERSION"
+            value = "v7"
+          }
+          env {
+            name  = "ES_PORT"
+            value = "9200"
+          }
+          env {
+            name  = "ES_SCHEME"
+            value = "http"
+          }
+          env {
+            name  = "POSTGRES_SEEDS"
+            value = "pg-cluster-rw.dbaas.svc.cluster.local"
+          }
+          env {
+            name  = "DB_PORT"
+            value = "5432"
+          }
+          env {
+            name  = "POSTGRES_USER"
+            value = "postiz"
+          }
+          env {
+            name = "POSTGRES_PWD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.temporal_db.metadata[0].name
+                key  = "POSTGRES_PWD"
+              }
+            }
+          }
+
+          port {
+            name           = "grpc"
+            container_port = 7233
+          }
+          resources {
+            requests = { cpu = "50m", memory = "256Mi" }
+            limits   = { memory = "512Mi" }
+          }
+          readiness_probe {
+            tcp_socket { port = 7233 }
+            initial_delay_seconds = 20
+            period_seconds        = 10
+            failure_threshold     = 12
+          }
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_deployment_v1.es, kubernetes_service.es]
+  lifecycle {
+    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
 
 resource "kubernetes_service" "temporal" {
   metadata {
@@ -191,18 +495,17 @@ resource "kubernetes_service" "temporal" {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Backup CronJob — nightly pg_dump of the postiz database to NFS.
+# Backup CronJob — nightly pg_dump of the bundled postiz-postgresql to NFS.
 #
-# Postiz's database lives on the SHARED CNPG cluster
-# (pg-cluster-rw.dbaas.svc.cluster.local/postiz) — the chart's bundled
-# PostgreSQL was dropped in the CNPG migration, so the old `postiz-postgresql`
-# host no longer resolves (this CronJob was failing on it for weeks —
-# BackupCronJobFailed; repointed 2026-06-26). The dump now connects via the
-# app's own DATABASE_URL (from the postiz-secrets Secret) so it always tracks
-# the live host + credentials. Dumps land on /srv/nfs/postiz-backup/ → covered
-# by inotify-driven offsite sync to Synology, closing the gap (CNPG data PVCs
-# live in dbaas, excluded from the LVM-snapshot leg). Only the postiz app DB is
-# dumped here; temporal's DBs are not.
+# The bundled PostgreSQL StatefulSet uses local-path storage on the K8s node
+# OS disk (chart default), which is NOT covered by Layer 1 (LVM thin
+# snapshots) or Layer 2 (sda file backup) of the 3-2-1 pipeline. A pg_dump
+# CronJob writing to /srv/nfs/postiz-backup/ closes the gap: dumps land on
+# Proxmox host NFS → covered by inotify-driven offsite sync to Synology.
+# Three databases are dumped: postiz (app data), temporal (workflow engine),
+# temporal_visibility (workflow search). Bitnami chart-default credentials
+# are used — same creds the Postiz pod itself uses, scoped to the postiz
+# namespace via ClusterIP-only Services.
 # ──────────────────────────────────────────────────────────────────────────────
 
 module "nfs_backup_host" {
@@ -252,9 +555,10 @@ resource "kubernetes_cron_job_v1" "postgres_backup" {
                 STATUS=0
                 for db in postiz; do
                   echo "Dumping $db..."
-                  if pg_dump -d "$DATABASE_URL" \
+                  if PGPASSWORD=postiz-password pg_dump -h postiz-postgresql -U postiz \
                        --format=custom --compress=6 \
-                       --file="$BACKUP_DIR/$db-$TIMESTAMP.dump"; then
+                       --file="$BACKUP_DIR/$db-$TIMESTAMP.dump" \
+                       "$db"; then
                     echo "  OK: $db ($(du -h "$BACKUP_DIR/$db-$TIMESTAMP.dump" | cut -f1))"
                   else
                     echo "  FAIL: $db" >&2
@@ -271,18 +575,6 @@ resource "kubernetes_cron_job_v1" "postgres_backup" {
                 exit $STATUS
                 EOT
               ]
-              # Connect to the live CNPG database using the app's own
-              # DATABASE_URL (postgresql://postiz:…@pg-cluster-rw.dbaas…/postiz)
-              # instead of a hardcoded host/password — survives credential changes.
-              env {
-                name = "DATABASE_URL"
-                value_from {
-                  secret_key_ref {
-                    name = "postiz-secrets"
-                    key  = "DATABASE_URL"
-                  }
-                }
-              }
               volume_mount {
                 name       = "backup"
                 mount_path = "/backup"
