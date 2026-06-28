@@ -261,7 +261,7 @@ Traefik chain:
 
 1. **Anti-AI bot-block** (`ai-bot-block` ForwardAuth, on by default via `ingress_factory`): blocks/tarpits known AI crawlers. **Fail-open** (currently a no-op `return 200` — poison-fountain scaled to 0; see `docs/architecture/security.md`).
 2. **Authentik Forward-Auth** (if `protected = true`): SSO authentication via OIDC. Non-authenticated users are redirected to login. Auth headers are stripped before forwarding to backend.
-3. **Rate Limiting**: Per-IP throttling. Returns **429 Too Many Requests** (not 503) when limit exceeded. Default is `rate-limit` (average 10 req/s, burst 50). Services whose clients legitimately burst harder get a dedicated middleware via `skip_default_rate_limit = true` + `extra_middlewares`: Immich (`immich-rate-limit`, 1000/20000, photo uploads) and ActualBudget (`actualbudget-rate-limit`, 50/300 — the Actual web app boots with ~70 parallel asset/migration revalidations; the default burst 429'd the tail and stalled every page load).
+3. **Rate Limiting**: Per-IP throttling. Returns **429 Too Many Requests** (not 503) when limit exceeded. Default is `rate-limit` (average 10 req/s, burst 50). Services whose clients legitimately burst harder get a dedicated middleware via `skip_default_rate_limit = true` + `extra_middlewares`: Immich (`immich-rate-limit`, 1000/20000, photo uploads), ActualBudget (`actualbudget-rate-limit`, 50/300 — the Actual web app boots with ~70 parallel asset/migration revalidations; the default burst 429'd the tail and stalled every page load), and authentik (`authentik-rate-limit`, 100/1000, on `/` and `/static` — the login SPA cold-loads ~70 flow-executor JS/CSS chunks from `/static`; the default burst 429'd the tail and a failed ES-module import left a blank login screen for cold/incognito/NAT-shared clients).
 4. **Retry**: 2 attempts with 100ms delay on transient failures (5xx errors, connection errors).
 
 Additional middleware:
@@ -550,7 +550,7 @@ chain — a CrowdSec/LAPI outage cannot cause 503s; it only stops new bans.) Che
 
 **Diagnosis**: Check Traefik middleware config for the affected IngressRoute.
 
-**Fix**: Give the service a dedicated higher-limit middleware (don't loosen the shared default): define `<service>-rate-limit` in `stacks/traefik/modules/traefik/middleware.tf`, then set `skip_default_rate_limit = true` + `extra_middlewares = ["traefik-<service>-rate-limit@kubernetescrd"]` on its `ingress_factory` call. Shared default is average 10 req/s / burst 50; Immich uses 1000/20000, ActualBudget 50/300.
+**Fix**: Give the service a dedicated higher-limit middleware (don't loosen the shared default): define `<service>-rate-limit` in `stacks/traefik/modules/traefik/middleware.tf`, then set `skip_default_rate_limit = true` + `extra_middlewares = ["traefik-<service>-rate-limit@kubernetescrd"]` on its `ingress_factory` call. Shared default is average 10 req/s / burst 50; Immich uses 1000/20000, ActualBudget 50/300, authentik 100/1000 (login SPA `/static` chunk burst → blank screen).
 
 ### Large Downloads or Uploads Truncate / Fail Partway
 

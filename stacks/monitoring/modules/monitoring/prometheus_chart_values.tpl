@@ -2385,6 +2385,24 @@ serverFiles:
             annotations:
               summary: "Traefik replica config divergence: max/min reload rate = {{ $value | printf \"%.1f\" }}x"
               description: "One Traefik replica is reloading config much less than its peers — likely a stale K8s informer cache returning 404 for ingresses. Identify the stale pod by comparing `traefik_config_reloads_total` across pods and delete it: `kubectl -n traefik delete pod <pod-name>`."
+          # Authentik '/' router 5xx — the episodic blank-login-screen + 30s-hang
+          # signature: all 3 goauthentik-server pods go NotReady together during a
+          # PG/pgbouncer transient, so Traefik has no healthy backend → 502/503/504.
+          # Needs traefik_router_requests_total (kept by the narrowed drop-regex in
+          # extraScrapeConfigs). Router name is verified live; it changes only if the
+          # authentik '/' ingress is renamed. 5% over 5m with a 0.1 req/s traffic
+          # floor so it doesn't fire on idle/just-restarted Prometheus.
+          - alert: AuthentikRootRouter5xxHigh
+            expr: |
+              sum(rate(traefik_router_requests_total{router="authentik-authentik-authentik-viktorbarzin-me@kubernetes",code=~"50[234]"}[5m]))
+              / sum(rate(traefik_router_requests_total{router="authentik-authentik-authentik-viktorbarzin-me@kubernetes"}[5m])) * 100 > 5
+              and sum(rate(traefik_router_requests_total{router="authentik-authentik-authentik-viktorbarzin-me@kubernetes"}[5m])) > 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "authentik '/' router 5xx rate {{ $value | printf \"%.1f\" }}% — episodic backend-unavailable (blank login / 30s hang)"
+              description: "The authentik UI '/' router is returning 502/503/504 — all 3 goauthentik-server pods are likely NotReady together during a PG/pgbouncer transient. Check `kubectl -n authentik get endpointslices` (should never be empty) and CNPG health."
           - alert: HighServiceErrorRate
             expr: |
               (
@@ -3642,8 +3660,15 @@ extraScrapeConfigs: |
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: instance
     metric_relabel_configs:
+      # Drop the high-cardinality duration HISTOGRAM (router/service/entrypoint
+      # *_bucket, ~5k series/pod — the real cardinality driver, commit 06490b06)
+      # plus the bulky bytes/tls/sum/count router series, but KEEP
+      # traefik_router_requests_total: the only per-router counter carrying both
+      # `router` and `code` labels, needed to see 4xx/5xx (incl. 429/503) on the
+      # authentik routers. ~448 series/pod. (The earlier blanket `traefik_router_.*`
+      # dropped it, so per-router error rates were un-queryable + un-alertable.)
       - source_labels: [__name__]
-        regex: 'traefik_(router|service|entrypoint)_request_duration_seconds_bucket|traefik_router_.*'
+        regex: 'traefik_(router|service|entrypoint)_request_duration_seconds_bucket|traefik_router_request(s_bytes_total|s_tls_total|_duration_seconds_(sum|count))|traefik_router_responses_bytes_total'
         action: drop
   - job_name: 'realestate-crawler-api'
     kubernetes_sd_configs:
