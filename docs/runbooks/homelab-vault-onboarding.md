@@ -72,8 +72,9 @@ bw --version            # confirm /usr/bin/bw resolves
 After landing a `cli/` change, rebuild the binary so users pick it up:
 
 ```bash
+# version is stamped from cli/VERSION, exactly as setup-devvm.sh does it
 sudo bash -c 'cd /home/wizard/code/infra/cli && \
-  go build -ldflags "-X main.version=$(git -C /home/wizard/code/infra describe --tags --always 2>/dev/null || echo dev)" \
+  go build -ldflags "-X main.version=$(cat VERSION 2>/dev/null || echo dev)" \
   -o /usr/local/bin/homelab .'
 ```
 
