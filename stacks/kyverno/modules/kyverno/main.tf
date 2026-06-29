@@ -36,8 +36,9 @@ resource "helm_release" "kyverno" {
       forceFailurePolicyIgnore = {
         enabled = true
       }
-      # Reporting fully disabled (2026-06-12, etcd-load-reduction). policyReports
-      # were already off, so admission/aggregate/background reporting generated
+      # Reporting features disabled (2026-06-12, etcd-load-reduction); the
+      # reportsController itself is now disabled too (2026-06-28, see below).
+      # policyReports were already off, so admission/aggregate/background generated
       # ephemeralreports + an hourly all-resource etcd re-scan for NO user-facing
       # output. Admission enforcement (deny-* policies) and Keel mutation are
       # independent of reporting; policy violations surface via Loki->Slack. This
@@ -56,7 +57,19 @@ resource "helm_release" "kyverno" {
       }
     }
 
+    # Fully disable the reports controller (2026-06-28). The 2026-06-12 change
+    # turned off the report *features* (policy/admission/aggregate/background) but
+    # LEFT this controller running with its default --enableReporting +
+    # --validatingAdmissionPolicyReports=true, so it kept emitting ephemeralreports.
+    # The 2026-06-21 kyverno upgrade then produced a one-time pile of ~10.5k
+    # cluster/namespaced ephemeralreports (~114MB in etcd) that nothing reaps
+    # (aggregation off) — and listing that range starves etcd's fdatasync hard
+    # enough to flap the apiserver (observed live 2026-06-28). Reports are not
+    # consumed (violations surface via Loki->Slack), so disable the controller
+    # outright; enforcement (deny-* policies) + Keel mutation are independent of
+    # it. Stale reports are cleared out-of-band (one-time, throttled).
     reportsController = {
+      enabled = false
       resources = {
         limits = {
           memory = "512Mi"
