@@ -829,7 +829,7 @@ resource "kubernetes_deployment" "phpmyadmin" {
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE — Keel manages tag updates
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
@@ -1159,6 +1159,16 @@ resource "null_resource" "pg_cluster" {
             wal_compression: "on"
             random_page_cost: "4"
             checkpoint_completion_target: "0.9"
+            # Write-reduction (2026-06-29, code-oflt): checkpoints were 100%
+            # timer-driven at the 5-min PG default, each firing a full-page-write
+            # burst + flush onto the contended sdc HDD. Stretch the timer to 15min
+            # and raise max/min_wal_size so size-triggered checkpoints stay rare and
+            # WAL segments get recycled (not churned). All three are reloadable
+            # (sighup) -> CNPG applies them without a restart. Bounded recovery-time
+            # tradeoff; completion_target 0.9 still smears each checkpoint's IO.
+            checkpoint_timeout: "15min"
+            max_wal_size: "4GB"
+            min_wal_size: "1GB"
           enableAlterSystem: true
         enableSuperuserAccess: true
         inheritedMetadata:
@@ -1605,7 +1615,7 @@ resource "kubernetes_deployment" "pgadmin" {
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE — Keel manages tag updates
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
