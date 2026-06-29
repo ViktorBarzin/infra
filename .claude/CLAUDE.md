@@ -197,7 +197,7 @@ the workflow's built-in `GITHUB_TOKEN` (`packages: write`).
 
 **`postgresql_host`** in `config.tfvars` is `pg-cluster-rw.dbaas.svc.cluster.local` (the CNPG primary). The legacy `postgresql.dbaas` service is a live compatibility alias (selector `cnpg.io/instanceRole=primary`, so it also reaches the primary — authentik's PgBouncer still points at it) — but use `pg-cluster-rw` for anything new. This variable is shared by ~12 stacks.
 
-**CNPG tuning** (in `stacks/dbaas/modules/dbaas/main.tf`): `shared_buffers=512MB`, `work_mem=16MB`, `wal_compression=on`, `effective_cache_size=1536MB`, pod memory 2Gi.
+**CNPG tuning** (in `stacks/dbaas/modules/dbaas/main.tf`): `shared_buffers=1024MB`, `effective_cache_size=2560MB`, `work_mem=16MB`, `max_connections=200`, `wal_compression=on`, pod memory 3Gi. **Write-reduction (2026-06-29, code-oflt):** `checkpoint_timeout=15min` + `max_wal_size=4GB` + `min_wal_size=1GB` — checkpoints were 100% timer-driven at the 5-min default, bursting full-page-writes onto the contended sdc HDD; all three are reloadable (no restart).
 
 ## Networking & Resilience
 - **Critical path services scaled to 3**: Traefik, Authentik, CrowdSec LAPI, PgBouncer, Cloudflared.
