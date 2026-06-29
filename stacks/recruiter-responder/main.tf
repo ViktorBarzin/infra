@@ -298,8 +298,8 @@ resource "kubernetes_deployment" "recruiter_responder" {
           }
 
           resources {
-            requests = { cpu = "100m", memory = "384Mi" }
-            limits   = { memory = "768Mi" }
+            requests = { cpu = "100m", memory = "192Mi" }
+            limits   = { memory = "256Mi" }
           }
         }
       }

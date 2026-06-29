@@ -178,11 +178,11 @@ resource "kubernetes_deployment" "insta2spotify" {
           }
           resources {
             limits = {
-              memory = "2Gi"
+              memory = "256Mi"
             }
             requests = {
               cpu    = "50m"
-              memory = "512Mi"
+              memory = "160Mi"
             }
           }
         }

@@ -284,10 +284,10 @@ resource "kubernetes_deployment" "breakglass" {
           resources {
             requests = {
               cpu    = "200m"
-              memory = "512Mi"
+              memory = "320Mi"
             }
             limits = {
-              memory = "4Gi"
+              memory = "512Mi"
             }
           }
         }
