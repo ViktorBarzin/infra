@@ -1113,7 +1113,7 @@ resource "null_resource" "pg_cluster" {
     storage_size  = "20Gi"
     storage_class = "proxmox-lvm-encrypted"
     memory_limit  = "3Gi"
-    pg_params     = "v4-shared1024-walcomp-workmem16-max200-ckpt15m-wal4g-minwal1g"
+    pg_params     = "v5-shared1024-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500"
     affinity      = "required-hostname-v1"
   }
 
@@ -1156,7 +1156,7 @@ resource "null_resource" "pg_cluster" {
             shared_buffers: "1024MB"
             effective_cache_size: "2560MB"
             work_mem: "16MB"
-            wal_compression: "on"
+            wal_compression: "zstd"
             random_page_cost: "4"
             checkpoint_completion_target: "0.9"
             # Write-reduction (2026-06-29, code-oflt): checkpoints were 100%
@@ -1169,6 +1169,17 @@ resource "null_resource" "pg_cluster" {
             checkpoint_timeout: "15min"
             max_wal_size: "4GB"
             min_wal_size: "1GB"
+            # Write-reduction (2026-06-29, analysis #6922). archive_timeout=0 stops
+            # the forced 16MB WAL segment switch every 300s that ships NOWHERE:
+            # archive_mode is CNPG-managed-on but .spec.backup is empty (no
+            # ObjectStore, firstRecoverabilityPoint empty), so it was ~4.6 GB/day of
+            # pure-waste WAL on the contended sdc. Daily pg_dump cron remains the real
+            # backup (~24h RPO). commit_delay groups concurrent fsyncs to cut fsync
+            # IOPS -- SAFE for ALL DBs incl financial: data is still fsynced before
+            # COMMIT acks; it only adds <=2.5ms latency under concurrency. (wal_compression
+            # also moved pglz->zstd above: ~30-50% smaller full-page images.)
+            archive_timeout: "0"
+            commit_delay: "2500"
           enableAlterSystem: true
         enableSuperuserAccess: true
         inheritedMetadata:
