@@ -1441,28 +1441,41 @@ serverFiles:
             annotations:
               summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) cannot pull image"
               description: "Check the deployment's image reference — often a stale tag, a removed registry, or a credentials mismatch. `kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}` shows the pull error."
-          # N-1 capacity check: if any non-GPU worker (node2/3/4) died, would
-          # its memory requests fit on the remaining Ready workers (incl. node1
-          # GPU node — its taint is PreferNoSchedule, soft)? Fires when the
-          # most-loaded non-GPU worker holds more memory requests than the rest
-          # of the cluster has free.
+          # N-1 capacity check (topology-agnostic — auto-tracks node add/remove/drain).
+          # If the most-loaded non-GPU worker died, would its memory REQUESTS
+          # reschedule onto the remaining Ready + schedulable workers (incl. the GPU
+          # node, whose taint is soft/PreferNoSchedule)? Fires when that worker holds
+          # more memory requests than the rest of the eligible pool has free.
+          # Node selection is dynamic via metrics: GPU node by nvidia_com_gpu capacity,
+          # drained/cordoned by kube_node_spec_unschedulable, down by the Ready
+          # condition. The control-plane is excluded by name (node!~"k8s-master.*")
+          # because this cluster's kube-state-metrics exposes neither kube_node_role
+          # nor node taints/labels — revisit if an HA control-plane is added.
           - alert: ClusterCannotTolerateNonGpuNodeLoss
             expr: |
               max(
-                sum by (node) (
-                  kube_pod_container_resource_requests{resource="memory",unit="byte",node=~"k8s-node[234]"}
+                (
+                  sum by (node) (
+                    kube_pod_container_resource_requests{resource="memory",unit="byte",node!~"k8s-master.*"}
+                  )
+                  * on(node) (kube_node_status_condition{condition="Ready",status="true"} == 1)
                 )
+                unless on(node) (kube_node_spec_unschedulable == 1)
+                unless on(node) (kube_node_status_capacity{resource="nvidia_com_gpu"} > 0)
               )
               >
               sum(
-                clamp_min(
-                  kube_node_status_allocatable{resource="memory",unit="byte",node=~"k8s-node[1234]"}
-                  - on(node) group_left() sum by (node) (
-                      kube_pod_container_resource_requests{resource="memory",unit="byte",node=~"k8s-node[1234]"}
-                    ),
-                  0
+                (
+                  clamp_min(
+                    kube_node_status_allocatable{resource="memory",unit="byte",node!~"k8s-master.*"}
+                    - on(node) group_left() sum by (node) (
+                        kube_pod_container_resource_requests{resource="memory",unit="byte",node!~"k8s-master.*"}
+                      ),
+                    0
+                  )
+                  * on(node) (kube_node_status_condition{condition="Ready",status="true"} == 1)
                 )
-                and on(node) (kube_node_status_condition{condition="Ready",status="true"} == 1)
+                unless on(node) (kube_node_spec_unschedulable == 1)
               )
             for: 15m
             labels:
@@ -1470,13 +1483,13 @@ serverFiles:
             annotations:
               summary: "Cluster cannot tolerate losing any non-GPU worker — memory requests won't fit on the rest"
               description: |
-                The most-loaded non-GPU worker (k8s-node2/3/4) has more memory
-                requests pinned to it than the rest of the workers (incl. node1
-                GPU node) currently have free. If that node went down, its
-                pods would not reschedule and stay Pending.
-                Remediation: right-size top reservers via Goldilocks (immich-server,
-                frigate, prometheus, pg-cluster, paperless) or bump VM RAM on
-                k8s-node2/k8s-node3 from 32GB → 48GB to match node1.
+                The most-loaded non-GPU worker has more memory requests pinned to it
+                than the rest of the eligible worker pool (incl. the GPU node)
+                currently has free. If that node went down, some of its pods would
+                not reschedule and would stay Pending.
+                Remediation: right-size the top memory reservers with `krr` (trim
+                over-provisioned requests — e.g. claude-agent, stirling-pdf, traefik,
+                authentik-worker), or add/return a worker node.
       # Goldmane edge-aggregator (ADR-0014 / infra #58, #61): the durable
       # who-talks-to-whom trail. The aggregator pod has NO /metrics endpoint,
       # so its health is inferred from kube-state-metrics signals — the trail
