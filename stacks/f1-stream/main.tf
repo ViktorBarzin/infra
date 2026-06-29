@@ -143,7 +143,7 @@ resource "kubernetes_deployment" "f1-stream" {
           # 256Mi = upperBound x ~1.3 (bursty); requests=limits per convention.
           resources {
             limits = {
-              memory = "256Mi"
+              memory = "384Mi"
             }
             requests = {
               cpu    = "50m"

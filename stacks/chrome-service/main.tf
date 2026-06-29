@@ -321,7 +321,7 @@ resource "kubernetes_deployment" "chrome_service" {
               memory = "1500Mi"
             }
             limits = {
-              memory = "2Gi"
+              memory = "2624Mi"
             }
           }
         }

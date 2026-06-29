@@ -347,7 +347,7 @@ resource "kubernetes_deployment" "forgejo" {
               memory = "4Gi"
             }
             limits = {
-              memory = "4Gi"
+              memory = "5Gi"
             }
           }
           port {

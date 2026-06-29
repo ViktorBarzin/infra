@@ -232,7 +232,7 @@ resource "kubernetes_deployment" "shlink" {
           # }
           resources {
             limits = {
-              memory = "512Mi"
+              memory = "704Mi"
             }
             requests = {
               cpu    = "25m"

@@ -201,7 +201,7 @@ resource "kubernetes_deployment" "linkwarden" {
               memory = "1Gi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "1280Mi"
             }
           }
         }
