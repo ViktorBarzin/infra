@@ -318,10 +318,10 @@ resource "kubernetes_deployment" "fire_planner" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "512Mi"
+              memory = "192Mi"
             }
             limits = {
-              memory = "1024Mi"
+              memory = "320Mi"
             }
           }
         }

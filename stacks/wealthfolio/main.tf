@@ -208,10 +208,10 @@ resource "kubernetes_deployment" "wealthfolio" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "256Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "512Mi"
             }
           }
         }

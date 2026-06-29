@@ -271,11 +271,12 @@ resource "kubernetes_deployment" "job_hunter" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "512Mi"
+              memory = "256Mi"
             }
             # Chromium baseline ~1Gi — matches broker-sync precedent.
+            # 30d peak only 118Mi (chromium rarely launched); keep 768Mi headroom.
             limits = {
-              memory = "1280Mi"
+              memory = "768Mi"
             }
           }
         }
