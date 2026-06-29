@@ -977,3 +977,5 @@ resource "kubernetes_cron_job_v1" "wealthfolio_daily_sync" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
+
+# rightsizing reconcile 2026-06-29: re-trigger CI apply (memory limit committed in batch 2/3 but #427 was killed mid-apply; local apply blocked on stale backend-init).

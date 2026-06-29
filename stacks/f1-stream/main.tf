@@ -329,3 +329,5 @@ module "ingress" {
 # CI retrigger v5 2026-05-16T23:10:38Z
 
 # CI retrigger v6 2026-05-16T23:18:58Z
+
+# rightsizing reconcile 2026-06-29: re-trigger CI apply (memory limit committed in batch 2/3 but #427 was killed mid-apply; local apply blocked on stale backend-init).
