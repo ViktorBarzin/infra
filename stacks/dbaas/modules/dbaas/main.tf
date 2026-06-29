@@ -1113,7 +1113,7 @@ resource "null_resource" "pg_cluster" {
     storage_size  = "20Gi"
     storage_class = "proxmox-lvm-encrypted"
     memory_limit  = "3Gi"
-    pg_params     = "v3-shared1024-walcomp-workmem16-max200"
+    pg_params     = "v4-shared1024-walcomp-workmem16-max200-ckpt15m-wal4g-minwal1g"
     affinity      = "required-hostname-v1"
   }
 
