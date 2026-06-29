@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Nightly k8s-upgrade report -> Slack.
+"""Weekly k8s-upgrade report -> Slack.
 
-Runs each morning (CronJob k8s-upgrade-nightly-report) after the 23:00 UTC
-version-check chain has finished. Reads the chain's Pushgateway gauges + live
-cluster state and posts ONE concise, actionable report to Slack so the
-autonomous upgrader's nightly outcome — and any blocker holding it back — is
-visible at a glance during the upgrade-cleanup window.
+Runs Monday morning (CronJob k8s-upgrade-nightly-report — historical name kept)
+after the Sunday-night version-check chain has finished. Reads the chain's
+Pushgateway gauges + live cluster state and posts ONE concise, actionable report
+to Slack so the autonomous upgrader's weekly outcome — and any blocker holding it
+back — is visible at a glance during the upgrade-cleanup window.
 
 Outcomes it distinguishes:
   ⚪ no upgrade needed     — cluster already at the latest supported patch
   🔴 BLOCKED              — compat gate refused the target; lists live reasons
   🟢 UPGRADED             — all nodes now on the detected target
   🟡 in progress / passed — gate passed, chain mid-flight (or partial)
-  ⚠️  detector STALE       — the 23:00 detector did not run last night
+  ⚠️  detector STALE       — the weekly (Sun 23:00) detector did not run
 
 Read-only. The pure helpers (parse_metrics / select / fmt_age / compose_report)
 are unit-tested in test_nightly_report.py; all I/O (kubectl, Pushgateway, the
@@ -28,7 +28,7 @@ import urllib.request
 PUSHGW = os.environ.get("PUSHGW", "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics")
 SLACK_FILE = os.environ.get("SLACK_FILE", "/secrets/k8s-upgrade/slack_webhook")
 SCRIPTS_DIR = os.environ.get("SCRIPTS_DIR", "/scripts")
-STALE_SECONDS = 90000  # ~25h: a nightly detector older than this didn't run last night
+STALE_SECONDS = 90000  # ~25h: report runs Mon ~7h after the Sun-night check, so >25h ⇒ the weekly check didn't fire
 
 _METRIC_RE = re.compile(r"^(?P<name>\w+)(?:\{(?P<labels>[^}]*)\})?\s+(?P<value>[-+0-9.eE]+)\s*$")
 _LABEL_RE = re.compile(r'(\w+)="([^"]*)"')
