@@ -27,13 +27,15 @@
 
 variable "schedule" {
   type = string
-  # Nightly 23:00 UTC (00:00 London) — overnight / low cluster usage, and clear
+  # Weekly Sunday 23:00 UTC (00:00 London) — overnight / low cluster usage, clear
   # of the kured OS-reboot window (01:00-05:00 UTC = 02:00-06:00 London) so the
-  # two drain-pipelines never overlap. Moved from 12:00 UTC noon on 2026-06-17
-  # (Viktor: disruptive node drains should run overnight). Was weekly Sunday
-  # until 2026-05-18. Concurrency bounded by the CronJob's Forbid policy +
-  # retry-on-failure Job-name idempotency.
-  default = "0 23 * * *"
+  # two drain-pipelines never overlap. Cadence history: weekly Sunday until
+  # 2026-05-18 → daily noon → daily 23:00 (2026-06-17) → back to weekly Sunday
+  # (2026-06-28). Rationale for weekly: the actionable-vs-held gate now quiets the
+  # routine "held" churn (e.g. 1.36), so a daily check/attempt buys little; weekly
+  # is enough and patch uptake lags ≤7d (an accepted trade-off). Concurrency
+  # bounded by the CronJob's Forbid policy + retry-on-failure Job-name idempotency.
+  default = "0 23 * * 0"
 }
 
 variable "enabled" {
@@ -41,13 +43,15 @@ variable "enabled" {
   default = true
 }
 
-# Nightly upgrade-report CronJob schedule. 06:07 UTC (07:07 London) — safely
-# after the 23:00 chain has finished (worst case ~02:00) and before the 08:00
-# London alert-digest, so the morning Slack skim shows last night's upgrade
-# outcome + any live blocker. Posts once/day; read-only.
+# Weekly upgrade-report CronJob schedule. Monday 06:07 UTC (07:07 London) — the
+# morning AFTER the Sunday-night check (~7h later, so nightly-report.py's ~25h
+# staleness threshold stays valid AND still flags a missed weekly run), and before
+# the 08:00 London alert-digest so the Monday skim shows the weekly upgrade
+# outcome + any live blocker. Posts once/week; read-only. (The CronJob keeps the
+# historical name k8s-upgrade-nightly-report — not renamed to avoid churn.)
 variable "report_schedule" {
   type    = string
-  default = "7 6 * * *"
+  default = "7 6 * * 1"
 }
 
 # Mirrors `local.image_tag` in stacks/claude-agent-service/main.tf — bump
@@ -494,16 +498,16 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                 #    Idempotency: deterministic name reconciles via `apply`.
                 JOB_NAME="k8s-upgrade-preflight-$${TARGET//./-}"
                 MASTER_JOB="k8s-upgrade-master-$${TARGET//./-}"
-                ANNOUNCE=yes   # Slack the spawn? Suppressed for silent nightly re-evaluations of a standing gate refusal.
+                ANNOUNCE=yes   # Slack the spawn? Suppressed for silent per-run re-evaluations of a standing gate refusal.
 
-                # Idempotency + nightly re-evaluation:
+                # Idempotency + per-run re-evaluation:
                 #   - FAILED preflight (transient gate abort, e.g. a spurious
                 #     critical alert / unhealthy node) -> delete + re-spawn, announced.
                 #   - COMPLETE preflight but NO master Job spawned -> the compat
                 #     gate REFUSED the target (blocked/held now Complete cleanly
                 #     rather than Failing). Re-spawn SILENTLY so the gate re-checks
-                #     nightly (the refusal may have cleared: addon upgraded / matrix
-                #     updated / upstream shipped) WITHOUT nightly Slack noise for a
+                #     each scheduled run (the refusal may have cleared: addon
+                #     upgraded / matrix updated / upstream shipped) WITHOUT per-run Slack noise for a
                 #     standing refusal — the morning report (+ K8sUpgradeBlocked for
                 #     actionable) is the signal.
                 #   - Otherwise (Active, or Complete with the chain advanced) -> skip.
@@ -521,7 +525,7 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                     slack "Preflight Job $JOB_NAME exists but FAILED — deleting and re-spawning"
                     /usr/local/bin/kubectl -n k8s-upgrade delete job "$JOB_NAME" --wait=true >/dev/null 2>&1 || true
                   elif [ "$JOB_COMPLETE" = "True" ] && ! /usr/local/bin/kubectl -n k8s-upgrade get job "$MASTER_JOB" >/dev/null 2>&1; then
-                    echo "Preflight $JOB_NAME Complete + no master Job (gate refused) — silent nightly re-evaluate"
+                    echo "Preflight $JOB_NAME Complete + no master Job (gate refused) — silent per-run re-evaluate"
                     /usr/local/bin/kubectl -n k8s-upgrade delete job "$JOB_NAME" --wait=true >/dev/null 2>&1 || true
                     ANNOUNCE=no
                   else
@@ -591,7 +595,7 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
 #
 # Each morning, after the 23:00 chain has finished, posts ONE concise Slack
 # report of last night's upgrade outcome (no-op / blocked+reasons / upgraded /
-# in-progress) so the autonomous upgrader's nightly result — and any live
+# in-progress) so the autonomous upgrader's weekly result — and any live
 # blocker — is visible at a glance. Read-only: reads the chain's Pushgateway
 # gauges + live nodes/jobs and re-runs compat-gate.py for fresh blocker reasons.
 # Reuses the same SA, creds secret (slack_webhook), and scripts ConfigMap as the
