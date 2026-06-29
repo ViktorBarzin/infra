@@ -28,6 +28,14 @@ resource "helm_release" "external_secrets" {
 
   values = [yamlencode({
     installCRDs = true
+    # --enable-vault-token-cache (graduated in chart 2.6.0): ESO reuses ONE Vault token
+    # (the `eso` k8s-auth role mints a 240h periodic token) instead of login+lookup+revoke
+    # on every secret fetch. Cuts the dominant Vault Raft write-churn on the contended PVE
+    # sdc HDD: baseline was ~0.22 login/s + ~0.22 revoke-self/s across 92 ExternalSecrets@15m,
+    # each cycle a token create+revoke (+lease) written ×3 members. (code-oflt write-reduction)
+    extraArgs = {
+      "enable-vault-token-cache" = ""
+    }
   })]
 }
 
