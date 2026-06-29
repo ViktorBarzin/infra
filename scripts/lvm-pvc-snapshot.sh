@@ -7,7 +7,7 @@ set -euo pipefail
 VG="pve"
 THINPOOL="data"
 SNAP_SUFFIX_FORMAT="%Y%m%d_%H%M"
-RETENTION_DAYS=7
+RETENTION_DAYS=3  # 7->3 (2026-06-29, code-oflt): fewer thin snapshots = less tmeta CoW write-IOPS on sdc + ~1TB freed; daily-backup keeps 4wk file-level history
 MIN_FREE_PCT=10
 PUSHGATEWAY="${LVM_SNAP_PUSHGATEWAY:-http://10.0.20.100:30091}"
 PUSHGATEWAY_JOB="lvm-pvc-snapshot"
