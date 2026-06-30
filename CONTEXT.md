@@ -56,6 +56,28 @@ _Avoid_: "core service" (collides with the `0-core-*` Namespace tier name).
 A non-admin identity declared in `secret/platform → k8s_users` (JSON map). Owns one or more namespaces and one or more public subdomains. Also drives a **Workstation profile** (an identity has both a cluster facet and a workstation facet).
 _Avoid_: bare "user", "tenant".
 
+### GPU sharing
+
+**GPU slice**:
+One unit of `nvidia.com/gpu` on the time-sliced Tesla T4 — a **scheduling turn, NOT a memory allocation**. The device plugin advertises the card ×100; a pod requesting `nvidia.com/gpu: 1` gets GPU *access*, with zero guarantee about how much of the 16 GB VRAM it may use. "Overallocate GPU memory" is a real failure precisely because a slice carries no memory accounting.
+_Avoid_: reading a GPU slice as a memory reservation or a fraction of the card; "vGPU" (we run no vGPU/MIG/MPS — see ADR-0016).
+
+**GPU memory budget**:
+The custom node-level extended resource **`viktorbarzin.me/gpumem`** (integer MiB) that makes the scheduler VRAM-aware (ADR-0016). The GPU node advertises a total (~14000 MiB = physical minus driver/context slack); each GPU tenant declares `resources.limits."viktorbarzin.me/gpumem"`; being non-overcommittable, the scheduler refuses to co-schedule past the card (overflow → `Pending`). A *schedule-time* reservation, **not** a runtime cap — it stops pile-on, not a single tenant's runaway.
+_Avoid_: treating it as a hard CUDA cap (it isn't — that's what the **GPU watchdog** is for); confusing it with the `nvidia.com/gpu` slice (orthogonal axes: access vs memory accounting).
+
+**GPU watchdog**:
+The `gpu-vram-watchdog` CronJob (nvidia ns) that supplies the runtime teeth the **GPU memory budget** lacks: when *actual* free VRAM (`gpu_pod_memory_used_bytes`) drops below a floor, it recycles the biggest tenant that is **over its declared budget**. Enforces the budget as a contract, acts only under pressure (so bursting into genuine slack is fine), and is what bounds the 2026-06-02 immich-ml runaway class.
+_Avoid_: expecting it to act on priority (it enforces the *budget*, since co-tenants often share one PriorityClass); expecting instant prevention (it corrects with a detection lag — soft, by design).
+
+**GPU demand-gate**:
+The scale-0↔1 admission CronJobs (`stacks/tts`) that bring a best-effort *batch* GPU tenant (chatterbox-tts) up only when free VRAM ≥ a floor and idle it back down — letting on-demand tenants fill real slack without holding a reserved **GPU memory budget** seat.
+_Avoid_: using it for interactive tenants (cold-load lag — portal-stt is warm-resident instead); conflating it with the **GPU watchdog** (gate = admit on free VRAM; watchdog = recycle on over-budget pressure).
+
+**gpu-workload priority**:
+The `gpu-workload` PriorityClass (1,200,000) auto-stamped on every GPU pod by the Kyverno `inject-gpu-workload-priority` policy — the exclude list (`tts`) drops to `tier-2-gpu` (600,000) so it loses node-pressure eviction first. Governs *Kubernetes node* eviction order, **not** VRAM (VRAM is the budget + watchdog's job).
+_Avoid_: assuming it protects VRAM; it is a scheduling/eviction priority on node memory/CPU pressure.
+
 ### Workstation (multi-user devvm)
 
 **devvm**:
