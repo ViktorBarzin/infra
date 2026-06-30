@@ -1507,6 +1507,107 @@
       ]
     },
     {
+      "id": 9230,
+      "title": "Effective hourly rate \u2014 gross vs net (\u00a3/h, per year)",
+      "description": "Annual pay \u00f7 hours worked. Hours = 40h/week contractual (2,080h per full year, per offer letter: Mon\u2013Fri 9\u201318 less 1h lunch), prorated by months actually worked. Gross = gross_pay incl. notional RSU vest; Net = take-home (RSU offset out). Calendar year; last 10y.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "timeFrom": "10y",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "axisLabel": "\u00a3 / hour",
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Gross (incl. RSU)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Net (take-home)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max",
+            "min"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "format": "time_series",
+          "editorMode": "code",
+          "rawQuery": true,
+          "rawSql": "WITH y AS (\n  SELECT date_trunc('year', pay_date) AS yr,\n         COUNT(DISTINCT date_trunc('month', pay_date)) AS months,\n         SUM(gross_pay) AS gross,\n         SUM(net_pay)   AS net\n  FROM payslip_ingest.payslip\n  GROUP BY 1\n)\nSELECT yr::timestamp AS \"time\",\n       gross / (months * (40.0 * 52 / 12)) AS \"Gross (incl. RSU)\",\n       net   / (months * (40.0 * 52 / 12)) AS \"Net (take-home)\"\nFROM y\nORDER BY yr"
+        }
+      ]
+    },
+    {
       "type": "row",
       "title": "Holdings",
       "collapsed": false,
@@ -1515,7 +1616,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 78
+        "y": 86
       },
       "panels": []
     },
@@ -1532,7 +1633,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 79
+        "y": 87
       },
       "fieldConfig": {
         "defaults": {
@@ -1729,7 +1830,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 79
+        "y": 87
       },
       "fieldConfig": {
         "defaults": {
@@ -1782,7 +1883,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 90
+        "y": 98
       },
       "panels": []
     },
@@ -1799,7 +1900,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 91
+        "y": 99
       },
       "fieldConfig": {
         "defaults": {
@@ -1916,7 +2017,7 @@
         "h": 12,
         "w": 12,
         "x": 12,
-        "y": 91
+        "y": 99
       },
       "fieldConfig": {
         "defaults": {
@@ -2135,7 +2236,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 104
+        "y": 112
       },
       "panels": []
     },
@@ -2152,7 +2253,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 105
+        "y": 113
       },
       "fieldConfig": {
         "defaults": {
@@ -2324,7 +2425,7 @@
       "title": "FC::intro",
       "gridPos": {
         "x": 0,
-        "y": 118,
+        "y": 126,
         "w": 24,
         "h": 4
       },
@@ -2339,7 +2440,7 @@
       "title": "FC::solo header",
       "gridPos": {
         "x": 0,
-        "y": 122,
+        "y": 130,
         "w": 24,
         "h": 2
       },
@@ -2358,7 +2459,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 124,
+        "y": 132,
         "w": 5,
         "h": 5
       },
@@ -2411,7 +2512,7 @@
       },
       "gridPos": {
         "x": 5,
-        "y": 124,
+        "y": 132,
         "w": 4,
         "h": 5
       },
@@ -2484,7 +2585,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 124,
+        "y": 132,
         "w": 5,
         "h": 5
       },
@@ -2549,7 +2650,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 124,
+        "y": 132,
         "w": 5,
         "h": 5
       },
@@ -2602,7 +2703,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 124,
+        "y": 132,
         "w": 5,
         "h": 5
       },
@@ -2651,7 +2752,7 @@
       "title": "FC::household header",
       "gridPos": {
         "x": 0,
-        "y": 129,
+        "y": 137,
         "w": 24,
         "h": 2
       },
@@ -2670,7 +2771,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 131,
+        "y": 139,
         "w": 5,
         "h": 5
       },
@@ -2723,7 +2824,7 @@
       },
       "gridPos": {
         "x": 5,
-        "y": 131,
+        "y": 139,
         "w": 4,
         "h": 5
       },
@@ -2796,7 +2897,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 131,
+        "y": 139,
         "w": 5,
         "h": 5
       },
@@ -2861,7 +2962,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 131,
+        "y": 139,
         "w": 5,
         "h": 5
       },
@@ -2914,7 +3015,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 131,
+        "y": 139,
         "w": 5,
         "h": 5
       },
@@ -2963,7 +3064,7 @@
       "title": "FC::family header",
       "gridPos": {
         "x": 0,
-        "y": 136,
+        "y": 144,
         "w": 24,
         "h": 2
       },
@@ -2982,7 +3083,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 138,
+        "y": 146,
         "w": 5,
         "h": 5
       },
@@ -3035,7 +3136,7 @@
       },
       "gridPos": {
         "x": 5,
-        "y": 138,
+        "y": 146,
         "w": 4,
         "h": 5
       },
@@ -3108,7 +3209,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 138,
+        "y": 146,
         "w": 5,
         "h": 5
       },
@@ -3173,7 +3274,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 138,
+        "y": 146,
         "w": 5,
         "h": 5
       },
@@ -3226,7 +3327,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 138,
+        "y": 146,
         "w": 5,
         "h": 5
       },
@@ -3275,7 +3376,7 @@
       "title": "FC::safety header",
       "gridPos": {
         "x": 0,
-        "y": 143,
+        "y": 151,
         "w": 24,
         "h": 2
       },
@@ -3294,7 +3395,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 145,
+        "y": 153,
         "w": 6,
         "h": 5
       },
@@ -3359,7 +3460,7 @@
       },
       "gridPos": {
         "x": 6,
-        "y": 145,
+        "y": 153,
         "w": 6,
         "h": 5
       },
@@ -3412,7 +3513,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 145,
+        "y": 153,
         "w": 6,
         "h": 5
       },
@@ -3461,7 +3562,7 @@
       "title": "FC::Anca bridge",
       "gridPos": {
         "x": 18,
-        "y": 145,
+        "y": 153,
         "w": 6,
         "h": 5
       },
