@@ -275,26 +275,60 @@ resource "kubernetes_service" "frigate-rtsp" {
     labels = {
       "app" = "frigate"
     }
+    annotations = {
+      # Dedicated MetalLB IP for go2rtc L4 traffic (RTSP restream + WebRTC).
+      # Pool 10.0.20.200-220; .200 shared, .201 Technitium, .202 KMS, .203
+      # Traefik -> .204 is the first free address (CONFIRM no conflict before
+      # merge). Gives HA Sofia (192.168.1.8) + LAN browsers a STABLE endpoint
+      # reachable cross-VLAN, instead of the Traefik HTTP(S) ingress which
+      # cannot carry RTSP/WebRTC. This is what unblocks native Frigate live in
+      # HA (today only go2rtc-MSE-over-Traefik works).
+      "metallb.io/loadBalancerIPs" = "10.0.20.204"
+    }
   }
 
   spec {
-    type = "NodePort" # Should always live on node1 where the gpu is
+    # Was NodePort. ETP=Local: the Frigate pod is pinned to the GPU node, so
+    # MetalLB advertises .204 only from that node -> no SNAT, real client IP
+    # preserved (same pattern as Traefik .203 / KMS .202).
+    type                    = "LoadBalancer"
+    external_traffic_policy = "Local"
     selector = {
       app = "frigate"
     }
+    # item 2 - RTSP restream reachable from HA for native HLS. Companion (NOT
+    # Terraform): in HA -> Frigate integration set
+    #   rtsp_url_template = rtsp://10.0.20.204:8554/{{ name }}
     port {
       name        = "rtsp-tcp"
       target_port = 8554
       port        = 8554
       protocol    = "TCP"
-      node_port   = 30554
     }
     port {
       name        = "rtsp-udp"
       target_port = 8554
       port        = 8554
       protocol    = "UDP"
-      node_port   = 30554
+    }
+    # item 1 - go2rtc WebRTC. Container already listens on 8555 TCP+UDP but no
+    # Service exposed it, so WebRTC live in HA could never connect. Companion
+    # (NOT Terraform; lives in config.yml on the frigate-config PVC):
+    #   go2rtc:
+    #     webrtc:
+    #       candidates:
+    #         - 10.0.20.204:8555
+    port {
+      name        = "webrtc-tcp"
+      target_port = 8555
+      port        = 8555
+      protocol    = "TCP"
+    }
+    port {
+      name        = "webrtc-udp"
+      target_port = 8555
+      port        = 8555
+      protocol    = "UDP"
     }
   }
 }
