@@ -852,6 +852,32 @@ serverFiles:
   #           targets: "alertmanager.viktorbarzin.lan"
   alerting_rules.yml:
     groups:
+      # GPU VRAM budget (ADR-0016). The post-mortem 2026-06-02 follow-up — alert
+      # on GPU free-VRAM — finally built. Physical T4 = 15360 MiB; free =
+      # physical - sum(gpu_pod_memory_used_bytes) (the host-PID exporter gauge).
+      - name: GPU VRAM
+        rules:
+          - alert: GPUVRAMLow
+            expr: (15360 * 1024 * 1024 - sum(gpu_pod_memory_used_bytes)) / 1024 / 1024 < 1024 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "GPU free VRAM {{ $value | printf \"%.0f\" }} MiB (<1024) — T4 oversubscribed; gpu-vram-watchdog recycles the biggest over-budget tenant. See ADR-0016."
+          - alert: GPUVRAMTelemetryDown
+            expr: absent(gpu_pod_memory_used_bytes)
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "GPU VRAM telemetry (gpu-pod-exporter) absent 15m — the free-VRAM alert AND the watchdog are blind to per-pod usage."
+          - alert: GPUVRAMWatchdogDown
+            expr: kube_deployment_status_replicas_available{namespace="nvidia", deployment="gpu-vram-watchdog"} < 1
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "gpu-vram-watchdog has no available replica for 15m — runtime VRAM enforcement (over-budget recycle) is OFF. Budget still scheduler-enforced."
       - name: R730 Host
         rules:
           - alert: HighCPUTemperature

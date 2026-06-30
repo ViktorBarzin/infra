@@ -266,8 +266,11 @@ resource "kubernetes_config_map" "llama_swap_config" {
 
 # Single Deployment running llama-swap. Spawns per-model llama-server
 # subprocesses on demand and unloads them after `ttl` seconds idle.
-# The whole T4 is allocated to this pod via nvidia.com/gpu=1; immich-ml
-# must be scaled to 0 during benchmark runs.
+# nvidia.com/gpu=1 buys ONE time-slice (a scheduling turn, NOT the card's
+# memory) — the T4 is shared with immich-ml/frigate/immich-server/portal-stt.
+# VRAM is bounded per-tenant by the gpumem budget + watchdog (ADR-0016), not by
+# scaling co-tenants to 0. llama-swap loads ONE model at a time (no `groups` =
+# swap mode, ttl=600 unloads idle), so its footprint is the largest single model.
 resource "kubernetes_deployment" "llama_swap" {
   metadata {
     name      = "llama-swap"
@@ -355,6 +358,9 @@ resource "kubernetes_deployment" "llama_swap" {
             limits = {
               memory           = "12Gi"
               "nvidia.com/gpu" = "1"
+              # GPU VRAM budget (ADR-0016): one model at a time; qwen3-8b @16k
+              # peak ~4.35 GiB + headroom (the protected recruiter-responder tenant).
+              "viktorbarzin.me/gpumem" = "5000"
             }
           }
         }

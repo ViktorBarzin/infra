@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "frigate" {
   metadata {
     name = "frigate"
     labels = {
-      tier = local.tiers.gpu
+      tier               = local.tiers.gpu
       "keel.sh/enrolled" = "true"
     }
     # labels = {
@@ -117,6 +117,8 @@ resource "kubernetes_deployment" "frigate" {
             limits = {
               memory           = "10Gi"
               "nvidia.com/gpu" = "1"
+              # GPU VRAM budget (ADR-0016): detector + ffmpeg decode (~1.9 GiB).
+              "viktorbarzin.me/gpumem" = "2000"
             }
           }
           env {

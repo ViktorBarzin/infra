@@ -295,6 +295,8 @@ resource "kubernetes_deployment" "portal_stt" {
             limits = {
               memory           = "4Gi"
               "nvidia.com/gpu" = "1" # ONE time-slice (operator advertises 100), NOT the whole card
+              # GPU VRAM budget (ADR-0016): large-v3-turbo int8 warm-resident (~1.5 GiB).
+              "viktorbarzin.me/gpumem" = "1500"
             }
           }
         }

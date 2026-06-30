@@ -376,6 +376,10 @@ resource "kubernetes_deployment" "immich_server" {
             limits = {
               memory           = "8Gi"
               "nvidia.com/gpu" = "1"
+              # GPU VRAM budget (ADR-0016): schedule-time reservation + the
+              # gpu-vram-watchdog recycle threshold. Bounds the onnxruntime
+              # OCR-arena runaway that starved llama-swap on 2026-06-02.
+              "viktorbarzin.me/gpumem" = "3000"
             }
           }
         }
@@ -732,6 +736,8 @@ resource "kubernetes_deployment" "immich-machine-learning" {
             limits = {
               memory           = "3584Mi"
               "nvidia.com/gpu" = "1"
+              # GPU VRAM budget (ADR-0016): NVENC transcode footprint (~1.2 GiB).
+              "viktorbarzin.me/gpumem" = "1800"
             }
           }
           liveness_probe {
