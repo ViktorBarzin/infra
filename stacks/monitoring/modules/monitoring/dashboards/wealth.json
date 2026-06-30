@@ -1509,7 +1509,7 @@
     {
       "id": 9230,
       "title": "Effective hourly rate \u2014 gross vs net (\u00a3/h, per year)",
-      "description": "Annual pay \u00f7 hours worked. Hours = 40h/week contractual (2,080h per full year, per offer letter: Mon\u2013Fri 9\u201318 less 1h lunch), prorated by months actually worked. Gross = gross_pay incl. notional RSU vest; Net = take-home (RSU offset out). Calendar year; last 10y.",
+      "description": "Annual pay \u00f7 hours worked. Hours = 40h/week contractual (2,080h per full year, per offer letter: Mon\u2013Fri 09:00\u201318:00 less 1h lunch), prorated by months actually worked. Gross = gross_pay incl. notional RSU vest; Net = take-home. The latest still-accruing year is shown DASHED: it reads high because the full-year bonus (paid each March) and front-loaded quarterly RSU vests are divided by only the months worked so far, and settles lower as the year completes. Calendar year; last 10y.",
       "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1575,6 +1575,64 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Gross (current yr, partial)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Net (current yr, partial)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
           }
         ]
       },
@@ -1603,7 +1661,7 @@
           "format": "time_series",
           "editorMode": "code",
           "rawQuery": true,
-          "rawSql": "WITH y AS (\n  SELECT date_trunc('year', pay_date) AS yr,\n         COUNT(DISTINCT date_trunc('month', pay_date)) AS months,\n         SUM(gross_pay) AS gross,\n         SUM(net_pay)   AS net\n  FROM payslip_ingest.payslip\n  GROUP BY 1\n)\nSELECT yr::timestamp AS \"time\",\n       gross / (months * (40.0 * 52 / 12)) AS \"Gross (incl. RSU)\",\n       net   / (months * (40.0 * 52 / 12)) AS \"Net (take-home)\"\nFROM y\nORDER BY yr"
+          "rawSql": "WITH y AS (\n  SELECT date_trunc('year', pay_date) AS yr,\n         COUNT(DISTINCT date_trunc('month', pay_date)) AS months,\n         SUM(gross_pay) AS gross, SUM(net_pay) AS net\n  FROM payslip_ingest.payslip GROUP BY 1\n),\ncalc AS (\n  SELECT yr, months,\n         gross / (months * (40.0 * 52 / 12)) AS gross_h,\n         net   / (months * (40.0 * 52 / 12)) AS net_h\n  FROM y\n),\nflagged AS (\n  SELECT yr, gross_h, net_h, (yr = MAX(yr) OVER () AND months < 12) AS partial FROM calc\n),\nwithlead AS (\n  SELECT yr, gross_h, net_h, partial,\n         COALESCE(LEAD(partial) OVER (ORDER BY yr), false) AS next_partial FROM flagged\n)\nSELECT yr::timestamp AS \"time\",\n       CASE WHEN partial THEN NULL ELSE gross_h END AS \"Gross (incl. RSU)\",\n       CASE WHEN partial THEN NULL ELSE net_h   END AS \"Net (take-home)\",\n       CASE WHEN partial OR next_partial THEN gross_h ELSE NULL END AS \"Gross (current yr, partial)\",\n       CASE WHEN partial OR next_partial THEN net_h   ELSE NULL END AS \"Net (current yr, partial)\"\nFROM withlead ORDER BY yr"
         }
       ]
     },
