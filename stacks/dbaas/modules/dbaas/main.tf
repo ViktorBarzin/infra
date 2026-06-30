@@ -112,6 +112,11 @@ resource "kubernetes_config_map" "mysql_standalone_cnf" {
       innodb_io_capacity_max=200
       innodb_redo_log_capacity=1073741824
       innodb_buffer_pool_size=2147483648
+      # DETECT_ONLY: stop writing full page content to the doublewrite buffer
+      # (~halves page-flush writes on the IOPS-bound sdc) while keeping torn-page
+      # DETECTION; recovery is restore-from-backup. OK with BBU+UPS+daily
+      # mysqldump. Dynamic (no restart). code-oflt 2026-06-30.
+      innodb_doublewrite=DETECT_ONLY
       innodb_flush_neighbors=1
       innodb_lru_scan_depth=256
       innodb_page_cleaners=1
