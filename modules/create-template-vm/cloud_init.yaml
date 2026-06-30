@@ -88,13 +88,12 @@ write_files:
 runcmd:
   # Enable weekly TRIM/discard to reclaim freed blocks in LVM thin pool
   - systemctl enable --now fstrim.timer
-  # Enable persistent journald logging for crash forensics, with size limits to reduce disk wear
-  - mkdir -p /var/log/journal
-  - sed -i 's/#Storage=auto/Storage=persistent/' /etc/systemd/journald.conf
-  - sed -i 's/#SystemMaxUse=/SystemMaxUse=500M/' /etc/systemd/journald.conf
-  - sed -i 's/#MaxRetentionSec=/MaxRetentionSec=7day/' /etc/systemd/journald.conf
-  - sed -i 's/#MaxFileSec=/MaxFileSec=1day/' /etc/systemd/journald.conf
-  - sed -i 's/#Compress=yes/Compress=yes/' /etc/systemd/journald.conf
+  # journald in RAM (volatile, capped) — node + pod journals already ship to
+  # Loki via alloy (loki.source.journal), so on-disk journald is pure sdc
+  # write-IOPS overhead on the IOPS-bound HDD. code-oflt 2026-06-30.
+  - mkdir -p /etc/systemd/journald.conf.d
+  - printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=200M\nCompress=yes\n' > /etc/systemd/journald.conf.d/90-oflt-volatile.conf
+  - rm -rf /var/log/journal
   - systemctl restart systemd-journald
   %{if is_k8s_template}
   # Node DNS is intentionally STOCK — no resolved drop-ins, no /etc/hosts
