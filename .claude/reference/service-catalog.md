@@ -50,7 +50,6 @@
 | owntracks | Location tracking | owntracks |
 | nextcloud | File sync/share | nextcloud |
 | calibre | E-book management (may be merged into ebooks stack) | calibre |
-| onlyoffice | Document editing | onlyoffice |
 | f1-stream | F1 streaming (uses chrome-service for hmembeds verifier); canonical source in own repo `viktor/f1-stream` (Forgejo, extracted 2026-06-05); GHA-built → `ghcr.io/viktorbarzin/f1-stream` (private), Woodpecker deploy-only (ADR-0002) | f1-stream |
 | chrome-service | Headed Chromium over CDP (`http://chrome-service.chrome-service.svc:9222`, `connect_over_cdp`; legacy `:3000/<token>` WS pool removed 2026-06-04) for sibling services driving anti-bot pages — snapshot-harvester CronJob + tripit fare scrape | chrome-service |
 | rybbit | Analytics | rybbit |
@@ -139,7 +138,7 @@ travel, netbox, phpipam, tripit, t3, stem95su
 mail, wg, headscale, immich, calibre, vaultwarden,
 mailserver-antispam, mailserver-admin, webhook, uptime,
 owntracks, dawarich, tuya, meshcentral, nextcloud, actualbudget,
-onlyoffice, forgejo, freshrss, navidrome, ollama, openwebui,
+forgejo, freshrss, navidrome, ollama, openwebui,
 isponsorblocktv, speedtest, freedify, rybbit, paperless,
 servarr, prowlarr, bazarr, radarr, sonarr, flaresolverr,
 jellyfin, jellyseerr, tdarr, affine, health, family, openclaw
