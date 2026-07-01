@@ -184,14 +184,9 @@ resource "kubernetes_service" "portal_tts" {
     name      = "portal-tts"
     namespace = kubernetes_namespace.portal_tts.metadata[0].name
     labels    = local.labels
-    annotations = {
-      # openai-edge-tts has no /metrics; annotation-based scrape kept on a live
-      # path so the Service stays in the scrape set (Ready-endpoint relabeling
-      # filters non-Ready pods). /v1/models is the OpenAI model list.
-      "prometheus.io/scrape" = "true"
-      "prometheus.io/path"   = "/v1/models"
-      "prometheus.io/port"   = "8000"
-    }
+    # No scrape annotations: openai-edge-tts exposes no Prometheus metrics, and
+    # scraping a JSON endpoint (/v1/models) fails exposition parsing anyway ->
+    # up=0 -> a permanently firing ScrapeTargetDown.
   }
   spec {
     type     = "ClusterIP"
