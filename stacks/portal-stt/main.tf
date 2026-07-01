@@ -334,13 +334,9 @@ resource "kubernetes_service" "portal_stt" {
     name      = "portal-stt"
     namespace = kubernetes_namespace.portal_stt.metadata[0].name
     labels    = local.labels
-    annotations = {
-      # Speaches exposes Prometheus metrics at /metrics — wire annotation-based
-      # scrape (Ready-endpoint relabeling already filters non-Ready pods).
-      "prometheus.io/scrape" = "true"
-      "prometheus.io/path"   = "/metrics"
-      "prometheus.io/port"   = "8000"
-    }
+    # No scrape annotations: the deployed Speaches build 404s /metrics, so the
+    # annotation-based scrape only produced a permanently firing
+    # ScrapeTargetDown. Re-add when the app actually serves Prometheus metrics.
   }
   spec {
     type     = "ClusterIP"
