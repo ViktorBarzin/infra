@@ -2484,12 +2484,12 @@
       "gridPos": {
         "x": 0,
         "y": 126,
-        "w": 24,
+        "w": 18,
         "h": 4
       },
       "options": {
         "mode": "markdown",
-        "content": "## \ud83d\udd25 FIRE Countdown \u2014 **$country**\nTarget = smallest **liquid** net worth where Guyton-Klinger hits **99%** success (Monte-Carlo), in **today's money**. Spend is your real actualbudget \u00d7 **1.5**, cost-of-living re-scaled to the country. The \u00a3139k workplace pension is excluded from current NW and joins as a tranche at ~57. _Current NW = liquid bridge pot._"
+        "content": "## \ud83d\udd25 FIRE Countdown \u2014 **$country**\nTarget = smallest **liquid** net worth where Guyton-Klinger hits **99%** success (Monte-Carlo), in **today's money**. Spend is your real actualbudget \u00d7 **1.5**, cost-of-living re-scaled to the country. The workplace pension is excluded from current NW and joins as a separate tranche at ~57 (value at unlock shown in the Pension-tranche panel). _Current NW = liquid bridge pot._\n\n_Caveats: Household/Family include an **estimated** figure for Anca's spend (pending a live re-pull). Countries without a modelled tax regime fall back to a neutral **nomad** 1% assumption (see Tax-regime panel)._"
       }
     },
     {
@@ -2745,7 +2745,7 @@
             "uid": "fire-planner-pg"
           },
           "rawQuery": true,
-          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF($savings_per_year,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='solo' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' WHEN COALESCE(NULLIF('$savings_per_year','')::numeric, 0) <= 0 THEN 'Set savings \u00a3/yr' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF(NULLIF('$savings_per_year','')::numeric,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='solo' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
           "editorMode": "code",
           "format": "table"
         }
@@ -3057,7 +3057,7 @@
             "uid": "fire-planner-pg"
           },
           "rawQuery": true,
-          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF($savings_per_year,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='household' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' WHEN COALESCE(NULLIF('$savings_per_year','')::numeric, 0) <= 0 THEN 'Set savings \u00a3/yr' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF(NULLIF('$savings_per_year','')::numeric,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='household' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
           "editorMode": "code",
           "format": "table"
         }
@@ -3369,7 +3369,7 @@
             "uid": "fire-planner-pg"
           },
           "rawQuery": true,
-          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF($savings_per_year,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='family' AND country_slug='$country' AND with_home=$with_home AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' WHEN COALESCE(NULLIF('$savings_per_year','')::numeric, 0) <= 0 THEN 'Set savings \u00a3/yr' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF(NULLIF('$savings_per_year','')::numeric,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='family' AND country_slug='$country' AND with_home=$with_home AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
           "editorMode": "code",
           "format": "table"
         }
@@ -3628,6 +3628,57 @@
         "mode": "markdown",
         "content": "**Anca's bridge**\n\nAnca's continued income covers the early sequence-risk years \u2014 the household never draws the full plan from day one. Plus the written **re-entry trigger**: take a contract if the portfolio is < \u00a31.0M for two quarters."
       }
+    },
+    {
+      "id": 90099,
+      "type": "stat",
+      "title": "FC::Tax regime ($country)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 126,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT jurisdiction FROM fire_planner.fire_target WHERE country_slug='$country' ORDER BY id LIMIT 1"
+        }
+      ]
     }
   ],
   "refresh": "5m",
