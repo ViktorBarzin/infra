@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "excalidraw" {
     name = "excalidraw"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -45,6 +45,15 @@ resource "kubernetes_deployment" "excalidraw" {
       app  = "excalidraw"
       tier = local.tiers.aux
     }
+    # Keel rolls new ghcr:latest digests (k8s-portal pattern). Values here are
+    # recreate-correct seeds only — the keys are in ignore_changes below, so
+    # the live annotations win on an existing deployment.
+    annotations = {
+      "keel.sh/policy"       = "force"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/match-tag"    = "true"
+      "keel.sh/pollSchedule" = "@every 5m"
+    }
   }
   spec {
     replicas = 1
@@ -67,9 +76,19 @@ resource "kubernetes_deployment" "excalidraw" {
         }
       }
       spec {
+        # GHCR pull secret: the ghcr-credentials Secret in this namespace is
+        # cloned in by the kyverno stack's sync-ghcr-credentials ClusterPolicy
+        # (allowlisted private-ghcr namespaces only — ADR-0002). Source of
+        # truth: stacks/kyverno/modules/kyverno/ghcr-credentials.tf.
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
         container {
-          image             = "viktorbarzin/excalidraw-library:v4"
-          image_pull_policy = "IfNotPresent"
+          # ADR-0002: GHA-built (.github/workflows/build-excalidraw.yml),
+          # PRIVATE ghcr; Keel rolls new :latest digests. DockerHub
+          # viktorbarzin/excalidraw-library:v4 is the frozen rollback image.
+          image             = "ghcr.io/viktorbarzin/excalidraw-library:latest"
+          image_pull_policy = "Always"
           name              = "excalidraw"
           port {
             container_port = 8080
@@ -107,7 +126,7 @@ resource "kubernetes_deployment" "excalidraw" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],

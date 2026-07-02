@@ -43,6 +43,11 @@ locals {
     # ghcr.io/passionprojectsanca/book-plotter (built by GHA in Anca's repo,
     # under her own org's ghcr). The deployment references the cloned secret.
     "plotting-book",
+    # excalidraw: infra-owned image migrated from manual DockerHub pushes to
+    # PRIVATE ghcr.io/viktorbarzin/excalidraw-library (ADR-0002, built by
+    # .github/workflows/build-excalidraw.yml). The deployment references the
+    # cloned secret.
+    "excalidraw",
   ]
 }
 
