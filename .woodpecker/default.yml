@@ -324,13 +324,8 @@ steps:
         fi
         GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master
 
-      # ── Slack notification ──
-      - |
-        PLATFORM_COUNT=$(wc -l < .platform_apply 2>/dev/null | tr -d ' ')
-        APP_COUNT=$(wc -l < .app_apply 2>/dev/null | tr -d ' ')
-        curl -s -X POST -H 'Content-type: application/json' \
-          --data "{\"channel\":\"general\",\"text\":\"Woodpecker CI: infra pipeline ${CI_PIPELINE_STATUS} (platform:${PLATFORM_COUNT}, apps:${APP_COUNT})\"}" \
-          "$SLACK_WEBHOOK" || true
+      # (No Slack post on success — Viktor 2026-07-02: CI notifies on FAILED
+      # runs only; the notify-failure step below covers those.)
 
   # Slack on failure (runs even if apply step fails)
   - name: notify-failure

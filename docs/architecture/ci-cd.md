@@ -293,7 +293,9 @@ The infra repo runs on Woodpecker via **two** forge registrations: the Forgejo
 forge (repo id 82, registered 2026-06-08) and the legacy GitHub forge (repo id
 1). Pushes to **Forgejo** `master` fire `.woodpecker/default.yml`
 (changed-stacks terragrunt apply, in `infra-ci`) plus the `notify-nonadmin-push`
-Slack audit step. Operational facts (2026-06-10):
+Slack audit step. **Slack policy (2026-07-02): every infra pipeline posts only
+on FAILURE** (plus the non-admin audit post and drift/error findings) — routine
+successful runs are silent. Operational facts (2026-06-10):
 
 - **Webhook URL is the IN-CLUSTER service**:
   `http://woodpecker-server.woodpecker.svc.cluster.local/api/hook?...` (PATCHed
@@ -375,7 +377,8 @@ steps:
   notify:
     image: plugins/slack
     when:
-      status: [success, failure]
+      # Failure-only (2026-07-02 policy): CI notifies about failed runs only.
+      status: [failure]
 ```
 
 ### CI/CD secrets sync

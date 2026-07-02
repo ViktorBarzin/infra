@@ -71,10 +71,11 @@ steps:
     commands:
       - |
         curl -s -X POST -H 'Content-type: application/json' \
-          --data "{\"channel\":\"general\",\"text\":\"Woodpecker CI: TLS certificate renewal ${CI_PIPELINE_STATUS}\"}" \
+          --data "{\"channel\":\"general\",\"text\":\":red_circle: Woodpecker CI: TLS certificate renewal FAILED\"}" \
           "$SLACK_WEBHOOK" || true
     environment:
       SLACK_WEBHOOK:
         from_secret: slack_webhook
     when:
-      status: [success, failure]
+      # Failure-only (Viktor 2026-07-02): successful renewals are routine.
+      status: [failure]
