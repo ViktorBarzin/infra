@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "diun" {
     name = "diun"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -203,16 +203,10 @@ resource "kubernetes_deployment" "diun" {
             name  = "DIUN_NOTIF_WEBHOOK_HEADERS_CONTENT-TYPE"
             value = "application/json"
           }
-          # Slack notifier (independent notification channel)
-          env {
-            name = "DIUN_NOTIF_SLACK_WEBHOOKURL"
-            value_from {
-              secret_key_ref {
-                name = "diun-secrets"
-                key  = "slack_url"
-              }
-            }
-          }
+          # Slack notifier REMOVED (2026-07-02): diun's default Slack message
+          # <!channel>-pinged #image-updates for every new upstream tag (every
+          # 6h watch cycle). The n8n webhook feed above remains the machine
+          # consumer; humans get the weekly upgrade report instead.
           env {
             name  = "LOG_LEVEL"
             value = "debug"
@@ -242,7 +236,7 @@ resource "kubernetes_deployment" "diun" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],

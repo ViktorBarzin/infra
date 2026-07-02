@@ -226,6 +226,27 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # App auto-upgrades (Keel). Keel's direct Slack notifier was disabled
+          # 2026-07-02 after a stuck update (gotenberg vs require-trusted-
+          # registries) re-posted an identical failure to #general on every
+          # hourly poll for days. This log alert is the replacement failure
+          # signal: alert-on-change routing notifies ONCE and the daily digest
+          # carries it while it persists — never an hourly drip.
+          name = "App auto-upgrades (Keel)"
+          rules = [
+            {
+              alert  = "KeelUpdateFailing"
+              expr   = "sum(count_over_time({namespace=\"keel\"} |= \"level=error\" |= \"got error while updating resource\" [3h])) > 2"
+              for    = "10m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "Keel repeatedly failing to roll out an image update"
+                description = "Keel failed the same resource update >2 times in 3h (its poll is hourly, so this means a persistently stuck rollout, not a blip). kubectl -n keel logs deploy/keel | grep level=error. Common causes: kyverno require-trusted-registries denying the new tag (extend the allowlist in stacks/kyverno/modules/kyverno/security-policies.tf), a ResourceQuota rejecting the surge pod, or a bad imagePullSecret."
+              }
+            },
+          ]
+        },
+        {
           # t3 session-auth + auto-upgrade health (devvm host scripts → journald →
           # Loki). Backstops the gated-nightly t3 tracker: the dispatch logs every
           # real-user pairing outcome (success endpoint + fallback) and the enforcer
