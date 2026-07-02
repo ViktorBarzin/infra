@@ -137,7 +137,7 @@ audiobook-search) now also land on ghcr.
   chrome-service-novnc, android-emulator.
 - **PRIVATE ghcr:** f1-stream, job-hunter, instagram-poster, payslip-ingest,
   wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli,
-  infra-ci, k8s-portal. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
+  infra-ci, k8s-portal, excalidraw-library. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
   (`stacks/kyverno/modules/kyverno/ghcr-credentials.tf`; NOT cluster-wide; cred
   = Vault `secret/viktor/ghcr_pull_token`, a dedicated classic PAT scoped to
   `read:packages` (UI-minted 2026-06-15; no longer the admin `github_pat`
@@ -153,7 +153,9 @@ github↔forgejo divergence was deliberately NOT reconciled):
 `build-cli.yml` → DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli`;
 `build-infra-ci.yml` → `ghcr.io/viktorbarzin/infra-ci`; `build-k8s-portal.yml` →
 PRIVATE `ghcr.io/viktorbarzin/k8s-portal` (Keel-deployed; the LAST in-cluster
-Woodpecker build, migrated 2026-06-13 — completes "no local builds"). **infra-ci**
+Woodpecker build, migrated 2026-06-13 — completes "no local builds"); `build-excalidraw.yml` →
+PRIVATE `ghcr.io/viktorbarzin/excalidraw-library` (Keel-deployed; replaced
+manual DockerHub pushes 2026-07-02 — DockerHub `:v4` frozen as rollback). **infra-ci**
 is the image the `.woodpecker/default.yml` apply step + `drift-detection.yml` run
 in (proven by pipelines 165/166). chatterbox-tts is already built by tripit's GHA → ghcr.
 The Woodpecker `build-ci-image.yml` + `build-cli.yml` pipelines were REMOVED;
