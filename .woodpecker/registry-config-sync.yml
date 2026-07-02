@@ -151,7 +151,8 @@ steps:
     commands:
       - |
         curl -s -X POST -H 'Content-type: application/json' \
-          --data "{\"channel\":\"general\",\"text\":\"Registry config sync on 10.0.20.10: ${CI_PIPELINE_STATUS}\"}" \
+          --data "{\"channel\":\"general\",\"text\":\":red_circle: Registry config sync on 10.0.20.10 FAILED\"}" \
           "$SLACK_WEBHOOK" || true
     when:
-      status: [success, failure]
+      # Failure-only (Viktor 2026-07-02): CI notifies on failed runs only.
+      status: [failure]

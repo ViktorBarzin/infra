@@ -147,13 +147,30 @@ steps:
         echo "Drift: ${DRIFTED:-none}"
         echo "Errors: ${ERRORS:-none}"
 
-        # ── Slack alert if drift found ──
+        # ── Slack only when something is WRONG (drift or errors) ──
+        # All-clean runs are silent (Viktor 2026-07-02: CI notifies on
+        # failed/actionable runs only; clean is the daily normal).
         if [ -n "$DRIFTED" ]; then
           curl -s -X POST -H 'Content-type: application/json' \
             --data "{\"channel\":\"general\",\"text\":\":warning: Drift detected in:${DRIFTED}\nClean: ${CLEAN} stacks. Errors:${ERRORS:-none}\"}" \
             "$SLACK_WEBHOOK" || true
-        else
+        elif [ -n "$ERRORS" ]; then
           curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"channel\":\"general\",\"text\":\":white_check_mark: Drift detection: all ${CLEAN} stacks clean${ERRORS:+. Errors: $ERRORS}\"}" \
+            --data "{\"channel\":\"general\",\"text\":\":red_circle: Drift detection had errors: ${ERRORS} (clean: ${CLEAN})\"}" \
             "$SLACK_WEBHOOK" || true
         fi
+
+  # Hard-failure catch: the in-script posts above never run if the step
+  # itself crashes early — this step is the only signal for that case.
+  - name: notify-failure
+    image: curlimages/curl
+    commands:
+      - |
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"channel\":\"general\",\"text\":\":red_circle: Drift-detection pipeline FAILED (crashed before reporting)\"}" \
+          "$SLACK_WEBHOOK" || true
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    when:
+      status: [failure]
