@@ -1,10 +1,10 @@
 # Networking Architecture
 
-Last updated: 2026-04-19 (WS E — Kea DHCP pushes dual DNS per subnet; Kea DDNS TSIG-signed)
+Last updated: 2026-07-02 (dCCTV segment added — dedicated pfSense leg for the garage camera, ADR-0017)
 
 ## Overview
 
-The homelab network is built on a dual-VLAN architecture with pfSense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik serves as the Kubernetes ingress controller with a middleware chain of anti-AI bot-blocking, Authentik forward-auth, rate limiting, and retry. CrowdSec IP-reputation enforcement is **out-of-band** (not a Traefik hop): banned IPs are dropped in-kernel via nftables on direct hosts and blocked at the Cloudflare edge on proxied hosts (see `docs/architecture/security.md`). All HTTP traffic flows through Cloudflared tunnels, avoiding the need for port forwarding or exposing public IPs.
+The homelab network is built on three isolated segments behind pfSense (management VLAN 10, Kubernetes VLAN 20, and the physically-legged dCCTV camera segment — see ADR-0017) with pfSense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik serves as the Kubernetes ingress controller with a middleware chain of anti-AI bot-blocking, Authentik forward-auth, rate limiting, and retry. CrowdSec IP-reputation enforcement is **out-of-band** (not a Traefik hop): banned IPs are dropped in-kernel via nftables on direct hosts and blocked at the Cloudflare edge on proxied hosts (see `docs/architecture/security.md`). All HTTP traffic flows through Cloudflared tunnels, avoiding the need for port forwarding or exposing public IPs.
 
 ## Architecture Diagram
 
@@ -24,9 +24,14 @@ graph TB
 
     CSdrop[CrowdSec drop<br/>nftables / CF edge<br/>out-of-band, pre-Traefik]
 
-    subgraph "Proxmox Host (eno1)"
+    subgraph "Proxmox Host (eno1, eno2)"
         vmbr0[vmbr0 Bridge<br/>192.168.1.127/24]
         vmbr1[vmbr1 Internal<br/>VLAN-aware]
+        vmbr2[vmbr2 Bridge<br/>eno2 → TL-SG105PE]
+
+        subgraph "dCCTV - 10.0.30.0/24<br/>ADR-0017"
+            Camera[vermont-garage<br/>10.0.30.70]
+        end
 
         subgraph "VLAN 10 - Management<br/>10.0.10.0/24"
             Proxmox[Proxmox Host<br/>10.0.10.1]
@@ -71,6 +76,9 @@ graph TB
     vmbr1 -.VLAN 20.- Tech
     vmbr1 -.VLAN 20.- Master
     vmbr1 -.VLAN 20.- Node1
+    vmbr2 -.physical link.- eno2
+    vmbr2 -.untagged.- Camera
+    vmbr2 -.pfSense net3 = dCCTV 10.0.30.1.- pfSense
 ```
 
 ## Components
@@ -81,6 +89,7 @@ graph TB
 | phpIPAM | v1.7.0 | phpipam.viktorbarzin.me | IP address management, device inventory, DNS sync |
 | vmbr0 | Linux bridge | 192.168.1.127/24 | Physical bridge on eno1, uplink to LAN |
 | vmbr1 | Linux bridge (VLAN-aware) | Internal | VLAN trunk for VM isolation |
+| vmbr2 | Linux bridge | Physical (eno2) | dCCTV segment leg: eno2 → TL-SG105PE (rack) → cameras; pfSense net3 is the only L3 exit (ADR-0017) |
 | Technitium DNS | Container | 10.0.20.201 (LB) / 10.96.0.53 (ClusterIP) | Internal DNS (viktorbarzin.lan) + full recursive resolver |
 | Cloudflare DNS | SaaS | External | ~50 public domains under viktorbarzin.me |
 | Cloudflared | Container | K8s (3 replicas) | Tunnel ingress, replaces port forwarding |
@@ -89,6 +98,22 @@ graph TB
 | Authentik | Helm chart | K8s (3 replicas + PDB) | SSO, forward-auth middleware |
 | MetalLB | v0.15.3 Helm chart | K8s | LoadBalancer IPs (10.0.20.200-10.0.20.220), all services on 10.0.20.200 |
 | Registry Cache | Container | 10.0.20.10 | Pull-through for docker.io:5000, ghcr.io:5010 |
+
+## CCTV Segment (dCCTV) — as-built 2026-07-02
+
+Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C at the garage entrance). Decision + rejected alternatives: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
+
+**Physical path**: camera → TL-SG105PE PoE port (CCTV VLAN, port-based) → R730 `eno2` → `vmbr2` (bridge-ports eno2, not vlan-aware) → pfSense `net3`/vtnet3 = interface **dCCTV `10.0.30.1/24`**. Untagged end-to-end; the only 802.1Q is the internal port-VLAN table on the TL-SG105PE, which also keeps its home-LAN ports (uplink, 4G router `192.168.1.7`, UPS mgmt, switch mgmt `192.168.1.6`) in VLAN 1.
+
+**Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`). Kea DDNS auto-registers names in Technitium; `phpipam-pfsense-import` picks up leases hourly.
+
+**Firewall** (all on pfSense):
+- dCCTV in: pass `udp OPT4-net → 10.0.30.1:123` (NTP) — everything else hits the interface's default deny. Cameras cannot reach LAN, other segments, or the internet.
+- WAN in (home LAN side): pass `192.168.1.8` (ha-sofia) → `10.0.30.70:80` (ISAPI/hikvision_next) and `:554` (RTSP), reply-to disabled on both.
+- dKubernetes is allow-all, so cluster Frigate/go2rtc pulls RTSP with no extra rule (pod egress SNATs to node IPs).
+- Home-LAN clients need the **AX6000 static route** `10.0.30.0/24 via 192.168.1.2` (camera-day step) to reach the camera UI.
+
+**Consumers**: cluster Frigate (`/srv/nfs/frigate/config/config.yml` — NOT Terraform) pulls `rtsp://10.0.30.70:554` main+sub as `vermont-garage`; HA integrates via Frigate plus direct hikvision_next for tamper events.
 
 ## IPAM & DNS Auto-Registration
 

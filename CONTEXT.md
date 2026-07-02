@@ -118,6 +118,14 @@ _Avoid_: "external", "outside".
 `viktorbarzin.lan`, served by Technitium DNS. Resolves only inside the homelab network.
 _Avoid_: bare "lan", "private", "intranet".
 
+**Segment**:
+One isolated L2/L3 network with pfSense as its gateway — realised as one Proxmox bridge feeding one dedicated pfSense interface (dManagementsVms 10.0.10.0/24, dKubernetes 10.0.20.0/24, dCCTV 10.0.30.0/24). pfSense itself never terminates 802.1Q; any tagging happens on the bridge or a switch.
+_Avoid_: "VLAN" as the primary name (VLAN 10/20 are informal aliases; dCCTV has no tag on the wire at all).
+
+**CCTV segment**:
+The untrusted camera **Segment** (`dCCTV`) — devices in it may be pulled from (RTSP/ISAPI) but may initiate nothing except NTP to their gateway. Deliberately outside every trusted source-IP allowlist (ADR-0017).
+_Avoid_: "camera VLAN", "CCTV LAN".
+
 **Ingress auth**:
 The `auth = "..."` parameter on `ingress_factory` — a discrete *mode*, not a ranked tier — one of `required` (Authentik forward-auth gates every request), `app` (the backend owns its login), `public` (anonymous Authentik binding for audit only), or `none` (Anubis-fronted content, or native-client API). Default `required` (fail-closed).
 _Avoid_: "auth tier" / "auth mode" — refer to it by the canonical key, `auth` (e.g. `auth = "required"`). "tier" is reserved for State tier and Namespace tier.
