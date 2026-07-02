@@ -1507,6 +1507,165 @@
       ]
     },
     {
+      "id": 9230,
+      "title": "Effective hourly rate \u2014 gross vs net (\u00a3/h, per year)",
+      "description": "Annual pay \u00f7 hours worked. Hours = 40h/week contractual (2,080h per full year, per offer letter: Mon\u2013Fri 09:00\u201318:00 less 1h lunch), prorated by months actually worked. Gross = gross_pay incl. notional RSU vest; Net = take-home. The latest still-accruing year is shown DASHED: it reads high because the full-year bonus (paid each March) and front-loaded quarterly RSU vests are divided by only the months worked so far, and settles lower as the year completes. Calendar year; last 10y.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "timeFrom": "10y",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "axisLabel": "\u00a3 / hour",
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Gross (incl. RSU)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Net (take-home)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Gross (current yr, partial)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Net (current yr, partial)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last",
+            "max",
+            "min"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "format": "time_series",
+          "editorMode": "code",
+          "rawQuery": true,
+          "rawSql": "WITH y AS (\n  SELECT date_trunc('year', pay_date) AS yr,\n         COUNT(DISTINCT date_trunc('month', pay_date)) AS months,\n         SUM(gross_pay) AS gross, SUM(net_pay) AS net\n  FROM payslip_ingest.payslip GROUP BY 1\n),\ncalc AS (\n  SELECT yr, months,\n         gross / (months * (40.0 * 52 / 12)) AS gross_h,\n         net   / (months * (40.0 * 52 / 12)) AS net_h\n  FROM y\n),\nflagged AS (\n  SELECT yr, gross_h, net_h, (yr = MAX(yr) OVER () AND months < 12) AS partial FROM calc\n),\nwithlead AS (\n  SELECT yr, gross_h, net_h, partial,\n         COALESCE(LEAD(partial) OVER (ORDER BY yr), false) AS next_partial FROM flagged\n)\nSELECT yr::timestamp AS \"time\",\n       CASE WHEN partial THEN NULL ELSE gross_h END AS \"Gross (incl. RSU)\",\n       CASE WHEN partial THEN NULL ELSE net_h   END AS \"Net (take-home)\",\n       CASE WHEN partial OR next_partial THEN gross_h ELSE NULL END AS \"Gross (current yr, partial)\",\n       CASE WHEN partial OR next_partial THEN net_h   ELSE NULL END AS \"Net (current yr, partial)\"\nFROM withlead ORDER BY yr"
+        }
+      ]
+    },
+    {
       "type": "row",
       "title": "Holdings",
       "collapsed": false,
@@ -1515,7 +1674,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 78
+        "y": 86
       },
       "panels": []
     },
@@ -1532,7 +1691,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 79
+        "y": 87
       },
       "fieldConfig": {
         "defaults": {
@@ -1729,7 +1888,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 79
+        "y": 87
       },
       "fieldConfig": {
         "defaults": {
@@ -1782,7 +1941,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 90
+        "y": 98
       },
       "panels": []
     },
@@ -1799,7 +1958,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 91
+        "y": 99
       },
       "fieldConfig": {
         "defaults": {
@@ -1916,7 +2075,7 @@
         "h": 12,
         "w": 12,
         "x": 12,
-        "y": 91
+        "y": 99
       },
       "fieldConfig": {
         "defaults": {
@@ -2135,7 +2294,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 104
+        "y": 112
       },
       "panels": []
     },
@@ -2152,7 +2311,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 105
+        "y": 113
       },
       "fieldConfig": {
         "defaults": {
@@ -2324,13 +2483,13 @@
       "title": "FC::intro",
       "gridPos": {
         "x": 0,
-        "y": 118,
-        "w": 24,
+        "y": 126,
+        "w": 18,
         "h": 4
       },
       "options": {
         "mode": "markdown",
-        "content": "## \ud83d\udd25 FIRE Countdown \u2014 **$country**\nTarget = smallest **liquid** net worth where Guyton-Klinger hits **99%** success (Monte-Carlo), in **today's money**. Spend is your real actualbudget \u00d7 **1.5**, cost-of-living re-scaled to the country. The \u00a3139k workplace pension is excluded from current NW and joins as a tranche at ~57. _Current NW = liquid bridge pot._"
+        "content": "## \ud83d\udd25 FIRE Countdown \u2014 **$country**\nTarget = smallest **liquid** net worth where Guyton-Klinger hits **99%** success (Monte-Carlo), in **today's money**. Spend is your real actualbudget \u00d7 **1.5**, cost-of-living re-scaled to the country. The workplace pension is excluded from current NW and joins as a separate tranche at ~57 (value at unlock shown in the Pension-tranche panel). _Current NW = liquid bridge pot._\n\n_Caveats: Household/Family include an **estimated** figure for Anca's spend (pending a live re-pull). Countries without a modelled tax regime fall back to a neutral **nomad** 1% assumption (see Tax-regime panel)._"
       }
     },
     {
@@ -2339,7 +2498,7 @@
       "title": "FC::solo header",
       "gridPos": {
         "x": 0,
-        "y": 122,
+        "y": 130,
         "w": 24,
         "h": 2
       },
@@ -2358,7 +2517,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 124,
+        "y": 132,
         "w": 5,
         "h": 5
       },
@@ -2411,7 +2570,7 @@
       },
       "gridPos": {
         "x": 5,
-        "y": 124,
+        "y": 132,
         "w": 4,
         "h": 5
       },
@@ -2484,7 +2643,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 124,
+        "y": 132,
         "w": 5,
         "h": 5
       },
@@ -2549,7 +2708,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 124,
+        "y": 132,
         "w": 5,
         "h": 5
       },
@@ -2586,7 +2745,7 @@
             "uid": "fire-planner-pg"
           },
           "rawQuery": true,
-          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF($savings_per_year,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='solo' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' WHEN COALESCE(NULLIF('$savings_per_year','')::numeric, 0) <= 0 THEN 'Set savings \u00a3/yr' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF(NULLIF('$savings_per_year','')::numeric,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='solo' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
           "editorMode": "code",
           "format": "table"
         }
@@ -2602,7 +2761,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 124,
+        "y": 132,
         "w": 5,
         "h": 5
       },
@@ -2651,7 +2810,7 @@
       "title": "FC::household header",
       "gridPos": {
         "x": 0,
-        "y": 129,
+        "y": 137,
         "w": 24,
         "h": 2
       },
@@ -2670,7 +2829,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 131,
+        "y": 139,
         "w": 5,
         "h": 5
       },
@@ -2723,7 +2882,7 @@
       },
       "gridPos": {
         "x": 5,
-        "y": 131,
+        "y": 139,
         "w": 4,
         "h": 5
       },
@@ -2796,7 +2955,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 131,
+        "y": 139,
         "w": 5,
         "h": 5
       },
@@ -2861,7 +3020,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 131,
+        "y": 139,
         "w": 5,
         "h": 5
       },
@@ -2898,7 +3057,7 @@
             "uid": "fire-planner-pg"
           },
           "rawQuery": true,
-          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF($savings_per_year,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='household' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' WHEN COALESCE(NULLIF('$savings_per_year','')::numeric, 0) <= 0 THEN 'Set savings \u00a3/yr' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF(NULLIF('$savings_per_year','')::numeric,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='household' AND country_slug='$country' AND with_home=false AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
           "editorMode": "code",
           "format": "table"
         }
@@ -2914,7 +3073,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 131,
+        "y": 139,
         "w": 5,
         "h": 5
       },
@@ -2963,7 +3122,7 @@
       "title": "FC::family header",
       "gridPos": {
         "x": 0,
-        "y": 136,
+        "y": 144,
         "w": 24,
         "h": 2
       },
@@ -2982,7 +3141,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 138,
+        "y": 146,
         "w": 5,
         "h": 5
       },
@@ -3035,7 +3194,7 @@
       },
       "gridPos": {
         "x": 5,
-        "y": 138,
+        "y": 146,
         "w": 4,
         "h": 5
       },
@@ -3108,7 +3267,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 138,
+        "y": 146,
         "w": 5,
         "h": 5
       },
@@ -3173,7 +3332,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 138,
+        "y": 146,
         "w": 5,
         "h": 5
       },
@@ -3210,7 +3369,7 @@
             "uid": "fire-planner-pg"
           },
           "rawQuery": true,
-          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF($savings_per_year,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='family' AND country_slug='$country' AND with_home=$with_home AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
+          "rawSql": "SELECT CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached' WHEN COALESCE(NULLIF('$savings_per_year','')::numeric, 0) <= 0 THEN 'Set savings \u00a3/yr' ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF(NULLIF('$savings_per_year','')::numeric,0)*365)::int, 'Mon YYYY') END AS fire_date FROM (SELECT * FROM fire_planner.fire_target WHERE \"case\"='family' AND country_slug='$country' AND with_home=$with_home AND bar=0.99 LIMIT 1) ft, (SELECT COALESCE(SUM(market_value_gbp),0) AS nw FROM fire_planner.account_snapshot WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot) AND account_type<>'WORKPLACE_PENSION') liq",
           "editorMode": "code",
           "format": "table"
         }
@@ -3226,7 +3385,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 138,
+        "y": 146,
         "w": 5,
         "h": 5
       },
@@ -3275,7 +3434,7 @@
       "title": "FC::safety header",
       "gridPos": {
         "x": 0,
-        "y": 143,
+        "y": 151,
         "w": 24,
         "h": 2
       },
@@ -3294,7 +3453,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 145,
+        "y": 153,
         "w": 6,
         "h": 5
       },
@@ -3359,7 +3518,7 @@
       },
       "gridPos": {
         "x": 6,
-        "y": 145,
+        "y": 153,
         "w": 6,
         "h": 5
       },
@@ -3412,7 +3571,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 145,
+        "y": 153,
         "w": 6,
         "h": 5
       },
@@ -3461,7 +3620,7 @@
       "title": "FC::Anca bridge",
       "gridPos": {
         "x": 18,
-        "y": 145,
+        "y": 153,
         "w": 6,
         "h": 5
       },
@@ -3469,6 +3628,57 @@
         "mode": "markdown",
         "content": "**Anca's bridge**\n\nAnca's continued income covers the early sequence-risk years \u2014 the household never draws the full plan from day one. Plus the written **re-entry trigger**: take a contract if the portfolio is < \u00a31.0M for two quarters."
       }
+    },
+    {
+      "id": 90099,
+      "type": "stat",
+      "title": "FC::Tax regime ($country)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "fire-planner-pg"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 126,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "fire-planner-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT jurisdiction FROM fire_planner.fire_target WHERE country_slug='$country' ORDER BY id LIMIT 1"
+        }
+      ]
     }
   ],
   "refresh": "5m",

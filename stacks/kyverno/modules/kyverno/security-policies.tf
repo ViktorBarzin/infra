@@ -353,7 +353,7 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
                   "lissy93/*", "louislam/*", "matrixdotorg/*", "mauriceboe/*",
                   "mendhak/*",
                   "mghee/*", "mindflavor/*", "mpepping/*", "netboxcommunity/*",
-                  "netsampler/*", "nousresearch/*", "nvidia/*", "onlyoffice/*",
+                  "netsampler/*", "nousresearch/*", "nvidia/*",
                   "openresty/*", "opentripplanner/*", "owntracks/*",
                   "phpipam/*", "phpmyadmin/*", "privatebin/*", "prom/*",
                   "prompve/*", "rancher/*", "rhasspy/*", "roundcube/*", "sclevine/*",

@@ -111,7 +111,12 @@ resource "kubernetes_config_map" "mysql_standalone_cnf" {
       innodb_io_capacity=100
       innodb_io_capacity_max=200
       innodb_redo_log_capacity=1073741824
-      innodb_buffer_pool_size=1073741824
+      innodb_buffer_pool_size=2147483648
+      # DETECT_ONLY: stop writing full page content to the doublewrite buffer
+      # (~halves page-flush writes on the IOPS-bound sdc) while keeping torn-page
+      # DETECTION; recovery is restore-from-backup. OK with BBU+UPS+daily
+      # mysqldump. Dynamic (no restart). code-oflt 2026-06-30.
+      innodb_doublewrite=DETECT_ONLY
       innodb_flush_neighbors=1
       innodb_lru_scan_depth=256
       innodb_page_cleaners=1
@@ -228,10 +233,12 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
           resources {
             requests = {
               cpu    = "250m"
-              memory = "3Gi"
-            }
-            limits = {
               memory = "4Gi"
+            }
+            # 6Gi (was 4Gi) — code-oflt 2026-06-30: headroom for the 2Gi InnoDB
+            # buffer pool (was 1Gi); the pod was already at ~3.7Gi/4Gi (near OOM).
+            limits = {
+              memory = "6Gi"
             }
           }
 
@@ -298,7 +305,15 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
   }
 
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # StatefulSet volumeClaimTemplates are immutable post-creation, and the
+      # pvc-autoresizer rewrites their annotations on the live object
+      # (storage_limit/threshold), so TF's desired VCT can never apply and a
+      # broad `dbaas` apply errors out. The autoresizer owns PVC sizing; ignore
+      # the VCT so other STS changes (e.g. resources) apply cleanly. (code-oflt 2026-06-30)
+      spec[0].volume_claim_template,
+    ]
   }
 }
 
