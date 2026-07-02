@@ -71,8 +71,15 @@ stacks/*/cloudflare_provider.tf
 stacks/*/tiers.tf
 stacks/*/terragrunt_rendered.json
 
-# Kubernetes config (sensitive)
+# Kubernetes config / cluster credentials (sensitive) — never commit in plaintext.
+# `config` alone missed the dotfile form: an admin kubeconfig once leaked to the
+# public mirror as `.config` (GitGuardian, 2026-07-02). Cover the common names.
 config
+.config
+kubeconfig
+*.kubeconfig
+admin.conf
+.kube/
 
 # Node.js (not part of infra)
 node_modules/
