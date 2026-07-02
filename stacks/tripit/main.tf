@@ -175,6 +175,12 @@ locals {
     STORY_SOURCE_MODE        = "web"
     SCRIPT_WRITER_MODE       = "chat"
     PLACE_RESOLVER_MODE      = "wikipedia"
+    # Saved Place preview photos (tripit ADR-0035/0040): the Wikipedia lead-image
+    # fetcher behind manual-add-time photos and the backfill sweep. Same fake-
+    # default gap as the resolver above — never set, so prod silently ran the
+    # fake and hand-added places (and any backfill) would store placeholder
+    # PNGs instead of real photos.
+    PLACE_PHOTO_PROVIDER = "wikipedia"
   }
 }
 
