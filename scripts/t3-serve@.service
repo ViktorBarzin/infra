@@ -21,12 +21,19 @@ WorkingDirectory=/home/%i
 ExecStart=/usr/bin/t3 serve --host 0.0.0.0 --port ${T3_PORT} --base-dir /home/%i/.t3
 Restart=on-failure
 RestartSec=5
-# Memory containment (2026-06-10): agent children live in this cgroup; a
-# runaway agent (10.8G anon on a 23G host) swap-thrashed the whole devvm —
-# every >20s stall fires the t3 client watchdog (visible "disconnects") —
-# then global-OOMed. Cap the cgroup so a runaway OOMs early and locally,
-# and forbid swap so stalls can't smear into minutes-long freezes.
-MemoryHigh=12G
+# Memory containment (2026-06-10, amended 2026-07-02): agent children live in
+# this cgroup; a runaway agent (10.8G anon on a 23G host) swap-thrashed the
+# whole devvm — every >20s stall fires the t3 client watchdog (visible
+# "disconnects") — then global-OOMed. Cap the cgroup so a runaway OOMs early
+# and locally, and forbid swap so stalls can't smear into minutes-long freezes.
+# MemoryHigh is DELIBERATELY infinity — do not add a soft band below MemoryMax:
+# with swap=0 a hog that plateaus between high and max is unreclaimable but
+# never OOMs, and the kernel's high-throttle stalls EVERY task in the cgroup
+# (the t3 event loop included) indefinitely. A 12.3G agent ugrep livelocked
+# this unit for ~50min on 2026-07-02 exactly this way. Straight-to-OOM at
+# MemoryMax is the containment; OOMPolicy=continue below keeps the server up.
+# See docs/post-mortems/2026-06-22-devvm-mem-io-overload-containment.md addendum.
+MemoryHigh=infinity
 MemoryMax=16G
 MemorySwapMax=0
 # Default OOMPolicy=stop kills the WHOLE unit (8.5min outage 2026-06-10

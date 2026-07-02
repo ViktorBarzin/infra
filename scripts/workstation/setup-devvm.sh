@@ -244,9 +244,15 @@ log "service units installed + enabled (t3-dispatch + 3 timers; t3-serve@ per-us
 #     virtual disk into an IO storm + multi-minute freeze (hard-killed 2026-06-22).
 #     t3-serve@ was already capped (its [Service] block); the HOLE was the uncapped
 #     user-<uid>.slice (all ssh/tmux work). Design — per user, on BOTH trees:
-#     MemoryHigh=12G soft (throttles a runaway to a crawl), MemoryMax=16G hard,
-#     MemorySwapMax=0 (work never touches disk swap → no thrash; it OOMs locally at
-#     the ceiling instead), plus fair-share CPU/IO weights.
+#     MemoryMax=16G hard + MemorySwapMax=0 (work never touches disk swap → no
+#     thrash; a runaway is cgroup-OOM-killed locally at the ceiling), plus
+#     fair-share CPU/IO weights.
+#     NO MemoryHigh soft band (removed 2026-07-02; was 12G "throttle to a crawl"):
+#     with swap=0, a hog that PLATEAUS between high and max is unreclaimable but
+#     never OOMs — the kernel parks every task of the cgroup in
+#     mem_cgroup_handle_over_high and the whole tree stalls indefinitely. A 12.3G
+#     agent ugrep livelocked t3-serve@wizard (t3 down ~50min) exactly this way.
+#     Cap-and-kill, never throttle-and-pray — see the post-mortem addendum.
 #     BACKSTOP = earlyoom, NOT systemd-oomd. We first shipped systemd-oomd but it is
 #     INERT with swap=0: its pressure-kill only acts on cgroups doing active reclaim
 #     (pgscan rising), and a no-swap anon workload never reclaims — verified live, a
@@ -260,12 +266,16 @@ log "service units installed + enabled (t3-dispatch + 3 timers; t3-serve@ per-us
 # 10a) per-user caps + fair-share weights on EVERY user-<uid>.slice (ssh/tmux)
 install -d -m 0755 /etc/systemd/system/user-.slice.d
 cat > /etc/systemd/system/user-.slice.d/50-devvm-resource.conf <<'SLICE_EOF'
-# Per-user containment for the shared devvm (setup-devvm.sh §10, 2026-06-22).
-# Applies to EACH user-<uid>.slice = all of one user's ssh/tmux work. Mirrors the
-# t3-serve@.service caps so a user is bounded in whichever surface they work in.
+# Per-user containment for the shared devvm (setup-devvm.sh §10, 2026-06-22;
+# MemoryHigh dropped 2026-07-02). Applies to EACH user-<uid>.slice = all of one
+# user's ssh/tmux work. Mirrors the t3-serve@.service caps so a user is bounded
+# in whichever surface they work in. MemoryHigh stays infinity: with swap=0 a
+# hog plateauing in a high..max band livelocks the entire slice (every ssh/tmux
+# session of that user) instead of dying — straight-to-OOM at MemoryMax is the
+# containment (see post-mortem addendum 2026-07-02).
 [Slice]
 MemoryAccounting=yes
-MemoryHigh=12G
+MemoryHigh=infinity
 MemoryMax=16G
 MemorySwapMax=0
 CPUAccounting=yes
@@ -294,12 +304,14 @@ cat > /etc/systemd/system/docker.slice <<'DOCKER_SLICE_EOF'
 # All docker containers live here (cgroup-parent in /etc/docker/daemon.json) so
 # they share one bounded budget and a runaway container is capped at MemoryMax
 # (cgroup-OOM'd locally) instead of escaping into the uncapped system.slice.
-# setup-devvm.sh §10, 2026-06-22.
+# setup-devvm.sh §10, 2026-06-22; MemoryHigh dropped 2026-07-02 — a container
+# plateauing in the high..max band would throttle-livelock EVERY container in
+# the slice (see post-mortem addendum); MemoryMax OOM is the containment.
 [Unit]
 Description=Docker containers slice (capped)
 [Slice]
 MemoryAccounting=yes
-MemoryHigh=6G
+MemoryHigh=infinity
 MemoryMax=8G
 MemorySwapMax=0
 CPUAccounting=yes

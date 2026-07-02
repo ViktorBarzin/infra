@@ -129,3 +129,40 @@ heavy user between 12–16G even with RAM free; bump to 16/20 if that bites.
   storm also neuters oomd. earlyoom (free-RAM threshold, swap-independent) is the
   correct pairing. A famous tool that "does OOM" still has to be proven to fire
   under *your* configuration.
+
+## Addendum (2026-07-02): the MemoryHigh throttle band livelocks — removed
+
+The soft-cap layer of this design was falsified in production on 2026-07-02
+(~15:42–16:35 UTC): an agent-spawned `ugrep` (12.35G RSS; `-o` with wide
+alternation captures over a multi-GB `.jsonl` transcript) **plateaued inside
+t3-serve@wizard's `MemoryHigh=12G..MemoryMax=16G` band**. With
+`MemorySwapMax=0` its anonymous pages were unreclaimable, so the kernel parked
+every allocating task of the cgroup in `mem_cgroup_handle_over_high`
+(`memory.pressure full avg60 ≈ 80%`, `memory.events high=882948`, `oom_kill=0`)
+— including the `t3 serve` event loop (~0.5G RSS, pure collateral). The accept
+queue backed up (21 pending connections), t3-probe logged `t3serve: [Errno 104]
+Connection reset by peer`, t3-dispatch logged `proxy error: context canceled`,
+and t3.viktorbarzin.me was dead for its user until the hog was SIGKILLed by
+hand (the D-state high-throttle sleep IS killable; the cgroup dropped 14G→1.4G
+and the service recovered in seconds with no restart).
+
+The Verification bullet above — a soft-capped balloon "throttled to a crawl,
+making no progress and **harming nothing**" — holds only when the hog is alone
+in its cgroup. Sharing the cgroup with a latency-sensitive server, the crawl
+IS the harm: a hog that stabilises below `MemoryMax` never triggers the local
+OOM the design counted on, so the band converts "runaway dies" into "everyone
+in the cgroup stalls forever".
+
+**Fix (same day, admin-approved): `MemoryHigh=infinity` on all three work
+cgroup definitions** — `scripts/t3-serve@.service`, the `user-.slice.d`
+drop-in, and `docker.slice` (`setup-devvm.sh` §10a/§10c). A runaway now runs
+unthrottled into `MemoryMax` and is cgroup-OOM-killed immediately
+(`OOMPolicy=continue` keeps t3-serve itself alive; in slices the kernel kills
+the biggest task). `MemoryMax`, `MemorySwapMax=0`, and earlyoom — the layers
+the stress tests actually validated — are unchanged. Applied live via
+`daemon-reload` + runtime `set-property` on the running cgroups; no session
+restarts.
+
+Lesson: **with `swap=0`, `memory.high` is not a gentler `memory.max` — it is
+an unbounded stall injector for everything sharing the cgroup.** Cap-and-kill
+beats throttle-and-pray for multi-tenant interactive services.
