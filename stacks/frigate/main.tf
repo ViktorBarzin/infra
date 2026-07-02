@@ -117,8 +117,9 @@ resource "kubernetes_deployment" "frigate" {
             limits = {
               memory           = "10Gi"
               "nvidia.com/gpu" = "1"
-              # GPU VRAM budget (ADR-0016): detector + ffmpeg decode (~1.9 GiB).
-              "viktorbarzin.me/gpumem" = "2000"
+              # GPU VRAM budget (ADR-0016): detector + ffmpeg decode (~1.9 GiB),
+              # +~250 MiB NVDEC headroom for the vermont-garage camera (ADR-0017).
+              "viktorbarzin.me/gpumem" = "2300"
             }
           }
           env {
