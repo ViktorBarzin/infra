@@ -22,6 +22,11 @@ locals {
     "instagram-poster",
     "payslip-ingest",
     "wealthfolio",
+    # broker-sync pulls the same PRIVATE ghcr.io/viktorbarzin/wealthfolio-sync
+    # image; the ADR-0002 migration only allowlisted the wealthfolio namespace,
+    # so broker-sync silently kept running the frozen pre-migration DockerHub
+    # image (its CronJobs lacked pull auth for ghcr).
+    "broker-sync",
     "fire-planner",
     "recruiter-responder",
     # openclaw's install-recruiter-plugin init container pulls the PRIVATE
