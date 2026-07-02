@@ -87,7 +87,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 }
 
 locals {
-  broker_sync_image = "viktorbarzin/broker-sync:${var.image_tag}"
+  broker_sync_image = "ghcr.io/viktorbarzin/wealthfolio-sync:${var.image_tag}"
 
   # Shared env block for every CronJob: auth into Wealthfolio + data path.
   common_env = [
@@ -123,6 +123,9 @@ resource "kubernetes_cron_job_v1" "version_probe" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             container {
               name    = "broker-sync"
               image   = local.broker_sync_image
@@ -167,6 +170,9 @@ resource "kubernetes_cron_job_v1" "trading212" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             # Pin every job that mounts the shared RWO data volume to one node:
             # cross-node scheduling forced a nightly detach/attach cycle whose
             # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
@@ -283,6 +289,9 @@ resource "kubernetes_cron_job_v1" "ibkr" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             # Pin every job that mounts the shared RWO data volume to one node:
             # cross-node scheduling forced a nightly detach/attach cycle whose
             # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
@@ -423,6 +432,9 @@ resource "kubernetes_cron_job_v1" "imap" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             # Pin every job that mounts the shared RWO data volume to one node:
             # cross-node scheduling forced a nightly detach/attach cycle whose
             # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
@@ -581,6 +593,9 @@ resource "kubernetes_cron_job_v1" "csv_drop" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             # Pin every job that mounts the shared RWO data volume to one node:
             # cross-node scheduling forced a nightly detach/attach cycle whose
             # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
@@ -679,6 +694,9 @@ resource "kubernetes_cron_job_v1" "fx_reconcile" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             # Pin every job that mounts the shared RWO data volume to one node:
             # cross-node scheduling forced a nightly detach/attach cycle whose
             # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
@@ -777,6 +795,9 @@ resource "kubernetes_cron_job_v1" "backup" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             # Pin every job that mounts the shared RWO data volume to one node:
             # cross-node scheduling forced a nightly detach/attach cycle whose
             # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
@@ -886,6 +907,9 @@ resource "kubernetes_cron_job_v1" "fidelity" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             # Pin every job that mounts the shared RWO data volume to one node:
             # cross-node scheduling forced a nightly detach/attach cycle whose
             # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
