@@ -4,3 +4,12 @@
 *.tfvars filter=git-crypt diff=git-crypt
 secrets/** filter=git-crypt diff=git-crypt
 stacks/**/secrets/** filter=git-crypt diff=git-crypt
+
+# Kubeconfigs / cluster credentials — encrypt at rest so a force-added or renamed
+# commit can't push plaintext to the public GitHub mirror. Belt-and-suspenders to
+# the .gitignore rules above; `.config` is explicit because that is exactly the
+# name an admin kubeconfig once leaked under (GitGuardian, 2026-07-02).
+.config filter=git-crypt diff=git-crypt
+kubeconfig filter=git-crypt diff=git-crypt
+*.kubeconfig filter=git-crypt diff=git-crypt
+admin.conf filter=git-crypt diff=git-crypt
