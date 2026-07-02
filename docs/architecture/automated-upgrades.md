@@ -128,7 +128,7 @@ The agent handles all three version patterns in Terraform:
 
 - **Slack**: All upgrade events reported (start, success, failure, rollback)
 - **Git**: Detailed commit messages with changelog summaries, risk level, backup status
-- **DIUN Slack**: Independent Slack channel for raw version detection (separate from upgrade agent)
+- **DIUN Slack**: REMOVED 2026-07-02 (per-tag @channel pings in #image-updates; human cadence is the weekly upgrade report). The n8n webhook feed to the upgrade agent is unchanged.
 
 ## Bulk Upgrades
 

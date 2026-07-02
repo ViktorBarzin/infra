@@ -345,10 +345,10 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
                   # 2026-06-05: mauriceboe (TREK group-trip planner trial).
                   "actualbudget/*", "afadil/*", "amruthpillai/*", "athomasson2/*",
                   "binwiederhier/*", "bitnami/*",
-                  "clickhouse/*", "cloudflare/*", "coturn/*", "crowdsecurity/*",
+                  "apache/*", "clickhouse/*", "cloudflare/*", "coturn/*", "crowdsecurity/*",
                   "curlimages/*", "deluan/*", "dgtlmoon/*", "dolthub/*",
                   "dpage/*", "dperson/*", "edoburu/*", "esanchezm/*",
-                  "freikin/*", "freshrss/*", "hackmdio/*", "hashicorp/*",
+                  "freikin/*", "freshrss/*", "gotenberg/*", "hackmdio/*", "hashicorp/*",
                   "headscale/*", "jhonderson/*", "kebe/*", "library/*",
                   "lissy93/*", "louislam/*", "matrixdotorg/*", "mauriceboe/*",
                   "mendhak/*",
