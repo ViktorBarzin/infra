@@ -329,6 +329,12 @@ Two independent grants make up "browser access" for a user:
 the provisioner. To revoke: remove from `CHROME_ALLOWED` and delete the SA (rotate
 a token by deleting its `<user>-browser-token` Secret).
 
+Because the SA is the user's DEFAULT kubectl credential, other per-namespace
+port-forward grants hang off the same identity: `stacks/excalidraw/rbac.tf`
+grants `emo-browser` `pods/portforward` in `excalidraw` (2026-07-02) so emo's
+agent can upload drawings via the port-forward + `X-Authentik-Username` recipe
+in his `~/.claude/CLAUDE.md`. Revoking the SA revokes those too.
+
 ## Limits + risks
 
 - **Anti-bot vs stealth arms race** — when an upstream beats us (DRM
