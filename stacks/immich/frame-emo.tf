@@ -73,7 +73,9 @@ resource "kubernetes_deployment" "immich-frame-emo" {
       }
       spec {
         container {
-          image = "ghcr.io/immichframe/immichframe:v1.0.32.0"
+          # immich_v3: upstream compat tag for Immich v3 — see frame.tf for the
+          # full story; repin to a versioned tag once upstream releases v3 support.
+          image = "ghcr.io/immichframe/immichframe:immich_v3"
           name  = "immich-frame-emo"
           resources {
             requests = {
