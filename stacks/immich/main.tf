@@ -15,7 +15,7 @@ locals {
 variable "immich_version" {
   type = string
   # Change me to upgrade
-  default = "v2.7.5"
+  default = "v3.0.0"
 }
 variable "proxmox_host" { type = string }
 variable "redis_host" { type = string }
@@ -492,7 +492,7 @@ resource "kubernetes_deployment" "immich-postgres" {
       }
       spec {
         container {
-          image = "ghcr.io/immich-app/postgres:15-vectorchord0.3.0-pgvectors0.2.0"
+          image = "ghcr.io/immich-app/postgres:15-vectorchord0.4.3-pgvectors0.2.0"
           name  = "immich-postgresql"
           port {
             container_port = 5432
@@ -882,7 +882,7 @@ resource "kubernetes_cron_job_v1" "clip-index-prewarm" {
             restart_policy = "Never"
             container {
               name  = "prewarm"
-              image = "ghcr.io/immich-app/postgres:15-vectorchord0.3.0-pgvectors0.2.0"
+              image = "ghcr.io/immich-app/postgres:15-vectorchord0.4.3-pgvectors0.2.0"
               # command overrides the postgres entrypoint → runs psql directly.
               command = [
                 "psql", "-v", "ON_ERROR_STOP=1", "-c",
@@ -964,7 +964,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
             }
             init_container {
               name  = "measure"
-              image = "ghcr.io/immich-app/postgres:15-vectorchord0.3.0-pgvectors0.2.0"
+              image = "ghcr.io/immich-app/postgres:15-vectorchord0.4.3-pgvectors0.2.0"
               command = ["/bin/bash", "-c", <<-EOT
                 set -uo pipefail
                 OUT=/shared/metrics.prom

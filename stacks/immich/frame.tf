@@ -69,7 +69,11 @@ resource "kubernetes_deployment" "immich-frame" {
       }
       spec {
         container {
-          image = "ghcr.io/immichframe/immichframe:v1.0.32.0"
+          # immich_v3 is the upstream compat tag for Immich v3 servers — every
+          # versioned release (≤ v1.0.33.0) crashes deserializing v3 API
+          # responses (immichFrame/immichFrame#653). Pin back to a vX.Y.Z.W tag
+          # once a stable release ships v3 support (upstream PR #654).
+          image = "ghcr.io/immichframe/immichframe:immich_v3"
           name  = "immich-frame"
           resources {
             requests = {
