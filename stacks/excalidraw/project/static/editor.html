@@ -8,41 +8,41 @@
         * { margin: 0; padding: 0; }
         html, body { width: 100%; height: 100%; overflow: hidden; }
         #root { width: 100%; height: 100%; }
-        .toolbar {
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            z-index: 1000;
+        .top-right-ui {
             display: flex;
+            align-items: center;
             gap: 8px;
-            background: rgba(255,255,255,0.95);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .top-right-ui a, .top-right-ui button {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
             padding: 8px 12px;
+            border: 1px solid transparent;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        }
-        .toolbar button, .toolbar a {
-            padding: 6px 14px;
-            border: none;
-            border-radius: 6px;
             cursor: pointer;
-            font-size: 14px;
-            background: #6c5ce7;
-            color: white;
+            font-size: 13px;
             text-decoration: none;
-            display: inline-block;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+            max-width: 40vw;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
-        .toolbar button:hover, .toolbar a:hover { background: #5b4cdb; }
-        .toolbar .secondary { background: #ddd; color: #333; }
-        .toolbar .secondary:hover { background: #ccc; }
-        .toolbar .title {
-            font-weight: 600;
-            padding: 6px 0;
-            color: #333;
+        .top-right-ui.theme-light a, .top-right-ui.theme-light button {
+            background: #ffffff;
+            color: #1b1b1f;
         }
+        .top-right-ui.theme-dark a, .top-right-ui.theme-dark button {
+            background: #232329;
+            color: #e9ecef;
+        }
+        .top-right-ui button:hover, .top-right-ui a:hover { border-color: #a29bfe; }
         .status {
             position: fixed;
             bottom: 10px;
-            right: 10px;
+            right: 60px;
             padding: 6px 12px;
             background: rgba(0,0,0,0.7);
             color: white;
@@ -51,6 +51,7 @@
             z-index: 1000;
             opacity: 0;
             transition: opacity 0.3s;
+            pointer-events: none;
         }
         .status.show { opacity: 1; }
         .loading {
@@ -67,11 +68,6 @@
     </style>
 </head>
 <body>
-    <div class="toolbar">
-        <a href="/" class="secondary">Back to Library</a>
-        <span class="title" id="title">Loading...</span>
-        <button onclick="saveDrawing()">Save</button>
-    </div>
     <div id="root">
         <div class="loading">
             <div>Loading Excalidraw...</div>
@@ -81,16 +77,33 @@
     <div id="status" class="status">Saved</div>
 
     <script>
+        // Replaces #root with an error panel (safe DOM methods, no innerHTML).
+        function showFatal(title, detail) {
+            var root = document.getElementById('root');
+            root.replaceChildren();
+            var panel = document.createElement('div');
+            panel.className = 'loading error';
+            var titleEl = document.createElement('div');
+            titleEl.textContent = title;
+            panel.appendChild(titleEl);
+            if (detail) {
+                var detailEl = document.createElement('div');
+                detailEl.style.fontSize = '0.9rem';
+                detailEl.textContent = detail;
+                panel.appendChild(detailEl);
+            }
+            root.appendChild(panel);
+        }
+
         // Get drawing ID from URL path: /draw/{id}
         var pathParts = window.location.pathname.split('/');
         var drawingId = pathParts[pathParts.length - 1] || pathParts[pathParts.length - 2];
 
         if (!drawingId) {
-            document.getElementById('root').innerHTML = '<div class="loading error">No drawing ID specified</div>';
+            showFatal('No drawing ID specified');
             throw new Error('No drawing ID');
         }
 
-        document.getElementById('title').textContent = drawingId;
         document.title = drawingId + ' - Excalidraw';
 
         var excalidrawAPI = null;
@@ -159,6 +172,46 @@
             autoSaveTimeout = setTimeout(saveDrawing, 2000);
         }
 
+        // Renames the current drawing via the API. Returns the new ID, or null
+        // if the rename was cancelled or failed.
+        async function renameCurrentDrawing() {
+            var newName = window.prompt('Rename drawing', drawingId);
+            if (newName === null) return null;
+            newName = newName.trim();
+            if (!newName || newName === drawingId) return null;
+
+            // A pending autosave would resurrect the old file after the rename.
+            clearTimeout(autoSaveTimeout);
+
+            var resp;
+            try {
+                resp = await fetch('/api/drawings/' + drawingId, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName })
+                });
+            } catch (e) {
+                showStatus('Rename failed!');
+                return null;
+            }
+            if (resp.status === 409) {
+                window.alert('A drawing with that name already exists.');
+                return null;
+            }
+            if (!resp.ok) {
+                window.alert('Rename failed: ' + (await resp.text()));
+                return null;
+            }
+            var result = await resp.json();
+            drawingId = result.id;
+            document.title = drawingId + ' - Excalidraw';
+            window.history.replaceState(null, '', '/draw/' + encodeURIComponent(drawingId));
+            showStatus('Renamed');
+            // Flush any unsaved changes to the new file.
+            saveDrawing();
+            return drawingId;
+        }
+
         // Load scripts dynamically
         function loadScript(src) {
             return new Promise(function(resolve, reject) {
@@ -197,33 +250,76 @@
 
                 updateLoadStatus('Rendering Excalidraw...');
 
-                // Create Excalidraw component
+                var e = React.createElement;
+                var MainMenu = ExcalidrawLib.MainMenu;
+
+                // Native default menu items, existence-guarded so a library
+                // update that drops one degrades gracefully.
+                function defaultItem(name) {
+                    var C = MainMenu && MainMenu.DefaultItems && MainMenu.DefaultItems[name];
+                    return C ? e(C, { key: name }) : null;
+                }
+
                 function App() {
-                    return React.createElement(ExcalidrawLib.Excalidraw, {
+                    var nameState = React.useState(drawingId);
+                    var name = nameState[0], setName = nameState[1];
+
+                    function onRename() {
+                        renameCurrentDrawing().then(function(newId) {
+                            if (newId) setName(newId);
+                        });
+                    }
+
+                    // The menu is where the native export features live:
+                    // Export = "Save to..." (.excalidraw), SaveAsImage =
+                    // "Export image..." (PNG / SVG / clipboard).
+                    var menu = MainMenu ? e(MainMenu, { key: 'menu' },
+                        e(MainMenu.Item, { key: 'back', onSelect: function() { window.location.href = '/'; } }, 'Back to Library'),
+                        e(MainMenu.Item, { key: 'save', onSelect: saveDrawing }, 'Save now'),
+                        e(MainMenu.Item, { key: 'rename', onSelect: onRename }, 'Rename drawing…'),
+                        MainMenu.Separator ? e(MainMenu.Separator, { key: 'sep1' }) : null,
+                        defaultItem('LoadScene'),
+                        defaultItem('Export'),
+                        defaultItem('SaveAsImage'),
+                        MainMenu.Separator ? e(MainMenu.Separator, { key: 'sep2' }) : null,
+                        defaultItem('ClearCanvas'),
+                        defaultItem('ToggleTheme'),
+                        defaultItem('ChangeCanvasBackground'),
+                        defaultItem('Help')
+                    ) : null;
+
+                    return e(ExcalidrawLib.Excalidraw, {
                         initialData: initialData ? {
                             elements: initialData.elements || [],
                             appState: initialData.appState || {}
                         } : undefined,
+                        UIOptions: { canvasActions: { toggleTheme: true } },
                         excalidrawAPI: function(api) {
                             excalidrawAPI = api;
                             console.log('Excalidraw API ready');
                         },
-                        onChange: onChange
-                    });
+                        onChange: onChange,
+                        renderTopRightUI: function(isMobile, appState) {
+                            return e('div', { className: 'top-right-ui theme-' + (appState.theme || 'light') },
+                                e('a', { key: 'home', href: '/', title: 'Back to Library' }, '← Library'),
+                                e('button', {
+                                    key: 'name',
+                                    title: 'Click to rename',
+                                    onClick: onRename
+                                }, name + ' ✎')
+                            );
+                        }
+                    }, menu);
                 }
 
                 var root = ReactDOM.createRoot(document.getElementById('root'));
-                root.render(React.createElement(App));
+                root.render(e(App));
 
                 console.log('Excalidraw rendered successfully');
 
-            } catch (e) {
-                console.error('Init error:', e);
-                document.getElementById('root').innerHTML =
-                    '<div class="loading error">' +
-                    '<div>Failed to load Excalidraw</div>' +
-                    '<div style="font-size:0.9rem">' + e.message + '</div>' +
-                    '</div>';
+            } catch (err) {
+                console.error('Init error:', err);
+                showFatal('Failed to load Excalidraw', err.message);
             }
         }
 
