@@ -109,10 +109,17 @@ rate(node_pressure_memory_stalled_seconds_total{instance="devvm"}[5m])
 node_memory_SwapFree_bytes{instance="devvm"}
 ```
 
-Guardrails in place (2026-06-10, `scripts/t3-serve@.service`): per-unit
-`MemoryHigh=12G`, `MemoryMax=16G`, `MemorySwapMax=0`, `OOMPolicy=continue` —
-a runaway agent now OOMs alone inside the cgroup instead of taking the box
-(and the WS server) with it.
+Guardrails in place (2026-06-10, hardened 2026-07-02; `scripts/t3-serve@.service`):
+per-unit `MemoryMax=16G`, `MemorySwapMax=0`, `OOMPolicy=continue`, and
+`MemoryHigh=infinity` — deliberately NO soft throttle band. With swap=0, a hog
+plateauing between high and max never OOMs and the kernel high-throttle stalls
+the whole unit: a 12.3G agent `ugrep` livelocked t3-serve@wizard for ~50min on
+2026-07-02 (signature: probe `t3serve` leg `Connection reset by peer`, dispatch
+`proxy error: context canceled`, server D-state in `mem_cgroup_handle_over_high`,
+`ss` backlog on the serve port; fix: SIGKILL the hog — the D-state is killable).
+A runaway agent now OOMs alone at 16G inside the cgroup instead of throttling
+the WS server with it. Post-mortem addendum:
+`docs/post-mortems/2026-06-22-devvm-mem-io-overload-containment.md`.
 
 ## 4. Known root causes (2026-06-10 investigation)
 
