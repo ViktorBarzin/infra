@@ -57,7 +57,9 @@ locals {
 # unschedulable (extended resource not advertised by any node).
 resource "null_resource" "advertise_gpumem" {
   provisioner "local-exec" {
-    command = <<-EOT
+    # bash, not the default /bin/sh: dash (Ubuntu sh) rejects `set -o pipefail`
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       for node in $(kubectl get nodes -l nvidia.com/gpu.present=true -o jsonpath='{.items[*].metadata.name}'); do
         echo "advertising ${var.gpumem_resource}=${var.gpumem_total_mib} on $node"
