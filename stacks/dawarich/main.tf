@@ -16,7 +16,7 @@ resource "kubernetes_namespace" "dawarich" {
     name = "dawarich"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
   }
@@ -330,7 +330,7 @@ resource "kubernetes_deployment" "dawarich" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
@@ -458,6 +458,13 @@ module "ingress" {
   namespace       = kubernetes_namespace.dawarich.metadata[0].name
   name            = "dawarich"
   tls_secret_name = var.tls_secret_name
+  # Rails serves all its fingerprinted assets itself and the map view adds an
+  # API burst per page load — the default 10/50 limiter 429s the asset tail
+  # from a single client IP (and risks dropping OwnTracks/mobile ingestion
+  # POSTs on the same host). Dedicated 100/1000 limiter defined in
+  # stacks/traefik/modules/traefik/middleware.tf.
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-dawarich-rate-limit@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Dawarich"

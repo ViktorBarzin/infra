@@ -368,6 +368,33 @@ resource "kubernetes_manifest" "middleware_authentik_rate_limit" {
   depends_on = [helm_release.traefik]
 }
 
+# Dawarich-specific rate limit. The Rails app serves all its fingerprinted
+# assets itself (JS/CSS chunks, SVG store badges, favicons, webmanifest) and
+# the map view adds a points/API burst on load — a single page load from one
+# client IP blows past the default 10/50 limiter and 429s the asset tail
+# (seventh instance of the burst pattern, after ha-sofia, ActualBudget, noVNC,
+# tripit, health and authentik). Background location ingestion (OwnTracks
+# bridge + mobile api_key POSTs) rides the same host, so 429s here also risk
+# dropped pings. Burst absorbs a couple of full page loads back-to-back.
+resource "kubernetes_manifest" "middleware_dawarich_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "dawarich-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 100
+        burst   = 1000
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # Compress responses to clients at the entrypoint level (outermost).
 # Applied at websecure entrypoint so all responses get compressed.
 # Uses includedContentTypes (whitelist) instead of excludedContentTypes:
