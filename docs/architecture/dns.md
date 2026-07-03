@@ -368,6 +368,7 @@ The Cloudflare tunnel uses a **wildcard rule** (`*.viktorbarzin.me → Traefik`)
 | TXT (MTA-STS) | 1 | `v=STSv1; id=20260412` | TLS enforcement |
 | TXT (TLSRPT) | 1 | `v=TLSRPTv1; rua=mailto:postmaster@...` | TLS reporting |
 | A (keyserver) | 1 | `130.162.165.220` (Oracle VPS) | PGP keyserver |
+| CNAME (CF Pages) | 1 | `most-6if.pages.dev` (Cloudflare Pages) | `most` — static site hosted off-infra on CF Pages, content deployed via wrangler |
 
 ### Proxied vs Non-Proxied
 
