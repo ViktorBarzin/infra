@@ -45,6 +45,28 @@ vtr_drift_ok() {
   printf ',%s,' "$pols" | grep -q ",$REQUIRED_POLICY," || return 1
 }
 
+# vtr_accessor <lookup-json> -> the token accessor (empty if absent).
+vtr_accessor() {
+  printf '%s' "$1" | jq -r '.data.accessor // ""'
+}
+
+# vtr_is_stale_periodic <lookup-json> <keep-accessor> -> 0 if this lookup
+# describes one of OUR periodic tokens (display name matches) that is NOT the
+# one to keep — i.e. a stale leftover a heal should revoke. 1 otherwise.
+# Name-only on purpose (no policy check): anything named token-devvm-wizard
+# that isn't the current token is garbage from a previous mint. An empty
+# keep-accessor sweeps NOTHING (fail-safe: never revoke when we don't know
+# which token is current).
+vtr_is_stale_periodic() {
+  local dn acc
+  [ -n "${2:-}" ] || return 1
+  dn=$(vtr_display_name "$1")
+  acc=$(vtr_accessor "$1")
+  [ "$dn" = "$EXPECTED_DN" ] || return 1
+  [ -n "$acc" ] || return 1
+  [ "$acc" != "$2" ]
+}
+
 vtr_main() {
   set -euo pipefail
   export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
