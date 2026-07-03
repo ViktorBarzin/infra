@@ -1002,6 +1002,14 @@ resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
                   echo "mail-auth: MX present"
                 fi
 
+                # Off-infra sites on Cloudflare Pages: the internal zone is
+                # authoritative (superset rule above), so public-only names
+                # with no Traefik ingress must be mirrored here or every
+                # internal client (LAN, VLANs, pods) gets NXDOMAIN for them.
+                # Target is the pages.dev host — resolves via upstream to CF
+                # edge IPs; normal egress, no hairpin involved.
+                add_cname "most.$$ZONE" "most-6if.pages.dev"
+
                 # Pin the .lan ingress anchor A record to the LIVE Traefik LB IP.
                 # *.viktorbarzin.lan ingress hosts CNAME to ingress.viktorbarzin.lan,
                 # so a Traefik LB IP move that misses the .lan zone silently breaks
