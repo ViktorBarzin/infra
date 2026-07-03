@@ -236,11 +236,11 @@ resource "cloudflare_record" "keyserver" {
 }
 
 # Cloudflare Pages site "мост" (ОбУ „Отец Паисий“ school static site).
-# Content is deployed off-infra to the Pages project `most` via
+# Content is deployed off-infra to the Pages project `bridge` via
 # `wrangler pages deploy`; this record just points the custom domain at it.
-resource "cloudflare_record" "most_pages" {
-  content = "most-6if.pages.dev"
-  name    = "most"
+resource "cloudflare_record" "bridge_pages" {
+  content = "bridge-cv2.pages.dev"
+  name    = "bridge"
   proxied = true
   ttl     = 1
   type    = "CNAME"
