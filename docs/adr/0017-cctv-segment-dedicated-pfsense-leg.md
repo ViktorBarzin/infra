@@ -4,6 +4,8 @@ Status: accepted (2026-07-02, rev 3 — single-switch)
 
 ![Network topology — dCCTV segment, flows, and camera-day steps](./0017-cctv-segment-topology.svg)
 
+![Physical cabling — wires only, no VLANs](./0017-cctv-physical-cabling.svg)
+
 The first owned camera at the Sofia/Vermont site (`vermont-garage`, HiLook
 IPC-T241H-C at the garage entrance) needs to be network-isolated: its cable is
 physically exposed outside the apartment, so anything plugged into that cable
