@@ -89,7 +89,7 @@ graph TB
 | phpIPAM | v1.7.0 | phpipam.viktorbarzin.me | IP address management, device inventory, DNS sync |
 | vmbr0 | Linux bridge | 192.168.1.127/24 | Physical bridge on eno1, uplink to LAN |
 | vmbr1 | Linux bridge (VLAN-aware) | Internal | VLAN trunk for VM isolation |
-| vmbr2 | Linux bridge | Physical (eno2) | dCCTV segment leg: eno2 → TL-SG105PE (dedicated CCTV switch in the rack) → cameras; pfSense net3 is the only L3 exit (ADR-0017) |
+| vmbr2 | Linux bridge | Physical (eno2) | DORMANT fallback leg for dCCTV (ADR-0017 rev 3) — live dCCTV rides vmbr0 tag 30 over the LAN1 trunk |
 | Technitium DNS | Container | 10.0.20.201 (LB) / 10.96.0.53 (ClusterIP) | Internal DNS (viktorbarzin.lan) + full recursive resolver |
 | Cloudflare DNS | SaaS | External | ~50 public domains under viktorbarzin.me |
 | Cloudflared | Container | K8s (3 replicas) | Tunnel ingress, replaces port forwarding |
@@ -103,9 +103,9 @@ graph TB
 
 Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C at the garage entrance). Decision + rejected alternatives: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
 
-**Physical path**: camera → TL-SG105PE PoE port → R730 `eno2` → `vmbr2` (bridge-ports eno2, not vlan-aware) → pfSense `net3`/vtnet3 = interface **dCCTV `10.0.30.1/24`**. The TL-SG105PE is a dedicated CCTV island — camera + eno2 uplink + 3 spare PoE ports, **no VLAN table anywhere**, mgmt at `10.0.30.6` (Kea). It is a second switch: the pre-existing garage TL-SG105E (`192.168.1.6`; apartment uplink, R730 LAN1, 4G router `192.168.1.7`, UPS mgmt, one free port; no PoE) is not involved in the CCTV path at all.
+**Physical path (rev 3, single switch)**: camera → TL-SG105PE PoE port (untagged VLAN 30) → trunk port (home LAN untagged + CCTV **tagged 30**) → the existing LAN1 cable → R730 `eno1` → `vmbr0` (vlan-aware) → pfSense `net3`/vtnet3 = `vmbr0 tag=30` = interface **dCCTV `10.0.30.1/24`**. The TL-SG105PE **replaces** the old garage TL-SG105E (retired to cold spare) and carries everything: apartment uplink, 4G router `192.168.1.7`, UPS mgmt (VLAN 1), camera (VLAN 30), trunk — all 5 ports used. VLAN-30 membership is {camera port, trunk port} only, so tagged injection from other ports is dropped. `eno2`/`vmbr2` remain dormant as the fallback physical leg (rev 2).
 
-**Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`, PE switch mgmt `10.0.30.6`). Kea DDNS auto-registers names in Technitium; `phpipam-pfsense-import` picks up leases hourly.
+**Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`; the PE switch mgmt inherits the retired switch's `192.168.1.6` on the home LAN). Kea DDNS auto-registers names in Technitium; `phpipam-pfsense-import` picks up leases hourly.
 
 **Firewall** (all on pfSense):
 - dCCTV in: pass `udp OPT4-net → 10.0.30.1:123` (NTP) — everything else hits the interface's default deny. Cameras cannot reach LAN, other segments, or the internet.

@@ -119,8 +119,8 @@ _Avoid_: "external", "outside".
 _Avoid_: bare "lan", "private", "intranet".
 
 **Segment**:
-One isolated L2/L3 network with pfSense as its gateway — realised as one Proxmox bridge feeding one dedicated pfSense interface (dManagementsVms 10.0.10.0/24, dKubernetes 10.0.20.0/24, dCCTV 10.0.30.0/24). pfSense itself never terminates 802.1Q; any tagging happens on the bridge or a switch.
-_Avoid_: "VLAN" as the primary name (VLAN 10/20 are informal aliases; dCCTV has no tag on the wire at all).
+One isolated L2/L3 network with pfSense as its gateway — realised as a Proxmox-bridge-level tag feeding one dedicated untagged pfSense interface (dManagementsVms 10.0.10.0/24 = vmbr1 tag 10, dKubernetes 10.0.20.0/24 = vmbr1 tag 20, dCCTV 10.0.30.0/24 = vmbr0 tag 30). pfSense itself never terminates 802.1Q.
+_Avoid_: "VLAN" as the primary name (the tags 10/20/30 are transport detail; the Segment is the concept).
 
 **CCTV segment**:
 The untrusted camera **Segment** (`dCCTV`) — devices in it may be pulled from (RTSP/ISAPI) but may initiate nothing except NTP to their gateway. Deliberately outside every trusted source-IP allowlist (ADR-0017).
