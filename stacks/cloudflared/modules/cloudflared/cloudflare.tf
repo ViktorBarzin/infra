@@ -235,6 +235,18 @@ resource "cloudflare_record" "keyserver" {
   zone_id  = var.cloudflare_zone_id
 }
 
+# Cloudflare Pages site "мост" (ОбУ „Отец Паисий“ school static site).
+# Content is deployed off-infra to the Pages project `most` via
+# `wrangler pages deploy`; this record just points the custom domain at it.
+resource "cloudflare_record" "most_pages" {
+  content = "most-6if.pages.dev"
+  name    = "most"
+  proxied = true
+  ttl     = 1
+  type    = "CNAME"
+  zone_id = var.cloudflare_zone_id
+}
+
 # Enable HTTP/3 (QUIC) for Cloudflare-proxied domains
 resource "cloudflare_zone_settings_override" "http3" {
   zone_id = var.cloudflare_zone_id
