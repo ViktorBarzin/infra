@@ -235,6 +235,11 @@ resource "cloudflare_record" "keyserver" {
   zone_id  = var.cloudflare_zone_id
 }
 
+# bridge.viktorbarzin.me (Cloudflare Pages, "мост" school site) moved to
+# stacks/valia-sites (ADR-0018) — all Valia-site records live there now. The
+# state forget lives in the STACK ROOT (../..//removed-bridge.tf): removed{}
+# blocks are root-module-only.
+
 # Enable HTTP/3 (QUIC) for Cloudflare-proxied domains
 resource "cloudflare_zone_settings_override" "http3" {
   zone_id = var.cloudflare_zone_id
