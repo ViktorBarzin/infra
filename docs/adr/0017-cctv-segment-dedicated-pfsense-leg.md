@@ -59,29 +59,9 @@ pfSense:
   out of its WAN toward the AX6000. Load-wise the trunk gained only the
   camera's ~8 Mbps — it already carried all rack-bound home-LAN traffic.
 
-```text
- INTERNET ── AX6000 192.168.1.1 (home GW; camera-day route 10.0.30.0/24 → .2)
-                │
-                │ apartment uplink · V1 untagged
- ┌──────────────┴───────────────────────────────┐    ┌────────────────────┐
- │ TL-SG105PE (mgmt 192.168.1.6)                │    │ vermont-garage     │
- │ P1 apartment · P2 4G .7 · P3 UPS  [VLAN 1]   │◄───┤ HiLook, pure IR    │
- │ P4 camera PoE [VLAN 30]                      │cat6│ 10.0.30.70 (Kea)   │
- │ P5 TRUNK: V1 untagged + V30 tagged           │    └────────────────────┘
- └──────────────┬───────────────────────────────┘
-                │ ONE cable (existing LAN1 run)
- ┌──────────────┴───────────────────────────────────────────────┐
- │ R730 · eno1 → vmbr0 (vlan-aware)                              │
- │   ├─ untagged → host .127 + pfSense net0 WAN 192.168.1.2      │
- │   └─ tag 30  → pfSense net3 dCCTV 10.0.30.1/24 (camera GW)    │
- │ eno2 → vmbr2: dormant fallback leg                            │
- │ vmbr1: tag 10 → dManagementsVms · tag 20 → dKubernetes (k8s,  │
- │        Frigate on node1, go2rtc LB 10.0.20.204 → HA live)     │
- └───────────────────────────────────────────────────────────────┘
+![VLAN tagging — where traffic can flow](./0017-cctv-vlan-tagging.svg)
 
- Frigate 10.0.20.x ─RTSP :554─► camera · ha-sofia .8 ─:80+:554─► camera
- camera ─NTP :123─► 10.0.30.1 · camera → anything else = DENY
-```
+*(editable source: [`0017-cctv-vlan-tagging.excalidraw`](./0017-cctv-vlan-tagging.excalidraw) — open it in excalidraw to tweak)*
 
 ## Considered options
 
