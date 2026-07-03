@@ -1008,7 +1008,7 @@ resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
                 # internal client (LAN, VLANs, pods) gets NXDOMAIN for them.
                 # Target is the pages.dev host — resolves via upstream to CF
                 # edge IPs; normal egress, no hairpin involved.
-                add_cname "most.$$ZONE" "most-6if.pages.dev"
+                add_cname "bridge.$$ZONE" "bridge-cv2.pages.dev"
 
                 # Pin the .lan ingress anchor A record to the LIVE Traefik LB IP.
                 # *.viktorbarzin.lan ingress hosts CNAME to ingress.viktorbarzin.lan,

@@ -277,7 +277,7 @@ Technitium's **Split Horizon AddressTranslation** app post-processes DNS respons
 
 Config is synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h).
 
-**Superset rule for the internal `viktorbarzin.me` zone**: it is authoritative for every internal client (pods included since 2026-06-10), so it must carry every record type those clients consume — not just ingress A/CNAMEs. The `technitium-ingress-dns-sync` CronJob therefore also maintains the static **mail-auth records** (apex SPF + brevo-code TXT, MX → mail.viktorbarzin.me, `_dmarc`, `mail._domainkey` DKIM), mirrored from the public Cloudflare zone. Without them, rspamd on the mailserver saw `SPF=none` for inbound `@viktorbarzin.me` mail and quarantined it (broke the Brevo email-roundtrip probe, 2026-06-10). If these records change in Cloudflare, update the sync script too. The same applies to **off-infra sites** (e.g. `most` → CNAME `most-6if.pages.dev`, Cloudflare Pages): any public-only name with no Traefik ingress must be added as a static record in the sync script, or internal clients NXDOMAIN on it while it works fine externally.
+**Superset rule for the internal `viktorbarzin.me` zone**: it is authoritative for every internal client (pods included since 2026-06-10), so it must carry every record type those clients consume — not just ingress A/CNAMEs. The `technitium-ingress-dns-sync` CronJob therefore also maintains the static **mail-auth records** (apex SPF + brevo-code TXT, MX → mail.viktorbarzin.me, `_dmarc`, `mail._domainkey` DKIM), mirrored from the public Cloudflare zone. Without them, rspamd on the mailserver saw `SPF=none` for inbound `@viktorbarzin.me` mail and quarantined it (broke the Brevo email-roundtrip probe, 2026-06-10). If these records change in Cloudflare, update the sync script too. The same applies to **off-infra sites** (e.g. `bridge` → CNAME `bridge-cv2.pages.dev`, Cloudflare Pages): any public-only name with no Traefik ingress must be added as a static record in the sync script, or internal clients NXDOMAIN on it while it works fine externally.
 
 ## NodeLocal DNSCache
 
@@ -368,7 +368,7 @@ The Cloudflare tunnel uses a **wildcard rule** (`*.viktorbarzin.me → Traefik`)
 | TXT (MTA-STS) | 1 | `v=STSv1; id=20260412` | TLS enforcement |
 | TXT (TLSRPT) | 1 | `v=TLSRPTv1; rua=mailto:postmaster@...` | TLS reporting |
 | A (keyserver) | 1 | `130.162.165.220` (Oracle VPS) | PGP keyserver |
-| CNAME (CF Pages) | 1 | `most-6if.pages.dev` (Cloudflare Pages) | `most` — static site hosted off-infra on CF Pages, content deployed via wrangler |
+| CNAME (CF Pages) | 1 | `bridge-cv2.pages.dev` (Cloudflare Pages) | `bridge` — static site hosted off-infra on CF Pages, content deployed via wrangler |
 
 ### Proxied vs Non-Proxied
 
