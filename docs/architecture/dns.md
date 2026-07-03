@@ -277,7 +277,7 @@ Technitium's **Split Horizon AddressTranslation** app post-processes DNS respons
 
 Config is synced to all 3 Technitium instances by CronJob `technitium-split-horizon-sync` (every 6h).
 
-**Superset rule for the internal `viktorbarzin.me` zone**: it is authoritative for every internal client (pods included since 2026-06-10), so it must carry every record type those clients consume — not just ingress A/CNAMEs. The `technitium-ingress-dns-sync` CronJob therefore also maintains the static **mail-auth records** (apex SPF + brevo-code TXT, MX → mail.viktorbarzin.me, `_dmarc`, `mail._domainkey` DKIM), mirrored from the public Cloudflare zone. Without them, rspamd on the mailserver saw `SPF=none` for inbound `@viktorbarzin.me` mail and quarantined it (broke the Brevo email-roundtrip probe, 2026-06-10). If these records change in Cloudflare, update the sync script too. The same applies to **off-infra sites** (e.g. `bridge` → CNAME `bridge-cv2.pages.dev`, Cloudflare Pages): any public-only name with no Traefik ingress must be added as a static record in the sync script, or internal clients NXDOMAIN on it while it works fine externally.
+**Superset rule for the internal `viktorbarzin.me` zone**: it is authoritative for every internal client (pods included since 2026-06-10), so it must carry every record type those clients consume — not just ingress A/CNAMEs. The `technitium-ingress-dns-sync` CronJob therefore also maintains the static **mail-auth records** (apex SPF + brevo-code TXT, MX → mail.viktorbarzin.me, `_dmarc`, `mail._domainkey` DKIM), mirrored from the public Cloudflare zone. Without them, rspamd on the mailserver saw `SPF=none` for inbound `@viktorbarzin.me` mail and quarantined it (broke the Brevo email-roundtrip probe, 2026-06-10). If these records change in Cloudflare, update the sync script too. **Off-infra Valia sites** (Cloudflare Pages, ADR-0018) are the other class of public-only names with no Traefik ingress — without internal records they NXDOMAIN for every internal client while working fine externally. Since 2026-07-03 they are reconciled **declaratively**: `stacks/valia-sites` writes the ConfigMap `valia-sites-dns` (technitium ns, `<name> → <project>.pages.dev`), and the sync script ensures/updates a CNAME per entry and **deletes** stale internal CNAMEs targeting `*.pages.dev` that left the map (retire/rename cleans itself up; deletion is suffix-scoped so nothing else can be touched).
 
 ## NodeLocal DNSCache
 
@@ -368,7 +368,7 @@ The Cloudflare tunnel uses a **wildcard rule** (`*.viktorbarzin.me → Traefik`)
 | TXT (MTA-STS) | 1 | `v=STSv1; id=20260412` | TLS enforcement |
 | TXT (TLSRPT) | 1 | `v=TLSRPTv1; rua=mailto:postmaster@...` | TLS reporting |
 | A (keyserver) | 1 | `130.162.165.220` (Oracle VPS) | PGP keyserver |
-| CNAME (CF Pages) | 1 | `bridge-cv2.pages.dev` (Cloudflare Pages) | `bridge` — static site hosted off-infra on CF Pages, content deployed via wrangler |
+| CNAME (CF Pages) | 2 | `<project>.pages.dev` (Cloudflare Pages) | bridge, stem95su — Valia sites (ADR-0018), managed by `stacks/valia-sites` |
 
 ### Proxied vs Non-Proxied
 
@@ -514,6 +514,7 @@ For external `.viktorbarzin.me` records:
 1. Add `dns_type = "proxied"` (or `"non-proxied"`) to the `ingress_factory` module call in the service stack
 2. Run `scripts/tg apply` on the service stack — DNS record is auto-created
 3. For non-standard records (MX, TXT), add a `cloudflare_record` resource in `stacks/cloudflared/modules/cloudflared/cloudflare.tf`
+4. For a Valia site (off-infra Cloudflare Pages), add the entry to `local.sites` in `stacks/valia-sites/main.tf` — public CNAME + internal record both follow (`docs/runbooks/valia-sites.md`)
 
 ## Incident History
 
