@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Unit tests for the pure drift-guard functions in vault-token-renew.sh.
-# Sources the script (vtr_main is guarded) and exercises the decision logic that
-# decides whether ~/.vault-token is OUR periodic admin token (renew) or a foreign
-# token that clobbered the file (refuse, fail loud). This is exactly the logic
-# whose ABSENCE let the 2026-06-05 woodpecker-token clobber be silently renewed
-# for two days. Run: bash infra/scripts/test-vault-token-renew.sh
+# Unit tests for the pure functions in vault-token-renew.sh.
+# Sources the script (vtr_main is guarded) and exercises (a) the drift-guard
+# decision — is ~/.vault-token OUR periodic admin token (renew) or a foreign
+# clobber (heal / fail loud)? — whose ABSENCE let the 2026-06-05 woodpecker
+# clobber be silently renewed for two days, and (b) the self-heal's revoke
+# filter — which stale token-devvm-wizard tokens a heal may sweep.
+# Run: bash infra/scripts/test-vault-token-renew.sh
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
