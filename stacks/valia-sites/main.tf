@@ -31,7 +31,7 @@ locals {
       folder_id  = "1cmOI2jRyBJdnrVPgbr4kx2cx_4DY6pm_" # "claude" — 95. СУ STEM board
       src_path   = "stem claude/files"
       entry_file = "stem_board.html"
-      manage_dns = false # flipped true in the cutover commit (record still owned by stacks/stem95su ingress_factory)
+      manage_dns = true
     }
   }
 
