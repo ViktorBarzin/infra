@@ -21,8 +21,8 @@ Dovecot LMTP delivery to docs@
     ▼
 docs@ INBOX ── paperless-ngx mail task (every 10 min, PAPERLESS_EMAIL_TASK_CRON
     │          default) applies mail rules in order: filter_from = <sender>
-    │          → consume attachments (attachments-only: inline images like
-    │          signature logos are skipped), owner = mapped user,
+    │          → consume attachments (ALL parts incl. inline — see design
+    │          notes: Apple Mail marks real PDFs inline), owner = mapped user,
     │          tag = email-ingest, title = mail subject
     ▼
 consumed mail is MOVED to the "Processed" IMAP folder (audit trail);
@@ -58,9 +58,10 @@ The map lives in **two places by design** — keep them in sync:
 2. Clone an existing `forward:` mail rule in the paperless admin UI
    (Mail → Rules) or via API, changing `filter_from` and the rule **owner**
    (documents are owned by the rule owner — `assign_owner_from_rule=true`).
-   Keep: action = Move to `Processed`, attachment type = attachments-only,
-   consumption scope = attachments only, tag `email-ingest`, order after the
-   existing rules.
+   Keep: action = Move to `Processed`, attachment type = **process all files
+   including inline** (`attachment_type=2` — NOT attachments-only, see design
+   notes), consumption scope = attachments only, tag `email-ingest`, order
+   after the existing rules.
 
 ## Operations
 
@@ -103,9 +104,19 @@ The map lives in **two places by design** — keep them in sync:
   crafted spoof could ingest documents into a family member's account. Accepted
   risk (worst case: unwanted documents appear, visible + deletable in
   paperless).
-- **Not PDF-only:** any real attachment type paperless supports is consumed
-  (PDF, images, Office via the existing tika+gotenberg pipeline). Inline
-  images are excluded by `attachment_type=1`.
+- **Not PDF-only:** any attachment type paperless supports is consumed
+  (PDF, images, Office via the existing tika+gotenberg pipeline).
+- **Inline attachments ARE processed (`attachment_type=2`, flipped
+  2026-07-03):** the rules originally used attachments-only (1) to skip
+  signature logos, but the very first real forward (Apple Mail, Viktor's
+  client) attached the invoice PDF with `Content-Disposition: inline` —
+  paperless matched the rule, consumed nothing, and recorded
+  `PROCESSED_WO_CONSUMPTION` (which, like any ProcessedMail row, blocks that
+  UID from ever being re-processed — delete the row via `manage.py shell` to
+  retry). Trade-off: signature/inline images in forwards may be ingested as
+  junk docs (tagged `email-ingest`, easy to spot). If that gets noisy, add
+  `filter_attachment_filename_exclude` patterns to the rules using the
+  actually-observed junk filenames — do NOT flip back to attachments-only.
 - **No dedicated alerting** (deliberate, 2026-07-03): mail-task errors surface
   in paperless logs; the mailserver inbound path is covered by
   `email-roundtrip-monitor`. Revisit if forwards start silently failing.
