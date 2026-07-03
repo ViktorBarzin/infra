@@ -237,6 +237,20 @@ _Avoid_: expecting Diun to deploy; conflating with **Keel**.
 **Anubis**:
 A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content-bearing sites without app-level auth (blog, wiki, landing pages). Never in front of Git, WebDAV, CalDAV, or API endpoints (clients can't solve PoW).
 
+### Externally-authored sites
+
+**Valia site**:
+A small public static site authored by Valia (Viktor's mother, external to the infra) and hosted for her under `<name>.viktorbarzin.me`. Its source of truth is a **Content folder** she owns; the live site is a mirror of that folder, fresh within ~10 minutes. Hosted **off-infra** (Cloudflare Pages) by decision: a homelab outage freezes content but never takes her sites down. Viktor picks the English subdomain name per site at registration (her folder names stay Bulgarian). Current instances: `stem95su`, `bridge`.
+_Avoid_: "school site" (the family may grow beyond school projects); treating the deployed copy as editable — edits land only in the **Content folder**.
+
+**Content folder**:
+The Google Drive folder (or subfolder) Valia shares with `vbarzin@gmail.com` holding one **Valia site**'s files. Strictly read-only from the infra side — nothing ever writes back to her Drive. Empty or half-uploaded folder states must never wipe a live site.
+_Avoid_: syncing a folder root when the servable content lives in a subfolder (stem95su serves `stem claude/files/`, not the folder root).
+
+**Entry file**:
+The HTML file a **Valia site** serves at `/`. Defaults to `index.html`; per-site override when she names it differently (stem95su: `stem_board.html`). The override is a registration-time setting, not a constraint on her authoring.
+_Avoid_: asking Valia to rename her files to fit hosting conventions.
+
 ## Relationships
 
 - A **Service** is defined by exactly one **Stack** — **flat** or wrapping a **Stack-local module** — which sources zero or more shared **Factory modules** and resolves to one or more K8s workloads.
@@ -248,6 +262,7 @@ A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content
 - A **Service**'s image reaches the cluster via **Woodpecker deploy** (push-driven, on commit) or **Keel** (poll-driven, on a new registry tag); **Diun** only notifies. Operator-managed StatefulSets are rolled by neither.
 - An owned **Service**'s image is built by GitHub Actions from the **Canonical repo**'s **GitHub mirror** and hosted on ghcr.io (ADR-0002); the **Forgejo registry** keeps only a frozen last-known-good tag per **Service**.
 - Tier-1 **State tier** state and ~12 app databases share one **CNPG** `pg-cluster`, reached through **PgBouncer**; their credentials rotate via the `vault-database` store.
+- A **Valia site** mirrors exactly one **Content folder** and serves exactly one **Entry file** at `/`; the folder is hers, the subdomain name is Viktor's, the hosting is off-infra.
 
 ## Example dialogue
 
