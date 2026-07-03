@@ -1511,6 +1511,34 @@ resource "null_resource" "pg_instagram_poster_db" {
   }
 }
 
+# Create tasks database for the tasks PWA (Reminders-style front-end over
+# Nextcloud CalDAV; FastAPI + SvelteKit SPA — see ~/code/tasks). Stores
+# Connected Accounts (Fernet-encrypted Nextcloud app passwords) + sync state.
+# Role password is managed by Vault Database Secrets Engine (static role
+# `pg-tasks`, 7d rotation). Tables are created by alembic on app startup.
+resource "null_resource" "pg_tasks_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "tasks"
+    username = "tasks"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'tasks'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE tasks WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'tasks'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE tasks OWNER tasks"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE tasks TO tasks"
+        '
+    EOT
+  }
+}
+
 # Old PostgreSQL deployment — kept commented for rollback reference
 # resource "kubernetes_deployment" "postgres" {
 #   metadata {
