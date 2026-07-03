@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <!-- ADR-0017: PHYSICAL cabling only — no VLANs, no flows. Solid = cable in
+       place today · dashed = camera-day work · ~~~ = radio. Palette: neutral
+       grays + blue for copper runs (reference dataviz palette text tokens). -->
+  <defs>
+    <marker id="dot" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="5" markerHeight="5">
+      <circle cx="4" cy="4" r="3" fill="#52514e"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="820" fill="#fcfcfb"/>
+
+  <text x="40" y="42" font-size="26" font-weight="700" fill="#0b0b0b">ADR-0017 — physical cabling (single-switch, rev 3)</text>
+  <text x="40" y="66" font-size="15" fill="#52514e">wires only — no VLANs, no traffic · solid = in place · dashed = camera-day · ~ = radio</text>
+
+  <!-- ═════════ APARTMENT ═════════ -->
+  <rect x="40" y="100" width="330" height="330" rx="10" fill="#0b0b0b" fill-opacity="0.03" stroke="#b9b8b2"/>
+  <text x="56" y="126" font-size="13" font-weight="700" fill="#52514e" letter-spacing="1">APARTMENT</text>
+
+  <text x="70" y="158" font-size="13" fill="#52514e">☁ ISP (internet)</text>
+  <path d="M120,166 L120,196" fill="none" stroke="#52514e" stroke-width="2"/>
+
+  <rect x="64" y="198" width="220" height="64" rx="8" fill="#ffffff" stroke="#8a8984"/>
+  <text x="80" y="222" font-size="14.5" font-weight="700" fill="#0b0b0b">AX6000 router</text>
+  <text x="80" y="242" font-size="12" fill="#52514e">192.168.1.1 · WAN←ISP · 8×LAN</text>
+
+  <rect x="64" y="290" width="220" height="52" rx="8" fill="#ffffff" stroke="#8a8984"/>
+  <text x="80" y="312" font-size="14" font-weight="700" fill="#0b0b0b">Synology NAS · .13</text>
+  <text x="80" y="330" font-size="12" fill="#52514e">on an AX6000 LAN port</text>
+  <path d="M174,262 L174,290" fill="none" stroke="#2a78d6" stroke-width="2"/>
+
+  <text x="70" y="376" font-size="12.5" fill="#52514e">📶 wifi clients (phones, laptops)</text>
+  <path d="M110,262 C104,272 106,278 100,286 C106,294 104,300 100,308 C106,316 104,322 100,330 C106,338 104,344 100,352 C104,358 102,362 98,366" fill="none" stroke="#8a8984" stroke-width="1.6" stroke-dasharray="2,3"/>
+
+  <!-- in-wall run apartment -> garage -->
+  <path d="M284,230 C450,230 540,228 616,228" fill="none" stroke="#2a78d6" stroke-width="2.5"/>
+  <text x="330" y="218" font-size="12.5" font-weight="700" fill="#2a78d6">in-wall run → garage</text>
+
+  <!-- ═════════ GARAGE — RACK ═════════ -->
+  <rect x="560" y="100" width="640" height="680" rx="10" fill="#0b0b0b" fill-opacity="0.03" stroke="#b9b8b2"/>
+  <text x="576" y="126" font-size="13" font-weight="700" fill="#52514e" letter-spacing="1">GARAGE — RACK</text>
+
+  <!-- switch -->
+  <rect x="600" y="150" width="560" height="150" rx="8" fill="#ffffff" stroke="#0b0b0b" stroke-opacity="0.5" stroke-width="1.6"/>
+  <text x="616" y="176" font-size="14.5" font-weight="700" fill="#0b0b0b">TL-SG105PE · 5-port gigabit PoE switch</text>
+  <text x="616" y="194" font-size="12" fill="#52514e">mgmt 192.168.1.6 · replaces the old TL-SG105E (→ shelf, cold spare)</text>
+  <g font-size="11.5" text-anchor="middle">
+    <rect x="616" y="210" width="96" height="40" rx="5" fill="#2a78d6" fill-opacity="0.08" stroke="#8a8984"/>
+    <text x="664" y="227" font-weight="700" fill="#0b0b0b">P1</text>
+    <text x="664" y="242" fill="#52514e">← apartment</text>
+    <rect x="722" y="210" width="96" height="40" rx="5" fill="#2a78d6" fill-opacity="0.08" stroke="#8a8984"/>
+    <text x="770" y="227" font-weight="700" fill="#0b0b0b">P2</text>
+    <text x="770" y="242" fill="#52514e">← 4G router</text>
+    <rect x="828" y="210" width="96" height="40" rx="5" fill="#2a78d6" fill-opacity="0.08" stroke="#8a8984"/>
+    <text x="876" y="227" font-weight="700" fill="#0b0b0b">P3</text>
+    <text x="876" y="242" fill="#52514e">← UPS mgmt</text>
+    <rect x="934" y="210" width="96" height="40" rx="5" fill="#2a78d6" fill-opacity="0.08" stroke="#8a8984" stroke-dasharray="4,3"/>
+    <text x="982" y="227" font-weight="700" fill="#0b0b0b">P4 ⚡PoE</text>
+    <text x="982" y="242" fill="#52514e">← camera</text>
+    <rect x="1040" y="210" width="96" height="40" rx="5" fill="#2a78d6" fill-opacity="0.08" stroke="#8a8984"/>
+    <text x="1088" y="227" font-weight="700" fill="#0b0b0b">P5</text>
+    <text x="1088" y="242" fill="#52514e">← R730 eno1</text>
+  </g>
+  <text x="616" y="284" font-size="12" fill="#52514e">every cable below re-plugs old-switch → PE on camera day (≈3 min)</text>
+
+  <!-- 4G router -->
+  <rect x="600" y="360" width="250" height="64" rx="8" fill="#ffffff" stroke="#8a8984"/>
+  <text x="616" y="384" font-size="14" font-weight="700" fill="#0b0b0b">4G router · 192.168.1.7</text>
+  <text x="616" y="403" font-size="12" fill="#52514e">~cellular uplink (out-of-band)</text>
+  <path d="M770,300 L770,360" fill="none" stroke="#2a78d6" stroke-width="2"/>
+  <path d="M856,392 C866,386 864,380 874,376 C866,370 868,364 876,360" fill="none" stroke="#8a8984" stroke-width="1.6" stroke-dasharray="2,3"/>
+  <text x="884" y="380" font-size="12" fill="#52514e">📡 cellular</text>
+
+  <!-- UPS -->
+  <rect x="600" y="452" width="250" height="56" rx="8" fill="#ffffff" stroke="#8a8984"/>
+  <text x="616" y="476" font-size="14" font-weight="700" fill="#0b0b0b">UPS (Huawei)</text>
+  <text x="616" y="494" font-size="12" fill="#52514e">network mgmt card</text>
+  <path d="M876,300 C876,340 800,410 720,452" fill="none" stroke="#2a78d6" stroke-width="2"/>
+
+  <!-- R730 -->
+  <rect x="600" y="540" width="560" height="220" rx="8" fill="#ffffff" stroke="#0b0b0b" stroke-opacity="0.5" stroke-width="1.6"/>
+  <text x="616" y="566" font-size="14.5" font-weight="700" fill="#0b0b0b">Dell R730 · PVE host · 192.168.1.127</text>
+  <g font-size="11.5">
+    <rect x="616" y="582" width="128" height="38" rx="5" fill="#2a78d6" fill-opacity="0.08" stroke="#8a8984"/>
+    <text x="628" y="598" font-weight="700" fill="#0b0b0b">eno1 · LAN1</text>
+    <text x="628" y="613" fill="#52514e">← switch P5 · 1GbE</text>
+    <rect x="756" y="582" width="128" height="38" rx="5" fill="#ffffff" stroke="#8a8984" stroke-dasharray="4,3"/>
+    <text x="768" y="598" font-weight="700" fill="#52514e">eno2 · LAN2</text>
+    <text x="768" y="613" fill="#8a8984">dark · fallback leg</text>
+    <rect x="896" y="582" width="128" height="38" rx="5" fill="#ffffff" stroke="#d8d7d2"/>
+    <text x="908" y="598" fill="#8a8984">eno3 / eno4</text>
+    <text x="908" y="613" fill="#8a8984">free, uncabled</text>
+    <rect x="1036" y="582" width="108" height="38" rx="5" fill="#ffffff" stroke="#d8d7d2"/>
+    <text x="1048" y="598" fill="#8a8984">iDRAC · .4</text>
+    <text x="1048" y="613" fill="#8a8984">shared-LOM/eno1</text>
+  </g>
+  <text x="616" y="648" font-size="12" fill="#52514e">no other network cables — everything else on this host is VIRTUAL:</text>
+  <text x="616" y="668" font-size="12" fill="#52514e">pfSense · ha-sofia (HA) · devvm · k8s-master + node1-6 · registry VM …</text>
+  <text x="616" y="696" font-size="12" fill="#8a8984">(power: host + switch fed from the UPS — power wiring not drawn)</text>
+
+  <path d="M1088,300 C1088,420 720,500 680,582" fill="none" stroke="#2a78d6" stroke-width="2.5"/>
+  <text x="1100" y="330" font-size="12.5" font-weight="700" fill="#2a78d6">LAN1 cable</text>
+
+  <!-- ═════════ GARAGE ENTRANCE ═════════ -->
+  <rect x="1280" y="100" width="280" height="200" rx="10" fill="#0b0b0b" fill-opacity="0.03" stroke="#b9b8b2"/>
+  <text x="1296" y="126" font-size="13" font-weight="700" fill="#52514e" letter-spacing="1">GARAGE ENTRANCE</text>
+  <rect x="1304" y="150" width="232" height="110" rx="8" fill="#ffffff" stroke="#8a8984"/>
+  <text x="1320" y="176" font-size="14" font-weight="700" fill="#0b0b0b">vermont-garage camera</text>
+  <text x="1320" y="196" font-size="12" fill="#52514e">HiLook IPC-T241H-C · 10.0.30.70</text>
+  <text x="1320" y="214" font-size="12" fill="#52514e">powered over the data cable (PoE)</text>
+  <text x="1320" y="232" font-size="12" fill="#52514e">outdoor · armored conduit</text>
+
+  <path d="M982,210 C982,150 1140,140 1304,180" fill="none" stroke="#52514e" stroke-width="2.5" stroke-dasharray="7,5"/>
+  <text x="1080" y="136" font-size="12.5" font-weight="700" fill="#52514e">single cat6 in conduit · data + PoE power (camera day)</text>
+
+  <!-- legend -->
+  <g transform="translate(40,780)" font-size="12.5">
+    <line x1="0" y1="-4" x2="44" y2="-4" stroke="#2a78d6" stroke-width="2.5"/>
+    <text x="52" y="0" fill="#0b0b0b">copper, in place</text>
+    <line x1="190" y1="-4" x2="234" y2="-4" stroke="#52514e" stroke-width="2.5" stroke-dasharray="7,5"/>
+    <text x="242" y="0" fill="#0b0b0b">camera-day cable / dark port</text>
+    <path d="M450,-4 C456,-10 454,-14 460,-18" fill="none" stroke="#8a8984" stroke-width="1.6" stroke-dasharray="2,3"/>
+    <text x="470" y="0" fill="#0b0b0b">radio (wifi / cellular)</text>
+    <text x="650" y="0" fill="#52514e">total wired links at the rack: 5 (all on the one switch) · ADR-0017 rev 3</text>
+  </g>
+</svg>
