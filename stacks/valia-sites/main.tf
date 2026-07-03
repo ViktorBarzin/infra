@@ -272,6 +272,14 @@ resource "kubernetes_cron_job_v1" "sync" {
                   if [ "$$N" -lt 1 ] || ! printf '%s\n' "$$MANIFEST" | cut -d';' -f1 | grep -qx "$$ENTRY"; then
                     echo "GUARD [$$SITE]: N=$$N / $$ENTRY missing -- skipping, site untouched"; continue
                   fi
+                  # Cloudflare Pages hard-caps files at 25 MB — deploying
+                  # without an oversize file would silently break the pages
+                  # that reference it, so skip the whole site instead (last
+                  # deployed content keeps serving) and say so loudly.
+                  OVERSIZE=$$(printf '%s\n' "$$MANIFEST" | awk -F';' '$$3 > 26214400 {print $$1" ("$$3" B)"}')
+                  if [ -n "$$OVERSIZE" ]; then
+                    echo "GUARD [$$SITE]: file(s) exceed the 25MB Pages limit -- skipping, site untouched:"; echo "$$OVERSIZE"; continue
+                  fi
                   HASH=$$(printf '%s' "$$MANIFEST" | sha256sum | cut -d' ' -f1)
                   LAST=$$(curl -sf --cacert $$SA/ca.crt -H "Authorization: Bearer $$KTOKEN" "$$STATE_URL" | jq -r --arg s "$$SITE" '.data[$$s] // ""')
                   if [ "$$HASH" = "$$LAST" ]; then echo "OK [$$SITE]: unchanged"; continue; fi

@@ -236,9 +236,10 @@ resource "cloudflare_record" "keyserver" {
 }
 
 # bridge.viktorbarzin.me (Cloudflare Pages, "мост" school site) moved to
-# stacks/valia-sites (ADR-0018) — all Valia-site records live there now. The
-# state forget lives in the STACK ROOT (../..//removed-bridge.tf): removed{}
-# blocks are root-module-only.
+# stacks/valia-sites (ADR-0018) — all Valia-site records live there now.
+# State handoff was a manual `tg state rm` (2026-07-03): the CI terraform
+# (<1.7) rejects removed{} blocks even at the stack root, so declarative
+# forget wasn't available. valia-sites imported the live record by id.
 
 # Enable HTTP/3 (QUIC) for Cloudflare-proxied domains
 resource "cloudflare_zone_settings_override" "http3" {
