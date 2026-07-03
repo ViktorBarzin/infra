@@ -65,7 +65,15 @@ The map lives in **two places by design** — keep them in sync:
 ## Operations
 
 - **Trigger a fetch immediately** (instead of waiting ≤10 min):
-  `kubectl -n paperless-ngx exec deploy/paperless-ngx -c paperless-ngx -- python3 manage.py mail_fetcher`
+  `kubectl -n paperless-ngx exec deploy/paperless-ngx -c paperless-ngx -- s6-setuidgid paperless python3 manage.py mail_fetcher`
+  The `s6-setuidgid paperless` is **required**: `kubectl exec` runs as root, and a
+  root-run fetcher downloads attachments root-owned into the scratch dir, which
+  the celery consumer (uid 1000) then can't read — `PermissionError` on
+  `/tmp/paperless/paperless-mail-*/...`, consume task FAILURE (hit during the
+  2026-07-03 build E2E). The mail correctly stays in INBOX for retry (the move
+  action is a chord callback on successful consumption). Recover: `rm -rf
+  /tmp/paperless/paperless-mail-*` (as root) and let the next scheduled fetch
+  re-process.
 - **Mailbox credentials:** Vault `secret/platform` → `mailserver_accounts`
   JSON, key `docs@viktorbarzin.me` (also used by the paperless mail account).
 - **Inspect the mailbox:**
