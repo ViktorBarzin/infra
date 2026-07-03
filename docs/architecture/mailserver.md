@@ -161,6 +161,17 @@ https://mail.viktorbarzin.me → Traefik → Roundcubemail
   DB: MySQL (mysql.dbaas.svc.cluster.local)
 ```
 
+### Paperless ingest mailbox (docs@)
+
+`docs@viktorbarzin.me` is a dedicated real mailbox (explicit self-alias in
+`extra/aliases.txt` so the `@domain → spam@` catch-all doesn't shadow it) that
+paperless-ngx polls over IMAP; family members forward document emails to it
+and the sender maps 1:1 to a paperless account. A per-user Dovecot sieve
+(`docs-at-viktorbarzin.me.dovecot.sieve` in the `mailserver.config` ConfigMap,
+mounted as `/tmp/docker-mailserver/docs@viktorbarzin.me.dovecot.sieve`)
+discards mail from non-allowlisted senders at delivery. Full flow, sender map,
+and add-a-sender procedure: [`runbooks/paperless-mail-ingest.md`](../runbooks/paperless-mail-ingest.md).
+
 ## DNS Records
 
 All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.tf`.

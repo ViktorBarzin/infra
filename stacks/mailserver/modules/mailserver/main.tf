@@ -110,6 +110,12 @@ resource "kubernetes_config_map" "mailserver_config" {
     "postfix-main.cf"     = var.postfix_cf
     "postfix-virtual.cf"  = local.postfix_virtual
 
+    # Per-user Dovecot sieve for the paperless-ngx ingest mailbox: DMS installs
+    # any /tmp/docker-mailserver/<login>.dovecot.sieve at startup. ConfigMap
+    # keys can't contain '@', so the key is sanitized ("-at-") and the
+    # volume_mount below restores the real filename.
+    "docs-at-viktorbarzin.me.dovecot.sieve" = file("${path.module}/extra/docs-at-viktorbarzin.me.dovecot.sieve")
+
     KeyTable      = "mail._domainkey.viktorbarzin.me viktorbarzin.me:mail:/etc/opendkim/keys/viktorbarzin.me-mail.key\n"
     SigningTable  = "*@viktorbarzin.me mail._domainkey.viktorbarzin.me\n"
     TrustedHosts  = "127.0.0.1\nlocalhost\n"
@@ -402,6 +408,12 @@ resource "kubernetes_deployment" "mailserver" {
             name       = "config"
             mount_path = "/tmp/docker-mailserver/postfix-virtual.cf"
             sub_path   = "postfix-virtual.cf"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/docs@viktorbarzin.me.dovecot.sieve"
+            sub_path   = "docs-at-viktorbarzin.me.dovecot.sieve"
             read_only  = true
           }
           volume_mount {

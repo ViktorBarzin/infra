@@ -81,7 +81,7 @@
 | ytdlp | YouTube downloader | ytdlp |
 | wealthfolio | Finance tracking | wealthfolio |
 | audiobookshelf | Audiobook server (may be merged into ebooks stack) | audiobookshelf |
-| paperless-ngx | Document management | paperless-ngx |
+| paperless-ngx | Document management. Mail ingest: forward document emails to `docs@viktorbarzin.me` — sender maps 1:1 to a paperless account (runbook `paperless-mail-ingest.md`) | paperless-ngx |
 | jsoncrack | JSON visualizer | jsoncrack |
 | servarr | Media automation (Sonarr/Radarr/etc) | servarr |
 | aiostreams | Stremio stream aggregator (Real-Debrid + Torrentio/Comet/StremThru Torz/Knaben; **MediaFusion removed 2026-06-07** — broken upstream `500`). `auth=app` (own UUID+password); stream-probe tests **both series+movie paths** with per-source breakdown (`aiostreams_streams_{comet,torrentio,stremthru_torz,knaben}`) + `aiostreams_error_streams` + `aiostreams_movie_stream_count`, success gated on Comet (workhorse) being alive; weekly NFS config + Stremio-account-collection backups to `/srv/nfs/aiostreams-backup/`. PG-backed user config (Comet timeout bumped 5s→10s 2026-06-07). | servarr/aiostreams |
