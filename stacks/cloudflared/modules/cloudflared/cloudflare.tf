@@ -235,16 +235,16 @@ resource "cloudflare_record" "keyserver" {
   zone_id  = var.cloudflare_zone_id
 }
 
-# Cloudflare Pages site "мост" (ОбУ „Отец Паисий“ school static site).
-# Content is deployed off-infra to the Pages project `bridge` via
-# `wrangler pages deploy`; this record just points the custom domain at it.
-resource "cloudflare_record" "bridge_pages" {
-  content = "bridge-cv2.pages.dev"
-  name    = "bridge"
-  proxied = true
-  ttl     = 1
-  type    = "CNAME"
-  zone_id = var.cloudflare_zone_id
+# bridge.viktorbarzin.me (Cloudflare Pages, "мост" school site) moved to
+# stacks/valia-sites (ADR-0018) — all Valia-site records live there now.
+# Forget from this state WITHOUT destroying; valia-sites imports the live
+# record by id. Delete this block once both stacks have applied.
+removed {
+  from = cloudflare_record.bridge_pages
+
+  lifecycle {
+    destroy = false
+  }
 }
 
 # Enable HTTP/3 (QUIC) for Cloudflare-proxied domains
