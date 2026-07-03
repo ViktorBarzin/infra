@@ -14,10 +14,15 @@ variable "nfs_server" { type = string }
 locals {
   _account_set   = keys(var.mailserver_accounts)
   _virtual_lines = split("\n", format("%s%s", var.postfix_account_aliases, file("${path.module}/extra/aliases.txt")))
+  # NOTE: the length guard must live in a ternary, not a leading `&&` operand.
+  # Terraform only short-circuits && / || from v1.6 — on the older terraform
+  # pinned in the infra-ci image, `split(" ", line)[1]` was still evaluated
+  # for blank/comment lines and failed the whole plan with "Invalid index"
+  # (first hit by CI pipeline #469, 2026-07-03). A conditional expression is
+  # lazy on every terraform version.
   postfix_virtual = join("\n", [
     for line in local._virtual_lines : line
-    if !(
-      length(split(" ", line)) == 2 &&
+    if length(split(" ", line)) != 2 ? true : !(
       contains(local._account_set, split(" ", line)[0]) &&
       contains(local._account_set, split(" ", line)[1]) &&
       split(" ", line)[0] != split(" ", line)[1]
