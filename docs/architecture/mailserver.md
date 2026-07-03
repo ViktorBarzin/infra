@@ -311,6 +311,21 @@ Push secrets (`BREVO_API_KEY`, `EMAIL_MONITOR_IMAP_PASSWORD`) come from External
 
 ## Troubleshooting
 
+### All mail tempfailing with `451 4.3.0 queue file write error` (postsrsd spin)
+
+Seen 2026-07-03 right after a pod restart. Signature in `/var/log/mail/mail.log`:
+`postfix/cleanup: warning: tcp:localhost:10001 lookup error` +
+`sender_canonical_maps map lookup problem ... message not accepted, try again later`.
+Cause: **postsrsd** (SRS daemon, `sender_canonical_maps = tcp:localhost:10001`)
+came up spinning at 100% CPU without binding 10001/10002 — supervisor shows it
+`RUNNING` but `ss -ltn | grep 1000` is empty and its log is empty. Postfix then
+tempfails every message (inbound AND submission); senders retry so nothing is
+lost, and the roundtrip probe alerts within the hour.
+Fix: `supervisorctl restart postsrsd` inside the container; if the fresh
+process spins again (it did once), `kubectl -n mailserver delete pod` for a
+full re-init — that healed it. Root cause not pinned down (one-off bad init;
+postsrsd 1.10).
+
 ### Inbound mail not arriving
 1. **DNS/MX**: `dig MX viktorbarzin.me +short` → should show `mail.viktorbarzin.me`
 2. **WAN reachability**: `nc -zw5 mail.viktorbarzin.me 25` from outside
