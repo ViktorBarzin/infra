@@ -873,6 +873,14 @@ resource "kubernetes_cluster_role" "ingress_dns_sync" {
     resources  = ["services"]
     verbs      = ["get", "list"]
   }
+  # Read the Valia-sites internal-DNS feed (written by stacks/valia-sites,
+  # ADR-0018) so the sync can reconcile off-infra Pages CNAMEs declaratively.
+  rule {
+    api_groups     = [""]
+    resources      = ["configmaps"]
+    resource_names = ["valia-sites-dns"]
+    verbs          = ["get"]
+  }
 }
 
 resource "kubernetes_cluster_role_binding" "ingress_dns_sync" {
@@ -1000,6 +1008,42 @@ resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
                   echo "$$R" | grep -q '"status":"ok"' && echo "mail-auth: added MX" || echo "mail-auth: FAILED MX -- $$R"
                 else
                   echo "mail-auth: MX present"
+                fi
+
+                # Valia sites (ADR-0018) — off-infra Cloudflare Pages sites.
+                # The internal zone is authoritative (superset rule above), so
+                # these public-only names must exist here or every internal
+                # client NXDOMAINs on them. Reconciled DECLARATIVELY from the
+                # ConfigMap valia-sites-dns (written by stacks/valia-sites):
+                # ensure/update every entry, and DELETE stale records that
+                # left the map (site retired/renamed). Deletion is scoped to
+                # CNAMEs targeting *.pages.dev — nothing else is ever touched.
+                # Targets resolve upstream to CF edge IPs; no hairpin involved.
+                VALIA=$$(kubectl get configmap valia-sites-dns -n technitium -o go-template='{{range $$k, $$v := .data}}{{$$k}} {{$$v}}{{"\n"}}{{end}}' 2>/dev/null || true)
+                if [ -n "$$VALIA" ]; then
+                  printf '%s\n' "$$VALIA" | while read -r VNAME VTARGET; do
+                    [ -z "$$VNAME" ] && continue
+                    CUR=$$(curl -sf "$$TECH_API/api/zones/records/get?token=$$TOKEN&zone=$$ZONE&domain=$$VNAME.$$ZONE" | grep -o '"cname":"[^"]*"' | head -1 | cut -d'"' -f4)
+                    if [ "$$CUR" = "$$VTARGET" ]; then
+                      echo "valia: $$VNAME.$$ZONE ok"
+                      continue
+                    fi
+                    if [ -n "$$CUR" ]; then
+                      curl -sf -G "$$TECH_API/api/zones/records/delete" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" --data-urlencode "domain=$$VNAME.$$ZONE" --data-urlencode "type=CNAME" --data-urlencode "cname=$$CUR" > /dev/null || true
+                    fi
+                    R=$$(curl -sf -G "$$TECH_API/api/zones/records/add" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" --data-urlencode "domain=$$VNAME.$$ZONE" --data-urlencode "type=CNAME" --data-urlencode "cname=$$VTARGET" --data-urlencode "ttl=3600") || true
+                    echo "$$R" | grep -q '"status":"ok"' && echo "valia: set $$VNAME.$$ZONE -> $$VTARGET" || echo "valia: FAILED $$VNAME.$$ZONE -- $$R"
+                  done
+                  # Deletion pass: zone CNAMEs targeting *.pages.dev that are
+                  # no longer in the map. ZONE_DUMP predates this run's adds,
+                  # but just-set names are in $VALIA so they're never deleted.
+                  printf '%s' "$$ZONE_DUMP" | tr ',' '\n' | awk -F'"' '/"name":/{n=$$4} /"cname":/{print n" "$$4}' | grep '\.pages\.dev *$$' | while read -r RNAME RTARGET; do
+                    SHORT=$${RNAME%%.$$ZONE}
+                    printf '%s\n' "$$VALIA" | grep -q "^$$SHORT " && continue
+                    curl -sf -G "$$TECH_API/api/zones/records/delete" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" --data-urlencode "domain=$$RNAME" --data-urlencode "type=CNAME" --data-urlencode "cname=$$RTARGET" > /dev/null && echo "valia: removed stale $$RNAME -> $$RTARGET"
+                  done
+                else
+                  echo "valia: CM valia-sites-dns absent/unreadable -- skipping Pages CNAMEs this run"
                 fi
 
                 # Pin the .lan ingress anchor A record to the LIVE Traefik LB IP.
