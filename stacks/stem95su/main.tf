@@ -168,6 +168,9 @@ module "ingress" {
   service_name    = kubernetes_service.stem95su.metadata[0].name
   port            = "80"
   host            = "stem95su"
-  dns_type        = "proxied"
+  # DNS moved to stacks/valia-sites (ADR-0018 cutover): the public CNAME now
+  # points at Cloudflare Pages, not the tunnel. Ingress kept only until the
+  # serving stack is retired.
+  dns_type        = "none"
   tls_secret_name = var.tls_secret_name
 }
