@@ -675,6 +675,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-nextcloud-todos",
     "pg-technitium",
     "pg-goldmane-edges",
+    "pg-tasks",
   ]
 
   postgresql {
@@ -900,6 +901,17 @@ resource "vault_database_secret_backend_static_role" "pg_goldmane_edges" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-goldmane-edges"
   username        = "goldmane_edges"
+  rotation_period = 604800
+}
+
+# tasks PWA (Reminders-style front-end over Nextcloud CalDAV) — 7-day rotation
+# for the `tasks` CNPG role. Consumed by stacks/tasks via a vault-database
+# ExternalSecret -> TASKS_DB_DSN (remoteRef static-creds/pg-tasks).
+resource "vault_database_secret_backend_static_role" "pg_tasks" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-tasks"
+  username        = "tasks"
   rotation_period = 604800
 }
 
