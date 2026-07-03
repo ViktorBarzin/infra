@@ -87,13 +87,12 @@ Rename = retire + add (Pages projects can't be renamed). Retire:
 
 ## History
 
-- stem95su still serves from its ORIGINAL in-cluster stack (nginx + NFS +
-  its own rclone CronJob): its Pages cutover is **parked** (`manage_dns =
-  false`) because `stem_board.html` embeds the 42.9 MB `stem_video.mp4`,
-  over the 25 MB Pages per-file cap — the sync guard-skips it until the
-  video shrinks below 25 MB (or the site is deliberately kept in-cluster
-  and removed from the map). Once cut over: flip `manage_dns = true`,
-  set `dns_type = "none"` in `stacks/stem95su`, then retire that stack;
-  `secret/stem95su` becomes superseded by `secret/valia-sites`.
+- stem95su served in-cluster (nginx + NFS + its own rclone CronJob) until
+  2026-07-03, when it was cut over to this pattern and the old stack retired
+  (ADR-0018). The blocking 42.9 MB `stem_video.mp4` was compressed to 21.4 MB
+  (same 1080p, ~2.5 Mbps H.264) and replaced in Valia's folder with Viktor's
+  explicit one-time OK. `secret/stem95su` is superseded by
+  `secret/valia-sites`; `/srv/nfs/stem-site` on the PVE host is a harmless
+  leftover.
 - bridge started as a hand-deployed wrangler experiment (2026-07-03, memory
   id 7085) and was adopted into the stack the same day.
