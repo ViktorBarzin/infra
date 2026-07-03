@@ -15,10 +15,13 @@ untagged pfSense interface per segment.
 
 **Decision:** the CCTV segment (`dCCTV`, 10.0.30.1/24) rides a dedicated
 physical leg — R730 `eno2` (spare) → new bridge `vmbr2` → pfSense `net3`
-(vtnet3), untagged end-to-end. The shared TL-SG105PE PoE switch in the rack
-splits via port-based VLANs: {camera port, eno2 uplink} in an internal VLAN,
-{home-LAN uplink, 4G router 192.168.1.7, UPS mgmt, switch mgmt 192.168.1.6}
-stay in VLAN 1. Cameras are untrusted: default-deny on dCCTV with a single
+(vtnet3), untagged end-to-end. The new TL-SG105PE PoE switch is a **dedicated
+CCTV island**: camera in a PoE port, one port patched to eno2, no VLAN table
+at all, mgmt IP inside the segment (10.0.30.6 via Kea). The existing garage
+TL-SG105E (192.168.1.6 — apartment uplink, R730 LAN1, 4G router 192.168.1.7,
+UPS mgmt; exactly one free port) is untouched — it has no PoE and no spare
+port pair, which is also why the two roles cannot share one switch.
+Cameras are untrusted: default-deny on dCCTV with a single
 NTP-to-gateway exception; Frigate (k8s) pulls RTSP in; ha-sofia (192.168.1.8)
 may reach ISAPI/RTSP directly; home-LAN clients route in via an AX6000 static
 route (10.0.30.0/24 via 192.168.1.2). 10.0.30.0/24 is deliberately NOT in the
@@ -38,11 +41,17 @@ route (10.0.30.0/24 via 192.168.1.2). 10.0.30.0/24 is deliberately NOT in the
 ## Consequences
 
 - eno2 is consumed; eno3/eno4 remain the last spare NICs on the R730.
-- The TL-SG105PE is now load-bearing shared infra: it carries pfSense's
-  backup-WAN path (4G router), UPS mgmt, AND the CCTV segment. Its Easy
-  Smart mgmt UI answers on every port regardless of VLAN — mitigated by a
-  strong password; residual L2 risk accepted.
-- Adding a future camera = one PoE port in the CCTV VLAN + a Kea
-  reservation; no pfSense/PVE work.
+- Two Easy Smart switches live in the rack: the OLD TL-SG105E at 192.168.1.6
+  remains the load-bearing shared one (apartment uplink, R730 LAN1, pfSense's
+  backup-WAN path via the 4G router, UPS mgmt — one port free); the NEW
+  TL-SG105PE carries only CCTV. The Easy Smart mgmt-answers-on-every-port
+  quirk is therefore contained: the PE's mgmt UI is only L2-adjacent to
+  cameras, and pfSense still gates all L3.
+- Adding a future camera = one free PoE port on the PE + a Kea
+  reservation; no pfSense/PVE/VLAN work.
+- 2026-07-02 correction: an earlier revision of this ADR described ONE shared
+  PE switch with a port-based VLAN split — written before discovering the
+  live 192.168.1.6 device is a separate, older non-PoE TL-SG105E. No VLAN
+  table exists anywhere in the final design.
 - Frigate's ADR-0016 VRAM budget was bumped 2000 → 2300 MiB for the extra
   NVDEC stream.

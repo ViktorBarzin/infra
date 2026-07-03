@@ -89,7 +89,7 @@ graph TB
 | phpIPAM | v1.7.0 | phpipam.viktorbarzin.me | IP address management, device inventory, DNS sync |
 | vmbr0 | Linux bridge | 192.168.1.127/24 | Physical bridge on eno1, uplink to LAN |
 | vmbr1 | Linux bridge (VLAN-aware) | Internal | VLAN trunk for VM isolation |
-| vmbr2 | Linux bridge | Physical (eno2) | dCCTV segment leg: eno2 → TL-SG105PE (rack) → cameras; pfSense net3 is the only L3 exit (ADR-0017) |
+| vmbr2 | Linux bridge | Physical (eno2) | dCCTV segment leg: eno2 → TL-SG105PE (dedicated CCTV switch in the rack) → cameras; pfSense net3 is the only L3 exit (ADR-0017) |
 | Technitium DNS | Container | 10.0.20.201 (LB) / 10.96.0.53 (ClusterIP) | Internal DNS (viktorbarzin.lan) + full recursive resolver |
 | Cloudflare DNS | SaaS | External | ~50 public domains under viktorbarzin.me |
 | Cloudflared | Container | K8s (3 replicas) | Tunnel ingress, replaces port forwarding |
@@ -103,9 +103,9 @@ graph TB
 
 Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C at the garage entrance). Decision + rejected alternatives: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
 
-**Physical path**: camera → TL-SG105PE PoE port (CCTV VLAN, port-based) → R730 `eno2` → `vmbr2` (bridge-ports eno2, not vlan-aware) → pfSense `net3`/vtnet3 = interface **dCCTV `10.0.30.1/24`**. Untagged end-to-end; the only 802.1Q is the internal port-VLAN table on the TL-SG105PE, which also keeps its home-LAN ports (uplink, 4G router `192.168.1.7`, UPS mgmt, switch mgmt `192.168.1.6`) in VLAN 1.
+**Physical path**: camera → TL-SG105PE PoE port → R730 `eno2` → `vmbr2` (bridge-ports eno2, not vlan-aware) → pfSense `net3`/vtnet3 = interface **dCCTV `10.0.30.1/24`**. The TL-SG105PE is a dedicated CCTV island — camera + eno2 uplink + 3 spare PoE ports, **no VLAN table anywhere**, mgmt at `10.0.30.6` (Kea). It is a second switch: the pre-existing garage TL-SG105E (`192.168.1.6`; apartment uplink, R730 LAN1, 4G router `192.168.1.7`, UPS mgmt, one free port; no PoE) is not involved in the CCTV path at all.
 
-**Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`). Kea DDNS auto-registers names in Technitium; `phpipam-pfsense-import` picks up leases hourly.
+**Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`, PE switch mgmt `10.0.30.6`). Kea DDNS auto-registers names in Technitium; `phpipam-pfsense-import` picks up leases hourly.
 
 **Firewall** (all on pfSense):
 - dCCTV in: pass `udp OPT4-net → 10.0.30.1:123` (NTP) — everything else hits the interface's default deny. Cameras cannot reach LAN, other segments, or the internet.
