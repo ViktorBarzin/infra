@@ -166,6 +166,33 @@ resource "kubernetes_deployment" "f1-stream" {
             name  = "DISCORD_CHANNELS"
             value = var.discord_f1_channel_ids
           }
+          # Replays feature (app repo ADR-0002). optional=true so the pod still
+          # starts before the Reddit app credentials exist; the app treats missing
+          # creds as "replays off" (logs "Replays pipeline disabled"). The
+          # ExternalSecret above uses dataFrom.extract on the Vault "f1-stream"
+          # key, so adding reddit_client_id / reddit_client_secret there auto-syncs
+          # them into this Secret — no ExternalSecret change needed, just a pod
+          # restart to pick them up.
+          env {
+            name = "REDDIT_CLIENT_ID"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "reddit_client_id"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "REDDIT_CLIENT_SECRET"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "reddit_client_secret"
+                optional = true
+              }
+            }
+          }
           # Verifier connects to in-cluster headed Chromium pool — see
           # stacks/chrome-service/. Falls back to in-process headless if unset.
           # 2026-06-04: migrated WS (:3000 / path-token) → CDP (:9222 /
