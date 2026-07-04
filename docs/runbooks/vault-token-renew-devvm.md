@@ -82,33 +82,48 @@ tail -5 ~/.local/state/vault-token-renew.log              # recent results
 A healthy log line looks like:
 `<ts> OK renewed (dn=token-devvm-wizard ttl=2764800s)` (ttl 2764800s = 768h).
 
-## Drift guard & recovery
+After an OIDC login you'll instead see, at the next nightly run:
+`<ts> HEALED: re-minted periodic token from foreign dn=oidc-… (revoked N stale periodic token(s))`
+— that's the self-heal working as designed.
+
+## Drift guard & self-heal
 
 `~/.vault-token` is the Vault CLI's default token sink, so **any** `vault login`
 overwrites it. Two confirmed clobber vectors:
 
 1. `vault login -method=oidc` → replaces it with a 7-day OIDC token (the renewer
-   can't push past the OIDC role's 7-day `token_max_ttl`).
+   can't push past the OIDC role's 7-day `token_max_ttl`). The infra docs
+   prescribe this login before applies, so it recurs — it went unnoticed for
+   weeks twice (2026-06-18→26, 2026-06-29→07-03) and read as "Vault expires
+   weekly".
 2. A stray `vault login -method=kubernetes` (e.g. a headless agent flow) →
    writes a read-only `kubernetes-woodpecker-default` token (can read Vault but
-   **cannot** write `secret/*`). This happened 2026-06-05 and went unnoticed for
-   two days — reads worked, writes silently 403'd.
+   **cannot** write `secret/*`). Happened 2026-06-05, unnoticed for two days.
 
-To stop the renewer from silently keeping a foreign token alive, it runs a
-**drift guard** first: it refuses to renew unless the token is
-`token-devvm-wizard` **and** carries `vault-admin`. On drift it logs loudly and
-exits non-zero (the systemd unit goes `failed`) rather than renewing someone
-else's token. Symptom in the log:
+Since 2026-07-03 the renewer **self-heals**
+(`docs/plans/2026-07-03-vault-token-self-heal-design.md`). On a foreign token
+it attempts the re-mint **with the clobbering token's own authority** and lets
+Vault's authz decide:
 
-`<ts> DRIFT: ~/.vault-token is dn=... policies=... Refusing to renew a foreign token. Re-mint: ...`
+- **Admin-capable clobber (OIDC login)** → re-mints the periodic token,
+  sanity-checks it against the drift guard, atomically replaces
+  `~/.vault-token`, revokes stale `token-devvm-wizard` leftovers
+  (anti-sprawl), logs
+  `HEALED: re-minted periodic token from foreign dn=… (revoked N stale periodic token(s))`
+  and exits 0. The clobbering token is NOT revoked — it may still back a live
+  login session; it ages out on its own.
+- **Weak clobber (read-only k8s token)** → the mint is denied; logs
+  `DRIFT: … heal denied, foreign token lacks create authority …; investigate what wrote it`
+  and exits non-zero (unit `failed`). Deliberately loud: this signals a
+  misbehaving agent flow — exactly the 2026-06-05 case.
 
-**Recovery: re-mint** (the DRIFT log line contains the exact command) — run the
-[mint/re-mint](#mint--re-mint-the-token) block. The drift guard detects but does
-**not** auto-recover (a deliberate scope choice — version-only, no self-heal);
-recovery is the manual re-mint above.
+**Manual recovery** is only needed for the weak-clobber case (the DRIFT log
+line still contains the exact command) — run the
+[mint/re-mint](#mint--re-mint-the-token) block.
 
 ## Tests
 
-`infra/scripts/test-vault-token-renew.sh` unit-tests the drift-guard decision
-and the lookup-JSON parsers (including the exact 2026-06-05 woodpecker-clobber
-case). Run: `bash infra/scripts/test-vault-token-renew.sh`.
+`infra/scripts/test-vault-token-renew.sh` unit-tests the drift-guard decision,
+the lookup-JSON parsers (including the exact 2026-06-05 woodpecker-clobber
+case), and the self-heal's revoke filter (which stale periodic tokens a heal
+may sweep). Run: `bash infra/scripts/test-vault-token-renew.sh`.
