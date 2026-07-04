@@ -28,7 +28,6 @@ routes = [
   { pattern = "stacks.viktorbarzin.me/*",               zone_name = "viktorbarzin.me" },
   { pattern = "f1.viktorbarzin.me/*",                   zone_name = "viktorbarzin.me" },
   { pattern = "frigate.viktorbarzin.me/*",              zone_name = "viktorbarzin.me" },
-  { pattern = "highlights-immich.viktorbarzin.me/*",    zone_name = "viktorbarzin.me" },
   { pattern = "immich.viktorbarzin.me/*",               zone_name = "viktorbarzin.me" },
   { pattern = "mail.viktorbarzin.me/*",                 zone_name = "viktorbarzin.me" },
   { pattern = "navidrome.viktorbarzin.me/*",            zone_name = "viktorbarzin.me" },

@@ -18,7 +18,6 @@ const SITE_IDS = {
   "stacks.viktorbarzin.me": "b38fda4285df",
   "f1.viktorbarzin.me": "7e69786f66d5",
   "frigate.viktorbarzin.me": "0d4044069ff5",
-  "highlights-immich.viktorbarzin.me": "602167601c6b",
   "immich.viktorbarzin.me": "35eedb7a3d2b",
   "mail.viktorbarzin.me": "082f164faa7d",
   "navidrome.viktorbarzin.me": "8a3844ff75ba",
