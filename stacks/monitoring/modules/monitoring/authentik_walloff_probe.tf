@@ -60,6 +60,10 @@ locals {
     # t3 dispatch probe surface (auth="none" path carve-out on /probe): WS echo
     # + healthz for the t3-probe drop-attribution client (stacks/t3code).
     "t3-probe-ws" = "https://t3.viktorbarzin.me/probe/healthz"
+    # tasks PWA icons + manifest (auth="none" path carve-out, stacks/tasks
+    # module.ingress_icons): macOS/iOS/Android icon fetchers carry no session
+    # cookies, so an Authentik 302 here breaks Add-to-Dock icons.
+    "tasks-icons" = "https://tasks.viktorbarzin.me/apple-touch-icon.png"
     # NOTE: openclaw task-webhook (auth="none") is intentionally NOT probed — it
     # has no public DNS record (NXDOMAIN, external_monitor=false), so there is no
     # externally GET-able URL to probe. Its carve-out is internal-only.
