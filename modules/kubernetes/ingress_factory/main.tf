@@ -127,20 +127,29 @@ variable "anti_ai_scraping" {
 variable "dns_type" {
   type        = string
   default     = "none"
-  description = "Cloudflare DNS: 'proxied' (CNAME to tunnel), 'non-proxied' (A/AAAA to public IP), or 'none'"
+  description = <<-EOT
+    Cloudflare DNS: 'proxied' (CNAME to tunnel), 'non-proxied' (A/AAAA to
+    public IP), 'internal' (A to the internal Traefik LB IP — resolvable from
+    any resolver but only ROUTABLE from home LANs / WG sites / VPN; the record
+    is a reachability pointer, NOT a gate: pair it with an ipAllowList via
+    extra_middlewares, e.g. traefik-home-lans-only@kubernetescrd, because
+    direct-to-WAN-IP requests with the right SNI still hit Traefik), or 'none'.
+  EOT
   validation {
-    condition     = contains(["proxied", "non-proxied", "none"], var.dns_type)
-    error_message = "dns_type must be 'proxied', 'non-proxied', or 'none'."
+    condition     = contains(["proxied", "non-proxied", "internal", "none"], var.dns_type)
+    error_message = "dns_type must be 'proxied', 'non-proxied', 'internal', or 'none'."
   }
 }
 
 # Uptime Kuma external monitor: when true, annotate the ingress so the
 # external-monitor-sync CronJob creates a `[External] <name>` monitor pointing
-# at https://<host>. Null means "follow dns_type" — enabled when proxied.
+# at https://<host>. Null means "follow dns_type" — enabled when the ingress
+# has a PUBLIC DNS record (proxied or non-proxied; 'internal' records are not
+# externally reachable, so no external monitor).
 variable "external_monitor" {
   type        = bool
   default     = null
-  description = "Enable Uptime Kuma external monitor. null = auto (enabled when dns_type == 'proxied')."
+  description = "Enable Uptime Kuma external monitor. null = auto (enabled when dns_type is 'proxied' or 'non-proxied')."
 }
 
 variable "external_monitor_name" {
@@ -169,6 +178,15 @@ variable "public_ip" {
 variable "public_ipv6" {
   type    = string
   default = "2001:470:6e:43d::2"
+}
+
+# Internal Traefik LB IP used by dns_type = "internal" records. Tracks the
+# dedicated MetalLB IP from stacks/traefik (ETP=Local). A future LB renumber
+# must update this default alongside the split-horizon apex record — see
+# docs/plans/2026-05-30-traefik-dedicated-ip-etp-local-*.
+variable "internal_lb_ip" {
+  type    = string
+  default = "10.0.20.203"
 }
 
 variable "homepage_group" {
@@ -201,8 +219,10 @@ locals {
   )
 
   # External monitor enabled by default when the ingress has a public DNS
-  # record (either CF-proxied or direct A/AAAA). Explicit bool overrides.
-  effective_external_monitor = var.external_monitor != null ? var.external_monitor : (var.dns_type != "none")
+  # record (either CF-proxied or direct A/AAAA). 'internal' records resolve
+  # publicly but are unroutable from outside, so they get no external monitor.
+  # Explicit bool overrides.
+  effective_external_monitor = var.external_monitor != null ? var.external_monitor : (var.dns_type == "proxied" || var.dns_type == "non-proxied")
 
   # Emit the annotation when effective is true (positive signal), or when the
   # caller explicitly set external_monitor=false (opt-out). When the caller
@@ -421,6 +441,22 @@ resource "cloudflare_record" "non_proxied_aaaa" {
   proxied         = false
   ttl             = 1
   type            = "AAAA"
+  zone_id         = var.cloudflare_zone_id
+  allow_overwrite = true
+}
+
+# 'internal': a publicly-resolvable A record carrying the INTERNAL Traefik LB
+# IP. Outsiders resolve it but can't route to it; home-LAN/WG-site/VPN clients
+# reach Traefik directly (the WG spokes policy-route 10.0.0.0/8 through the
+# tunnel), so kiosk devices with baked-in URLs need no DNS overrides anywhere.
+# IPv4-only on purpose: the spokes route no internal IPv6 range.
+resource "cloudflare_record" "internal_a" {
+  count           = var.dns_type == "internal" ? 1 : 0
+  name            = local.dns_name
+  content         = var.internal_lb_ip
+  proxied         = false
+  ttl             = 1
+  type            = "A"
   zone_id         = var.cloudflare_zone_id
   allow_overwrite = true
 }

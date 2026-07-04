@@ -142,14 +142,23 @@ resource "kubernetes_service" "immich-frame" {
 
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
-  # Photo-frame kiosk display — runs in headless browser mode on a TV/frame
-  # device and pulls images via an Immich API key (no user login). Forward-auth
-  # would 302 the device to Authentik with no way to complete login.
-  # auth = "none": Photo-frame kiosk display — headless browser with API key; no user login; forward-auth breaks device automation.
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = "immich"
-  name            = "highlights-immich"
-  tls_secret_name = var.tls_secret_name
-  service_name    = "immich-frame"
+  # Photo-frame kiosk display (Viktor's London Portal Plus WebView) — pulls
+  # images via an Immich API key; no user login possible on the device, so
+  # forward-auth would 302 it to Authentik with no way to complete login.
+  # The GATE is network-level: the home-lans-only ipAllowList (Sofia/London/
+  # Valchedrym LANs + 10/8) 403s everyone else, and dns_type "internal"
+  # publishes the Traefik LB IP publicly so the Portal's baked-in URL resolves
+  # from any resolver yet routes only via the home LANs / WG tunnel.
+  # LAN-only design: docs/plans/2026-07-04-immich-frame-lan-only-design.md.
+  # auth = "none": kiosk WebView, no user auth by design; gated by the home-lans-only ipAllowList instead.
+  auth              = "none"
+  dns_type          = "internal"
+  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
+  # Not externally reachable — explicit opt-out so external-monitor-sync
+  # drops the old [External] monitor instead of default-opting it back in.
+  external_monitor = false
+  namespace        = "immich"
+  name             = "highlights-immich"
+  tls_secret_name  = var.tls_secret_name
+  service_name     = "immich-frame"
 }

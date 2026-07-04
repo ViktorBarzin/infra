@@ -119,6 +119,40 @@ resource "kubernetes_manifest" "middleware_local_only" {
   depends_on = [helm_release.traefik]
 }
 
+# IP allowlist for household access across ALL home sites: Sofia LAN + the
+# WireGuard spoke LANs (London, Valchedrym) + 10/8 (VLANs, K8s pods/services,
+# WG tunnel IPs). Deliberately a SEPARATE middleware from `local-only` —
+# widening local-only would grant the remote LANs access to the admin surfaces
+# that use it (Prometheus, iDRAC, Loki, …). Use for family-facing services
+# (e.g. the immich-frame kiosks) that every household device may open but the
+# public internet must not. Pair with ingress_factory `dns_type = "internal"`:
+# a Cloudflare-proxied record would deliver public traffic from cloudflared
+# POD IPs (inside 10/8) and silently bypass this allowlist.
+resource "kubernetes_manifest" "middleware_home_lans_only" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "home-lans-only"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      ipAllowList = {
+        sourceRange = [
+          "192.168.1.0/24", # Sofia LAN (hub site)
+          "10.0.0.0/8",     # VLANs, K8s pod/svc CIDRs, WG tunnel subnet
+          "192.168.8.0/24", # London LAN (via WG tunnel)
+          "192.168.0.0/24", # Valchedrym LAN (via WG tunnel)
+          "fc00::/7",
+          "fe80::/10",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # HTTPS redirect middleware
 resource "kubernetes_manifest" "middleware_redirect_https" {
   manifest = {

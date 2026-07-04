@@ -232,6 +232,8 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
   - blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send, audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden, changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser, travel, netbox
 - **Non-proxied domains** (grey cloud, direct IP resolution):
   - mail, wg, headscale, immich, calibre, vaultwarden, and other services requiring direct connections
+- **Internal-IP domains** (grey cloud, A → `10.0.20.203` Traefik LB, `ingress_factory` `dns_type = "internal"`):
+  - highlights-immich, highlights-immich-emo — publicly *resolvable* but only *routable* from home LANs / WG sites / VPN (spokes policy-route `10.0.0.0/8` down the tunnel, so kiosk devices with baked-in URLs need no per-site DNS overrides). The record is reachability, not a gate — enforcement is the `home-lans-only` Traefik ipAllowList (Sofia/London/Valchedrym LANs + 10/8) on the ingress. See `docs/plans/2026-07-04-immich-frame-lan-only-design.md`.
 - CNAME records for proxied domains point to Cloudflared tunnel FQDNs
 
 ### Ingress Flow
