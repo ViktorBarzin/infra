@@ -21,7 +21,9 @@ Two cooperating pieces — the gate and the reachability pointer:
 1. **The gate — `home-lans-only` Traefik middleware** (traefik stack, next to
    `local-only`): `ipAllowList` of `192.168.1.0/24` (Sofia LAN), `10.0.0.0/8`
    (VLANs, K8s pods `10.10.0.0/16`, services `10.96.0.0/12`, WG tunnel
-   `10.3.2.0/24`), `192.168.8.0/24` (London LAN), `192.168.0.0/24`
+   `10.3.2.0/24`), `192.168.8.0/24` (London LAN), `192.168.9.0/24` (London
+   GUEST net — post-rollout discovery: the Portal Plus actually leases here,
+   `Portal-75AE8F9C2A8A` = `192.168.9.198`, added same day), `192.168.0.0/24`
    (Valchedrym LAN), `fc00::/7`, `fe80::/10`. Attached to both frame
    ingresses via `extra_middlewares`. Everyone else gets a Traefik 403 —
    including direct-to-WAN-IP requests carrying the right SNI, which DNS
@@ -55,7 +57,7 @@ convention comment now names the ipAllowList as the gate.
 | Client | Path | Result |
 |---|---|---|
 | Emo's Portal Mini (Sofia LAN) | Technitium CNAME → `.203` direct (unchanged) | allowed (`192.168.1.x`) |
-| Viktor's Portal Plus (London LAN) | public A → `10.0.20.203` → WG tunnel | allowed (`192.168.8.x`) |
+| Viktor's Portal Plus (London GUEST net) | public A → `10.0.20.203` → WG tunnel | allowed (`192.168.9.x`) |
 | Household browsers (any of the 3 LANs) | same as above | allowed |
 | In-cluster checks (`homelab browser`, blackbox) | CoreDNS → Technitium → `.203` | allowed (pod IP in 10/8) |
 | Stranger, resolves hostname | gets `10.0.20.203` | unroutable |
