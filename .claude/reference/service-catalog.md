@@ -99,6 +99,7 @@
 | tor-proxy | Tor proxy | tor-proxy |
 | forgejo | Git forge. Open native self-signup (Turnstile captcha + email confirm) + Authentik & GitHub OAuth sign-in; see `docs/runbooks/forgejo-open-signups.md` | forgejo |
 | freshrss | RSS reader | freshrss |
+| drone-logbook | DJI flight-log analyzer (Open DroneLog, upstream image) — dronelog.viktorbarzin.me | drone-logbook |
 | navidrome | Music streaming | navidrome |
 | networking-toolbox | Network tools | networking-toolbox |
 | stirling-pdf | PDF tools | stirling-pdf |
