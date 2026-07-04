@@ -76,11 +76,13 @@ sender MTA ──► MX lookup ┤                                              
 - Account email: **`rollernet@viktorbarzin.me`** (Viktor, 2026-07-04; resolves
   via catch-all → `spam@`). Known circularity: during an outage their
   notifications to this address are themselves queued (at their side) until
-  recovery. Accepted — credentials and config live in Vault and the runbook
+  recovery. Accepted — credentials live in Vaultwarden and the runbook
   documents ACC access; nothing operational depends on receiving their mail
   mid-outage.
-- Credentials → Vault `secret/viktor` (`rollernet_password`, plus API key if
-  minted).
+- Credentials → **Vaultwarden** item `Rollernet (backup MX)` (Viktor,
+  2026-07-04 — personal web login, so the password manager, not Vault KV;
+  retrieve via `homelab vault get "Rollernet (backup MX)"`). Any API key
+  minted later joins the same item as a custom field.
 - Domain `viktorbarzin.me` in **Secondary MX** mode; valid-user table default
   action = **allow any** (catch-all).
 - `abuse@` / `postmaster@` must be deliverable (their RFC requirement) — the
