@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Unit tests for the pure drift-guard functions in vault-token-renew.sh.
-# Sources the script (vtr_main is guarded) and exercises the decision logic that
-# decides whether ~/.vault-token is OUR periodic admin token (renew) or a foreign
-# token that clobbered the file (refuse, fail loud). This is exactly the logic
-# whose ABSENCE let the 2026-06-05 woodpecker-token clobber be silently renewed
-# for two days. Run: bash infra/scripts/test-vault-token-renew.sh
+# Unit tests for the pure functions in vault-token-renew.sh.
+# Sources the script (vtr_main is guarded) and exercises (a) the drift-guard
+# decision — is ~/.vault-token OUR periodic admin token (renew) or a foreign
+# clobber (heal / fail loud)? — whose ABSENCE let the 2026-06-05 woodpecker
+# clobber be silently renewed for two days, and (b) the self-heal's revoke
+# filter — which stale token-devvm-wizard tokens a heal may sweep.
+# Run: bash infra/scripts/test-vault-token-renew.sh
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
@@ -52,6 +53,22 @@ eq "pols woodpecker"                 "ci,default,terraform-state"     "$(vtr_pol
 ok "ours: parse+decide renews"        vtr_drift_ok "$(vtr_display_name "$LOOKUP_OURS")" "$(vtr_policies_csv "$LOOKUP_OURS")"
 no "woodpecker: parse+decide refused" vtr_drift_ok "$(vtr_display_name "$LOOKUP_WP")"   "$(vtr_policies_csv "$LOOKUP_WP")"
 no "oidc: parse+decide refused"       vtr_drift_ok "$(vtr_display_name "$LOOKUP_OIDC")" "$(vtr_policies_csv "$LOOKUP_OIDC")"
+
+# --- vtr_accessor: parse accessor out of lookup JSON ---
+LOOKUP_NEW='{"data":{"display_name":"token-devvm-wizard","accessor":"acc-new","policies":["default","sops-admin","vault-admin"],"identity_policies":null}}'
+eq "accessor parsed"          "acc-new" "$(vtr_accessor "$LOOKUP_NEW")"
+eq "accessor absent -> empty" ""        "$(vtr_accessor '{"data":{"display_name":"x"}}')"
+
+# --- vtr_is_stale_periodic: the heal's revoke filter — ONLY old token-devvm-wizard
+# --- tokens are swept; the just-minted token, foreign tokens, and anything with an
+# --- unknown accessor are kept. An empty keep-accessor sweeps NOTHING (fail-safe).
+STALE_OURS='{"data":{"display_name":"token-devvm-wizard","accessor":"acc-old","policies":["default","sops-admin","vault-admin"]}}'
+ok "older periodic token is stale"      vtr_is_stale_periodic "$STALE_OURS" "acc-new"
+no "the just-minted token is kept"      vtr_is_stale_periodic "$LOOKUP_NEW" "acc-new"
+no "foreign oidc token never swept"     vtr_is_stale_periodic "$LOOKUP_OIDC" "acc-new"
+no "woodpecker token never swept"       vtr_is_stale_periodic "$LOOKUP_WP" "acc-new"
+no "missing accessor never swept"       vtr_is_stale_periodic '{"data":{"display_name":"token-devvm-wizard"}}' "acc-new"
+no "empty keep-accessor sweeps nothing" vtr_is_stale_periodic "$STALE_OURS" ""
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 (( fail == 0 ))
