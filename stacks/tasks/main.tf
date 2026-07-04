@@ -293,6 +293,40 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
 }
 
+# Carve-out for the PWA icon assets + web manifest. macOS Safari's
+# "Add to Dock" (and every other OS icon fetcher: iOS Add-to-Home-Screen,
+# Android install prompt) fetches these in a cookie-less context — behind
+# forward-auth it got the Authentik 302 and fell back to a letter monogram.
+# Traefik prioritises these longer path prefixes over the main "/" router,
+# so ONLY these five static files bypass Authentik; the SPA shell and /api
+# stay gated by the main ingress above (and the app itself 401s /api
+# without the identity header). Guarded against regression by the
+# tasks-icons entry in the Authentik walling-off probe
+# (stacks/monitoring/modules/monitoring/authentik_walloff_probe.tf).
+module "ingress_icons" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": public static icons + manifest, no user data; required for
+  # OS icon fetchers (Safari Add-to-Dock etc.) that carry no session and
+  # cannot complete the Authentik redirect dance.
+  auth         = "none"
+  namespace    = kubernetes_namespace.tasks.metadata[0].name
+  name         = "tasks-icons"
+  service_name = kubernetes_service.tasks.metadata[0].name
+  port         = 8000
+  ingress_path = [
+    "/apple-touch-icon.png",
+    "/favicon.png",
+    "/pwa-192x192.png",
+    "/pwa-512x512.png",
+    "/manifest.webmanifest",
+  ]
+  full_host        = "tasks.viktorbarzin.me" # MUST match the main ingress host; otherwise the factory derives tasks-icons.viktorbarzin.me and the carve-out never matches.
+  dns_type         = "none"                  # host record already owned by the main tasks ingress
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false # Five static icons + a manifest; nothing for scrapers to mine.
+  homepage_enabled = false # path carve-out, not its own dashboard tile
+}
+
 # --- NetworkPolicy: scoped pod ingress (security-review finding SEC-1). ---
 # The app trusts X-authentik-username unconditionally, so its ENTIRE auth
 # model depends on requests only ever arriving through Traefik (where the
