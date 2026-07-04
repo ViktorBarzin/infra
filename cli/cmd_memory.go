@@ -30,11 +30,21 @@ func memoryCommands() []Command {
 	}
 }
 
-// printMemories renders a {memories:[…]} response as compact lines, or raw JSON.
+// printMemories renders a {memories:[…]} response as one line per memory, or raw JSON.
 func printMemories(raw []byte, jsonOut bool) error {
+	fmt.Print(renderMemories(raw, jsonOut))
+	return nil
+}
+
+// renderMemories formats each memory as a single line with its FULL content
+// (newlines flattened to spaces). Content is deliberately never truncated: the
+// old 240-rune preview cut memories mid-sentence, misled agents into believing
+// no full-content read-back existed, and made blind `update --content` from
+// the preview silently destroy the stored tail. Full passthrough also can't
+// produce invalid UTF-8 (the old mid-rune cut crashed the recall hook).
+func renderMemories(raw []byte, jsonOut bool) string {
 	if jsonOut {
-		fmt.Println(string(raw))
-		return nil
+		return string(raw) + "\n"
 	}
 	var r struct {
 		Memories []struct {
@@ -46,36 +56,20 @@ func printMemories(raw []byte, jsonOut bool) error {
 		} `json:"memories"`
 	}
 	if err := json.Unmarshal(raw, &r); err != nil {
-		fmt.Println(string(raw))
-		return nil
+		return string(raw) + "\n"
 	}
 	if len(r.Memories) == 0 {
-		fmt.Println("(no memories)")
-		return nil
+		return "(no memories)\n"
 	}
+	var b strings.Builder
 	for _, m := range r.Memories {
-		c := truncatePreview(strings.ReplaceAll(m.Content, "\n", " "), 240)
-		fmt.Printf("#%d [%s] (%.2f) %s\n", m.ID, m.Category, m.Importance, c)
+		c := strings.ReplaceAll(m.Content, "\n", " ")
+		fmt.Fprintf(&b, "#%d [%s] (%.2f) %s\n", m.ID, m.Category, m.Importance, c)
 		if m.Tags != "" {
-			fmt.Printf("       tags: %s\n", m.Tags)
+			fmt.Fprintf(&b, "       tags: %s\n", m.Tags)
 		}
 	}
-	return nil
-}
-
-// truncatePreview shortens s to at most maxRunes RUNES, appending "…" when it
-// trims. Counting runes (not bytes) is load-bearing: a byte slice like s[:240]
-// can cut through the middle of a multibyte UTF-8 character (e.g. 2-byte
-// Cyrillic), leaving a dangling lead byte = invalid UTF-8. That crashed strict
-// decoders downstream — notably the homelab-memory-recall.py UserPromptSubmit
-// hook (subprocess text=True), which surfaced as a recurring "UserPromptSubmit
-// hook error" for Cyrillic-language users.
-func truncatePreview(s string, maxRunes int) string {
-	r := []rune(s)
-	if len(r) <= maxRunes {
-		return s
-	}
-	return string(r[:maxRunes]) + "…"
+	return b.String()
 }
 
 func memoryRecall(args []string) error {
