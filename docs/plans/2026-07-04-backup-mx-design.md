@@ -311,7 +311,11 @@ Newly introduced, accepted:
   (June 2026, A1). Mitigations: PAYG (required), recurring inbound-25 probe,
   `BackupMxDown`, and the fact that outside an active outage the queue is
   empty — a surprise reclamation loses nothing, only coverage until rebuilt.
-  Rollernet Basic ($30/yr) stays the documented fallback if OCI sours.
+  If OCI sours, the documented fallback order is: **RackNerd VPS ($11/yr,
+  port 25 open by default per the community mail-provider matrix — same
+  self-hosted relay design, and outbound 25 works so the custom drain port
+  becomes unnecessary)**, then Rollernet Basic ($30/yr, managed). [Deep-research
+  survey 2026-07-05: no other free VM tier or free managed backup-MX exists.]
 - **Spam hygiene**: 4xx-only postscreen on the VM (pregreet + conservative
   DNSBL-defer) instead of v2's nothing; drained spam is tagged/folded by
   rspamd, never bounced.

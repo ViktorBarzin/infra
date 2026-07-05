@@ -46,7 +46,13 @@ final form. Design:
   MXes even while the primary is up, background spam alone can hold it
   suspended, making it *worse than no backup MX*. Free accounts are also
   being discontinued. (Their TLS checked out; their paid Basic at $30/yr is
-  the documented fallback if the OCI route sours.)
+  a fallback if the OCI route sours — behind RackNerd at $11/yr, whose VPSes
+  ship with port 25 open by default per the community mail-provider matrix,
+  making it the cheapest paid escape hatch with the same relay design and no
+  custom drain port. A 2026-07-05 deep-research survey reconfirmed no free
+  alternative exists: Fly.io's free tier is dead for new customers, GCP
+  blocks egress 25 with US-only free regions, and OVH/IBM/Alibaba/Tencent/
+  Scaleway offer no always-free VM.)
 - **Dynu Email Backup ($9.99/yr)** — queue lifetime undocumented (FAQ hints
   12–24 h, barely beating sender retry); filtering black-box; not free.
 - **Cloudflare Email Routing / mailflare** — no store-and-forward / terminal
