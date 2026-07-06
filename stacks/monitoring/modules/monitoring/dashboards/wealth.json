@@ -2483,7 +2483,7 @@
       "title": "FC::intro",
       "gridPos": {
         "x": 0,
-        "y": 126,
+        "y": 143,
         "w": 18,
         "h": 4
       },
@@ -2498,7 +2498,7 @@
       "title": "FC::solo header",
       "gridPos": {
         "x": 0,
-        "y": 130,
+        "y": 147,
         "w": 24,
         "h": 2
       },
@@ -2517,7 +2517,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 132,
+        "y": 149,
         "w": 5,
         "h": 5
       },
@@ -2570,7 +2570,7 @@
       },
       "gridPos": {
         "x": 5,
-        "y": 132,
+        "y": 149,
         "w": 4,
         "h": 5
       },
@@ -2643,7 +2643,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 132,
+        "y": 149,
         "w": 5,
         "h": 5
       },
@@ -2708,7 +2708,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 132,
+        "y": 149,
         "w": 5,
         "h": 5
       },
@@ -2761,7 +2761,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 132,
+        "y": 149,
         "w": 5,
         "h": 5
       },
@@ -2810,7 +2810,7 @@
       "title": "FC::household header",
       "gridPos": {
         "x": 0,
-        "y": 137,
+        "y": 154,
         "w": 24,
         "h": 2
       },
@@ -2829,7 +2829,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 139,
+        "y": 156,
         "w": 5,
         "h": 5
       },
@@ -2882,7 +2882,7 @@
       },
       "gridPos": {
         "x": 5,
-        "y": 139,
+        "y": 156,
         "w": 4,
         "h": 5
       },
@@ -2955,7 +2955,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 139,
+        "y": 156,
         "w": 5,
         "h": 5
       },
@@ -3020,7 +3020,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 139,
+        "y": 156,
         "w": 5,
         "h": 5
       },
@@ -3073,7 +3073,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 139,
+        "y": 156,
         "w": 5,
         "h": 5
       },
@@ -3122,7 +3122,7 @@
       "title": "FC::family header",
       "gridPos": {
         "x": 0,
-        "y": 144,
+        "y": 161,
         "w": 24,
         "h": 2
       },
@@ -3141,7 +3141,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 146,
+        "y": 163,
         "w": 5,
         "h": 5
       },
@@ -3194,7 +3194,7 @@
       },
       "gridPos": {
         "x": 5,
-        "y": 146,
+        "y": 163,
         "w": 4,
         "h": 5
       },
@@ -3267,7 +3267,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 146,
+        "y": 163,
         "w": 5,
         "h": 5
       },
@@ -3332,7 +3332,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 146,
+        "y": 163,
         "w": 5,
         "h": 5
       },
@@ -3385,7 +3385,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 146,
+        "y": 163,
         "w": 5,
         "h": 5
       },
@@ -3434,7 +3434,7 @@
       "title": "FC::safety header",
       "gridPos": {
         "x": 0,
-        "y": 151,
+        "y": 168,
         "w": 24,
         "h": 2
       },
@@ -3453,7 +3453,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 153,
+        "y": 170,
         "w": 6,
         "h": 5
       },
@@ -3518,7 +3518,7 @@
       },
       "gridPos": {
         "x": 6,
-        "y": 153,
+        "y": 170,
         "w": 6,
         "h": 5
       },
@@ -3571,7 +3571,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 153,
+        "y": 170,
         "w": 6,
         "h": 5
       },
@@ -3620,7 +3620,7 @@
       "title": "FC::Anca bridge",
       "gridPos": {
         "x": 18,
-        "y": 153,
+        "y": 170,
         "w": 6,
         "h": 5
       },
@@ -3639,7 +3639,7 @@
       },
       "gridPos": {
         "x": 18,
-        "y": 126,
+        "y": 143,
         "w": 6,
         "h": 4
       },
@@ -3677,6 +3677,95 @@
           "editorMode": "code",
           "format": "table",
           "rawSql": "SELECT jurisdiction FROM fire_planner.fire_target WHERE country_slug='$country' ORDER BY id LIMIT 1"
+        }
+      ]
+    },
+    {
+      "id": 9240,
+      "title": "Spend-down trajectory \u2014 balance by age (today's \u00a3)",
+      "description": "Year-by-year drawdown that PROVES the 'Spend-down to \u00a30 at age 100' summary above. Starting from current net worth (pension included), each year the pot grows at the scenario's REAL rate (1+g)/1.03\u22121 and the constant real 'Spend / yr' (top row, in today's money) is withdrawn \u2014 draining to ~\u00a30 by the 100th birthday (2098-10-04). All balances are in TODAY'S \u00a3 (constant purchasing power). Sanity-check any row: next = balance\u00d7(1+real_rate) \u2212 spend. The three columns (No growth 0%, Inflation 3%, Market 7%) use the same net-worth CTE and annuity payment as the summary table. Computed live; rates hardcoded (one-line SQL edit).",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 18,
+        "w": 12,
+        "x": 0,
+        "y": 125
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 0,
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Year"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "string"
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Age"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH latest AS (\n  SELECT DISTINCT ON (d.account_id) d.account_id, d.total_value\n  FROM dav_corrected d JOIN accounts a ON a.id=d.account_id\n  ORDER BY d.account_id, d.valuation_date DESC),\nnw  AS (SELECT SUM(total_value) AS pv FROM latest),\nhz  AS (SELECT pv, (DATE '2098-10-04' - CURRENT_DATE)::float8/365.25 AS years FROM nw),\nr   AS (SELECT g, (1+g)/1.03-1 AS rr FROM (VALUES (0.0::float8),(0.03::float8),(0.07::float8)) AS s(g)),\npmt AS (SELECT g, rr, pv, years,\n          CASE WHEN abs(rr)<1e-9 THEN pv/years ELSE pv*rr/(1-power(1+rr,-years)) END AS annual\n        FROM r, hz),\nbal AS (\n  SELECT k.k,\n    MAX(CASE WHEN g=0.0  THEN CASE WHEN abs(rr)<1e-9 THEN pv-annual*k.k ELSE pv*power(1+rr,k.k)-annual*(power(1+rr,k.k)-1)/rr END END) AS s0,\n    MAX(CASE WHEN g=0.03 THEN CASE WHEN abs(rr)<1e-9 THEN pv-annual*k.k ELSE pv*power(1+rr,k.k)-annual*(power(1+rr,k.k)-1)/rr END END) AS s3,\n    MAX(CASE WHEN g=0.07 THEN CASE WHEN abs(rr)<1e-9 THEN pv-annual*k.k ELSE pv*power(1+rr,k.k)-annual*(power(1+rr,k.k)-1)/rr END END) AS s7\n  FROM pmt CROSS JOIN generate_series(0,72) AS k(k)\n  GROUP BY k.k),\nrows AS (\n  SELECT -1 AS ord, NULL::int AS age, 'Spend / yr'::text AS yr,\n         (SELECT annual FROM pmt WHERE g=0.0)  AS s0,\n         (SELECT annual FROM pmt WHERE g=0.03) AS s3,\n         (SELECT annual FROM pmt WHERE g=0.07) AS s7\n  UNION ALL\n  SELECT b.k, (EXTRACT(YEAR FROM CURRENT_DATE)::int + b.k - 1998),\n         (EXTRACT(YEAR FROM CURRENT_DATE)::int + b.k)::text, b.s0, b.s3, b.s7\n  FROM bal b)\nSELECT age AS \"Age\", yr AS \"Year\",\n       round(s0::numeric,0) AS \"No growth\",\n       round(s3::numeric,0) AS \"Inflation (3%)\",\n       round(s7::numeric,0) AS \"Market (7%)\"\nFROM rows ORDER BY ord;"
         }
       ]
     }
