@@ -330,10 +330,13 @@ Routed via **Loki ruler → Alertmanager → the `slack-security` receiver, whic
 | CIDR | Source |
 |---|---|
 | `10.0.20.0/22` | VLAN 20 (K8s cluster + main LAN) |
+| `10.0.10.0/24` | VLAN 10 (devvm) — **K2/K9 only** (added 2026-07-06). The devvm legitimately uses ServiceAccount-token kubeconfigs against the apiserver (e.g. `chrome-service:emo-browser` doing `kubectl port-forward` for the shared headful Chrome). V7/S1 do **not** yet include it — add there too if devvm Vault-OIDC (`vault login`) or PVE-ssh from VLAN 10 becomes a normal workflow. |
 | `192.168.1.0/24` | Proxmox host LAN + Sofia LAN (same RFC1918 block in both physical locations; cross-site traffic transits Headscale so the CIDR matches only on-LAN clients in either location) |
-| K8s pod CIDR (verify at implementation time) | In-cluster pods talking to apiserver |
-| K8s service CIDR | Service-to-apiserver traffic |
-| Headscale tailnet | VPN-connected devices |
+| K8s pod CIDR `10.10.0.0/16` | In-cluster pods talking to apiserver |
+| K8s service CIDR `10.96.0.0/12` | Service-to-apiserver traffic |
+| Headscale tailnet `100.64.0.0/10` | VPN-connected devices |
+
+> **K2/K9 LogQL gotcha (fixed 2026-07-06).** `sourceIPs` in a K8s audit event is a JSON **array**. Loki's no-arg `| json` flattens nested *objects* but does **not** index arrays, so it never populated the `sourceIPs_0` label — it was always empty, and `sourceIPs_0 !~ <allowlist>` (empty ≠ allowlisted) matched **every** ServiceAccount event. K2 had been firing on all in-cluster controller traffic (~500–900 events/5min); it only surfaced when the same-day `loki.ruler → loki.rulerConfig` fix first let the ruler deliver alerts. Fix: explicit array extraction `| json sourceIPs_0="sourceIPs[0]"` + a `sourceIPs_0 != ""` guard. **V7 is unaffected** — it reads `request_remote_address`, a nested *scalar*, which auto-flatten handles. Any future rule matching an audit-log array element must use explicit extraction, never assume `<field>_0`.
 
 **Policy: no public-IP access ever.** Vault, kube-apiserver, PVE sshd must transit a trusted LAN or Headscale. Anything else fires an alert.
 

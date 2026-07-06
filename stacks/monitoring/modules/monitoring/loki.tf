@@ -427,11 +427,15 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             # K2: ServiceAccount token used from outside cluster.
-            # Allowlist = pod CIDR + LAN + Headscale tailnet. Anything else =
-            # likely stolen SA token used externally.
+            # Allowlist = pod CIDR + LAN + devvm VLAN 10 + Headscale tailnet.
+            # Anything else = likely stolen SA token used externally.
+            # NOTE: sourceIPs is a JSON *array*; Loki's no-arg `| json` flattens
+            # nested objects but does NOT index arrays, so it never populates
+            # `sourceIPs_0` (always empty -> matched every event). Use an
+            # explicit array expression + a non-empty guard. (fixed 2026-07-06)
             {
               alert  = "K8sSATokenFromUnexpectedIP"
-              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | user_username=~\"system:serviceaccount:.+\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json user_username=\"user.username\", sourceIPs_0=\"sourceIPs[0]\" | user_username=~\"system:serviceaccount:.+\" | sourceIPs_0!=\"\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.0\\\\.10\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
               for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
@@ -512,10 +516,12 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                 runbook = "docs/runbooks/security-incident.md#k8-anonymous-binding"
               }
             },
-            # K9: Viktor's identity from non-allowlist source IP. Same regex as V7.
+            # K9: Viktor's identity from non-allowlist source IP.
+            # Same sourceIPs array-extraction fix + VLAN 10 allowlist as K2
+            # above (no-arg `| json` never populates `sourceIPs_0`). (fixed 2026-07-06)
             {
               alert  = "K8sViktorFromUnexpectedIP"
-              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | user_username=\"me@viktorbarzin.me\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json user_username=\"user.username\", sourceIPs_0=\"sourceIPs[0]\" | user_username=\"me@viktorbarzin.me\" | sourceIPs_0!=\"\" | sourceIPs_0!~\"^(10\\\\.0\\\\.2[0-3]\\\\.|192\\\\.168\\\\.1\\\\.|10\\\\.0\\\\.10\\\\.|10\\\\.10\\\\.|10\\\\.(9[6-9]|1[01][0-9]|111)\\\\.|100\\\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\\\.).*\" [5m])) > 0"
               for    = "0m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
