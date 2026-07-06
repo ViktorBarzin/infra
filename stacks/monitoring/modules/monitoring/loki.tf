@@ -468,9 +468,15 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             # K5: Mass delete of pods/secrets/configmaps in 60s by single actor.
+            # Excludes legitimate bulk-deleters (fixed 2026-07-06 — these fired
+            # SECURITY/CRITICAL + RESOLVED on a loop): kubelets (system:node:*
+            # reap pods), the kube-system GC + namespace-controller, and
+            # woodpecker CI (pipeline-pod cleanup). A human (me@viktorbarzin.me /
+            # kubernetes-admin) or an app-namespace SA doing >5 deletes/60s still
+            # fires.
             {
               alert  = "K8sMassDelete"
-              expr   = "sum by (user_username) (count_over_time({job=\"kubernetes-audit\"} | json | verb=\"delete\" | objectRef_resource=~\"pods|secrets|configmaps\" [1m])) > 5"
+              expr   = "sum by (user_username) (count_over_time({job=\"kubernetes-audit\"} | json | verb=\"delete\" | objectRef_resource=~\"pods|secrets|configmaps\" | user_username!~\"^system:(node:.+|serviceaccount:(kube-system:(generic-garbage-collector|namespace-controller)|woodpecker:.+))$\" [1m])) > 5"
               for    = "1m"
               labels = { severity = "critical", lane = "security" }
               annotations = {

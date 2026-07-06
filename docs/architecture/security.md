@@ -301,7 +301,7 @@ Routed via **Loki ruler → Alertmanager → the `slack-security` receiver, whic
 | K2 | ServiceAccount token used from outside cluster (sourceIPs not in pod CIDR or trusted LAN) | critical |
 | K3 | Secret READ in `vault`, `sealed-secrets`, `external-secrets` namespaces by a non-allowlisted ServiceAccount | critical |
 | K4 | Exec into a pod in `vault`, `kube-system`, `dbaas`, `cnpg-system` (excluding `me@viktorbarzin.me` + 1 break-glass SA) | warning |
-| K5 | >5 deletes of `Pod`, `Secret`, or `ConfigMap` in 60s by any single actor | critical |
+| K5 | >5 deletes of `Pod`, `Secret`, or `ConfigMap` in 60s by any single actor (excludes legit bulk-deleters: kubelets, kube-system GC + namespace-controller, woodpecker CI — see runbook) | critical |
 | K6 | `audit-log-path` flag or audit policy modified on kube-apiserver | critical |
 | K7 | New ClusterRole created with `verbs: ["*"]` and `resources: ["*"]` | warning |
 | K8 | Anonymous binding granted (any RoleBinding/CRB referencing `system:anonymous` or `system:unauthenticated`) | critical |
