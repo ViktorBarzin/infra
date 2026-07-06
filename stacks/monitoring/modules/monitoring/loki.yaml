@@ -28,7 +28,14 @@ loki:
     working_directory: /var/loki/compactor
     compaction_interval: 1h
     delete_request_store: filesystem
-  ruler:
+  # RULER CONFIG LIVES UNDER `rulerConfig`, NOT `ruler` (loki chart 7.x
+  # consumes .Values.loki.rulerConfig via mergeOverwrite in _helpers.tpl;
+  # a `loki.ruler` key is silently ignored). This block sat under `ruler`
+  # from the 2026-05-18 install until 2026-07-06, so NONE of it was live:
+  # the running ruler had alertmanager_url="" — every Loki-ruler alert
+  # (Security Wave 1, CloudflaredTunnelConnLoss, t3, Matrix, Vaultwarden)
+  # evaluated but notified NOWHERE. The rename resurrects that lane.
+  rulerConfig:
     enable_api: true
     storage:
       type: local
@@ -39,6 +46,19 @@ loki:
       kvstore:
         store: inmemory
     rule_path: /var/loki/scratch
+    # Recording rules (e.g. the Immich share-link counters in loki.tf)
+    # remote-write their samples to Prometheus (26w retention) so per-link
+    # analytics outlive Loki's 30d log retention. Requires the
+    # web.enable-remote-write-receiver flag on prometheus-server (set in
+    # prometheus_chart_values.tpl). WAL lives on the singleBinary PVC so
+    # ruler restarts don't drop generated samples.
+    wal:
+      dir: /var/loki/ruler-wal
+    remote_write:
+      enabled: true
+      clients:
+        prometheus:
+          url: http://prometheus-server.monitoring.svc.cluster.local:80/api/v1/write
   storage:
     type: "filesystem"
   auth_enabled: false

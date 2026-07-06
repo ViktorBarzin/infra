@@ -13,6 +13,12 @@ resource "helm_release" "loki" {
 
   repository = "https://grafana.github.io/helm-charts"
   chart      = "loki"
+  # Pin to the deployed chart version (same rationale as the traefik pin):
+  # unpinned, a refreshed helm repo index silently upgrades to the latest
+  # chart on the next apply. Pinned 2026-07-06 while fixing the inert
+  # `loki.ruler` values key (chart consumes `loki.rulerConfig`). Bump
+  # deliberately, with values migration.
+  version = "7.0.0"
 
   values  = [templatefile("${path.module}/loki.yaml", {})]
   timeout = 600
@@ -584,6 +590,47 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                 summary     = "Unusually high homelab vault fetch volume (>100/10m) for {{ $labels.user }}"
                 description = "A burst of credential fetches for one user — possible runaway loop or exfiltration. Cross-check the op-log parent process and the Vault audit stream (namespace=vault,container=audit-tail) for reads of secret/data/workstation/claude-users/{{ $labels.user }}."
               }
+            },
+          ]
+        },
+        {
+          # Immich share-link analytics (recording rules → Prometheus
+          # remote-write, 2026-07-06). Continuous per-slug counters that
+          # OUTLIVE Loki's 30d log retention (Prometheus keeps 26w): a shared
+          # album link lives up to a year, so ad-hoc log sweeps can't answer
+          # "total visits" after week 4. Query totals with e.g.
+          # sum_over_time(immich:share_link_opens:count1m{slug="x"}[90d]).
+          # CARDINALITY / INJECTION GUARDS — all three are load-bearing:
+          # (1) slug extraction is ANCHORED to the CLF request-line position
+          #     (`^ip - user [ts] "METHOD path"`), because since 2026-07-06
+          #     the line also carries attacker-controlled User-Agent/Referer —
+          #     an unanchored regexp would let any client mint arbitrary slug
+          #     label values via a crafted header (Prometheus cardinality
+          #     bomb); (2) status 2xx/304 required — Immich 404s unknown
+          #     /s/<slug> and 401s API calls with a bad ?slug=, so junk-slug
+          #     probes don't mint series; (3) the slug charset regex bounds
+          #     label values. `|= "immich-immich"` (main immich router token;
+          #     kiosk immich-frame routers don't match) is only a scan
+          #     prefilter — false positives are dropped by the anchors.
+          # Complemented by the daily share-link-geo CronJob
+          # (share_link_analytics.tf) for unique-IP + per-country gauges
+          # (exact distincts need IP-level data that doesn't belong in
+          # Prometheus labels).
+          name     = "Immich Share Link Analytics"
+          interval = "1m"
+          rules = [
+            {
+              # Page opens: successful GET/HEAD of the share page /s/<slug>.
+              record = "immich:share_link_opens:count1m"
+              expr   = "sum by (slug) (count_over_time({namespace=\"traefik\"} |= \"immich-immich\" |~ `\"(GET|HEAD) /s/` | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"(?:GET|HEAD) /s/(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})[ ?/]` | slug != \"\" | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"[^\"]*\" (?P<status>[0-9]{3}) ` | status =~ \"2..|304\" [1m]))"
+              labels = { source = "loki-ruler" }
+            },
+            {
+              # Browsing volume: successful API/asset requests carrying
+              # ?slug=<slug> in the request path (thumbnails, originals, video).
+              record = "immich:share_link_requests:count1m"
+              expr   = "sum by (slug) (count_over_time({namespace=\"traefik\"} |= \"immich-immich\" |= \"slug=\" | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"[A-Z]+ [^\" ]*[?&]slug=(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})` | slug != \"\" | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"[^\"]*\" (?P<status>[0-9]{3}) ` | status =~ \"2..|304\" [1m]))"
+              labels = { source = "loki-ruler" }
             },
           ]
         }
