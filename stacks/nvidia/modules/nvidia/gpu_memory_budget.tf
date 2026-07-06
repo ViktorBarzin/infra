@@ -201,7 +201,11 @@ EXPORTER = os.environ.get(
 )
 GPU_NODE_LABEL = "nvidia.com/gpu.present=true"
 
-K8S = "https://kubernetes.default.svc"
+# nvidia-ns cluster DNS is broken (getaddrinfo fails for kubernetes.default.svc
+# and *.svc.cluster.local from every nvidia pod — not a NetworkPolicy; 2026-07-06),
+# so reach the apiserver by the always-injected KUBERNETES_SERVICE_HOST ClusterIP
+# (its cert SAN 10.96.0.1 verifies against the mounted cluster CA) instead of DNS.
+K8S = "https://" + os.environ.get("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc") + ":" + os.environ.get("KUBERNETES_SERVICE_PORT", "443")
 TOKEN = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
 CA = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 _ctx = ssl.create_default_context(cafile=CA)
@@ -408,6 +412,13 @@ resource "kubernetes_deployment" "gpu_vram_watchdog" {
           env {
             name  = "DRY_RUN"
             value = tostring(var.watchdog_dry_run)
+          }
+          env {
+            # Same broken nvidia-ns DNS as K8S above — target the exporter by its
+            # stable ClusterIP instead of the DNS name the script defaults to, so
+            # scrape_used_mib() works (per-pod VRAM attribution) without resolution.
+            name  = "EXPORTER_URL"
+            value = "http://${kubernetes_service.gpu_pod_exporter.spec[0].cluster_ip}:80/metrics"
           }
           volume_mount {
             name       = "script"
