@@ -26,10 +26,10 @@ resource "kubernetes_namespace" "forgejo" {
 }
 
 # Custom ResourceQuota — replaces the tier-3-edge auto quota (opted out via the
-# resource-governance/custom-quota label above). requests.memory is 8Gi so the
-# 4Gi Forgejo pod sits at ~50% (clears KubeQuotaAlmostFull + the healthcheck
-# resourcequota check) with room for a transient migration/sidecar pod. To
-# raise Forgejo's memory limit past 4Gi later, bump requests.memory here too.
+# resource-governance/custom-quota label above). requests.memory is 8Gi; the
+# Forgejo pod requests 1.5Gi (right-sized 2026-07-06 from 4Gi — 7-day peak was
+# ~0.97Gi) so it sits at ~19%, with ample room for a transient migration/sidecar
+# pod. To raise Forgejo's memory request later, bump this quota if needed too.
 resource "kubernetes_resource_quota" "forgejo" {
   metadata {
     name      = "forgejo-quota"
@@ -343,11 +343,13 @@ resource "kubernetes_deployment" "forgejo" {
           # requests=limits (Guaranteed QoS) per the repo memory convention.
           resources {
             requests = {
-              cpu    = "15m"
-              memory = "4Gi"
+              cpu = "15m"
+              # 7-day peak ~0.97Gi; was 4Gi (heavily over-reserved). Right-sized
+              # 2026-07-06 to relieve ClusterCannotTolerateNonGpuNodeLoss.
+              memory = "1.5Gi"
             }
             limits = {
-              memory = "5Gi"
+              memory = "2Gi"
             }
           }
           port {

@@ -370,11 +370,12 @@ resource "kubernetes_deployment" "immich_server" {
           }
           resources {
             requests = {
-              cpu    = "100m"
-              memory = "8Gi"
+              cpu = "100m"
+              # 7-day peak ~5.65Gi; right-sized 8Gi->7Gi 2026-07-06 (node-loss headroom).
+              memory = "7Gi"
             }
             limits = {
-              memory           = "8Gi"
+              memory           = "7Gi"
               "nvidia.com/gpu" = "1"
               # GPU VRAM budget (ADR-0016): schedule-time reservation + the
               # gpu-vram-watchdog recycle threshold. Bounds the onnxruntime
@@ -543,11 +544,12 @@ resource "kubernetes_deployment" "immich-postgres" {
           }
           resources {
             requests = {
-              cpu    = "100m"
-              memory = "5Gi"
+              cpu = "100m"
+              # 7-day peak ~2.57Gi; right-sized 5Gi->4Gi 2026-07-06 (node-loss headroom).
+              memory = "4Gi"
             }
             limits = {
-              memory = "5Gi"
+              memory = "4Gi"
             }
           }
         }
