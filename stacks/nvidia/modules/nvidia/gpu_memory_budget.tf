@@ -349,6 +349,13 @@ resource "kubernetes_service_account" "gpu_vram_watchdog" {
 resource "kubernetes_cluster_role" "gpu_vram_watchdog" {
   metadata { name = "gpu-vram-watchdog" }
   rule {
+    # find the GPU node — GET /api/v1/nodes?labelSelector=nvidia.com/gpu.present=true
+    # (first api() call every tick; missing since ADR-0016, masked by the broken DNS)
+    api_groups = [""]
+    resources  = ["nodes"]
+    verbs      = ["get", "list"]
+  }
+  rule {
     api_groups = [""]
     resources  = ["pods"]
     verbs      = ["get", "list"]
