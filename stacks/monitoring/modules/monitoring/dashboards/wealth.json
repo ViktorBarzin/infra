@@ -305,8 +305,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 0,
+        "w": 4,
+        "x": 6,
         "y": 5
       },
       "fieldConfig": {
@@ -398,8 +398,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
+        "w": 4,
+        "x": 10,
         "y": 5
       },
       "fieldConfig": {
@@ -491,8 +491,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 12,
+        "w": 4,
+        "x": 14,
         "y": 5
       },
       "fieldConfig": {
@@ -2384,6 +2384,99 @@
           "editorMode": "code",
           "format": "table",
           "rawSql": "WITH liq AS (\n  SELECT COALESCE(SUM(market_value_gbp),0) AS nw\n  FROM fire_planner.account_snapshot\n  WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM fire_planner.account_snapshot)\n    AND account_type<>'WORKPLACE_PENSION'\n)\nSELECT\n  initcap(ft.\"case\") AS \"Scenario\",\n  ft.target_nw_gbp AS \"Target NW\",\n  LEAST(100, ROUND(100.0*liq.nw/NULLIF(ft.target_nw_gbp,0),1)) AS \"Progress %\",\n  GREATEST(0, ft.target_nw_gbp - liq.nw) AS \"Still needed\",\n  CASE WHEN ft.target_nw_gbp - liq.nw <= 0 THEN 'Reached'\n       WHEN COALESCE(NULLIF('$savings_per_year','')::numeric,0) <= 0 THEN 'Set savings \u00a3/yr'\n       ELSE to_char(CURRENT_DATE + ((ft.target_nw_gbp - liq.nw)/NULLIF(NULLIF('$savings_per_year','')::numeric,0)*365)::int, 'Mon YYYY') END AS \"Projected FIRE\",\n  ROUND(liq.nw/NULLIF(ft.annual_spend_gbp,0),1) AS \"Runway (yrs)\"\nFROM fire_planner.fire_target ft, liq\nWHERE ft.country_slug='$country' AND ft.bar=0.99\n  AND ( (ft.\"case\" IN ('solo','household') AND ft.with_home=false)\n     OR (ft.\"case\"='family' AND ft.with_home=$with_home) )\nORDER BY CASE ft.\"case\" WHEN 'solo' THEN 1 WHEN 'household' THEN 2 WHEN 'family' THEN 3 ELSE 4 END"
+        }
+      ]
+    },
+    {
+      "id": 9217,
+      "title": "Today (live)",
+      "description": "Today's change from LIVE quotes: current price vs the previous trading day's close, per holding (FX-adjusted), summed. \u0394 market = \u00a3 move, Return = % of the moved holdings' prior value. Uses quote_latest vs quote_prev (refreshed ~every 6h), so it moves during the day \u2014 unlike the EOD valuation tiles. Holdings with a stale/broken feed (>7d, e.g. a frozen quote) are excluded. Computed live.",
+      "type": "stat",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "wealth-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Return"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\u0394 market"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyGBP"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "vertical",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH fx AS (\n  SELECT 'GBP'::text AS ccy, 1.0::float8 AS fx_now, 1.0::float8 AS fx_prev\n  UNION ALL\n  SELECT 'USD', (1.0/NULLIF(ql.close,0))::float8, (1.0/NULLIF(qp.close,0))::float8\n  FROM assets a\n  JOIN quote_latest ql ON ql.asset_id=a.id\n  LEFT JOIN quote_prev qp ON qp.asset_id=a.id\n  WHERE a.symbol='GBP/USD'\n),\nheld AS (\n  SELECT p.quantity, p.currency, ql.close AS close_now, qp.close AS close_prev\n  FROM positions_latest p\n  JOIN assets a ON a.id=p.asset_id\n  JOIN quote_latest ql ON ql.asset_id=p.asset_id\n  JOIN quote_prev qp ON qp.asset_id=p.asset_id\n  WHERE a.symbol <> 'GBP/USD' AND ql.day >= CURRENT_DATE - INTERVAL '7 days'\n),\ncalc AS (\n  SELECT h.quantity*(h.close_now*f.fx_now - h.close_prev*f.fx_prev) AS chg_gbp,\n         h.quantity*h.close_prev*f.fx_prev AS base_gbp\n  FROM held h JOIN fx f ON f.ccy=h.currency\n)\nSELECT round((100.0*SUM(chg_gbp)/NULLIF(SUM(base_gbp),0))::numeric,2) AS \"Return\",\n       round(COALESCE(SUM(chg_gbp),0)::numeric,0) AS \"\u0394 market\"\nFROM calc"
         }
       ]
     }

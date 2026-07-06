@@ -386,6 +386,12 @@ resource "kubernetes_deployment" "wealthfolio" {
             close NUMERIC NOT NULL,
             currency TEXT
           );
+          CREATE TABLE IF NOT EXISTS quote_prev (
+            asset_id TEXT PRIMARY KEY,
+            day DATE NOT NULL,
+            close NUMERIC NOT NULL,
+            currency TEXT
+          );
           CREATE TABLE IF NOT EXISTS positions_latest (
             asset_id TEXT PRIMARY KEY,
             snapshot_date DATE NOT NULL,
@@ -542,6 +548,24 @@ resource "kubernetes_deployment" "wealthfolio" {
           WHERE rn = 1;
           SQ
 
+          # Previous-day close per asset — the close on the day BEFORE quote_latest's
+          # day (YAHOO-preferred). Powers the "today's change" tile: value now
+          # (quote_latest) vs the prior trading day's close. DENSE_RANK over distinct
+          # days so multiple same-day rows don't collapse the window.
+          sqlite3 -separator $'\t' /tmp/wf-sync/snapshot.db <<'SQ' > /tmp/wf-sync/quote_prev.tsv
+          SELECT asset_id, day, CAST(close AS REAL) AS close, currency
+          FROM (
+            SELECT asset_id, day, close, currency,
+                   DENSE_RANK() OVER (PARTITION BY asset_id ORDER BY day DESC) AS day_rank,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY asset_id, day
+                     ORDER BY CASE source WHEN 'YAHOO' THEN 1 ELSE 2 END
+                   ) AS src_rn
+            FROM quotes
+          )
+          WHERE day_rank = 2 AND src_rn = 1;
+          SQ
+
           # Currently-held positions only, from the TOTAL aggregate snapshot (sums lots across accounts).
           sqlite3 -separator $'\t' /tmp/wf-sync/snapshot.db <<'SQ' > /tmp/wf-sync/positions_latest.tsv
           SELECT je.key AS asset_id,
@@ -559,12 +583,13 @@ resource "kubernetes_deployment" "wealthfolio" {
           # Truncate-and-reload (small tables; simpler than upserts).
           psql -v ON_ERROR_STOP=1 <<SQL
           BEGIN;
-          TRUNCATE accounts, daily_account_valuation, activities, assets, quote_latest, positions_latest;
+          TRUNCATE accounts, daily_account_valuation, activities, assets, quote_latest, quote_prev, positions_latest;
           \copy accounts FROM '/tmp/wf-sync/accounts.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy daily_account_valuation FROM '/tmp/wf-sync/dav.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy activities FROM '/tmp/wf-sync/activities.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy assets FROM '/tmp/wf-sync/assets.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy quote_latest FROM '/tmp/wf-sync/quote_latest.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
+          \copy quote_prev FROM '/tmp/wf-sync/quote_prev.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy positions_latest FROM '/tmp/wf-sync/positions_latest.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           COMMIT;
           SQL
