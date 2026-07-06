@@ -957,27 +957,39 @@ serverFiles:
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp
-            expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_TEMP > 65
+            # T4 slows ~85°C / shuts down ~95°C. 7-day temp p50=51 / max=66°C, so
+            # the old >65 fired on normal warmth with ~20°C of headroom unused.
+            # 80°C = genuinely dangerously close to the thermal-throttle limit
+            # (retuned 2026-07-06 from >65, calibrated on 7d DCGM data).
+            expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_TEMP > 80
             for: 3m  # bumped from 1m for global scrape_interval=2m
             labels:
               severity: warning
             annotations:
-              summary: "GPU temp: {{ $value | printf \"%.0f\" }}°C (threshold: 65°C)"
+              summary: "GPU temp: {{ $value | printf \"%.0f\" }}°C (threshold: 80°C — throttle ~85°C)"
           - alert: HighPowerUsage
-            expr: nvidia_tesla_t4_DCGM_FI_DEV_POWER_USAGE > 50
+            # T4 TDP ~70W. 7-day power p50=33 / p99=72.75 / max=75W, so the old >50
+            # fired on any real load. >73 = at/over the power limit — the only
+            # "dangerously close to a limit" band with headroom (retuned 2026-07-06).
+            expr: nvidia_tesla_t4_DCGM_FI_DEV_POWER_USAGE > 73
             for: 30m
             labels:
               severity: info
               subsystem: gpu
             annotations:
-              summary: "GPU power: {{ $value | printf \"%.0f\" }}W (threshold: 50W)"
+              summary: "GPU power: {{ $value | printf \"%.0f\" }}W (threshold: 73W — TDP ~70W)"
           - alert: HighUtilization
-            expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_UTIL > 50
-            for: 30m
+            # GPU is usually near-idle (7-day util p50=11%) but bursts to 100% for
+            # legit work (frigate/LLM). A single high sample is normal; SUSTAINED
+            # saturation is the "something's stuck/runaway" signal. >95% for 4h
+            # catches that without firing on normal bursts (retuned 2026-07-06 from
+            # >50%/30m). Tune the 4h window if normal heavy jobs run longer.
+            expr: nvidia_tesla_t4_DCGM_FI_DEV_GPU_UTIL > 95
+            for: 4h
             labels:
               severity: info
             annotations:
-              summary: "GPU util: {{ $value | printf \"%.0f\" }}% (threshold: 50%)"
+              summary: "GPU util sustained {{ $value | printf \"%.0f\" }}% for 4h (threshold: 95%) — possible stuck/runaway workload"
           - alert: HighMemoryUsage
             expr: nvidia_tesla_t4_DCGM_FI_DEV_FB_USED / 1024 > 14
             for: 15m
