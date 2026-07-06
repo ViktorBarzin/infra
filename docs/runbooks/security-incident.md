@@ -74,8 +74,10 @@ All source-IP-based alerts (K2, K9, V7, S1) reference this list. It is **inlined
 **Meaning:** Single actor deleted >5 Pods, Secrets, or ConfigMaps in 60 seconds. Either a script gone wrong or destructive intrusion.
 
 ```logql
-sum by (user_username) (count_over_time({job="kubernetes-audit"} | json | verb = "delete" | objectRef_resource =~ "pods|secrets|configmaps" [1m])) > 5
+sum by (user_username) (count_over_time({job="kubernetes-audit"} | json | verb = "delete" | objectRef_resource =~ "pods|secrets|configmaps" | user_username !~ "^system:(node:.+|serviceaccount:(kube-system:(generic-garbage-collector|namespace-controller)|woodpecker:.+))$" [1m])) > 5
 ```
+
+> **Note (2026-07-06):** the rule **excludes legitimate bulk-deleters** — kubelets (`system:node:*`), the kube-system `generic-garbage-collector` + `namespace-controller`, and woodpecker CI — which otherwise flapped SECURITY/CRITICAL+RESOLVED on every routine cleanup burst. A human (`me@viktorbarzin.me`/`kubernetes-admin`) or an app-namespace SA still fires. If another controller starts flapping this alert, add it to the exclusion regex in `stacks/monitoring/modules/monitoring/loki.tf` (K5) rather than widening the whole rule.
 
 **Action:** Identify actor. If a Terraform apply or known cleanup job, false positive. If unrecognized, suspend the actor's credentials immediately and audit what was deleted.
 
