@@ -324,6 +324,10 @@ server:
     - "storage.tsdb.allow-overlapping-blocks"
     - "storage.tsdb.retention.size=180GB"
     - "storage.tsdb.wal-compression"
+    # Accept remote-write from the Loki ruler (share-link recording rules in
+    # loki.tf). In-cluster senders only — the service isn't exposed for write
+    # externally (ingress is read-path; Authentik gates it).
+    - "web.enable-remote-write-receiver"
   persistentVolume:
     # enabled: false
     existingClaim: prometheus-data-proxmox
@@ -2783,6 +2787,16 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Email round-trip monitor never reported - check CronJob in mailserver namespace"
+          - alert: ShareLinkGeoStale
+            # Daily job; >49h without success = two missed runs. Counters
+            # (Loki recording rules) are unaffected — only the geo/unique-IP
+            # gauges freeze at their last values while this fires.
+            expr: (time() - share_link_geo_last_success_timestamp) > 176400
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "share-link-geo CronJob (monitoring ns) hasn't succeeded in >49h — geo/unique-IP share-link gauges are stale"
           - alert: T3ProbeLegDown
             expr: t3probe_connected{job="t3-probe"} == 0
             for: 5m

@@ -211,10 +211,31 @@ resource "helm_release" "traefik" {
       }
     }
 
-    # Access logs
+    # Access logs. Headers default to DROP (log "-"); keep only User-Agent +
+    # Referer so visitor analytics can tell devices/browsers and preview bots
+    # apart (2026-07-06 — before this, share-link analytics were IP-only and
+    # bot detection needed reverse-DNS guesswork). CLF format prints them in
+    # the standard combined-log positions. Everything else (Authorization,
+    # Cookie, ...) stays dropped.
+    # ACCEPTED TRADE-OFF: traefik escapes embedded quotes in header values
+    # (`"` -> `\"`), which CrowdSec's traefik-logs grok (%%{NOTDQUOTE}) can't
+    # span — a deliberate quote-in-UA makes that line unparsed and invisible
+    # to the CrowdSec http-abuse scenarios (legit browsers never send quotes
+    # in UA). CrowdSec is one fail-open layer among several (rate-limit,
+    # Authentik, Anubis, CF); accepted 2026-07-06. Anything consuming these
+    # lines must NOT trust UA/Referer content — see the anchored-extraction
+    # guards on the share-link recording rules in stacks/monitoring.
     logs = {
       access = {
         enabled = true
+        fields = {
+          headers = {
+            names = {
+              "User-Agent" = "keep"
+              "Referer"    = "keep"
+            }
+          }
+        }
       }
     }
 
