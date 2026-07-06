@@ -78,10 +78,12 @@ resource "kubernetes_deployment" "immich-frame" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "128Mi"
+              # Matches frame-emo: 128Mi OOM-loops the kiosk renderer on image
+              # load — raised to 256Mi 2026-07-06.
+              memory = "256Mi"
             }
           }
           port {
