@@ -108,6 +108,29 @@ resource "kubernetes_manifest" "external_secret" {
             property = "actualbudget_sync_id"
           }
         },
+        # Anca's SEPARATE actualbudget instance — drives her half of the
+        # Household/Family FIRE spend (live_anca_or_default in the recompute).
+        {
+          secretKey = "ACTUALBUDGET_ANCA_API_URL"
+          remoteRef = {
+            key      = "fire-planner"
+            property = "actualbudget_anca_api_url"
+          }
+        },
+        {
+          secretKey = "ACTUALBUDGET_ANCA_API_KEY"
+          remoteRef = {
+            key      = "fire-planner"
+            property = "actualbudget_anca_api_key"
+          }
+        },
+        {
+          secretKey = "ACTUALBUDGET_ANCA_SYNC_ID"
+          remoteRef = {
+            key      = "fire-planner"
+            property = "actualbudget_anca_sync_id"
+          }
+        },
       ]
     }
   }
