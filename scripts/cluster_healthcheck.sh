@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Cluster health check script.
-# Runs 45 diagnostic checks against the Kubernetes cluster and prints
+# Runs 49 diagnostic checks against the Kubernetes cluster and prints
 # a colour-coded report with PASS / WARN / FAIL for each section.
 #
 # Usage: ./scripts/cluster_healthcheck.sh [--fix] [--quiet|-q] [--json] [--kubeconfig <path>]
@@ -27,7 +27,7 @@ KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/config}"
 [[ -f "$KUBECONFIG_PATH" ]] || KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=48
+TOTAL_CHECKS=49
 
 # Parallel execution settings. Each check function is self-contained — it
 # only reads cluster state and mutates the in-memory counters / JSON_RESULTS
@@ -3194,7 +3194,207 @@ check_goldmane_aggregator() {
     fi
 }
 
+# --- 49. Slack — #alerts Recent Alerts ---
+#
+# All alerting lanes post into the #alerts Slack channel (Alertmanager
+# critical/warning/info + the [SECURITY/*] receiver, the daily alert +
+# goldmane-edges digests, woodpecker CI notices, KMS activation, diun).
+# This check reads the channel over the Slack Web API so the health board
+# surfaces what has been alerting recently without opening Slack.
+#
+# Messages in the window (default 2h, HEALTHCHECK_SLACK_WINDOW_HOURS to
+# override) are classified: Alertmanager alert events — attachment title/
+# fallback tagged [CRITICAL]/[WARNING]/[INFO]/[SECURITY/<SEV>]/[RESOLVED]
+# per the receivers in prometheus_chart_values.tpl — vs everything else
+# (digests, CI pushes, ... = "other traffic", never treated as firing).
+# WARN when any alert is net-FIRING (its latest event in the window is a
+# firing one, with no later [RESOLVED] for the same alertname) or when the
+# channel is noisy (>20 messages in the window); PASS otherwise. Missing
+# token / unreachable Slack API degrades to WARN-and-skip (same convention
+# as the Uptime Kuma password and HA Sofia token dependencies). The token
+# is read from Vault and passed to python via the environment only — it
+# must never appear on a command line or in output.
+check_slack_alerts() {
+    section 49 "Slack — #alerts Recent Alerts"
+    local window_hours="${HEALTHCHECK_SLACK_WINDOW_HOURS:-2}"
+
+    # Token from env override or Vault (mirrors UPTIME_KUMA_PASSWORD).
+    local slack_token="${SLACK_BOT_TOKEN:-}"
+    if [[ -z "$slack_token" ]]; then
+        slack_token=$(vault kv get -field=slack_bot_token secret/viktor 2>/dev/null) || true
+    fi
+    if [[ -z "$slack_token" ]]; then
+        [[ "$QUIET" == true ]] && section_always 49 "Slack — #alerts Recent Alerts"
+        warn "Slack bot token not available (set SLACK_BOT_TOKEN or vault login) — skipping"
+        json_add "slack_alerts" "WARN" "token not available"
+        return 0
+    fi
+
+    local result
+    result=$(SLACK_BOT_TOKEN="$slack_token" SLACK_WINDOW_HOURS="$window_hours" python3 << 'SLACK_ALERTS_EOF' 2>/dev/null
+import os
+import re
+import sys
+import time
+
+import requests
+
+API = "https://slack.com/api"
+
+
+def die(reason):
+    # Single parseable line; "|" is the bash-side field separator.
+    print("ERR|" + str(reason).replace("|", "/")[:160])
+    sys.exit(0)
+
+
+try:
+    token = os.environ["SLACK_BOT_TOKEN"]
+    window_h = float(os.environ.get("SLACK_WINDOW_HOURS", "2"))
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Resolve the #alerts channel id. types MUST stay public_channel only:
+    # the bot token lacks groups:read, and including private_channel makes
+    # conversations.list fail with missing_scope.
+    channel_id = None
+    cursor = ""
+    for _ in range(10):
+        params = {"types": "public_channel", "limit": 200, "exclude_archived": "true"}
+        if cursor:
+            params["cursor"] = cursor
+        resp = requests.get(f"{API}/conversations.list", headers=headers, params=params, timeout=15).json()
+        if not resp.get("ok"):
+            die(f"conversations.list: {resp.get('error', 'bad response')}")
+        for chan in resp.get("channels", []):
+            if chan.get("name") == "alerts":
+                channel_id = chan["id"]
+                break
+        cursor = (resp.get("response_metadata") or {}).get("next_cursor", "")
+        if channel_id or not cursor:
+            break
+    if not channel_id:
+        die("channel #alerts not found")
+
+    oldest = time.time() - window_h * 3600
+    resp = requests.get(
+        f"{API}/conversations.history",
+        headers=headers,
+        params={"channel": channel_id, "oldest": f"{oldest:.6f}", "limit": 100},
+        timeout=15,
+    ).json()
+    if not resp.get("ok"):
+        die(f"conversations.history: {resp.get('error', 'bad response')}")
+    messages = resp.get("messages", [])
+except Exception as exc:  # any failure degrades to WARN-and-skip upstream
+    die(f"{type(exc).__name__}: {exc}")
+
+# Alertmanager receiver formats (slack-critical/-warning/-info/-security in
+# stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl):
+#   [CRITICAL] <alertname> (n) / [WARNING] ... / [SECURITY/<SEV>] ...  -> firing
+#   [RESOLVED] <alertname> (n)                                         -> resolved
+#   [INFO] <alertname> — title is IDENTICAL firing vs resolved; the
+#          attachment colour disambiguates (good = resolved).
+# Slack normalises named attachment colours to bare hex: danger=a30200,
+# warning=daa038, good=2eb886 (info firing posts literal 439FE0).
+# [FIRING:n] is accepted too in case a receiver reverts to the stock
+# Alertmanager template. Messages without such a tag (woodpecker CI,
+# daily digests, KMS activation, diun, ...) count as other traffic.
+TAG_RE = re.compile(
+    r"^\[?(CRITICAL|WARNING|INFO|RESOLVED|SECURITY[/-][A-Z]+|FIRING(?::\d+)?)\]?:?\s+(\S+)"
+)
+GOOD_COLORS = {"good", "2eb886"}
+
+latest = {}  # alertname -> (ts, state); newest event wins
+alert_msgs = 0
+for msg in messages:
+    ts = float(msg.get("ts", 0))
+    for att in msg.get("attachments", []) or []:
+        tag = name = None
+        for field in (att.get("title"), att.get("fallback")):
+            m = TAG_RE.match((field or "").strip())
+            if m:
+                tag, name = m.group(1), m.group(2)
+                break
+        if not tag:
+            continue
+        color = (att.get("color") or "").lstrip("#").lower()
+        if tag == "RESOLVED" or (tag == "INFO" and color in GOOD_COLORS):
+            state = "resolved"
+        else:
+            state = "firing"
+        alert_msgs += 1
+        if name not in latest or ts > latest[name][0]:
+            latest[name] = (ts, state)
+        break  # one attachment per Alertmanager message — count each message once
+
+net_firing = sorted(n for n, (_, state) in latest.items() if state == "firing")
+print(f"OK|{len(messages)}|{alert_msgs}|{len(messages) - alert_msgs}|{len(net_firing)}|{','.join(net_firing)}")
+SLACK_ALERTS_EOF
+    ) || true
+    result=${result%%$'\n'*}
+
+    local status total alert_events other net_count net_names
+    IFS='|' read -r status total alert_events other net_count net_names <<< "$result"
+
+    if [[ "$status" != "OK" || ! "$total" =~ ^[0-9]+$ || ! "$net_count" =~ ^[0-9]+$ ]]; then
+        [[ "$QUIET" == true ]] && section_always 49 "Slack — #alerts Recent Alerts"
+        # For ERR results the reason rides in the second field.
+        warn "Slack API unavailable (${total:-no response}) — skipping"
+        json_add "slack_alerts" "WARN" "Slack API unavailable: ${total:-no response}"
+        return 0
+    fi
+
+    local traffic="${total} msg(s) in last ${window_hours}h: ${alert_events} alert event(s), ${other} other"
+    local reason=""
+    if [[ "$net_count" -gt 0 ]]; then
+        reason="${net_count} net-FIRING alert(s): ${net_names}"
+    fi
+    if [[ "$total" -gt 20 ]]; then
+        [[ -n "$reason" ]] && reason+="; "
+        reason+="noisy channel (${total} messages > 20)"
+    fi
+
+    if [[ -n "$reason" ]]; then
+        [[ "$QUIET" == true ]] && section_always 49 "Slack — #alerts Recent Alerts"
+        warn "$reason — $traffic"
+        json_add "slack_alerts" "WARN" "$reason — $traffic"
+    else
+        pass "No net-firing alerts — $traffic"
+        json_add "slack_alerts" "PASS" "$traffic"
+    fi
+}
+
 # --- Summary ---
+
+# Recompute the summary counters from the per-check JSON records.
+#
+# pass()/warn()/fail() increment once per FINDING, and several checks call
+# them in per-item loops (one fail per broken DaemonSet, per hot node, ...),
+# so the raw counters count findings, not checks — a single bad check could
+# add 9 to FAIL_COUNT while the checks[] array (json_add fires exactly once
+# per check, in every output mode) records one FAIL. That skew made the
+# JSON summary report e.g. pass:39/warn:7/fail:18 while checks[] held
+# 34/7/7. Deriving the final counters from JSON_RESULTS makes the summary,
+# the human report and the exit code all agree with checks[]: one unit per
+# check. The per-finding [PASS]/[WARN]/[FAIL] report lines are unaffected.
+recompute_check_counters() {
+    PASS_COUNT=0
+    WARN_COUNT=0
+    FAIL_COUNT=0
+    local r status
+    for r in "${JSON_RESULTS[@]}"; do
+        # Extract the value of the "status" field. Detail strings are
+        # json-escaped, so the raw sequence "status":" cannot occur in them.
+        status="${r#*\"status\":\"}"
+        status="${status%%\"*}"
+        case "$status" in
+            PASS) PASS_COUNT=$((PASS_COUNT + 1)) ;;
+            WARN) WARN_COUNT=$((WARN_COUNT + 1)) ;;
+            FAIL) FAIL_COUNT=$((FAIL_COUNT + 1)) ;;
+        esac
+    done
+}
+
 print_summary() {
     if [[ "$JSON" == true ]]; then
         echo "{"
@@ -3263,6 +3463,7 @@ main() {
         check_external_replicas check_external_divergence check_pve_thermals
         check_pve_load check_external_traefik_5xx check_ha_status_dashboard
         check_immich_search check_csi_ghost_drift check_goldmane_aggregator
+        check_slack_alerts
     )
 
     # Auto-fix mutates cluster state inside individual checks — keep that
@@ -3291,6 +3492,10 @@ main() {
             "$fn"
         done
     fi
+
+    # Summary + exit code count one unit per CHECK (from the json_add
+    # records), not per finding — see recompute_check_counters.
+    recompute_check_counters
 
     print_summary
 
