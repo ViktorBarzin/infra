@@ -468,15 +468,18 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             # K5: Mass delete of pods/secrets/configmaps in 60s by single actor.
-            # Excludes legitimate bulk-deleters (fixed 2026-07-06 — these fired
-            # SECURITY/CRITICAL + RESOLVED on a loop): kubelets (system:node:*
-            # reap pods), the kube-system GC + namespace-controller, and
-            # woodpecker CI (pipeline-pod cleanup). A human (me@viktorbarzin.me /
+            # Excludes legitimate bulk-deleters (2026-07-06, extended 2026-07-07
+            # — these fired SECURITY/CRITICAL + RESOLVED on a loop): kubelets
+            # (system:node:* reap pods), the kube-system GC + namespace-controller
+            # + daemon-set-controller (replaces evicted DS pods during node
+            # pressure), woodpecker CI (pipeline-pod cleanup), and the local-path
+            # provisioner (deletes its helper pods for every Woodpecker workspace
+            # PVC — >5/60s on any busy CI window). A human (me@viktorbarzin.me /
             # kubernetes-admin) or an app-namespace SA doing >5 deletes/60s still
             # fires.
             {
               alert  = "K8sMassDelete"
-              expr   = "sum by (user_username) (count_over_time({job=\"kubernetes-audit\"} | json | verb=\"delete\" | objectRef_resource=~\"pods|secrets|configmaps\" | user_username!~\"^system:(node:.+|serviceaccount:(kube-system:(generic-garbage-collector|namespace-controller)|woodpecker:.+))$\" [1m])) > 5"
+              expr   = "sum by (user_username) (count_over_time({job=\"kubernetes-audit\"} | json | verb=\"delete\" | objectRef_resource=~\"pods|secrets|configmaps\" | user_username!~\"^system:(node:.+|serviceaccount:(kube-system:(generic-garbage-collector|namespace-controller|daemon-set-controller)|woodpecker:.+|local-path-storage:local-path-provisioner-service-account))$\" [1m])) > 5"
               for    = "1m"
               labels = { severity = "critical", lane = "security" }
               annotations = {
