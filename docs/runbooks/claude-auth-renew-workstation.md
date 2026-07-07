@@ -132,6 +132,23 @@ forbidden shared token, and it never crosses OS users.
    that env file. **Sessions started before activation keep the old credential
    until relaunched** — the user must restart their agents / `t3-serve` to cut over.
 
+   **Interactive shells** load the token too, via `/etc/profile.d/25-claude-oauth-token.sh`
+   (installed by `setup-devvm.sh`). Note: Debian's `/etc/zsh/zprofile` does **not**
+   source `/etc/profile`, so that snippet is also sourced from `/etc/zsh/zshenv`
+   (read on every zsh invocation) — otherwise a plain interactive `claude` in a zsh
+   terminal would miss the token and print `Not logged in · Please run /login` even
+   while the user's agents run fine (their env is set by `start-claude.sh`). Both are
+   per-user (`$HOME`), guarded, and a no-op for users without a setup-token.
+
+   **Backup / don't-lose-it:** the `setup_token` lives in the user's Vault path
+   `secret/workstation/claude-users/<user>`; it is (a) written with `kv patch
+   -method=rw` (MERGE — never clobbers `claude_ai_oauth_json` / `vaultwarden_*`
+   siblings), (b) versioned by Vault KV v2 with `max_versions=50` on these paths
+   (an accidental overwrite is recoverable via `vault kv get -version=<n>` / `kv
+   rollback`), and (c) captured in the weekly `vault-raft-backup` snapshot (→ NFS →
+   Synology offsite). Once a `setup_token` is active, `claude-auth-sync` stops the
+   6-hourly write to this path, so the token version stays stable.
+
 **Disable it:** clear the field (`vault kv patch -method=rw
 secret/workstation/claude-users/<os-user> setup_token=""`) — the next sync removes
 the env file and the user reverts to the per-user SSO credential flow.
