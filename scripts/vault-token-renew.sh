@@ -16,10 +16,10 @@
 # (ExecStart=%h/.local/bin/vault-token-renew). Per-user tokens:
 #   wizard: policies vault-admin (path "*" sudo) + sops-admin (SOPS transit) —
 #           can self-heal a clobber (see vtr_heal) because it holds create authority.
-#   emo:    policies default + personal-emo (own secret tree secret/emo/*) —
-#           matches emo's OIDC entitlement; cannot mint orphan tokens, so a
-#           clobber can't self-heal and instead fails loud (rare: emo doesn't
-#           `vault login`). Re-mint is an admin action (see runbook).
+#   emo:    default + personal-emo (own tree secret/emo/*) + projects-emo (service
+#           secrets emo maintains, e.g. secret/tuya-bridge) — matches emo's OIDC
+#           entitlement; cannot mint orphan tokens, so a clobber can't self-heal and
+#           instead fails loud (rare: emo doesn't `vault login`). Re-mint = admin (runbook).
 #
 # To mint/recreate a user's token (admin, one-time — needs create authority):
 #   vault token create -orphan -period=768h \
@@ -48,7 +48,7 @@ vtr_resolve_config() {
       REQUIRED_POLICY="vault-admin"
       ;;
     emo)
-      VTR_MINT_POLICIES=(default personal-emo)    # emo's own tree only (secret/emo/*)
+      VTR_MINT_POLICIES=(default personal-emo projects-emo)  # own tree (secret/emo/*) + projects (secret/tuya-bridge)
       REQUIRED_POLICY="personal-emo"
       ;;
     *)

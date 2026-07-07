@@ -21,12 +21,14 @@ fails loud rather than minting an unknown scope.
 | User | `display_name` | `policies` | Can self-heal a clobber? |
 |---|---|---|---|
 | `wizard` | `token-devvm-wizard` | `default`, `sops-admin`, `vault-admin` | yes — holds orphan-create authority |
-| `emo` | `token-devvm-emo` | `default`, `personal-emo` (own tree `secret/emo/*`) | no — fails loud; an admin re-mints |
+| `emo` | `token-devvm-emo` | `default`, `personal-emo` (own tree `secret/emo/*`), `projects-emo` (`secret/tuya-bridge`) | no — fails loud; an admin re-mints |
 
-`emo`'s scope matches emo's OIDC entitlement (entity `emo`, alias
-`emil.barzin@gmail.com`, direct policy `personal-emo`) made persistent — no
-escalation. Common to all: `period` `768h` (32 days), `explicit_max_ttl` `0`
-(no hard cap), `orphan` `true` (not revoked when any parent expires).
+`emo`'s base scope matches emo's OIDC entitlement (entity `emo`, alias
+`emil.barzin@gmail.com`, policy `personal-emo`) made persistent; `projects-emo`
+(CRUD on `secret/tuya-bridge`, the service emo maintains) is a Viktor-approved
+widening (2026-07-07, defined in `stacks/vault/main.tf` — a growable policy: add
+paths there, no token re-mint needed). Common to all: `period` `768h` (32 days),
+`explicit_max_ttl` `0` (no hard cap), `orphan` `true` (not revoked when any parent expires).
 
 Periodic tokens have no max-TTL; they only need renewing once per `period`.
 Daily renewal leaves a 32× margin. **If devvm is decommissioned and the timer
@@ -82,7 +84,7 @@ with a `vault-admin` token:
 ```bash
 export VAULT_ADDR=https://vault.viktorbarzin.me
 vault token create -orphan -period=768h \
-  -policy=default -policy=personal-emo -display-name=devvm-emo \
+  -policy=default -policy=personal-emo -policy=projects-emo -display-name=devvm-emo \
   -field=token | sudo install -m 600 -o emo -g emo /dev/stdin /home/emo/.vault-token
 ```
 
@@ -94,7 +96,7 @@ Run as the user being checked (for emo: `sudo -u emo XDG_RUNTIME_DIR=/run/user/1
 export VAULT_ADDR=https://vault.viktorbarzin.me
 vault token lookup | grep -E 'display_name|period|explicit_max_ttl|policies'
 # wizard: display_name token-devvm-wizard, policies [default sops-admin vault-admin]
-# emo:    display_name token-devvm-emo,    policies [default personal-emo]
+# emo:    display_name token-devvm-emo,    policies [default personal-emo projects-emo]
 # both:   period 768h, explicit_max_ttl 0s
 
 # authoritative capability check (do NOT trust the policies field alone — an

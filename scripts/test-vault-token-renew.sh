@@ -40,7 +40,7 @@ ok "emo user maps"                     vtr_resolve_config emo
 eq "emo EXPECTED_DN"      "token-devvm-emo"         "$EXPECTED_DN"
 eq "emo REQUIRED_POLICY"  "personal-emo"            "$REQUIRED_POLICY"
 eq "emo mint display"     "devvm-emo"               "$VTR_MINT_DISPLAY_NAME"
-eq "emo mint policies"    "default personal-emo"    "${VTR_MINT_POLICIES[*]}"
+eq "emo mint policies"    "default personal-emo projects-emo" "${VTR_MINT_POLICIES[*]}"
 no "unmapped user refused (no mint of unknown scope)" vtr_resolve_config nobody-xyz
 
 # --- vtr_drift_ok (WIZARD context): ONLY our periodic token (right name AND vault-admin) renews ---
