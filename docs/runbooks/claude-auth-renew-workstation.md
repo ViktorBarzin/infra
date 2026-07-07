@@ -129,8 +129,17 @@ forbidden shared token, and it never crosses OS users.
    (`CLAUDE_CODE_OAUTH_TOKEN=…`, mode 0600) and, while a token is present, **skips**
    the rotating-credential validate/backup/restore (so no false
    `WorkstationClaudeAuthInvalid`). `start-claude.sh` and `t3-serve@.service` load
-   that env file. **Sessions started before activation keep the old credential
-   until relaunched** — the user must restart their agents / `t3-serve` to cut over.
+   that env file.
+
+   **Already-running sessions cut over WITHOUT a restart.** Processes launched
+   before activation never see the env var — they authenticate from
+   `~/.claude/.credentials.json`, which claude re-reads at access-token expiry.
+   The sync therefore also backfills the setup-token into that file as a
+   far-future `accessToken` (claude accepts an `sk-ant-oat01` there; proven live
+   2026-07-07). Pre-existing agents pick it up at their next natural credential
+   re-read, and a legacy writer that clobbers the file (the refresh-race wipe
+   pattern) self-heals on the next 6-hourly sync. Idempotent — no rewrite while
+   the file already carries the token.
 
    **Interactive shells** load the token too, via `/etc/profile.d/25-claude-oauth-token.sh`
    (installed by `setup-devvm.sh`). Note: Debian's `/etc/zsh/zprofile` does **not**

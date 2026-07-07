@@ -149,6 +149,44 @@ cas_restore() {
 # OS users. Returns 0 when a token is active, so the caller skips the
 # rotating-credential validate/backup/restore (probing the now-vestigial
 # credential would otherwise emit false WorkstationClaudeAuthInvalid alerts).
+
+# Sessions launched BEFORE the env file existed never see CLAUDE_CODE_OAUTH_TOKEN
+# — they authenticate from ~/.claude/.credentials.json, which claude re-reads at
+# access-token expiry. Keep that file carrying the setup-token as a far-future
+# accessToken (claude accepts an sk-ant-oat01 there; proven live 2026-07-07), so
+# pre-existing agents cut over WITHOUT a restart — and if a stray legacy writer
+# clobbers the file (the refresh-race wipe pattern), it self-heals within one
+# timer period. Idempotent: rewrites only when the stored accessToken differs.
+# Preserves sibling keys (mcpOAuth etc.). Never fails the sync (best-effort).
+cas_backfill_credentials_file() {
+  local token="$1" cur base tmp exp
+  cur=""
+  [[ -f "$CAS_CREDENTIALS" ]] && cur="$(jq -r '.claudeAiOauth.accessToken // ""' "$CAS_CREDENTIALS" 2>/dev/null)"
+  [[ "$cur" == "$token" ]] && return 0
+  exp=$(( ($(date +%s) + 350 * 24 * 3600) * 1000 ))   # ~350d; the token itself lives ~1y
+  mkdir -p "$(dirname "$CAS_CREDENTIALS")"
+  if jq -e 'type == "object"' "$CAS_CREDENTIALS" >/dev/null 2>&1; then
+    base="$CAS_CREDENTIALS"
+  else
+    base="$(mktemp)"; printf '{}\n' > "$base"
+  fi
+  tmp="$(mktemp "${CAS_CREDENTIALS}.XXXXXX")" || { cas_log "WARN could not stage credentials backfill"; return 0; }
+  # Token passed via environment (env.CAS_TOK), never argv — argv is world-readable.
+  if CAS_TOK="$token" jq -ce --argjson exp "$exp" \
+      '.claudeAiOauth = ((.claudeAiOauth // {}) + {accessToken: env.CAS_TOK, expiresAt: $exp})
+       | .claudeAiOauth.scopes = (.claudeAiOauth.scopes // ["user:inference"])' \
+      "$base" > "$tmp"; then
+    chmod 0600 "$tmp"
+    mv "$tmp" "$CAS_CREDENTIALS"
+    cas_log "OK setup-token backfilled into credentials file (pre-env sessions cut over without restart)"
+  else
+    rm -f "$tmp"
+    cas_log "WARN credentials-file backfill failed; pre-env sessions may lose auth at their next token expiry"
+  fi
+  [[ "$base" == "$CAS_CREDENTIALS" ]] || rm -f "$base"
+  return 0
+}
+
 cas_sync_setup_token() {
   local token desired tmp
   token="$(vault kv get -field=setup_token "$CAS_VAULT_PATH" 2>/dev/null)" || token=""
@@ -161,6 +199,7 @@ cas_sync_setup_token() {
   fi
   desired="CLAUDE_CODE_OAUTH_TOKEN=$token"
   if [[ -r "$CAS_TOKEN_ENV_FILE" && "$(<"$CAS_TOKEN_ENV_FILE")" == "$desired" ]]; then
+    cas_backfill_credentials_file "$token"
     cas_log "OK long-lived setup-token active (CLAUDE_CODE_OAUTH_TOKEN current); credential checks skipped"
     return 0
   fi
@@ -168,6 +207,7 @@ cas_sync_setup_token() {
   printf '%s\n' "$desired" > "$tmp"
   chmod 0600 "$tmp"
   mv "$tmp" "$CAS_TOKEN_ENV_FILE"
+  cas_backfill_credentials_file "$token"
   cas_log "OK long-lived setup-token active; CLAUDE_CODE_OAUTH_TOKEN materialized; credential checks skipped"
   return 0
 }
