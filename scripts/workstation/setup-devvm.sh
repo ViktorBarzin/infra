@@ -57,6 +57,39 @@ PROFILE_EOF
 chmod 0644 /etc/profile.d/10-local-bin.sh
 log "/etc/profile.d/10-local-bin.sh (~/.local/bin on PATH for login shells)"
 
+# 2a-ii) Load the per-user long-lived Claude setup-token into INTERACTIVE shells.
+#     start-claude.sh + t3-serve@.service already load ~/.config/claude-auth-sync/
+#     claude-oauth.env (CLAUDE_CODE_OAUTH_TOKEN, materialized by claude-auth-sync
+#     from the user's OWN Vault setup_token). A plain interactive `claude` did NOT
+#     get it, so a heavy-agent user (emo) saw "Not logged in · Please run /login" in
+#     a fresh terminal even while the token was valid and their agents ran. Load it
+#     here too. Per-user ($HOME), guarded, no-op for users without a setup-token;
+#     NEVER a shared token (that would collapse identities — see
+#     docs/runbooks/claude-auth-renew-workstation.md).
+cat > /etc/profile.d/25-claude-oauth-token.sh <<'PROFILE_EOF'
+# Load the per-user long-lived Claude setup-token so interactive `claude` uses it.
+# Guarded, per-user, no-op without a token. Sourced by bash login (/etc/profile)
+# and by zsh via /etc/zsh/zshenv (Debian's zsh zprofile does NOT source /etc/profile).
+_cc_oauth_env="$HOME/.config/claude-auth-sync/claude-oauth.env"
+if [ -r "$_cc_oauth_env" ]; then
+  set -a; . "$_cc_oauth_env"; set +a
+fi
+unset _cc_oauth_env
+PROFILE_EOF
+chmod 0644 /etc/profile.d/25-claude-oauth-token.sh
+# Debian's /etc/zsh/zprofile is inert (does NOT source /etc/profile), so profile.d
+# is invisible to zsh login/interactive shells — and emo has no personal rc files.
+# Source the loader from /etc/zsh/zshenv (read on EVERY zsh invocation). Idempotent.
+if ! grep -q '25-claude-oauth-token.sh' /etc/zsh/zshenv 2>/dev/null; then
+  cat >> /etc/zsh/zshenv <<'ZSHENV_EOF'
+
+# Load the per-user Claude setup-token for zsh (login, ttyd/tmux panes, scripts):
+# Debian's /etc/zsh/zprofile does NOT source /etc/profile, so profile.d is missed.
+[ -r /etc/profile.d/25-claude-oauth-token.sh ] && . /etc/profile.d/25-claude-oauth-token.sh
+ZSHENV_EOF
+fi
+log "claude setup-token interactive loader (/etc/profile.d/25 + /etc/zsh/zshenv hook)"
+
 # 2b) t3 (the per-user coding surface) — GATED NIGHTLY TRACKER (2026-06-16; was pinned).
 #     t3 is pre-1.0 and ships breaking auth-schema + bootstrap-API changes (2026-06-09
 #     outage: a blind nightly auto-update broke pairing for ALL users). The daily
