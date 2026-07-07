@@ -315,7 +315,11 @@ resource "kubernetes_deployment" "llama_swap" {
         container {
           name  = "llama-swap"
           image = local.llamaswap_image
-          args  = ["-config", "/app/config.yaml", "-listen", ":8080"]
+          # ulimit -c 0: a crashing llama-server (CUDA OOM under VRAM squeeze)
+          # dumps a ~536MiB core into the writable layer every few seconds —
+          # 2026-07-07 that filled node1 (~148GiB in 50min) and the DiskPressure
+          # eviction storm took out the DNS primary. Crash logs go to stdout.
+          command = ["/bin/sh", "-c", "ulimit -c 0 && exec /app/llama-swap -config /app/config.yaml -listen :8080"]
           port {
             container_port = 8080
             name           = "http"
@@ -352,12 +356,17 @@ resource "kubernetes_deployment" "llama_swap" {
           }
           resources {
             requests = {
-              cpu    = "200m"
-              memory = "2Gi"
+              cpu                 = "200m"
+              memory              = "2Gi"
+              "ephemeral-storage" = "1Gi"
             }
             limits = {
-              memory           = "12Gi"
-              "nvidia.com/gpu" = "1"
+              memory = "12Gi"
+              # Blast-radius bound (2026-07-07): runaway writable-layer growth
+              # evicts THIS pod at 10Gi instead of tipping the whole node into
+              # DiskPressure (models live on the PVC; normal usage is <100Mi).
+              "ephemeral-storage" = "10Gi"
+              "nvidia.com/gpu"    = "1"
               # GPU VRAM budget (ADR-0016): one model at a time; qwen3-8b @16k
               # peak ~4.35 GiB + headroom (the protected recruiter-responder tenant).
               "viktorbarzin.me/gpumem" = "5000"
