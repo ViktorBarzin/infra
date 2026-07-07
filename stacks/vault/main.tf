@@ -1295,9 +1295,38 @@ resource "vault_policy" "personal_emo" {
   EOT
 }
 
+# emo project/service secrets — tuya-bridge (deliberate, Viktor-approved 2026-07-07)
+# ----------------------------------------------------------------------------------
+# emo authors + maintains the tuya-bridge "Саксии" (planters) HA-Sofia feature
+# (shipped in infra master bf604dbf, the emo/saksii-live-poller PR). To manage its
+# runtime secret without relaying one-line `vault kv patch` commands through Viktor,
+# emo gets full read/write on the SINGLE service secret `secret/tuya-bridge` — and
+# only that. Viktor explicitly chose least-privilege (just tuya-bridge) on 2026-07-07
+# after the Polivane session hit `vault token capabilities secret/data/tuya-bridge ->
+# deny`. KV v2 can't scope to one field, so this necessarily lets emo read that
+# secret's existing Tuya API keys — accepted, since emo develops the bridge.
+#
+# This is a NAMED, growable "projects" policy: to grant emo another service secret
+# later, add a path here — no token re-mint needed, since emo's periodic devvm token
+# carries the policy NAME (policy content is evaluated live). Attached to emo's OIDC
+# entity (below, for `vault login` parity) AND minted into emo's periodic devvm token
+# (vtr_resolve_config in scripts/vault-token-renew.sh).
+resource "vault_policy" "projects_emo" {
+  name   = "projects-emo"
+  policy = <<-EOT
+    # Full read/write on the tuya-bridge service secret emo maintains
+    path "secret/data/tuya-bridge" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "secret/metadata/tuya-bridge" {
+      capabilities = ["list", "read"]
+    }
+  EOT
+}
+
 resource "vault_identity_entity" "emo" {
   name     = "emo"
-  policies = [vault_policy.personal_emo.name]
+  policies = [vault_policy.personal_emo.name, vault_policy.projects_emo.name]
 }
 
 resource "vault_identity_entity_alias" "emo" {
