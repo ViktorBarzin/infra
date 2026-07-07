@@ -49,8 +49,8 @@ pfSense:
   LAN's gateway is and remains the AX6000; home-LAN traffic never transits
   pfSense. Consequently a pfSense (or R730 VM-level) outage does not affect
   the home LAN, and the apartment ↔ 4G-router ↔ UPS paths don't even leave
-  the switch (P1/P2/P3 bridge internally), so out-of-band recovery via the
-  4G router survives the whole rack being down.
+  the switch (the VLAN-1 access ports P2/P3/P5 bridge internally), so
+  out-of-band recovery via the 4G router survives the whole rack being down.
 - **Tagged 30 (CCTV)** has exactly one possible landing: vmbr0 delivers
   VID 30 only to pfSense `net3` (dCCTV, 10.0.30.1), which is the camera
   segment's gateway, firewall and sole exit. "Camera → AX6000 → internet"
@@ -90,10 +90,33 @@ pfSense:
   leg); eno3/eno4 remain free.
 - The old TL-SG105E is retired to cold spare; the PE inherits 192.168.1.6
   (Kea reservation by MAC).
-- Revision history (all 2026-07-02): rev 1 assumed one shared PE with a
+- Revision history: rev 1 (2026-07-02) assumed one shared PE with a
   port-VLAN split (conflated the two devices); rev 2 split into two switches
   after inspecting 192.168.1.6 (old non-PoE SG105E, 4/5 ports used); rev 3
   consolidated back to one switch — the PE replacing the SG105E — per
-  Viktor's preference, moving CCTV onto a managed tagged trunk.
+  Viktor's preference, moving CCTV onto a managed tagged trunk; **rev 4
+  (2026-07-03) is the as-built after the physical swap** — see the port map
+  below.
 - Frigate's ADR-0016 VRAM budget was bumped 2000 → 2300 MiB for the extra
   NVDEC stream.
+
+## As-built port map (rev 4, verified 2026-07-03)
+
+After the physical swap, ports were assigned by a ping-burst counter test on
+the live switch (NOT the illustrative left-to-right order the earlier
+diagrams guessed — the R730 and apartment-uplink ports came out swapped):
+
+| Port | Speed | Device | VLAN role |
+|------|-------|--------|-----------|
+| **P1** | 1 GbE | **R730 `eno1`** | **trunk — VLAN 1 untagged (PVID 1) + VLAN 30 tagged** |
+| P2 | 100 M | 4G router `192.168.1.7` | VLAN 1 untagged |
+| P3 | 100 M | UPS mgmt | VLAN 1 untagged |
+| **P4** | 100 M | **camera (PoE)** | **VLAN 30 untagged, PVID 30** |
+| P5 | 1 GbE | apartment uplink → AX6000 | VLAN 1 untagged |
+
+Live 802.1Q table: `vids [1,30]`, `tagMbrs [0x0, 0x01]` (VLAN 30 tagged =
+P1), `untagMbrs [0x17, 0x08]` (VLAN 1 = P1/P2/P3/P5, VLAN 30 = P4),
+`pvids [1,1,1,30,1]`. The camera is live at `10.0.30.70` (Kea reservation),
+streaming into Frigate as `vermont-garage`; VLAN 30 never touches the
+apartment uplink (clean isolation). Camera config + activation details:
+memory #7066 / #7123.

@@ -1,6 +1,6 @@
 # Networking Architecture
 
-Last updated: 2026-07-02 (dCCTV segment added — dedicated pfSense leg for the garage camera, ADR-0017)
+Last updated: 2026-07-03 (dCCTV as-built after the single-switch swap — camera live on P1 trunk, ADR-0017 rev 4)
 
 ## Overview
 
@@ -76,9 +76,9 @@ graph TB
     vmbr1 -.VLAN 20.- Tech
     vmbr1 -.VLAN 20.- Master
     vmbr1 -.VLAN 20.- Node1
-    vmbr2 -.physical link.- eno2
-    vmbr2 -.untagged.- Camera
-    vmbr2 -.pfSense net3 = dCCTV 10.0.30.1.- pfSense
+    Camera -.P4 → P1 trunk → eno1, tag 30.- vmbr0
+    vmbr0 -.pfSense net3 = dCCTV 10.0.30.1 (vmbr0 tag 30).- pfSense
+    vmbr2 -.dormant fallback leg.- eno2
 ```
 
 ## Components
@@ -89,7 +89,7 @@ graph TB
 | phpIPAM | v1.7.0 | phpipam.viktorbarzin.me | IP address management, device inventory, DNS sync |
 | vmbr0 | Linux bridge | 192.168.1.127/24 | Physical bridge on eno1, uplink to LAN |
 | vmbr1 | Linux bridge (VLAN-aware) | Internal | VLAN trunk for VM isolation |
-| vmbr2 | Linux bridge | Physical (eno2) | DORMANT fallback leg for dCCTV (ADR-0017 rev 3) — live dCCTV rides vmbr0 tag 30 over the LAN1 trunk |
+| vmbr2 | Linux bridge | Physical (eno2) | DORMANT fallback leg for dCCTV (ADR-0017 rev 4) — live dCCTV rides vmbr0 tag 30 over the P1 trunk (LAN1 cable) |
 | Technitium DNS | Container | 10.0.20.201 (LB) / 10.96.0.53 (ClusterIP) | Internal DNS (viktorbarzin.lan) + full recursive resolver |
 | Cloudflare DNS | SaaS | External | ~50 public domains under viktorbarzin.me |
 | Cloudflared | Container | K8s (3 replicas) | Tunnel ingress, replaces port forwarding |
@@ -99,11 +99,11 @@ graph TB
 | MetalLB | v0.15.3 Helm chart | K8s | LoadBalancer IPs (10.0.20.200-10.0.20.220), all services on 10.0.20.200 |
 | Registry Cache | Container | 10.0.20.10 | Pull-through for docker.io:5000, ghcr.io:5010 |
 
-## CCTV Segment (dCCTV) — as-built 2026-07-02
+## CCTV Segment (dCCTV) — as-built 2026-07-03 (ADR-0017 rev 4)
 
-Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C at the garage entrance). Decision + rejected alternatives: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
+Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C at the garage entrance). Decision + rejected alternatives + diagrams: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
 
-**Physical path (rev 3, single switch)**: camera → TL-SG105PE PoE port (untagged VLAN 30) → trunk port (home LAN untagged + CCTV **tagged 30**) → the existing LAN1 cable → R730 `eno1` → `vmbr0` (vlan-aware) → pfSense `net3`/vtnet3 = `vmbr0 tag=30` = interface **dCCTV `10.0.30.1/24`**. The TL-SG105PE **replaces** the old garage TL-SG105E (retired to cold spare) and carries everything: apartment uplink, 4G router `192.168.1.7`, UPS mgmt (VLAN 1), camera (VLAN 30), trunk — all 5 ports used. VLAN-30 membership is {camera port, trunk port} only, so tagged injection from other ports is dropped. `eno2`/`vmbr2` remain dormant as the fallback physical leg (rev 2).
+**Physical path (single switch, as-built)**: camera → TL-SG105PE **P4** (untagged VLAN 30, PoE) → **P1 trunk** (home LAN untagged + CCTV **tagged 30**) → the existing LAN1 cable → R730 `eno1` → `vmbr0` (vlan-aware) → pfSense `net3`/vtnet3 = `vmbr0 tag=30` = interface **dCCTV `10.0.30.1/24`**. The TL-SG105PE **replaced** the old garage TL-SG105E (retired to cold spare, PE inherited mgmt `192.168.1.6`) and carries everything on 5 ports — verified live 2026-07-03: **P1 = R730 eno1 trunk, P2 = 4G router, P3 = UPS, P4 = camera, P5 = apartment uplink** (ports assigned by a ping-burst test, NOT the diagrams' earlier illustrative order). 802.1Q: `tagMbrs [0x0,0x01]` (VLAN 30 tagged = P1 only), `untagMbrs [0x17,0x08]`, `pvids [1,1,1,30,1]` — VLAN-30 membership is {P4 camera, P1 trunk} only, so tagged injection from any other port (incl. the apartment uplink) is dropped. `eno2`/`vmbr2` remain dormant as the fallback physical leg (rev 2).
 
 **Addressing**: Kea DHCP pool `10.0.30.100-199`; devices get MAC reservations (camera `10.0.30.70`; the PE switch mgmt inherits the retired switch's `192.168.1.6` on the home LAN). Kea DDNS auto-registers names in Technitium; `phpipam-pfsense-import` picks up leases hourly.
 
