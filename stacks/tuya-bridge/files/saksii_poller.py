@@ -28,13 +28,13 @@ DID = os.environ["TUYA_DEVICE_ID"]
 HA_URL = os.environ["HA_URL"].rstrip("/")
 HA_TOKEN = os.environ["HA_TOKEN"]
 
-# WD-01ADE timer DP byte format (reverse-engineered 2026-07-06 against real
-# schedules): base64 -> bytes; byte0 = header/version, then 11-byte entries:
-#   [0]type(1=Schedule,0=Custom) [1]repeat [2]hh [3]mm [4]dur_hi [5]dur_lo
-#   [6]act [7..10]reserved.  duration = uint16 BE seconds.
-#   repeat: bit7 set -> weekly, bits0-6 = weekdays (bit0=Sun..bit6=Sat);
-#           bit7 clear -> interval, value = every N days.
-DAYS = ["Нед", "Пон", "Вто", "Сря", "Чет", "Пет", "Съб"]  # bit0=Sun..bit6=Sat
+# WD-01ADE timer DP byte format (reverse-engineered 2026-07-06/07 against real
+# schedules): base64 -> bytes; byte0 = header, then 11-byte entries:
+#   [0]type [1]daymask [2]hh [3]mm [4]dur_hi [5]dur_lo [6]act [7..10]reserved.
+#   duration = uint16 BE seconds.
+#   daymask byte: bit0 = enabled; bit1=Mon bit2=Tue bit3=Wed bit4=Thu
+#                 bit5=Fri bit6=Sat bit7=Sun. No weekday bit set -> never fires.
+DOW = {1: "Пон", 2: "Вто", 3: "Сря", 4: "Чет", 5: "Пет", 6: "Съб", 7: "Нед"}
 
 
 def decode_timer(b64):
@@ -47,12 +47,8 @@ def decode_timer(b64):
         e = body[i:i + 11]
         rep, hh, mm = e[1], e[2], e[3]
         dur = (e[4] << 8) | e[5]
-        if rep & 0x80:
-            bits = rep & 0x7F
-            days = [DAYS[d] for d in range(7) if bits & (1 << d)]
-            repeat = "седмично: " + " ".join(days)
-        else:
-            repeat = "всеки %d ден" % rep
+        days = [DOW[b] for b in range(1, 8) if rep & (1 << b)]
+        repeat = " ".join(days) if days else "няма избрани дни"
         m, s = divmod(dur, 60)
         dur_h = ("%dм %dс" % (m, s)) if s else ("%d мин" % m)
         out.append({
