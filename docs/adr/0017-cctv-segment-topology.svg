@@ -18,7 +18,7 @@
   <rect width="1600" height="880" fill="#fcfcfb"/>
 
   <text x="40" y="42" font-size="26" font-weight="700" fill="#0b0b0b">ADR-0017 — CCTV segment behind pfSense, VLAN-30 trunk on the LAN1 cable</text>
-  <text x="40" y="66" font-size="15" fill="#52514e">Sofia/Vermont · rev 3 (single switch) 2026-07-02 · dashed = camera-day · the ONLY 802.1Q is the trunk between the switch and eno1</text>
+  <text x="40" y="66" font-size="15" fill="#52514e">Sofia/Vermont · rev 4 (single switch, as-built 2026-07-03) · the ONLY 802.1Q is the P1 trunk between the switch and eno1</text>
 
   <!-- camera -> everything else (denied) -->
   <path d="M240,168 C520,104 900,104 1148,140" fill="none" stroke="#e34948" stroke-width="3" marker-end="url(#arrRed)"/>
@@ -48,10 +48,10 @@
   <rect x="64" y="396" width="512" height="176" rx="8" fill="#4a3aa7" fill-opacity="0.04" stroke="#4a3aa7" stroke-width="2"/>
   <text x="80" y="420" font-size="15" font-weight="700" fill="#0b0b0b">TL-SG105PE <tspan font-size="12.5" font-weight="400" fill="#52514e">replaces the SG105E · mgmt 192.168.1.6 (Kea) · all 5 ports used</tspan></text>
   <g font-size="11.5" text-anchor="middle">
-    <rect x="80"  y="436" width="88" height="56" rx="6" fill="#2a78d6" fill-opacity="0.12" stroke="#2a78d6"/>
-    <text x="124" y="454" font-weight="700" fill="#0b0b0b">P1 · V1</text>
-    <text x="124" y="470" fill="#52514e">apartment</text>
-    <text x="124" y="484" fill="#52514e">uplink</text>
+    <rect x="80"  y="436" width="88" height="56" rx="6" fill="#2a78d6" fill-opacity="0.10" stroke="#4a3aa7" stroke-width="2"/>
+    <text x="124" y="454" font-weight="700" fill="#0b0b0b">P1 · trunk</text>
+    <text x="124" y="470" fill="#52514e">V1 untagged</text>
+    <text x="124" y="484" fill="#4a3aa7">+ V30 tagged</text>
     <rect x="178" y="436" width="88" height="56" rx="6" fill="#2a78d6" fill-opacity="0.12" stroke="#2a78d6"/>
     <text x="222" y="454" font-weight="700" fill="#0b0b0b">P2 · V1</text>
     <text x="222" y="470" fill="#52514e">4G router</text>
@@ -63,19 +63,19 @@
     <text x="418" y="454" font-weight="700" fill="#0b0b0b">P4 · V30</text>
     <text x="418" y="470" fill="#52514e">camera</text>
     <text x="418" y="484" fill="#52514e">PoE ON</text>
-    <rect x="472" y="436" width="88" height="56" rx="6" fill="#2a78d6" fill-opacity="0.10" stroke="#4a3aa7" stroke-width="2" stroke-dasharray="0"/>
-    <text x="516" y="454" font-weight="700" fill="#0b0b0b">P5 · trunk</text>
-    <text x="516" y="470" fill="#52514e">V1 untagged</text>
-    <text x="516" y="484" fill="#4a3aa7">+ V30 tagged</text>
+    <rect x="472" y="436" width="88" height="56" rx="6" fill="#2a78d6" fill-opacity="0.12" stroke="#2a78d6"/>
+    <text x="516" y="454" font-weight="700" fill="#0b0b0b">P5 · V1</text>
+    <text x="516" y="470" fill="#52514e">apartment</text>
+    <text x="516" y="484" fill="#52514e">uplink</text>
   </g>
-  <text x="80" y="516" font-size="12" fill="#52514e">802.1Q: VLAN 1 untagged {P1,P2,P3,P5} · VLAN 30 {P4 untagged/PVID 30, P5 tagged}</text>
-  <text x="80" y="534" font-size="12" fill="#52514e">tag-30 ingress on P1/P2/P3 is dropped (not members) — the trunk is the only tagged path</text>
+  <text x="80" y="516" font-size="12" fill="#52514e">802.1Q: VLAN 1 untagged {P1,P2,P3,P5} · VLAN 30 {P4 untagged/PVID 30, P1 tagged}</text>
+  <text x="80" y="534" font-size="12" fill="#52514e">tag-30 ingress on P2/P3/P5 is dropped (not members) — the P1 trunk is the only tagged path</text>
   <text x="80" y="558" font-size="12" fill="#8a8984">old TL-SG105E → retired, cold spare · backup-WAN (4G) + UPS keep their ports</text>
 
   <!-- trunk: two parallel lines to eno1 -->
   <path d="M560,458 C630,458 640,428 692,420" fill="none" stroke="#2a78d6" stroke-width="2.5"/>
   <path d="M560,466 C632,466 644,436 692,428" fill="none" stroke="#4a3aa7" stroke-width="2.5"/>
-  <text x="588" y="404" font-size="12" font-weight="700" fill="#0b0b0b">LAN1 cable</text>
+  <text x="576" y="404" font-size="12" font-weight="700" fill="#0b0b0b">trunk P1 → eno1 (LAN1)</text>
 
   <!-- R730 / PVE zone -->
   <rect x="680" y="330" width="880" height="440" rx="10" fill="#0b0b0b" fill-opacity="0.03" stroke="#b9b8b2"/>
@@ -144,7 +144,7 @@
   <text x="1372" y="272" font-size="11.5" fill="#52514e">10.0.30.0/24 via 192.168.1.2</text>
 
   <path d="M1254,308 C1150,352 950,372 790,400" fill="none" stroke="#2a78d6" stroke-width="2" opacity="0.6"/>
-  <text x="1010" y="374" font-size="12" fill="#2a78d6">apartment uplink · switch P1 · trunk · eno1</text>
+  <text x="1010" y="374" font-size="12" fill="#2a78d6">apartment (P5) · trunk P1 · eno1</text>
 
   <!-- FLOWS -->
   <path d="M1256,497 C1010,690 330,730 120,650 C40,618 40,380 96,286" fill="none" stroke="#008300" stroke-width="3" marker-end="url(#arrGreen)"/>
@@ -173,6 +173,6 @@
     <text x="1030" y="14" fill="#0b0b0b">denied</text>
     <line x1="1100" y1="9" x2="1140" y2="9" stroke="#52514e" stroke-width="2" stroke-dasharray="6,5"/>
     <text x="1150" y="14" fill="#0b0b0b">camera-day step</text>
-    <text x="1320" y="14" fill="#52514e">ADR-0017 · rev 3</text>
+    <text x="1320" y="14" fill="#52514e">ADR-0017 · rev 4 (as-built)</text>
   </g>
 </svg>
