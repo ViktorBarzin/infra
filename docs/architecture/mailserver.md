@@ -155,8 +155,16 @@ WireGuard tunnel (`10.3.2.10 → 10.0.20.1:25`, i.e. straight into the HAProxy
 frontend above — UDP-encapsulated, so Oracle's egress-25 block doesn't apply
 and no extra WAN port exists). The primary permits the PTR-less tunnel IP via
 `check_client_access cidr:/tmp/docker-mailserver/backup-mx-permit.cidr`
-prepended to `smtpd_sender_restrictions`. Sender MTAs' own 1–5 day retry
-(RFC 5321) remains the fallback beneath that. Full as-built + recreate:
+prepended to `smtpd_sender_restrictions`, and exempts it from anvil limits so
+large drains aren't throttled. **Filtering parity (2026-07-08):** mx2 runs
+postscreen (pregreet + Spamhaus defer, 4xx-only via `soft_bounce`) + the
+primary's anvil limits + FCrDNS; drained mail is scored by the primary's
+rspamd against the ORIGINAL sender IP (`external_relay` ip_map), with the
+action ladder capped at add_header (`force_actions` on the `BACKUP_MX_DRAIN`
+symbol — a 5xx to the drain would make mx2 bounce into a void, i.e. silent
+loss) and policyd-spf skipping the tunnel IP (it would otherwise 550
+strict-SPF senders). Sender MTAs' own 1–5 day retry (RFC 5321) remains the
+fallback beneath that. Full as-built + recreate + parity details:
 [`runbooks/backup-mx.md`](../runbooks/backup-mx.md).
 
 ### Outbound
