@@ -88,8 +88,11 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     # mailserver.md (2026-07-03), but the documented remedy (restart/delete pod)
     # NO LONGER heals it. Disabled to keep mail durable across restarts; the
     # cost is SPF-safe envelope rewriting for the handful of externally-
-    # forwarding aliases. RE-ENABLE once postsrsd is fixed (DMS/postsrsd version
-    # bump). Triggered by the ADR-0019 backup-mx O5 scale-to-zero test.
+    # forwarding aliases. Triggered by the ADR-0019 backup-mx O5 scale-to-zero
+    # test. DECISION 2026-07-08 (Viktor): leave SRS OFF permanently — the fix
+    # needs postsrsd 2.x (socketmap-only; no official image, so it'd mean
+    # building ghcr.io/viktorbarzin/postsrsd + a sidecar), not worth it for ~3
+    # forwarding aliases. postsrsd 1.10 stays unused.
     ENABLE_SRS                             = "0"
     FETCHMAIL_POLL                         = "120"
     ONE_DIR                                = "1"

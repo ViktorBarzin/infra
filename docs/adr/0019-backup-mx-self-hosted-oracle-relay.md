@@ -79,7 +79,7 @@ differs from the design above:
   `BackupMxDown`, node/postfix-exporter queue-depth scrape allowlisted to the
   homelab WAN /32, and MX-set drift.
 - **SRS disabled on the PRIMARY** as a side effect of the O5 test (postsrsd
-  busy-loop) — open follow-up under Consequences.
+  1.10 busy-loop); kept OFF permanently by decision — see Consequences.
 
 ## Considered options
 
@@ -140,15 +140,18 @@ differs from the design above:
   stays gated by `smtpd_relay_restrictions`, so the tunnel IP is deliberately
   **NOT** in the primary's `mynetworks` (a compromised VM must not relay through
   us).
-- **SRS disabled on the primary — side effect of the O5 test; OPEN FOLLOW-UP.**
-  The O5 scale-to-zero failover restarted the primary mailserver and exposed a
-  chronic **postsrsd 1.10 busy-loop**: it deterministically spins ~100% CPU
-  without binding `tcp:10001/10002` on any restart, and the documented
-  restart/delete remedy no longer heals it. Mitigated by disabling SRS on the
-  primary (`ENABLE_SRS=0`) so mail stays durable across restarts; the cost is
-  loss of SPF-safe envelope rewriting for the ~3 externally-forwarding aliases.
-  Follow-up: bump docker-mailserver/postsrsd (1.10 → 2.x), then re-enable SRS.
-  Cross-referenced in `architecture/mailserver.md` troubleshooting.
+- **SRS disabled on the primary — side effect of the O5 test; now a PERMANENT
+  decision (2026-07-08).** The O5 scale-to-zero failover restarted the primary
+  mailserver and exposed a chronic **postsrsd 1.10 busy-loop**: it
+  deterministically spins ~100% CPU without binding `tcp:10001/10002` on any
+  restart, and the documented restart/delete remedy no longer heals it.
+  Disabled SRS (`ENABLE_SRS=0`) so mail stays durable across restarts. The only
+  real fix is postsrsd 2.x (socketmap-only, no official container image → would
+  require building `ghcr.io/viktorbarzin/postsrsd` + a sidecar), judged not
+  worth it for the ~3 externally-forwarding aliases — **Viktor's decision: SRS
+  stays OFF.** Those aliases now forward with the original envelope sender (may
+  fail SPF at the destination). Cross-referenced in
+  `architecture/mailserver.md` troubleshooting.
 - **Outages > 30 days lose queued mail silently** — no DSN can ever leave the
   VM. Stated and accepted (6× better than the status quo).
 - Outage mail sits in plaintext on Oracle disk ≤ 30 days — single-tenant but
