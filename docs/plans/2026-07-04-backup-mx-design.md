@@ -1,7 +1,19 @@
 # Backup MX — self-hosted store-and-forward relay on Oracle Always-Free — design
 
-Date: 2026-07-04 (v3 — post-challenge; v2 Oracle pivot same day) · Status: design,
-pre-implementation · ADR: [0019](../adr/0019-backup-mx-self-hosted-oracle-relay.md)
+Date: 2026-07-04 (v3 — post-challenge; v2 Oracle pivot same day) · **Status:
+IMPLEMENTED + all gates O1–O5 passed 2026-07-08** · ADR:
+[0019](../adr/0019-backup-mx-self-hosted-oracle-relay.md) · as-built runbook:
+[backup-mx.md](../runbooks/backup-mx.md)
+
+> **As-built deltas from this design (2026-07-08):** (1) the drain rides a
+> **WireGuard tunnel** to pfSense (`10.3.2.10 → 10.0.20.1:25`), NOT the WAN:2526
+> NAT rule — no new WAN port; Oracle egress-25 is dodged by UDP encapsulation.
+> (2) **Break-glass SSH** from the homelab WAN /32 was added (the devvm isn't a
+> tailnet node, so tailnet-only management was inoperable). (3) Drain TLS =
+> `none` (redundant inside the tunnel; STARTTLS to the IP literal fails). (4)
+> The O5 scale-to-zero test exposed a chronic **postsrsd** spin on the PRIMARY;
+> SRS was disabled (`ENABLE_SRS=0`) to keep mail durable — see mailserver.md.
+> (5) PAYG deferred; free-only + load-bearing keep-alive.
 
 v3 incorporates two independent adversarial-challenge reviews (same day). Their
 material corrections are marked **[CH]** throughout — the largest: the v2 drain
