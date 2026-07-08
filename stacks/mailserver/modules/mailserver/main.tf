@@ -81,7 +81,16 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     ENABLE_OPENDMARC                       = "0"
     ENABLE_RSPAMD_REDIS                    = "0"
     RSPAMD_LEARN                           = "1"
-    ENABLE_SRS                             = "1"
+    # DISABLED 2026-07-08: postsrsd 1.10 deterministically busy-loops at ~100%
+    # CPU without binding tcp:10001/10002 on a fresh start (independent of args
+    # / secret / node) — so sender_canonical_maps=tcp:10001 makes postfix 451
+    # ALL mail after any pod restart. This is the chronic spin noted in
+    # mailserver.md (2026-07-03), but the documented remedy (restart/delete pod)
+    # NO LONGER heals it. Disabled to keep mail durable across restarts; the
+    # cost is SPF-safe envelope rewriting for the handful of externally-
+    # forwarding aliases. RE-ENABLE once postsrsd is fixed (DMS/postsrsd version
+    # bump). Triggered by the ADR-0019 backup-mx O5 scale-to-zero test.
+    ENABLE_SRS                             = "0"
     FETCHMAIL_POLL                         = "120"
     ONE_DIR                                = "1"
     OVERRIDE_HOSTNAME                      = "mail.viktorbarzin.me"
