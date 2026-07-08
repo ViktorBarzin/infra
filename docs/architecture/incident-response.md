@@ -151,14 +151,17 @@ flowchart TD
 
 ## Status Page
 
-The status page at [status.viktorbarzin.me](https://status.viktorbarzin.me) shows:
+The status page at [status.viktorbarzin.me](https://status.viktorbarzin.me) is
+served from **mx2**, the offsite OCI VM (ADR-0020): gatus probes the public
+services every 60s from outside the homelab, so the page shows live up/down
+state and stays reachable even when the cluster, its WAN, or the Cloudflare
+tunnel are down. During such an outage the outage-failover Cloudflare Worker
+serves this page's `/error.html` to visitors of every proxied host.
 
-- **Live service status** — updated every 5 minutes from Uptime Kuma monitors
-- **Active incidents** — SEV-classified with timelines and affected services
-- **User reports** — issues filed by users, with error type and scope
-- **Recently resolved** — incidents closed in the last 7 days with postmortem links
-
-The status page is hosted on GitHub Pages — it stays up even when the cluster is down.
+(The previous GitHub-Pages implementation — Uptime-Kuma snapshots pushed every
+5 minutes by the status-page CronJob — was disabled 2026-05-26 and superseded
+by ADR-0020; its incident/user-report sections went with it. Incident history
+lives in the issue tracker and `docs/post-mortems/`.)
 
 ---
 
@@ -218,7 +221,7 @@ flowchart LR
 | TODO Resolver | `.claude/agents/postmortem-todo-resolver.md` | Implements safe follow-up fixes |
 | Post-Mortem Skill | `.claude/skills/post-mortem/` | Manual `/post-mortem` command |
 | Cluster Health | `.claude/skills/cluster-health/` | Health check with auto-filing for SEV1/SEV2 |
-| Status Page CronJob | `stacks/status-page/main.tf` | Pushes status + incidents to GitHub Pages every 5 min |
+| Status Page CronJob | `stacks/status-page/main.tf` | RETIRED (disabled 2026-05-26) — status page is now gatus on mx2 (ADR-0020) |
 | Issue Templates | `.github/ISSUE_TEMPLATE/` | Structured forms for outage reports + feature requests |
 
 ### Safety Guardrails
