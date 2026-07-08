@@ -19,6 +19,8 @@ One Deployment, one pod, two sets of Postfix `master.cf` services + Dovecot `ine
 flowchart TB
     %% External ingress path
     SENDER[Sending MTA<br/>arbitrary public IP] -->|MX lookup + SMTP<br/>:25| MX[mail.viktorbarzin.me<br/>A 176.12.22.76]
+    SENDER -.->|primary unreachable →<br/>MX pri 20| MX2[mx2.viktorbarzin.me<br/>Oracle Always-Free<br/>92.5.132.215<br/>queue ≤30d — ADR-0019]
+    MX2 -.->|drain: SMTP in WireGuard<br/>10.3.2.10 → 10.0.20.1:25<br/>UDP :51821| HAP
     MX --> PF[pfSense WAN<br/>vtnet0 192.168.1.2]
     PF -->|NAT rdr<br/>WAN:25/465/587/993<br/>→ 10.0.20.1:same| HAP
     HAP[pfSense HAProxy<br/>4 TCP frontends on 10.0.20.1<br/>send-proxy-v2 to backends]
@@ -144,7 +146,18 @@ Internet → MX: mail.viktorbarzin.me (priority 1)
          → Rspamd (spam + DKIM + DMARC) → Dovecot → mailbox
 ```
 
-No backup MX. If the server is down, sender MTAs queue and retry for 4-5 days per SMTP standards (RFC 5321).
+**Backup MX (since 2026-07-08, ADR-0019):** `mx2.viktorbarzin.me` (MX pri 20) —
+a Postfix store-and-forward relay on an Oracle Always-Free VM (reserved IP
+`92.5.132.215`, Frankfurt AD-3). When the primary is unreachable, senders fall
+to mx2, which accepts everything for the domain (catch-all semantics, no
+reputation 5xx) and queues up to **30 days**, then drains to the primary over a
+WireGuard tunnel (`10.3.2.10 → 10.0.20.1:25`, i.e. straight into the HAProxy
+frontend above — UDP-encapsulated, so Oracle's egress-25 block doesn't apply
+and no extra WAN port exists). The primary permits the PTR-less tunnel IP via
+`check_client_access cidr:/tmp/docker-mailserver/backup-mx-permit.cidr`
+prepended to `smtpd_sender_restrictions`. Sender MTAs' own 1–5 day retry
+(RFC 5321) remains the fallback beneath that. Full as-built + recreate:
+[`runbooks/backup-mx.md`](../runbooks/backup-mx.md).
 
 ### Outbound
 ```
@@ -179,6 +192,8 @@ All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.t
 | Type | Name | Value | Purpose |
 |------|------|-------|---------|
 | MX | `viktorbarzin.me` | `mail.viktorbarzin.me` (pri 1) | Inbound mail routing |
+| MX | `viktorbarzin.me` | `mx2.viktorbarzin.me` (pri 20) | Backup MX (ADR-0019, since 2026-07-08) — senders fall to it when the primary is unreachable |
+| A | `mx2.viktorbarzin.me` | `92.5.132.215` (non-proxied) | Backup MX — OCI reserved public IP (stable across VM stop/start) |
 | A | `mail.viktorbarzin.me` | `176.12.22.76` (non-proxied) | Mail server IP |
 | AAAA | `mail.viktorbarzin.me` | `2001:470:6e:43d::2` | IPv6 (HE tunnel) |
 | TXT (SPF) | `viktorbarzin.me` | `v=spf1 include:spf.brevo.com ~all` | Authorize Brevo for outbound (soft-fail during cutover; was `include:mailgun.org -all` until 2026-04-18 Brevo migration) |
@@ -212,7 +227,9 @@ docker-mailserver ships Fail2ban, but it is explicitly disabled here: `ENABLE_FA
 - DKIM signing (selector `mail`, 2048-bit RSA)
 - DMARC verification on inbound mail
 - Auto-learns from Junk folder movements (`RSPAMD_LEARN=1`)
-- SRS (Sender Rewriting Scheme) enabled for forwarded mail
+- SRS **disabled** (2026-07-08, permanent): postsrsd 1.10 deterministically
+  busy-loops on restart, 451-ing all mail; see Troubleshooting. Externally-
+  forwarding aliases forward with the original envelope sender.
 
 ### Postfix Rate Limiting
 ```
@@ -244,6 +261,15 @@ Push secrets (`BREVO_API_KEY`, `EMAIL_MONITOR_IMAP_PASSWORD`) come from External
 | EmailRoundtripFailing | Probe failing for 30m | warning |
 | EmailRoundtripStale | No success in >80m (60m threshold + for:20m) | warning |
 | EmailRoundtripNeverRun | Metric absent for 40m | warning |
+| BackupMxDown | mx2:25 blackbox TCP probe down 15m | warning |
+| BackupMxQueueStuck | mx2 deferred queue >0 for 2h WHILE primary up (drain broken; outage backlog deliberately doesn't fire) | warning |
+
+Backup-MX scrape jobs (2026-07-08): `backup-mx-smtp` (blackbox `tcp_connect` →
+`92.5.132.215:25`) and `backup-mx-node` (node_exporter + `postfix_queue_size`
+textfile on `:9100`, reachable only from the homelab WAN /32 per the OCI
+security list). Note: since mx2 exists, a *transient* primary blip can route
+the roundtrip probe's mail via mx2 — it then arrives minutes late through the
+drain, so `EmailRoundtripFailing` can mean "delayed via backup MX", not lost.
 
 ### Uptime Kuma Monitors
 - TCP SMTP on `176.12.22.76:25` — full external path (DNS → WAN → pfSense HAProxy → mailserver)
@@ -375,8 +401,10 @@ of the 1.10 spin still unpinned.
 
 ## Related
 
+- [Backup MX runbook](../runbooks/backup-mx.md) — mx2 as-built, one-command recreate, drain ops (ADR-0019)
 - [Monitoring Architecture](monitoring.md) — alert definitions, Uptime Kuma
 - [Networking Architecture](networking.md) — MetalLB, pfSense NAT, Cloudflare DNS
+- [VPN Architecture](vpn.md) — the WireGuard fabric the backup-MX drain rides
 - [Security Architecture](security.md) — CrowdSec deployment
 - [Secrets Management](secrets.md) — Vault paths for mail credentials
 - [Mailserver Hardening Plan](../plans/2026-02-23-mailserver-hardening-plan.md) — historical

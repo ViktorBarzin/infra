@@ -16,9 +16,11 @@ graph TB
         Sofia[Sofia pfSense<br/>10.3.2.1<br/>tun_wg0]
         London[London GL-iNet Flint 2<br/>10.3.2.6<br/>192.168.8.0/24]
         Valchedrym[Valchedrym OpenWRT<br/>10.3.2.5<br/>192.168.0.0/24]
+        MX2[mx2 backup MX<br/>10.3.2.10<br/>Oracle Cloud, mail drain only]
 
         Sofia ---|WireGuard Tunnel| London
         Sofia ---|WireGuard Tunnel| Valchedrym
+        Sofia ---|WireGuard Tunnel| MX2
     end
 
     subgraph "Headscale Mesh Overlay"
@@ -92,11 +94,12 @@ sequenceDiagram
 
 ### WireGuard Site-to-Site
 
-Three physical locations are permanently connected via WireGuard in a **hub-and-spoke** topology with Sofia as the hub. A single WireGuard interface (`tun_wg0`) on pfSense carries both peers on the `10.3.2.0/24` tunnel subnet:
+Three physical locations are permanently connected via WireGuard in a **hub-and-spoke** topology with Sofia as the hub. A single WireGuard interface (`tun_wg0`) on pfSense carries all peers on the `10.3.2.0/24` tunnel subnet:
 
 - **Sofia** (hub): `10.3.2.1` — pfSense, K8s cluster on `10.0.20.0/24`, management on `10.0.10.0/24`, LAN on `192.168.1.0/24`
 - **London** (spoke): `10.3.2.6` — GL-iNet Flint 2 (GL-MT6000), LAN `192.168.8.0/24`, guest `192.168.9.0/24`
 - **Valchedrym** (spoke): `10.3.2.5` — OpenWRT router, LAN `192.168.0.0/24`
+- **mx2 / backup MX** (road-warrior peer, since 2026-07-08): `10.3.2.10/32` — the Oracle Always-Free backup-MX relay (ADR-0019). Not a site: no LAN behind it; its side allows only `10.0.20.1/32`. The tunnel exists solely so mx2 can drain queued mail to the mailserver HAProxy (Oracle blocks egress TCP 25; the drain is UDP-encapsulated to pfSense `:51821`). Peer reproducer: `scripts/pfsense-backup-mx-wg.sh` (pfSense WireGuard is hand-configured kernel `wg` via `/usr/local/etc/wireguard/tun_wg0.conf`, not the package). Runbook: [`backup-mx.md`](../runbooks/backup-mx.md).
 
 Routes are configured as static routes on pfSense. London and Valchedrym route Sofia-bound traffic through their WireGuard tunnels. London ↔ Valchedrym traffic transits through Sofia (no direct tunnel).
 
