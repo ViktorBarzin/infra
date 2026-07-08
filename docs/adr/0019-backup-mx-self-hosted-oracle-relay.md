@@ -1,5 +1,13 @@
 # Inbound mail gets a self-hosted store-and-forward backup MX on Oracle Always-Free
 
+**Status: IMPLEMENTED + LIVE** — built from `stacks/backup-mx/`; all validation
+gates **O1–O5 passed 2026-07-08**. Runbook:
+[`backup-mx.md`](../runbooks/backup-mx.md). Several mechanisms changed between
+design and build — most importantly the drain now rides a **WireGuard tunnel**,
+not the WAN:2526 NAT rule. See **As-built (2026-07-08)** below for the full delta
+set; the decision narrative and considered options below are preserved as the
+design-time record.
+
 `viktorbarzin.me` has run a single direct MX to the home IP since the 2026-04-12
 inbound overhaul, with sender-MTA retry (1–5 days, sender-dependent) as the only
 outage protection — a documented "No Backup MX" decision made after ForwardEmail's
@@ -36,6 +44,42 @@ end-to-end, and a live failover test that includes a high-spam-score and a
 >10 MB message. Two independent adversarial reviews (2026-07-04) shaped this
 final form. Design:
 [`plans/2026-07-04-backup-mx-design.md`](../plans/2026-07-04-backup-mx-design.md).
+
+## As-built (2026-07-08)
+
+Live from `stacks/backup-mx/` (reserved IP `92.5.132.215`, Frankfurt AD-3); all
+gates passed — O1 auth+capacity, O2 inbound 25 from the internet, O3 drain
+end-to-end, O4 LE cert, O5 live failover (mailserver scaled to 0 → external mail
+queued on mx2 → scaled up → drained `status=sent`, queue empty). What shipped
+differs from the design above:
+
+- **Drain rides a WireGuard tunnel, not the WAN:2526 NAT rule.** mx2 is a
+  road-warrior peer on pfSense `tun_wg0` (tunnel IP `10.3.2.10/32`; pfSense
+  endpoint `176.12.22.76:51821`); the Postfix transport is `smtp:[10.0.20.1]:25`
+  over the tunnel. Oracle's tenancy-wide egress-25 block is dodged because the
+  drain is UDP-encapsulated to `:51821` — so **no new WAN mail port was opened**,
+  a security win over the NAT plan. pfSense WireGuard is hand-configured kernel
+  `wg` (NOT the package); reproducer `scripts/pfsense-backup-mx-wg.sh`; `opt2`
+  (tun_wg0) already had an any→any allow, so no firewall rule was needed.
+- **Drain TLS = none** — redundant inside the encrypted tunnel, and opportunistic
+  STARTTLS to the `10.0.20.1` IP literal fails the handshake anyway.
+- **Break-glass SSH was added** — a homelab-WAN-/32-locked, key-only rule in the
+  OCI security list. The design's "tailnet-only management" was inoperable: the
+  devvm the VM is operated from is not a tailnet node. Mirrors the PVE `:52222`
+  break-glass precedent; Tailscale/headscale still enrolls, and the OCI serial
+  console stays the mid-outage fallback.
+- **PAYG deferred → free-only** (risk detail under Consequences): Oracle's £80
+  upgrade pre-auth was taken while the Revolut card was rejected as
+  prepaid-class, so the account runs free-only with a **load-bearing
+  `keepalive-cpu.service`** as the idle-reclamation defense (not PAYG). PAYG retry
+  with a conventional card stays recommended hardening.
+- **Primary-side drain exemption simplified to one layer** — a single
+  `check_client_access` permit for the tunnel IP (details under Consequences).
+- **Monitoring wired 2026-07-08** (`stacks/monitoring`): blackbox TCP:25
+  `BackupMxDown`, node/postfix-exporter queue-depth scrape allowlisted to the
+  homelab WAN /32, and MX-set drift.
+- **SRS disabled on the PRIMARY** as a side effect of the O5 test (postsrsd
+  busy-loop) — open follow-up under Consequences.
 
 ## Considered options
 
@@ -89,12 +133,22 @@ final form. Design:
   Oracle cannot bill, ever; retry later with a conventional card remains the
   recommended hardening). Home region is fixed at signup — Frankfurt, chosen
   once; quarterly console logins cover the 30-day account-abandonment clause.
-- The drain stream bypasses `reject_unknown_client_hostname`, anvil limits,
-  and rspamd's reject tier for one /32; DKIM verification, SPF/DMARC (against
-  the original IP via `external_relay`), and content scoring stay on — spam
-  arriving via the backup is tagged and folded to Junk, never bounced. The VM
-  is deliberately NOT in the primary's `mynetworks` (a compromised VM must
-  not relay through us).
+- **Primary-side drain exemption (as-built — one layer, not the design's
+  four).** A `check_client_access cidr` (`10.3.2.10/32 OK`) prepended to
+  `smtpd_sender_restrictions` clears the PTR-less WireGuard tunnel IP past
+  `reject_unknown_client_hostname`. `OK` clears client/helo/sender only — relay
+  stays gated by `smtpd_relay_restrictions`, so the tunnel IP is deliberately
+  **NOT** in the primary's `mynetworks` (a compromised VM must not relay through
+  us).
+- **SRS disabled on the primary — side effect of the O5 test; OPEN FOLLOW-UP.**
+  The O5 scale-to-zero failover restarted the primary mailserver and exposed a
+  chronic **postsrsd 1.10 busy-loop**: it deterministically spins ~100% CPU
+  without binding `tcp:10001/10002` on any restart, and the documented
+  restart/delete remedy no longer heals it. Mitigated by disabling SRS on the
+  primary (`ENABLE_SRS=0`) so mail stays durable across restarts; the cost is
+  loss of SPF-safe envelope rewriting for the ~3 externally-forwarding aliases.
+  Follow-up: bump docker-mailserver/postsrsd (1.10 → 2.x), then re-enable SRS.
+  Cross-referenced in `architecture/mailserver.md` troubleshooting.
 - **Outages > 30 days lose queued mail silently** — no DSN can ever leave the
   VM. Stated and accepted (6× better than the status quo).
 - Outage mail sits in plaintext on Oracle disk ≤ 30 days — single-tenant but
@@ -103,7 +157,8 @@ final form. Design:
   host found dangling during design — inert today; must list `mx2` when
   fixed) needs 1–2 more → schedule the next record purge proactively.
 - `architecture/mailserver.md` §"No Backup MX" superseded at implementation;
-  new runbook `docs/runbooks/backup-mx.md` (incl. OCI console break-glass);
-  `vpn.md`'s stale headscale claims fixed in passing; the roundtrip probe's
-  failure semantics change (a "failing" probe may now mean "delayed via mx2,
-  drains shortly" — noted in alert description).
+  new runbook `docs/runbooks/backup-mx.md` (break-glass SSH from the homelab WAN
+  /32, OCI serial console as mid-outage fallback); `vpn.md`'s stale headscale
+  claims fixed in passing; the roundtrip probe's failure semantics change (a
+  "failing" probe may now mean "delayed via mx2, drains shortly" — noted in alert
+  description).
