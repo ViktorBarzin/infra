@@ -215,11 +215,19 @@ wouldn't, the cloud-init mirror has drifted and that is the bug to fix.
 
 ### Verification drill
 
-- **Cheap (any time, zero impact):** `curl -i https://test-failover.viktorbarzin.me`
-  — a permanent synthetic proxied host (CNAME → all-zeros tunnel UUID) that is
-  ALWAYS 530 at the edge. Expect **HTTP 503** + an `x-failover` header +
-  `Retry-After` + the branded page body. This exercises DNS → Worker intercept
-  → mx2 `/error.html` fetch end-to-end without touching any real service.
+- **Cheap (any time, zero impact):** a permanent synthetic proxied host
+  (CNAME → all-zeros tunnel UUID) is ALWAYS 530 at the edge. From OUTSIDE the
+  homelab: `curl -i https://test-failover.viktorbarzin.me -H 'Accept: text/html'`.
+  From the LAN/devvm the name deliberately has NO internal record (an internal
+  CNAME-to-apex would hit Traefik instead of the Cloudflare edge and test
+  nothing), so pin the edge IP via public DNS:
+  `curl -i --resolve test-failover.viktorbarzin.me:443:$(dig +short @1.1.1.1 test-failover.viktorbarzin.me | head -1) https://test-failover.viktorbarzin.me/ -H 'Accept: text/html'`.
+  Expect **HTTP 503** + an `x-failover` header + `Retry-After` + the branded
+  page body (`Accept: text/html` is required — machine clients get the raw
+  530 by design). This exercises DNS → Worker intercept → outage page without
+  touching any real service. NOTE the ADR-0020 coverage gap: hosts with
+  per-host rybbit-analytics routes (apex, www, immich, …) bypass the failover
+  Worker until the two Workers are consolidated.
 - **Full (deliberate outage — requires explicit human OK + a presence claim
   first):** scale the cloudflared deployment (`stacks/cloudflared`) to 0 for
   ~2 min; confirm real proxied hosts serve the failover page (503 + branded

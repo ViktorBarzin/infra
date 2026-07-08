@@ -9,8 +9,16 @@
 resource "cloudflare_worker_script" "outage_failover" {
   account_id = var.cloudflare_account_id
   name       = "outage-failover"
-  content    = file("${path.module}/worker_failover.js")
-  module     = true # ES module Worker (export default { fetch })
+  # The self-contained outage page (error_page.html — same content mx2 serves
+  # at /error.html) is baked into the script as a JSON string literal:
+  # Worker fetch() to a same-zone grey-cloud hostname was observed failing
+  # (2026-07-08), so the page must not depend on a runtime subrequest to mx2.
+  content = replace(
+    file("${path.module}/worker_failover.js"),
+    "\"__INLINE_PAGE_JSON__\"",
+    jsonencode(file("${path.module}/error_page.html")),
+  )
+  module = true # ES module Worker (export default { fetch })
 }
 
 # Zone routes — quota math: the zone serves ~20k proxied req/day (26k peak,
@@ -23,15 +31,18 @@ resource "cloudflare_worker_script" "outage_failover" {
 # routes API, hence not in this provider); verify it once after first apply:
 # dash → Workers Routes → edit each route below.
 #
-# Two patterns because "*.viktorbarzin.me/*" does not match the apex.
+# COVERAGE GAP (known, 2026-07-08): the out-of-band "rybbit-analytics" Worker
+# (dashboard-managed, NOT in Terraform) holds ~26 per-host routes — including
+# the apex "viktorbarzin.me/*", www, immich, nextcloud, mail, f1, … — and
+# Cloudflare runs only the single MOST-SPECIFIC matching route per request,
+# so those hosts run analytics injection and NEVER reach this Worker; during
+# an outage they still show raw Cloudflare errors. An apex route here is also
+# impossible while rybbit owns the pattern (API error 10020 — a first apply
+# attempt failed on exactly that). The fix is consolidation: fold rybbit's
+# HTMLRewriter head-injection into this TF-managed Worker and retire the
+# out-of-band script+routes — pending Viktor's decision (out-of-band config).
 resource "cloudflare_worker_route" "outage_failover_wildcard" {
   zone_id     = var.cloudflare_zone_id
   pattern     = "*.viktorbarzin.me/*"
-  script_name = cloudflare_worker_script.outage_failover.name
-}
-
-resource "cloudflare_worker_route" "outage_failover_apex" {
-  zone_id     = var.cloudflare_zone_id
-  pattern     = "viktorbarzin.me/*"
   script_name = cloudflare_worker_script.outage_failover.name
 }
