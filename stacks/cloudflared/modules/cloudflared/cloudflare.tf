@@ -173,6 +173,38 @@ resource "cloudflare_record" "backup_mx_mx" {
   zone_id  = var.cloudflare_zone_id
 }
 
+# Status page (ADR-0020) — gatus on mx2, the same Oracle Always-Free VM as the
+# backup MX (stacks/backup-mx owns the host; same OCI reserved IP as
+# backup_mx_a above). MUST stay grey-cloud: the page's whole job is to be up
+# when the homelab AND the tunnel are down, so it cannot ride the CF
+# proxy→tunnel path; grey also means the outage-failover Worker's subrequest
+# to https://status.viktorbarzin.me/error.html goes straight to mx2 and can
+# never re-enter a Worker route (routes only see proxied traffic — no
+# recursion possible). Do NOT re-add "status" to cloudflare_proxied_names.
+resource "cloudflare_record" "status_a" {
+  content = "92.5.132.215"
+  name    = "status"
+  proxied = false
+  ttl     = 1
+  type    = "A"
+  zone_id = var.cloudflare_zone_id
+}
+
+# Permanent synthetic origin-unreachable host (ADR-0020) — proxied CNAME to a
+# tunnel UUID that does not exist, so Cloudflare answers 530/1033 for it
+# forever. Lets us verify the outage-failover Worker end-to-end (see
+# worker.tf) without touching real traffic or waiting for a real outage. One
+# permanent DNS record + a trickle of Worker requests — negligible cost,
+# deliberate.
+resource "cloudflare_record" "test_failover" {
+  content = "00000000-0000-0000-0000-000000000000.cfargotunnel.com"
+  name    = "test-failover"
+  proxied = true
+  ttl     = 1
+  type    = "CNAME"
+  zone_id = var.cloudflare_zone_id
+}
+
 
 resource "cloudflare_record" "mail_spf" {
   # Brevo replaced Mailgun as the outbound relay on 2026-04-12 (see docs/architecture/mailserver.md).
