@@ -1,0 +1,161 @@
+#cloud-config
+# Backup MX relay (mx2.viktorbarzin.me) — ADR-0019.
+# Cattle: this file IS the machine. Rebuild = terraform apply (mint a fresh
+# headscale preauth key first — they are single-use).
+package_update: true
+packages:
+  - postfix
+  - certbot
+  - prometheus-node-exporter
+  - stress-ng
+
+users:
+  - default
+  - name: ubuntu
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+write_files:
+  # Drain: everything for the domain goes to the primary on the custom port
+  # (Oracle blocks egress 25 tenancy-wide; 2526 is pfSense NAT -> HAProxy :25).
+  - path: /etc/postfix/transport
+    content: |
+      viktorbarzin.me smtp:[mail.viktorbarzin.me]:2526
+  # Catch-all domain: every recipient is valid by definition. A backup MX
+  # that rejects recipients manufactures the loss it exists to prevent.
+  - path: /etc/postfix/relay_recipients
+    content: |
+      @viktorbarzin.me OK
+  - path: /usr/local/bin/postfix-setup.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # Idempotent: re-run after cert issuance (certbot deploy hook) or by hand.
+      set -e
+      postconf -e "myhostname = mx2.viktorbarzin.me"
+      postconf -e "mydestination ="
+      postconf -e "mynetworks = 127.0.0.0/8"
+      postconf -e "relay_domains = viktorbarzin.me"
+      postconf -e "transport_maps = hash:/etc/postfix/transport"
+      postconf -e "relay_recipient_maps = hash:/etc/postfix/relay_recipients"
+      # Explicit 5xx for foreign-domain RCPTs — the default tail defers (4xx),
+      # which invites every relay probe to retry forever.
+      postconf -e "smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination"
+      # The whole point: outlive homelab outages. Bounces are the exception —
+      # this host can never deliver a DSN (egress 25 blocked), so discard
+      # undeliverable bounces fast or they rot for a month and poison the
+      # queue-depth alert. delay warnings likewise can't be delivered.
+      postconf -e "maximal_queue_lifetime = 30d"
+      postconf -e "bounce_queue_lifetime = 1d"
+      postconf -e "delay_warning_time = 0h"
+      # Match the primary exactly (200 MB). Stock 10 MB would 552-reject large
+      # legitimate mail mid-outage. Equal, never higher.
+      postconf -e "message_size_limit = 209715200"
+      # Primary publishes an AAAA but the IPv6 bridge has no :2526 listener.
+      postconf -e "inet_protocols = ipv4"
+      postconf -e "inet_interfaces = all"
+      postconf -e "smtp_tls_security_level = may"
+      postconf -e "smtpd_tls_security_level = may"
+      if [ -f /etc/letsencrypt/live/mx2.viktorbarzin.me/fullchain.pem ]; then
+        postconf -e "smtpd_tls_cert_file = /etc/letsencrypt/live/mx2.viktorbarzin.me/fullchain.pem"
+        postconf -e "smtpd_tls_key_file = /etc/letsencrypt/live/mx2.viktorbarzin.me/privkey.pem"
+      fi
+      postmap /etc/postfix/transport
+      postmap /etc/postfix/relay_recipients
+      # postscreen, pregreet-only posture: bots that talk before the banner
+      # never retry; real MTAs never trip it. No DNSBL — reputation must never
+      # 5xx on a backup MX.
+      if ! grep -q "postscreen" /etc/postfix/master.cf; then
+        sed -i 's|^smtp      inet  n       -       y       -       -       smtpd$|smtp      inet  n       -       y       -       1       postscreen\nsmtpd     pass  -       -       y       -       -       smtpd\ndnsblog   unix  -       -       y       -       0       dnsblog\ntlsproxy  unix  -       -       y       -       0       tlsproxy|' /etc/postfix/master.cf
+      fi
+      postconf -e "postscreen_greet_action = enforce"
+      systemctl restart postfix
+  # Keep-alive is LOAD-BEARING on a free-only account (PAYG deferred
+  # 2026-07-08): Oracle reclaims when 95th-pct CPU AND network are both <20%
+  # over 7 days — holding CPU above the bar alone prevents reclamation.
+  # CPUSchedulingPolicy=idle: real work always preempts it.
+  - path: /etc/systemd/system/keepalive-cpu.service
+    content: |
+      [Unit]
+      Description=Hold CPU above Oracle Always-Free idle-reclamation threshold
+      [Service]
+      ExecStart=/usr/bin/stress-ng --cpu 1 --cpu-load 30
+      Nice=19
+      CPUSchedulingPolicy=idle
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+  - path: /usr/local/bin/queue-metrics.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # Queue depth for Prometheus via node-exporter textfile collector.
+      # Bounce rot is already capped by bounce_queue_lifetime=1d.
+      D=/var/lib/prometheus/node-exporter
+      mkdir -p "$D"
+      {
+        echo "# TYPE postfix_queue_size gauge"
+        for q in deferred active incoming; do
+          echo "postfix_queue_size{queue=\"$q\"} $(find /var/spool/postfix/$q -type f 2>/dev/null | wc -l)"
+        done
+      } > "$D/postfix_queue.prom.tmp"
+      mv "$D/postfix_queue.prom.tmp" "$D/postfix_queue.prom"
+  - path: /etc/systemd/system/queue-metrics.service
+    content: |
+      [Unit]
+      Description=Export postfix queue depth for node-exporter
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/queue-metrics.sh
+  - path: /etc/systemd/system/queue-metrics.timer
+    content: |
+      [Unit]
+      Description=Postfix queue metrics every minute
+      [Timer]
+      OnCalendar=*-*-* *:*:00
+      [Install]
+      WantedBy=timers.target
+  # LE cert can only issue once the mx2 A record exists — retry until then,
+  # go dormant once issued (certbot's own timer handles renewals after).
+  - path: /usr/local/bin/certbot-bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      [ -f /etc/letsencrypt/live/mx2.viktorbarzin.me/fullchain.pem ] && exit 0
+      certbot certonly --standalone -n --agree-tos \
+        -m postmaster@viktorbarzin.me -d mx2.viktorbarzin.me \
+        --deploy-hook /usr/local/bin/postfix-setup.sh || true
+  - path: /etc/systemd/system/certbot-bootstrap.service
+    content: |
+      [Unit]
+      Description=Bootstrap LE cert for mx2 (retries until DNS exists)
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/certbot-bootstrap.sh
+  - path: /etc/systemd/system/certbot-bootstrap.timer
+    content: |
+      [Unit]
+      Description=Retry LE bootstrap every 15m until issued
+      [Timer]
+      OnBootSec=2m
+      OnUnitActiveSec=15m
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  # OCI Ubuntu images ship an OS-level iptables ruleset that REJECTs all but
+  # 22 INDEPENDENT of security lists — rules appended after the REJECT are
+  # dead, so insert at the top. (The famous OCI gotcha; gate O2 fails without
+  # this even with a correct security list.)
+  - iptables -I INPUT 1 -p tcp --dport 25 -j ACCEPT
+  - iptables -I INPUT 2 -p tcp --dport 80 -j ACCEPT
+  - iptables -I INPUT 3 -p tcp --dport 9100 -s ${homelab_wan_ip}/32 -j ACCEPT
+  - iptables -I INPUT 4 -i tailscale0 -j ACCEPT
+  - netfilter-persistent save
+  # Tailnet enrollment (management access; no public SSH — the security list
+  # never opens 22).
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - tailscale up --login-server=https://headscale.viktorbarzin.me --auth-key=${headscale_preauth} --hostname=mx2 --accept-dns=false
+  - bash /usr/local/bin/postfix-setup.sh
+  - systemctl daemon-reload
+  - systemctl enable --now keepalive-cpu.service queue-metrics.timer certbot-bootstrap.timer
