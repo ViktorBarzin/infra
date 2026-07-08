@@ -151,6 +151,19 @@ resource "kubernetes_config_map" "blackbox_exporter_config" {
             valid_rcodes          = ["NOERROR"]
           }
         }
+        # TCP connect (added 2026-07-08, ADR-0019): drives the backup-mx-smtp
+        # scrape job — probes mx2.viktorbarzin.me:25 (the Oracle backup MX) from
+        # inside the cluster, i.e. out over the internet to the reserved public
+        # IP. Backend-agnostic TCP handshake; no SMTP dialogue (a plain connect
+        # is enough to know the relay is up).
+        tcp_connect = {
+          prober  = "tcp"
+          timeout = "10s"
+          tcp = {
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+          }
+        }
       }
     })
   }

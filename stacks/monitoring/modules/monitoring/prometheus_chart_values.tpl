@@ -3377,6 +3377,34 @@ serverFiles:
       # slack-critical via the severity=critical child route; WAN/egress-down
       # inhibits the downstream egress symptoms (see inhibit_rules).
       # Runbook: docs/runbooks/pfsense-egress.md.
+      # Backup MX (mx2, Oracle relay; ADR-0019). Warnings, not criticals: a
+      # down/stuck backup MX only matters during a PRIMARY outage, and the
+      # queue is empty in normal operation. Runbook: docs/runbooks/backup-mx.md.
+      - name: Backup MX
+        rules:
+          - alert: BackupMxDown
+            # In-cluster blackbox TCP-connect to the reserved public IP:25.
+            expr: max(probe_success{job="backup-mx-smtp"}) == 0
+            for: 15m
+            labels:
+              severity: warning
+              subsystem: mail
+            annotations:
+              summary: "Backup MX (mx2.viktorbarzin.me:25) unreachable for >15m"
+              description: "The Oracle Always-Free backup MX is not answering TCP:25 from the cluster for >15m. It only carries mail during a primary outage, but if it's down then, mail would fall back to sender-MTA retry. Check the VM (Oracle idle-reclamation? free-tier change?) — `ssh -i ~/.ssh/backup-mx ubuntu@92.5.132.215` or the OCI console; rebuild via `tg apply -replace=oci_core_instance.mx2`. Runbook: docs/runbooks/backup-mx.md."
+          - alert: BackupMxQueueStuck
+            # Deferred mail on mx2 for >2h WHILE the primary is up = a drain
+            # problem (WireGuard tunnel / primary exemption), NOT a legit outage
+            # backlog (queue growth during a real outage is expected + good, and
+            # the primary being down suppresses this via the AND).
+            expr: (max(postfix_queue_size{node="mx2",queue="deferred"}) > 0) and (max(kube_deployment_status_replicas_available{namespace="mailserver",deployment="mailserver"}) > 0)
+            for: 2h
+            labels:
+              severity: warning
+              subsystem: mail
+            annotations:
+              summary: "Backup MX has deferred mail for >2h while the primary is up"
+              description: "mx2 is holding deferred mail it cannot drain to the primary even though the mailserver is running — the drain path (WireGuard tunnel 10.3.2.10 -> 10.0.20.1:25, or the primary's 10.3.2.10 exemption) is likely broken. On mx2: `sudo postqueue -p` for the deferral reason, `sudo postqueue -f` to retry. Runbook: docs/runbooks/backup-mx.md."
       - name: Egress / pfSense
         rules:
           - alert: WANGatewayUnreachable
@@ -3477,6 +3505,43 @@ extraScrapeConfigs: |
         target_label: instance
       - target_label: __address__
         replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
+  # --- Backup MX (mx2, Oracle Always-Free relay; ADR-0019) ------------------
+  # Two jobs: (1) a blackbox TCP-connect probe of the reserved public IP:25 from
+  # inside the cluster (out over the internet) -> BackupMxDown; (2) a direct
+  # scrape of the VM's node_exporter (9100), which also serves the postfix
+  # queue-depth textfile metric (postfix_queue_size). 9100 is allowlisted to the
+  # homelab WAN /32 in the OCI security list, so this scrape (egressing as
+  # 176.12.22.76) is the only thing that can reach it. Alerts: BackupMxDown /
+  # BackupMxQueueStuck (alerting_rules.yml, group "Backup MX").
+  - job_name: 'backup-mx-smtp'
+    scrape_interval: 2m
+    scrape_timeout: 15s
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets: ["92.5.132.215:25"]
+        labels:
+          service: 'backup-mx'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
+  - job_name: 'backup-mx-node'
+    scrape_interval: 2m
+    scrape_timeout: 15s
+    static_configs:
+      - targets: ["92.5.132.215:9100"]
+        labels:
+          node: 'mx2'
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'mx2'
   # The `mailserver-dovecot` scrape job was retired in code-1ik together
   # with the Dovecot exporter. docker-mailserver 15.0.0's Dovecot 2.3
   # doesn't emit the old_stats protocol the exporter expected, so the
