@@ -148,11 +148,8 @@ resource "cloudflare_record" "mail_mx" {
   zone_id  = var.cloudflare_zone_id
 }
 
-# Backup MX host (ADR-0019) — the Oracle Always-Free relay. This is the A
-# record only; the MX record pointing at it (priority 20) lands separately,
-# AFTER gates O3/O5 pass (whitelist-before-MX guard). The A record now lets
-# certbot issue the LE cert (gate O4). IP is the OCI RESERVED public IP
-# (stable across VM stop/start; owned by stacks/backup-mx).
+# Backup MX host (ADR-0019) — the Oracle Always-Free relay. IP is the OCI
+# RESERVED public IP (stable across VM stop/start; owned by stacks/backup-mx).
 resource "cloudflare_record" "backup_mx_a" {
   content = "92.5.132.215"
   name    = "mx2.viktorbarzin.me"
@@ -160,6 +157,20 @@ resource "cloudflare_record" "backup_mx_a" {
   ttl     = 1
   type    = "A"
   zone_id = var.cloudflare_zone_id
+}
+
+# Backup MX at priority 20 — senders fall to it only when the primary (pri 1)
+# is unreachable. ARMED now that the drain path works end-to-end (gate O3:
+# mx2's WireGuard tunnel IP 10.3.2.10 is whitelisted past the primary's PTR
+# check). mx2 queues up to 30 days and drains to the primary on recovery.
+resource "cloudflare_record" "backup_mx_mx" {
+  content  = "mx2.viktorbarzin.me"
+  name     = "viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "MX"
+  priority = 20
+  zone_id  = var.cloudflare_zone_id
 }
 
 
