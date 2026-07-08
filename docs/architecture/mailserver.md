@@ -287,10 +287,16 @@ Push secrets (`BREVO_API_KEY`, `EMAIL_MONITOR_IMAP_PASSWORD`) come from External
 
 ## Decisions & Rationale
 
-### No Backup MX
-- **Alternatives considered**: ForwardEmail (free relay), Cloudflare Email Routing, Dynu Store/Forward
-- **Decision**: Direct MX only. ForwardEmail relay was evaluated (2026-04-12) and abandoned — its anti-spoofing enforcement rejects legitimate forwarded mail regardless of SPF configuration. Cloudflare Email Routing can't store-and-forward (pass-through proxy only). Dynu ($9.99/yr) is a viable future option.
-- **Tradeoff**: If server is down, mail delivery relies on sender MTA retry queues (4-5 days standard). No immediate forwarding to a backup address.
+### Backup MX (SUPERSEDED "No Backup MX" 2026-07-08 — ADR-0019)
+- **Now HAS a backup MX**: `mx2.viktorbarzin.me` (MX pri 20), a Postfix
+  store-and-forward relay on an Oracle Always-Free VM, queuing ≤30 days and
+  draining to the primary over a WireGuard tunnel (`10.3.2.10 → 10.0.20.1:25`).
+  As-built + recreate procedure: [`runbooks/backup-mx.md`](../runbooks/backup-mx.md);
+  decision + alternatives (ForwardEmail/CF Email Routing/Dynu/Rollernet all
+  rejected): [ADR-0019](../adr/0019-backup-mx-self-hosted-oracle-relay.md).
+- **Historical (pre-2026-07-08)**: direct MX only; outages relied on sender-MTA
+  retry (1–5 days). ForwardEmail (2026-04-12) abandoned (anti-spoofing rejected
+  forwarded mail); CF Email Routing can't store-and-forward.
 
 ### Brevo for Outbound (migrated from Mailgun 2026-04-12)
 - **Decision**: All outbound relays through Brevo EU (ex-Sendinblue). 300 emails/day free tier (3x Mailgun's 100/day).
@@ -321,10 +327,20 @@ came up spinning at 100% CPU without binding 10001/10002 — supervisor shows it
 `RUNNING` but `ss -ltn | grep 1000` is empty and its log is empty. Postfix then
 tempfails every message (inbound AND submission); senders retry so nothing is
 lost, and the roundtrip probe alerts within the hour.
-Fix: `supervisorctl restart postsrsd` inside the container; if the fresh
-process spins again (it did once), `kubectl -n mailserver delete pod` for a
-full re-init — that healed it. Root cause not pinned down (one-off bad init;
-postsrsd 1.10).
+Fix (2026-07-03): `supervisorctl restart postsrsd`; if it spun again,
+`kubectl -n mailserver delete pod` for a full re-init healed it.
+**UPDATE 2026-07-08 — that remedy NO LONGER heals it, and SRS is now DISABLED.**
+An ADR-0019 backup-mx O5 pod restart re-triggered the spin, but this time
+postsrsd busy-loops at ~100% CPU without binding on EVERY fresh start —
+verified independent of invocation, explicit args, secret regeneration, and
+pod re-create (it spins as root before dropping privs, i.e. stuck in early
+init). With `sender_canonical_maps = tcp:localhost:10001` that 451-defers ALL
+mail on any restart — a latent SEV. Resolved by setting **`ENABLE_SRS = "0"`**
+(`stacks/mailserver/modules/mailserver/main.tf`), which stops postsrsd and
+unsets the canonical maps, so mail is durable across restarts. Cost: SPF-safe
+envelope rewriting for the ~3 externally-forwarding aliases. **Follow-up**:
+fix postsrsd (DMS/postsrsd version bump) and re-enable SRS. Root cause of the
+spin still unpinned (postsrsd 1.10).
 
 ### Inbound mail not arriving
 1. **DNS/MX**: `dig MX viktorbarzin.me +short` → should show `mail.viktorbarzin.me`
