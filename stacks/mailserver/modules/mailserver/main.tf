@@ -115,6 +115,15 @@ resource "kubernetes_config_map" "mailserver_config" {
     "postfix-main.cf"     = var.postfix_cf
     "postfix-virtual.cf"  = local.postfix_virtual
 
+    # backup-mx (ADR-0019): permit the Oracle relay's WireGuard tunnel IP
+    # (10.3.2.10) past reject_unknown_client_hostname — a private tunnel IP has
+    # no PTR, so the drain would otherwise 450-defer forever. A cidr map is read
+    # directly (no postmap). `OK` clears only the client/helo/sender phase;
+    # relay control (smtpd_relay_restrictions) still applies, so this grants NO
+    # relay ability — deliberately NOT using mynetworks. See postfix_cf where it
+    # is wired into smtpd_sender_restrictions.
+    "backup-mx-permit.cidr" = "10.3.2.10/32 OK\n"
+
     # Per-user Dovecot sieve for the paperless-ngx ingest mailbox: DMS installs
     # any /tmp/docker-mailserver/<login>.dovecot.sieve at startup. ConfigMap
     # keys can't contain '@', so the key is sanitized ("-at-") and the
@@ -407,6 +416,12 @@ resource "kubernetes_deployment" "mailserver" {
             name       = "config"
             mount_path = "/tmp/docker-mailserver/postfix-main.cf"
             sub_path   = "postfix-main.cf"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/backup-mx-permit.cidr"
+            sub_path   = "backup-mx-permit.cidr"
             read_only  = true
           }
           volume_mount {
