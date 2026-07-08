@@ -153,6 +153,7 @@ resource "oci_core_instance" "mx2" {
       ssh_public_key    = data.vault_kv_secret_v2.viktor.data["backup_mx_ssh_public_key"]
       headscale_preauth = data.vault_kv_secret_v2.viktor.data["backup_mx_headscale_preauth"]
       homelab_wan_ip    = var.public_ip
+      wg_private_key    = data.vault_kv_secret_v2.viktor.data["backup_mx_wg_private_key"]
     }))
   }
 
