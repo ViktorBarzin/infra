@@ -80,6 +80,20 @@ differs from the design above:
   homelab WAN /32, and MX-set drift.
 - **SRS disabled on the PRIMARY** as a side effect of the O5 test (postsrsd
   1.10 busy-loop); kept OFF permanently by decision — see Consequences.
+- **Filtering parity hardened same-day (2026-07-08 audit)** — the build had
+  drifted from the design's protection line items: mx2's postscreen was
+  silently inert (the activation guard matched Ubuntu's *commented* stock
+  postscreen examples), and drained mail bypassed the primary's filtering
+  entirely (rspamd treated the tunnel IP as local and skipped the scan;
+  policyd-spf 550'd strict-SPF senders at RCPT — a mail-LOSS bug). As-built
+  now: mx2 runs postscreen (pregreet + Spamhaus defer, `soft_bounce` so 4xx
+  only) + primary-equal anvil limits + FCrDNS; the primary scores drained
+  mail against the ORIGINAL sender IP (rspamd `external_relay` ip_map, which
+  stamps `BACKUP_MX_DRAIN`), caps the drain's action ladder at add_header
+  (`force_actions` on that symbol — never a 5xx back to mx2), and skips
+  policyd-spf for the tunnel IP. All verified live with drain tests
+  (an 11.50-score message: rejected before, tagged+delivered after). Details:
+  runbook §"Filtering parity".
 
 ## Considered options
 
