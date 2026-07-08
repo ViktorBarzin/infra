@@ -1010,6 +1010,37 @@ resource "kubernetes_cron_job_v1" "technitium_ingress_dns_sync" {
                   echo "mail-auth: MX present"
                 fi
 
+                # Offsite mx2 names (ADR-0020): status + mx2 are public
+                # grey-cloud A records to the OCI VM (reserved IP) — public-only
+                # names, so the superset rule applies: without these, internal
+                # clients NXDOMAIN on them, and both the in-cluster
+                # StatusPageDown blackbox probe and LAN visitors consume
+                # status.viktorbarzin.me. status also lingers as a stale
+                # CNAME -> apex (from the retired hetrix-redirect IngressRoute
+                # era; the ingress sync above never deletes) which would point
+                # internal clients at Traefik's 404 — replace it with the A
+                # record, valia-style ensure/update scoped to exactly these
+                # two names. The IP is the reserved OCI address: slow-moving;
+                # if ever reassigned update here + stacks/backup-mx +
+                # stacks/cloudflared together.
+                MX2_IP="92.5.132.215"
+                for ONAME in status mx2; do
+                  OREC=$$(curl -sf "$$TECH_API/api/zones/records/get?token=$$TOKEN&zone=$$ZONE&domain=$$ONAME.$$ZONE")
+                  OCUR_A=$$(printf '%s' "$$OREC" | grep -o '"ipAddress":"[^"]*"' | head -1 | cut -d'"' -f4)
+                  if [ "$$OCUR_A" = "$$MX2_IP" ]; then echo "mx2: $$ONAME.$$ZONE ok"; continue; fi
+                  OCUR_C=$$(printf '%s' "$$OREC" | grep -o '"cname":"[^"]*"' | head -1 | cut -d'"' -f4)
+                  if [ -n "$$OCUR_C" ]; then
+                    curl -sf -G "$$TECH_API/api/zones/records/delete" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" --data-urlencode "domain=$$ONAME.$$ZONE" --data-urlencode "type=CNAME" --data-urlencode "cname=$$OCUR_C" > /dev/null || true
+                    echo "mx2: removed stale CNAME $$ONAME.$$ZONE -> $$OCUR_C"
+                  fi
+                  if [ -n "$$OCUR_A" ]; then
+                    curl -sf -G "$$TECH_API/api/zones/records/delete" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" --data-urlencode "domain=$$ONAME.$$ZONE" --data-urlencode "type=A" --data-urlencode "ipAddress=$$OCUR_A" > /dev/null || true
+                    echo "mx2: removed stale A $$ONAME.$$ZONE -> $$OCUR_A"
+                  fi
+                  R=$$(curl -sf -G "$$TECH_API/api/zones/records/add" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$ZONE" --data-urlencode "domain=$$ONAME.$$ZONE" --data-urlencode "type=A" --data-urlencode "ipAddress=$$MX2_IP" --data-urlencode "ttl=3600") || true
+                  echo "$$R" | grep -q '"status":"ok"' && echo "mx2: set $$ONAME.$$ZONE -> $$MX2_IP" || echo "mx2: FAILED $$ONAME.$$ZONE -- $$R"
+                done
+
                 # Valia sites (ADR-0018) — off-infra Cloudflare Pages sites.
                 # The internal zone is authoritative (superset rule above), so
                 # these public-only names must exist here or every internal
