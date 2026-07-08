@@ -11,6 +11,14 @@ data "vault_kv_secret_v2" "viktor" {
   name  = "viktor"
 }
 
+# Shared Alertmanager Slack webhook (same key the monitoring stack reads) —
+# gatus's edge sentinels page the same #alerts channel as everything else
+# instead of growing a second notification path (ADR-0020).
+data "vault_kv_secret_v2" "platform" {
+  mount = "secret"
+  name  = "platform"
+}
+
 locals {
   tenancy_ocid = data.vault_kv_secret_v2.viktor.data["oci_tenancy_ocid"]
   mx_hostname  = "mx2.viktorbarzin.me"
@@ -69,12 +77,24 @@ resource "oci_core_security_list" "backup_mx" {
   }
   # Permanently open: LE HTTP-01 validation is multi-perspective with no
   # published source IPs; nothing listens outside certbot's renewal seconds.
+  # (Since ADR-0020, nginx also serves the ACME webroot + https redirect here.)
   ingress_security_rules {
     protocol = "6"
     source   = "0.0.0.0/0"
     tcp_options {
       min = 80
       max = 80
+    }
+  }
+  # Status/error page + failover artifacts over TLS (gatus behind nginx,
+  # ADR-0020): status.viktorbarzin.me UI, /error.html for the Cloudflare
+  # failover Worker, /myip for the WAN-IP-change detector. ACME stays on 80.
+  ingress_security_rules {
+    protocol = "6"
+    source   = "0.0.0.0/0"
+    tcp_options {
+      min = 443
+      max = 443
     }
   }
   # node-exporter, scraped by the homelab Prometheus (egress SNATs to the WAN IP).
@@ -138,8 +158,8 @@ resource "oci_core_instance" "mx2" {
   }
 
   create_vnic_details {
-    subnet_id        = oci_core_subnet.backup_mx.id
-    hostname_label   = "mx2"
+    subnet_id      = oci_core_subnet.backup_mx.id
+    hostname_label = "mx2"
     # No ephemeral public IP — the reserved one below is attached to the
     # private IP, so the address survives stop/start (four controls are keyed
     # on it: pfSense NAT source, the primary's smtpd/rspamd exemptions, this
@@ -154,6 +174,10 @@ resource "oci_core_instance" "mx2" {
       headscale_preauth = data.vault_kv_secret_v2.viktor.data["backup_mx_headscale_preauth"]
       homelab_wan_ip    = var.public_ip
       wg_private_key    = data.vault_kv_secret_v2.viktor.data["backup_mx_wg_private_key"]
+      # try(): if the key is ever absent, gatus renders display-only (the
+      # template guards every alerting block on non-empty) instead of
+      # breaking the plan or the VM.
+      alertmanager_slack_api_url = try(data.vault_kv_secret_v2.platform.data["alertmanager_slack_api_url"], "")
     }))
   }
 

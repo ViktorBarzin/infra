@@ -25,6 +25,10 @@ write_files:
   # egress-25 block never applies. Private key from Vault (stable across
   # rebuilds -> the pfSense peer never needs re-adding). AllowedIPs is JUST the
   # mailserver HAProxy VIP, so the tunnel carries nothing but the drain.
+  # Endpoint is the vpn.viktorbarzin.me grey-cloud A record (same IP today),
+  # NOT the raw WAN IP: an ISP change at home then heals via DNS alone
+  # (code-dvla). WireGuard resolves the name ONCE at interface-up — the
+  # wg-reresolve timer below covers the re-resolution half.
   - path: /etc/wireguard/wg0.conf
     permissions: "0600"
     content: |
@@ -34,7 +38,7 @@ write_files:
 
       [Peer]
       PublicKey = 3OeDa6Z3Z6vPVxn/WKJujYL7DoDYPPpI5W+2glUYLHU=
-      Endpoint = 176.12.22.76:51821
+      Endpoint = vpn.viktorbarzin.me:51821
       AllowedIPs = 10.0.20.1/32
       PersistentKeepalive = 25
   # Catch-all domain: every recipient is valid by definition. A backup MX
@@ -147,16 +151,27 @@ write_files:
       OnCalendar=*-*-* *:*:00
       [Install]
       WantedBy=timers.target
-  # LE cert can only issue once the mx2 A record exists — retry until then,
-  # go dormant once issued (certbot's own timer handles renewals after).
+  # LE certs can only issue once each A record exists — retry until then, go
+  # dormant once issued (certbot's own timer handles renewals after).
+  # Webroot (through nginx :80) replaced --standalone the day nginx became a
+  # permanent :80 tenant (ADR-0020): standalone must BIND :80 itself, which
+  # would now collide with nginx on every issuance/renewal. Two INDEPENDENT
+  # certs on purpose — mail is the priority tenant, so its cert must never
+  # wait on (or fail with) the status-page DNS record:
+  #   mx2.viktorbarzin.me    -> postfix TLS (deploy hook re-runs postfix-setup)
+  #   status.viktorbarzin.me -> nginx TLS (deploy hook swaps the self-signed
+  #                             bootstrap pair for the LE pair, reloads nginx)
   - path: /usr/local/bin/certbot-bootstrap.sh
     permissions: "0755"
     content: |
       #!/bin/bash
-      [ -f /etc/letsencrypt/live/mx2.viktorbarzin.me/fullchain.pem ] && exit 0
-      certbot certonly --standalone -n --agree-tos \
-        -m postmaster@viktorbarzin.me -d mx2.viktorbarzin.me \
-        --deploy-hook /usr/local/bin/postfix-setup.sh || true
+      issue() { # $1 = fqdn, $2 = deploy hook
+        [ -f "/etc/letsencrypt/live/$1/fullchain.pem" ] && return 0
+        certbot certonly --webroot -w /var/www/acme -n --agree-tos \
+          -m postmaster@viktorbarzin.me -d "$1" --deploy-hook "$2" || true
+      }
+      issue mx2.viktorbarzin.me /usr/local/bin/postfix-setup.sh
+      issue status.viktorbarzin.me /usr/local/bin/nginx-tls-install.sh
   - path: /etc/systemd/system/certbot-bootstrap.service
     content: |
       [Unit]
@@ -173,6 +188,384 @@ write_files:
       OnUnitActiveSec=15m
       [Install]
       WantedBy=timers.target
+  # Gatus ships NO binary release assets — the only official artifact is the
+  # Docker image (verified on the v5.36.0 release page, 2026-07-08). Docker
+  # itself is far too heavy for this 1 GB box, so pull the (FROM scratch)
+  # image straight off the registry HTTP API and extract the static binary.
+  # Supply chain is pinned by DIGEST, not tag: the fetched manifest's bytes
+  # must hash to the pinned sha256, and every layer blob must hash to the
+  # digest that verified manifest lists — nothing unverified lands on disk.
+  # Version bump = update BOTH pins together (digest source:
+  # hub.docker.com/v2/repositories/twinproduction/gatus/tags/<tag>).
+  - path: /usr/local/bin/gatus-install.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      # gatus v5.36.0 (released 2026-05-19), linux/amd64 image manifest digest:
+      DIGEST="sha256:8df964117ac6a78749ec8cd00039a499268156b874c3a110dc58de7e312c1ab5"
+      STAMP=/usr/local/bin/gatus.digest
+      [ -x /usr/local/bin/gatus ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$DIGEST" ] && exit 0
+      TMP=$(mktemp -d)
+      trap 'rm -rf "$TMP"' EXIT
+      TOKEN=$(curl -fsSL "https://auth.docker.io/token?service=registry.docker.io&scope=repository:twinproduction/gatus:pull" | jq -r .token)
+      curl -fsSL -H "Authorization: Bearer $TOKEN" \
+        -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+        -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+        -o "$TMP/manifest.json" \
+        "https://registry-1.docker.io/v2/twinproduction/gatus/manifests/$DIGEST"
+      echo "$(printf '%s' "$DIGEST" | cut -d: -f2)  $TMP/manifest.json" | sha256sum -c - >/dev/null
+      mkdir "$TMP/rootfs"
+      for L in $(jq -r '.layers[].digest' "$TMP/manifest.json"); do
+        curl -fsSL -H "Authorization: Bearer $TOKEN" -o "$TMP/layer.tar.gz" \
+          "https://registry-1.docker.io/v2/twinproduction/gatus/blobs/$L"
+        echo "$(printf '%s' "$L" | cut -d: -f2)  $TMP/layer.tar.gz" | sha256sum -c - >/dev/null
+        tar -xzf "$TMP/layer.tar.gz" -C "$TMP/rootfs"
+      done
+      install -m 0755 "$TMP/rootfs/gatus" /usr/local/bin/gatus
+      printf '%s\n' "$DIGEST" > "$STAMP"
+  # Gatus config. Two groups with OPPOSITE alerting postures, by design:
+  #   * "services" is DISPLAY-ONLY — in-cluster Alertmanager owns per-service
+  #     alerting; a second pager here would double-page every app blip.
+  #   * "edge" alerts (Slack): "the homelab edge is unreachable from the
+  #     internet" is the ONE class in-cluster monitoring can never report,
+  #     and exactly what this offsite vantage exists for (ADR-0020).
+  # Privacy: only hostnames already published in public DNS are probed.
+  # NEVER add an outbound :25 probe — Oracle blocks egress 25 tenancy-wide.
+  - path: /etc/gatus/config.yaml
+    permissions: "0640"
+    content: |
+      web:
+        # Loopback only — nginx is the TLS front; gatus is never exposed raw.
+        address: 127.0.0.1
+        port: 8080
+      ui:
+        title: "viktorbarzin.me status"
+      storage:
+        type: sqlite
+        path: /var/lib/gatus/data.db
+      %{ if alertmanager_slack_api_url != "" }
+      alerting:
+        slack:
+          # The same webhook Alertmanager uses -> the same #alerts channel.
+          webhook-url: "${alertmanager_slack_api_url}"
+          default-alert:
+            enabled: true
+            failure-threshold: 3 # ~3 min of consecutive failures before paging
+            success-threshold: 2
+            send-on-resolved: true
+      %{ endif }
+      endpoints:
+        # ---- services: display-only (NO alerts on purpose) ----
+        - name: website
+          group: services
+          url: "https://viktorbarzin.me"
+          interval: 60s
+          conditions:
+            # Anubis fronts the apex: its interstitial answers non-5xx, so
+            # only 5xx/timeouts mean actually down.
+            - "[STATUS] < 500"
+        - name: tripit
+          group: services
+          url: "https://tripit.viktorbarzin.me"
+          interval: 60s
+          conditions:
+            - "[STATUS] == 200"
+        - name: immich
+          group: services
+          url: "https://immich.viktorbarzin.me"
+          interval: 60s
+          conditions:
+            - "[STATUS] == 200"
+        - name: nextcloud
+          group: services
+          url: "https://nextcloud.viktorbarzin.me"
+          interval: 60s
+          conditions:
+            - "[STATUS] == 200"
+        - name: grafana
+          group: services
+          url: "https://grafana.viktorbarzin.me"
+          interval: 60s
+          conditions:
+            - "[STATUS] == 200"
+        - name: vault
+          group: services
+          url: "https://vault.viktorbarzin.me"
+          interval: 60s
+          conditions:
+            - "[STATUS] == 200"
+        - name: git (forgejo)
+          group: services
+          url: "https://forgejo.viktorbarzin.me"
+          interval: 60s
+          conditions:
+            - "[STATUS] == 200"
+        - name: sso (authentik)
+          group: services
+          url: "https://authentik.viktorbarzin.me"
+          interval: 60s
+          conditions:
+            - "[STATUS] == 200"
+        - name: "mail: imaps"
+          group: services
+          url: "tcp://mail.viktorbarzin.me:993"
+          interval: 60s
+          conditions:
+            - "[CONNECTED] == true"
+        - name: "mail: smtps"
+          group: services
+          url: "tcp://mail.viktorbarzin.me:465"
+          interval: 60s
+          conditions:
+            - "[CONNECTED] == true"
+        # ---- edge: the sentinels that DO page ----
+        # Tunnel path. [CONNECTED] alone is inert on a Cloudflare-proxied
+        # host (TCP succeeds against the CF edge even with the tunnel dead),
+        # so the tripwire is the CF origin-error band: 520-530 = "Cloudflare
+        # could not reach/understand the origin". App-level 5xx pass through
+        # as <= 511 and must NOT page from here.
+        - name: "tunnel (viktorbarzin.me)"
+          group: edge
+          url: "https://viktorbarzin.me"
+          interval: 60s
+          conditions:
+            - "[CONNECTED] == true"
+            - "[STATUS] < 520"
+          %{ if alertmanager_slack_api_url != "" }
+          alerts:
+            - type: slack
+          %{ endif }
+        # Direct WAN path, app-independent: pfSense HAProxy accepts the TCP
+        # connect itself (its mail backends deliberately carry no health
+        # checks), so this only goes red when DNS/WAN/pfSense — the edge —
+        # is gone, never when a backend app is.
+        - name: "wan direct: mail 993"
+          group: edge
+          url: "tcp://mail.viktorbarzin.me:993"
+          interval: 60s
+          conditions:
+            - "[CONNECTED] == true"
+          %{ if alertmanager_slack_api_url != "" }
+          alerts:
+            - type: slack
+          %{ endif }
+        # Direct-A-record HTTPS path (pfSense NAT 443 -> Traefik). Any HTTP
+        # status is fine — a completed connection proves the edge; app health
+        # is not the sentinel's business.
+        - name: "wan direct: https (immich)"
+          group: edge
+          url: "https://immich.viktorbarzin.me"
+          interval: 60s
+          conditions:
+            - "[CONNECTED] == true"
+          %{ if alertmanager_slack_api_url != "" }
+          alerts:
+            - type: slack
+          %{ endif }
+  # RAM contract on the 954 MB box (mail is the priority tenant): postfix
+  # ~100-150 MB + gatus <= 128 MB (MemoryMax; ~50-70 typical) + nginx ~15 MB
+  # + node-exporter ~20 MB + tailscaled ~40 MB leaves > 400 MB headroom.
+  # MemoryHigh reclaims/throttles before MemoryMax OOM-kills. CPUWeight stays
+  # DEFAULT on purpose: gatus is real work — unlike keepalive-cpu, which runs
+  # Nice=19 + idle sched precisely so tenants like this always preempt it.
+  - path: /etc/systemd/system/gatus.service
+    content: |
+      [Unit]
+      Description=Gatus status/monitoring backend (ADR-0020)
+      Wants=network-online.target
+      After=network-online.target
+      [Service]
+      User=gatus
+      Group=gatus
+      Environment=GATUS_CONFIG_PATH=/etc/gatus/config.yaml
+      WorkingDirectory=/var/lib/gatus
+      ExecStart=/usr/local/bin/gatus
+      MemoryHigh=100M
+      MemoryMax=128M
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ProtectHome=true
+      PrivateTmp=true
+      ReadWritePaths=/var/lib/gatus
+      Restart=always
+      RestartSec=5
+      [Install]
+      WantedBy=multi-user.target
+  # nginx site (written before the package installs — dpkg leaves unknown
+  # files alone; runcmd links it and removes the stock default site). :80
+  # exists for ACME + the https redirect ONLY; everything real is on :443.
+  - path: /etc/nginx/sites-available/status
+    content: |
+      server {
+          listen 80 default_server;
+          server_name _;
+          # certbot --webroot target for BOTH certs (mx2 + status) — see
+          # certbot-bootstrap.sh for why standalone had to die.
+          location ^~ /.well-known/acme-challenge/ {
+              root /var/www/acme;
+              default_type text/plain;
+          }
+          location / {
+              return 301 https://$host$request_uri;
+          }
+      }
+      server {
+          listen 443 ssl default_server;
+          server_name status.viktorbarzin.me;
+          # Stable path that BOOTSTRAPS as a runcmd self-signed pair — nginx
+          # must start before the first LE issuance succeeds (the status A
+          # record can lag a rebuild); the certbot deploy hook
+          # (nginx-tls-install.sh) swaps in the LE pair and reloads.
+          ssl_certificate /etc/nginx/tls/fullchain.pem;
+          ssl_certificate_key /etc/nginx/tls/privkey.pem;
+          # Self-contained outage page — also served on OTHER hostnames by
+          # the Cloudflare failover Worker during outages (ADR-0020).
+          location = /error.html {
+              root /var/www/failover;
+          }
+          # WAN-IP oracle for the homelab heartbeat / WAN-IP-change detector
+          # (beads code-dvla): plain-text client source IP.
+          location = /myip {
+              default_type text/plain;
+              return 200 "$remote_addr\n";
+          }
+          # The error page fetches gatus JSON cross-origin (it renders on
+          # other hostnames mid-outage) — CORS lives HERE, not in gatus.
+          # GET-only in practice; ACAO:* is credential-less by spec.
+          location /api/ {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_set_header Host $host;
+              add_header Access-Control-Allow-Origin "*" always;
+          }
+          location / {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_set_header Host $host;
+          }
+      }
+  - path: /usr/local/bin/nginx-tls-install.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # certbot deploy hook (status.viktorbarzin.me): copy — not symlink — the
+      # LE pair onto the stable path nginx loads, then reload. Copies keep the
+      # path valid pre-issuance (self-signed bootstrap) and reload (not
+      # restart) keeps in-flight probes alive.
+      set -e
+      D=/etc/letsencrypt/live/status.viktorbarzin.me
+      install -m 0644 "$D/fullchain.pem" /etc/nginx/tls/fullchain.pem
+      install -m 0640 "$D/privkey.pem" /etc/nginx/tls/privkey.pem
+      systemctl reload nginx || systemctl restart nginx || true
+  # The offline artifact: fully self-contained (inline CSS, zero external
+  # assets) because it must render when NOTHING else does — including via the
+  # Cloudflare Worker on other hostnames. The live status list is best-effort
+  # and degrades silently if the gatus fetch fails.
+  - path: /var/www/failover/error.html
+    content: |
+      <!doctype html>
+      <html lang="en">
+      <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <meta name="robots" content="noindex">
+      <meta name="color-scheme" content="light dark">
+      <title>viktorbarzin.me — temporarily unreachable</title>
+      <style>
+      :root{--bg:#f6f7f9;--fg:#1c1e21;--muted:#5f6570;--card:#ffffff;--edge:#e3e6ea;--up:#2e9e5b;--down:#d64545;--link:#2563eb}
+      @media (prefers-color-scheme:dark){:root{--bg:#101215;--fg:#e8eaed;--muted:#9aa1ab;--card:#181b1f;--edge:#262a30;--up:#3fbf72;--down:#e05d5d;--link:#7aa2ff}}
+      *{box-sizing:border-box}
+      body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px}
+      main{max-width:560px;width:100%;background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:32px 36px}
+      h1{font-size:1.35rem;margin:0 0 12px;display:flex;align-items:center}
+      p{margin:0 0 12px;color:var(--muted)}
+      p.lead{color:var(--fg)}
+      a{color:var(--link)}
+      .pulse{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--down);margin-right:10px;flex:none}
+      ul{list-style:none;margin:16px 0 0;padding:12px 0 0;border-top:1px solid var(--edge);display:none}
+      ul.show{display:block}
+      li{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.92rem}
+      li .dot{width:8px;height:8px;border-radius:50%;flex:none}
+      li.up .dot{background:var(--up)}
+      li.down .dot{background:var(--down)}
+      li.down{color:var(--down)}
+      small{display:block;margin-top:18px;color:var(--muted);font-size:.8rem}
+      </style>
+      </head>
+      <body>
+      <main>
+      <h1><span class="pulse"></span>Temporarily unreachable</h1>
+      <p class="lead">viktorbarzin.me services can't be reached right now.
+      You've landed on the offsite failover (mx2, Frankfurt), which runs
+      independently of the homelab and keeps mail and this page alive during
+      the outage.</p>
+      <p>Live details: <a href="https://status.viktorbarzin.me">status.viktorbarzin.me</a></p>
+      <ul id="svc"></ul>
+      <small id="ts"></small>
+      </main>
+      <script>
+      (function(){
+        document.getElementById('ts').textContent='Rendered '+new Date().toLocaleString();
+        fetch('https://status.viktorbarzin.me/api/v1/endpoints/statuses')
+          .then(function(r){if(!r.ok){throw new Error('bad status')}return r.json()})
+          .then(function(all){
+            var list=all.filter(function(e){return e.group==='services'});
+            if(!list.length){return}
+            var ul=document.getElementById('svc');
+            list.forEach(function(e){
+              var up=e.results&&e.results.length&&e.results[e.results.length-1].success;
+              var li=document.createElement('li');
+              li.className=up?'up':'down';
+              var dot=document.createElement('span');
+              dot.className='dot';
+              li.appendChild(dot);
+              li.appendChild(document.createTextNode(e.name+(up?'':' — unreachable')));
+              ul.appendChild(li);
+            });
+            ul.className='show';
+          })
+          .catch(function(){});
+      })();
+      </script>
+      </body>
+      </html>
+  - path: /usr/local/bin/wg-reresolve.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # WireGuard resolves the Endpoint DNS name ONCE at interface-up, so a
+      # WAN-IP change at home (the reason the endpoint is vpn.viktorbarzin.me
+      # and not a hardcoded IP — code-dvla) would strand the drain tunnel on
+      # the dead address forever. This is the standard wireguard-tools
+      # reresolve-dns pattern, inlined: when the peer's latest handshake is
+      # older than 135s (keepalive is 25s, so that is >5 missed), re-run
+      # `wg set` with the DNS endpoint, which re-resolves it. Steady state
+      # does nothing — zero DNS churn while handshakes are fresh. Also
+      # self-heals a boot where wg-quick failed because DNS wasn't up yet
+      # (a failure mode that only exists with a name endpoint).
+      PEER="3OeDa6Z3Z6vPVxn/WKJujYL7DoDYPPpI5W+2glUYLHU="
+      ENDPOINT="vpn.viktorbarzin.me:51821"
+      wg show wg0 >/dev/null 2>&1 || { systemctl restart wg-quick@wg0 || true; exit 0; }
+      LAST=$(wg show wg0 latest-handshakes | awk '{print $2}')
+      [ -z "$LAST" ] && exit 0
+      NOW=$(date +%s)
+      if [ $((NOW - LAST)) -gt 135 ]; then
+        wg set wg0 peer "$PEER" endpoint "$ENDPOINT" || true
+      fi
+  - path: /etc/systemd/system/wg-reresolve.service
+    content: |
+      [Unit]
+      Description=Re-resolve WireGuard drain endpoint when handshake is stale
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/wg-reresolve.sh
+  - path: /etc/systemd/system/wg-reresolve.timer
+    content: |
+      [Unit]
+      Description=WireGuard endpoint re-resolution check every minute
+      [Timer]
+      OnCalendar=*-*-* *:*:00
+      [Install]
+      WantedBy=timers.target
 
 runcmd:
   # (1) Open inbound FIRST — no egress needed, so gate O2 can pass even while
@@ -183,6 +576,9 @@ runcmd:
   - iptables -I INPUT 1 -p tcp --dport 25 -j ACCEPT
   - iptables -I INPUT 2 -p tcp --dport 80 -j ACCEPT
   - iptables -I INPUT 3 -p tcp --dport 9100 -s ${homelab_wan_ip}/32 -j ACCEPT
+  # 443 rides the same gotcha: status/error page + failover artifacts over
+  # TLS (gatus behind nginx, ADR-0020). ACME stays on 80.
+  - iptables -I INPUT 4 -p tcp --dport 443 -j ACCEPT
   - netfilter-persistent save
   # (2) Wait for egress — OCI IGW route programming lags boot 30-90s; without
   # this gate the package/tailscale fetches race it and fail permanently.
@@ -191,10 +587,12 @@ runcmd:
   # one-shot `packages:` directive died on the boot race (now gated above),
   # and `apt-get install postfix` HANGS on an interactive debconf TUI ("mail
   # server configuration type") that blocks cloud-init forever — so preseed it
-  # and force the noninteractive frontend.
+  # and force the noninteractive frontend. nginx-light + jq joined for the
+  # status-page tenants (ADR-0020; jq parses the registry manifest in
+  # gatus-install.sh).
   - echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections
   - echo "postfix postfix/mailname string mx2.viktorbarzin.me" | debconf-set-selections
-  - for i in $(seq 1 5); do apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y postfix certbot prometheus-node-exporter stress-ng wireguard && break || sleep 20; done
+  - for i in $(seq 1 5); do apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y postfix certbot prometheus-node-exporter stress-ng wireguard nginx-light jq && break || sleep 20; done
   # Bring up the drain tunnel to pfSense (wg0.conf written above).
   - systemctl enable --now wg-quick@wg0 || true
   # (4) Tailnet enrollment (management access; no public SSH). Retry the fetch.
@@ -206,3 +604,19 @@ runcmd:
   - bash /usr/local/bin/postfix-setup.sh
   - systemctl daemon-reload
   - systemctl enable --now keepalive-cpu.service queue-metrics.timer certbot-bootstrap.timer
+  # (6) Status-page tenants (ADR-0020): gatus (loopback :8080) behind nginx
+  # (:80 = ACME webroot + redirect, :443 = status UI / error page / myip).
+  - id -u gatus >/dev/null 2>&1 || useradd --system --home-dir /var/lib/gatus --shell /usr/sbin/nologin gatus
+  - install -d -o gatus -g gatus -m 0750 /var/lib/gatus
+  # Config holds the Slack webhook -> root:gatus 0640, not world-readable.
+  - chgrp gatus /etc/gatus/config.yaml
+  - for i in $(seq 1 5); do bash /usr/local/bin/gatus-install.sh && break || sleep 20; done
+  - install -d -m 0755 /var/www/acme /etc/nginx/tls
+  # Self-signed bootstrap pair so nginx can start pre-issuance; deliberately
+  # short-lived — the certbot deploy hook swaps in the LE pair.
+  - test -f /etc/nginx/tls/fullchain.pem || openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=status.viktorbarzin.me" -keyout /etc/nginx/tls/privkey.pem -out /etc/nginx/tls/fullchain.pem
+  # The stock default site also claims default_server:80 — ours replaces it.
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/status /etc/nginx/sites-enabled/status
+  - nginx -t && systemctl enable --now nginx && systemctl restart nginx
+  - systemctl enable --now gatus.service wg-reresolve.timer
