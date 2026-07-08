@@ -44,5 +44,14 @@ anvil_rate_time_unit = 60s
 # clients pay the greet/bare-newline re-check on every new TCP session,
 # which is trivial at our volume (~100 deliveries/day).
 postscreen_cache_map =
+
+# backup-mx drain (ADR-0019): the DMS-managed smtpd_sender_restrictions is
+# `permit_mynetworks, reject_unknown_client_hostname`; the Oracle relay drains
+# from its WireGuard tunnel IP 10.3.2.10 which has no PTR, so without this it
+# 450-defers forever ("cannot find your hostname"). Prepend a check_client_access
+# that returns OK for that /32 — permits the client/helo/sender phase only;
+# smtpd_relay_restrictions still gates relay, so no relay is granted (NOT
+# mynetworks). If DMS ever expands its sender macro, re-sync this literal.
+smtpd_sender_restrictions = check_client_access cidr:/tmp/docker-mailserver/backup-mx-permit.cidr, permit_mynetworks, reject_unknown_client_hostname
 EOT
 }
