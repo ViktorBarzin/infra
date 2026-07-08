@@ -77,12 +77,18 @@ final form. Design:
   besides). Never a backup target itself.
 - **Oracle free-tier caprice is the top risk**: Oracle silently halved the A1
   free allowance in June 2026 and terminated over-limit instances, and
-  publishes no commitment that inbound 25 stays open. Mitigations:
-  **Pay-As-You-Go conversion is a required prerequisite** (exempts idle
-  reclamation, stays $0), a recurring inbound-25 probe, `BackupMxDown`, and
-  the queue being empty outside outages (a surprise reclamation loses
-  coverage, never mail). Home region is fixed at signup — Frankfurt, chosen
-  once.
+  publishes no commitment that inbound 25 stays open. Mitigations: a
+  **load-bearing keep-alive workload** above the idle-reclamation bars
+  (95th-pct CPU/network ≥ 20% over 7 days), a recurring inbound-25 probe,
+  `BackupMxDown` with a CLI-restart recovery path (reclamation stops, never
+  deletes), and the queue being empty outside outages (a surprise reclamation
+  loses coverage, never mail). **PAYG conversion — originally a required
+  prerequisite — was DEFERRED on 2026-07-08**: Oracle's £80 upgrade pre-auth
+  was taken while the Revolut card was simultaneously rejected as
+  prepaid-class; Viktor chose to run free-only (no payment method on file =
+  Oracle cannot bill, ever; retry later with a conventional card remains the
+  recommended hardening). Home region is fixed at signup — Frankfurt, chosen
+  once; quarterly console logins cover the 30-day account-abandonment clause.
 - The drain stream bypasses `reject_unknown_client_hostname`, anvil limits,
   and rspamd's reject tier for one /32; DKIM verification, SPF/DMARC (against
   the original IP via `external_relay`), and content scoring stay on — spam

@@ -97,12 +97,26 @@ sender MTA ──► MX lookup ┤                                        ▲
   charged). **Home region is fixed at signup and Always-Free compute exists
   only there — choose `eu-frankfurt-1` deliberately; there is no
   try-another-region fallback without a new account. [CH]**
-- **[CH] PAYG conversion is a REQUIRED prerequisite, not a recommendation**:
-  Oracle stops idle Always-Free instances (95th-pct CPU < 20% over 7 days — an
-  idle Postfix box qualifies) and demonstrably changes free-tier terms without
-  notice, enforcing by termination (June 2026: A1 allowance silently halved,
-  over-limit instances shut down). PAYG keeps Always-Free resources free and
-  exempts them from idle reclamation.
+- **PAYG conversion: DEFERRED (Viktor, 2026-07-08) — running free-only.**
+  v3 made PAYG a hard prerequisite (idle-reclamation exemption). The upgrade
+  attempt failed in practice: Oracle's £80 (~$100) pre-authorization was
+  placed on Viktor's Revolut card while the card itself was REJECTED
+  (Revolut classified as prepaid-class by Oracle's processor — the known
+  failure; the pending hold voids within days). Viktor's decision: stay on
+  the free-only account. Trade-offs accepted: (a) idle reclamation applies
+  (95th-pct CPU < 20% AND network < 20% over 7 days) → **the cloud-init
+  keep-alive workload is now load-bearing, not belt-and-braces** — it must
+  hold the instance above the idle bars (lookbusy-style CPU tickler +
+  periodic network pulls; calibrate against OCI metrics after launch);
+  (b) free-only accounts have lower capacity priority and were the ones hit
+  by the June 2026 A1 terminations — `BackupMxDown` + a documented
+  CLI-restart recovery (reclamation STOPS the instance, doesn't delete it;
+  the queue is empty outside outages, so exposure = a coverage gap until
+  restarted, never lost mail); (c) the 30-day account-abandonment clause
+  gets a quarterly console-login reminder in the runbook. Silver lining: a
+  free-only account has no payment method — Oracle cannot bill anything,
+  ever. PAYG retry with a non-Revolut (conventional bank / credit) card
+  stays the recommended future hardening.
 - **Shape**: `VM.Standard.E2.1.Micro` (x86, 1/8 OCPU burst, 1 GB RAM; 2
   always-free instances allowed; ample for queue-only Postfix — and untouched
   by the 2026 A1 cuts). ARM A1 fallback is **unreliable** (halved quota,
@@ -234,7 +248,11 @@ reserved /32 (the PROXY-v2-recovered client IP):
    ACCEPTs for 25/80/9100/9154 ahead of the OCI image's REJECT rule
    (persisted)**, postfix + config above, certbot, tailscale→headscale
    enrollment (preauth key from Vault), node_exporter, postfix_exporter,
-   unattended-upgrades.
+   unattended-upgrades, and a **keep-alive service holding the instance above
+   Oracle's idle bars** (95th-pct CPU ≥ 20% AND network ≥ 20% over 7 days —
+   load-bearing while the account is free-only; calibrate against the OCI
+   Monitoring metrics after launch and document the observed margins in the
+   runbook).
 2. **DNS** — `stacks/cloudflared/modules/cloudflared/cloudflare.tf`: A
    `mx2.viktorbarzin.me` → reserved IP (non-proxied), MX pref 20 → `mx2`.
    **[CH] Live zone count verified: 195/200 → 197/200 after this change; only
@@ -285,7 +303,7 @@ MUST include `mx: mx2.viktorbarzin.me` (and budget its DNS records against the
 
 | # | Gate | Method | Failure handling |
 |---|------|--------|------------------|
-| O1 | Oracle account (home region `eu-frankfurt-1`, **fixed forever at signup**), **PAYG conversion done**, E2.1.Micro capacity | Viktor signs up + converts; TF apply | A1-in-home-region is a best-effort fallback only (halved quota, contended); else decision returns to Viktor |
+| O1 | Oracle account (home region `eu-frankfurt-1`, **fixed forever at signup**) + E2.1.Micro capacity. ~~PAYG~~ deferred (2026-07-08, free-only — see account section) | **PASSED 2026-07-08**: API-key auth verified from devvm; quota shows 2 available in AD-3 (AD-1/AD-2 at 0 — pin to AD-3) | A1-in-home-region is a best-effort fallback only (halved quota, contended); else decision returns to Viktor |
 | O2 | Inbound TCP 25 reachable from the internet (after the OS-iptables fix) | `nc -zv <reserved-ip> 25` from outside + recurring Uptime-Kuma TCP monitor (keeps proving it — Oracle publishes no commitment) | Stop; decision returns to Viktor |
 | O3 | Drain works: VM → `mail.viktorbarzin.me:2526` delivers end-to-end | Test message injected on the VM | Debug pfSense NAT / HAProxy path |
 | O4 | LE cert issued | certbot standalone | STARTTLS is opportunistic — non-blocking for go-live; fix before MTA-STS |
@@ -308,9 +326,11 @@ Newly introduced, accepted:
   backup target.
 - **Oracle free-tier caprice [CH — upgraded from v2's framing]**: Oracle has
   silently cut Always-Free allowances and terminated over-limit instances
-  (June 2026, A1). Mitigations: PAYG (required), recurring inbound-25 probe,
-  `BackupMxDown`, and the fact that outside an active outage the queue is
-  empty — a surprise reclamation loses nothing, only coverage until rebuilt.
+  (June 2026, A1). Mitigations: load-bearing keep-alive workload (PAYG
+  deferred 2026-07-08 — free-only account, see account section), recurring
+  inbound-25 probe, `BackupMxDown` + CLI-restart recovery in the runbook, and
+  the fact that outside an active outage the queue is empty — a surprise
+  reclamation loses nothing, only coverage until restarted.
   If OCI sours, the documented fallback order is: **RackNerd VPS ($11/yr,
   port 25 open by default per the community mail-provider matrix — same
   self-hosted relay design, and outbound 25 works so the custom drain port
@@ -332,8 +352,12 @@ on `backup-mx`; delete the pfSense NAT rule (scripted); drop the mailserver
 
 1. Create the Oracle Cloud account — **home region `eu-frankfurt-1`** (fixed
    forever), card for identity, $0 charged.
-2. **Convert the tenancy to Pay-As-You-Go** (required — idle-reclamation
-   exemption; Always-Free stays $0).
-3. Hand me the tenancy OCID + a console user → I mint the API key, store
-   creds (Vault + Vaultwarden), and build the stack.
+2. ~~Convert the tenancy to Pay-As-You-Go~~ — DEFERRED (2026-07-08): the £80
+   pre-auth landed while the Revolut card was rejected as prepaid-class;
+   running free-only with the keep-alive mitigation. Optional future
+   hardening with a conventional bank/credit card.
+3. ~~Hand me the tenancy OCID + API key~~ — DONE (2026-07-08): key pasted,
+   auth verified from the devvm, creds in Vault.
 4. Approve the (scripted) pfSense NAT rule when I reach that step.
+5. Quarterly: log into the OCI console once (30-day account-abandonment
+   clause; reminder lives in the runbook).
