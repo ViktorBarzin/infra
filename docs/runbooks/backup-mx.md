@@ -101,7 +101,54 @@ The primary permits mx2's tunnel IP `10.3.2.10` past `reject_unknown_client_host
 (`10.3.2.10/32 OK`) prepended to `smtpd_sender_restrictions`
 (`stacks/mailserver/modules/mailserver/main.tf` + `variables.tf`). `OK` clears
 only client/helo/sender — relay is still gated by `smtpd_relay_restrictions`, so
-no relay is granted (deliberately not `mynetworks`).
+no relay is granted (deliberately not `mynetworks`). The tunnel IP is also in
+`smtpd_client_event_limit_exceptions` so a big post-outage drain isn't anvil-throttled
+to ~30 msg/min (which would false-fire `BackupMxQueueStuck`).
+
+## Filtering parity (added 2026-07-08, same-day audit)
+
+A backup MX is a classic spam-filter bypass — spammers deliberately target the
+higher-preference MX. Parity is split across the two hosts; all reputation
+verdicts on mx2 are **4xx-only** (a backup MX that 5xxs manufactures the loss
+it exists to prevent):
+
+**On mx2** (`stacks/backup-mx/cloud-init.yaml.tftpl`, mirrors the primary):
+- **postscreen** fronts :25 — pregreet `enforce` + Spamhaus zen DNSBL
+  (`threshold 3`), with `-o soft_bounce=yes` on the postscreen service so its
+  rejects are 450s, never 550s. Spamhaus resolves fine via the OCI
+  per-instance resolver (verified). NOTE: the original bring-up guard
+  `grep -q postscreen master.cf` matched Ubuntu's stock COMMENTED postscreen
+  examples and silently skipped activation — mx2 ran bare smtpd until the
+  2026-07-08 audit. The guard now matches only an active line.
+- **anvil rate limits** identical to the primary (10 conn / 30 msg per 60s).
+- **FCrDNS** (`reject_unknown_client_hostname`, 450) — so no-PTR clients can't
+  use mx2 to dodge the primary's identical check.
+
+**On the primary, for the drain stream** (`stacks/mailserver`):
+- **rspamd `external_relay`** (`ip_map = 10.3.2.10/32`): scores drained mail
+  against the ORIGINAL client IP from mx2's Received header, not the tunnel IP
+  — without it rspamd treats 10.3.2.10 as `local_addrs` and skips the scan
+  entirely (verified on the O5 mail: zero X-Spamd headers). Stamps the
+  `BACKUP_MX_DRAIN` symbol.
+- **rspamd `force_actions`**: when `BACKUP_MX_DRAIN` is present, downgrades
+  reject/soft-reject to `add header` — spam is tagged and foldered, never
+  5xx'd back to mx2 (a reject makes mx2 bounce, and its DSN can never leave —
+  egress 25 blocked — so a false positive would be SILENT loss). A settings
+  rule matching `ip = 10.3.2.10` does NOT work — external_relay rewrites the
+  IP before settings match.
+- **policyd-spf `skip_addresses += 10.3.2.10/32`** (user-patches.sh): policyd
+  checks SPF against the CONNECTING IP, so any strict-SPF (`-all`) sender
+  drained through mx2 was 550'd at RCPT — a pre-existing loss bug found by
+  this audit (O3/O5 used `~all` senders and never tripped it). SPF for
+  drained mail is rspamd's job, against the original IP.
+- **GTUBE exception**: rspamd handles the GTUBE test-string as a core
+  pre-result that bypasses force_actions — a drained GTUBE still bounces.
+  Only the literal test pattern does this; treat it as a canary.
+
+Verify after changes: send through mx2 from an external client and check
+`grep <subject> /var/log/mail/rspamd.log` on the pod shows `ip: <original>`,
+`BACKUP_MX_DRAIN(0.00)`, and for a >11-score message an `add header` action
+with mx2 logging `status=sent`, not `bounced`.
 
 ## Gotchas learned during bring-up (2026-07-08)
 

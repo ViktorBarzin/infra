@@ -53,5 +53,12 @@ postscreen_cache_map =
 # smtpd_relay_restrictions still gates relay, so no relay is granted (NOT
 # mynetworks). If DMS ever expands its sender macro, re-sync this literal.
 smtpd_sender_restrictions = check_client_access cidr:/tmp/docker-mailserver/backup-mx-permit.cidr, permit_mynetworks, reject_unknown_client_hostname
+
+# backup-mx drain (ADR-0019): exempt the tunnel IP from anvil rate limits —
+# without this a large post-outage drain is throttled to ~30 msg/min
+# (smtpd_client_message_rate_limit) and a multi-thousand-message backlog
+# false-fires BackupMxQueueStuck while legitimately draining. $mynetworks is
+# the postfix DEFAULT for this parameter; keep it listed when extending.
+smtpd_client_event_limit_exceptions = $mynetworks 10.3.2.10
 EOT
 }
