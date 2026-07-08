@@ -86,6 +86,20 @@ resource "oci_core_security_list" "backup_mx" {
       max = 9100
     }
   }
+  # Break-glass SSH, locked to the homelab WAN /32 (NOT public). Design v1 was
+  # tailnet-only, but the devvm — where this VM is actually operated from — is
+  # not a tailnet node, so tailnet-only management is inoperable in practice
+  # (proven during the 2026-07-08 bring-up). Mirrors the PVE :52222 break-glass
+  # precedent: source-restricted, key-only. Tailscale still enrolls for the day
+  # the devvm joins the tailnet.
+  ingress_security_rules {
+    protocol = "6"
+    source   = "${var.public_ip}/32"
+    tcp_options {
+      min = 22
+      max = 22
+    }
+  }
   egress_security_rules {
     protocol    = "all"
     destination = "0.0.0.0/0"

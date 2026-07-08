@@ -2,12 +2,11 @@
 # Backup MX relay (mx2.viktorbarzin.me) — ADR-0019.
 # Cattle: this file IS the machine. Rebuild = terraform apply (mint a fresh
 # headscale preauth key first — they are single-use).
-package_update: true
-packages:
-  - postfix
-  - certbot
-  - prometheus-node-exporter
-  - stress-ng
+#
+# NB: package installs and tailscale are deferred to a connectivity-gated
+# runcmd script (NOT the `packages:` directive / inline curl) because OCI's
+# IGW route programming lags boot by 30-90s — a one-shot fetch during that
+# window fails permanently and cloud-final dies (learned 2026-07-08, v1).
 
 users:
   - default
@@ -143,19 +142,32 @@ write_files:
       WantedBy=timers.target
 
 runcmd:
-  # OCI Ubuntu images ship an OS-level iptables ruleset that REJECTs all but
-  # 22 INDEPENDENT of security lists — rules appended after the REJECT are
-  # dead, so insert at the top. (The famous OCI gotcha; gate O2 fails without
-  # this even with a correct security list.)
+  # (1) Open inbound FIRST — no egress needed, so gate O2 can pass even while
+  # packages are still installing. OCI Ubuntu images ship an OS-level iptables
+  # ruleset that REJECTs all but 22 INDEPENDENT of security lists; rules
+  # appended after the REJECT are dead, so INSERT at the top. (The famous OCI
+  # gotcha — gate O2 fails without this even with a correct security list.)
   - iptables -I INPUT 1 -p tcp --dport 25 -j ACCEPT
   - iptables -I INPUT 2 -p tcp --dport 80 -j ACCEPT
   - iptables -I INPUT 3 -p tcp --dport 9100 -s ${homelab_wan_ip}/32 -j ACCEPT
-  - iptables -I INPUT 4 -i tailscale0 -j ACCEPT
   - netfilter-persistent save
-  # Tailnet enrollment (management access; no public SSH — the security list
-  # never opens 22).
-  - curl -fsSL https://tailscale.com/install.sh | sh
-  - tailscale up --login-server=https://headscale.viktorbarzin.me --auth-key=${headscale_preauth} --hostname=mx2 --accept-dns=false
+  # (2) Wait for egress — OCI IGW route programming lags boot 30-90s; without
+  # this gate the package/tailscale fetches race it and fail permanently.
+  - for i in $(seq 1 40); do getent hosts archive.ubuntu.com && break || sleep 15; done
+  # (3) Install packages WITH retries. Two v1/v2 lessons baked in: the
+  # one-shot `packages:` directive died on the boot race (now gated above),
+  # and `apt-get install postfix` HANGS on an interactive debconf TUI ("mail
+  # server configuration type") that blocks cloud-init forever — so preseed it
+  # and force the noninteractive frontend.
+  - echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections
+  - echo "postfix postfix/mailname string mx2.viktorbarzin.me" | debconf-set-selections
+  - for i in $(seq 1 5); do apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y postfix certbot prometheus-node-exporter stress-ng && break || sleep 20; done
+  # (4) Tailnet enrollment (management access; no public SSH). Retry the fetch.
+  - for i in $(seq 1 5); do curl -fsSL https://tailscale.com/install.sh | sh && break || sleep 20; done
+  - tailscale up --login-server=https://headscale.viktorbarzin.me --auth-key=${headscale_preauth} --hostname=mx2 --accept-dns=false || true
+  # (5) Now that tailscale0 exists, trust it (interface didn't exist earlier).
+  - iptables -I INPUT 4 -i tailscale0 -j ACCEPT || true
+  - netfilter-persistent save
   - bash /usr/local/bin/postfix-setup.sh
   - systemctl daemon-reload
   - systemctl enable --now keepalive-cpu.service queue-metrics.timer certbot-bootstrap.timer

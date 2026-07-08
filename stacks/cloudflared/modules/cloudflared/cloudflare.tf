@@ -148,6 +148,20 @@ resource "cloudflare_record" "mail_mx" {
   zone_id  = var.cloudflare_zone_id
 }
 
+# Backup MX host (ADR-0019) — the Oracle Always-Free relay. This is the A
+# record only; the MX record pointing at it (priority 20) lands separately,
+# AFTER gates O3/O5 pass (whitelist-before-MX guard). The A record now lets
+# certbot issue the LE cert (gate O4). IP is the OCI RESERVED public IP
+# (stable across VM stop/start; owned by stacks/backup-mx).
+resource "cloudflare_record" "backup_mx_a" {
+  content = "92.5.132.215"
+  name    = "mx2.viktorbarzin.me"
+  proxied = false
+  ttl     = 1
+  type    = "A"
+  zone_id = var.cloudflare_zone_id
+}
+
 
 resource "cloudflare_record" "mail_spf" {
   # Brevo replaced Mailgun as the outbound relay on 2026-04-12 (see docs/architecture/mailserver.md).
