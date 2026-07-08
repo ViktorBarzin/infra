@@ -3405,6 +3405,29 @@ serverFiles:
             annotations:
               summary: "Backup MX has deferred mail for >2h while the primary is up"
               description: "mx2 is holding deferred mail it cannot drain to the primary even though the mailserver is running — the drain path (WireGuard tunnel 10.3.2.10 -> 10.0.20.1:25, or the primary's 10.3.2.10 exemption) is likely broken. On mx2: `sudo postqueue -p` for the deferral reason, `sudo postqueue -f` to retry. Runbook: docs/runbooks/backup-mx.md."
+      # Status / failover page (mx2 second tenant, nginx + gatus; ADR-0020).
+      # "Watch the watcher": during a homelab outage the Cloudflare Worker
+      # serves this page's /error.html to visitors of every proxied host — so
+      # the cluster's Prometheus must watch the page itself. Probe metrics come
+      # from the status-page-https blackbox job (extraScrapeConfigs): in-cluster
+      # HTTPS GET traversing cluster egress -> internet -> mx2. Warning, not
+      # critical (same rationale as Backup MX: the page only MATTERS during a
+      # primary outage; nothing user-facing breaks in normal operation).
+      # Runbook: docs/runbooks/backup-mx.md.
+      - name: Status Page
+        rules:
+          - alert: StatusPageDown
+            # In-cluster blackbox HTTPS GET of the public page (http_2xx
+            # module: 2xx-after-redirects + valid TLS). Single target — max()
+            # collapses it to one clean series, mirroring BackupMxDown.
+            expr: max(probe_success{job="status-page-https"}) == 0
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: status-page
+            annotations:
+              summary: "Status/failover page https://status.viktorbarzin.me unreachable for >10m"
+              description: "The external status/failover page on mx2 (nginx + gatus, ADR-0020) has failed its in-cluster HTTPS probe for >10m. During a homelab outage the Cloudflare Worker serves this page's /error.html to visitors of all proxied hosts — while it is down, outage error pages degrade to the Worker's inline fallback HTML. Check gatus/nginx on mx2: `ssh -i ~/.ssh/backup-mx ubuntu@92.5.132.215` or the OCI console. NOTE: if BackupMxDown (TCP:25, same VM) fires simultaneously, the whole VM — or our own egress (see WANGatewayUnreachable/InternetEgressDown) — is the problem, not nginx. Runbook: docs/runbooks/backup-mx.md."
       - name: Egress / pfSense
         rules:
           - alert: WANGatewayUnreachable
@@ -3542,6 +3565,32 @@ extraScrapeConfigs: |
       - source_labels: [__address__]
         target_label: instance
         replacement: 'mx2'
+  # --- Status / failover page (mx2 second tenant; ADR-0020) ------------------
+  # HTTPS blackbox probe (http_2xx module, authentik_walloff_probe.tf) of the
+  # public status/failover page served by nginx + gatus on mx2 (grey-cloud A
+  # record — no Cloudflare proxy). Probed from inside the cluster, the path
+  # traverses cluster egress -> internet -> mx2, which is the fidelity we want:
+  # it fails if EITHER our egress or mx2's web tenant breaks. backup-mx-smtp
+  # (TCP:25, same VM) disambiguates — both down = whole VM (or our egress);
+  # only this one = nginx/gatus. Alert: StatusPageDown (alerting_rules.yml,
+  # group "Status Page").
+  - job_name: 'status-page-https'
+    scrape_interval: 2m
+    scrape_timeout: 15s
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ["https://status.viktorbarzin.me"]
+        labels:
+          service: 'status-page'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
   # The `mailserver-dovecot` scrape job was retired in code-1ik together
   # with the Dovecot exporter. docker-mailserver 15.0.0's Dovecot 2.3
   # doesn't emit the old_stats protocol the exporter expected, so the

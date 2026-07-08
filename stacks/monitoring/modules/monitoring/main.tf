@@ -472,52 +472,9 @@ resource "kubernetes_service" "pushgateway_nodeport" {
   }
 }
 
-resource "kubernetes_manifest" "status_redirect_middleware" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "status-redirect"
-      namespace = kubernetes_namespace.monitoring.metadata[0].name
-    }
-    spec = {
-      redirectRegex = {
-        regex       = ".*"
-        replacement = "https://hetrixtools.com/r/38981b548b5d38b052aca8d01285a3f3/"
-        permanent   = true
-      }
-    }
-  }
-}
-
-resource "kubernetes_manifest" "status_ingress_route" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "IngressRoute"
-    metadata = {
-      name      = "hetrix-redirect-ingress"
-      namespace = kubernetes_namespace.monitoring.metadata[0].name
-    }
-    spec = {
-      entryPoints = ["websecure"]
-      routes = [{
-        match = "Host(`status.viktorbarzin.me`)"
-        kind  = "Rule"
-        middlewares = [{
-          name      = "status-redirect"
-          namespace = kubernetes_namespace.monitoring.metadata[0].name
-        }]
-        services = [{
-          kind = "TraefikService"
-          name = "noop@internal"
-        }]
-      }]
-      tls = {
-        secretName = var.tls_secret_name
-      }
-    }
-  }
-}
+# The hetrix-redirect Middleware + IngressRoute for status.viktorbarzin.me
+# were retired 2026-07-08 (ADR-0020): the name is now a grey-cloud A record
+# to mx2 (gatus status page), so no traffic for it reaches Traefik anymore.
 
 resource "kubernetes_manifest" "yotovski_redirect_middleware" {
   manifest = {

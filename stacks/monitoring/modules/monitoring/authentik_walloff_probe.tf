@@ -164,6 +164,25 @@ resource "kubernetes_config_map" "blackbox_exporter_config" {
             ip_protocol_fallback  = false
           }
         }
+        # Plain HTTPS GET expecting a 2xx (added 2026-07-08, ADR-0020): drives
+        # the status-page-https scrape job — probes the public status/failover
+        # page https://status.viktorbarzin.me (nginx + gatus on mx2, grey-cloud
+        # A record) from inside the cluster, i.e. cluster egress -> internet ->
+        # mx2. Named after blackbox's conventional http_2xx module. Follows
+        # redirects (blackbox default); the empty valid_status_codes default
+        # means "2xx only", and fail_if_not_ssl fails a redirect chain that
+        # lands on plain http. TLS/DNS failures fail the probe as usual.
+        http_2xx = {
+          prober  = "http"
+          timeout = "10s"
+          http = {
+            method                = "GET"
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            fail_if_not_ssl       = true
+            valid_http_versions   = ["HTTP/1.1", "HTTP/2.0"]
+          }
+        }
       }
     })
   }
