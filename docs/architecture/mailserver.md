@@ -338,9 +338,14 @@ init). With `sender_canonical_maps = tcp:localhost:10001` that 451-defers ALL
 mail on any restart — a latent SEV. Resolved by setting **`ENABLE_SRS = "0"`**
 (`stacks/mailserver/modules/mailserver/main.tf`), which stops postsrsd and
 unsets the canonical maps, so mail is durable across restarts. Cost: SPF-safe
-envelope rewriting for the ~3 externally-forwarding aliases. **Follow-up**:
-fix postsrsd (DMS/postsrsd version bump) and re-enable SRS. Root cause of the
-spin still unpinned (postsrsd 1.10).
+envelope rewriting for the ~3 externally-forwarding aliases (they now forward
+with the original envelope sender, which may fail SPF at the destination).
+**DECISION 2026-07-08 (Viktor): SRS stays OFF permanently** — the only real
+fix is postsrsd 2.x, which is socketmap-only and has no official container
+image, so it would mean building `ghcr.io/viktorbarzin/postsrsd` + running it
+as a sidecar; not worth that for ~3 aliases. postsrsd 1.10 is left unused; do
+NOT flip `ENABLE_SRS` back to 1 (it re-arms the 451-all-mail spin). Root cause
+of the 1.10 spin still unpinned.
 
 ### Inbound mail not arriving
 1. **DNS/MX**: `dig MX viktorbarzin.me +short` → should show `mail.viktorbarzin.me`
