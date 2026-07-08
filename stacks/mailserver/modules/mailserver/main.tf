@@ -163,6 +163,42 @@ resource "kubernetes_config_map" "mailserver_config" {
         }
     }
     EOF
+    # Rspamd: score mail drained from the backup MX (ADR-0019) against the
+    # ORIGINAL sender IP, not the WireGuard tunnel IP. Without this, rspamd
+    # treats 10.3.2.10 as local (local_addrs covers 10/8) and skips the scan
+    # entirely — verified 2026-07-08 on the O5 drained mail (no X-Spamd
+    # headers, no milter consult): the backup MX was a clean bypass around
+    # spam filtering. ip_map strategy: hops whose IP is in the map are
+    # skipped; the first unrecognized Received IP (the one mx2 stamped for
+    # the real client) becomes the scan subject — RBL/reputation parity with
+    # direct mail. Direct mail is untouched (first hop already unrecognized).
+    "external_relay.conf" = <<-EOF
+    enabled = true;
+    rules {
+        BACKUP_MX_DRAIN {
+            strategy = "ip_map";
+            ip_map = ["10.3.2.10/32"];
+        }
+    }
+    EOF
+    # Rspamd force_actions: cap the drain stream's action ladder at
+    # add_header (tag + fold), never reject — a 5xx to the drain makes mx2
+    # bounce, and mx2 can never deliver a DSN (egress 25 blocked), so a
+    # false-positive reject would be SILENT mail loss (ADR-0019 never-lose
+    # rule). Keyed on the BACKUP_MX_DRAIN symbol the external_relay rule
+    # stamps — a settings ip=10.3.2.10 match does NOT work here (verified
+    # 2026-07-08: external_relay rewrites the IP before settings match it).
+    # force_actions is a post-filter, so it sees the final verdict.
+    "force_actions.conf" = <<-EOF
+    rules {
+        BACKUP_MX_DRAIN_NO_REJECT {
+            action = "add header";
+            expression = "BACKUP_MX_DRAIN";
+            require_action = ["reject", "soft reject"];
+            message = "capped to add_header: backup-MX drain is never rejected (ADR-0019)";
+        }
+    }
+    EOF
     # Increase max IMAP connections per user+IP - all Roundcube connections come from same pod IP
     "dovecot.cf"  = <<-EOF
     mail_max_userip_connections = 50
@@ -297,6 +333,18 @@ resource "kubernetes_config_map" "mailserver_user_patches" {
         -o smtpd_upstream_proxy_protocol=haproxy
         -o smtpd_upstream_proxy_timeout=5s
       PFXEOF
+      fi
+
+      # ADR-0019 backup-mx drain: policyd-spf evaluates SPF against the
+      # CONNECTING IP, which for drained mail is the WireGuard tunnel IP
+      # 10.3.2.10 — any strict-SPF (-all) sender domain gets 550'd at RCPT
+      # and the mail is silently lost (mx2 cannot deliver a DSN). Skip the
+      # tunnel IP; SPF for drained mail is evaluated by rspamd against the
+      # ORIGINAL client IP via external_relay. Found empirically 2026-07-08
+      # (a -all test sender bounced on the drain).
+      SPF_CONF=/etc/postfix-policyd-spf-python/policyd-spf.conf
+      if ! grep -q '10.3.2.10' "$SPF_CONF"; then
+        sed -i 's|^skip_addresses = .*|&,10.3.2.10/32|' "$SPF_CONF"
       fi
     EOT
   }
@@ -499,6 +547,18 @@ resource "kubernetes_deployment" "mailserver" {
             name       = "config"
             mount_path = "/tmp/docker-mailserver/rspamd/override.d/dkim_signing.conf"
             sub_path   = "dkim_signing.conf"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/rspamd/override.d/external_relay.conf"
+            sub_path   = "external_relay.conf"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/rspamd/override.d/force_actions.conf"
+            sub_path   = "force_actions.conf"
             read_only  = true
           }
           volume_mount {

@@ -78,13 +78,29 @@ write_files:
       fi
       postmap /etc/postfix/transport
       postmap /etc/postfix/relay_recipients
-      # postscreen, pregreet-only posture: bots that talk before the banner
-      # never retry; real MTAs never trip it. No DNSBL — reputation must never
-      # 5xx on a backup MX.
-      if ! grep -q "postscreen" /etc/postfix/master.cf; then
-        sed -i 's|^smtp      inet  n       -       y       -       -       smtpd$|smtp      inet  n       -       y       -       1       postscreen\nsmtpd     pass  -       -       y       -       -       smtpd\ndnsblog   unix  -       -       y       -       0       dnsblog\ntlsproxy  unix  -       -       y       -       0       tlsproxy|' /etc/postfix/master.cf
+      # postscreen: pregreet + conservative Spamhaus-defer (parity with the
+      # primary, which fronts BOTH its listeners with postscreen). soft_bounce
+      # on the postscreen service turns its 550s into 450s — reputation must
+      # never 5xx on a backup MX (ADR-0019). Spamhaus resolves fine via the
+      # OCI per-instance resolver (verified 2026-07-08); threshold 3 = only a
+      # definitive zen listing defers. GUARD matches only an ACTIVE postscreen
+      # line — Ubuntu's stock master.cf carries COMMENTED postscreen examples,
+      # and the original 'grep -q postscreen' matched those, silently skipping
+      # the sed (found 2026-07-08: mx2 ran bare smtpd until the parity audit).
+      if ! grep -qE '^smtp\s+inet.*postscreen' /etc/postfix/master.cf; then
+        sed -i 's|^smtp      inet  n       -       y       -       -       smtpd$|smtp      inet  n       -       y       -       1       postscreen\n    -o soft_bounce=yes\nsmtpd     pass  -       -       y       -       -       smtpd\ndnsblog   unix  -       -       y       -       0       dnsblog\ntlsproxy  unix  -       -       y       -       0       tlsproxy|' /etc/postfix/master.cf
       fi
       postconf -e "postscreen_greet_action = enforce"
+      postconf -e "postscreen_dnsbl_sites = zen.spamhaus.org=127.0.0.[2..11]*3"
+      postconf -e "postscreen_dnsbl_threshold = 3"
+      postconf -e "postscreen_dnsbl_action = enforce"
+      # Abuse parity with the primary (identical values): per-client anvil
+      # rate limits, and FCrDNS deferral so mx2 is not a bypass around the
+      # primary's reject_unknown_client_hostname (450 = defer-only, loss-safe).
+      postconf -e "smtpd_client_connection_rate_limit = 10"
+      postconf -e "smtpd_client_message_rate_limit = 30"
+      postconf -e "anvil_rate_time_unit = 60s"
+      postconf -e "smtpd_sender_restrictions = permit_mynetworks, reject_unknown_client_hostname"
       systemctl restart postfix
   # Keep-alive is LOAD-BEARING on a free-only account (PAYG deferred
   # 2026-07-08): Oracle reclaims when 95th-pct CPU AND network are both <20%
