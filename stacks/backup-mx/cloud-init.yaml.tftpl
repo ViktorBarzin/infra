@@ -19,7 +19,24 @@ write_files:
   # (Oracle blocks egress 25 tenancy-wide; 2526 is pfSense NAT -> HAProxy :25).
   - path: /etc/postfix/transport
     content: |
-      viktorbarzin.me smtp:[mail.viktorbarzin.me]:2526
+      viktorbarzin.me smtp:[10.0.20.1]:25
+  # WireGuard client -> pfSense (drain tunnel). mx2 dials out to pfSense's WAN
+  # WG endpoint; the drain to 10.0.20.1:25 is UDP-encapsulated so Oracle's
+  # egress-25 block never applies. Private key from Vault (stable across
+  # rebuilds -> the pfSense peer never needs re-adding). AllowedIPs is JUST the
+  # mailserver HAProxy VIP, so the tunnel carries nothing but the drain.
+  - path: /etc/wireguard/wg0.conf
+    permissions: "0600"
+    content: |
+      [Interface]
+      PrivateKey = ${wg_private_key}
+      Address = 10.3.2.10/32
+
+      [Peer]
+      PublicKey = 3OeDa6Z3Z6vPVxn/WKJujYL7DoDYPPpI5W+2glUYLHU=
+      Endpoint = 176.12.22.76:51821
+      AllowedIPs = 10.0.20.1/32
+      PersistentKeepalive = 25
   # Catch-all domain: every recipient is valid by definition. A backup MX
   # that rejects recipients manufactures the loss it exists to prevent.
   - path: /etc/postfix/relay_recipients
@@ -161,7 +178,9 @@ runcmd:
   # and force the noninteractive frontend.
   - echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections
   - echo "postfix postfix/mailname string mx2.viktorbarzin.me" | debconf-set-selections
-  - for i in $(seq 1 5); do apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y postfix certbot prometheus-node-exporter stress-ng && break || sleep 20; done
+  - for i in $(seq 1 5); do apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y postfix certbot prometheus-node-exporter stress-ng wireguard && break || sleep 20; done
+  # Bring up the drain tunnel to pfSense (wg0.conf written above).
+  - systemctl enable --now wg-quick@wg0 || true
   # (4) Tailnet enrollment (management access; no public SSH). Retry the fetch.
   - for i in $(seq 1 5); do curl -fsSL https://tailscale.com/install.sh | sh && break || sleep 20; done
   - tailscale up --login-server=https://headscale.viktorbarzin.me --auth-key=${headscale_preauth} --hostname=mx2 --accept-dns=false || true
