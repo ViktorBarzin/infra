@@ -110,6 +110,18 @@ All verified as-of 2026-07-08:
   design: pure pass-through outside the narrow intercept set, FAIL OPEN on
   quota, inline-HTML last resort — the engineered worst case equals the
   status quo (raw 530s), never a new outage class.
+- **KNOWN COVERAGE GAP (as-built 2026-07-08):** the dashboard-managed
+  `rybbit-analytics` Worker holds ~26 per-host routes (apex, www, immich,
+  nextcloud, mail, f1, …); Cloudflare runs only the single most-specific
+  route per request, so those hosts bypass the failover Worker and still
+  show raw Cloudflare errors during an outage (an apex route for this Worker
+  is impossible while rybbit owns `viktorbarzin.me/*` — API error 10020).
+  Additionally, Worker `fetch()` to the same-zone grey-cloud `status` host
+  was observed failing, so the outage page is BAKED INTO the script at
+  deploy time (`error_page.html`, injected by `worker.tf`; live status loads
+  client-side from the gatus API). Planned fix: consolidate rybbit's
+  head-injection into this TF-managed Worker and retire the out-of-band
+  script + routes — pending decision (out-of-band production config).
 - **mx2 gains ~140 MB of tenants** (gatus under `MemoryMax=128M` + nginx)
   under the ADR-0019 mail-priority rule: the mail queue always wins.
 - **Port 443 opens to the world** on mx2 — OCI security list + OS iptables —

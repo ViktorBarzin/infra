@@ -23,33 +23,16 @@
 
 const INTERCEPT_STATUS = new Set([530, 521, 522, 523]);
 
-// Last resort when mx2 is unreachable too (VM down / TLS not yet issued).
-// Fully self-contained: no external assets, must render from this string alone.
-const INLINE_FALLBACK_HTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>viktorbarzin.me — temporarily unavailable</title>
-<style>
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-font-family:system-ui,-apple-system,sans-serif;background:#14161a;color:#e8e8e8}
-main{max-width:34rem;padding:2rem;text-align:center}
-h1{font-size:1.4rem;margin-bottom:.5rem}
-p{color:#b5bac1;line-height:1.5}
-a{color:#8ab4f8}
-</style>
-</head>
-<body>
-<main>
-<h1>Sorry — this service is temporarily unreachable</h1>
-<p>The server behind viktorbarzin.me is not responding right now.
-It is usually back within a few minutes.</p>
-<p>Live status: <a href="https://status.viktorbarzin.me">status.viktorbarzin.me</a></p>
-</main>
-</body>
-</html>
-`;
+// The primary outage page, injected at deploy time by worker.tf from
+// error_page.html (same content mx2's nginx serves at /error.html — keep the
+// two in sync when editing). Fully self-contained: inline CSS, no external
+// assets; live per-service status loads CLIENT-side from the gatus API on
+// status.viktorbarzin.me (grey-cloud, so the visitor's browser reaches mx2
+// directly even mid-outage; CORS is enabled on /api/). Baking it in — rather
+// than subrequesting mx2 — matters because Worker fetch() to a same-zone
+// grey-cloud hostname was observed failing on 2026-07-08 (the mx2 fetch below
+// remains as an opportunistic first try; this constant is the reliable path).
+const INLINE_FALLBACK_HTML = "__INLINE_PAGE_JSON__";
 
 function isBrowsable(request) {
   const accept = request.headers.get("Accept") || "";
