@@ -1,6 +1,6 @@
 # DNS Architecture
 
-Last updated: 2026-07-08 (ADR-0020 — mx2 is the deployed external vantage; `status.viktorbarzin.me` moves proxied-CNAME → grey-cloud A on mx2; new `test-failover` synthetic record. Previously 2026-04-19: WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq; WS E — Kea multi-IP DHCP option 6 + TSIG-signed DDNS)
+Last updated: 2026-07-08 (record cleanup: 13 verified-dead Cloudflare records deleted, zone now **185/200** of the free-plan cap — see "Zone record budget" below. Same day, ADR-0020 — mx2 is the deployed external vantage; `status.viktorbarzin.me` moves proxied-CNAME → grey-cloud A on mx2; new `test-failover` synthetic record. Previously 2026-04-19: WS C — NodeLocal DNSCache deployed; WS D — pfSense Unbound replaces dnsmasq; WS E — Kea multi-IP DHCP option 6 + TSIG-signed DDNS)
 
 ## Overview
 
@@ -8,12 +8,18 @@ DNS is served by a split architecture: **Technitium DNS** handles internal resol
 
 ## Architecture Diagram
 
+The public edge + offsite failover picture (steady-state, outage, mail and monitoring paths) is also drawn in [`public-edge-failover.svg`](public-edge-failover.svg) (as-built 2026-07-08, ADR-0019/0020). The mermaid below focuses on DNS resolution paths:
+
 ```mermaid
 graph TB
     subgraph "External"
         Internet[Internet Clients]
-        CF[Cloudflare DNS<br/>~50 domains<br/>viktorbarzin.me]
+        CF[Cloudflare DNS + edge<br/>viktorbarzin.me, 185/200 records<br/>outage-failover Worker on *.viktorbarzin.me]
         CFTunnel[Cloudflared Tunnel<br/>3 replicas]
+    end
+
+    subgraph "Offsite — Oracle Frankfurt (ADR-0020)"
+        MX2[mx2 92.5.132.215<br/>gatus external vantage + status page<br/>backup MX pri 20]
     end
 
     subgraph "LAN (192.168.1.0/24)"
@@ -52,6 +58,8 @@ graph TB
 
     Internet -->|DNS query| CF
     CF -->|CNAME to tunnel| CFTunnel
+    CF -->|"status A (grey-cloud)"| MX2
+    MX2 -->|probes public hostnames<br/>edge-unreachable alerts| CF
     LAN -->|DNS query UDP 53| pf_unbound
     pf_kea -->|lease event| pf_ddns
     pf_ddns -->|A + PTR| LB_DNS
@@ -83,7 +91,7 @@ graph TB
 | Technitium DNS | K8s namespace `technitium` | 14.3.0 | Primary internal DNS + recursive resolver |
 | CoreDNS | K8s `kube-system` | Cluster default | K8s service discovery + forwarding to Technitium |
 | NodeLocal DNSCache | K8s `kube-system` (DaemonSet) | `k8s-dns-node-cache:1.23.1` | Per-node DNS cache, transparent interception on 10.96.0.10 + 169.254.20.10. Insulates pods from CoreDNS/Technitium/pfSense disruption. |
-| Cloudflare DNS | SaaS | N/A | Public domain management (~50 domains) |
+| Cloudflare DNS | SaaS | N/A | Public zone management — 185/200 records (free-plan hard cap; see "Zone record budget") |
 | pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium; DoT upstream to Cloudflare |
 | Kea DHCP-DDNS | 10.0.20.1 | pfSense 2.7.x | Automatic DNS registration on DHCP lease |
 | phpIPAM | K8s namespace `phpipam` | v1.7.0 | IPAM ↔ DNS bidirectional sync |
@@ -356,21 +364,31 @@ The Cloudflare tunnel uses a **wildcard rule** (`*.viktorbarzin.me → Traefik`)
 
 ### Record Types
 
+Counts are exact as of the 2026-07-08 record cleanup (zone total **185**):
+
 | Type | Records | Target | Example |
 |------|---------|--------|---------|
-| Proxied CNAME | ~100 domains | `{tunnel_id}.cfargotunnel.com` | blog, hackmd, homepage, ntfy |
-| Non-proxied A | ~35 domains | `176.12.22.76` (public IP) | mail, headscale, immich |
-| Non-proxied AAAA | ~35 domains | IPv6 (HE tunnel) | Same as non-proxied A |
-| MX | 1 | `mail.viktorbarzin.me` | Inbound email |
-| TXT (SPF) | 1 | `v=spf1 include:mailgun.org -all` | Email authentication |
-| TXT (DKIM) | 4 | RSA keys (s1, mail, brevo1, brevo2) | Email signing |
+| Proxied CNAME (tunnel) | 99 | `{tunnel_id}.cfargotunnel.com` | blog (apex), hackmd, homepage, ntfy |
+| Non-proxied A | 34 | `176.12.22.76` (public IP) | mail, headscale, immich |
+| Non-proxied AAAA | 33 | IPv6 (HE tunnel) | Same set as non-proxied A (minus the IPv4-only names) |
+| Internal-IP A (`dns_type = "internal"`) | 2 | `10.0.20.203` (internal Traefik LB) | highlights-immich kiosks — publicly resolvable, routable only from home/WG/VPN |
+| MX | 2 | `mail.viktorbarzin.me` (pri 1), `mx2.viktorbarzin.me` (pri 20, ADR-0019) | Inbound email + offsite store-and-forward backup |
+| TXT (SPF) | 1 | `v=spf1 include:spf.brevo.com ~all` | Email authentication (Brevo relay) |
+| TXT (DKIM) | 2 | RSA keys (`mail`, `cf2024-1`) | Email signing (Brevo selectors are the 2 CNAMEs below) |
+| CNAME (DKIM, Brevo) | 2 | `b{1,2}.viktorbarzin-me.dkim.brevo.com` | brevo1/brevo2 selector delegation |
 | TXT (DMARC) | 1 | `v=DMARC1; p=quarantine; pct=100` | Email policy |
 | TXT (MTA-STS) | 1 | `v=STSv1; id=20260412` | TLS enforcement |
 | TXT (TLSRPT) | 1 | `v=TLSRPTv1; rua=mailto:postmaster@...` | TLS reporting |
+| TXT (Brevo verification) | 1 | `brevo-code:…` | Relay domain verification |
 | A (keyserver) | 1 | `130.162.165.220` (Oracle VPS) | PGP keyserver |
+| A (mx2) | 1 | `92.5.132.215` (Oracle VM, reserved IP) | Backup MX + external vantage (ADR-0019/0020) |
 | CNAME (CF Pages) | 2 | `<project>.pages.dev` (Cloudflare Pages) | bridge, stem95su — Valia sites (ADR-0018), managed by `stacks/valia-sites` |
 | A (status) | 1 | `92.5.132.215` (mx2, grey-cloud) | Status page served from mx2 (ADR-0020) — moved from proxied CNAME 2026-07-08 so it resolves + serves through a homelab **and** tunnel outage |
 | CNAME (test-failover) | 1 | all-zeros tunnel UUID (proxied) | Permanent synthetic always-530 host — end-to-end verification of the failover Worker (ADR-0020); see the drill in `runbooks/backup-mx.md` |
+
+### Zone record budget (free-plan 200 cap)
+
+The free plan hard-caps the zone at **200 records** (error 81045 on overflow — first hit 2026-07-04). Standing at **185/200** after the 2026-07-08 cleanup, which deleted 13 verified-dead records (crowdsec/finance/redis from the legacy tfvars list; orphaned deemix, lidarr, soulseek, rybbit-api, wrongmove-api, registry ×2; 2 stale `_acme-challenge` tokens). Cleanup method that works: dump the zone via API (keep the dump as a restore backup), cross-reference every name against live cluster Ingresses/IngressRoutes, then probe — dead names serve the Traefik 404 catch-all, which answers **HTTP 200 with a "404 Not Found" body** on HEAD/plain requests, so don't trust status codes alone. Remember each new `dns_type = "non-proxied"` service costs 2 records (A+AAAA). When the cap bites again: next cleanup → wildcard-record migration → paid plan.
 
 ### Proxied vs Non-Proxied
 

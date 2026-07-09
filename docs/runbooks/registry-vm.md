@@ -120,7 +120,7 @@ does not bounce the link.
 ssh root@10.0.20.10 '
   dig +short idrac.viktorbarzin.lan       # 192.168.1.4
   dig +short github.com                   # GitHub A record
-  dig +short registry.viktorbarzin.me     # 10.0.20.10 + external A
+  dig +short forgejo.viktorbarzin.me      # split-horizon answer (registry.viktorbarzin.me records were deleted 2026-07-08 — the name retired with the :5050 registry)
 '
 ```
 
