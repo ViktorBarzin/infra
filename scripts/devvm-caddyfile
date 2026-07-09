@@ -1,0 +1,27 @@
+# devvm Caddyfile — canonical copy: infra/scripts/devvm-caddyfile
+# Deploy: sudo install -m 644 scripts/devvm-caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+
+# Stock default site (unused, kept as installed).
+:80 {
+	root * /usr/share/caddy
+	file_server
+}
+
+# learn Viewer — learn.viktorbarzin.me → devvm:7685 (infra/stacks/learn).
+# Serves each user's ~/code/learn LIVE, per-user via X-Authentik-Username
+# injected by the cluster's authentik-forward-auth middleware. Same
+# header-trust model as ttyd :7681 / t3-dispatch (see learn/docs/adr/0001
+# in the monorepo). The regex confines the value to a plain username —
+# no '/', no '..', so the root can't be steered outside /home/<user>/code/learn.
+# The caddy user is in group code-shared for wizard's 770 ~/code; other
+# users opt in with `chmod o+x ~` (their ~/code is already world-readable).
+:7685 {
+	@user header_regexp user X-Authentik-Username ^([a-z][a-z0-9_.-]{0,31})$
+	handle @user {
+		root * /home/{re.user.1}/code/learn
+		file_server browse
+	}
+	handle {
+		respond "Forbidden: missing or invalid X-Authentik-Username" 403
+	}
+}
