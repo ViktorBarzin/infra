@@ -60,6 +60,15 @@ generate "k8s_providers" {
   contents  = <<EOF
 terraform {
   required_providers {
+    # Floor, not pin: hashicorp/kubernetes 3.0.x–3.1.x ship a provider-side
+    # resource-identity bug ("Missing Resource Identity After Update") that
+    # failed redis/dbaas on every CI apply that touched a resource (issue
+    # #68); fixed upstream in 3.2.1. Lockfiles are gitignored, so without a
+    # floor any environment can resolve back into the broken range.
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 3.2.1"
+    }
     vault = {
       source  = "hashicorp/vault"
       version = "~> 4.0"
