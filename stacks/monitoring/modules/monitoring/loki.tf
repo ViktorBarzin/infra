@@ -261,6 +261,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           # 2026-06-09 failure class (mint/bootstrap broke, all users on the pair
           # prompt). Route: Loki ruler → Alertmanager → default #alerts Slack.
           # Runbook: docs/runbooks/t3-version-bump.md.
+          # The T3AutoUpdate* identifier regex covers every t3-safe-restart.sh
+          # caller (t3-autoupdate, t3-migrate-idle, t3-watchdog) — rollback/freeze
+          # log lines are identical regardless of which timer triggered them.
           name = "t3 Auth & Upgrades"
           rules = [
             {
@@ -296,7 +299,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # The enforcer's health-check failed a build and auto-rolled-back the
               # binary. The gate worked — but a bad nightly shipped, so you should know.
               alert  = "T3AutoUpdateRolledBack"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=\"t3-autoupdate\"} |~ \"rolling back|rolled back\" [15m])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"rolling back|rolled back\" [15m])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
@@ -309,7 +312,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # Rollback itself failed (npm couldn't reinstall the previous build):
               # the box may be left on a broken t3. Manual fix needed.
               alert  = "T3AutoUpdateRollbackFailed"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=\"t3-autoupdate\"} |~ \"ROLLBACK FAILED\" [15m])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"ROLLBACK FAILED\" [15m])) > 0"
               for    = "0m"
               labels = { severity = "critical" }
               annotations = {
@@ -323,13 +326,42 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # /etc/t3-autoupdate.freeze switch is set). Surfaces a stuck-on-purpose
               # tracker so it isn't silently frozen forever.
               alert  = "T3AutoUpdateFrozen"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=\"t3-autoupdate\"} |~ \"FROZEN\" [25h])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"FROZEN\" [25h])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
                 summary     = "t3 auto-update is FROZEN (not tracking nightly)"
                 description = "The t3 tracker froze — either the pre-run pairing gate tripped or /etc/t3-autoupdate.freeze is set. t3 is held at the last-good pin and is NOT picking up new builds until cleared. Confirm pairing is healthy, then remove the freeze."
                 runbook     = "docs/runbooks/t3-version-bump.md"
+              }
+            },
+            {
+              # The wedge watchdog detected a dead/unresponsive t3-serve listener
+              # and safe-restarted it (2026-07-08 class: OOMPolicy=continue keeps
+              # the main proc alive but it drops its listener after a cgroup OOM).
+              # Self-healed — skim why it wedged (cgroup OOM is the usual suspect).
+              alert  = "T3WatchdogRestarted"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=\"t3-watchdog\"} |~ \"WATCHDOG: restarted\" [15m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "t3-watchdog auto-restarted a wedged t3-serve instance"
+                description = "A t3-serve instance stopped answering its local port while its unit stayed active; the watchdog safe-restarted it and pairing verified. Self-healed. Check the devvm journal (identifier=t3-watchdog) for which user and the failure reason."
+                runbook     = "docs/runbooks/t3-watchdog.md"
+              }
+            },
+            {
+              # The watchdog hit its flap cap (default 3 restarts/30m) and stood
+              # down while the instance is still unhealthy — restarting isn't
+              # curing it. That user's t3 is DOWN until a human intervenes.
+              alert  = "T3WatchdogExhausted"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=\"t3-watchdog\"} |~ \"WATCHDOG-EXHAUSTED\" [15m])) > 0"
+              for    = "0m"
+              labels = { severity = "critical" }
+              annotations = {
+                summary     = "t3-watchdog EXHAUSTED — a t3-serve instance keeps wedging and stays down"
+                description = "The watchdog restarted the same t3-serve instance to its flap cap within the window and it is still failing probes, so it stood down. Investigate: cgroup OOM kills (journalctl -k), state.sqlite size, the running build; restart manually once the cause is addressed."
+                runbook     = "docs/runbooks/t3-watchdog.md"
               }
             },
             {
