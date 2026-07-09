@@ -180,6 +180,13 @@ resource "kubernetes_config_map" "policy" {
 # `anubis_ed25519_key`. Same key across every instance so JWTs are
 # cross-validatable, enabling cross-subdomain SSO.
 resource "kubernetes_manifest" "ed25519_secret" {
+  # The live CRs were created under the v1beta1 field manager; without
+  # force_conflicts the v1 re-apply fails with a field-manager conflict
+  # (same pattern as every other ExternalSecret kubernetes_manifest in the
+  # repo, e.g. stacks/grampsweb).
+  field_manager {
+    force_conflicts = true
+  }
   manifest = {
     # v1 since the ESO 2.6.0 migration (2026-06-22) — v1beta1 was removed from
     # the CRD, and this inline manifest was the one declaration the migration
