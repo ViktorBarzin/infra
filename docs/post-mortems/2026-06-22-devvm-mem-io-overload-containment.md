@@ -166,3 +166,17 @@ restarts.
 Lesson: **with `swap=0`, `memory.high` is not a gentler `memory.max` — it is
 an unbounded stall injector for everything sharing the cgroup.** Cap-and-kill
 beats throttle-and-pray for multi-tenant interactive services.
+
+## Addendum 2 (2026-07-09): OOMPolicy=continue leaves survived-but-wounded — watchdog added
+
+2026-07-08 falsified the remaining assumption that "`OOMPolicy=continue` keeps
+t3-serve itself alive": after two ~10G children were cgroup-OOM-killed inside
+`t3-serve@wizard` (07:24/07:26), the surviving main process degraded and at
+~18:58 silently dropped its `:3773` listener — unit still `active`,
+`NRestarts=0`, journal dark — a listener-less zombie for ~2h until a manual
+restart (graceful stop timed out; SIGKILL). `continue` remains correct (see
+2026-06-10 rationale above); what was missing is recovery for the wounded
+survivor. Closed by **t3-watchdog** (`scripts/t3-watchdog.sh`, minutely timer):
+local-port probes, 3-strike confirmation, pairing-verified safe restart, flap
+cap + Loki alerts. Design: `../plans/2026-07-08-t3-watchdog-design.md`;
+runbook: `../runbooks/t3-watchdog.md`.
