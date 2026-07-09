@@ -1,7 +1,12 @@
 FROM alpine:3.20
 
 # Pin versions to match CI requirements
-ARG TERRAFORM_VERSION=1.5.7
+# 1.15.4 matches the devvm fleet (which has applied every stack on it).
+# The old 1.5.7 pin (last-MPL era) combined with hashicorp/kubernetes 3.x
+# produced provider-side "Missing Resource Identity After Update" failures
+# on redis/dbaas updates that a modern core does not (issue #68) — the
+# old-core + new-provider-SDK pairing is the broken combination.
+ARG TERRAFORM_VERSION=1.15.4
 ARG TERRAGRUNT_VERSION=0.99.4
 ARG SOPS_VERSION=3.9.4
 ARG KUBECTL_VERSION=1.34.0
