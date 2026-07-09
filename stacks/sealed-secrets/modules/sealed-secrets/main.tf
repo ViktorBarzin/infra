@@ -7,7 +7,7 @@ resource "kubernetes_namespace" "sealed_secrets" {
   metadata {
     name = "sealed-secrets"
     labels = {
-      tier = var.tier
+      tier               = var.tier
       "keel.sh/enrolled" = "true"
     }
   }
@@ -28,7 +28,11 @@ resource "helm_release" "sealed_secrets" {
   atomic           = true
   timeout          = 300
 
-  repository = "https://bitnami-labs.github.io/sealed-secrets"
+  # bitnami.github.io (official per the project README) — the old
+  # bitnami-labs.github.io Pages repo went 404 (Broadcom's 2025 Bitnami purge)
+  # and failed every CI apply with "Error locating chart". Same chart, same
+  # pinned version; the live release (2.18.3 / controller 0.36.0) is untouched.
+  repository = "https://bitnami.github.io/sealed-secrets"
   chart      = "sealed-secrets"
   version    = "2.18.3"
 
