@@ -207,10 +207,14 @@ module "valchedrym" {
 
 # https://mladost3.viktorbarzin.me/
 module "mladost3" {
-  source            = "./factory"
-  name              = "mladost3"
-  external_name     = "mladost3.ddns.net"
-  port              = 8080
+  source        = "./factory"
+  name          = "mladost3"
+  external_name = "mladost3.ddns.net"
+  port          = 8080
+  # Internal-only: shadows the * wildcard CNAME (2026-07-09) — without an
+  # explicit record this name would resolve via Cloudflare and go public.
+  dns_type          = "internal"
+  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
   tls_secret_name   = var.tls_secret_name
   depends_on        = [kubernetes_namespace.reverse-proxy]
   external_monitor  = false

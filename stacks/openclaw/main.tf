@@ -1797,17 +1797,10 @@ resource "kubernetes_service" "task_webhook" {
   }
 }
 
-module "task_webhook_ingress" {
-  source = "../../modules/kubernetes/ingress_factory"
-  # auth = "none": inbound Forgejo webhook receiver - machine sender (no Authentik SSO cookie); receiver filters on payload action + bot-user
-  auth             = "none"
-  namespace        = kubernetes_namespace.openclaw.metadata[0].name
-  name             = "task-webhook"
-  tls_secret_name  = var.tls_secret_name
-  host             = "task-webhook"
-  port             = 80
-  external_monitor = false
-}
+# The public ingress for task-webhook was removed 2026-07-09: the Forgejo
+# webhook calls the cluster-local Service (task-webhook.openclaw.svc) directly,
+# nothing referenced the public hostname, and with the wildcard DNS record an
+# unauthenticated job-creation endpoint must not be publicly routable.
 
 # --- Shared ServiceAccount: grants pod-exec into the openclaw pod ---
 # Used by the task_processor CronJob (below). Previously also used by the

@@ -65,10 +65,10 @@ variable "skip_global_rate_limit" {
 variable "dns_type" {
   type        = string
   default     = "none"
-  description = "Cloudflare DNS: 'proxied' (CNAME to tunnel), 'non-proxied' (A/AAAA to public IP), or 'none'"
+  description = "Cloudflare DNS: 'proxied' (CNAME to tunnel), 'non-proxied' (A/AAAA to public IP), 'internal' (A to the internal Traefik LB IP — shadows the * wildcard, resolvable everywhere but routable only from home LANs/WG/VPN; pair with traefik-home-lans-only), or 'none'"
   validation {
-    condition     = contains(["proxied", "non-proxied", "none"], var.dns_type)
-    error_message = "dns_type must be 'proxied', 'non-proxied', or 'none'."
+    condition     = contains(["proxied", "non-proxied", "internal", "none"], var.dns_type)
+    error_message = "dns_type must be 'proxied', 'non-proxied', 'internal', or 'none'."
   }
 }
 
@@ -101,6 +101,14 @@ variable "public_ip" {
 variable "public_ipv6" {
   type    = string
   default = "2001:470:6e:43d::2"
+}
+
+# Internal Traefik LB IP used by dns_type = "internal" records — same value
+# and caveats as modules/kubernetes/ingress_factory (tracks the dedicated
+# MetalLB IP from stacks/traefik, ETP=Local).
+variable "internal_lb_ip" {
+  type    = string
+  default = "10.0.20.203"
 }
 
 
@@ -303,6 +311,22 @@ resource "cloudflare_record" "non_proxied_aaaa" {
   proxied         = false
   ttl             = 1
   type            = "AAAA"
+  zone_id         = var.cloudflare_zone_id
+  allow_overwrite = true
+}
+
+# 'internal': a publicly-resolvable A record carrying the INTERNAL Traefik LB
+# IP. Shadows the * wildcard CNAME (an explicit record wins over the
+# wildcard), so the name stays unreachable from outside while home-LAN/WG/VPN
+# clients resolve and route to Traefik directly. Mirrors
+# modules/kubernetes/ingress_factory's internal_a.
+resource "cloudflare_record" "internal_a" {
+  count           = var.dns_type == "internal" ? 1 : 0
+  name            = var.name
+  content         = var.internal_lb_ip
+  proxied         = false
+  ttl             = 1
+  type            = "A"
   zone_id         = var.cloudflare_zone_id
   allow_overwrite = true
 }
