@@ -10,16 +10,21 @@
 #
 # This stack owns only the Kubernetes side (same split as stacks/terminal):
 # Service + Endpoints → 10.0.10.10:7685 and the Authentik-gated IngressRoute.
-# The DevVM side is Caddy (system service) with a :7685 site block that maps
-# X-Authentik-Username → /home/<user>/code/learn (file_server browse).
-# Canonical Caddyfile: scripts/devvm-caddyfile — deploy with
+# The DevVM side is Caddy (system service) with a :7685 site block. Authentik
+# usernames are FULL EMAILS (e.g. vbarzin@gmail.com), so like tmux-attach.sh
+# (`${auth_user%%@*}`) and t3-dispatch the block strips the @domain and maps
+# the local part to the OS user (vbarzin→wizard, emil.barzin→emo,
+# ancaelena98→ancamilea — keep in sync with /etc/ttyd-user-map, generated
+# from roster.yaml), then serves /home/<os_user>/code/learn (file_server
+# browse). Canonical Caddyfile: scripts/devvm-caddyfile — deploy with
 #   sudo install -m 644 scripts/devvm-caddyfile /etc/caddy/Caddyfile
 #   sudo systemctl reload caddy
 # Per-user access needs: caddy in group code-shared (wizard's 770 ~/code);
 # other users opt in with `chmod o+x ~` (their ~/code is world-readable).
 # Header-trust model matches ttyd :7681 / t3-dispatch: backends trust
-# X-Authentik-Username from the cluster proxy; the Caddy regex confines it
-# to a plain username (no '/', no '..') so the docroot can't be steered.
+# X-Authentik-Username from the cluster proxy; the Caddy regex confines the
+# local part to a plain username (no '/', no leading dot) so the docroot
+# can't be steered, and unmapped users fall to a nonexistent root (404).
 
 variable "tls_secret_name" {
   type      = string
