@@ -42,14 +42,14 @@ locals {
   # STORAGE_DIR points at the RWX NFS PVC — the app's default ./var is not
   # writable by the non-root user.
   app_env = {
-    AUTH_MODE     = "normal"
+    AUTH_MODE = "normal"
     # Open-signup abuse controls sit behind Traefik (tripit ADR-0028, #95): trust
     # the proxy's X-Forwarded-For so the per-IP rate-limit keys on the real client,
     # not the shared ingress pod IP. (The PoW captcha is the primary control.)
     TRUST_FORWARDED_FOR = "true"
-    OIDC_ISSUER   = "https://authentik.viktorbarzin.me/application/o/tripit-app/"
-    OIDC_JWKS_URL = "https://authentik.viktorbarzin.me/application/o/tripit-app/jwks/"
-    OIDC_AUDIENCE = "tripit-app"
+    OIDC_ISSUER         = "https://authentik.viktorbarzin.me/application/o/tripit-app/"
+    OIDC_JWKS_URL       = "https://authentik.viktorbarzin.me/application/o/tripit-app/jwks/"
+    OIDC_AUDIENCE       = "tripit-app"
     # OTA Web bundles (ADR-0014): the signed zip URL must point at the
     # bearer-only host — the in-app request-derived base would be wrong
     # behind the proxy (uvicorn doesn't trust forwarded headers).
@@ -70,15 +70,15 @@ locals {
     WEATHER_PROVIDER = "openmeteo"
     # Geocodes lodging addresses -> coords for the per-city itinerary weather
     # (Open-Meteo keyless geocoding API; results cached in the geocode_cache table).
-    GEOCODER_PROVIDER   = "openmeteo"
-    PUSH_PROVIDER       = "webpush"
+    GEOCODER_PROVIDER = "openmeteo"
+    PUSH_PROVIDER     = "webpush"
     # Real LLM on the Deployment too (was fake): in-app reel-URL paste (#120) and
     # booking share run ingest in the web pod. llama-cpp primary + claude-agent
     # fallback (ADR-0033). qwen3-8b segfaults on the current llama-swap image, so
     # use qwen3vl-8b (matches the ingest-plans CronJob).
-    LLM_MODE            = "llamacpp"
-    LLM_MODEL           = "qwen3vl-8b"
-    LLM_ENDPOINT        = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+    LLM_MODE     = "llamacpp"
+    LLM_MODEL    = "qwen3vl-8b"
+    LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
     # Reel-route POI geocoding (ADR-0031/0033) for the in-app paste path too.
     REEL_GEOCODER_PROVIDER = "nominatim"
     # The REEL FETCHER (ADR-0031): anonymous IG/TikTok read via yt-dlp (the IG
@@ -86,7 +86,7 @@ locals {
     # unset = yt-dlp only, which works). Was UNSET -> FakeReelExtractor returned a
     # CANNED caption, so every pasted/forwarded reel produced a DUMMY place.
     # Verified: yt-dlp reads a real IG /p/ caption from the cluster, no doc_id.
-    REEL_PROVIDER = "anonymous"
+    REEL_PROVIDER       = "anonymous"
     MAIL_INGEST_ENABLED = "false"
     # Outbound mail (native-auth signup-verification + account recovery, linked-
     # email verification, trip-share invites) — submitted via the cluster
@@ -121,6 +121,19 @@ locals {
     # keep serving), so the env landed AFTER that image rolled out.
     FARE_PROVIDER = "playwright"
     FARE_CDP_URL  = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+    # Live flight-Offer search (tripit ADR-0046): concrete flights (airline,
+    # times, stops, price, fare brand, cabin/checked bag counts) scraped from
+    # Momondo via the SHARED in-cluster FlareSolverr in ns servarr — the *arr
+    # indexers' Cloudflare-bypass browser (a real browser that renders Momondo's
+    # SPA; verified rendering result cards from the cluster egress IP with no
+    # Cloudflare challenge). Same rate-limit/cache/back-off + degrade-to-empty
+    # contract as FARE_PROVIDER; one serial shared browser, so this is for
+    # low-volume individual (route,date) lookups only, never bulk sweeps. NOTE:
+    # OfferMode `momondo` only exists in images >= the ADR-0046 offer slice
+    # (live in dec7b61e), so this env lands AFTER that rollout — same image-first
+    # hold-order as FARE_PROVIDER (an older image would crash-loop on the enum).
+    OFFER_PROVIDER         = "momondo"
+    OFFER_FLARESOLVERR_URL = "http://flaresolverr.servarr.svc.cluster.local:80/v1"
     # Live lodging-price scrape (tripit ADR-0025, issue #78): the lodging twin of
     # FARE_PROVIDER — Playwright driving the SHARED chrome-service browser over CDP
     # to read Booking.com + Airbnb nightly rates. Same rate-limit/cache/back-off +
@@ -616,12 +629,12 @@ locals {
         # the global GEOCODER_PROVIDER=openmeteo which stays city-level for
         # weather/tours. Only this CronJob runs the reel route (ingest-mail).
         REEL_GEOCODER_PROVIDER = "nominatim"
-        IMAP_HOST           = "mailserver.mailserver.svc.cluster.local"
-        IMAP_PORT           = "993"
-        IMAP_USER           = "spam@viktorbarzin.me"
-        IMAP_FOLDER         = "INBOX"
-        IMAP_USE_SSL        = "true"
-        IMAP_SEARCH         = "TO \"plans@viktorbarzin.me\""
+        IMAP_HOST              = "mailserver.mailserver.svc.cluster.local"
+        IMAP_PORT              = "993"
+        IMAP_USER              = "spam@viktorbarzin.me"
+        IMAP_FOLDER            = "INBOX"
+        IMAP_USE_SSL           = "true"
+        IMAP_SEARCH            = "TO \"plans@viktorbarzin.me\""
       }
     }
     # Proactive nudges (travel-agent merged into tripit, beads code-muqi).
