@@ -41,16 +41,28 @@ scrape_configs:
     journal:
       max_age: 12h
       json: false
-      path: /var/log/journal
+      # path deliberately UNSET (2026-07-09): empty = sd_journal default open,
+      # which follows BOTH /run/log/journal and /var/log/journal. A hardcoded
+      # /var/log/journal silently shipped NOTHING from 2026-06-30 12:28 (the
+      # code-oflt Storage=volatile drop-in moved the live journal to /run) until
+      # 2026-07-09 — no errors anywhere; found only because the t3-watchdog
+      # live-fire drill's alert never arrived. Dead-man alert: DevvmJournalSilent.
       labels:
         host: devvm
         job: devvm-journal
     relabel_configs:
       - source_labels: ['__journal__systemd_unit']
         target_label: unit
-      - source_labels: ['__journal_priority_keyword']
-        target_label: level
+      # identifier ONLY for the allowlisted tags that Loki rules/forensics key on.
+      # The old unconditional identifier + level labels made stream cardinality
+      # identifier x level x unit — a busy dev box explodes that past Loki's
+      # GLOBAL 5000-active-stream cap (shared single anonymous tenant), and Loki
+      # then 429-rejects NEW streams for everyone ("maximum active stream limit
+      # exceeded", seen 2026-07-09 during the 12h replay; also the likely source
+      # of the historic 1M ingester_error drops). level is dropped entirely —
+      # nothing queries it; grep the line text instead.
       - source_labels: ['__journal_syslog_identifier']
+        regex: '(t3-.*|claude-auth-sync|sshd.*|sudo|kernel|earlyoom|promtail)'
         target_label: identifier
       # sshd auth lines -> job=sshd-devvm (parity with the pve shipper's sshd-pve).
       - source_labels: ['__journal_syslog_identifier']
