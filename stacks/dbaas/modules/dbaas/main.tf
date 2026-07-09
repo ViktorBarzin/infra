@@ -43,35 +43,12 @@ resource "kubernetes_namespace" "dbaas" {
   }
 }
 
-# Override Kyverno tier-1-cluster LimitRange (max 4Gi) to allow MySQL 6Gi limit
-resource "kubernetes_limit_range" "dbaas" {
-  metadata {
-    name      = "tier-defaults"
-    namespace = kubernetes_namespace.dbaas.metadata[0].name
-  }
-  lifecycle {
-    # This object is dual-owned: TF declares the content (the 6Gi override)
-    # while Kyverno's generate-limitrange-by-tier stamps its bookkeeping
-    # labels (generate.kyverno.io/*, app.kubernetes.io/managed-by). Without
-    # this, every apply strips those labels and Kyverno re-adds them.
-    ignore_changes = [metadata[0].labels]
-  }
-  spec {
-    limit {
-      type = "Container"
-      default = {
-        memory = "256Mi"
-      }
-      default_request = {
-        cpu    = "50m"
-        memory = "256Mi"
-      }
-      max = {
-        memory = "8Gi"
-      }
-    }
-  }
-}
+# The dbaas LimitRange (tier-defaults) is OWNED BY KYVERNO — do not re-add a
+# TF copy. The old TF override existed to raise the tier-1-cluster max above
+# 4Gi for MySQL, but generate-limitrange-by-tier now generates max=8Gi itself
+# and runs synchronize=true, so the TF copy only fought the policy over
+# defaultRequest.cpu (50m vs 100m) on every apply (issue #68 churn). Removed
+# from config + state 2026-07-09 (state rm, live object untouched).
 
 resource "kubernetes_resource_quota" "dbaas" {
   metadata {
