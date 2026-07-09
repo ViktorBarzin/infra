@@ -22,7 +22,7 @@ RUN apk add --no-cache \
 # Terraform
 RUN curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" \
     -o /tmp/terraform.zip \
-    && unzip /tmp/terraform.zip -d /usr/local/bin/ \
+    && unzip -o /tmp/terraform.zip terraform -d /usr/local/bin/ \
     && rm /tmp/terraform.zip \
     && terraform version
 
@@ -48,7 +48,7 @@ RUN curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/ku
 # because scripts/tg swallows stderr ("vault: not found").
 RUN curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" \
     -o /tmp/vault.zip \
-    && unzip /tmp/vault.zip -d /usr/local/bin/ \
+    && unzip -o /tmp/vault.zip vault -d /usr/local/bin/ \
     && rm /tmp/vault.zip \
     && vault version
 
