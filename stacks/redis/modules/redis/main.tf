@@ -169,6 +169,10 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
       # semantic downgrade) rejected `aof-load-corrupt-tail-max-size` and
       # crashed redis. Both LABEL + ANNOTATION required for full opt-out.
       "keel.sh/policy" = "never"
+      # Declared because the sync-tier-label-from-namespace Kyverno policy
+      # stamps it live; without it every apply strips the label and the
+      # policy re-adds it (perma-drift that fed provider identity bugs).
+      tier = var.tier
     }
     annotations = {
       "keel.sh/policy" = "never"
