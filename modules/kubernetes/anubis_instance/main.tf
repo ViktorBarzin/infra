@@ -181,7 +181,11 @@ resource "kubernetes_config_map" "policy" {
 # cross-validatable, enabling cross-subdomain SSO.
 resource "kubernetes_manifest" "ed25519_secret" {
   manifest = {
-    apiVersion = "external-secrets.io/v1beta1"
+    # v1 since the ESO 2.6.0 migration (2026-06-22) — v1beta1 was removed from
+    # the CRD, and this inline manifest was the one declaration the migration
+    # missed: every apply of every Anubis-fronted stack failed GVK discovery
+    # ("CRD may not be installed") from 06-22 until this fix (2026-07-09).
+    apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
       name      = "${local.full_name}-key"
