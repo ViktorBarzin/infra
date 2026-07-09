@@ -158,11 +158,24 @@ resource "kubernetes_deployment" "wealthfolio" {
         }
       }
       spec {
+        # Since 3.3.x upstream ships the image with USER 1000:1000 (3.2.1 ran
+        # as root), but the PVC data predates that and is root-owned. fsGroup
+        # makes kubelet chgrp the volume to 1000 with group-rw at mount, so
+        # the app can write the SQLite DB + WAL. Sidecars/CronJobs unaffected:
+        # backup runs as root, wealthfolio-sync (uid 10001) only reads via
+        # the API; in-tree NFS volumes are skipped by fsGroup entirely.
+        security_context {
+          fs_group               = 1000
+          fs_group_change_policy = "OnRootMismatch"
+        }
         container {
-          # Pinned 2026-05-26: prior live was :3.2.1, Keel rolled it to :2.0
-          # on 2026-05-26 03:13, then truncated to :3.2 at 06:46 (Keel string
-          # match dropped the patch suffix). Restore the patch version.
-          image = "afadil/wealthfolio:3.2.1"
+          # Floor tag only — Keel owns the live tag (image is ignore_changes).
+          # Keel's injected policy is `patch`, so it never crosses minors;
+          # minor/major bumps are manual: update this floor AND roll the
+          # deployment (kubectl set image, the standard deploy mechanism).
+          # History: pinned 3.2.1 on 2026-05-26 after the Keel tag-rewrite
+          # incident (:3.2.1 -> :2.0 -> :3.2); bumped to 3.6.1 on 2026-07-08.
+          image = "afadil/wealthfolio:3.6.1"
           name  = "wealthfolio"
           port {
             container_port = 8080
