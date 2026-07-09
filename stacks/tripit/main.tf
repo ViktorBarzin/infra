@@ -112,14 +112,18 @@ locals {
     TTS_MODE     = "openai_compatible"
     TTS_BASE_URL = "http://chatterbox-tts.tts.svc.cluster.local:8000"
     TTS_MODEL    = "chatterbox"
-    # Live flight-fare scrape (tripit ADR-0007, issue #18): Playwright driving
-    # the SHARED chrome-service browser over CDP (no per-pod browser). The
-    # provider rate-limits (30s min interval), caches 6h, backs off 300s on
-    # failure, and degrades to manual entry — never blocks the grid. NOTE:
-    # FareMode `playwright` only exists in images >= the #18 slice; setting
-    # this against an older image crash-loops on the unknown enum (old pods
-    # keep serving), so the env landed AFTER that image rolled out.
-    FARE_PROVIDER = "playwright"
+    # Flight FARE source for Decision cells + Routing leg pricing (tripit
+    # ADR-0046, code-3zue). `fli` hits Google Flights' internal RPC over plain
+    # HTTP — dozens of priced results per sub-second call, no browser, and NO
+    # min-interval gate, so Routing (ADR-0024) can price many legs concurrently.
+    # This SUPERSEDES the old `playwright` Google-Flights browser scrape (issue
+    # #18), which priced everything None in prod: fli is bulk-friendly where the
+    # browser was not. NOTE: FareMode `fli` only exists in images >= the ADR-0046
+    # code-3zue slice (live in 3005b3dd), so this env landed AFTER that rollout —
+    # same image-first hold-order as before (an older image crash-loops on the
+    # unknown enum). fli needs no CDP/browser; FARE_CDP_URL is retained only for
+    # a manual revert to FARE_PROVIDER=playwright and is otherwise unused.
+    FARE_PROVIDER = "fli"
     FARE_CDP_URL  = "http://chrome-service.chrome-service.svc.cluster.local:9222"
     # Live flight-Offer search (tripit ADR-0046): concrete flights (airline,
     # times, stops, price, fare brand, cabin/checked bag counts) scraped from
