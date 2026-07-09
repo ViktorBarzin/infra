@@ -411,9 +411,18 @@ resource "kubernetes_manifest" "buffering" {
 }
 
 # Cloudflare DNS records — created automatically when dns_type is set.
-# Proxied: CNAME to Cloudflare tunnel. Non-proxied: A + AAAA to public IP.
+# Non-proxied: A + AAAA to public IP. Internal: A to the internal LB.
+#
+# Proxied hostnames ride the zone-wide * wildcard CNAME (ADR-0021, declared
+# in stacks/cloudflared) — dns_type = "proxied" still means "publicly served
+# via the Cloudflare tunnel" and still drives the external-monitor
+# annotation, but creates NO per-name record (the free plan caps the zone at
+# 200 records; per-name CNAMEs duplicated the tunnel's *.viktorbarzin.me
+# catch-all). ONE exception: a DNS wildcard never matches the zone apex, so
+# the root-domain ingress (stacks/blog, effective host == root_domain →
+# dns_name "@") keeps its explicit record.
 resource "cloudflare_record" "proxied" {
-  count           = var.dns_type == "proxied" ? 1 : 0
+  count           = var.dns_type == "proxied" && local.dns_name == "@" ? 1 : 0
   name            = local.dns_name
   content         = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
   proxied         = true
