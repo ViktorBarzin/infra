@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="820" viewBox="0 0 1240 820" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <!-- viktorbarzin.me public edge, DNS & offsite failover — as-built 2026-07-08 (ADR-0019/0020).
+       Referenced from docs/architecture/dns.md and docs/adr/0020. Regenerate by hand-editing;
+       colors follow the dataviz reference palette (identity by path family, status red = outage flow). -->
+  <defs>
+    <marker id="ab" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" fill="#2a78d6"/></marker>
+    <marker id="av" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" fill="#4a3aa7"/></marker>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" fill="#d03b3b"/></marker>
+    <marker id="ao" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" fill="#eb6834"/></marker>
+    <marker id="aa" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" fill="#1baf7a"/></marker>
+  </defs>
+
+  <rect width="1240" height="820" fill="#f9f9f7"/>
+  <text x="36" y="44" font-size="21" font-weight="650" fill="#0b0b0b">viktorbarzin.me — public edge, DNS &amp; offsite failover</text>
+  <text x="36" y="66" font-size="12.5" fill="#52514e">as-built 2026-07-08 · ADR-0019 (backup MX) + ADR-0020 (outage failover &amp; external vantage) · Cloudflare zone 185/200 records after the record cleanup</text>
+
+  <!-- ======================= VISITORS ======================= -->
+  <rect x="36" y="100" width="170" height="120" rx="10" fill="#fcfcfb" stroke="#d8d7d2"/>
+  <text x="52" y="126" font-size="11" letter-spacing="1.2" fill="#52514e">VISITORS</text>
+  <text x="52" y="150" font-size="13.5" font-weight="600" fill="#0b0b0b">Browsers &amp; apps</text>
+  <text x="52" y="170" font-size="11.5" fill="#52514e">public DNS lookups,</text>
+  <text x="52" y="186" font-size="11.5" fill="#52514e">HTTPS to edge or WAN IP</text>
+
+  <rect x="36" y="560" width="170" height="86" rx="10" fill="#fcfcfb" stroke="#d8d7d2"/>
+  <text x="52" y="586" font-size="11" letter-spacing="1.2" fill="#52514e">SENDER MTAs</text>
+  <text x="52" y="610" font-size="13.5" font-weight="600" fill="#0b0b0b">Inbound email</text>
+  <text x="52" y="628" font-size="11.5" fill="#52514e">MX pri 1 → mail · pri 20 → mx2</text>
+
+  <!-- ======================= CLOUDFLARE ======================= -->
+  <rect x="270" y="100" width="280" height="330" rx="10" fill="#fcfcfb" stroke="#d8d7d2"/>
+  <text x="286" y="126" font-size="11" letter-spacing="1.2" fill="#52514e">CLOUDFLARE (FREE PLAN)</text>
+  <text x="286" y="150" font-size="13.5" font-weight="600" fill="#0b0b0b">DNS zone — 185/200 records</text>
+  <text x="286" y="168" font-size="11.5" fill="#52514e">99 proxied CNAMEs → tunnel</text>
+  <text x="286" y="184" font-size="11.5" fill="#52514e">34 grey A → 176.12.22.76 (+33 AAAA)</text>
+  <text x="286" y="200" font-size="11.5" fill="#52514e">status + mx2 grey A → 92.5.132.215</text>
+
+  <rect x="286" y="218" width="248" height="92" rx="8" fill="none" stroke="#2a78d6" stroke-width="1.5"/>
+  <text x="298" y="240" font-size="12.5" font-weight="600" fill="#0b0b0b">outage-failover Worker</text>
+  <text x="298" y="257" font-size="11" fill="#52514e">route *.viktorbarzin.me/* · pass-through;</text>
+  <text x="298" y="272" font-size="11" fill="#52514e">intercepts 530/521–523 (browser GET/HTML)</text>
+  <text x="298" y="287" font-size="11" fill="#52514e">→ 503 + Retry-After, baked-in status page</text>
+  <text x="298" y="302" font-size="11" fill="#52514e">quota 100k/day (~20k used) · fail-open</text>
+
+  <rect x="286" y="322" width="248" height="60" rx="8" fill="none" stroke="#eda100" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <text x="298" y="343" font-size="12" font-weight="600" fill="#0b0b0b">known gap: rybbit-analytics Worker</text>
+  <text x="298" y="359" font-size="11" fill="#52514e">26 per-host routes (apex, www, immich…)</text>
+  <text x="298" y="374" font-size="11" fill="#52514e">pre-empt the wildcard → no failover page</text>
+
+  <text x="286" y="412" font-size="11" fill="#52514e">CrowdSec edge ban list · bot fight mode</text>
+
+  <!-- ======================= HOMELAB ======================= -->
+  <rect x="610" y="100" width="300" height="430" rx="10" fill="#fcfcfb" stroke="#d8d7d2"/>
+  <text x="626" y="126" font-size="11" letter-spacing="1.2" fill="#52514e">HOMELAB (SOFIA)</text>
+
+  <rect x="626" y="140" width="268" height="106" rx="8" fill="none" stroke="#d8d7d2"/>
+  <text x="638" y="162" font-size="12.5" font-weight="600" fill="#0b0b0b">Edge: TP-Link → pfSense</text>
+  <text x="638" y="180" font-size="11" fill="#52514e">WAN 176.12.22.76 (static, no DDNS yet)</text>
+  <text x="638" y="196" font-size="11" fill="#52514e">443 NAT → Traefik LB 10.0.20.203</text>
+  <text x="638" y="212" font-size="11" fill="#52514e">HAProxy mail 25/465/587/993</text>
+  <text x="638" y="228" font-size="11" fill="#52514e">WireGuard hub :51821</text>
+
+  <rect x="626" y="260" width="268" height="82" rx="8" fill="none" stroke="#d8d7d2"/>
+  <text x="638" y="282" font-size="12.5" font-weight="600" fill="#0b0b0b">Kubernetes ingress</text>
+  <text x="638" y="300" font-size="11" fill="#52514e">cloudflared ×3 ← tunnel from CF edge</text>
+  <text x="638" y="316" font-size="11" fill="#52514e">Traefik ×3 (ETP=Local) · error-pages 404</text>
+  <text x="638" y="332" font-size="11" fill="#52514e">catch-all for unmatched hosts</text>
+
+  <rect x="626" y="356" width="268" height="66" rx="8" fill="none" stroke="#d8d7d2"/>
+  <text x="638" y="378" font-size="12.5" font-weight="600" fill="#0b0b0b">~130 services</text>
+  <text x="638" y="396" font-size="11" fill="#52514e">blog · immich · tripit · nextcloud · mail…</text>
+  <text x="638" y="412" font-size="11" fill="#52514e">split-horizon: LAN resolves via Technitium</text>
+
+  <rect x="626" y="436" width="268" height="76" rx="8" fill="none" stroke="#1baf7a" stroke-width="1.5"/>
+  <text x="638" y="458" font-size="12.5" font-weight="600" fill="#0b0b0b">In-cluster monitoring</text>
+  <text x="638" y="476" font-size="11" fill="#52514e">Prometheus + blackbox: StatusPageDown,</text>
+  <text x="638" y="492" font-size="11" fill="#52514e">BackupMxDown, egress probes → #alerts</text>
+
+  <!-- ======================= OFFSITE MX2 ======================= -->
+  <rect x="970" y="100" width="234" height="430" rx="10" fill="#fcfcfb" stroke="#d8d7d2"/>
+  <text x="986" y="126" font-size="11" letter-spacing="1.2" fill="#52514e">OFFSITE — ORACLE FRANKFURT</text>
+  <text x="986" y="150" font-size="13.5" font-weight="600" fill="#0b0b0b">mx2 · 92.5.132.215</text>
+  <text x="986" y="166" font-size="11" fill="#52514e">Always-Free VM · 1 GB · disposable</text>
+  <text x="986" y="181" font-size="11" fill="#52514e">(rebuilt from stacks/backup-mx)</text>
+
+  <rect x="986" y="196" width="202" height="88" rx="8" fill="none" stroke="#4a3aa7" stroke-width="1.5"/>
+  <text x="998" y="218" font-size="12.5" font-weight="600" fill="#0b0b0b">nginx + Let's Encrypt</text>
+  <text x="998" y="236" font-size="11" fill="#52514e">status.viktorbarzin.me</text>
+  <text x="998" y="252" font-size="11" fill="#52514e">/error.html (self-contained)</text>
+  <text x="998" y="268" font-size="11" fill="#52514e">/myip echo · CORS on /api</text>
+
+  <rect x="986" y="296" width="202" height="88" rx="8" fill="none" stroke="#1baf7a" stroke-width="1.5"/>
+  <text x="998" y="318" font-size="12.5" font-weight="600" fill="#0b0b0b">gatus — external vantage</text>
+  <text x="998" y="336" font-size="11" fill="#52514e">13 probes / 60s · 3 edge sentinels</text>
+  <text x="998" y="352" font-size="11" fill="#52514e">edge-unreachable → Slack #alerts</text>
+  <text x="998" y="368" font-size="11" fill="#52514e">(threshold 3, resolve notices)</text>
+
+  <rect x="986" y="396" width="202" height="88" rx="8" fill="none" stroke="#eb6834" stroke-width="1.5"/>
+  <text x="998" y="418" font-size="12.5" font-weight="600" fill="#0b0b0b">postfix — backup MX pri 20</text>
+  <text x="998" y="436" font-size="11" fill="#52514e">queues ≤30 d during outages</text>
+  <text x="998" y="452" font-size="11" fill="#52514e">drains via WireGuard 10.3.2.10</text>
+  <text x="998" y="468" font-size="11" fill="#52514e">endpoint = vpn.viktorbarzin.me</text>
+
+  <text x="986" y="508" font-size="11" fill="#52514e">+ keepalive-cpu (reclaim defence)</text>
+
+  <!-- ======================= FLOWS ======================= -->
+  <!-- proxied steady state: visitor -> CF -> tunnel -> traefik -->
+  <path d="M206,150 C240,150 240,160 268,164" fill="none" stroke="#2a78d6" stroke-width="2" marker-end="url(#ab)"/>
+  <path d="M550,170 C590,170 590,290 624,296" fill="none" stroke="#2a78d6" stroke-width="2" marker-end="url(#ab)"/>
+  <text x="556" y="252" font-size="10.5" fill="#2a78d6">tunnel</text>
+  <!-- direct: visitor -> pfsense -->
+  <path d="M206,190 C400,196 480,186 624,190 " fill="none" stroke="#4a3aa7" stroke-width="2" marker-end="url(#av)"/>
+  <text x="380" y="181" font-size="10.5" fill="#4a3aa7">34 grey-A hosts, direct to WAN</text>
+  <!-- visitor -> status page on mx2 -->
+  <path d="M206,132 C560,84 800,90 984,140 " fill="none" stroke="#4a3aa7" stroke-width="2" marker-end="url(#av)"/>
+  <text x="600" y="94" font-size="10.5" fill="#4a3aa7">status.viktorbarzin.me (grey A — survives homelab + tunnel outage)</text>
+  <!-- outage: worker -> visitor -->
+  <path d="M284,264 C240,268 228,220 214,222 " fill="none" stroke="#d03b3b" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ar)"/>
+  <text x="70" y="248" font-size="10.5" fill="#d03b3b">origin down: branded 503</text>
+  <text x="70" y="262" font-size="10.5" fill="#d03b3b">page + live status via JS</text>
+  <!-- mail flows -->
+  <path d="M206,600 C400,600 500,232 626,226 " fill="none" stroke="#eb6834" stroke-width="2" marker-end="url(#ao)"/>
+  <text x="300" y="576" font-size="10.5" fill="#eb6834">SMTP 25 — MX pri 1</text>
+  <path d="M206,632 C620,700 900,600 984,478 " fill="none" stroke="#eb6834" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ao)"/>
+  <text x="470" y="668" font-size="10.5" fill="#eb6834">homelab down: MX pri 20 queues on mx2</text>
+  <path d="M984,442 C880,420 760,300 700,248 " fill="none" stroke="#eb6834" stroke-width="2" stroke-dasharray="2 3" marker-end="url(#ao)"/>
+  <text x="760" y="286" font-size="10.5" fill="#eb6834">WG drain → mailserver</text>
+  <!-- monitoring -->
+  <path d="M984,340 C740,360 560,300 552,268 " fill="none" stroke="#1baf7a" stroke-width="2" stroke-dasharray="2 3" marker-end="url(#aa)"/>
+  <text x="700" y="330" font-size="10.5" fill="#1baf7a">probes the public paths from outside</text>
+  <path d="M894,470 C930,470 950,420 984,410 " fill="none" stroke="#1baf7a" stroke-width="2" stroke-dasharray="2 3" marker-end="url(#aa)"/>
+  <text x="900" y="500" font-size="10.5" fill="#1baf7a">watch the watcher</text>
+
+  <!-- ======================= LEGEND ======================= -->
+  <rect x="36" y="712" width="1168" height="72" rx="10" fill="#fcfcfb" stroke="#d8d7d2"/>
+  <line x1="56" y1="738" x2="96" y2="738" stroke="#0b0b0b" stroke-width="2"/><text x="104" y="742" font-size="11.5" fill="#0b0b0b">steady state</text>
+  <line x1="196" y1="738" x2="236" y2="738" stroke="#0b0b0b" stroke-width="2" stroke-dasharray="6 4"/><text x="244" y="742" font-size="11.5" fill="#0b0b0b">outage / failover</text>
+  <line x1="366" y1="738" x2="406" y2="738" stroke="#0b0b0b" stroke-width="2" stroke-dasharray="2 3"/><text x="414" y="742" font-size="11.5" fill="#0b0b0b">monitoring / drain</text>
+  <circle cx="560" cy="738" r="5" fill="#2a78d6"/><text x="572" y="742" font-size="11.5" fill="#0b0b0b">proxied web</text>
+  <circle cx="672" cy="738" r="5" fill="#4a3aa7"/><text x="684" y="742" font-size="11.5" fill="#0b0b0b">direct (grey-cloud)</text>
+  <circle cx="812" cy="738" r="5" fill="#eb6834"/><text x="824" y="742" font-size="11.5" fill="#0b0b0b">mail</text>
+  <circle cx="884" cy="738" r="5" fill="#1baf7a"/><text x="896" y="742" font-size="11.5" fill="#0b0b0b">monitoring</text>
+  <circle cx="996" cy="738" r="5" fill="#d03b3b"/><text x="1008" y="742" font-size="11.5" fill="#0b0b0b">outage page</text>
+  <text x="56" y="768" font-size="11" fill="#52514e">Detection &amp; drills: test-failover.viktorbarzin.me is a permanent synthetic-530 host; full drill = scale cloudflared to 0 (runbooks/backup-mx.md). LAN clients resolve everything via Technitium split-horizon (superset rule: status/mx2 have internal A records).</text>
+</svg>
