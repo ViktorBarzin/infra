@@ -105,11 +105,11 @@
   <!-- ======================= FLOWS ======================= -->
   <!-- proxied steady state: visitor -> CF -> tunnel -> traefik -->
   <path d="M206,150 C240,150 240,160 268,164" fill="none" stroke="#2a78d6" stroke-width="2" marker-end="url(#ab)"/>
-  <path d="M550,170 C590,170 590,290 624,296" fill="none" stroke="#2a78d6" stroke-width="2" marker-end="url(#ab)"/>
-  <text x="556" y="252" font-size="10.5" fill="#2a78d6">tunnel</text>
-  <!-- direct: visitor -> pfsense -->
-  <path d="M206,190 C400,196 480,186 624,190 " fill="none" stroke="#4a3aa7" stroke-width="2" marker-end="url(#av)"/>
-  <text x="380" y="181" font-size="10.5" fill="#4a3aa7">34 grey-A hosts, direct to WAN</text>
+  <path d="M550,240 C580,250 600,278 622,294" fill="none" stroke="#2a78d6" stroke-width="2" marker-end="url(#ab)"/>
+  <text x="552" y="228" font-size="10.5" fill="#2a78d6">tunnel</text>
+  <!-- direct: visitor -> pfsense, routed under the CF box then up the corridor -->
+  <path d="M206,202 C270,470 500,478 566,438 C588,398 602,300 622,228" fill="none" stroke="#4a3aa7" stroke-width="2" marker-end="url(#av)"/>
+  <text x="252" y="497" font-size="10.5" fill="#4a3aa7">34 grey-A hosts — direct to the WAN IP, no Cloudflare</text>
   <!-- visitor -> status page on mx2 -->
   <path d="M206,132 C560,84 800,90 984,140 " fill="none" stroke="#4a3aa7" stroke-width="2" marker-end="url(#av)"/>
   <text x="600" y="94" font-size="10.5" fill="#4a3aa7">status.viktorbarzin.me (grey A — survives homelab + tunnel outage)</text>
@@ -118,17 +118,18 @@
   <text x="70" y="248" font-size="10.5" fill="#d03b3b">origin down: branded 503</text>
   <text x="70" y="262" font-size="10.5" fill="#d03b3b">page + live status via JS</text>
   <!-- mail flows -->
-  <path d="M206,600 C400,600 500,232 626,226 " fill="none" stroke="#eb6834" stroke-width="2" marker-end="url(#ao)"/>
-  <text x="300" y="576" font-size="10.5" fill="#eb6834">SMTP 25 — MX pri 1</text>
+  <path d="M206,588 C380,636 546,512 592,434 C606,380 612,296 626,238" fill="none" stroke="#eb6834" stroke-width="2" marker-end="url(#ao)"/>
+  <text x="366" y="650" font-size="10.5" fill="#eb6834">SMTP 25 — MX pri 1</text>
   <path d="M206,632 C620,700 900,600 984,478 " fill="none" stroke="#eb6834" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ao)"/>
-  <text x="470" y="668" font-size="10.5" fill="#eb6834">homelab down: MX pri 20 queues on mx2</text>
-  <path d="M984,442 C880,420 760,300 700,248 " fill="none" stroke="#eb6834" stroke-width="2" stroke-dasharray="2 3" marker-end="url(#ao)"/>
-  <text x="760" y="286" font-size="10.5" fill="#eb6834">WG drain → mailserver</text>
+  <text x="470" y="678" font-size="10.5" fill="#eb6834">homelab down: MX pri 20 queues on mx2</text>
+  <path d="M984,436 C946,414 918,322 898,242" fill="none" stroke="#eb6834" stroke-width="2" stroke-dasharray="2 3" marker-end="url(#ao)"/>
+  <text x="900" y="306" font-size="10.5" fill="#eb6834">WG drain</text>
+  <text x="900" y="320" font-size="10.5" fill="#eb6834">→ mailserver</text>
   <!-- monitoring -->
-  <path d="M984,340 C740,360 560,300 552,268 " fill="none" stroke="#1baf7a" stroke-width="2" stroke-dasharray="2 3" marker-end="url(#aa)"/>
-  <text x="700" y="330" font-size="10.5" fill="#1baf7a">probes the public paths from outside</text>
-  <path d="M894,470 C930,470 950,420 984,410 " fill="none" stroke="#1baf7a" stroke-width="2" stroke-dasharray="2 3" marker-end="url(#aa)"/>
-  <text x="900" y="500" font-size="10.5" fill="#1baf7a">watch the watcher</text>
+  <path d="M984,352 C820,562 640,560 572,436" fill="none" stroke="#1baf7a" stroke-width="2" stroke-dasharray="2 3" marker-end="url(#aa)"/>
+  <text x="618" y="578" font-size="10.5" fill="#1baf7a">probes the public paths from outside</text>
+  <path d="M896,474 C932,480 962,420 982,368" fill="none" stroke="#1baf7a" stroke-width="2" stroke-dasharray="2 3" marker-end="url(#aa)"/>
+  <text x="850" y="522" font-size="10.5" fill="#1baf7a">watch the watcher</text>
 
   <!-- ======================= LEGEND ======================= -->
   <rect x="36" y="712" width="1168" height="72" rx="10" fill="#fcfcfb" stroke="#d8d7d2"/>
