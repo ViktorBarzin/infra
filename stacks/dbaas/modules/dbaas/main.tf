@@ -49,6 +49,13 @@ resource "kubernetes_limit_range" "dbaas" {
     name      = "tier-defaults"
     namespace = kubernetes_namespace.dbaas.metadata[0].name
   }
+  lifecycle {
+    # This object is dual-owned: TF declares the content (the 6Gi override)
+    # while Kyverno's generate-limitrange-by-tier stamps its bookkeeping
+    # labels (generate.kyverno.io/*, app.kubernetes.io/managed-by). Without
+    # this, every apply strips those labels and Kyverno re-adds them.
+    ignore_changes = [metadata[0].labels]
+  }
   spec {
     limit {
       type = "Container"
@@ -143,6 +150,10 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
       # had silently overwritten our annotation=never → patch this turn
       # and Keel patch-bumped mysql:8.4.8 → 8.4.9, stalling the DD upgrade.
       "keel.sh/policy" = "never"
+      # Declared because the sync-tier-label-from-namespace Kyverno policy
+      # stamps it live; without it every apply strips the label and the
+      # policy re-adds it (perma-drift that fed provider identity bugs).
+      tier = var.tier
     }
     # Explicit Keel opt-out. The dbaas namespace is already excluded
     # from the `inject-keel-annotations` Kyverno ClusterPolicy, but the
@@ -1248,6 +1259,11 @@ resource "kubernetes_service" "postgresql_lb" {
       "metallb.universe.tf/loadBalancerIPs" = "10.0.20.200"
       "metallb.io/allow-shared-ip"          = "shared"
     }
+  }
+  lifecycle {
+    # MetalLB's controller writes this annotation on the live object;
+    # without the ignore every apply strips it and MetalLB re-adds it.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
   }
   spec {
     type = "LoadBalancer"
