@@ -226,15 +226,32 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
 - Serves K8s VLAN clients and pfSense's own DNS needs
 - Aliases: `technitium_dns` (10.0.20.201), `k8s_shared_lb` (10.0.20.200)
 
-**External (Cloudflare)**:
-- Manages ~50 public domains, all under `viktorbarzin.me`
-- **Proxied domains** (orange cloud, traffic via Cloudflare CDN):
-  - blog, hackmd, privatebin, url, echo, f1tv, excalidraw, send, audiobookshelf, jsoncrack, ntfy, cyberchef, homepage, linkwarden, changedetection, tandoor, n8n, stirling-pdf, dashy, city-guesser, travel, netbox
-- **Non-proxied domains** (grey cloud, direct IP resolution):
-  - mail, wg, headscale, immich, calibre, vaultwarden, and other services requiring direct connections
+**External (Cloudflare)** — zone on the Free plan (200-record cap), ~87
+records since the 2026-07-09 wildcard consolidation (ADR-0021):
+- **Proxied hostnames** (orange cloud, via Cloudflare CDN/tunnel): served by
+  ONE wildcard CNAME `*.viktorbarzin.me` → the cloudflared tunnel FQDN
+  (declared in `stacks/cloudflared`). Individual proxied apps have NO
+  per-name DNS record — the tunnel config routes `*.viktorbarzin.me` to
+  Traefik, which routes by Host header. Only the apex `viktorbarzin.me`
+  keeps an explicit proxied CNAME (a DNS wildcard never covers the apex;
+  record owned by `stacks/blog` via the `ingress_factory` "@" carve-out),
+  plus the permanent `test-failover` canary (ADR-0020).
+  **Consequence: every recordless `.me` name resolves and reaches Traefik —
+  "dark by missing DNS" is dead.** Internal-only ingresses must use
+  `dns_type = "internal"` (below) or live on `viktorbarzin.lan`.
+- **Non-proxied domains** (grey cloud, explicit A+AAAA to the WAN IP —
+  explicit records shadow the wildcard): mail, forgejo, immich, headscale,
+  vaultwarden, and other services needing direct connections (large
+  uploads, non-HTTP protocols, QUIC). The central `config.tfvars` list
+  (turn, vpn, xray-reality) is **A-only**: those serve non-web ports
+  (51820/udp, 3478, 7443) that the IPv6 HAProxy bridge (443/80+mail) never
+  carries, so AAAA records only misdirected v6-preferring clients.
 - **Internal-IP domains** (grey cloud, A → `10.0.20.203` Traefik LB, `ingress_factory` `dns_type = "internal"`):
   - highlights-immich, highlights-immich-emo — publicly *resolvable* but only *routable* from home LANs / WG sites / VPN (spokes policy-route `10.0.0.0/8` down the tunnel, so kiosk devices with baked-in URLs need no per-site DNS overrides). The record is reachability, not a gate — enforcement is the `home-lans-only` Traefik ipAllowList (Sofia/London/Valchedrym LANs + 10/8) on the ingress. See `docs/plans/2026-07-04-immich-frame-lan-only-design.md`.
-- CNAME records for proxied domains point to Cloudflared tunnel FQDNs
+  - family, hermes-agent, mladost3, torrserver — household-only apps whose
+    explicit internal record **shadows the `*` wildcard** (without it they
+    would resolve through the proxy and go public). Same `home-lans-only`
+    enforcement.
 
 ### Ingress Flow
 

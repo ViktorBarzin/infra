@@ -282,16 +282,11 @@ resource "kubernetes_manifest" "custom_csp" {
 }
 
 # Cloudflare DNS records — created automatically when dns_type is set.
-resource "cloudflare_record" "proxied" {
-  count           = var.dns_type == "proxied" ? 1 : 0
-  name            = var.name
-  content         = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
-  proxied         = true
-  ttl             = 1
-  type            = "CNAME"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
-}
+# Proxied hostnames create NO record: they ride the zone-wide * wildcard
+# CNAME (ADR-0021, stacks/cloudflared). dns_type = "proxied" still records
+# intent and drives the external-monitor annotation. (This factory never
+# serves the apex, so unlike modules/kubernetes/ingress_factory there is no
+# "@" carve-out.)
 
 resource "cloudflare_record" "non_proxied_a" {
   count           = var.dns_type == "non-proxied" ? 1 : 0

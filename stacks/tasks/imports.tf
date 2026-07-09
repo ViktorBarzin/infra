@@ -45,9 +45,6 @@ import {
   id = "tasks/tasks"
 }
 
-# Cloudflare record ID looked up via the API (zone fd2c5dd4… / record for
-# tasks.viktorbarzin.me, CNAME → the cfargotunnel target, proxied).
-import {
-  to = module.ingress.cloudflare_record.proxied[0]
-  id = "fd2c5dd4efe8fe38958944e74d0ced6d/a8e6901a074c5255d09700d93eaaf705"
-}
+# (The stale cloudflare_record.proxied import stanza was removed 2026-07-09:
+# already applied long ago, and proxied per-name records are gone entirely —
+# tasks.viktorbarzin.me rides the * wildcard, ADR-0021.)

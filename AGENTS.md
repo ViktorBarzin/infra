@@ -95,7 +95,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 ## Key Paths
 - `stacks/<service>/main.tf` — service definition
 - `stacks/platform/modules/<service>/` — core infra modules
-- `modules/kubernetes/ingress_factory/` — standardized ingress with auth, rate limiting, anti-AI, and auto Cloudflare DNS (`dns_type = "proxied"`, `"non-proxied"`, or `"internal"` — a public A record carrying the internal Traefik LB IP for household-only services; pair with the `home-lans-only` ipAllowList middleware, never with `"proxied"`)
+- `modules/kubernetes/ingress_factory/` — standardized ingress with auth, rate limiting, anti-AI, and auto Cloudflare DNS (`dns_type = "proxied"` — no per-name record, rides the zone-wide `*` wildcard CNAME per ADR-0021 (apex `"@"` carve-out excepted); `"non-proxied"` — explicit A/AAAA to the WAN IP, shadows the wildcard; `"internal"` — a public A record carrying the internal Traefik LB IP for household-only services, shadows the wildcard so the name stays dark; pair with the `home-lans-only` ipAllowList middleware, never with `"proxied"`. Since the wildcard, `dns_type = "none"` on a `.me` host is NOT private — recordless names resolve through the tunnel; internal-only ingresses must use `"internal"` or `.lan`)
 - `modules/kubernetes/nfs_volume/` — NFS volume module (CSI-backed, soft mount)
 - `config.tfvars` — non-secret configuration (plaintext)
 - `secrets.sops.json` — all secrets (SOPS-encrypted JSON)
