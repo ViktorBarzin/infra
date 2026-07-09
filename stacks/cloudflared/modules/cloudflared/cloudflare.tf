@@ -100,6 +100,28 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
   }
 }
 
+# Wildcard: ONE proxied CNAME serves every proxied hostname (2026-07-09).
+# The tunnel config above already routes *.viktorbarzin.me → Traefik, which
+# routes by Host header — per-name CNAMEs added nothing but a DNS answer while
+# eating the free-plan 200-records-per-zone cap (hit on 2026-07-04, blocked a
+# deploy). DNS wildcard semantics: any name with an explicit record (apex,
+# non-proxied A/AAAA, "internal" shadows) wins over the wildcard; only
+# recordless names fall through to it. Consequences, accepted deliberately:
+#   - unknown/typo'd subdomains resolve and get Traefik's 404 (was NXDOMAIN);
+#   - a .me ingress with NO record is now publicly reachable — "dark by
+#     missing DNS" is dead; internal-only names MUST use dns_type="internal"
+#     (see docs/adr/0021).
+# The apex is NOT covered by a wildcard — stacks/blog keeps its explicit "@"
+# record via the ingress_factory apex carve-out.
+resource "cloudflare_record" "wildcard" {
+  content = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
+  name    = "*"
+  proxied = true
+  ttl     = 1
+  type    = "CNAME"
+  zone_id = var.cloudflare_zone_id
+}
+
 resource "cloudflare_record" "dns_record" {
   # count   = length(var.cloudflare_proxied_names)
   # name    = var.cloudflare_proxied_names[count.index]
@@ -128,15 +150,13 @@ resource "cloudflare_record" "non_proxied_dns_record" {
 }
 
 
-resource "cloudflare_record" "non_proxied_dns_record_ipv6" {
-  for_each = local.cloudflare_non_proxied_names_map
-  name     = each.key
-  content  = var.public_ipv6
-  proxied  = false
-  ttl      = 1
-  type     = "AAAA"
-  zone_id  = var.cloudflare_zone_id
-}
+# No AAAA for the central non-proxied names (removed 2026-07-09): they serve
+# non-web ports — wireguard 51820/udp, coturn 3478, xray-reality 7443 — that
+# the IPv6 ingress bridge (pfSense HAProxy: 443/80 + mail only, see
+# docs/architecture/networking.md → "IPv6 Ingress") never carries. Their AAAA
+# records pointed v6-preferring clients at closed ports (WireGuard does not
+# fall back to A). Web/mail AAAA records come from ingress_factory
+# "non-proxied" instances, which stay dual-stack.
 
 resource "cloudflare_record" "mail_mx" {
   content  = "mail.viktorbarzin.me"
