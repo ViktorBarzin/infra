@@ -365,6 +365,22 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             {
+              # DEAD-MAN switch for the devvm log pipeline. Every rule in this
+              # group is blind if the devvm journal stops reaching Loki — which
+              # happened SILENTLY 2026-06-30..07-09 (journald went Storage=volatile,
+              # promtail kept tailing the now-empty /var/log/journal; found only
+              # because the t3-watchdog drill's alert never arrived). The devvm
+              # logs every minute (t3 timers), so 30m of absence = pipeline dead.
+              alert  = "DevvmJournalSilent"
+              expr   = "absent_over_time({job=\"devvm-journal\"}[30m]) == 1"
+              for    = "15m"
+              labels = { severity = "critical" }
+              annotations = {
+                summary     = "devvm journal has stopped reaching Loki — ALL devvm alerts are blind"
+                description = "No {job=\"devvm-journal\"} lines for >45m. Every t3/claude-auth alert in this group is non-functional until fixed. Check on the devvm: systemctl status promtail; curl -s localhost:9080/metrics | grep -E 'sent_entries|journal_target_lines|429'; journalctl -u promtail. Config source-of-truth: scripts/devvm-promtail.yaml (journald is Storage=volatile — the journal lives in /run/log/journal; promtail must NOT pin path to /var/log/journal). Loki-side: 429 stream-limit = global 5000 active-stream cap saturated."
+              }
+            },
+            {
               # Per-user Claude refresh/backup/restore exhausted its automatic
               # recovery path. This is actionable: that user needs interactive SSO,
               # or the scoped Vault token/bootstrap needs repair.
