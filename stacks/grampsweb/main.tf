@@ -53,7 +53,7 @@ resource "kubernetes_namespace" "grampsweb" {
   metadata {
     name = "grampsweb"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -375,14 +375,20 @@ resource "kubernetes_service" "grampsweb" {
 }
 
 module "ingress" {
-  source           = "../../modules/kubernetes/ingress_factory"
-  namespace        = kubernetes_namespace.grampsweb.metadata[0].name
-  name             = "family"
-  service_name     = "grampsweb"
-  tls_secret_name  = var.tls_secret_name
-  max_body_size    = "500m"
-  auth             = "required"
-  external_monitor = false
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.grampsweb.metadata[0].name
+  name            = "family"
+  service_name    = "grampsweb"
+  tls_secret_name = var.tls_secret_name
+  max_body_size   = "500m"
+  auth            = "required"
+  # Internal-only: with the * wildcard CNAME live, a name without an explicit
+  # record would resolve through Cloudflare and become publicly reachable.
+  # The internal A record shadows the wildcard (outsiders resolve 10.0.20.203,
+  # unroutable); home-lans-only enforces the same boundary at Traefik.
+  dns_type          = "internal"
+  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
+  external_monitor  = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "GrampsWeb"

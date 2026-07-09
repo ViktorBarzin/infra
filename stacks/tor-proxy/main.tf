@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "tor-proxy" {
     name = "tor-proxy"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -321,13 +321,17 @@ resource "kubernetes_service" "torrserver-bt" {
 }
 
 module "torrserver_ingress" {
-  source           = "../../modules/kubernetes/ingress_factory"
-  namespace        = kubernetes_namespace.tor-proxy.metadata[0].name
-  name             = "torrserver"
-  tls_secret_name  = var.tls_secret_name
-  port             = "8090"
-  auth             = "required"
-  external_monitor = false
+  source          = "../../modules/kubernetes/ingress_factory"
+  namespace       = kubernetes_namespace.tor-proxy.metadata[0].name
+  name            = "torrserver"
+  tls_secret_name = var.tls_secret_name
+  port            = "8090"
+  auth            = "required"
+  # Internal-only: shadows the * wildcard CNAME (2026-07-09) — without an
+  # explicit record this name would resolve via Cloudflare and go public.
+  dns_type          = "internal"
+  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
+  external_monitor  = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "TorrServer"

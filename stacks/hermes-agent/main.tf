@@ -453,6 +453,10 @@ module "ingress" {
   # ExternalAccessDivergence (which halts kured reboots). Re-enable when the
   # deployment is brought back up. (2026-05-31)
   external_monitor = false
+  # Internal-only: shadows the * wildcard CNAME (2026-07-09) — without an
+  # explicit record this name would resolve via Cloudflare and go public.
+  dns_type          = "internal"
+  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Hermes Agent"
