@@ -564,9 +564,10 @@ for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" 
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
 
 # 0) self-deploy: the repo is the authoring surface (like sync_managed_config /
-#    deploy_user_launcher below). Nothing else redeploys /usr/local/bin (only the
-#    manual setup-devvm.sh did) — so a committed edit silently never reached the
-#    hourly run until now (the homelab-memory rollout sat undeployed for a day).
+#    deploy_user_launcher below). Historically nothing else redeployed
+#    /usr/local/bin (only the manual setup-devvm.sh did) — so a committed edit
+#    silently never reached the hourly run (the homelab-memory rollout sat
+#    undeployed for a day); this step + the homelab CLI rebuild in 0b close that.
 #    If the repo copy differs, install it and re-exec the fresh binary. Guarded:
 #    re-exec flag (no loop), bash -n (never deploy a broken script), DRY_RUN (no
 #    mutation), cmp (no churn when unchanged).
@@ -583,6 +584,42 @@ if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" && -r "$SELF_SRC" ]] && ! cmp -s "$SE
     log "WARN: repo t3-provision-users.sh fails 'bash -n' — keeping deployed copy"
   fi
 fi
+
+# 0b) homelab CLI: rebuild /usr/local/bin/homelab from the repo's cli/ when the
+#     deployed binary's stamped version differs from cli/VERSION (or is absent).
+#     The memory hooks install_memory refreshes EVERY run (5d) call this binary
+#     with current flags/verbs (recall --json, store --link, get) — hooks and
+#     CLI must ride the SAME hourly deploy clock or a newer hook degrades
+#     against an older binary (auto-learn additionally capability-gates --link
+#     for the go-absent/build-failed remainder). Before 0b only a manual
+#     setup-devvm.sh run ever rebuilt the binary. Version-compare keeps the
+#     hourly run cheap: no go compile unless cli/VERSION moved. -buildvcs=false:
+#     root building in the admin-owned clone must not depend on git ownership
+#     checks; the version is stamped via -ldflags from cli/VERSION anyway.
+build_homelab_cli() {
+  local src="$WORKSTATION_DIR/../../cli" dst=/usr/local/bin/homelab
+  local want have="" tmp
+  want="$(cat "$src/VERSION" 2>/dev/null || true)"
+  [[ -n "$want" ]] || { log "WARN: $src/VERSION unreadable -> skip homelab CLI rebuild"; return 0; }
+  [[ -x "$dst" ]] && have="$("$dst" --version 2>/dev/null | awk '{print $2}')" || true
+  [[ "$have" == "$want" ]] && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] rebuild homelab CLI (${have:-absent} -> $want)"; return 0; fi
+  if ! command -v go >/dev/null; then
+    log "WARN: go absent -> cannot rebuild homelab CLI (${have:-absent} -> $want); memory hooks degrade until setup-devvm runs"
+    return 0
+  fi
+  tmp="$(mktemp /usr/local/bin/.homelab.XXXXXX)" || { log "WARN: mktemp failed -> skip homelab CLI rebuild"; return 0; }
+  # build to a same-fs temp then rename: a mid-flight caller never sees a torn binary
+  if (cd "$src" && go build -buildvcs=false -ldflags "-X main.version=$want" -o "$tmp" .) \
+      && chmod 0755 "$tmp" && mv -f "$tmp" "$dst"; then
+    log "homelab CLI rebuilt (${have:-absent} -> $want)"
+  else
+    rm -f "$tmp"
+    log "WARN: homelab CLI build failed (${have:-absent} -> $want); keeping deployed binary"
+  fi
+  return 0
+}
+build_homelab_cli
 
 install -d -m 0755 "$ENVDIR"
 
