@@ -21,9 +21,18 @@ Delivery contract (ADR-0007 "Bounded self-contained Memories with typed Links"):
   the harness's ~10KB persist threshold;
 - zero new results -> no output at all (no empty-context injection).
 
-Best-effort: every failure (timeout, CLI error, bad JSON, IO) appends one line
-to ~/.claude/tmp/memory-recall-errors.log and exits 0 silently — recall just
-doesn't happen that turn; the user's prompt is never broken.
+Silent skips (steady states, parity with the pre-rewrite production hook — NOT
+errors, so they never touch the errors log): prompts under MIN_PROMPT_CHARS;
+prompts opening with a backtick/{/< (pasted code/JSON/XML blobs, not recall
+queries); no homelab binary on the box; a wired-but-keyless user (documented
+steady state until an admin mints a MEMORY_API_KEY — multi-tenancy.md).
+
+Best-effort: every real failure (timeout, CLI error, bad JSON, IO) appends one
+line to ~/.claude/tmp/memory-recall-errors.log (rotated once past
+ERRORS_LOG_MAX_BYTES) and exits 0 silently — recall just doesn't happen that
+turn; the user's prompt is never broken. Per-session seen-files idle past
+SEEN_TTL_S are pruned when a new session starts, so ~/.claude/tmp never
+accumulates them unboundedly.
 """
 
 import json
@@ -32,6 +41,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 TMP_DIR = os.path.expanduser("~/.claude/tmp")
@@ -42,6 +52,8 @@ RECALL_TIMEOUT_S = 6
 CONTEXT_BYTE_CAP = 8000
 CLIP_THRESHOLD = 1400  # the ADR-0007 Memory bound; only legacy entries exceed it
 CLIP_AT = 1200
+SEEN_TTL_S = 7 * 24 * 3600     # a seen-file's mtime refreshes on every injection
+ERRORS_LOG_MAX_BYTES = 262_144  # ~256KB, then one rotation generation (.1)
 
 # Link types rendered as one-line pointers. supersedes redirects (the API
 # serves the successor, flagging `redirected_from`) and resolved-by
@@ -63,15 +75,55 @@ def seen_file_path(session_id):
 
 
 def log_error(reason):
-    """Append one timestamped line to the errors log; never raise."""
+    """Append one timestamped line to the errors log; never raise.
+
+    Bounded: past ERRORS_LOG_MAX_BYTES the log rotates once to `.1` (worst
+    case ~2x the cap on disk) — diagnostics, not an unbounded audit trail.
+    """
     try:
         os.makedirs(TMP_DIR, exist_ok=True)
+        path = errors_log_path()
+        try:
+            if os.path.getsize(path) > ERRORS_LOG_MAX_BYTES:
+                os.replace(path, path + ".1")
+        except OSError:
+            pass  # no log yet, or a concurrent rotation won the race
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         line = " ".join(str(reason).split()) or "unknown error"
-        with open(errors_log_path(), "a", encoding="utf-8") as fh:
+        with open(path, "a", encoding="utf-8") as fh:
             fh.write(f"{stamp} {line}\n")
     except Exception:
         pass
+
+
+def _homelab_path():
+    """Absolute path of the homelab CLI, or None when absent from this box."""
+    path = shutil.which("homelab") or "/usr/local/bin/homelab"
+    return path if os.path.exists(path) else None
+
+
+def prune_stale_seen_files(now=None):
+    """Delete per-session seen-files idle past SEEN_TTL_S; never raise.
+
+    A seen-file's mtime refreshes on every injection, so idle == the session is
+    long gone (worst case a revived ancient session re-injects once). Called
+    only when a NEW session's seen-file is about to appear — one directory scan
+    per session, and the files can no longer accumulate unboundedly. The errors
+    log has a different name and is never touched.
+    """
+    now = time.time() if now is None else now
+    try:
+        for entry in os.scandir(TMP_DIR):
+            if (entry.name.startswith("memory-recall-seen-")
+                    and entry.name.endswith(".ids")
+                    and entry.is_file()
+                    and now - entry.stat().st_mtime > SEEN_TTL_S):
+                try:
+                    os.unlink(entry.path)
+                except OSError:
+                    pass
+    except OSError:
+        pass  # TMP_DIR missing on a fresh box — nothing to prune
 
 
 def _as_int(value):
@@ -262,12 +314,25 @@ def _run():
     prompt = str(hook_input.get("prompt") or "").strip()
     if len(prompt) < MIN_PROMPT_CHARS:
         return  # by design: too short to recall against — silent, not an error
+    if prompt[0] in "`{<":
+        return  # pasted code/JSON/XML blob, not a recall query — silent by design
+
+    # Steady-state preflights (parity with the pre-rewrite hook): no CLI on the
+    # box, or a wired-but-keyless user (documented until an admin mints a key —
+    # multi-tenancy.md), must NOT append an error line on every prompt forever.
+    homelab = _homelab_path()
+    if homelab is None:
+        return
+    if not (os.environ.get("CLAUDE_MEMORY_API_KEY") or os.environ.get("MEMORY_API_KEY")):
+        return
 
     session_id = re.sub(
         r"[^A-Za-z0-9._-]", "_", str(hook_input.get("session_id") or "unknown")
     )[:120] or "unknown"
+    seen_path = seen_file_path(session_id)
+    if not os.path.exists(seen_path):
+        prune_stale_seen_files()  # session start: sweep long-idle sessions' files
 
-    homelab = shutil.which("homelab") or "/usr/local/bin/homelab"
     cmd = [homelab, "memory", "recall", prompt, "--limit", str(RECALL_LIMIT), "--json"]
     try:
         res = subprocess.run(
@@ -288,7 +353,6 @@ def _run():
         log_error(f"recall output not JSON: {type(exc).__name__}: {exc}")
         return
 
-    seen_path = seen_file_path(session_id)
     context, injected = build_context(payload, load_seen(seen_path))
     if not context:
         return  # nothing new to inject — silent by design
