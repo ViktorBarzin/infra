@@ -1,4 +1,4 @@
-# === learn Viewer — learn.viktorbarzin.me (cluster-native, git-backed) ===
+# === learn Viewer — learn.viktorbarzin.me + plans.viktorbarzin.me ===
 #
 # Authentik-gated web surface for the /teach skill's learning workspaces
 # (monorepo learn/ — lessons are interactive HTML with quizzes, so they need
@@ -10,6 +10,9 @@
 # lessons appear on PUSH (~30-60s), not on file-write — is accepted, and the
 # teach skill commits+pushes each lesson when it writes it. Decision +
 # history: monorepo learn/docs/adr/0002 (supersedes 0001, the devvm design).
+# Since 2026-07-10 the same pod also serves plans.viktorbarzin.me — the
+# monorepo's plans/ tree of published HTML plan snapshots (infra#72); the
+# Caddyfile splits the two sites by Host header, module "ingress_plans" below.
 #
 # Access is OWNER-ONLY: the repo is Viktor's, so only his Authentik identity
 # (vbarzin, injected by authentik-forward-auth as a full email) is served;
@@ -103,8 +106,24 @@ resource "kubernetes_config_map" "caddyfile" {
       :8080 {
       	# Owner-only: Authentik injects the username as a full email
       	# (vbarzin@...); only Viktor's identity is served (ADR-0002).
-      	@owner header_regexp X-Authentik-Username ^vbarzin(@.*)?$
-      	handle @owner {
+      	# Two sites split by Host, matchers deliberately non-overlapping so
+      	# behavior can't depend on handle ordering: plans.viktorbarzin.me
+      	# serves the monorepo's plans/ tree (published HTML plan snapshots,
+      	# infra#72); every other host — learn.viktorbarzin.me and the
+      	# readiness probe's host-less requests — serves learn/ as before.
+      	@plans_owner {
+      		host plans.viktorbarzin.me
+      		header_regexp X-Authentik-Username ^vbarzin(@.*)?$
+      	}
+      	@learn_owner {
+      		not host plans.viktorbarzin.me
+      		header_regexp X-Authentik-Username ^vbarzin(@.*)?$
+      	}
+      	handle @plans_owner {
+      		root * /repo/src/current/plans
+      		file_server
+      	}
+      	handle @learn_owner {
       		root * /repo/src/current/learn
       		file_server browse
       	}
@@ -288,6 +307,28 @@ module "ingress" {
     "gethomepage.dev/name"         = "Learn"
     "gethomepage.dev/description"  = "Learning-workspace Viewer (lessons, git-backed)"
     "gethomepage.dev/icon"         = "mdi-school"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/pod-selector" = "app=learn"
+  }
+}
+
+# plans.viktorbarzin.me — published HTML plan snapshots (the monorepo's plans/
+# tree, rendered + pushed by the publish-plan skill; spec: infra#72). Served by
+# the SAME learn pod: the Caddyfile above picks the site by Host header, with
+# the identical owner-only gate. Only the ingress hostname is new.
+module "ingress_plans" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.learn.metadata[0].name
+  name            = "plans"
+  service_name    = "learn"
+  tls_secret_name = var.tls_secret_name
+  auth            = "required"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Plans"
+    "gethomepage.dev/description"  = "Published plan/spec HTML snapshots (git-backed)"
+    "gethomepage.dev/icon"         = "mdi-map-check"
     "gethomepage.dev/group"        = "Productivity"
     "gethomepage.dev/pod-selector" = "app=learn"
   }
