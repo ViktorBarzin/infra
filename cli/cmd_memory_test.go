@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -94,5 +96,146 @@ func TestMemoryGetRequiresID(t *testing.T) {
 	}
 	if err := memoryGet([]string{"--json"}); err == nil {
 		t.Fatalf("get with only flags should error")
+	}
+}
+
+func TestParseLinkSpec(t *testing.T) {
+	// The link vocabulary is a CLOSED enum of four (ADR-0007 — the
+	// category-drift lesson: free vocabularies rot). id must be an integer.
+	for _, tc := range []struct{ in, wantType string; wantID int }{
+		{"part-of:123", "part-of", 123},
+		{"supersedes:274", "supersedes", 274},
+		{"see-also:9", "see-also", 9},
+		{"resolved-by:6775", "resolved-by", 6775},
+	} {
+		got, err := parseLinkSpec(tc.in)
+		if err != nil {
+			t.Errorf("parseLinkSpec(%q): unexpected err %v", tc.in, err)
+			continue
+		}
+		if got.Type != tc.wantType || got.TargetID != tc.wantID {
+			t.Errorf("parseLinkSpec(%q) = %+v, want %s:%d", tc.in, got, tc.wantType, tc.wantID)
+		}
+	}
+	for _, bad := range []string{"parent-of:5", "PART-OF:5", "part-of", "part-of:", "part-of:abc", "part-of:1.5", "see-also:-2", ":5", ""} {
+		if _, err := parseLinkSpec(bad); err == nil {
+			t.Errorf("parseLinkSpec(%q) should be rejected", bad)
+		}
+	}
+}
+
+// memAPIRecorder captures every request the CLI makes so tests can assert on
+// method/path/body sequences.
+type memAPIRecorder struct {
+	mu       sync.Mutex
+	reqs     []recordedReq
+	linkFail bool // 500 every /links POST/DELETE
+}
+
+type recordedReq struct {
+	method, path, body string
+}
+
+func (rec *memAPIRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	rec.mu.Lock()
+	rec.reqs = append(rec.reqs, recordedReq{r.Method, r.URL.Path, string(body)})
+	rec.mu.Unlock()
+	if strings.Contains(r.URL.Path, "/links") {
+		if rec.linkFail {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		w.Write([]byte(`{"status":"linked"}`))
+		return
+	}
+	w.Write([]byte(`{"id":42,"category":"facts","importance":0.5}`))
+}
+
+func TestMemoryStoreWithLinksPostsEachLink(t *testing.T) {
+	rec := &memAPIRecorder{}
+	newMemTestServer(t, rec)
+	err := memoryStore([]string{"the hub entry", "--link", "part-of:7", "--link", "see-also:9"})
+	if err != nil {
+		t.Fatalf("memoryStore: %v", err)
+	}
+	if len(rec.reqs) != 3 {
+		t.Fatalf("want store + 2 link POSTs, got %+v", rec.reqs)
+	}
+	if rec.reqs[0].method != "POST" || rec.reqs[0].path != "/api/memories" {
+		t.Fatalf("first call must store the memory: %+v", rec.reqs[0])
+	}
+	for i, want := range []recordedReq{
+		{"POST", "/api/memories/42/links", `{"type":"part-of","target_id":7}`},
+		{"POST", "/api/memories/42/links", `{"type":"see-also","target_id":9}`},
+	} {
+		got := rec.reqs[i+1]
+		if got.method != want.method || got.path != want.path || got.body != want.body {
+			t.Errorf("link call %d = %+v, want %+v", i, got, want)
+		}
+	}
+}
+
+func TestMemoryStoreLinkFailureReportedNotRolledBack(t *testing.T) {
+	// ADR-0007: the memory is the durable thing — a failed link never deletes
+	// it. The error must surface (non-zero exit) so the caller can retry the
+	// link, and must NOT be followed by any rollback call.
+	rec := &memAPIRecorder{linkFail: true}
+	newMemTestServer(t, rec)
+	err := memoryStore([]string{"content", "--link", "supersedes:274"})
+	if err == nil || !strings.Contains(err.Error(), "link") {
+		t.Fatalf("link failure must be reported, got %v", err)
+	}
+	for _, r := range rec.reqs {
+		if r.method == "DELETE" {
+			t.Fatalf("no rollback allowed, saw %+v", rec.reqs)
+		}
+	}
+	if rec.reqs[0].path != "/api/memories" {
+		t.Fatalf("memory must have been stored first: %+v", rec.reqs)
+	}
+}
+
+func TestMemoryStoreInvalidLinkFailsBeforeAPI(t *testing.T) {
+	rec := &memAPIRecorder{}
+	newMemTestServer(t, rec)
+	if err := memoryStore([]string{"content", "--link", "parent-of:5"}); err == nil {
+		t.Fatalf("invalid link type must be rejected")
+	}
+	if len(rec.reqs) != 0 {
+		t.Fatalf("invalid link must fail before any API call, saw %+v", rec.reqs)
+	}
+}
+
+func TestMemoryUpdateLinkAndUnlink(t *testing.T) {
+	rec := &memAPIRecorder{}
+	newMemTestServer(t, rec)
+	err := memoryUpdate([]string{"5", "--content", "new text", "--link", "resolved-by:6775", "--unlink", "see-also:9"})
+	if err != nil {
+		t.Fatalf("memoryUpdate: %v", err)
+	}
+	want := []recordedReq{
+		{"PUT", "/api/memories/5", `{"content":"new text"}`},
+		{"POST", "/api/memories/5/links", `{"type":"resolved-by","target_id":6775}`},
+		{"DELETE", "/api/memories/5/links/see-also/9", ""},
+	}
+	if len(rec.reqs) != len(want) {
+		t.Fatalf("calls = %+v, want %+v", rec.reqs, want)
+	}
+	for i := range want {
+		if rec.reqs[i] != want[i] {
+			t.Errorf("call %d = %+v, want %+v", i, rec.reqs[i], want[i])
+		}
+	}
+}
+
+func TestMemoryUpdateInvalidUnlinkFailsBeforeAPI(t *testing.T) {
+	rec := &memAPIRecorder{}
+	newMemTestServer(t, rec)
+	if err := memoryUpdate([]string{"5", "--unlink", "see-also:x"}); err == nil {
+		t.Fatalf("invalid unlink id must be rejected")
+	}
+	if len(rec.reqs) != 0 {
+		t.Fatalf("invalid unlink must fail before any API call, saw %+v", rec.reqs)
 	}
 }
