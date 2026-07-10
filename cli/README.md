@@ -277,7 +277,7 @@ pointing FROM the memory being stored/updated TO `<id>`.
 | --- | --- | --- |
 | `memory get <id> [--json]` | read | one full entry: content (verbatim, multi-line), metadata, then links one per line (`-> supersedes #274` outgoing, `<- part-of #123` incoming) |
 | `memory store "…" [--link type:id …]` | write | store, then POST each link from the new id |
-| `memory update <id> [--link type:id …] [--unlink type:id …]` | write | update, then add/remove links; a failed link op is reported but never rolls the memory back |
+| `memory update <id> [--link type:id …] [--unlink type:id …]` | write | update, then add/remove links; a link-only update skips the field PUT (the server rejects an empty one); a failed link op is reported but never rolls the memory back |
 
 **Content is bounded at 1,400 unicode characters** (chars, not bytes — the
 recall hook's 8KB/5-results delivery budget, so a ranked Memory always arrives

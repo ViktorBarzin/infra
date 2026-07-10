@@ -26,14 +26,16 @@ func TestRenderMemoryGetHumanOutput(t *testing.T) {
 	// `memory get` is the read-one-full-entry verb (ADR-0007): full content
 	// (verbatim, multi-line — never flattened like list/recall), metadata, then
 	// links one per line: "-> <type> #<id>" outgoing, "<- <type> #<id>" incoming.
+	// links_out/links_in entries are keyed {"id": <otherEnd>, "type": ...} —
+	// the landed server shape (claude-memory-mcp api/app.py get_memory).
 	raw, _ := json.Marshal(map[string]interface{}{
 		"id": 6775, "content": "root cause line one\nline two", "category": "gotchas",
 		"tags": "dns,nvidia", "importance": 0.8, "owner": "wizard",
 		"created_at": "2026-07-09T10:00:00", "updated_at": "2026-07-10T11:00:00",
-		"links_out": []map[string]interface{}{{"type": "supersedes", "target_id": 274}},
+		"links_out": []map[string]interface{}{{"type": "supersedes", "id": 274}},
 		"links_in": []map[string]interface{}{
-			{"type": "part-of", "source_id": 123},
-			{"type": "resolved-by", "source_id": 5972},
+			{"type": "part-of", "id": 123},
+			{"type": "resolved-by", "id": 5972},
 		},
 	})
 	got := renderMemory(raw, false)
@@ -52,6 +54,25 @@ func TestRenderMemoryGetHumanOutput(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing link line %q in %q", want, got)
 		}
+	}
+}
+
+func TestRenderMemoryToleratesLegacyEndKeys(t *testing.T) {
+	// otherEnd tolerance: entries keyed target_id (out) / source_id (in) must
+	// still render the right end — never "#0" — if the server shape drifts.
+	raw, _ := json.Marshal(map[string]interface{}{
+		"id": 1, "content": "x", "category": "facts", "importance": 0.5,
+		"links_out": []map[string]interface{}{{"type": "supersedes", "target_id": 274}},
+		"links_in":  []map[string]interface{}{{"type": "part-of", "source_id": 123}},
+	})
+	got := renderMemory(raw, false)
+	for _, want := range []string{"-> supersedes #274", "<- part-of #123"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing link line %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "#0") {
+		t.Fatalf("a link line rendered as #0 — end-key tolerance broken: %q", got)
 	}
 }
 
@@ -141,6 +162,12 @@ func (rec *memAPIRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec.mu.Lock()
 	rec.reqs = append(rec.reqs, recordedReq{r.Method, r.URL.Path, string(body)})
 	rec.mu.Unlock()
+	// Mirror the real server (api/app.py): a PUT carrying no updatable fields
+	// is a 400. A recorder that 200s empty PUTs hid the link-only-update bug.
+	if r.Method == "PUT" && strings.TrimSpace(string(body)) == "{}" {
+		http.Error(w, `{"detail":"No fields to update"}`, http.StatusBadRequest)
+		return
+	}
 	if strings.Contains(r.URL.Path, "/links") {
 		if rec.linkFail {
 			http.Error(w, "boom", http.StatusInternalServerError)
@@ -165,9 +192,10 @@ func TestMemoryStoreWithLinksPostsEachLink(t *testing.T) {
 	if rec.reqs[0].method != "POST" || rec.reqs[0].path != "/api/memories" {
 		t.Fatalf("first call must store the memory: %+v", rec.reqs[0])
 	}
+	// Wire key is link_type (server LinkCreate model) — {"type": ...} 422s.
 	for i, want := range []recordedReq{
-		{"POST", "/api/memories/42/links", `{"type":"part-of","target_id":7}`},
-		{"POST", "/api/memories/42/links", `{"type":"see-also","target_id":9}`},
+		{"POST", "/api/memories/42/links", `{"link_type":"part-of","target_id":7}`},
+		{"POST", "/api/memories/42/links", `{"link_type":"see-also","target_id":9}`},
 	} {
 		got := rec.reqs[i+1]
 		if got.method != want.method || got.path != want.path || got.body != want.body {
@@ -214,10 +242,13 @@ func TestMemoryUpdateLinkAndUnlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("memoryUpdate: %v", err)
 	}
+	// DELETE is path-addressed as /links/{targetId}/{type} — ID FIRST — to
+	// match the server route /api/memories/{memory_id}/links/{dst_id}/{link_type}
+	// (type-first would 422: "see-also" can't parse as int dst_id).
 	want := []recordedReq{
 		{"PUT", "/api/memories/5", `{"content":"new text"}`},
-		{"POST", "/api/memories/5/links", `{"type":"resolved-by","target_id":6775}`},
-		{"DELETE", "/api/memories/5/links/see-also/9", ""},
+		{"POST", "/api/memories/5/links", `{"link_type":"resolved-by","target_id":6775}`},
+		{"DELETE", "/api/memories/5/links/9/see-also", ""},
 	}
 	if len(rec.reqs) != len(want) {
 		t.Fatalf("calls = %+v, want %+v", rec.reqs, want)
@@ -226,6 +257,49 @@ func TestMemoryUpdateLinkAndUnlink(t *testing.T) {
 		if rec.reqs[i] != want[i] {
 			t.Errorf("call %d = %+v, want %+v", i, rec.reqs[i], want[i])
 		}
+	}
+}
+
+func TestMemoryUpdateLinkOnlySkipsPut(t *testing.T) {
+	// The canonical ADR-0007 retro-cross-linking flow: after storing a truth,
+	// `memory update <symptomId> --link resolved-by:<truthId>` carries NO field
+	// edits. The server 400s an empty PUT ("No fields to update"), so the CLI
+	// must skip the PUT entirely and go straight to the link call.
+	rec := &memAPIRecorder{}
+	newMemTestServer(t, rec)
+	if err := memoryUpdate([]string{"5972", "--link", "resolved-by:6775"}); err != nil {
+		t.Fatalf("link-only update must succeed without a PUT: %v", err)
+	}
+	want := []recordedReq{
+		{"POST", "/api/memories/5972/links", `{"link_type":"resolved-by","target_id":6775}`},
+	}
+	if len(rec.reqs) != len(want) || rec.reqs[0] != want[0] {
+		t.Fatalf("calls = %+v, want %+v", rec.reqs, want)
+	}
+}
+
+func TestMemoryUpdateUnlinkOnlySkipsPut(t *testing.T) {
+	rec := &memAPIRecorder{}
+	newMemTestServer(t, rec)
+	if err := memoryUpdate([]string{"5", "--unlink", "see-also:9"}); err != nil {
+		t.Fatalf("unlink-only update must succeed without a PUT: %v", err)
+	}
+	want := []recordedReq{{"DELETE", "/api/memories/5/links/9/see-also", ""}}
+	if len(rec.reqs) != len(want) || rec.reqs[0] != want[0] {
+		t.Fatalf("calls = %+v, want %+v", rec.reqs, want)
+	}
+}
+
+func TestMemoryUpdateNothingToDoErrors(t *testing.T) {
+	// No fields, no links, no unlinks → a local error, not a silent no-op and
+	// not a doomed empty PUT.
+	rec := &memAPIRecorder{}
+	newMemTestServer(t, rec)
+	if err := memoryUpdate([]string{"5"}); err == nil {
+		t.Fatalf("update with nothing to change must error")
+	}
+	if len(rec.reqs) != 0 {
+		t.Fatalf("no-op update must not reach the API, saw %+v", rec.reqs)
 	}
 }
 
