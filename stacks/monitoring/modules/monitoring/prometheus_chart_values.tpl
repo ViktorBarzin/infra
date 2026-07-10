@@ -240,8 +240,8 @@ alertmanager:
           - send_resolved: true
             channel: "#alerts"
             color: '{{ if eq .Status "firing" }}#439FE0{{ else }}good{{ end }}'
-            fallback: 'INFO: {{ .GroupLabels.alertname }}'
-            title: '[INFO] {{ .GroupLabels.alertname }}'
+            fallback: '{{ if eq .Status "firing" }}INFO{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
+            title: '{{ if eq .Status "firing" }}[INFO]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
             text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
       - name: slack-security
         slack_configs:
