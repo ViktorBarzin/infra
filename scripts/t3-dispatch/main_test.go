@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -395,5 +398,146 @@ func TestClientIP(t *testing.T) {
 	r.Header.Set("X-Forwarded-For", "1.2.3.4, 10.10.1.1")
 	if got := clientIP(r); got != "1.2.3.4, 10.10.1.1" {
 		t.Errorf("clientIP xff = %q", got)
+	}
+}
+
+// --- PWA install layer (manifest + head-tag injection) ---
+
+func TestManifestEndpoint(t *testing.T) {
+	mux := http.NewServeMux()
+	registerPWA(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/manifest.webmanifest")
+	if err != nil {
+		t.Fatalf("GET /manifest.webmanifest: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/manifest+json" {
+		t.Errorf("content-type = %q, want application/manifest+json", ct)
+	}
+	var m struct {
+		Display  string `json:"display"`
+		StartURL string `json:"start_url"`
+		Icons    []struct {
+			Src string `json:"src"`
+		} `json:"icons"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		t.Fatalf("manifest not valid JSON: %v", err)
+	}
+	if m.Display != "standalone" {
+		t.Errorf("display = %q, want standalone (the point of installing)", m.Display)
+	}
+	if m.StartURL != "/" {
+		t.Errorf("start_url = %q, want /", m.StartURL)
+	}
+	if len(m.Icons) == 0 || m.Icons[0].Src == "" {
+		t.Errorf("manifest needs at least one icon, got %+v", m.Icons)
+	}
+}
+
+// appInstance serves /api/auth/session (always valid) plus a catch-all with the
+// given content-type/encoding/body — the upstream half of the injection tests.
+func appInstance(ct, enc string, body []byte) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth/session" {
+			_, _ = w.Write([]byte(`{"authenticated":true}`))
+			return
+		}
+		if enc != "" {
+			w.Header().Set("Content-Encoding", enc)
+		}
+		w.Header().Set("Content-Type", ct)
+		_, _ = w.Write(body)
+	}))
+}
+
+// proxyThrough sends a valid-cookie document navigation through handler against
+// ts and returns the recorded response.
+func proxyThrough(t *testing.T, ts *httptest.Server, acceptEncoding string) *httptest.ResponseRecorder {
+	t.Helper()
+	setTable(portOf(t, ts))
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-authentik-username", "vbarzin@gmail.com")
+	r.Header.Set("Sec-Fetch-Dest", "document")
+	if acceptEncoding != "" {
+		r.Header.Set("Accept-Encoding", acceptEncoding)
+	}
+	r.AddCookie(&http.Cookie{Name: cookieName, Value: "good"})
+	w := httptest.NewRecorder()
+	handler(w, r)
+	return w
+}
+
+func TestHandlerInjectsPWATagsIntoHTML(t *testing.T) {
+	page := `<!doctype html><html><head><title>t3</title></head><body>app</body></html>`
+	ts := appInstance("text/html; charset=utf-8", "", []byte(page))
+	defer ts.Close()
+
+	w := proxyThrough(t, ts, "")
+	body := w.Body.String()
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", w.Code, body)
+	}
+	for _, want := range []string{`rel="manifest"`, "apple-mobile-web-app-capable"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("proxied HTML missing %q:\n%s", want, body)
+		}
+	}
+	head := strings.Index(body, "</head>")
+	link := strings.Index(body, `rel="manifest"`)
+	if head < 0 || link < 0 || link > head {
+		t.Errorf("manifest link must sit inside <head> (link@%d, </head>@%d)", link, head)
+	}
+	if cl := w.Header().Get("Content-Length"); cl != strconv.Itoa(len(body)) {
+		t.Errorf("Content-Length = %s, want %d (stale length corrupts the response)", cl, len(body))
+	}
+}
+
+func TestHandlerLeavesNonHTMLUntouched(t *testing.T) {
+	payload := `{"threads":["</head>"]}` // marker inside JSON must not attract injection
+	ts := appInstance("application/json", "", []byte(payload))
+	defer ts.Close()
+
+	w := proxyThrough(t, ts, "")
+	if got := w.Body.String(); got != payload {
+		t.Errorf("JSON body modified: %q -> %q", payload, got)
+	}
+}
+
+func TestHandlerLeavesEncodedHTMLUntouched(t *testing.T) {
+	page := `<!doctype html><html><head></head><body>app</body></html>`
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, _ = zw.Write([]byte(page))
+	_ = zw.Close()
+	gz := buf.Bytes()
+
+	ts := appInstance("text/html", "gzip", gz)
+	defer ts.Close()
+
+	// Client advertises gzip (as real browsers do), so the transport passes the
+	// compressed body + Content-Encoding through to the proxy untouched — the
+	// hook must not garble a body it cannot parse.
+	w := proxyThrough(t, ts, "gzip")
+	if !bytes.Equal(w.Body.Bytes(), gz) {
+		t.Errorf("compressed body must pass through byte-identical (len %d -> %d)", len(gz), w.Body.Len())
+	}
+}
+
+func TestHandlerLeavesHeadlessHTMLUntouched(t *testing.T) {
+	page := "no head element here"
+	ts := appInstance("text/html", "", []byte(page))
+	defer ts.Close()
+
+	w := proxyThrough(t, ts, "")
+	if got := w.Body.String(); got != page {
+		t.Errorf("headless HTML modified: %q -> %q", page, got)
 	}
 }
