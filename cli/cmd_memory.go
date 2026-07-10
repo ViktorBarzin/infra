@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 func memoryCommands() []Command {
@@ -122,6 +123,20 @@ func memoryRecall(args []string) error {
 		return err
 	}
 	return printMemories(raw, jsonOut)
+}
+
+// memoryBound is the hard Memory content bound (ADR-0007): 1,400 unicode
+// CHARACTERS (not bytes) — derived from the recall hook's 8KB/5-results
+// delivery budget so a ranked Memory always arrives whole.
+const memoryBound = 1400
+
+// checkMemoryBound pre-validates content client-side with the same
+// split-into-hub+parts guidance as the server's 422, saving the round-trip.
+func checkMemoryBound(content string) error {
+	if n := utf8.RuneCountInString(content); n > memoryBound {
+		return fmt.Errorf("content is %d chars; the Memory bound is 1,400. Split into a hub + part-of details: store the hub, then store parts with --link part-of:<hubId> (ADR-0007)", n)
+	}
+	return nil
 }
 
 // memLinkTypes is the CLOSED enum of Memory→Memory link types (ADR-0007 —
@@ -392,6 +407,9 @@ func memoryStore(args []string) error {
 	if req.Content == "" {
 		return fmt.Errorf(`usage: homelab memory store "<content>" [--category C] [--tags ...] [--keywords ...] [--importance 0.5] [--sensitive] [--link type:id ...]`)
 	}
+	if err := checkMemoryBound(req.Content); err != nil {
+		return err
+	}
 	c, err := newMemoryClient()
 	if err != nil {
 		return err
@@ -469,6 +487,11 @@ func memoryUpdate(args []string) error {
 	}
 	if id == "" {
 		return fmt.Errorf("usage: homelab memory update <id> [--content ...] [--tags ...] [--importance N] [--keywords ...] [--link type:id ...] [--unlink type:id ...]")
+	}
+	if req.Content != nil {
+		if err := checkMemoryBound(*req.Content); err != nil {
+			return err
+		}
 	}
 	c, err := newMemoryClient()
 	if err != nil {
