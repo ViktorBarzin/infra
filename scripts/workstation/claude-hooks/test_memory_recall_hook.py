@@ -10,9 +10,11 @@ a pytest tmp_path — no network, no real ~/.claude. Run:
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import subprocess
 import sys
+import time
 import types
 
 _HOOK_PATH = pathlib.Path(__file__).resolve().parent / "homelab-memory-recall.py"
@@ -186,8 +188,17 @@ def test_single_block_over_cap_yields_no_output():
 # ------------------------------------------------------------- main() wiring
 
 def _run_main(monkeypatch, capsys, tmp_path, hook_input, payload=None,
-              returncode=0, raw_stdout=None, stderr="", raise_exc=None, calls=None):
+              returncode=0, raw_stdout=None, stderr="", raise_exc=None, calls=None,
+              homelab="/usr/local/bin/homelab", api_key="test-key"):
     monkeypatch.setattr(hook, "TMP_DIR", str(tmp_path))
+    # Default to a fully wired user (binary present + key minted); tests for the
+    # silent preflights override homelab=None / api_key=None explicitly.
+    monkeypatch.setattr(hook, "_homelab_path", lambda: homelab)
+    monkeypatch.delenv("CLAUDE_MEMORY_API_KEY", raising=False)
+    if api_key is None:
+        monkeypatch.delenv("MEMORY_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("MEMORY_API_KEY", api_key)
 
     def fake_run(cmd, **kwargs):
         if calls is not None:
@@ -305,3 +316,80 @@ def test_main_session_id_sanitized_for_filename(monkeypatch, capsys, tmp_path):
     files = [p.name for p in tmp_path.iterdir()]
     assert all("/" not in name for name in files)
     assert not (tmp_path.parent.parent / "evil").exists()
+
+
+# ------------------------------------------------- silent preflights (steady states)
+
+def test_main_no_binary_is_silent_not_an_error(monkeypatch, capsys, tmp_path):
+    # A box without the homelab CLI is a steady state, not a per-prompt error.
+    calls = []
+    out = _run_main(monkeypatch, capsys, tmp_path,
+                    {"prompt": PROMPT, "session_id": "s"},
+                    payload={"memories": [_mem(1)]}, calls=calls, homelab=None)
+    assert out == ""
+    assert calls == []
+    assert _errors_log(tmp_path) == ""
+
+
+def test_main_keyless_user_is_silent_not_an_error(monkeypatch, capsys, tmp_path):
+    # Documented steady state (docs/architecture/multi-tenancy.md): a wired but
+    # keyless user's memory no-ops until an admin mints a key. That must NOT
+    # grow the errors log by one line per prompt, forever.
+    calls = []
+    out = _run_main(monkeypatch, capsys, tmp_path,
+                    {"prompt": PROMPT, "session_id": "s"},
+                    payload={"memories": [_mem(1)]}, calls=calls, api_key=None)
+    assert out == ""
+    assert calls == []
+    assert _errors_log(tmp_path) == ""
+
+
+def test_main_code_blob_prompts_skip_cli_silently(monkeypatch, capsys, tmp_path):
+    # Parity with the pre-rewrite production hook: pasted code/JSON/XML blobs
+    # are not recall queries. All long enough to pass the length gate.
+    for blob in ("`kubectl get pods -A` output pasted here",
+                 '{"key": "value", "list": [1, 2, 3], "more": true}',
+                 "<div>some pasted markup fragment</div>"):
+        calls = []
+        out = _run_main(monkeypatch, capsys, tmp_path,
+                        {"prompt": blob, "session_id": "s"},
+                        payload={"memories": [_mem(1)]}, calls=calls)
+        assert out == ""
+        assert calls == []
+    assert _errors_log(tmp_path) == ""
+
+
+# ------------------------------------------------------- tmp-file housekeeping
+
+def test_stale_seen_files_pruned_when_a_new_session_starts(monkeypatch, capsys, tmp_path):
+    stale = tmp_path / "memory-recall-seen-old-sess.ids"
+    stale.write_text("9\n")
+    old = time.time() - hook.SEEN_TTL_S - 3600
+    os.utime(stale, (old, old))
+    fresh = tmp_path / "memory-recall-seen-live-sess.ids"
+    fresh.write_text("8\n")
+    errors = tmp_path / "memory-recall-errors.log"
+    errors.write_text("2026-07-01T00:00:00+00:00 old diagnostics\n")
+    os.utime(errors, (old, old))
+
+    out = _run_main(monkeypatch, capsys, tmp_path,
+                    {"prompt": PROMPT, "session_id": "new-sess"},
+                    payload={"memories": [_mem(1)]})
+    assert out != ""
+    assert not stale.exists()   # idle past the TTL -> pruned
+    assert fresh.exists()       # recently active session survives
+    assert errors.exists()      # prune never touches the errors log
+    assert (tmp_path / "memory-recall-seen-new-sess.ids").exists()
+
+
+def test_errors_log_rotates_at_size_cap(monkeypatch, tmp_path):
+    monkeypatch.setattr(hook, "TMP_DIR", str(tmp_path))
+    log = tmp_path / "memory-recall-errors.log"
+    log.write_text("x" * (hook.ERRORS_LOG_MAX_BYTES + 1))
+    hook.log_error("fresh line after rotation")
+    rotated = tmp_path / "memory-recall-errors.log.1"
+    assert rotated.exists()
+    assert rotated.read_text().startswith("x")
+    text = log.read_text()
+    assert "fresh line after rotation" in text
+    assert len(text) < 1000     # the live log restarted small
