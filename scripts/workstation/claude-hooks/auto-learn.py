@@ -7,6 +7,15 @@ haiku to detect corrections, preferences, decisions, or facts worth storing.
 If learning events are detected, stores them via the `homelab memory` CLI — the
 only sanctioned memory path on the devvm (no direct HTTP, no local SQLite).
 
+ADR-0007: every stored Memory is bounded (1,400 chars) and self-contained;
+oversize knowledge is split by the judge into a hub + part-of details. The
+part-of link rides `homelab memory store --link`, which only v0.13.0+ CLIs
+understand — and hooks deploy hourly while the binary is rebuilt by the same
+reconcile only on a cli/VERSION change — so --link is capability-gated
+(usage-line probe): an older deployed CLI stores parts UNLINKED (they are
+self-contained by contract) instead of silently polluting content with a
+stray "part-of:<id>" suffix.
+
 Runs with async: true — does NOT block the user.
 """
 
@@ -28,6 +37,7 @@ MEMORY_BOUND = 1400
 
 # Shared with the recall hook — one place to look when memory hooks misbehave.
 ERRORS_LOG = os.path.expanduser("~/.claude/tmp/memory-recall-errors.log")
+ERRORS_LOG_MAX_BYTES = 262_144  # ~256KB, then one rotation generation (.1)
 
 JUDGE_PROMPT = """You are a memory extraction judge. Analyze this exchange between a user and an AI assistant.
 
@@ -61,14 +71,67 @@ Rules:
 
 
 def _log_error(reason):
-    """Append one timestamped line to the shared errors log; never raise."""
+    """Append one timestamped line to the shared errors log; never raise.
+
+    Bounded like the recall hook's: past ERRORS_LOG_MAX_BYTES the log rotates
+    once to `.1` (worst case ~2x the cap on disk).
+    """
     try:
         os.makedirs(os.path.dirname(ERRORS_LOG), exist_ok=True)
+        try:
+            if os.path.getsize(ERRORS_LOG) > ERRORS_LOG_MAX_BYTES:
+                os.replace(ERRORS_LOG, ERRORS_LOG + ".1")
+        except OSError:
+            pass  # no log yet, or a concurrent rotation won the race
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with open(ERRORS_LOG, "a", encoding="utf-8") as fh:
             fh.write(f"{stamp} {' '.join(str(reason).split())}\n")
     except Exception:
         pass
+
+
+def _homelab_path():
+    """Absolute path of the homelab CLI, or None when absent from this box."""
+    path = shutil.which("homelab") or "/usr/local/bin/homelab"
+    return path if os.path.exists(path) else None
+
+
+# Memoized result of the --link capability probe (None = not probed yet).
+_LINK_SUPPORT = None
+
+
+def _cli_supports_link():
+    """True iff the DEPLOYED homelab CLI advertises `--link` on memory store.
+
+    Hooks and the CLI deploy on different clocks: the hourly reconcile
+    (t3-provision-users) refreshes the hook scripts every run but rebuilds
+    /usr/local/bin/homelab only on a cli/VERSION change — and not at all when
+    go is absent or the build fails. A pre-v0.13.0 `memory store` treats
+    `--link` as an unknown flag and swallows its VALUE into the stored CONTENT
+    ("<part text> part-of:77", exit 0 — silent durable pollution), so --link
+    must never be passed on faith.
+
+    Probe: `homelab memory store --help` prints the usage line without any
+    network call or API key (the empty-content check precedes the HTTP client);
+    v0.13.0+ usage advertises "[--link type:id ...]". Memoized per process;
+    any probe failure counts as no support (degrade to unlinked, never risk
+    polluting the durable store).
+    """
+    global _LINK_SUPPORT
+    if _LINK_SUPPORT is None:
+        homelab = _homelab_path()
+        if homelab is None:
+            _LINK_SUPPORT = False
+            return _LINK_SUPPORT
+        try:
+            res = subprocess.run(
+                [homelab, "memory", "store", "--help"],
+                capture_output=True, text=True, timeout=10, env=os.environ,
+            )
+            _LINK_SUPPORT = "--link" in ((res.stdout or "") + (res.stderr or ""))
+        except Exception:
+            _LINK_SUPPORT = False
+    return _LINK_SUPPORT
 
 
 def _store_via_homelab_cli(content, category, tags, importance, expanded_keywords, link=None):
@@ -79,8 +142,8 @@ def _store_via_homelab_cli(content, category, tags, importance, expanded_keyword
 
     Returns the new memory id when parseable from the CLI's response JSON
     (needed to link part-of details to their hub), else None."""
-    homelab = shutil.which("homelab") or "/usr/local/bin/homelab"
-    if not os.path.exists(homelab):
+    homelab = _homelab_path()
+    if homelab is None:
         return None
     if not (os.environ.get("CLAUDE_MEMORY_API_KEY") or os.environ.get("MEMORY_API_KEY")):
         return None
@@ -109,9 +172,20 @@ def _store_via_homelab_cli(content, category, tags, importance, expanded_keyword
         return None
 
 
+def _memory_wired():
+    """True iff this box can store at all: CLI present + an API key minted.
+    Both absences are documented steady states (multi-tenancy.md), so callers
+    skip SILENTLY — never one error-log line per event, forever."""
+    return _homelab_path() is not None and bool(
+        os.environ.get("CLAUDE_MEMORY_API_KEY") or os.environ.get("MEMORY_API_KEY")
+    )
+
+
 def _store_event(event, category_map):
     """Store one judge event: guard the ADR-0007 bound, store the content (the
     hub when "parts" are present), then store each part linked part-of the hub."""
+    if not _memory_wired():
+        return
     content = (event.get("content") or "").strip()
     if not content:
         return
@@ -132,6 +206,23 @@ def _store_event(event, category_map):
 
     parts = [p.strip() for p in (event.get("parts") or []) if isinstance(p, str) and p.strip()]
     hub_id = _store_via_homelab_cli(content, category, tags, importance, expanded_keywords)
+
+    # Parts are stored linked part-of the hub ONLY when both halves exist: a
+    # parseable hub id AND a deployed CLI that understands --link (capability
+    # probe — a pre-v0.13.0 CLI would silently store "part-of:<id>" AS content).
+    # Parts are self-contained by the judge contract, so unlinked storage
+    # degrades gracefully: only the graph edge is lost, never the knowledge.
+    link_ok = False
+    if parts:
+        if not hub_id:
+            _log_error("auto-learn: hub id unparseable; storing parts unlinked")
+        elif not _cli_supports_link():
+            _log_error(
+                "auto-learn: deployed homelab CLI lacks --link (pre-v0.13.0) — "
+                "storing parts unlinked until the reconcile rebuilds the CLI"
+            )
+        else:
+            link_ok = True
     for part in parts:
         if len(part) > MEMORY_BOUND:
             _log_error(
@@ -139,9 +230,7 @@ def _store_event(event, category_map):
                 f"{MEMORY_BOUND}-char Memory bound; skipped, never truncated"
             )
             continue
-        link = f"part-of:{hub_id}" if hub_id else None
-        if link is None:
-            _log_error("auto-learn: hub id unparseable; storing part unlinked")
+        link = f"part-of:{hub_id}" if link_ok else None
         _store_via_homelab_cli(part, category, tags, importance, expanded_keywords, link=link)
 
 
