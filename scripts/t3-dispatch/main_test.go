@@ -490,6 +490,18 @@ func TestHandlerInjectsPWATagsIntoHTML(t *testing.T) {
 			t.Errorf("proxied HTML missing %q:\n%s", want, body)
 		}
 	}
+	// Status bar must be "default" (opaque, app laid out BELOW it). With
+	// "black-translucent" the standalone app draws from the physical top of the
+	// screen, and t3's floating workspace controls (--workspace-controls-top:0px,
+	// sidebar toggle included) land under the iPhone status bar — invisible and
+	// untappable (found on-device 2026-07-10). Upstream only safe-area-pads
+	// left/right/bottom, so the top overlay is not survivable.
+	if !strings.Contains(body, `name="apple-mobile-web-app-status-bar-style" content="default"`) {
+		t.Errorf("status-bar-style must be default, got:\n%s", body)
+	}
+	if strings.Contains(body, "black-translucent") {
+		t.Errorf("black-translucent hides t3's top controls under the status bar:\n%s", body)
+	}
 	head := strings.Index(body, "</head>")
 	link := strings.Index(body, `rel="manifest"`)
 	if head < 0 || link < 0 || link > head {

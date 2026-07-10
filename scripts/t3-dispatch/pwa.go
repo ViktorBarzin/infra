@@ -37,7 +37,12 @@ const pwaManifest = `{
 const pwaHeadTags = `<link rel="manifest" href="/manifest.webmanifest"/>` +
 	`<meta name="mobile-web-app-capable" content="yes"/>` +
 	`<meta name="apple-mobile-web-app-capable" content="yes"/>` +
-	`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>` +
+	// status-bar-style MUST stay "default" (opaque bar, app below it): with
+	// "black-translucent" the standalone app draws from the physical top and
+	// t3's floating workspace controls (--workspace-controls-top:0px, incl. the
+	// sidebar toggle) vanish under the iPhone status bar — upstream safe-area-
+	// pads left/right/bottom but not top (on-device finding, 2026-07-10).
+	`<meta name="apple-mobile-web-app-status-bar-style" content="default"/>` +
 	`<meta name="apple-mobile-web-app-title" content="T3 Code"/>`
 
 // registerPWA registers the manifest endpoint on mux.
