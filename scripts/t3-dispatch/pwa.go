@@ -34,7 +34,13 @@ const pwaManifest = `{
 // pwaHeadTags go in front of </head> of every proxied HTML document. The
 // manifest link is the modern install signal (iOS 16.4+/Android); the
 // apple-* metas are the legacy-but-reliable iOS standalone signals.
-const pwaHeadTags = `<link rel="manifest" href="/manifest.webmanifest"/>` +
+// crossorigin="use-credentials" is load-bearing: manifest fetches run in
+// anonymous CORS mode by spec (no cookies), so behind the Authentik
+// forward-auth edge a bare link 302s the fetch to SSO and the browser kills
+// the cross-origin redirect with a console CORS error (2026-07-10). With it,
+// the browser attaches the same-origin session cookie and the fetch passes
+// the edge like any other authenticated asset.
+const pwaHeadTags = `<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials"/>` +
 	`<meta name="mobile-web-app-capable" content="yes"/>` +
 	`<meta name="apple-mobile-web-app-capable" content="yes"/>` +
 	// status-bar-style MUST stay "default" (opaque bar, app below it): with
