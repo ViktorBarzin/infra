@@ -11,6 +11,8 @@ func memoryCommands() []Command {
 	return []Command{
 		{Path: []string{"memory", "recall"}, Tier: TierRead,
 			Summary: `semantic search of memory: memory recall "<context>" [--query …] [--category] [--sort] [--limit]`, Run: memoryRecall},
+		{Path: []string{"memory", "get"}, Tier: TierRead,
+			Summary: "show one memory in full, with its links: memory get <id> [--json]", Run: memoryGet},
 		{Path: []string{"memory", "list"}, Tier: TierRead,
 			Summary: "list recent memories [--category C] [--tag T] [--limit N]", Run: memoryList},
 		{Path: []string{"memory", "categories"}, Tier: TierRead,
@@ -118,6 +120,92 @@ func memoryRecall(args []string) error {
 		return err
 	}
 	return printMemories(raw, jsonOut)
+}
+
+// memLinkEdge is one typed Memory→Memory link as served by the API (ADR-0007):
+// links_out entries carry target_id, links_in entries carry source_id. otherEnd
+// tolerates either key so the render never shows #0 on a naming mismatch.
+type memLinkEdge struct {
+	Type     string `json:"type"`
+	TargetID int    `json:"target_id"`
+	SourceID int    `json:"source_id"`
+}
+
+func (e memLinkEdge) otherEnd() int {
+	if e.TargetID != 0 {
+		return e.TargetID
+	}
+	return e.SourceID
+}
+
+// renderMemory formats a single GET /api/memories/{id} response: header,
+// FULL content (verbatim, multi-line — this is the read-one-whole-entry verb,
+// unlike the one-line list/recall views), metadata, then links one per line
+// ("-> supersedes #274" outgoing, "<- part-of #123" incoming), or raw JSON.
+func renderMemory(raw []byte, jsonOut bool) string {
+	if jsonOut {
+		return string(raw) + "\n"
+	}
+	var m struct {
+		ID         int           `json:"id"`
+		Content    string        `json:"content"`
+		Category   string        `json:"category"`
+		Tags       string        `json:"tags"`
+		Importance float64       `json:"importance"`
+		Owner      string        `json:"owner"`
+		CreatedAt  string        `json:"created_at"`
+		UpdatedAt  string        `json:"updated_at"`
+		LinksOut   []memLinkEdge `json:"links_out"`
+		LinksIn    []memLinkEdge `json:"links_in"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return string(raw) + "\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "#%d [%s] (%.2f)\n", m.ID, m.Category, m.Importance)
+	fmt.Fprintln(&b, m.Content)
+	if m.Tags != "" {
+		fmt.Fprintf(&b, "tags: %s\n", m.Tags)
+	}
+	if m.Owner != "" {
+		fmt.Fprintf(&b, "owner: %s\n", m.Owner)
+	}
+	if m.CreatedAt != "" {
+		fmt.Fprintf(&b, "created: %s\n", m.CreatedAt)
+	}
+	if m.UpdatedAt != "" {
+		fmt.Fprintf(&b, "updated: %s\n", m.UpdatedAt)
+	}
+	for _, l := range m.LinksOut {
+		fmt.Fprintf(&b, "-> %s #%d\n", l.Type, l.otherEnd())
+	}
+	for _, l := range m.LinksIn {
+		fmt.Fprintf(&b, "<- %s #%d\n", l.Type, l.otherEnd())
+	}
+	return b.String()
+}
+
+func memoryGet(args []string) error {
+	jsonOut := false
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+		}
+	}
+	id, _ := firstPositional(args)
+	if id == "" {
+		return fmt.Errorf("usage: homelab memory get <id> [--json]")
+	}
+	c, err := newMemoryClient()
+	if err != nil {
+		return err
+	}
+	raw, err := c.do("GET", "/api/memories/"+id, nil)
+	if err != nil {
+		return err
+	}
+	fmt.Print(renderMemory(raw, jsonOut))
+	return nil
 }
 
 func memoryList(args []string) error {
