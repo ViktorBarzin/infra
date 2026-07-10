@@ -14,8 +14,10 @@ locals {
 
 variable "immich_version" {
   type = string
-  # Change me to upgrade
-  default = "v3.0.0"
+  # Record only — live image is Keel-managed (ignore_changes on the deployments).
+  # Keel auto-applies PATCH releases (v3.0.x) hourly; this var just records the
+  # current floor. Minor/major bumps: change this + `kubectl set image` live.
+  default = "v3.0.2"
 }
 variable "proxmox_host" { type = string }
 variable "redis_host" { type = string }
