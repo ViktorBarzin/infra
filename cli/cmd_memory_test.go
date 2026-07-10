@@ -229,6 +229,52 @@ func TestMemoryUpdateLinkAndUnlink(t *testing.T) {
 	}
 }
 
+func TestCheckMemoryBoundCountsRunesNotBytes(t *testing.T) {
+	// The bound is 1,400 UNICODE CHARACTERS (ADR-0007 — derived from the recall
+	// hook's 8KB/5-results delivery budget, so a ranked Memory arrives whole).
+	// 1,400 Cyrillic runes are 2,800 bytes and must PASS: chars, not bytes.
+	if err := checkMemoryBound(strings.Repeat("я", 1400)); err != nil {
+		t.Fatalf("1400 multibyte runes must pass the bound: %v", err)
+	}
+	err := checkMemoryBound(strings.Repeat("я", 1401))
+	if err == nil {
+		t.Fatalf("1401 runes must be rejected")
+	}
+	want := "content is 1401 chars; the Memory bound is 1,400. Split into a hub + part-of details: store the hub, then store parts with --link part-of:<hubId> (ADR-0007)"
+	if err.Error() != want {
+		t.Fatalf("bound error must teach the split pattern verbatim:\n got %q\nwant %q", err.Error(), want)
+	}
+}
+
+func TestMemoryStoreOverBoundNeverCallsAPI(t *testing.T) {
+	rec := &memAPIRecorder{}
+	newMemTestServer(t, rec)
+	err := memoryStore([]string{strings.Repeat("x", 1401)})
+	if err == nil || !strings.Contains(err.Error(), "1,400") {
+		t.Fatalf("over-bound store must fail with the bound message, got %v", err)
+	}
+	if len(rec.reqs) != 0 {
+		t.Fatalf("over-bound store must not reach the API, saw %+v", rec.reqs)
+	}
+}
+
+func TestMemoryUpdateOverBoundNeverCallsAPI(t *testing.T) {
+	rec := &memAPIRecorder{}
+	newMemTestServer(t, rec)
+	err := memoryUpdate([]string{"5", "--content", strings.Repeat("x", 1401)})
+	if err == nil || !strings.Contains(err.Error(), "1,400") {
+		t.Fatalf("over-bound update must fail with the bound message, got %v", err)
+	}
+	if len(rec.reqs) != 0 {
+		t.Fatalf("over-bound update must not reach the API, saw %+v", rec.reqs)
+	}
+	// An update that does NOT touch content (e.g. importance-only) is exempt —
+	// the bound is a write-side content rule.
+	if err := memoryUpdate([]string{"5", "--importance", "0.9"}); err != nil {
+		t.Fatalf("content-less update must not trip the bound: %v", err)
+	}
+}
+
 func TestMemoryUpdateInvalidUnlinkFailsBeforeAPI(t *testing.T) {
 	rec := &memAPIRecorder{}
 	newMemTestServer(t, rec)
