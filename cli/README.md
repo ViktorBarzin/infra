@@ -265,6 +265,30 @@ handlers set `VAULT_ADDR` but never inject the scoped token (which would 403 off
 its own path). Access is whatever your policy grants. Writes are merge-only;
 `put` (replace) / `delete` are out of scope — use the raw `vault` CLI.
 
+### v0.13 — memory links + the 1,400-char bound (ADR-0007)
+
+Memories gain typed Memory→Memory **links** — a closed enum of four, each with
+defined recall behaviour: `supersedes` (redirect: successor served in place of
+the old entry), `resolved-by` (target auto-attached when the source ranks),
+`part-of` and `see-also` (one-line pointers). Link specs are `<type>:<id>`,
+pointing FROM the memory being stored/updated TO `<id>`.
+
+| Command | Tier | What it does |
+| --- | --- | --- |
+| `memory get <id> [--json]` | read | one full entry: content (verbatim, multi-line), metadata, then links one per line (`-> supersedes #274` outgoing, `<- part-of #123` incoming) |
+| `memory store "…" [--link type:id …]` | write | store, then POST each link from the new id |
+| `memory update <id> [--link type:id …] [--unlink type:id …]` | write | update, then add/remove links; a failed link op is reported but never rolls the memory back |
+
+**Content is bounded at 1,400 unicode characters** (chars, not bytes — the
+recall hook's 8KB/5-results delivery budget, so a ranked Memory always arrives
+whole). Over-bound `store`/`update --content` fail client-side, before the API,
+with the split guidance: store the hub, then store parts with
+`--link part-of:<hubId>`.
+
+`recall` sends `sort_by` only when `--sort` is given — the server default is
+now **relevance** (ADR-0005, amended). `recall --json` / `get --json` emit the
+raw API response for machine consumers (the recall hook).
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
