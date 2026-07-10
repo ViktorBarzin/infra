@@ -499,6 +499,15 @@ func TestHandlerInjectsPWATagsIntoHTML(t *testing.T) {
 	if !strings.Contains(body, `name="apple-mobile-web-app-status-bar-style" content="default"`) {
 		t.Errorf("status-bar-style must be default, got:\n%s", body)
 	}
+	// Manifest fetches run in anonymous CORS mode by spec — no cookies — so
+	// behind the Authentik forward-auth edge a bare link 302s to SSO and the
+	// browser kills the cross-origin redirect with a CORS error (seen in every
+	// console, 2026-07-10). use-credentials makes the browser attach the
+	// same-origin session cookie, letting the fetch pass the edge like any
+	// other authenticated asset.
+	if !strings.Contains(body, `rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials"`) {
+		t.Errorf("manifest link must carry crossorigin=\"use-credentials\", got:\n%s", body)
+	}
 	if strings.Contains(body, "black-translucent") {
 		t.Errorf("black-translucent hides t3's top controls under the status bar:\n%s", body)
 	}
