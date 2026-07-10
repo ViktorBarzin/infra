@@ -1108,11 +1108,26 @@ module "ingress" {
 #
 # Rollback: apply old deployment yaml, revert service selector to app=postgresql.
 
+# CNPG operand image for the shared pg-cluster. DEFAULT = the image the cluster
+# runs today (PostGIS, NO pgvector), so merging this variable is a NO-OP: the
+# rendered manifest stays byte-identical until an operator flips it to the
+# genuine-pgvector image (ghcr.io/viktorbarzin/cnpg-postgis-pgvector:16-pgvector0.8.0,
+# built from claude-memory-mcp deploy/infra/Dockerfile.pgvector) per
+# claude-memory-mcp docs/runbooks/hybrid-recall-promotion.md. MUST be a REAL
+# pgvector image — NOT pgvecto.rs/VectorChord (vectors.so), which lacks
+# CREATE EXTENSION vector / halfvec / hnsw and would leave the availability-gated
+# migration silently lexical-only. Changing this rolls a MULTI-TENANT cluster:
+# claim presence on db:pg-cluster + take a logical backup first (runbook Phase 2).
+variable "pg_cluster_image" {
+  type    = string
+  default = "ghcr.io/cloudnative-pg/postgis:16"
+}
+
 # Ensure the CNPG cluster manifest exists (idempotent kubectl apply)
 resource "null_resource" "pg_cluster" {
   triggers = {
     instances     = "3"
-    image         = "ghcr.io/cloudnative-pg/postgis:16"
+    image         = var.pg_cluster_image
     storage_size  = "20Gi"
     storage_class = "proxmox-lvm-encrypted"
     memory_limit  = "3Gi"
@@ -1145,7 +1160,7 @@ resource "null_resource" "pg_cluster" {
           enablePodAntiAffinity: true
           podAntiAffinityType: required
           topologyKey: kubernetes.io/hostname
-        imageName: ghcr.io/cloudnative-pg/postgis:16
+        imageName: ${var.pg_cluster_image}
         postgresql:
           parameters:
             search_path: '"$user", public'
