@@ -148,8 +148,10 @@ func checkMemoryBound(content string) error {
 var memLinkTypes = map[string]bool{"part-of": true, "supersedes": true, "see-also": true, "resolved-by": true}
 
 // memLinkReq is the POST /api/memories/{src}/links body: src --type--> target.
+// Wire key is link_type — the server's LinkCreate model (claude-memory-mcp
+// src/claude_memory/api/models.py) 422s a "type" key.
 type memLinkReq struct {
-	Type     string `json:"type"`
+	Type     string `json:"link_type"`
 	TargetID int    `json:"target_id"`
 }
 
@@ -189,10 +191,13 @@ func applyLinks(c *memoryClient, id string, links []memLinkReq) error {
 
 // removeLinks DELETEs each link of memory id (path-addressed — no DELETE
 // bodies, they don't survive every proxy). Same no-rollback contract.
+// Segment order is target-id THEN type, matching the server route
+// /api/memories/{memory_id}/links/{dst_id}/{link_type} (type-first would 422:
+// the type string can't parse as the int dst_id).
 func removeLinks(c *memoryClient, id string, links []memLinkReq) error {
 	var failed []string
 	for _, l := range links {
-		path := fmt.Sprintf("/api/memories/%s/links/%s/%d", id, l.Type, l.TargetID)
+		path := fmt.Sprintf("/api/memories/%s/links/%d/%s", id, l.TargetID, l.Type)
 		if _, err := c.do("DELETE", path, nil); err != nil {
 			failed = append(failed, err.Error())
 			continue
@@ -205,16 +210,21 @@ func removeLinks(c *memoryClient, id string, links []memLinkReq) error {
 	return nil
 }
 
-// memLinkEdge is one typed Memory→Memory link as served by the API (ADR-0007):
-// links_out entries carry target_id, links_in entries carry source_id. otherEnd
-// tolerates either key so the render never shows #0 on a naming mismatch.
+// memLinkEdge is one typed Memory→Memory link as served by the API (ADR-0007).
+// The landed server keys each links_out/links_in entry {"id": <otherEnd>,
+// "type": ...} (claude-memory-mcp api/app.py get_memory); otherEnd also
+// tolerates target_id/source_id so the render never shows #0 on shape drift.
 type memLinkEdge struct {
 	Type     string `json:"type"`
+	ID       int    `json:"id"`
 	TargetID int    `json:"target_id"`
 	SourceID int    `json:"source_id"`
 }
 
 func (e memLinkEdge) otherEnd() int {
+	if e.ID != 0 {
+		return e.ID
+	}
 	if e.TargetID != 0 {
 		return e.TargetID
 	}
@@ -495,15 +505,25 @@ func memoryUpdate(args []string) error {
 			return err
 		}
 	}
+	// Only PUT when a field actually changes: the server 400s an empty update
+	// ("No fields to update"), which would abort a link-only update — the
+	// canonical ADR-0007 retro-cross-linking flow
+	// (`memory update <symptomId> --link resolved-by:<truthId>`).
+	hasFields := req.Content != nil || req.Tags != nil || req.Importance != nil || req.ExpandedKeywords != nil
+	if !hasFields && len(links) == 0 && len(unlinks) == 0 {
+		return fmt.Errorf("nothing to update: pass at least one of --content/--tags/--importance/--keywords/--link/--unlink")
+	}
 	c, err := newMemoryClient()
 	if err != nil {
 		return err
 	}
-	raw, err := c.do("PUT", "/api/memories/"+id, req)
-	if err != nil {
-		return err
+	if hasFields {
+		raw, err := c.do("PUT", "/api/memories/"+id, req)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(raw))
 	}
-	fmt.Println(string(raw))
 	var linkErrs []string
 	if err := applyLinks(c, id, links); err != nil {
 		linkErrs = append(linkErrs, err.Error())
