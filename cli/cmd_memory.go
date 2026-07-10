@@ -13,7 +13,7 @@ import (
 func memoryCommands() []Command {
 	return []Command{
 		{Path: []string{"memory", "recall"}, Tier: TierRead,
-			Summary: `semantic search of memory: memory recall "<context>" [--query …] [--category] [--sort] [--limit]`, Run: memoryRecall},
+			Summary: `semantic search of memory: memory recall "<context>" [--query …] [--category] [--sort] [--limit] [--json]`, Run: memoryRecall},
 		{Path: []string{"memory", "get"}, Tier: TierRead,
 			Summary: "show one memory in full, with its links: memory get <id> [--json]", Run: memoryGet},
 		{Path: []string{"memory", "list"}, Tier: TierRead,
@@ -112,7 +112,9 @@ func memoryRecall(args []string) error {
 	}
 	req.Context = strings.Join(pos, " ")
 	if req.Context == "" {
-		return fmt.Errorf(`usage: homelab memory recall "<context>" [--query …] [--category C] [--sort importance|relevance|recency] [--limit N]`)
+		// sort_by is only sent when --sort is given; the server default is
+		// relevance (ADR-0005, amended by ADR-0007's grilling).
+		return fmt.Errorf(`usage: homelab memory recall "<context>" [--query …] [--category C] [--sort relevance|importance|recency] [--limit N] [--json]`)
 	}
 	c, err := newMemoryClient()
 	if err != nil {

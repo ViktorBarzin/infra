@@ -229,6 +229,32 @@ func TestMemoryUpdateLinkAndUnlink(t *testing.T) {
 	}
 }
 
+func TestRecallOmitsSortByUnlessGiven(t *testing.T) {
+	// ADR-0005 (amended): the SERVER default sort is relevance. The CLI must
+	// not silently re-impose an old default — sort_by is sent only when the
+	// caller passes --sort.
+	rec := &memAPIRecorder{}
+	newMemTestServer(t, rec)
+	if err := memoryRecall([]string{"nvidia", "dns", "--json"}); err != nil {
+		t.Fatalf("memoryRecall: %v", err)
+	}
+	if err := memoryRecall([]string{"nvidia", "--sort", "importance"}); err != nil {
+		t.Fatalf("memoryRecall --sort: %v", err)
+	}
+	if len(rec.reqs) != 2 || rec.reqs[0].path != "/api/memories/recall" {
+		t.Fatalf("unexpected calls: %+v", rec.reqs)
+	}
+	if strings.Contains(rec.reqs[0].body, "sort_by") {
+		t.Fatalf("recall without --sort must omit sort_by (server default = relevance): %s", rec.reqs[0].body)
+	}
+	if !strings.Contains(rec.reqs[0].body, `"context":"nvidia dns"`) {
+		t.Fatalf("--json must not leak into the recall context: %s", rec.reqs[0].body)
+	}
+	if !strings.Contains(rec.reqs[1].body, `"sort_by":"importance"`) {
+		t.Fatalf("--sort importance must be sent explicitly: %s", rec.reqs[1].body)
+	}
+}
+
 func TestCheckMemoryBoundCountsRunesNotBytes(t *testing.T) {
 	// The bound is 1,400 UNICODE CHARACTERS (ADR-0007 — derived from the recall
 	// hook's 8KB/5-results delivery budget, so a ranked Memory arrives whole).
