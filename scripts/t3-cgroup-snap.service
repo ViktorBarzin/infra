@@ -1,0 +1,25 @@
+[Unit]
+# Design: docs/plans/2026-07-09-t3-cgroup-snap-design.md
+# Runbook: docs/runbooks/t3-cgroup-snap.md
+# Diagnostic: identifies the recurring 5-7 GiB Comm='2.1.205' OOM victim
+# in t3-serve@wizard so we can pick a targeted mitigation. Removed in
+# the same PR that lands the mitigation.
+Description=t3-serve cgroup process-level snapshotter (diagnostic)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/t3-cgroup-snap
+Restart=on-failure
+RestartSec=15
+# Read /proc for other users + write /var/log -> root; unavoidable.
+StandardOutput=journal
+StandardError=journal
+# Diagnostic isn't security-sensitive but tighten low-cost surface:
+ProtectSystem=strict
+ReadWritePaths=/var/log
+ProtectHome=read-only
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
