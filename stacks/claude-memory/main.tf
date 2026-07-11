@@ -220,6 +220,14 @@ resource "kubernetes_deployment" "claude-memory" {
               }
             }
           }
+          env {
+            # Dense (semantic) recall leg — flipped 2026-07-11 after the pgvector
+            # operand swap + full embedding backfill (hybrid-recall promotion
+            # runbook Phase 5). Read live by embeddings_enabled(); rollback =
+            # set to "0" and re-apply (instant lexical-only, schema untouched).
+            name  = "MEMORY_EMBEDDINGS_ENABLED"
+            value = "1"
+          }
 
           startup_probe {
             http_get {
