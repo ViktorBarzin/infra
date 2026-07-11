@@ -3292,8 +3292,9 @@ except Exception as exc:  # any failure degrades to WARN-and-skip upstream
 # stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl):
 #   [CRITICAL] <alertname> (n) / [WARNING] ... / [SECURITY/<SEV>] ...  -> firing
 #   [RESOLVED] <alertname> (n)                                         -> resolved
-#   [INFO] <alertname> — title is IDENTICAL firing vs resolved; the
-#          attachment colour disambiguates (good = resolved).
+#   [INFO] <alertname> (n) — resolves are titled [RESOLVED] like the other
+#          receivers since 2026-07-10; the colour check below still
+#          classifies pre-change history ([INFO] title + good colour).
 # Slack normalises named attachment colours to bare hex: danger=a30200,
 # warning=daa038, good=2eb886 (info firing posts literal 439FE0).
 # [FIRING:n] is accepted too in case a receiver reverts to the stock

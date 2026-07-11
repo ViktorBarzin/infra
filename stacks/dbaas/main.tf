@@ -34,4 +34,8 @@ module "dbaas" {
   mysql_roundcubemail_password = data.vault_kv_secret_v2.viktor.data["mysql_roundcubemail_password"]
   kube_config_path             = var.kube_config_path
   tier                         = local.tiers.cluster
+  # pgvector operand swap (claude-memory hybrid-recall promotion, runbook Phase 2,
+  # 2026-07-10). Additive image: PostGIS base + genuine pgvector 0.8.4 — verified
+  # standalone (vector/halfvec/hnsw + postgis). Rolling multi-tenant restart on apply.
+  pg_cluster_image             = "ghcr.io/viktorbarzin/cnpg-postgis-pgvector:16-pgvector0.8.0"
 }

@@ -2,15 +2,20 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 func memoryCommands() []Command {
 	return []Command{
 		{Path: []string{"memory", "recall"}, Tier: TierRead,
-			Summary: `semantic search of memory: memory recall "<context>" [--query …] [--category] [--sort] [--limit]`, Run: memoryRecall},
+			Summary: `semantic search of memory: memory recall "<context>" [--query …] [--category] [--sort] [--limit] [--json]`, Run: memoryRecall},
+		{Path: []string{"memory", "get"}, Tier: TierRead,
+			Summary: "show one memory in full, with its links: memory get <id> [--json]", Run: memoryGet},
 		{Path: []string{"memory", "list"}, Tier: TierRead,
 			Summary: "list recent memories [--category C] [--tag T] [--limit N]", Run: memoryList},
 		{Path: []string{"memory", "categories"}, Tier: TierRead,
@@ -22,9 +27,9 @@ func memoryCommands() []Command {
 		{Path: []string{"memory", "secret"}, Tier: TierRead,
 			Summary: "reveal a sensitive memory's content: memory secret <id>", Run: memorySecret},
 		{Path: []string{"memory", "store"}, Tier: TierWrite,
-			Summary: `store a memory: memory store "<content>" [--category --tags --keywords --importance --sensitive]`, Run: memoryStore},
+			Summary: `store a memory (≤1,400 chars): memory store "<content>" [--category --tags --keywords --importance --sensitive --link type:id]`, Run: memoryStore},
 		{Path: []string{"memory", "update"}, Tier: TierWrite,
-			Summary: "update a memory: memory update <id> [--content --tags --importance --keywords]", Run: memoryUpdate},
+			Summary: "update a memory: memory update <id> [--content --tags --importance --keywords --link type:id --unlink type:id]", Run: memoryUpdate},
 		{Path: []string{"memory", "delete"}, Tier: TierWrite,
 			Summary: "delete a memory: memory delete <id>", Run: memoryDelete},
 	}
@@ -107,7 +112,9 @@ func memoryRecall(args []string) error {
 	}
 	req.Context = strings.Join(pos, " ")
 	if req.Context == "" {
-		return fmt.Errorf(`usage: homelab memory recall "<context>" [--query …] [--category C] [--sort importance|relevance|recency] [--limit N]`)
+		// sort_by is only sent when --sort is given; the server default is
+		// relevance (ADR-0005, amended by ADR-0007's grilling).
+		return fmt.Errorf(`usage: homelab memory recall "<context>" [--query …] [--category C] [--sort relevance|importance|recency] [--limit N] [--json]`)
 	}
 	c, err := newMemoryClient()
 	if err != nil {
@@ -118,6 +125,180 @@ func memoryRecall(args []string) error {
 		return err
 	}
 	return printMemories(raw, jsonOut)
+}
+
+// memoryBound is the hard Memory content bound (ADR-0007): 1,400 unicode
+// CHARACTERS (not bytes) — derived from the recall hook's 8KB/5-results
+// delivery budget so a ranked Memory always arrives whole.
+const memoryBound = 1400
+
+// checkMemoryBound pre-validates content client-side with the same
+// split-into-hub+parts guidance as the server's 422, saving the round-trip.
+func checkMemoryBound(content string) error {
+	if n := utf8.RuneCountInString(content); n > memoryBound {
+		return fmt.Errorf("content is %d chars; the Memory bound is 1,400. Split into a hub + part-of details: store the hub, then store parts with --link part-of:<hubId> (ADR-0007)", n)
+	}
+	return nil
+}
+
+// memLinkTypes is the CLOSED enum of Memory→Memory link types (ADR-0007 —
+// free link vocabularies rot, the category-drift lesson). Each has defined
+// recall behaviour: supersedes redirects, resolved-by auto-attaches,
+// part-of/see-also render as one-line pointers.
+var memLinkTypes = map[string]bool{"part-of": true, "supersedes": true, "see-also": true, "resolved-by": true}
+
+// memLinkReq is the POST /api/memories/{src}/links body: src --type--> target.
+// Wire key is link_type — the server's LinkCreate model (claude-memory-mcp
+// src/claude_memory/api/models.py) 422s a "type" key.
+type memLinkReq struct {
+	Type     string `json:"link_type"`
+	TargetID int    `json:"target_id"`
+}
+
+// parseLinkSpec parses a --link/--unlink value of the form "<type>:<id>",
+// where the edge points FROM the memory being stored/updated TO <id>
+// (store the successor with --link supersedes:<oldId>; store a detail with
+// --link part-of:<hubId>).
+func parseLinkSpec(s string) (memLinkReq, error) {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 || !memLinkTypes[parts[0]] {
+		return memLinkReq{}, fmt.Errorf("invalid link %q: want <type>:<id> with type one of part-of|supersedes|see-also|resolved-by", s)
+	}
+	id, err := strconv.Atoi(parts[1])
+	if err != nil || id <= 0 {
+		return memLinkReq{}, fmt.Errorf("invalid link %q: %q is not a positive integer memory id", s, parts[1])
+	}
+	return memLinkReq{Type: parts[0], TargetID: id}, nil
+}
+
+// applyLinks POSTs each link for memory id. Failures are reported (non-zero
+// exit) but NEVER roll back the memory — the memory is the durable thing,
+// links are additive (ADR-0007).
+func applyLinks(c *memoryClient, id string, links []memLinkReq) error {
+	var failed []string
+	for _, l := range links {
+		if _, err := c.do("POST", "/api/memories/"+id+"/links", l); err != nil {
+			failed = append(failed, err.Error())
+			continue
+		}
+		fmt.Printf("linked -> %s #%d\n", l.Type, l.TargetID)
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("memory %s saved, but %d link(s) failed: %s", id, len(failed), strings.Join(failed, "; "))
+	}
+	return nil
+}
+
+// removeLinks DELETEs each link of memory id (path-addressed — no DELETE
+// bodies, they don't survive every proxy). Same no-rollback contract.
+// Segment order is target-id THEN type, matching the server route
+// /api/memories/{memory_id}/links/{dst_id}/{link_type} (type-first would 422:
+// the type string can't parse as the int dst_id).
+func removeLinks(c *memoryClient, id string, links []memLinkReq) error {
+	var failed []string
+	for _, l := range links {
+		path := fmt.Sprintf("/api/memories/%s/links/%d/%s", id, l.TargetID, l.Type)
+		if _, err := c.do("DELETE", path, nil); err != nil {
+			failed = append(failed, err.Error())
+			continue
+		}
+		fmt.Printf("unlinked -> %s #%d\n", l.Type, l.TargetID)
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("memory %s saved, but %d unlink(s) failed: %s", id, len(failed), strings.Join(failed, "; "))
+	}
+	return nil
+}
+
+// memLinkEdge is one typed Memory→Memory link as served by the API (ADR-0007).
+// The landed server keys each links_out/links_in entry {"id": <otherEnd>,
+// "type": ...} (claude-memory-mcp api/app.py get_memory); otherEnd also
+// tolerates target_id/source_id so the render never shows #0 on shape drift.
+type memLinkEdge struct {
+	Type     string `json:"type"`
+	ID       int    `json:"id"`
+	TargetID int    `json:"target_id"`
+	SourceID int    `json:"source_id"`
+}
+
+func (e memLinkEdge) otherEnd() int {
+	if e.ID != 0 {
+		return e.ID
+	}
+	if e.TargetID != 0 {
+		return e.TargetID
+	}
+	return e.SourceID
+}
+
+// renderMemory formats a single GET /api/memories/{id} response: header,
+// FULL content (verbatim, multi-line — this is the read-one-whole-entry verb,
+// unlike the one-line list/recall views), metadata, then links one per line
+// ("-> supersedes #274" outgoing, "<- part-of #123" incoming), or raw JSON.
+func renderMemory(raw []byte, jsonOut bool) string {
+	if jsonOut {
+		return string(raw) + "\n"
+	}
+	var m struct {
+		ID         int           `json:"id"`
+		Content    string        `json:"content"`
+		Category   string        `json:"category"`
+		Tags       string        `json:"tags"`
+		Importance float64       `json:"importance"`
+		Owner      string        `json:"owner"`
+		CreatedAt  string        `json:"created_at"`
+		UpdatedAt  string        `json:"updated_at"`
+		LinksOut   []memLinkEdge `json:"links_out"`
+		LinksIn    []memLinkEdge `json:"links_in"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return string(raw) + "\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "#%d [%s] (%.2f)\n", m.ID, m.Category, m.Importance)
+	fmt.Fprintln(&b, m.Content)
+	if m.Tags != "" {
+		fmt.Fprintf(&b, "tags: %s\n", m.Tags)
+	}
+	if m.Owner != "" {
+		fmt.Fprintf(&b, "owner: %s\n", m.Owner)
+	}
+	if m.CreatedAt != "" {
+		fmt.Fprintf(&b, "created: %s\n", m.CreatedAt)
+	}
+	if m.UpdatedAt != "" {
+		fmt.Fprintf(&b, "updated: %s\n", m.UpdatedAt)
+	}
+	for _, l := range m.LinksOut {
+		fmt.Fprintf(&b, "-> %s #%d\n", l.Type, l.otherEnd())
+	}
+	for _, l := range m.LinksIn {
+		fmt.Fprintf(&b, "<- %s #%d\n", l.Type, l.otherEnd())
+	}
+	return b.String()
+}
+
+func memoryGet(args []string) error {
+	jsonOut := false
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+		}
+	}
+	id, _ := firstPositional(args)
+	if id == "" {
+		return fmt.Errorf("usage: homelab memory get <id> [--json]")
+	}
+	c, err := newMemoryClient()
+	if err != nil {
+		return err
+	}
+	raw, err := c.do("GET", "/api/memories/"+id, nil)
+	if err != nil {
+		return err
+	}
+	fmt.Print(renderMemory(raw, jsonOut))
+	return nil
 }
 
 func memoryList(args []string) error {
@@ -194,6 +375,7 @@ func memorySecret(args []string) error {
 
 func memoryStore(args []string) error {
 	req := memStoreReq{Category: "facts", Importance: 0.5}
+	var links []memLinkReq
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -218,6 +400,15 @@ func memoryStore(args []string) error {
 				fmt.Sscanf(args[i+1], "%f", &req.Importance)
 				i++
 			}
+		case a == "--link":
+			if i+1 < len(args) {
+				l, err := parseLinkSpec(args[i+1])
+				if err != nil {
+					return err
+				}
+				links = append(links, l)
+				i++
+			}
 		case a == "--sensitive":
 			req.ForceSensitive = true
 		case !strings.HasPrefix(a, "-"):
@@ -226,7 +417,10 @@ func memoryStore(args []string) error {
 	}
 	req.Content = strings.Join(pos, " ")
 	if req.Content == "" {
-		return fmt.Errorf(`usage: homelab memory store "<content>" [--category C] [--tags ...] [--keywords ...] [--importance 0.5] [--sensitive]`)
+		return fmt.Errorf(`usage: homelab memory store "<content>" [--category C] [--tags ...] [--keywords ...] [--importance 0.5] [--sensitive] [--link type:id ...]`)
+	}
+	if err := checkMemoryBound(req.Content); err != nil {
+		return err
 	}
 	c, err := newMemoryClient()
 	if err != nil {
@@ -237,12 +431,22 @@ func memoryStore(args []string) error {
 		return err
 	}
 	fmt.Println(string(raw))
-	return nil
+	if len(links) == 0 {
+		return nil
+	}
+	var resp struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil || resp.ID == 0 {
+		return fmt.Errorf("stored, but could not parse the new memory id to link from: %s", strings.TrimSpace(string(raw)))
+	}
+	return applyLinks(c, strconv.Itoa(resp.ID), links)
 }
 
 func memoryUpdate(args []string) error {
 	var id string
 	req := memUpdateReq{}
+	var links, unlinks []memLinkReq
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -271,22 +475,65 @@ func memoryUpdate(args []string) error {
 				req.Importance = &f
 				i++
 			}
+		case a == "--link":
+			if i+1 < len(args) {
+				l, err := parseLinkSpec(args[i+1])
+				if err != nil {
+					return err
+				}
+				links = append(links, l)
+				i++
+			}
+		case a == "--unlink":
+			if i+1 < len(args) {
+				l, err := parseLinkSpec(args[i+1])
+				if err != nil {
+					return err
+				}
+				unlinks = append(unlinks, l)
+				i++
+			}
 		case !strings.HasPrefix(a, "-") && id == "":
 			id = a
 		}
 	}
 	if id == "" {
-		return fmt.Errorf("usage: homelab memory update <id> [--content ...] [--tags ...] [--importance N] [--keywords ...]")
+		return fmt.Errorf("usage: homelab memory update <id> [--content ...] [--tags ...] [--importance N] [--keywords ...] [--link type:id ...] [--unlink type:id ...]")
+	}
+	if req.Content != nil {
+		if err := checkMemoryBound(*req.Content); err != nil {
+			return err
+		}
+	}
+	// Only PUT when a field actually changes: the server 400s an empty update
+	// ("No fields to update"), which would abort a link-only update — the
+	// canonical ADR-0007 retro-cross-linking flow
+	// (`memory update <symptomId> --link resolved-by:<truthId>`).
+	hasFields := req.Content != nil || req.Tags != nil || req.Importance != nil || req.ExpandedKeywords != nil
+	if !hasFields && len(links) == 0 && len(unlinks) == 0 {
+		return fmt.Errorf("nothing to update: pass at least one of --content/--tags/--importance/--keywords/--link/--unlink")
 	}
 	c, err := newMemoryClient()
 	if err != nil {
 		return err
 	}
-	raw, err := c.do("PUT", "/api/memories/"+id, req)
-	if err != nil {
-		return err
+	if hasFields {
+		raw, err := c.do("PUT", "/api/memories/"+id, req)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(raw))
 	}
-	fmt.Println(string(raw))
+	var linkErrs []string
+	if err := applyLinks(c, id, links); err != nil {
+		linkErrs = append(linkErrs, err.Error())
+	}
+	if err := removeLinks(c, id, unlinks); err != nil {
+		linkErrs = append(linkErrs, err.Error())
+	}
+	if len(linkErrs) > 0 {
+		return errors.New(strings.Join(linkErrs, "; "))
+	}
 	return nil
 }
 
