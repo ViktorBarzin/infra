@@ -78,6 +78,9 @@ resource "kubernetes_deployment" "immich-frame-emo" {
           # immich_v3: upstream compat tag for Immich v3 — see frame.tf for the
           # full story; repin to a versioned tag once upstream releases v3 support.
           image = "ghcr.io/immichframe/immichframe:immich_v3"
+          # Always-pull: nodes had a STALE cached immich_v3 (pre-v1.0.34,
+          # before Immich-v3 album loading was fixed) and IfNotPresent kept
+          # reusing it, breaking ExcludedAlbums. Force a fresh pull.
           image_pull_policy = "Always"
           name  = "immich-frame-emo"
           resources {
