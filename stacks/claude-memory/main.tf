@@ -314,6 +314,13 @@ resource "kubernetes_service" "claude-memory" {
     labels = {
       app = "claude-memory"
     }
+    annotations = {
+      # ADR-0007 observability: recall rate/latency/errors, dense-leg
+      # contribution, link redirects/attaches, embed-on-write, store gauges.
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/path"   = "/metrics"
+      "prometheus.io/port"   = "8000"
+    }
   }
   spec {
     selector = {
