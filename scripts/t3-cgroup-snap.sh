@@ -15,7 +15,7 @@ SNAP_INTERVAL="${T3_SNAP_INTERVAL:-5}"                    # seconds between snap
 SNAP_LOG="${T3_SNAP_LOG:-/var/log/t3-cgroup-snap.jsonl}"
 SNAP_MAX_BYTES="${T3_SNAP_MAX_BYTES:-52428800}"           # 50 MiB per rotation slot -> 150 MiB total
 SNAP_ARGV_MAX="${T3_SNAP_ARGV_MAX:-512}"                  # per-proc argv cap
-SNAP_CGROUP_GLOB="${T3_SNAP_CGROUP_GLOB:-/sys/fs/cgroup/system.slice/system-t3\x2dserve.slice/t3-serve@*.service}"
+SNAP_CGROUP_ROOT="${T3_SNAP_CGROUP_ROOT:-/sys/fs/cgroup/system.slice/system-t3\x2dserve.slice}"
 
 # read_pid_status <procroot> <pid> -> single JSON object on stdout, empty on missing.
 # Emits just the pid/uid/rss_kb/comm fields; full-line assembly happens in emit_line.
@@ -69,14 +69,17 @@ rotate_if_needed() {
 }
 
 # users_with_cgroup: one <user>\t<cgroup.procs-path> per t3-serve@ cgroup that exists.
+# Uses find (not shell glob) because the slice-name directory contains a LITERAL
+# backslash — systemd's `\x2d` escape for the `-` in `system-t3-serve.slice`. Bash
+# pathname patterns interpret `\x` as "literal x", so shell globbing never matches
+# the real path. find just does directory readdir — no glob semantics — so it works.
 users_with_cgroup() {
   local d u
-  # shellcheck disable=SC2086 # $SNAP_CGROUP_GLOB is a glob pattern, MUST be word-split.
-  for d in $SNAP_CGROUP_GLOB; do
+  while IFS= read -r d; do
     [ -r "$d/cgroup.procs" ] || continue
     u="${d##*t3-serve@}"; u="${u%.service}"
     printf '%s\t%s\n' "$u" "$d/cgroup.procs"
-  done
+  done < <(find "$SNAP_CGROUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name 't3-serve@*.service' 2>/dev/null)
 }
 
 snapshot_once() {
