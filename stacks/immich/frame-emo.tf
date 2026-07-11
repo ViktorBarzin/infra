@@ -35,6 +35,8 @@ resource "kubernetes_config_map" "frame_config_emo" {
         - ImmichServerUrl: http://immich.viktorbarzin.me
           ApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_api_key_emo"]}
           ImagesFromDays: 365
+          Albums:
+            - c64addd4-79f5-490e-bf4b-6af1e1ef610f
     EOF
   }
 }
