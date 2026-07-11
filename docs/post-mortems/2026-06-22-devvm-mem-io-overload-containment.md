@@ -180,3 +180,17 @@ survivor. Closed by **t3-watchdog** (`scripts/t3-watchdog.sh`, minutely timer):
 local-port probes, 3-strike confirmation, pairing-verified safe restart, flap
 cap + Loki alerts. Design: `../plans/2026-07-08-t3-watchdog-design.md`;
 runbook: `../runbooks/t3-watchdog.md`.
+
+## Addendum 3 (2026-07-11): still-unidentified 5-7 GiB balloon — diagnostic deployed
+
+Two more cgroup-OOMs on 2026-07-09 22:26:44 + 22:27:29 killed the same
+`Comm='2.1.205'` subprocess pattern as 2026-07-08 (5.4 GiB anon RSS this
+time; ~10 GiB then). No installed tool reports version 2.1.205 — this is a
+`prctl(PR_SET_NAME)`-renamed subprocess whose real identity isn't in the
+kernel OOM record. Deployed `t3-cgroup-snap` (`scripts/t3-cgroup-snap.sh`,
+long-lived service, 5 s cadence) to snapshot every process in every
+`t3-serve@<user>` cgroup with full argv, so the next OOM's killed PID can
+be resolved to its real tool. Diagnostic-only; the mitigation lands in the
+PR that removes the snapshotter.
+Runbook: `../runbooks/t3-cgroup-snap.md`; design:
+`../plans/2026-07-09-t3-cgroup-snap-design.md`.
