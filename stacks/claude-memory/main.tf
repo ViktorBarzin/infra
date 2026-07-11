@@ -255,12 +255,17 @@ resource "kubernetes_deployment" "claude-memory" {
           }
 
           resources {
+            # Dense-leg sizing (2026-07-11): the local bge-large embedder holds
+            # ~1.8Gi resident once the first embed loads it (lazy import; the
+            # old 128Mi limit OOM-killed the import). Burstable on purpose —
+            # baseline API is ~150Mi; only embed-serving pods grow to the model
+            # ceiling. Tier-3/4 burstable precedent.
             requests = {
-              memory = "128Mi"
+              memory = "512Mi"
               cpu    = "10m"
             }
             limits = {
-              memory = "128Mi"
+              memory = "2560Mi"
             }
           }
         }
