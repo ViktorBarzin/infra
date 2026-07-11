@@ -240,8 +240,8 @@ alertmanager:
           - send_resolved: true
             channel: "#alerts"
             color: '{{ if eq .Status "firing" }}#439FE0{{ else }}good{{ end }}'
-            fallback: 'INFO: {{ .GroupLabels.alertname }}'
-            title: '[INFO] {{ .GroupLabels.alertname }}'
+            fallback: '{{ if eq .Status "firing" }}INFO{{ else }}RESOLVED{{ end }}: {{ .GroupLabels.alertname }}'
+            title: '{{ if eq .Status "firing" }}[INFO]{{ else }}[RESOLVED]{{ end }} {{ .GroupLabels.alertname }} ({{ .Alerts | len }})'
             text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
       - name: slack-security
         slack_configs:
@@ -2809,6 +2809,40 @@ serverFiles:
               severity: warning
             annotations:
               summary: "share-link-geo CronJob (monitoring ns) hasn't succeeded in >49h — geo/unique-IP share-link gauges are stale"
+          - alert: MemoryRecallErrors
+            # The audit's silent-failure class: recall handlers raising (was the
+            # tsquery-500 that cost ~11%% of prompts their memories, unnoticed).
+            expr: increase(memory_recall_errors_total[15m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "claude-memory recall handlers are raising (see surface label) — sessions silently losing recall"
+          - alert: MemoryEmbedWriteFailing
+            expr: increase(memory_embed_write_total{status="failed"}[30m]) > 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "claude-memory embed-on-write failing repeatedly — new memories invisible to the dense leg"
+          - alert: MemoryEmbedBacklog
+            # Steady state is ~0 (embed-on-write keeps up). A growing backlog
+            # means the background embed task is stalled or the model broke.
+            expr: memory_embeddings_pending > 100
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "claude-memory embeddings backlog >100 for 6h — dense recall coverage degrading"
+          - alert: MemoryRecallLatencyHigh
+            # The recall hook aborts at 6s; p95 near that silently drops
+            # injected memories from prompts.
+            expr: histogram_quantile(0.95, sum(rate(memory_recall_seconds_bucket[10m])) by (le)) > 2.5
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "claude-memory recall p95 >2.5s for 30m — approaching the 6s hook timeout"
           - alert: T3ProbeLegDown
             expr: t3probe_connected{job="t3-probe"} == 0
             for: 5m

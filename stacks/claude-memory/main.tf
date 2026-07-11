@@ -220,6 +220,14 @@ resource "kubernetes_deployment" "claude-memory" {
               }
             }
           }
+          env {
+            # Dense (semantic) recall leg — flipped 2026-07-11 after the pgvector
+            # operand swap + full embedding backfill (hybrid-recall promotion
+            # runbook Phase 5). Read live by embeddings_enabled(); rollback =
+            # set to "0" and re-apply (instant lexical-only, schema untouched).
+            name  = "MEMORY_EMBEDDINGS_ENABLED"
+            value = "1"
+          }
 
           startup_probe {
             http_get {
@@ -247,12 +255,17 @@ resource "kubernetes_deployment" "claude-memory" {
           }
 
           resources {
+            # Dense-leg sizing (2026-07-11): the local bge-large embedder holds
+            # ~1.8Gi resident once the first embed loads it (lazy import; the
+            # old 128Mi limit OOM-killed the import). Burstable on purpose —
+            # baseline API is ~150Mi; only embed-serving pods grow to the model
+            # ceiling. Tier-3/4 burstable precedent.
             requests = {
-              memory = "128Mi"
+              memory = "512Mi"
               cpu    = "10m"
             }
             limits = {
-              memory = "128Mi"
+              memory = "2560Mi"
             }
           }
         }
@@ -300,6 +313,13 @@ resource "kubernetes_service" "claude-memory" {
     namespace = kubernetes_namespace.claude-memory.metadata[0].name
     labels = {
       app = "claude-memory"
+    }
+    annotations = {
+      # ADR-0007 observability: recall rate/latency/errors, dense-leg
+      # contribution, link redirects/attaches, embed-on-write, store gauges.
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/path"   = "/metrics"
+      "prometheus.io/port"   = "8000"
     }
   }
   spec {
