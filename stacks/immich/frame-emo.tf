@@ -35,6 +35,8 @@ resource "kubernetes_config_map" "frame_config_emo" {
         - ImmichServerUrl: http://immich.viktorbarzin.me
           ApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_api_key_emo"]}
           ImagesFromDays: 365
+          ExcludedAlbums:
+            - b703c7e1-943f-44c4-9ebb-ae3ee41473dd
     EOF
   }
 }
@@ -76,6 +78,7 @@ resource "kubernetes_deployment" "immich-frame-emo" {
           # immich_v3: upstream compat tag for Immich v3 — see frame.tf for the
           # full story; repin to a versioned tag once upstream releases v3 support.
           image = "ghcr.io/immichframe/immichframe:immich_v3"
+          image_pull_policy = "Always"
           name  = "immich-frame-emo"
           resources {
             requests = {
