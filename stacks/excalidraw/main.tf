@@ -44,6 +44,10 @@ resource "kubernetes_deployment" "excalidraw" {
     labels = {
       app  = "excalidraw"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "excalidraw"
     }
     # Keel rolls new ghcr:latest digests (k8s-portal pattern). Values here are
     # recreate-correct seeds only — the keys are in ignore_changes below, so
@@ -135,6 +139,7 @@ resource "kubernetes_deployment" "excalidraw" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -161,7 +166,11 @@ resource "kubernetes_service" "draw" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "excalidraw"
+  }
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.excalidraw.metadata[0].name
   name            = "draw"

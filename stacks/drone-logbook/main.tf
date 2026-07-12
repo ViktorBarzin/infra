@@ -108,6 +108,10 @@ resource "kubernetes_deployment" "drone_logbook" {
       app                             = "drone-logbook"
       "kubernetes.io/cluster-service" = "true"
       tier                            = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "drone-logbook"
     }
   }
   spec {
@@ -210,6 +214,7 @@ resource "kubernetes_deployment" "drone_logbook" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -270,15 +275,26 @@ resource "kubernetes_cron_job_v1" "backup" {
         template {
           metadata {}
           spec {
+            # PREFERRED (was required) since sablier enrollment (ADR-0022):
+            # the app is usually PARKED at 01:30 — required affinity left the
+            # backup pod Pending forever with no app pod to land next to. The
+            # affinity exists for the RWO data volume: parked app = volume
+            # unattached = backup can mount it on any node; awake app = soft
+            # colocation keeps the single-node RWO constraint satisfied. Rare
+            # race (wake mid-backup on another node) self-heals when the
+            # backup Job finishes and releases the attach.
             affinity {
               pod_affinity {
-                required_during_scheduling_ignored_during_execution {
-                  label_selector {
-                    match_labels = {
-                      app = "drone-logbook"
+                preferred_during_scheduling_ignored_during_execution {
+                  weight = 100
+                  pod_affinity_term {
+                    label_selector {
+                      match_labels = {
+                        app = "drone-logbook"
+                      }
                     }
+                    topology_key = "kubernetes.io/hostname"
                   }
-                  topology_key = "kubernetes.io/hostname"
                 }
               }
             }
@@ -342,7 +358,11 @@ resource "kubernetes_cron_job_v1" "backup" {
 
 # https://dronelog.viktorbarzin.me
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "drone-logbook"
+  }
   auth            = "required" # Authentik forward-auth — flight logs are GPS traces of home/travel
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.drone_logbook.metadata[0].name

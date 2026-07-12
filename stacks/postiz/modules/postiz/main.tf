@@ -94,16 +94,20 @@ resource "helm_release" "postiz" {
   version    = var.chart_version
   # No atomic/auto-rollback on first install so a bad boot is debuggable, not
   # silently rolled back. wait=false so the apply doesn't block on pod readiness.
-  atomic = false
-  wait   = false
+  atomic  = false
+  wait    = false
   timeout = 600
 
   values = [yamlencode({
     fullnameOverride = "postiz"
-    # PARKED (2026-06-28): postiz + temporal scaled to 0 — IG-via-postiz is
-    # Meta-blocked (retired scopes); IG runs via the instagram-poster service.
-    # To revive: set this + temporal replicas back to 1 (and re-check image pins).
-    replicaCount     = 0
+    # PARKED (2026-06-28), sablier-enrolled (ADR-0022, 2026-07-12): group
+    # "postiz" = postiz + temporal + elasticsearch — one visit to the UI wakes
+    # the whole chain (ES → temporal → postiz, ~90-180s cold), 3h idle parks
+    # it. replicaCount stays 0 = the parked default; sablier owns the live
+    # value (a re-apply of this chart while awake re-parks it — next request
+    # re-wakes). Labels land via kubernetes_labels.postiz_sablier below (the
+    # chart has no deployment-labels surface).
+    replicaCount = 0
     image = {
       repository = "ghcr.io/gitroomhq/postiz-app"
       tag        = var.image_tag
@@ -157,13 +161,13 @@ resource "helm_release" "postiz" {
 
     # Secret env (chart renders these into the postiz-secrets Secret, envFrom).
     secrets = {
-      DATABASE_URL              = data.vault_kv_secret_v2.postiz.data["database_url"]
-      REDIS_URL                 = "redis://redis-master.redis.svc.cluster.local:6379/11"
-      JWT_SECRET                = data.vault_kv_secret_v2.instagram_poster.data["postiz_jwt_secret"]
-      FACEBOOK_APP_ID           = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_id"]
-      FACEBOOK_APP_SECRET       = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_secret"]
-      INSTAGRAM_APP_ID          = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_id"]
-      INSTAGRAM_APP_SECRET      = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_secret"]
+      DATABASE_URL               = data.vault_kv_secret_v2.postiz.data["database_url"]
+      REDIS_URL                  = "redis://redis-master.redis.svc.cluster.local:6379/11"
+      JWT_SECRET                 = data.vault_kv_secret_v2.instagram_poster.data["postiz_jwt_secret"]
+      FACEBOOK_APP_ID            = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_id"]
+      FACEBOOK_APP_SECRET        = data.vault_kv_secret_v2.instagram_poster.data["facebook_app_secret"]
+      INSTAGRAM_APP_ID           = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_id"]
+      INSTAGRAM_APP_SECRET       = data.vault_kv_secret_v2.instagram_poster.data["instagram_app_secret"]
       POSTIZ_OAUTH_CLIENT_SECRET = var.oauth_client_secret
     }
 
@@ -201,7 +205,14 @@ module "ingress_uploads_public" {
 }
 
 module "ingress" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): one authenticated visit wakes the whole postiz
+  # group (ES → temporal → postiz, ~90-180s cold — expect one CF 524 + retry
+  # on a cold hit). The /uploads ingress above deliberately carries NO sablier
+  # (dead Meta-fetch path; parked = 503 there, same as before enrollment).
+  sablier = {
+    group = "postiz"
+  }
   dns_type        = "none" # DNS already created by ingress_uploads_public
   namespace       = kubernetes_namespace.postiz.metadata[0].name
   name            = "postiz"
@@ -265,13 +276,40 @@ resource "kubernetes_persistent_volume_claim" "es" {
   }
 }
 
+# Sablier enrollment labels for the Helm-owned postiz Deployment (ADR-0022).
+# The postiz-app chart exposes no deployment-labels value, so this field-manager
+# patch stamps them post-install; sablier discovers workloads by DEPLOYMENT
+# metadata labels. Survives helm upgrades (three-way merge keeps foreign labels;
+# this resource re-asserts them on every apply regardless).
+resource "kubernetes_labels" "postiz_sablier" {
+  api_version = "apps/v1"
+  kind        = "Deployment"
+  metadata {
+    name      = "postiz"
+    namespace = kubernetes_namespace.postiz.metadata[0].name
+  }
+  labels = {
+    "sablier.enable" = "true"
+    "sablier.group"  = "postiz"
+  }
+  depends_on = [helm_release.postiz]
+}
+
 resource "kubernetes_deployment_v1" "es" {
   metadata {
     name      = "elasticsearch"
     namespace = kubernetes_namespace.postiz.metadata[0].name
-    labels    = { app = "elasticsearch" }
+    labels = {
+      app = "elasticsearch"
+      # Scale-to-zero (ADR-0022): parks/wakes with the postiz group — ES only
+      # serves temporal's visibility store, nothing else reads it.
+      "sablier.enable" = "true"
+      "sablier.group"  = "postiz"
+    }
   }
   spec {
+    # Sablier-managed (group "postiz"). Was always-on at 1 — ~1GiB idle RAM
+    # for a parked app; now parks with the group.
     replicas = 1
     selector { match_labels = { app = "elasticsearch" } }
     strategy { type = "Recreate" }
@@ -353,7 +391,10 @@ resource "kubernetes_deployment_v1" "es" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales the postiz group (ADR-0022)
+    ]
   }
 }
 
@@ -386,10 +427,15 @@ resource "kubernetes_deployment_v1" "temporal" {
   metadata {
     name      = "temporal"
     namespace = kubernetes_namespace.postiz.metadata[0].name
-    labels    = { app = "temporal" }
+    labels = {
+      app = "temporal"
+      # Scale-to-zero (ADR-0022): parks/wakes with the postiz group.
+      "sablier.enable" = "true"
+      "sablier.group"  = "postiz"
+    }
   }
   spec {
-    replicas = 0 # PARKED with postiz (2026-06-28) — revive: set to 1
+    replicas = 0 # PARKED default; sablier-managed with the postiz group (ADR-0022)
     selector { match_labels = { app = "temporal" } }
     strategy { type = "Recreate" }
     template {
@@ -475,7 +521,10 @@ resource "kubernetes_deployment_v1" "temporal" {
   }
   depends_on = [kubernetes_deployment_v1.es, kubernetes_service.es]
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales the postiz group (ADR-0022)
+    ]
   }
 }
 

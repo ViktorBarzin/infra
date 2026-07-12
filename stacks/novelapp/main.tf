@@ -38,7 +38,7 @@ resource "kubernetes_namespace" "novelapp" {
     name = "novelapp"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -89,6 +89,10 @@ resource "kubernetes_deployment" "novelapp" {
     labels = {
       app  = "novelapp"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "novelapp"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
@@ -109,11 +113,12 @@ resource "kubernetes_deployment" "novelapp" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      metadata[0].annotations["kubernetes.io/change-cause"],         # Keel writes this on each auto-upgrade
-      metadata[0].annotations["deployment.kubernetes.io/revision"],  # K8s increments this on every rollout
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      metadata[0].annotations["kubernetes.io/change-cause"],              # Keel writes this on each auto-upgrade
+      metadata[0].annotations["deployment.kubernetes.io/revision"],       # K8s increments this on every rollout
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1 — Keel writes on update
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
   spec {
@@ -140,8 +145,8 @@ resource "kubernetes_deployment" "novelapp" {
           }
         }
         container {
-          image             = "mghee/novelapp:v1.1.3"
-          name              = "novelapp"
+          image = "mghee/novelapp:v1.1.3"
+          name  = "novelapp"
           # IfNotPresent is correct now that the tag is a pinned semver (Keel
           # bumps the tag string on upgrade -> a new tag always pulls fresh).
           # Always was only needed back when this tracked the mutable :latest.
@@ -246,6 +251,10 @@ resource "kubernetes_service" "novelapp" {
 
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "novelapp"
+  }
   # auth = "app": novelapp handles its own auth via NextAuth + Google OAuth
   # (AUTH_URL/AUTH_SECRET/GOOGLE_CLIENT_{ID,SECRET} env vars above). Putting
   # Authentik forward-auth in front double-gates the app and breaks iOS/Android

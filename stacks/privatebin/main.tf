@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "privatebin" {
     name = "privatebin"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
   }
@@ -62,6 +62,10 @@ resource "kubernetes_deployment" "privatebin" {
     labels = {
       app  = "privatebin"
       tier = local.tiers.edge
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "privatebin"
     }
   }
   spec {
@@ -124,6 +128,7 @@ resource "kubernetes_deployment" "privatebin" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -156,6 +161,10 @@ resource "kubernetes_service" "privatebin" {
 
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "privatebin"
+  }
   # Public pastebin — anyone can create/read pastes. Pastes are client-side
   # encrypted; AI scrapers gain nothing from indexing them. anti_ai_scraping
   # defaults on for auth=none, which is the existing protection.

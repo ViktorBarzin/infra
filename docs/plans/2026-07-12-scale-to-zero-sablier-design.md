@@ -332,6 +332,43 @@ to 30m–1h at enrollment.
   stirling-pdf, city-guesser, networking-toolbox — each through the
   checklist individually. Expected reclaim: order of 5–10Gi across waves 2–3.
 
+### Waves 2+3 as-built (2026-07-12, same day)
+
+Every candidate went through the checklist via a full-repo vetting sweep
+(ingress mechanics, in-cluster consumers, namespace CronJobs, WS use).
+
+**Enrolled (16 groups across 16 stacks):** dashy, grampsweb, **postiz group**
+(postiz + temporal + elasticsearch — postiz is Helm-managed, labels via a
+`kubernetes_labels` field-manager patch since the chart has no
+deployment-labels value; ~90–180s chained cold boot, expect one CF 524 +
+retry), trek, health (both its ingresses share the group), drone-logbook
+(backup CronJob pod-affinity relaxed required→preferred — it exists for the
+RWO data volume, and a parked app means the volume is free for the backup pod
+anywhere; previously the 01:30 backup would have sat Pending forever against
+a parked app), privatebin, cyberchef, jsoncrack (their anubis-* gates stay
+running), stirling-pdf, city-guesser, networking-toolbox, excalidraw, learn
+(group spans learn.* AND plans.* — cold wake re-clones the monorepo via
+git-sync from emptyDir, nothing persisted), tandoor, novelapp.
+
+**Vetted-ineligible, with the blocker on record:** wealthfolio (in-ns daily
+sync CronJob via cluster DNS — can't wake what it calls — plus a monthly
+pod-affinity job and an hourly pg-sync sidecar feeding Grafana), beadboard
+(beads-dispatcher polls `/api/agent-status` every 2 min via cluster DNS),
+speedtest (the in-app hourly Laravel scheduler IS the product), freedify ×2
+(the hand-rolled auth-free `/api/stream/` ingress carries no sablier
+middleware — streaming/AirPlay could neither wake nor keep-alive), navidrome
+(background Subsonic mobile clients + homepage widget via cluster DNS +
+freedify's scan target), hackmd + send (WebSocket-core). Docs correction
+landed alongside: privatebin was never Anubis-fronted (the CLAUDE.md Anubis
+roster wrongly listed pb; its XHR POST breaks under the challenge).
+
+**Notes:** privatebin is the first `auth = "none"` enrollee — it validates
+the `ignoreUserAgent` probe-exclusion end-to-end (Kuma probes now reach the
+sablier middleware directly). novelapp is shared with an external user
+(Gheorghe) — his first visit after idle costs a cold start. Public
+`auth=none` enrollees wake on any bot that clears the CF/CrowdSec/anti-AI
+edge — correct behavior, just less idle time than Authentik-walled apps.
+
 ## Out of scope (v1)
 
 TCP services (torrserver, coturn, mail), queue/cron workers, StatefulSets/DBs,

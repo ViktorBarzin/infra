@@ -96,6 +96,10 @@ resource "kubernetes_deployment" "trek" {
     labels = {
       app  = "trek"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "trek"
     }
   }
   spec {
@@ -200,6 +204,7 @@ resource "kubernetes_deployment" "trek" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -232,7 +237,11 @@ module "tls_secret" {
 # Authentik forward-auth gates the app — for the solo trial it keeps the
 # internet out; TREK's own login sits behind it. Proxied via Cloudflare.
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "trek"
+  }
   auth            = "required"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.trek.metadata[0].name
