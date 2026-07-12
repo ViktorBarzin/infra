@@ -34,7 +34,7 @@ peak ~11k req/h, ~5% CPU).
 |---|----------|--------|
 | 1 | What scaling buys | **HA + zero-downtime deploys** (not throughput) |
 | 2 | Failure domains in scope | **Stateless tier only**; PG/Redis/NFS stay documented SPOFs |
-| 3 | API tier shape | **2 replicas**, spread across nodes, **PDB minAvailable=1**, RollingUpdate **maxUnavailable=0** |
+| 3 | API tier shape | **3 replicas** (revised from 2 on 2026-07-12 — "just in case", matches the Traefik/Authentik critical-path convention), spread across nodes, **PDB minAvailable=2**, RollingUpdate **maxUnavailable=1 / maxSurge=0** (≥2 always serving; no surge pod, so rolls can never be quota-blocked) |
 | 4 | ML tier | **Unchanged** (1 GPU replica on node1) |
 | 5 | Coordination Redis | **Keep the shared cluster Redis** (reuse-before-building; revisit on contention) |
 
@@ -126,11 +126,12 @@ flowchart TB
 
     TR --> SVC[Service immich-server<br/>selector: app=immich-api]
 
-    subgraph api[API tier — 2 replicas, spread, PDB minAvail=1, RollingUpdate maxUnavail=0]
-      API1[immich-api pod<br/>no GPU · any node]
-      API2[immich-api pod<br/>no GPU · different node]
+    subgraph api[API tier — 3 replicas, spread, PDB minAvail=2, RollingUpdate maxUnavail=1/maxSurge=0]
+      API1[immich-api pod<br/>no GPU · node A]
+      API2[immich-api pod<br/>no GPU · node B]
+      API3[immich-api pod<br/>no GPU · node C]
     end
-    SVC --> API1 & API2
+    SVC --> API1 & API2 & API3
 
     subgraph jobs[Job tier — 1 replica, Recreate]
       WRK[immich-worker pod<br/>GPU + NVENC + gpumem<br/>node1 only]
@@ -141,16 +142,17 @@ flowchart TB
     NFS[(Shared media root<br/>RWX NFS: library, upload,<br/>thumbs, encoded-video, …)]
     ML[immich-machine-learning<br/>1 GPU replica — unchanged]
 
-    API1 & API2 <--> REDIS
+    API1 & API2 & API3 <--> REDIS
     WRK <--> REDIS
-    API1 & API2 --> PG
+    API1 & API2 & API3 --> PG
     WRK --> PG
-    API1 & API2 --> NFS
+    API1 & API2 & API3 --> NFS
     WRK --> NFS
     WRK --> ML
 
     style API1 fill:#c8e6c9
     style API2 fill:#c8e6c9
+    style API3 fill:#c8e6c9
     style WRK fill:#ffe0b2
     style PG fill:#ffcdd2
     style REDIS fill:#ffcdd2
@@ -164,12 +166,14 @@ singleton by upstream constraint.
 
 - **`immich-api` Deployment** (new): image = same `immich_version` var; env =
   current server env + `IMMICH_WORKERS_INCLUDE=api`; **no** `nvidia.com/gpu`,
-  **no** gpumem, **no** node pin; resources ≈ request 2Gi / limit 4Gi (initial —
-  re-measure after a week, the 6.9Gi peaks belong to jobs); replicas=2;
+  **no** gpumem, **no** node pin; resources ≈ request 1.5Gi / limit 4Gi (initial —
+  re-measure after a week, the 6.9Gi peaks belong to jobs; requests kept lean so
+  3 replicas + cronjob pods fit the namespace quota); replicas=3;
   `topologySpreadConstraints` on hostname (maxSkew 1, DoNotSchedule) or hard
-  pod-anti-affinity; RollingUpdate maxSurge=1 maxUnavailable=0; PDB
-  minAvailable=1; probes as today (`/api/server/ping`); mounts: full shared
-  media root set.
+  pod-anti-affinity; RollingUpdate **maxUnavailable=1, maxSurge=0** (2 of 3
+  always serving; a surge pod would need quota headroom that isn't there —
+  see quota table); PDB minAvailable=2; probes as today (`/api/server/ping`);
+  mounts: full shared media root set.
 - **`immich-worker` Deployment** (converted from today's `immich-server`):
   env + `IMMICH_WORKERS_EXCLUDE=api`; keeps GPU=1 + gpumem + node1 pin +
   request 7Gi / limit 10Gi; replicas=1; strategy **Recreate** (two live job
@@ -192,32 +196,55 @@ singleton by upstream constraint.
 | Δ | requests | limits |
 |---|----------|--------|
 | Today (all pods) | 16.9Gi | 21Gi |
-| + 2× api (2Gi/4Gi) | +4Gi | +8Gi |
+| + 3× api (1.5Gi/4Gi) | +4.5Gi | +12Gi |
 | Worker (unchanged from server) | ±0 | ±0 |
-| **Projected** | **~20.9/24Gi** | **~29/40Gi** |
+| **Projected** | **~21.4/24Gi** | **~33/40Gi** |
 
-Fits. Node-loss math also improves: ~4Gi of api requests move OFF node1.
+Fits, with ~2.6Gi request headroom left for the every-5-min cronjob pods
+(clip-prewarm/keepalive/search-probe) and drift. Deploy rolls need **zero**
+extra headroom because maxSurge=0. If the namespace ever needs more room,
+raising the tier quota is a deliberate follow-up, not a silent side effect.
+Node-loss math also improves: ~4.5Gi of api requests move OFF node1.
 
 ## 6. Rollout sequence (for the future execution session)
 
-Ordering exists to guarantee **never two job-workers** and **no serving gap**:
+**Standing requirement (Viktor, 2026-07-12): the rollout must not disrupt
+current service — users keep browsing/uploading throughout.** The ordering
+below guarantees that, plus **never two job-workers**. Every step lists its
+user-visible impact; the only impact anywhere is a ~1 min background-job pause
+that users cannot see.
 
 ```mermaid
-flowchart LR
-    A[1. Add immich-api Deployment<br/>2 replicas, INCLUDE=api] --> B[2. Wait Ready<br/>api pods serving via pod-IP checks]
-    B --> C[3. Flip Service selector<br/>to app=immich-api]
-    C --> D[4. Convert old immich-server<br/>to immich-worker EXCLUDE=api<br/>Recreate — one pod swap]
-    D --> E[5. Verify checklist below]
-    E --> F[6. Commit+push same session<br/>CI no-op apply confirms]
+flowchart TD
+    A["1. Add immich-api Deployment (3 replicas, INCLUDE=api)<br/>old combined pod untouched, still serving everything<br/>impact: none"] --> B["2. Gate: all 3 api pods Ready on distinct nodes;<br/>probe each pod IP directly (/api/server/ping,<br/>login page, one authed API call)<br/>impact: none — no user traffic on them yet"]
+    B --> C["3. Flip Service immich-server selector to app=immich-api<br/>NEW requests → api pods; ESTABLISHED connections<br/>(websockets, in-flight uploads) stay on the old pod<br/>impact: none"]
+    C --> D["4. SOAK ≥30 min: old pod drains naturally<br/>(websocket clients reconnect on their own schedule,<br/>in-flight uploads finish); watch old-pod conn count +<br/>0×5xx on the router<br/>impact: none"]
+    D --> E["5. Convert old immich-server → immich-worker<br/>(EXCLUDE=api, Recreate, keeps GPU/node1)<br/>impact: job processing pauses ~1 min —<br/>queue buffers in Redis; viewing/uploads unaffected"]
+    E --> F["6. Full verification checklist (below)"]
+    F --> G["7. Commit+push same session; CI apply no-ops<br/>(or CI-first: push, let CI apply, verify) —<br/>either way repo == live before session ends"]
 ```
 
-Step 4's pod swap is the only moment the job tier is briefly absent (~1 min):
-uploads/viewing unaffected, queued jobs wait in Redis. At no point do two
-microservices workers run.
+**Zero-disruption mechanics, spelled out:**
+
+- Steps 1–2 add capacity alongside the running pod — nothing existing changes.
+- Step 3 is an endpoints swap for NEW connections only; kube-proxy/conntrack
+  keeps established TCP (websockets, running uploads) pinned to the old pod,
+  which remains fully api-capable until step 5. Socket.io clients that do
+  reconnect land on the api tier and keep working (Redis adapter, §3.3).
+- Step 4's soak turns the theoretical drain into an observed one: proceed only
+  when the old pod's established-connection count is ~0 (or the soak window
+  expires) AND the router shows zero 5xx since the flip.
+- Step 5 never overlaps two microservices workers (the old pod is deleted
+  before its replacement starts — Recreate), and by then it serves no users.
+- Abort path at any gate: flip the Service selector back to the old pod's
+  label — instant, no data changes anywhere in the sequence.
+
+At no point do two microservices workers run, and at no point is user-facing
+capacity below 1 healthy serving pod (it is ≥2 from step 2 onward).
 
 **Verification checklist (execution session must tick every box):**
 
-1. Two api pods on different nodes; worker on node1 (`kubectl get pods -o wide`).
+1. Three api pods on three distinct nodes; worker on node1 (`kubectl get pods -o wide`).
 2. Zero 5xx across the flip (Traefik router metrics, the monitoring pattern
    from 2026-07-12).
 3. Websocket cross-replica: two browser sessions (forced to different pods via
@@ -231,7 +258,9 @@ microservices workers run.
 8. Kill one api pod → no user-visible failure (repeat #2 during it).
 9. `kubectl drain`-simulate node1 loss (or cordon+delete worker pod): viewing
    keeps working; jobs pause; worker reschedules when possible.
-10. Deploy test: bump any env, watch RollingUpdate produce zero 5xx.
+10. Deploy test: bump any env, watch the roll (maxUnavailable=1) produce zero
+    5xx with ≥2 api pods serving at every moment — and confirm the roll is NOT
+    quota-blocked (maxSurge=0 means it never asks for headroom).
 
 **Rollback:** revert the commit — TF restores the single combined Deployment;
 Service selector returns with it. No data-shape changes anywhere in this plan
