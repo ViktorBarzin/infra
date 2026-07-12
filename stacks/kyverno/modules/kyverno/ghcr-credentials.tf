@@ -48,6 +48,10 @@ locals {
     # .github/workflows/build-excalidraw.yml). The deployment references the
     # cloned secret.
     "excalidraw",
+    # hermes-agent: PRIVATE ghcr.io/viktorbarzin/hermes-agent (Hermes v2
+    # Discord assistant, spec infra#75). Deployment + git-init initContainer
+    # reference the cloned secret.
+    "hermes-agent",
   ]
 }
 
