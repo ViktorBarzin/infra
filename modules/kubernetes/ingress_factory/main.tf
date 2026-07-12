@@ -7,6 +7,12 @@ terraform {
     kubernetes = {
       source = "hashicorp/kubernetes"
     }
+    # For kubectl_manifest.sablier — raw SSA apply without the hashicorp
+    # provider's plan-time type inference (beads code-e2dp workaround class).
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
   }
 }
 
@@ -456,10 +462,15 @@ resource "kubernetes_manifest" "buffering" {
 # by the poll cadence. strategy = "blocking" remains for API-shaped paths.
 # failOpen=true: if the Sablier API is down the plugin passes requests
 # through — running apps stay reachable, parked ones 503 until it returns.
-resource "kubernetes_manifest" "sablier" {
+# kubectl_manifest (NOT kubernetes_manifest): the hashicorp provider's
+# plan-time type inference breaks on IN-PLACE SHAPE CHANGES of free-form CRD
+# fields ("Provider produced inconsistent result after apply" when the
+# blocking block became dynamic, 2026-07-12) — the same provider bug class
+# the repo already works around with gavinbunney/kubectl (beads code-e2dp).
+resource "kubectl_manifest" "sablier" {
   count = var.sablier != null ? 1 : 0
 
-  manifest = {
+  yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
     kind       = "Middleware"
     metadata = {
@@ -500,7 +511,7 @@ resource "kubernetes_manifest" "sablier" {
         )
       }
     }
-  }
+  })
 }
 
 # Cloudflare DNS records — created automatically when dns_type is set.
