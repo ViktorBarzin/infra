@@ -122,13 +122,18 @@ resource "kubernetes_deployment" "printer" {
             value = "10"
           }
 
+          # Chromium cannot boot in the old 128Mi limit — the pod crash-looped
+          # on the first sablier wake (2026-07-12; this pair was hand-parked in
+          # March precisely for OOM). Burstable with a hard 1Gi cap: enough to
+          # render PDFs, can never eat the node like the uncapped incident,
+          # and costs nothing while parked (the scale-to-zero point).
           resources {
             requests = {
-              memory = "128Mi"
+              memory = "256Mi"
               cpu    = "25m"
             }
             limits = {
-              memory = "128Mi"
+              memory = "1Gi"
             }
           }
 
@@ -309,13 +314,15 @@ resource "kubernetes_deployment" "resume" {
             mount_path = "/app/data"
           }
 
+          # OOMKilled at the old 64Mi on the first sablier wake (2026-07-12) —
+          # reactive-resume v5 needs more to boot. Burstable, tier 4-aux.
           resources {
             requests = {
-              memory = "64Mi"
+              memory = "128Mi"
               cpu    = "15m"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
 
