@@ -430,6 +430,32 @@ resource "kubernetes_manifest" "middleware_dawarich_rate_limit" {
   depends_on = [helm_release.traefik]
 }
 
+# Executor-specific rate limit. The web UI is a TanStack-Router SPA that
+# cold-loads ~40-60 hashed route/asset chunks in one burst on first paint,
+# and because it's reached over the internal path via cloudflared (dns_type
+# internal), Traefik sees a SINGLE client IP (the cloudflared pod) for all of
+# it — so the default 10/50 limiter 429s the tail and the UI renders broken
+# (eighth instance of the burst pattern, after ha-sofia, ActualBudget, noVNC,
+# tripit, health, authentik and dawarich).
+resource "kubernetes_manifest" "middleware_executor_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "executor-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 100
+        burst   = 1000
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # Compress responses to clients at the entrypoint level (outermost).
 # Applied at websecure entrypoint so all responses get compressed.
 # Uses includedContentTypes (whitelist) instead of excludedContentTypes:
