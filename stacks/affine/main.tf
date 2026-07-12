@@ -192,6 +192,14 @@ resource "kubernetes_deployment" "affine" {
     labels = {
       app  = "affine"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022, batch 4). WS CAVEAT: AFFiNE syncs
+      # over WebSockets, which do NOT refresh sablier sessions (plugin #26) —
+      # an editing session >3h of pure typing can be reaped mid-use; AFFiNE is
+      # local-first and re-syncs on reconnect (accepted by Viktor — same
+      # posture as excalidraw).
+      "sablier.enable"      = "true"
+      "sablier.group"       = "affine"
+      "sablier.ready-after" = "5s"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
@@ -340,6 +348,7 @@ resource "kubernetes_deployment" "affine" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales replicas (ADR-0022)
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
@@ -376,6 +385,14 @@ resource "kubernetes_service" "affine" {
 
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022, batch 4): BLOCKING strategy, not the dynamic
+  # default — AFFiNE's desktop/mobile sync clients hit the bearer-token API
+  # directly (no Authentik wall on auth=app), and a 200 HTML loading page
+  # would corrupt their responses; a held request just looks like slow I/O.
+  sablier = {
+    group    = "affine"
+    strategy = "blocking"
+  }
   # auth = "app": AFFiNE has its own workspace auth + bearer-token API
   # used by desktop/mobile sync clients. Authentik forward-auth was 302-ing
   # those API callers; AFFiNE's own auth gates users.
