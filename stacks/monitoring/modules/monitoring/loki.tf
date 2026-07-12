@@ -232,6 +232,26 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Immich worker split (2026-07-12): the job tier (immich-worker) has
+          # no HTTP surface, so its death is invisible to HTTP probes — but the
+          # api pods' checkWorkers() logs this exact warning every interval
+          # while no microservices worker is registered in Redis. Message text
+          # verified at v3.0.2 (server/src/repositories/job.repository.ts:128).
+          name = "Immich"
+          rules = [
+            {
+              alert  = "ImmichNoJobWorker"
+              expr   = "sum(count_over_time({namespace=\"immich\"} |= \"No microservices worker is connected\" [5m])) > 0"
+              for    = "5m"
+              labels = { severity = "warning", subsystem = "immich" }
+              annotations = {
+                summary     = "Immich job tier down — thumbnails/transcodes/ML jobs silently paused"
+                description = "immich-api pods keep logging Immich's 'No microservices worker is connected' warning: the single immich-worker (GPU job tier) is dead or can't reach Redis. Photo viewing keeps working; background jobs buffer in Redis until the worker returns. Check: kubectl -n immich get pods -l app=immich-worker. Design: docs/plans/2026-07-12-immich-horizontal-scaling-design.md §7. Brief flaps during worker deploys (Recreate, ~1 min) stay under the 5m for-window."
+              }
+            },
+          ]
+        },
+        {
           # App auto-upgrades (Keel). Keel's direct Slack notifier was disabled
           # 2026-07-02 after a stuck update (gotenberg vs require-trusted-
           # registries) re-posted an identical failure to #general on every
