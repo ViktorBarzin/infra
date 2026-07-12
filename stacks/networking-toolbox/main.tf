@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "networking-toolbox" {
     name = "networking-toolbox"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -32,6 +32,10 @@ resource "kubernetes_deployment" "networking-toolbox" {
     labels = {
       app  = "networking-toolbox"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "networking-toolbox"
     }
   }
   spec {
@@ -82,6 +86,7 @@ resource "kubernetes_deployment" "networking-toolbox" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -108,7 +113,11 @@ resource "kubernetes_service" "networking-toolbox" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "networking-toolbox"
+  }
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.networking-toolbox.metadata[0].name
   name            = "networking-toolbox"

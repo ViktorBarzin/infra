@@ -61,6 +61,10 @@ resource "kubernetes_deployment" "health" {
     labels = {
       app  = "health"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "health"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
@@ -173,6 +177,7 @@ resource "kubernetes_deployment" "health" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -199,7 +204,11 @@ resource "kubernetes_service" "health" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "health"
+  }
   auth            = "required"
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.health.metadata[0].name
@@ -230,6 +239,10 @@ module "ingress" {
 # (ADR-0008). Same `health` deployment; acts as DEV_AUTH_EMAIL=vbarzin@gmail.com.
 module "ingress_test" {
   source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "health"
+  }
   # auth = "none": LAN-only (allow_local_access_only) test host — no public
   # exposure; the public health.viktorbarzin.me ingress above stays
   # auth="required". No user data gate here by design — it serves the real app

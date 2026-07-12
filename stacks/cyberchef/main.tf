@@ -8,7 +8,7 @@ resource "kubernetes_namespace" "cyberchef" {
   metadata {
     name = "cyberchef"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -31,6 +31,10 @@ resource "kubernetes_deployment" "cyberchef" {
     labels = {
       app  = "cyberchef"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "cyberchef"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
@@ -88,6 +92,7 @@ resource "kubernetes_deployment" "cyberchef" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -123,7 +128,11 @@ module "anubis" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "cyberchef"
+  }
   auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
   dns_type          = "proxied"
   namespace         = kubernetes_namespace.cyberchef.metadata[0].name

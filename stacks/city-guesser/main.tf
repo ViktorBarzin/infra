@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "city-guesser" {
     name = "city-guesser"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -32,6 +32,10 @@ resource "kubernetes_deployment" "city-guesser" {
     labels = {
       run  = "city-guesser"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "city-guesser"
     }
   }
   spec {
@@ -69,7 +73,7 @@ resource "kubernetes_deployment" "city-guesser" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
@@ -78,6 +82,7 @@ resource "kubernetes_deployment" "city-guesser" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -104,7 +109,11 @@ resource "kubernetes_service" "city-guesser" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "city-guesser"
+  }
   dns_type        = "proxied"
   namespace       = "city-guesser"
   name            = "city-guesser"

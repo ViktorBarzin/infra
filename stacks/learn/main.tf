@@ -141,6 +141,12 @@ resource "kubernetes_deployment" "learn" {
     namespace = kubernetes_namespace.learn.metadata[0].name
     labels = {
       app = "learn"
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request to EITHER learn.viktorbarzin.me or plans.viktorbarzin.me
+      # (both ingresses carry the same sablier group). Cold wake re-clones the
+      # monorepo shallow via git-sync (~15-50s) — emptyDir content, nothing lost.
+      "sablier.enable" = "true"
+      "sablier.group"  = "learn"
     }
   }
 
@@ -268,7 +274,10 @@ resource "kubernetes_deployment" "learn" {
   }
 
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
+    ]
   }
 
   depends_on = [kubernetes_manifest.git_creds_external_secret]
@@ -296,7 +305,12 @@ resource "kubernetes_service" "learn" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park. Same group on
+  # the plans ingress below — a visit to either host wakes the shared pod.
+  sablier = {
+    group = "learn"
+  }
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.learn.metadata[0].name
   name            = "learn"
@@ -317,7 +331,11 @@ module "ingress" {
 # the SAME learn pod: the Caddyfile above picks the site by Host header, with
 # the identical owner-only gate. Only the ingress hostname is new.
 module "ingress_plans" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): same group as the learn ingress above.
+  sablier = {
+    group = "learn"
+  }
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.learn.metadata[0].name
   name            = "plans"
