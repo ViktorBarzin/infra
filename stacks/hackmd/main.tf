@@ -52,7 +52,9 @@ resource "kubernetes_deployment" "hackmd" {
     }
   }
   spec {
-    replicas = 1
+    # PARKED (2026-07-12, Viktor) — unused; WebSocket-core so it can't
+    # wake-on-request (ADR-0022 ineligible). Revive: set to 1.
+    replicas = 0
     strategy {
       type = "Recreate"
     }

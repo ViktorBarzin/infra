@@ -439,6 +439,13 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
     labels = {
       app  = "annas-archive-stacks"
       tier = local.tiers.edge
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first visit to stacks.viktorbarzin.me (Viktor's pick, 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "annas-archive"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
     }
   }
   spec {
@@ -515,6 +522,7 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -541,7 +549,11 @@ resource "kubernetes_service" "annas-archive-stacks" {
 }
 
 module "stacks_ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): loading-page wake, 3h idle park.
+  sablier = {
+    group = "annas-archive"
+  }
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "stacks"

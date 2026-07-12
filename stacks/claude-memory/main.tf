@@ -156,11 +156,12 @@ resource "kubernetes_deployment" "claude-memory" {
     }
   }
   spec {
-    # 2 replicas (stateless FastAPI over shared CNPG PG) so node drains, Keel
-    # bumps, Reloader restarts (7d DB rotation), CI deploys, and descheduler
-    # evictions become zero-downtime rolling events instead of hard outages —
-    # the latter were surfacing as recurring memory-MCP "disconnects".
-    replicas = 2
+    # 1 replica (trimmed from 2 on 2026-07-12, Viktor — ~680Mi back). The 2nd
+    # replica existed to make drains/rotations/deploys zero-downtime; at 1,
+    # those events cost a brief recall/store blip for active sessions
+    # (accepted). PDB below flipped to max_unavailable=1 accordingly —
+    # min_available=1 with a single replica would BLOCK kured node drains.
+    replicas = 1
     selector {
       match_labels = {
         app = "claude-memory"
@@ -298,7 +299,9 @@ resource "kubernetes_pod_disruption_budget_v1" "claude-memory" {
     namespace = kubernetes_namespace.claude-memory.metadata[0].name
   }
   spec {
-    min_available = "1"
+    # max_unavailable (not min_available): with 1 replica, min_available=1
+    # blocks every voluntary eviction — kured drains would hang on this pod.
+    max_unavailable = "1"
     selector {
       match_labels = {
         app = "claude-memory"

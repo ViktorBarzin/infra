@@ -52,7 +52,10 @@ resource "kubernetes_deployment" "send" {
     }
   }
   spec {
-    replicas = 1
+    # PARKED (2026-07-12, Viktor) — unused; WS-upload protocol so it can't
+    # wake-on-request (ADR-0022 ineligible). Share links are DEAD while
+    # parked. Revive: set to 1 and drop external_monitor = false below.
+    replicas = 0
     strategy {
       type = "Recreate"
     }
@@ -169,12 +172,15 @@ module "ingress" {
   # Send is an end-to-end encrypted file-drop — anonymous recipients open a
   # share link to download. Forward-auth would block every share-link user.
   # auth = "none": End-to-end encrypted file-drop — anonymous recipients open share links; forward-auth blocks all share-link access.
-  auth            = "none"
-  dns_type        = "non-proxied"
-  namespace       = kubernetes_namespace.send.metadata[0].name
-  name            = "send"
-  tls_secret_name = var.tls_secret_name
-  port            = 1443
+  auth     = "none"
+  dns_type = "non-proxied"
+  # Parked service: keep the external-monitor-sync from holding a permanently
+  # red [External] monitor against a 0-replica backend.
+  external_monitor = false
+  namespace        = kubernetes_namespace.send.metadata[0].name
+  name             = "send"
+  tls_secret_name  = var.tls_secret_name
+  port             = 1443
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Send"
