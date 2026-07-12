@@ -125,6 +125,13 @@ here so the deltas from the reviewed draft are explicit:
    services) until a second apply pass recreated them. Lesson recorded: a
    same-name resource-address migration needs `terraform state rm` of the
    old address (or removed{} blocks) instead of parallel destroy+create.
+9. **learn un-enrolled — deliberately always-on (Viktor, same day):** the
+   learn pod serves plans.viktorbarzin.me, the plan-review surface opened on
+   the go — a 30–60s cold re-clone before reading a plan defeats its purpose.
+   Eligible per the checklist, excluded by owner choice; all three enrollment
+   pieces reverted in `stacks/learn`, replicas pinned back to 1 under normal
+   Terraform management. Precedent: eligibility ≠ obligation — frequently
+   *reached-for* services can be worth their idle RAM (~40Mi here).
 
 ## Options considered (July 2026 survey)
 
