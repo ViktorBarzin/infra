@@ -193,13 +193,19 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.immich]
 }
 
+# Job tier of the worker split (docs/plans/2026-07-12-immich-horizontal-scaling-design.md):
+# runs EVERY background job (thumbnails, metadata, ML fan-out, transcoding —
+# job-based AND real-time HLS ffmpeg) via IMMICH_WORKERS_EXCLUDE=api. Exactly
+# 1 replica: BullMQ concurrency is per-worker-process (upstream #28051), so a
+# second worker would double every queue and race face-clustering. Client
+# traffic is served by immich-api; this pod has no HTTP surface.
 resource "kubernetes_deployment" "immich_server" {
   metadata {
-    name      = "immich-server"
+    name      = "immich-worker"
     namespace = kubernetes_namespace.immich.metadata[0].name
 
     labels = {
-      app  = "immich-server"
+      app  = "immich-worker"
       tier = local.tiers.gpu
     }
     annotations = {
@@ -227,18 +233,20 @@ resource "kubernetes_deployment" "immich_server" {
 
     selector {
       match_labels = {
-        app = "immich-server"
+        app = "immich-worker"
       }
     }
 
     strategy {
+      # Never two job workers concurrently (#28051) — Recreate swaps the single
+      # worker with a ~1 min job pause; the queue buffers in Redis meanwhile.
       type = "Recreate"
     }
 
     template {
       metadata {
         labels = {
-          app = "immich-server"
+          app = "immich-worker"
         }
         annotations = {
           "diun.enable"                = "true"
@@ -262,15 +270,15 @@ resource "kubernetes_deployment" "immich_server" {
           effect   = "NoSchedule"
         }
         container {
-          name  = "immich-server"
+          name  = "immich-worker"
           image = "ghcr.io/immich-app/immich-server:${var.immich_version}"
 
-          port {
-            name           = "http"
-            container_port = 2283
-            protocol       = "TCP"
+          env {
+            # Everything except the api worker = the microservices role.
+            # docs.immich.app/administration/jobs-workers
+            name  = "IMMICH_WORKERS_EXCLUDE"
+            value = "api"
           }
-
           env {
             name  = "DB_DATABASE_NAME"
             value = "immich"
@@ -301,44 +309,15 @@ resource "kubernetes_deployment" "immich_server" {
             value = var.redis_host
           }
 
-          liveness_probe {
-            http_get {
-              path = "/api/server/ping"
-              port = "http"
-            }
-            initial_delay_seconds = 0
-            period_seconds        = 10
-            timeout_seconds       = 1
-            failure_threshold     = 3
-            success_threshold     = 1
-          }
-
-          readiness_probe {
-            http_get {
-              path = "/api/server/ping"
-              port = "http"
-            }
-            period_seconds    = 10
-            timeout_seconds   = 1
-            failure_threshold = 3
-            success_threshold = 1
-          }
-
-          startup_probe {
-            http_get {
-              path = "/api/server/ping"
-              port = "http"
-            }
-            period_seconds  = 10
-            timeout_seconds = 1
-            # Bumped 30 → 360 (5min → 1h): after a PG restart, immich-server
-            # reindexes the clip_index + face_index vector tables before binding
-            # the API port. Hundreds of thousands of rows take longer than 5min
-            # on a cold cache, so the old threshold trapped us in a startup
-            # crashloop after every PG restart (2026-05-24 incident).
-            failure_threshold = 360
-            success_threshold = 1
-          }
+          # NO HTTP probes and NO port: the microservices worker binds an
+          # EPHEMERAL port (app.listen(0) in workers/microservices.ts @ v3.0.2)
+          # and serves no HTTP, so any httpGet probe would crash-loop it.
+          # Upstream's own immich-healthcheck exits 0 unconditionally when the
+          # api worker is excluded — the health contract is "process alive"
+          # (k8s restarts on exit) plus the Loki alert on the api pods'
+          # checkWorkers() warning ("No microservices worker is connected").
+          # The 2026-05-24 startup-probe lesson (1h vector reindex after a PG
+          # restart) moved to immich-api, which kept the HTTP probes.
 
           # volume_mount {
           #   name       = "library-old"
