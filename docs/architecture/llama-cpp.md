@@ -71,8 +71,8 @@ for the initial deployment.
 The llama-swap pod requests `nvidia.com/gpu: 1`, but the T4 is
 **time-sliced** by the NVIDIA device plugin — several pods on k8s-node1
 each hold a `nvidia.com/gpu: 1` slice and run **concurrently**:
-`llama-swap`, `immich.immich-machine-learning`, `immich.immich-server`
-(NVENC transcode), and `frigate`. Time-slicing shares *compute* but
+`llama-swap`, `immich.immich-machine-learning`, `immich.immich-worker`
+(NVENC transcode; ex `immich-server` — worker split 2026-07-12), and `frigate`. Time-slicing shares *compute* but
 **not memory** — the 16 GB VRAM is a single unpartitioned pool, so one
 greedy tenant can starve all the others.
 
@@ -128,7 +128,7 @@ mtmd Flash-Attention regression fix
 ## Known issues / decisions
 
 - **Cluster-wide GPU contention** — the T4 is time-sliced across
-  llama-swap, immich-ml, immich-server, and frigate; compute is shared
+  llama-swap, immich-ml, immich-worker, and frigate; compute is shared
   but the 16 GB VRAM is **not** isolated, so any tenant can OOM the
   others (see "GPU allocation" + the 2026-06-02 post-mortem). No hard
   memory partitioning is wired in (T4 has no MIG; MPS memory limits are
