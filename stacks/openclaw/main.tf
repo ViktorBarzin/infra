@@ -61,19 +61,6 @@ resource "kubernetes_manifest" "external_secret" {
           key = "openclaw"
         }
       }]
-      # Cross-path key: the nextcloud-todos-api plugin authenticates to the
-      # nextcloud-todos service with ITS bearer token, which lives in
-      # secret/nextcloud-todos (not secret/openclaw). Pull just that one key
-      # into openclaw-secrets so the plugin's NEXTCLOUD_TODOS_TOKEN env can
-      # secret_key_ref it (same model as the recruiter plugin, whose token
-      # happens to already live under secret/openclaw).
-      data = [{
-        secretKey = "nextcloud_todos_bearer_token"
-        remoteRef = {
-          key      = "nextcloud-todos"
-          property = "webhook_bearer_token"
-        }
-      }]
     }
   }
   depends_on = [kubernetes_namespace.openclaw]
@@ -218,7 +205,7 @@ resource "kubernetes_config_map" "openclaw_config" {
         }
       }
       plugins = {
-        allow = ["memory-core", "recruiter-api", "nextcloud-todos-api"]
+        allow = ["memory-core", "recruiter-api"]
         slots = { memory = "memory-core" }
         load = {
           # /app/extensions is the legacy bundled-plugins path; OpenClaw
@@ -545,31 +532,18 @@ resource "kubernetes_deployment" "openclaw" {
           }
         }
 
-        # Init 3b: install the nextcloud-todos-api OpenClaw plugin from the
-        # nextcloud-todos image into NFS extensions/. Plugin lifecycle is
-        # coupled to the nextcloud-todos image tag — bumping that tag
-        # re-installs the plugin on next openclaw pod restart. Same pattern as
-        # install-recruiter-plugin above.
+        # Remove the retired nextcloud-todos integration from the persistent
+        # extensions directory. Keeping this cleanup idempotent prevents an
+        # older NFS snapshot from silently restoring the plugin on a restart.
         init_container {
-          name = "install-nextcloud-todos-plugin"
-          # SHA-pinned (not :latest) because the node's imagePullPolicy is
-          # IfNotPresent: a cached stale :latest meant the plugin manifest
-          # (configSchema fix) never got pulled. An uncached SHA forces the
-          # pull. Bump this when the openclaw plugin in nextcloud-todos changes.
-          image             = "ghcr.io/viktorbarzin/nextcloud-todos:latest"
-          image_pull_policy = "Always"
+          name  = "remove-nextcloud-todos-plugin"
+          image = "busybox:1.37"
           command = ["sh", "-c", <<-EOT
             set -eu
-            mkdir -p /home/node/.openclaw/extensions/nextcloud-todos-api
-            cp -r /app/openclaw-plugin/. /home/node/.openclaw/extensions/nextcloud-todos-api/
-            chown -R 1000:1000 /home/node/.openclaw/extensions/nextcloud-todos-api
-            echo "nextcloud-todos-api plugin installed at /home/node/.openclaw/extensions/nextcloud-todos-api"
-            ls -la /home/node/.openclaw/extensions/nextcloud-todos-api
+            rm -rf /home/node/.openclaw/extensions/nextcloud-todos-api
+            echo "nextcloud-todos-api plugin removed"
           EOT
           ]
-          # /home/node/.openclaw is uid 1000 on NFS; nextcloud-todos image
-          # otherwise drops to uid 10001 which can't write or chown. Run as
-          # root so mkdir + chown succeed.
           security_context {
             run_as_user = 0
           }
@@ -1195,21 +1169,18 @@ resource "kubernetes_deployment" "openclaw" {
             # the allow list. --allow-unconfigured then loads them at gateway
             # start WITHOUT needing the slow `plugins enable` step.
             node openclaw.mjs doctor --fix 2>/dev/null
-            echo '{"plugins":{"allow":["memory-core","recruiter-api","nextcloud-todos-api","telegram","openrouter","brave","openai","codex"]}}' \
+            echo '{"plugins":{"allow":["memory-core","recruiter-api","telegram","openrouter","brave","openai","codex"]}}' \
               | timeout 20 node openclaw.mjs config patch --stdin 2>/dev/null || true
             # SLOW/optional steps run in the BACKGROUND so they can NEVER delay
-            # the gateway past its readiness/liveness window. (2026-06-04: with
-            # these inline, `plugins enable nextcloud-todos-api` hung on an npm
-            # install on the tight openclaw-home PVC and the cumulative waits
-            # tripped liveness → crashloop. The gateway loads plugins from
-            # plugins.allow above regardless; mcp servers register async.)
+            # the gateway past its readiness/liveness window. The gateway loads
+            # plugins from plugins.allow above regardless; mcp servers register
+            # asynchronously.
             (
               timeout 30 node openclaw.mjs models set nim/meta/llama-3.1-70b-instruct 2>/dev/null
               timeout 30 node openclaw.mjs mcp set ha "{\"url\":\"$HA_SOFIA_MCP_URL\",\"transport\":\"streamable-http\"}" 2>/dev/null
               timeout 30 node openclaw.mjs mcp set context7 '{"command":"npx","args":["-y","@upstash/context7-mcp"]}' 2>/dev/null
               timeout 30 node openclaw.mjs mcp set playwright '{"url":"http://localhost:3000/mcp","transport":"streamable-http"}' 2>/dev/null
               timeout 120 node openclaw.mjs plugins enable recruiter-api 2>/dev/null
-              timeout 120 node openclaw.mjs plugins enable nextcloud-todos-api 2>/dev/null
               timeout 120 node openclaw.mjs memory index --force 2>/dev/null
             ) >/dev/null 2>&1 &
             exec node openclaw.mjs gateway --allow-unconfigured --bind lan
@@ -1321,25 +1292,7 @@ resource "kubernetes_deployment" "openclaw" {
               }
             }
           }
-          # nextcloud-todos API — consumed by the nextcloud-todos-api plugin
-          # (mounted into /home/node/.openclaw/extensions/nextcloud-todos-api/
-          # via the install-nextcloud-todos-plugin init container above).
-          env {
-            name  = "NEXTCLOUD_TODOS_URL"
-            value = "http://nextcloud-todos.nextcloud-todos.svc.cluster.local:8080"
-          }
-          env {
-            name = "NEXTCLOUD_TODOS_TOKEN"
-            value_from {
-              secret_key_ref {
-                name     = "openclaw-secrets"
-                key      = "nextcloud_todos_bearer_token"
-                optional = true
-              }
-            }
-          }
           # Telegram chat ID for the recruiter-api plugin's announcement loop.
-          # Also consumed by the nextcloud-todos-api plugin (shared chat).
           env {
             name = "VIKTOR_CHAT_ID"
             value_from {
