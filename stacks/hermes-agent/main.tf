@@ -1,15 +1,27 @@
+# Hermes v2 — Viktor's personal assistant: a Discord bot on the Claude Code
+# harness (claude-agent-sdk) with self-contained homelab powers. Rewrites the
+# parked Nous-framework stack (replicas=0 since 2026-04-22).
+# Design: docs/plans/2026-07-12-hermes-agent-v2-discord-claude-design.md
+# Spec:   ViktorBarzin/infra#75 · Code: forgejo viktor/hermes-agent
+#
+# GO-LIVE PRECONDITION (Viktor, manual — Discord app creation is hCaptcha-gated,
+# can't be automated): create the "Hermes" Discord app + bot, enable the
+# Message Content + Server Members intents, then
+#   vault kv patch secret/hermes-agent \
+#     DISCORD_BOT_TOKEN=<bot token> \
+#     DISCORD_GUILD_ID=<your private guild id> \
+#     HERMES_OWNER_USER_ID=<your discord user id>
+# and invite the bot to the guild. The pod CrashLoops without a valid
+# DISCORD_BOT_TOKEN — expected until the token is set.
+
 variable "tls_secret_name" {
   type      = string
   sensitive = true
 }
 
 locals {
-  # Parked since 2026-04-22 (PVC /opt/data perms bug). While parked we run zero
-  # replicas AND skip the PVC entirely: a WaitForFirstConsumer PVC with no
-  # consumer pod sits Pending forever and falsely trips PVCStuckPending, which
-  # halts kured node reboots. Flip to false to bring Hermes back — that
-  # recreates the PVC and scales the Deployment to 1 in a single apply.
-  hermes_parked = true
+  image     = "ghcr.io/viktorbarzin/hermes-agent"
+  image_tag = "latest"
 }
 
 # --- Namespace ---
@@ -35,6 +47,10 @@ module "tls_secret" {
 }
 
 # --- Secrets (ESO from Vault) ---
+# Explicit per-key refs (not dataFrom): the Discord + memory keys live in
+# secret/hermes-agent; the Claude OAuth token is CROSS-PATH-extracted from
+# secret/claude-agent-service (reused credential, design decision #7); the
+# Forgejo push token comes from the shared secret/ci/global.
 
 resource "kubernetes_manifest" "external_secret" {
   field_manager {
@@ -56,23 +72,130 @@ resource "kubernetes_manifest" "external_secret" {
       target = {
         name = "hermes-agent-secrets"
       }
-      dataFrom = [{
-        extract = {
-          key = "hermes-agent"
-        }
-      }]
+      data = [
+        {
+          secretKey = "DISCORD_BOT_TOKEN"
+          remoteRef = { key = "hermes-agent", property = "DISCORD_BOT_TOKEN" }
+        },
+        {
+          secretKey = "DISCORD_GUILD_ID"
+          remoteRef = { key = "hermes-agent", property = "DISCORD_GUILD_ID" }
+        },
+        {
+          secretKey = "HERMES_OWNER_USER_ID"
+          remoteRef = { key = "hermes-agent", property = "HERMES_OWNER_USER_ID" }
+        },
+        {
+          secretKey = "CLAUDE_MEMORY_API_KEY"
+          remoteRef = { key = "hermes-agent", property = "CLAUDE_MEMORY_API_KEY" }
+        },
+        {
+          # Reused Claude Code OAuth token (design decision #7) — one credential
+          # shared with claude-agent-service; revoking it stops both.
+          secretKey = "CLAUDE_CODE_OAUTH_TOKEN"
+          remoteRef = { key = "claude-agent-service", property = "claude_oauth_token" }
+        },
+        {
+          # Forgejo push token so the infra checkout can land commits → CI applies.
+          secretKey = "FORGEJO_TOKEN"
+          remoteRef = { key = "ci/global", property = "forgejo_push_token" }
+        },
+      ]
     }
   }
   depends_on = [kubernetes_namespace.hermes_agent]
 }
 
-# --- Storage ---
+# git-crypt key so the infra checkout can decrypt secrets it reads
+resource "kubernetes_config_map" "git_crypt_key" {
+  metadata {
+    name      = "git-crypt-key"
+    namespace = kubernetes_namespace.hermes_agent.metadata[0].name
+  }
+  data = {
+    "key" = filebase64("${path.root}/../../.git/git-crypt/keys/default")
+  }
+}
 
-resource "kubernetes_persistent_volume_claim" "data_proxmox" {
-  count            = local.hermes_parked ? 0 : 1
+# --- SOUL (system prompt) ConfigMap — overrides the in-image SOUL.md ---
+
+resource "kubernetes_config_map" "soul" {
+  metadata {
+    name      = "hermes-agent-soul"
+    namespace = kubernetes_namespace.hermes_agent.metadata[0].name
+  }
+  data = {
+    "SOUL.md" = file("${path.module}/SOUL.md")
+  }
+}
+
+# --- ServiceAccount + RBAC ---
+# Read/list/watch everything + pod logs + the debug verbs (delete pods,
+# patch deployments for rollout-restart). DELIBERATELY EXCLUDES cluster-wide
+# `secrets` read and `pods/exec` — either would let a steered Hermes read the
+# breakglass SSH key (K8s secret in ns claude-breakglass) past the Vault deny
+# that keeps untrusted-input agents away from root-on-devvm (adversarial-review
+# finding; design §3.4). Widen only on Viktor's explicit say-so.
+
+resource "kubernetes_service_account" "hermes_agent" {
+  metadata {
+    name      = "hermes-agent"
+    namespace = kubernetes_namespace.hermes_agent.metadata[0].name
+  }
+}
+
+resource "kubernetes_cluster_role" "hermes_agent" {
+  metadata {
+    name = "hermes-agent"
+  }
+  rule {
+    verbs      = ["get", "list", "watch"]
+    api_groups = ["", "apps", "batch", "networking.k8s.io"]
+    resources = [
+      "pods", "pods/log", "nodes", "events", "deployments", "services",
+      "namespaces", "jobs", "cronjobs", "configmaps", "replicasets",
+      "statefulsets", "daemonsets", "ingresses", "persistentvolumeclaims",
+      "endpoints", "resourcequotas",
+    ]
+  }
+  # rollout-restart / scale debugging
+  rule {
+    verbs      = ["patch", "update"]
+    api_groups = ["apps"]
+    resources  = ["deployments", "statefulsets"]
+  }
+  # delete a wedged pod (debug)
+  rule {
+    verbs      = ["delete"]
+    api_groups = [""]
+    resources  = ["pods"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "hermes_agent" {
+  metadata {
+    name = "hermes-agent"
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.hermes_agent.metadata[0].name
+    namespace = kubernetes_namespace.hermes_agent.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.hermes_agent.metadata[0].name
+  }
+}
+
+# --- Storage ---
+# Sessions PVC holds the SDK transcripts (CLAUDE_CONFIG_DIR=/sessions) +
+# the conversation->session map. Encrypted: conversations contain infra detail.
+
+resource "kubernetes_persistent_volume_claim" "sessions_encrypted" {
   wait_until_bound = false
   metadata {
-    name      = "hermes-agent-data-proxmox"
+    name      = "hermes-agent-sessions-encrypted"
     namespace = kubernetes_namespace.hermes_agent.metadata[0].name
     annotations = {
       "resize.topolvm.io/threshold"     = "10%"
@@ -82,7 +205,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "proxmox-lvm"
+    storage_class_name = "proxmox-lvm-encrypted"
     resources {
       requests = {
         storage = "1Gi"
@@ -90,139 +213,7 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
     }
   }
   lifecycle {
-    # The autoresizer expands requests.storage up to storage_limit and
-    # PVCs can't shrink. Without this, every TF apply tries to revert
-    # to the spec value, K8s rejects the shrink, and the PVC ends up
-    # in Terminating-but-in-use limbo.
     ignore_changes = [spec[0].resources[0].requests]
-  }
-}
-
-# --- ConfigMaps ---
-
-resource "kubernetes_config_map" "hermes_config" {
-  metadata {
-    name      = "hermes-agent-config"
-    namespace = kubernetes_namespace.hermes_agent.metadata[0].name
-  }
-  data = {
-    "config.yaml" = yamlencode({
-      # Primary model — Qwen 3.5 397B via NVIDIA NIM (free tier)
-      # api_key is injected by init container from the secret
-      model = {
-        provider       = "custom"
-        default        = "qwen/qwen3.5-397b-a17b"
-        base_url       = "https://integrate.api.nvidia.com/v1"
-        api_key        = "__NVIDIA_API_KEY_PLACEHOLDER__"
-        context_window = 262000
-      }
-
-      # Terminal execution
-      terminal = {
-        backend = "local"
-      }
-
-      # Memory system
-      memory = {
-        memory_enabled       = true
-        user_profile_enabled = true
-        memory_char_limit    = 2200
-        user_char_limit      = 1375
-      }
-
-      # Context compression
-      compression = {
-        enabled        = true
-        threshold      = 0.50
-        target_ratio   = 0.20
-        protect_last_n = 20
-      }
-
-      # Security
-      security = {
-        redact_secrets = true
-      }
-
-      # Display
-      display = {
-        streaming = true
-      }
-
-      # Web tools
-      web = {
-        backend = "tavily"
-      }
-
-      # Agent behavior
-      agent = {
-        max_turns        = 90
-        api_timeout      = 90
-        reasoning_effort = "medium"
-      }
-
-      # Telegram DM policy
-      unauthorized_dm_behavior = "ignore"
-
-      # MCP servers — claude-memory for persistent cross-session memory
-      mcp_servers = {
-        claude-memory = {
-          url = "http://claude-memory.claude-memory.svc.cluster.local/mcp/mcp"
-          headers = {
-            Authorization = "Bearer $${CLAUDE_MEMORY_API_KEY}"
-          }
-        }
-      }
-    })
-  }
-}
-
-resource "kubernetes_config_map" "hermes_soul" {
-  metadata {
-    name      = "hermes-agent-soul"
-    namespace = kubernetes_namespace.hermes_agent.metadata[0].name
-  }
-  data = {
-    "SOUL.md" = <<-EOT
-# Hermes - Viktor's Personal AI Assistant
-
-You are Hermes, a knowledgeable and helpful AI assistant owned and operated by
-Viktor Barzin. You run on Viktor's home lab Kubernetes cluster and are powered
-by Anthropic Claude.
-
-## Personality
-- Direct and concise, no unnecessary fluff
-- Technical when needed, plain language when possible
-- Honest about limitations and uncertainties
-- Proactive — suggest improvements, flag risks, follow up on open items
-
-## Owner
-- Viktor Barzin — software engineer based in London
-- Runs a home lab with a 5-node Kubernetes cluster on Proxmox
-- Infrastructure managed with Terraform/Terragrunt
-- Uses Vault for secrets, Traefik for ingress, Authentik for SSO
-
-## Your Capabilities
-- Terminal: local execution inside your container (Python, Node.js, git, ripgrep, ffmpeg)
-- Memory: you have access to claude-memory MCP for persistent cross-session memory
-  - Always check memory at the start of conversations for context
-  - Store important decisions, learnings, and user preferences
-- Skills: you can create and refine your own skills over time
-- Web: search and fetch capabilities for research
-
-## Package Persistence
-Your container restarts lose system packages. To make installs survive restarts:
-- **pip**: packages auto-persist to /opt/data/pip-packages/ (PIP_TARGET is set)
-- **npm -g**: packages auto-persist to /opt/data/npm-global/ (NPM_CONFIG_PREFIX is set)
-- **apt**: after installing system packages, save them:
-  `apt install -y foo bar && echo -e "foo\nbar" >> /opt/data/apt-packages.txt && sort -u -o /opt/data/apt-packages.txt /opt/data/apt-packages.txt`
-  They will be auto-reinstalled on next container restart.
-
-## Communication Preferences
-- Viktor prefers terse, technical responses
-- No emojis unless asked
-- Lead with the answer, not the reasoning
-- When unsure, say so rather than guessing
-    EOT
   }
 }
 
@@ -236,15 +227,18 @@ resource "kubernetes_deployment" "hermes_agent" {
       app  = "hermes-agent"
       tier = local.tiers.aux
     }
+    annotations = {
+      "keel.sh/policy"       = "force"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/pollSchedule" = "@every 5m"
+      "keel.sh/match-tag"    = "true"
+    }
   }
   spec {
     strategy {
-      type = "Recreate"
+      type = "Recreate" # RWO sessions volume
     }
-    # Parked 2026-04-22 — main container fails "mkdir: cannot create directory
-    # '/opt/data': Permission denied" (fsGroup/runAsUser mismatch vs init
-    # container). Fix PVC perms before un-parking (set local.hermes_parked = false).
-    replicas = local.hermes_parked ? 0 : 1
+    replicas = 1
     selector {
       match_labels = {
         app = "hermes-agent"
@@ -260,113 +254,131 @@ resource "kubernetes_deployment" "hermes_agent" {
         }
       }
       spec {
-        # Init container 1: bootstrap config into writable PVC
+        service_account_name = kubernetes_service_account.hermes_agent.metadata[0].name
+        security_context {
+          fs_group = 1000 # PVC + git-crypt writable by the hermes user (uid 1000)
+        }
+
+        # Init: clone the infra repo + unlock git-crypt (commit->CI apply path)
         init_container {
-          name  = "bootstrap-config"
-          image = "docker.io/library/busybox:1.37"
+          name  = "git-init"
+          image = "${local.image}:${local.image_tag}"
           command = ["sh", "-c", <<-EOF
-            # Create subdirectories
-            mkdir -p /opt/data/memories /opt/data/skills /opt/data/sessions /opt/data/cron /opt/data/logs
-            mkdir -p /opt/data/pip-packages/bin /opt/data/npm-global/bin
-
-            # Copy config from ConfigMap and inject secrets
-            cp /config/config.yaml /opt/data/config.yaml
-            cp /soul/SOUL.md /opt/data/SOUL.md
-
-            # Replace API key placeholder with actual value from secret
-            NVIDIA_KEY=$(cat /secrets/NVIDIA_API_KEY)
-            sed -i "s|__NVIDIA_API_KEY_PLACEHOLDER__|$${NVIDIA_KEY}|g" /opt/data/config.yaml
-
-            # Generate .env from mounted secret files
-            echo "# Auto-generated from Vault secret/hermes-agent" > /opt/data/.env
-            for f in /secrets/*; do
-              key=$(basename "$f")
-              val=$(cat "$f")
-              echo "$${key}=$${val}" >> /opt/data/.env
-            done
-
-            # Fix ownership (hermes container user)
-            chown -R 1000:1000 /opt/data
+            set -e
+            git config --global user.name "Hermes Agent"
+            git config --global user.email "hermes-agent@viktorbarzin.me"
+            git config --global --add safe.directory /workspace/infra
+            if [ -n "$${FORGEJO_TOKEN}" ]; then
+              git config --global url."https://$${FORGEJO_TOKEN}@forgejo.viktorbarzin.me/".insteadOf "https://forgejo.viktorbarzin.me/"
+            fi
+            if [ ! -d /workspace/infra/.git ]; then
+              git clone https://forgejo.viktorbarzin.me/viktor/infra.git /workspace/infra
+            else
+              cd /workspace/infra && git fetch origin && git reset --hard origin/master
+            fi
+            cd /workspace/infra
+            git-crypt unlock /secrets/git-crypt/key || true
           EOF
           ]
-          volume_mount {
-            name       = "data"
-            mount_path = "/opt/data"
+          env_from {
+            secret_ref {
+              name = "hermes-agent-secrets"
+            }
           }
           volume_mount {
-            name       = "config"
-            mount_path = "/config"
+            name       = "workspace"
+            mount_path = "/workspace"
+          }
+          volume_mount {
+            name       = "git-crypt-key"
+            mount_path = "/secrets/git-crypt"
+          }
+        }
+
+        container {
+          name  = "hermes-agent"
+          image = "${local.image}:${local.image_tag}"
+
+          # Symlink ~/.vault-token at the sidecar-refreshed token before exec
+          # so the homelab / vault CLIs the agent shells out to pick it up.
+          command = ["sh", "-c", "ln -sfn /vault/token \"$HOME/.vault-token\" 2>/dev/null; exec python main.py"]
+
+          env_from {
+            secret_ref {
+              name = "hermes-agent-secrets"
+            }
+          }
+          env {
+            name  = "HERMES_SESSIONS_DIR"
+            value = "/sessions"
+          }
+          env {
+            # SDK transcripts live on the PVC so conversations survive restarts.
+            name  = "CLAUDE_CONFIG_DIR"
+            value = "/sessions"
+          }
+          env {
+            name  = "HERMES_WORKDIR"
+            value = "/workspace/infra"
+          }
+          env {
+            name  = "HERMES_SOUL_PATH"
+            value = "/soul/SOUL.md"
+          }
+          env {
+            name  = "HERMES_METRICS_PORT"
+            value = "9090"
+          }
+          env {
+            name  = "VAULT_ADDR"
+            value = "https://vault.viktorbarzin.me"
+          }
+          # EXECUTOR_MCP_URL is intentionally UNSET at v1. Executor's /mcp
+          # speaks MCP OAuth (verified 2026-07-12: 401 + oauth-protected-
+          # resource metadata), so wiring Hermes to it needs a client
+          # credential minted in the Executor UI — Viktor's "configure
+          # integrations" step. Set EXECUTOR_MCP_URL (+ token) here once minted.
+
+          volume_mount {
+            name       = "sessions"
+            mount_path = "/sessions"
+          }
+          volume_mount {
+            name       = "workspace"
+            mount_path = "/workspace"
           }
           volume_mount {
             name       = "soul"
             mount_path = "/soul"
           }
           volume_mount {
-            name       = "secrets"
-            mount_path = "/secrets"
+            name       = "git-crypt-key"
+            mount_path = "/secrets/git-crypt"
           }
-        }
-
-        container {
-          name  = "hermes-agent"
-          image = "nousresearch/hermes-agent:latest"
-          # Wrap entrypoint: restore apt packages (as root) then hand off to original entrypoint
-          command = ["bash", "-c", <<-EOF
-            if [ -f /opt/data/apt-packages.txt ] && [ -s /opt/data/apt-packages.txt ]; then
-              echo "Restoring apt packages: $(cat /opt/data/apt-packages.txt | tr '\n' ' ')"
-              apt-get update -qq && \
-              xargs -a /opt/data/apt-packages.txt apt-get install -y -qq --no-install-recommends 2>&1 | tail -5
-              echo "Done restoring apt packages"
-            fi
-            exec /opt/hermes/docker/entrypoint.sh gateway run
-          EOF
-          ]
-
-          env {
-            name  = "HERMES_HOME"
-            value = "/opt/data"
-          }
-
-          # Persist pip packages across restarts
-          env {
-            name  = "PIP_TARGET"
-            value = "/opt/data/pip-packages"
-          }
-          env {
-            name  = "PYTHONPATH"
-            value = "/opt/data/pip-packages"
-          }
-
-          # Persist npm global packages across restarts
-          env {
-            name  = "NPM_CONFIG_PREFIX"
-            value = "/opt/data/npm-global"
-          }
-
-          # Add persistent bin dirs to PATH
-          env {
-            name  = "PATH"
-            value = "/opt/data/pip-packages/bin:/opt/data/npm-global/bin:/opt/data/apt-local/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-          }
-
+          # Shared Vault token written by the vault-token-refresher sidecar.
           volume_mount {
-            name       = "data"
-            mount_path = "/opt/data"
+            name       = "vault-token"
+            mount_path = "/vault"
           }
 
           resources {
             requests = {
               cpu    = "100m"
-              memory = "512Mi"
+              memory = "256Mi"
             }
             limits = {
               memory = "1Gi"
             }
           }
 
+          port {
+            name           = "metrics"
+            container_port = 9090
+          }
+
           liveness_probe {
             exec {
-              command = ["pgrep", "-f", "hermes"]
+              command = ["pgrep", "-f", "main.py"]
             }
             initial_delay_seconds = 30
             period_seconds        = 30
@@ -374,31 +386,71 @@ resource "kubernetes_deployment" "hermes_agent" {
           }
         }
 
+        # vault-token-refresher: k8s-auth login on the dedicated hermes-agent
+        # Vault role -> shared emptyDir. Mirrors the claude-agent-service sidecar.
+        container {
+          name  = "vault-token-refresher"
+          image = "docker.io/curlimages/curl:8.11.0"
+          command = ["/bin/sh", "-c", <<-EOF
+            umask 077
+            while true; do
+              SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              TOKEN=$(curl -s -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
+                -d "{\"role\":\"$VAULT_K8S_ROLE\",\"jwt\":\"$SA_TOKEN\"}" \
+                | sed -n 's/.*"client_token":"\([^"]*\)".*/\1/p')
+              if [ -n "$TOKEN" ]; then
+                printf '%s' "$TOKEN" > /vault/token
+                echo "$(date -u +%FT%TZ) refreshed vault token (role=$VAULT_K8S_ROLE)"
+              else
+                echo "$(date -u +%FT%TZ) ERROR: vault k8s login failed (role=$VAULT_K8S_ROLE)" >&2
+              fi
+              sleep 1800
+            done
+          EOF
+          ]
+          env {
+            name  = "VAULT_ADDR"
+            value = "http://vault-active.vault.svc.cluster.local:8200"
+          }
+          env {
+            name  = "VAULT_K8S_ROLE"
+            value = "hermes-agent"
+          }
+          volume_mount {
+            name       = "vault-token"
+            mount_path = "/vault"
+          }
+          resources {
+            requests = { cpu = "5m", memory = "16Mi" }
+            limits   = { memory = "32Mi" }
+          }
+        }
+
         volume {
-          name = "data"
+          name = "sessions"
           persistent_volume_claim {
-            # Static name — the PVC resource is count-gated by local.hermes_parked,
-            # so we can't reference the (possibly zero-instance) resource here.
-            claim_name = "hermes-agent-data-proxmox"
+            claim_name = kubernetes_persistent_volume_claim.sessions_encrypted.metadata[0].name
           }
         }
         volume {
-          name = "config"
-          config_map {
-            name = kubernetes_config_map.hermes_config.metadata[0].name
-          }
+          name = "workspace"
+          empty_dir {}
         }
         volume {
           name = "soul"
           config_map {
-            name = kubernetes_config_map.hermes_soul.metadata[0].name
+            name = kubernetes_config_map.soul.metadata[0].name
           }
         }
         volume {
-          name = "secrets"
-          secret {
-            secret_name = "hermes-agent-secrets"
+          name = "git-crypt-key"
+          config_map {
+            name = kubernetes_config_map.git_crypt_key.metadata[0].name
           }
+        }
+        volume {
+          name = "vault-token"
+          empty_dir {}
         }
       }
     }
@@ -410,7 +462,7 @@ resource "kubernetes_deployment" "hermes_agent" {
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
       spec[0].template[0].spec[0].init_container[0].image,
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
@@ -419,7 +471,7 @@ resource "kubernetes_deployment" "hermes_agent" {
   }
 }
 
-# --- Service ---
+# --- Service (Prometheus scrape target only; no ingress — Discord is outbound) ---
 
 resource "kubernetes_service" "hermes_agent" {
   metadata {
@@ -428,44 +480,19 @@ resource "kubernetes_service" "hermes_agent" {
     labels = {
       app = "hermes-agent"
     }
+    annotations = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/port"   = "9090"
+    }
   }
   spec {
     selector = {
       app = "hermes-agent"
     }
     port {
-      port        = 80
-      target_port = 8642
+      name        = "metrics"
+      port        = 9090
+      target_port = 9090
     }
   }
 }
-
-# --- Ingress ---
-
-module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.hermes_agent.metadata[0].name
-  name            = "hermes-agent"
-  tls_secret_name = var.tls_secret_name
-  auth            = "required"
-  # Parked at replicas=0 since 2026-04-22 (PVC perms bug). Opt out of the
-  # Uptime Kuma external monitor so a deliberately-down service doesn't fire
-  # ExternalAccessDivergence (which halts kured reboots). Re-enable when the
-  # deployment is brought back up. (2026-05-31)
-  external_monitor = false
-  # Internal-only: shadows the * wildcard CNAME (2026-07-09) — without an
-  # explicit record this name would resolve via Cloudflare and go public.
-  dns_type          = "internal"
-  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
-  extra_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "Hermes Agent"
-    "gethomepage.dev/description"  = "Self-improving AI agent"
-    "gethomepage.dev/icon"         = "mdi-robot"
-    "gethomepage.dev/group"        = "AI & Data"
-    "gethomepage.dev/pod-selector" = ""
-  }
-}
-
-# CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
-# CI retrigger v2 2026-05-16T13:46:35+00:00
