@@ -24,7 +24,7 @@ Secondary win: convenience — parking is already the habit (see the ~20
 |---|---|---|---|
 | 1 | Primary goal | RAM reclaim **and** auto-wake | Memory-bound cluster; parking is already the operating habit |
 | 2 | Scope v1 | HTTP services behind Traefik, **incl. GPU HTTP apps**. OUT: DBs/StatefulSets, queue/cron workers (servarr, paperless, n8n, changedetection), critical path, TCP services | Only request-driven workloads can be woken by a request; workers' value is background work that sleeping silently kills |
-| 3 | Wake UX | **Hold the request** (Sablier *blocking* strategy) everywhere; no waiting page | One mental model, API-safe. Cloudflare-proxied hosts cap held requests at ~100s — slow boots may 524 once; the wake continues and a retry lands |
+| 3 | Wake UX | ~~Hold the request everywhere~~ **REVISED by Viktor same day (see As-built #8): default = *dynamic* loading page** ("&lt;service&gt; is starting…", ghost theme, 5s auto-poll, swaps to the app when ready); `strategy = "blocking"` stays as per-service override for API paths | The enrolled fleet turned out to be almost entirely browser UIs, and the held request produced a naked 503/524 on cold hits. The loading page returns 200 instantly (no CF cap), shows progress, and absorbs the endpoint race |
 | 4 | Engine | **Sablier v1.15+, plugin vendored as a Traefik *local* plugin, pinned, `failOpen: true`** | Only option with a real probe-exclusion story; one small pod; groups; maintained (Jul 2026). Yaegi risk bounded — see Failure modes |
 | 5 | Idle timeout | `sessionDuration: 3h` default, per-service override | Lazy by choice: candidates are weekly/monthly-use, 15m-vs-3h RAM delta is negligible, cold-start annoyance isn't. GPU tenants *should* override shorter (30m–1h) — T4 VRAM is scarcer than RAM |
 | 6 | Monitoring semantics | Probes excluded via `ignoreUserAgent` → enrolled monitors go **shallow** (green = ingress + wake layer up). Add one wake-failure alert | Monitors must not keep services awake. Real failure mode ("woke but never became ready") caught by kube-state metrics |
@@ -102,6 +102,29 @@ here so the deltas from the reviewed draft are explicit:
      answer probes before the sablier middleware is reached (monitors were
      shallow for them already). First `auth = "app"`/`"none"` enrollee in
      wave 2/3 verifies it.
+
+8. **Wake-UX revision (same day, after live cold-hit UX):** Viktor asked for
+   a visible loading state instead of the naked 503/timeout. The
+   `ingress_factory` sablier middleware now defaults to the **dynamic**
+   strategy — instant themed page ("&lt;service&gt; is starting…", ghost theme,
+   `showDetails`, 5s poll) that swaps to the app on readiness. Verified live
+   on privatebin: cold hit = 200 in ~100ms with the loading page; real
+   `<title>PrivateBin</title>` page after boot. `strategy = "blocking"`
+   remains available per service (none use it today). Two hardenings landed
+   with it: (a) every enrolled deployment carries `sablier.ready-after: "5s"`
+   — a settling delay after k8s readiness that covers Traefik's
+   endpoint-list propagation, closing the 503-after-wake race at the source;
+   (b) the middleware resource moved from `kubernetes_manifest` to
+   `kubectl_manifest` (gavinbunney) — the hashicorp provider errors with
+   "Provider produced inconsistent result after apply" on in-place shape
+   changes of free-form CRD fields (the blocking→dynamic swap; the known
+   code-e2dp provider bug class). **Migration incident, contained:** the
+   address change ran create-new-then-destroy-old on the SAME-named CR, so
+   the destroy deleted the fresh object — all 20 sablier middlewares were
+   absent for ~7 minutes (broken routers on parked, near-zero-traffic
+   services) until a second apply pass recreated them. Lesson recorded: a
+   same-name resource-address migration needs `terraform state rm` of the
+   old address (or removed{} blocks) instead of parallel destroy+create.
 
 ## Options considered (July 2026 survey)
 
