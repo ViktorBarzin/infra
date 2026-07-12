@@ -229,6 +229,12 @@ resource "kubernetes_deployment" "nextcloud_todos" {
             name  = "LIST_ALLOWLIST"
             value = "Personal"
           }
+          # Noticing lists: skipped by the classifier, routed to the ideation
+          # runner (ideas appended onto the todo; learn/romance course).
+          env {
+            name  = "IDEATION_ALLOWLIST"
+            value = "Noticing File"
+          }
           # Tier-0 LLM classifier
           env {
             name  = "LLAMA_SWAP_URL"
