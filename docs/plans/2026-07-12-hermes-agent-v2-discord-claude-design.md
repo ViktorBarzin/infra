@@ -1,6 +1,6 @@
 # Hermes v2 — Discord personal assistant on the Claude Code harness + Executor integration hub
 
-**Status:** draft — pending Viktor's approval (grill-with-docs session 2026-07-12; adversarial pass applied; rev 2 adds Executor)
+**Status:** EXECUTING (as-built 2026-07-12) — all infra deployed; go-live gated only on Viktor creating the Discord bot (hCaptcha-blocked for automation). See §7 As-built.
 **Owner:** Viktor (wizard) · **Author:** Claude (grilling interview + research + 2 blind challenger reviews)
 **Supersedes:** the parked Nous-framework hermes-agent (`stacks/hermes-agent`, replicas=0 since 2026-04-22)
 
@@ -188,3 +188,24 @@ Self-hosted Executor as its own Tier-1 stack, namespace `executor`:
 Two blind challengers attacked rev 1; confirmed findings folded in above: breakglass bypass via mirrored elevated RBAC (fixed: no exec/no k8s-secrets); "CI is the only apply path" overclaim (restated honestly); terraform-state DB credential exposure (fixed: dedicated Vault policy without database grants); Vault role lives in Tier-0 vault stack, manual apply (fixed: step 5); `homelab claim` unusable in-pod (fixed: presence-exempt); DM-membership gap (fixed: member-set tracking); session persistence path unpinned (fixed: `CLAUDE_CONFIG_DIR=/sessions`); quota blast radius (fixed: rate limit + kill switch + written acceptance); infra-cli binary path is `/app/infra_cli` (fixed). One challenger's "model IDs will 404" claim was itself disproven (IDs verified current; smoke-test kept). Challenger counter-proposal to subprocess the CLI instead of the SDK: recorded as fallback, SDK retained.
 
 **Rev 2 (Executor)** was verified against primary sources (executor.sh docs + GitHub repo: MIT, self-host container, SQLite+keys on `/data`, `/mcp` streamable HTTP, sandboxed credentials, per-tool policies) rather than re-running challengers — the addition is a single internal-only stack with Hermes as its sole v1 client; the three genuinely unknown behaviors are captured as execution gates E1–E3 that must be resolved before Hermes is wired to it.
+
+## 7. As-built (executed 2026-07-12)
+
+Built via `/to-spec` (ViktorBarzin/infra#75) → `/implement`. Everything below is live except the one Viktor-gated step.
+
+**Done and verified:**
+- **OAuth token** smoke-tested against `claude-sonnet-5` and `claude-opus-4-8` from the c-a-s pod — both return under the reused subscription token.
+- **`stacks/executor`** deployed: `executor-selfhost:v1.5.33` pod Running, encrypted `/data` PVC, internal-only UI ingress (`executor.viktorbarzin.me`, auth=app), nightly sqlite backup CronJob. **Gate E1 resolved:** `/mcp` speaks MCP OAuth (401 + `oauth-protected-resource` metadata) — a static bearer won't do; wiring Hermes needs a credential minted in Executor's UI (Viktor's integrations step). **Gate E2 done:** NetworkPolicy locks port 4788 to Traefik + the hermes-agent namespace (verified: a pod in `default` times out; the hermes-agent probe reaches the 401 handshake). **Gate E3:** deferred until a client is wired (keep Hermes-visible tool policies allow-or-block, not approval).
+- **`hermes-agent` repo** (Forgejo `viktor/hermes-agent`, GitHub mirror, GHA→ghcr, tagged `v0.1.0`): discord.py gateway + Claude Agent SDK runner behind the single AgentRunner seam; 45 behavior tests + 1 real-SDK integration test green; ruff + mypy --strict clean. Code review found and fixed a chunker infinite-loop (long fence header) + unguarded reply sends.
+- **Vault** dedicated `hermes-agent` policy + k8s-auth role applied (broad KV read minus vault/breakglass denies, no database grants).
+- **`stacks/hermes-agent`** rewritten and applied: deployment (fs_group 1000), encrypted sessions PVC at `/sessions`, ESOs (Discord/memory keys + cross-path OAuth token + Forgejo push token), narrowed ClusterRole (no exec / no cluster-secret read), vault-token-refresher sidecar, infra-checkout init container, Prometheus scrape service, no ingress. ghcr pull secret wired via the Kyverno allowlist. Two apply-time bugs found and fixed: init-container image was pinned to the old Nous busybox by an over-broad `ignore_changes` (removed); git-crypt key must be `binary_data` not `data` (a base64-in-`data` mount is the base64 text, not the binary key).
+- **Live state:** the pod's init container clones the infra repo and unlocks git-crypt cleanly; the main container starts and fails **only** on the absent `DISCORD_BOT_TOKEN` — the expected end state.
+- **Docs:** service-catalog rows added for `hermes-agent` + `executor`.
+
+**The one remaining step (Viktor, ~2 min — Discord app creation is hCaptcha-gated, can't be automated; login itself succeeded, no 2FA):**
+1. discord.com/developers → New Application **Hermes** → **Bot** → enable **Message Content** + **Server Members** intents → Reset Token, copy it.
+2. `vault kv patch secret/hermes-agent DISCORD_BOT_TOKEN=<token> DISCORD_GUILD_ID=<your guild id> HERMES_OWNER_USER_ID=<your discord user id>`
+3. OAuth2 → URL Generator → scopes `bot`; perms: View Channels, Send Messages, Read Message History, Attach Files, Create Public Threads → open the URL → add to your private server.
+4. ESO resyncs within 15 min (or `kubectl -n hermes-agent delete pod -l app=hermes-agent` to pull immediately); the pod goes Ready and Hermes answers in `#hermes` / on @mention / on member DM.
+
+Then E2E-verify (design §5.7): the flows, non-member DM ignored, rate-limit, a homelab query, a memory round-trip, and — once you mint an Executor MCP credential and set `EXECUTOR_MCP_URL` — an integration round-trip.
