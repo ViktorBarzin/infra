@@ -36,7 +36,14 @@ resource "kubernetes_deployment" "oauth2_proxy" {
   metadata {
     name      = "oauth2-proxy"
     namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
-    labels    = { app = "oauth2-proxy" }
+    labels = {
+      app = "oauth2-proxy"
+      # Scale-to-zero enrollment (ADR-0022, batch 4 — group "k8s-dashboard").
+      "sablier.enable"          = "true"
+      "sablier.group"           = "k8s-dashboard"
+      "sablier.ready-after"     = "5s"
+      "sablier.active.replicas" = "2"
+    }
   }
 
   spec {
@@ -129,6 +136,7 @@ resource "kubernetes_deployment" "oauth2_proxy" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].replicas,                               # SABLIER_MANAGED_REPLICAS — sablier scales replicas (ADR-0022)
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],

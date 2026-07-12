@@ -1593,6 +1593,11 @@ resource "kubernetes_deployment" "pgadmin" {
       # namespace alone can't attribute Goldmane flows. Value = the fronting
       # Service name (kubernetes_service.pgadmin is named "pgadmin").
       "service-identity" = "pgadmin"
+      # Scale-to-zero enrollment (ADR-0022, batch 4): pure browser admin tool —
+      # parked when idle, woken by visiting its ingress.
+      "sablier.enable"      = "true"
+      "sablier.group"       = "pgadmin"
+      "sablier.ready-after" = "5s"
     }
   }
   spec {
@@ -1668,6 +1673,7 @@ resource "kubernetes_deployment" "pgadmin" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales replicas (ADR-0022)
       # This Deployment is Keel-enrolled (keel.sh/policy=patch) and Keel has
       # bumped the live image (dpage/pgadmin4:9.16). Ignore the Keel/Kyverno
       # runtime-mutated attributes so `terragrunt apply` (incl. the daily drift
@@ -1698,7 +1704,11 @@ resource "kubernetes_service" "pgadmin" {
   }
 }
 module "ingress-pgadmin" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022, batch 4): loading-page wake, 3h idle park.
+  sablier = {
+    group = "pgadmin"
+  }
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.dbaas.metadata[0].name
   name            = "pgadmin"
