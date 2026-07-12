@@ -63,6 +63,17 @@ resource "kubernetes_cluster_role" "sablier" {
     resources  = ["deployments/scale", "statefulsets/scale"]
     verbs      = ["get", "list", "watch", "patch", "update"]
   }
+  # Sablier's k8s provider unconditionally registers a CNPG informer when the
+  # clusters.postgresql.cnpg.io CRD exists (it does here) — without read
+  # access it error-spams every few seconds and group discovery fails at
+  # startup. READ ONLY on purpose: no `patch`, so even a mislabeled CNPG
+  # cluster can never be hibernated by sablier (DBs are out of scale-to-zero
+  # scope, ADR-0022).
+  rule {
+    api_groups = ["postgresql.cnpg.io"]
+    resources  = ["clusters"]
+    verbs      = ["get", "list", "watch"]
+  }
 }
 
 resource "kubernetes_cluster_role_binding" "sablier" {
