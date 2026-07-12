@@ -317,9 +317,9 @@ ran anyway; Viktor called ready at ~25 min.
 | 1 | 3 api pods on distinct nodes + worker on node1 | ✅ node2/3/4 + node1 |
 | 2 | Zero 5xx across the whole rollout | ✅ 50-min window: no 5xx series at all |
 | 3 | Websocket cross-replica | ◐ machinery verified (redis-adapter + websocket-only in source; worker-registry state visibly shared by all pods); 2-min two-browser human check outstanding |
-| 4 | Upload lands on shared storage | ◐ source-verified stateless streaming + identical mounts; live upload deliberately not driven by the agent (no personal-account login) |
+| 4 | Upload lands on shared storage | ✅ (driven live 18:45, on Viktor's ask) real upload via an upload-enabled share link through the front door → **201 created**, asset on shared NFS (test asset `claude-split-verify.jpg` in the dormant "Lake District '24" album — trash at leisure) |
 | 5 | Media path through front door | ✅ share-link page + API 200; thumbnail ×3 200 (~80 ms); ranged original **206** |
-| 6 | Job drain to worker | ◐ queue registration proven (checkWorkers warning stopped); queue was quiet — first natural job/nightly run exercises it under the new alert |
+| 6 | Job drain to worker | ✅ the 18:45 test upload was processed by immich-worker in <40 s: `metadataExtractedAt` set + `asset_file` preview & thumbnail rows created + thumbnail 200 through the front door (metadata→thumbnail chain per the upload pipeline) |
 | 7 | Config propagation to all replicas | ◐ mechanism source-verified (serverSideEmit over shared Redis); live UI toggle not driven (needs admin session) |
 | 8 | Kill one api pod under load | ✅ **30/30 requests 200 during the kill**; replacement Ready in seconds |
 | 9 | Worker loss behavior | ✅ observed live in phase C swap: one warning during the ~1 min gap, jobs buffered, worker re-registered |
