@@ -86,3 +86,19 @@ Rejected:
   managed by Sablier **or** the GPU demand-gate (`stacks/tts`), never both —
   chatterbox-tts stays on the demand-gate unless deliberately migrated.
 - Full design + rollout waves: `docs/plans/2026-07-12-scale-to-zero-sablier-design.md`.
+
+## Amendment (2026-07-12, same day — wake-UX strategy revised)
+
+Decision point 3 ("blocking strategy everywhere") was revised by Viktor after
+live cold-hit UX: the **default is now the `dynamic` strategy** — an instant
+themed loading page (ghost theme, 5s poll) that swaps to the app on readiness —
+because the enrolled fleet turned out to be almost entirely browser UIs, and
+the held request surfaced as a naked 503/524 on cold hits. `blocking` remains
+a per-service override for API-shaped paths (first user: affine, whose
+desktop/mobile sync clients would choke on a 200 HTML interstitial). Two
+hardenings landed with the revision: every enrolled deployment carries
+`sablier.ready-after: "5s"` (settling delay covering Traefik endpoint
+propagation), and the middleware resource moved to `kubectl_manifest` (the
+hashicorp provider's type inference breaks on in-place strategy shape
+changes). Everything else in this ADR stands. Details: design doc
+As-built corrections #8.
