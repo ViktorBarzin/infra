@@ -1,6 +1,6 @@
-# Immich horizontal scaling — design (plan only)
+# Immich horizontal scaling — design
 
-**Status:** draft — approved decisions, NOT executed (Viktor: "create the plan only")
+**Status:** done — executed 2026-07-12 evening (Viktor: "let's ship it"); execution record in §11
 **Date:** 2026-07-12
 **Owner:** Viktor (grilled + decided) / Claude (research + synthesis)
 **Related:** `docs/research/immich-front-cache.md` (2026-07-12 — rejected a fronting
@@ -294,6 +294,40 @@ Service selector returns with it. No data-shape changes anywhere in this plan
    during execution; harmless either way at 1 ML replica.
 2. Postgres HA (CNPG/vectorchord) — future project, unblocked by this design.
 3. Job-tier scale-out — blocked upstream (#28051); re-check per Immich release.
+
+## 11. Execution record (2026-07-12, ~17:44–18:45 UTC)
+
+Commits: `06f13175` (kubernetes provider ≥3.2.1 floor, immich slice of the
+in-flight fleet bump), `9009049c` (phase A: immich-api ×3 + PDB),
+phase B selector flip, phase C worker conversion, ImmichNoJobWorker Loki
+alert; docs updated same session (infra `.claude/CLAUDE.md` Immich row).
+
+**Execution deltas from the plan (both found mid-flight, both now §5-worthy
+facts):** (a) the worker role binds an **ephemeral port** (`app.listen(0)`) and
+serves no HTTP — the HTTP probes/port were REMOVED from immich-worker; upstream's
+`immich-healthcheck` no-ops when api is excluded, so worker health = process-alive
++ the new `ImmichNoJobWorker` alert. (b) The soak observed **0 established
+connections from the moment of the flip** (validated counter) — the 30-min window
+ran anyway; Viktor called ready at ~25 min.
+
+**Checklist outcomes:**
+
+| # | Check | Result |
+|---|-------|--------|
+| 1 | 3 api pods on distinct nodes + worker on node1 | ✅ node2/3/4 + node1 |
+| 2 | Zero 5xx across the whole rollout | ✅ 50-min window: no 5xx series at all |
+| 3 | Websocket cross-replica | ◐ machinery verified (redis-adapter + websocket-only in source; worker-registry state visibly shared by all pods); 2-min two-browser human check outstanding |
+| 4 | Upload lands on shared storage | ◐ source-verified stateless streaming + identical mounts; live upload deliberately not driven by the agent (no personal-account login) |
+| 5 | Media path through front door | ✅ share-link page + API 200; thumbnail ×3 200 (~80 ms); ranged original **206** |
+| 6 | Job drain to worker | ◐ queue registration proven (checkWorkers warning stopped); queue was quiet — first natural job/nightly run exercises it under the new alert |
+| 7 | Config propagation to all replicas | ◐ mechanism source-verified (serverSideEmit over shared Redis); live UI toggle not driven (needs admin session) |
+| 8 | Kill one api pod under load | ✅ **30/30 requests 200 during the kill**; replacement Ready in seconds |
+| 9 | Worker loss behavior | ✅ observed live in phase C swap: one warning during the ~1 min gap, jobs buffered, worker re-registered |
+| 10 | Deploy roll (maxUnavailable=1, no quota block) | ◐ config live-verified (maxSurge=0); first real roll arrives with the next Keel patch, covered by PDB + alerts |
+
+Quota landed on projection: 21/24 Gi requests, 32.5/40 Gi limits. User-visible
+impact of the entire rollout: none (0×5xx; the only pause was ~1 min of
+background-job processing during the worker swap).
 
 ## 10. Sources
 
