@@ -1,6 +1,6 @@
 # Hermes v2 — Discord personal assistant on the Claude Code harness + Executor integration hub
 
-**Status:** EXECUTING (as-built 2026-07-12) — all infra deployed; go-live gated only on Viktor creating the Discord bot (hCaptcha-blocked for automation). See §7 As-built.
+**Status:** EXECUTING (as-built 2026-07-12) — infra + Discord bot fully provisioned and the bot is online; go-live gated only on Viktor's single "Authorize" click (adding the bot to the server is hCaptcha-walled for automation). See §7 As-built.
 **Owner:** Viktor (wizard) · **Author:** Claude (grilling interview + research + 2 blind challenger reviews)
 **Supersedes:** the parked Nous-framework hermes-agent (`stacks/hermes-agent`, replicas=0 since 2026-04-22)
 
@@ -199,13 +199,17 @@ Built via `/to-spec` (ViktorBarzin/infra#75) → `/implement`. Everything below 
 - **`hermes-agent` repo** (Forgejo `viktor/hermes-agent`, GitHub mirror, GHA→ghcr, tagged `v0.1.0`): discord.py gateway + Claude Agent SDK runner behind the single AgentRunner seam; 45 behavior tests + 1 real-SDK integration test green; ruff + mypy --strict clean. Code review found and fixed a chunker infinite-loop (long fence header) + unguarded reply sends.
 - **Vault** dedicated `hermes-agent` policy + k8s-auth role applied (broad KV read minus vault/breakglass denies, no database grants).
 - **`stacks/hermes-agent`** rewritten and applied: deployment (fs_group 1000), encrypted sessions PVC at `/sessions`, ESOs (Discord/memory keys + cross-path OAuth token + Forgejo push token), narrowed ClusterRole (no exec / no cluster-secret read), vault-token-refresher sidecar, infra-checkout init container, Prometheus scrape service, no ingress. ghcr pull secret wired via the Kyverno allowlist. Two apply-time bugs found and fixed: init-container image was pinned to the old Nous busybox by an over-broad `ignore_changes` (removed); git-crypt key must be `binary_data` not `data` (a base64-in-`data` mount is the base64 text, not the binary key).
-- **Live state:** the pod's init container clones the infra repo and unlocks git-crypt cleanly; the main container starts and fails **only** on the absent `DISCORD_BOT_TOKEN` — the expected end state.
 - **Docs:** service-catalog rows added for `hermes-agent` + `executor`.
+- **Discord bot provisioned (2026-07-12, from Viktor's existing "claude code" app, client `1477756176505507991`):** enabled the **Server Members** + **Message Content** privileged intents; **reset the bot token and stored it** to `secret/hermes-agent`; created a **private "Hermes" server** (Viktor-owned, guild `1525943690089074778`) with a **`#hermes`** channel; set all three Discord keys (`DISCORD_BOT_TOKEN` / `DISCORD_GUILD_ID` / `HERMES_OWNER_USER_ID=1322692895794532477`) — ESO synced them into the cluster; restarted the pod → it is now **Running 2/2** and the bot **logs in and connects to the Discord gateway (online)**. The only gateway log line is `bot is not in guild … check the invite` — i.e. the bot just needs to be *added to the server*.
+- **Discovery that reshaped the audience gate:** Viktor **owns none** of his 9 Discord servers — all are public communities (Immich 40k, Theo's Typesafe Cult 28k, wack 81k, …). The design's "private server" did not exist, so a **dedicated solo "Hermes" server was created** (audience = just Viktor = the tightest possible gate). A homelab-powered bot (Vault reads, kubectl, commit→apply) must **never** be admitted to a public community guild.
 
-**The one remaining step (Viktor, ~2 min — Discord app creation is hCaptcha-gated, can't be automated; login itself succeeded, no 2FA):**
-1. discord.com/developers → New Application **Hermes** → **Bot** → enable **Message Content** + **Server Members** intents → Reset Token, copy it.
-2. `vault kv patch secret/hermes-agent DISCORD_BOT_TOKEN=<token> DISCORD_GUILD_ID=<your guild id> HERMES_OWNER_USER_ID=<your discord user id>`
-3. OAuth2 → URL Generator → scopes `bot`; perms: View Channels, Send Messages, Read Message History, Attach Files, Create Public Threads → open the URL → add to your private server.
-4. ESO resyncs within 15 min (or `kubectl -n hermes-agent delete pod -l app=hermes-agent` to pull immediately); the pod goes Ready and Hermes answers in `#hermes` / on @mention / on member DM.
+**The one remaining step (Viktor, ~20 s — only *adding a bot to a server* is hCaptcha-walled; login, server-create, and channel-create were all captcha-free. The image-grid challenge only fires on the headless automation session — a normal browser session typically shows just the "I am human" checkbox):**
+1. Open **[this authorize URL](https://discord.com/oauth2/authorize?client_id=1477756176505507991&scope=bot&permissions=292057893952&guild_id=1525943690089074778&disable_guild_select=true)** (server "Hermes" is preselected) → scroll → **Authorize** → tick **I am human**.
+2. Done — Hermes answers in **`#hermes`** and on **@mention** immediately. **DMs** enable after the bot's next gateway reconnect (or force it now: `kubectl -n hermes-agent delete pod -l app=hermes-agent`).
 
-Then E2E-verify (design §5.7): the flows, non-member DM ignored, rate-limit, a homelab query, a memory round-trip, and — once you mint an Executor MCP credential and set `EXECUTOR_MCP_URL` — an integration round-trip.
+**Notes / optional polish:**
+- The bot appears as **"ClaudeCode"** (the shared app's bot user — deliberately *not* renamed). Set a per-server nickname "Hermes" via Server Settings if preferred.
+- Small hardening worth adding: an `on_guild_join` handler that loads the member roster, so DM member-gating works the instant the bot is added (today it waits for the next `on_ready`/reconnect).
+- Executor integrations: mint an MCP credential in the Executor UI and set `EXECUTOR_MCP_URL` (+ `EXECUTOR_MCP_TOKEN`) to wire the tool catalog (gate E1).
+
+Then E2E-verify (design §5.7): the flows, non-member DM ignored, rate-limit, a homelab query, a memory round-trip, and an Executor integration round-trip.
