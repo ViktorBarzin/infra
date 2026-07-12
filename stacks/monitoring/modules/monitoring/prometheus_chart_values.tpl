@@ -2172,11 +2172,15 @@ serverFiles:
           #     annotations:
           #       summary: Pod stuck not ready.
           - alert: DeploymentReplicasMismatch
+            # Sablier-enrolled deployments excluded (ADR-0022): their wake
+            # transients would double-fire alongside SablierWakeFailed, which
+            # is the single deep signal for that fleet (fires at 5m, not 30m).
             expr: |
               (
                 kube_deployment_spec_replicas
                 - on(namespace, deployment) kube_deployment_status_replicas_available
               ) > 0
+              unless on(namespace, deployment) (kube_deployment_labels{label_sablier_enable="true"} == 1)
             for: 30m
             labels:
               severity: warning
@@ -3041,20 +3045,31 @@ serverFiles:
             annotations:
               summary: "Claude OAuth expiry monitor has never pushed — CronJob not running"
               description: "Expected `claude_oauth_expiry_monitor_last_push_timestamp` to appear once the CronJob runs. Check the CronJob in claude-agent namespace."
+          # Down = unavailable while the deployment WANTS replicas (spec > 0).
+          # spec=0 is deliberate parking (hackmd is hand-parked 2026-07-12;
+          # privatebin is sablier-enrolled and parks by design, ADR-0022) —
+          # not an outage. Sablier-enrolled apps are additionally excluded
+          # entirely: their woke-but-broken signal is SablierWakeFailed.
           - alert: HackmdDown
-            expr: (kube_deployment_status_replicas_available{namespace="hackmd"} or on() vector(0)) < 1
+            expr: |
+              (kube_deployment_status_replicas_available{namespace="hackmd"} < 1)
+              and on(namespace, deployment) (kube_deployment_spec_replicas > 0)
+              unless on(namespace, deployment) (kube_deployment_labels{label_sablier_enable="true"} == 1)
             for: 5m
             labels:
               severity: warning
             annotations:
-              summary: "Hackmd has no available replicas"
+              summary: "Hackmd has no available replicas (and is not parked)"
           - alert: PrivatebinDown
-            expr: (kube_deployment_status_replicas_available{namespace="privatebin"} or on() vector(0)) < 1
+            expr: |
+              (kube_deployment_status_replicas_available{namespace="privatebin"} < 1)
+              and on(namespace, deployment) (kube_deployment_spec_replicas > 0)
+              unless on(namespace, deployment) (kube_deployment_labels{label_sablier_enable="true"} == 1)
             for: 10m
             labels:
               severity: warning
             annotations:
-              summary: "Privatebin has no available replicas"
+              summary: "Privatebin has no available replicas (and is not parked/enrolled)"
           - alert: DawarichIngestionStale
             expr: (time() - dawarich_last_point_ingested_timestamp{user="viktor"}) > 172800
             for: 15m
