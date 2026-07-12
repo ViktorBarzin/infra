@@ -708,7 +708,10 @@ resource "kubernetes_service" "immich-server" {
 
   spec {
     selector = {
-      app = "immich-server"
+      # Serves from the api tier since the 2026-07-12 worker split; the name
+      # stays "immich-server" so the ingress and ImmichFrame kiosks are
+      # untouched. immich-worker has no HTTP to serve.
+      app = "immich-api"
     }
     port {
       port = 2283
