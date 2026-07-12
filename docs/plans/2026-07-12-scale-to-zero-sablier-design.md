@@ -47,7 +47,7 @@ Full survey in the session research; summary:
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph edge [Edge]
         CF[Cloudflare / direct LB]
     end
