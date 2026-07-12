@@ -201,6 +201,47 @@ resource "kubernetes_manifest" "clipboard_strip_prefix" {
   }
 }
 
+# Carve-out for the PWA manifest + icons + vendored webfonts on
+# terminal.viktorbarzin.me. The PWA manifest fetch is credential-less by
+# spec, and every OS icon fetcher (iOS Add-to-Home-Screen, Android WebAPK
+# install, macOS Safari Add-to-Dock) carries no session cookies — behind
+# forward-auth they get the Authentik 302 and the installed app falls back
+# to a letter monogram; cookie-less webfont fetches fail the same way.
+# Traefik prioritises these longer exact paths over the main "/" router,
+# so ONLY these nine static files bypass Authentik; the lobby shell,
+# /token, /ws, /clipboard/ and /api/sessions/ stay gated by the routes
+# above. The files are served by exact-path GET handlers in
+# clipboard-upload (terminal-lobby repo) from a fixed whitelist — no
+# directory serving, no user data. Guarded against regression by the
+# terminal-pwa-assets entry in the Authentik walling-off probe
+# (stacks/monitoring/modules/monitoring/authentik_walloff_probe.tf).
+module "ingress_assets" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": public PWA manifest + icons, no user data; OS icon
+  # fetchers carry no session cookies
+  auth         = "none"
+  namespace    = kubernetes_namespace.terminal.metadata[0].name
+  name         = "terminal-assets"
+  service_name = kubernetes_service.clipboard_upload.metadata[0].name
+  port         = 80
+  ingress_path = [
+    "/manifest.webmanifest",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/icon-512-maskable.png",
+    "/fonts/JetBrainsMono-Regular.woff2",
+    "/fonts/JetBrainsMono-Bold.woff2",
+    "/fonts/JetBrainsMono-Italic.woff2",
+    "/fonts/JetBrainsMono-BoldItalic.woff2",
+    "/fonts/dm-sans-latin-wght-normal.woff2",
+  ]
+  full_host        = "terminal.viktorbarzin.me" # MUST match the main ingress host; otherwise the factory derives terminal-assets.viktorbarzin.me and the carve-out never matches.
+  dns_type         = "none"                     # host record already owned by the main terminal ingress
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false # a manifest, three icons and five OFL font files; nothing for scrapers to mine
+  homepage_enabled = false # path carve-out, not its own dashboard tile
+}
+
 module "ingress_ro" {
   source          = "../../modules/kubernetes/ingress_factory"
   dns_type        = "proxied"
