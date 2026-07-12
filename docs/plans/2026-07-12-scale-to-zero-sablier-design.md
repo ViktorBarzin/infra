@@ -73,6 +73,35 @@ here so the deltas from the reviewed draft are explicit:
    replica counts — it wakes to `sablier.active.replicas` (label/annotation,
    default 1). All enrolled services here are replicas-1 apps, so the default
    is correct; a future multi-replica enrollee must set that label.
+7. **Day-one verification results (2026-07-12 12:01–12:40 UTC):**
+   - Traefik rolled cleanly ×3 with `Plugins loaded.
+     plugins=["api-token-middleware","sablier"]` on every replica, zero
+     "Plugins are disabled" events; paperless-mcp still 403s without a token
+     (shared plugin layer healthy).
+   - **netbox: full lifecycle proven** — blocking wake 0→1 (~50s to ready,
+     Sablier returned `status: ready`), 2m test session expired, re-parked
+     to 0 at 12:25:20. No Terraform drift on `replicas`.
+   - **Group wake proven** — one headless-browser visit to
+     resume.viktorbarzin.me (through Cloudflare + the public outpost) scaled
+     BOTH resume and printer 0→1 together.
+   - **SablierWakeFailed fired for real on day one**: the resume group woke
+     and crashed — printer (chromium) could never boot in its old 128Mi
+     limit and resume OOMKilled at 64Mi (the pair had been hand-parked for
+     exactly this since March). Limits fixed (printer 256Mi/1Gi, resume
+     128Mi/256Mi; printer now boots) — but resume then surfaced the REAL
+     bit-rot: `DATABASE_URL is not set` (v5 requires Postgres it was never
+     given). **Resume needs service restoration (DB provisioning / data
+     decision) — Viktor's call, out of scale-to-zero scope.** Until then a
+     visitor gets the styled 503 error page after the blocking hold — same
+     end-state as the parked past, now with an alert attached.
+   - **Clean-slate lever verified**: restarting the sablier pod parked the
+     sessionless resume group via `auto-stop-on-startup`, resolving the
+     wake-fail alert.
+   - Probe-exclusion (`ignoreUserAgent`) could not be exercised end-to-end
+     by this pilot: both pilot ingresses sit behind Authentik walls that
+     answer probes before the sablier middleware is reached (monitors were
+     shallow for them already). First `auth = "app"`/`"none"` enrollee in
+     wave 2/3 verifies it.
 
 ## Options considered (July 2026 survey)
 
