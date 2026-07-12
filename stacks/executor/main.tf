@@ -317,8 +317,12 @@ module "ingress" {
   auth = "app"
   # Owner-only admin surface: resolvable everywhere, routable only from home
   # LANs/WG/VPN; pair with the allowlist middleware per ADR-0021.
-  dns_type          = "internal"
-  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
+  dns_type = "internal"
+  # The SPA cold-loads ~40-60 chunks in one burst; over the cloudflared path
+  # Traefik sees one client IP, so the default 10/50 limiter 429s the tail.
+  # Dedicated 100/1000 limiter (SPA cold-load pattern), allowlist gates first.
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-home-lans-only@kubernetescrd", "traefik-executor-rate-limit@kubernetescrd"]
   external_monitor  = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
