@@ -96,6 +96,21 @@ alertmanager:
           - alertname = NodeDown
         target_matchers:
           - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeStale|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
+      # Planned node maintenance (kured drain-reboot or a manual cordon): the
+      # window is announced by NodeMaintenanceInProgress (info — one Slack
+      # line), and everything a 3-6 min drain+reboot predictably trips is
+      # suppressed for its duration (2026-07-12: node4's routine kured reboot
+      # produced ~19 distinct alert notifications). Inhibition is
+      # Alertmanager-side only — it DELAYS notifications, never drops state:
+      # anything still firing when the node uncordons notifies then, and
+      # kured's own alert gate + the sentinel gate read PROMETHEUS, so they
+      # still see every alert (incl. the RecentNodeReboot 1h settle window).
+      # Forgotten-cordon guard: NodeCordonedTooLong (2h) is deliberately NOT
+      # in the target list below.
+      - source_matchers:
+          - alertname = NodeMaintenanceInProgress
+        target_matchers:
+          - alertname =~ "NodeDown|NodeNotReady|NodeConditionBad|CalicoNodeNotReady|RecentNodeReboot|TraefikDown|AuthentikDown|AuthentikRootRouter5xxHigh|ForwardAuthFallbackActive|MailServerDown|DaemonSetMissingPods|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|PodCrashLooping|ContainerOOMKilled|KernelOOMKiller|ScrapeTargetDown|HighMemoryUsage|HighSystemLoad|HighPowerUsage|KubeletRunningContainersDrop|GPUVRAMLow|MysqlStandaloneDown|PostgreSQLDown|RedisDown|CloudflaredDown|HeadscaleDown|HeadscaleReplicasMismatch|ClusterCannotTolerateNonGpuNodeLoss|PodStuckPending|PVCStuckPending|NodeExporterDown|NodeLowFreeMemory|KubeletImagePullErrors|PodsStuckContainerCreating|TechnitiumZoneCountMismatch|TechnitiumDNSDown|EmailRoundtripFailing"
       # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
@@ -2272,6 +2287,46 @@ serverFiles:
               severity: info
             annotations:
               summary: "Node {{ $labels.node }} kubelet started {{ $value | humanizeDuration }} ago — 1h settle window halts further reboots"
+          # NodeMaintenanceInProgress — a node is cordoned (kured drain-reboot
+          # or manual maintenance). Exists primarily as the INHIBITION SOURCE
+          # that mutes the planned-reboot alert blast (see inhibit_rules in
+          # the alertmanager config above); info severity → the one Slack
+          # line that marks the window. Side effect (intended): kured's alert
+          # gate reads Prometheus, so a cordoned node also pauses further
+          # kured reboots until the cordon lifts.
+          - alert: NodeMaintenanceInProgress
+            expr: kube_node_spec_unschedulable == 1
+            for: 1m
+            labels:
+              severity: info
+            annotations:
+              summary: "Node {{ $labels.node }} cordoned — maintenance window; reboot-blast alerts are inhibited until uncordon"
+          # Guard for the inhibition above: a FORGOTTEN cordon would otherwise
+          # keep muting notifications indefinitely. Deliberately absent from
+          # the inhibited target list.
+          - alert: NodeCordonedTooLong
+            expr: kube_node_spec_unschedulable == 1
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.node }} cordoned for 2h+ — finish the maintenance or uncordon (alert inhibition is active while it stays cordoned)"
+          # PodStuckPending — scheduled onto a node but not starting for 20m+:
+          # volume-attach wedges (MountVolume ... device not found — the
+          # 2026-07-12 n8n / wedged-QMP-hotplug class, memory #9580), stuck
+          # image pulls, init-container deadlocks. Excludes pods the scheduler
+          # can't place (PodUnschedulable owns those). First move:
+          # `kubectl describe pod` events; wedged-hotplug recipe: cordon the
+          # node → delete the pod (reschedules elsewhere) → uncordon; the VM
+          # needs a reboot to clear the wedge (cluster-health check 47 now
+          # detects it directly).
+          - alert: PodStuckPending
+            expr: kube_pod_status_phase{phase="Pending"} == 1 unless on(namespace, pod) kube_pod_status_conditions{condition="PodScheduled", status="false"} == 1
+            for: 20m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }} Pending 20m+ though scheduled — check describe events (FailedMount / image pull / init)"
           - alert: MysqlStandaloneDown
             # Single-replica StatefulSet: brief drain re-scheduling routinely
             # takes 1-3 min during k8s upgrades. 3m suppresses those blips;

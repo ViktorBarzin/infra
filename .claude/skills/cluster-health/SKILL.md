@@ -13,8 +13,8 @@ description: |
   Goldmane edge-aggregator, Slack #alerts recent alerts)
   with safe auto-fix for evicted pods.
 author: Claude Code
-version: 2.1.0
-date: 2026-07-07
+version: 2.2.0
+date: 2026-07-12
 ---
 
 # Cluster Health Check
@@ -119,7 +119,7 @@ bash infra/scripts/cluster_healthcheck.sh --kubeconfig /path/to/config
 | 44 | PVE Host Load | `/proc/loadavg` via SSH. PASS 5m <30, WARN 30-37, FAIL ≥38 of 44 threads |
 | 45 | HA Sofia — Status Dashboard | emo's curated Барзини → Статус view (`dashboard-barzini` / path `status`). Pulls the lovelace config via WS, batch-renders every `custom:mushroom-template-card` secondary template against `/api/template`, classifies each rendered line: FAIL on `Offline` / `Disconnected` / `Разкачен` / `— No data`; WARN on `⚠️` / `Abnormal` / `Trouble (` / `(ниска)` / `Пълен резервоар` / `Грешка` / `attention` / `Внимание`. Verdict rolls up across the 8 sections (Сигурност, Мрежа & IT, Енергия, Климат, Уреди, Мултимедия, Осветление, Поливна) |
 | 46 | Immich Smart Search | `clip_index` residency in PG `shared_buffers` + representative ANN probe latency (in immich-postgresql). FAIL >1.5s or <50% resident; WARN >0.5s or <90% resident. Cold cache → check `clip-index-prewarm` CronJob |
-| 47 | Proxmox CSI — Ghost-Disk Drift | Per node, compares real virtio-scsi CSI disks in `qm config <vmid>` (SSH PVE) vs attached proxmox-CSI VolumeAttachments k8s tracks. Catches orphaned "ghost" disks left by failed detaches (`query-pci` QMP timeouts) that the scheduler's 28-LUN guard can't see. PASS reconciled; WARN drift>0 or real 20-24; FAIL real ≥25 (near LUN cap → imminent wedge). Cleanup: detach ghosts via `qm set <vmid> --delete scsiN` (frees slot, retains LV) |
+| 47 | Proxmox CSI — Ghost-Disk + Hotplug-Wedge Drift | Per node, three-way diff: CSI disks in `qm config <vmid>` (SSH PVE) vs the LIVE QEMU runtime (`info block` via `qm monitor`) vs attached proxmox-CSI VolumeAttachments k8s tracks. Catches (a) orphaned "ghost" disks left by failed detaches (`query-pci` QMP timeouts) the scheduler's 28-LUN guard can't see, and (b) WEDGED HOTPLUG — config-present but runtime-absent disks (the 2026-07-12 n8n/node5 class): every new mount on that node fails "device not found" until the VM reboots. PASS all three match; WARN ghosts>0 or real 20-24; FAIL wedged>0 or real ≥25. Cleanup: ghosts → `qm set <vmid> --delete scsiN` (frees slot, retains LV); wedged → drain + reboot the VM (interim: cordon → delete stuck pod → reschedules elsewhere → uncordon) |
 | 48 | Goldmane Edge-Aggregator | `goldmane-edge-aggregator` Deployment `Available` condition (the who-talks-to-whom edge trail, ADR-0014). Missing Deployment or not-Available → FAIL (mirrors the `AggregatorDown` Prometheus alert; the pod has no `/metrics` to scrape) |
 | 49 | Slack — #alerts Recent Alerts | Reads the #alerts channel via the Slack Web API (bot token from Vault `secret/viktor/slack_bot_token`, env override `SLACK_BOT_TOKEN`; window 2h, `HEALTHCHECK_SLACK_WINDOW_HOURS` to override). Classifies messages into Alertmanager alert events (`[CRITICAL]/[WARNING]/[INFO]/[SECURITY/*]` firing vs `[RESOLVED]`; `[INFO]` disambiguated by colour) vs other traffic (CI notices, digests, diun, KMS). WARN if any alert is net-FIRING (no later RESOLVED in the window — names listed) or >20 messages in the window (noisy); PASS otherwise. Token missing / API unreachable → WARN + skip |
 
