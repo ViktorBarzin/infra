@@ -6,7 +6,7 @@ resource "kubernetes_namespace" "shadowsocks" {
   metadata {
     name = "shadowsocks"
     labels = {
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
     # TLS termination seems iffy - I get pfsense MiTM-ing

@@ -12,7 +12,7 @@ resource "kubernetes_namespace" "webhook-handler" {
   metadata {
     name = "webhook-handler"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }

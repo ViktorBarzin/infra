@@ -8,8 +8,8 @@ resource "kubernetes_namespace" "insta2spotify" {
   metadata {
     name = "insta2spotify"
     labels = {
-      "istio-injection" = "disabled"
-      tier              = local.tiers.aux
+      "istio-injection"  = "disabled"
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -264,9 +264,9 @@ module "ingress_api" {
   service_name    = "insta2spotify"
   tls_secret_name = var.tls_secret_name
   # auth = "none": API endpoints consumed by browser fetch() XHRs; forward-auth 302 breaks CORS preflight.
-  auth            = "none"
-  ingress_path    = ["/api/identify", "/api/auth", "/api/health", "/api/history"]
-  max_body_size   = "50m"
+  auth          = "none"
+  ingress_path  = ["/api/identify", "/api/auth", "/api/health", "/api/history"]
+  max_body_size = "50m"
 }
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)

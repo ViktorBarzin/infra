@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "whisper" {
   metadata {
     name = "whisper"
     labels = {
-      tier = local.tiers.gpu
+      tier               = local.tiers.gpu
       "keel.sh/enrolled" = "true"
     }
   }

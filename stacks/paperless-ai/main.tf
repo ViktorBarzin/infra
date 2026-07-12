@@ -315,11 +315,11 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   port            = 80
   extra_annotations = {
-    "gethomepage.dev/enabled"     = "true"
-    "gethomepage.dev/description" = "AI document search & tagging"
-    "gethomepage.dev/group"       = "Productivity"
-    "gethomepage.dev/icon"        = "paperless-ngx.png"
-    "gethomepage.dev/name"        = "Paperless-AI"
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/description"  = "AI document search & tagging"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/icon"         = "paperless-ngx.png"
+    "gethomepage.dev/name"         = "Paperless-AI"
     "gethomepage.dev/pod-selector" = ""
   }
 }

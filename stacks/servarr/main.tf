@@ -51,7 +51,7 @@ resource "kubernetes_namespace" "servarr" {
   metadata {
     name = "servarr"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }

@@ -8,7 +8,7 @@ resource "kubernetes_namespace" "navidrome" {
     name = "navidrome"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }

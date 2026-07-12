@@ -14,7 +14,7 @@ resource "kubernetes_namespace" "rybbit" {
   metadata {
     name = "rybbit"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }

@@ -11,7 +11,7 @@ resource "kubernetes_namespace" "send" {
     name = "send"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }

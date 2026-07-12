@@ -17,7 +17,7 @@ resource "kubernetes_namespace" "phpipam" {
   metadata {
     name = "phpipam"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }

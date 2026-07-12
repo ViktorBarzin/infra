@@ -117,25 +117,38 @@ variable "extra_middlewares" {
 }
 variable "sablier" {
   type = object({
-    group            = optional(string)       # sablier group; defaults to var.name
-    session_duration = optional(string, "3h") # idle window before the group parks (ADR-0022 default)
-    blocking_timeout = optional(string, "5m") # how long the held first request waits for readiness
+    group             = optional(string)            # sablier group; defaults to var.name
+    session_duration  = optional(string, "3h")      # idle window before the group parks (ADR-0022 default)
+    strategy          = optional(string, "dynamic") # "dynamic" (loading page, browser UIs — default) | "blocking" (hold the request, API paths)
+    display_name      = optional(string)            # loading-page title; defaults to var.name
+    theme             = optional(string, "ghost")   # sablier embedded theme: ghost | hacker-terminal | matrix | shuffle
+    refresh_frequency = optional(string, "5s")      # loading-page poll cadence
+    blocking_timeout  = optional(string, "5m")      # (strategy=blocking) how long the held request waits
   })
   default     = null
   description = <<-EOT
     Scale-to-zero enrollment (ADR-0022). Non-null emits a per-ingress sablier
-    Middleware CR (blocking strategy — the first request is HELD until the
-    workload is ready; no waiting page) and appends it to the router chain
-    AFTER the auth middleware, so unauthenticated scanners never wake the app.
+    Middleware CR and appends it to the router chain AFTER the auth
+    middleware, so unauthenticated scanners never wake the app.
+    Strategy (revised 2026-07-12, Viktor): DEFAULT = "dynamic" — an instant
+    themed loading page that polls and swaps to the app when ready (no held
+    request, no CF 524 on slow boots, endpoint races absorbed by the poll).
+    Set strategy = "blocking" per service for programmatic/API paths where
+    an HTML interstitial would break the client.
     The TARGET Deployment(s) must also carry the `sablier.enable: "true"` +
-    `sablier.group: <group>` labels and put `spec[0].replicas` under
-    lifecycle.ignore_changes (marker: # SABLIER_MANAGED_REPLICAS) — the module
-    only owns the request-path half of enrollment.
+    `sablier.group: <group>` + `sablier.ready-after: "5s"` labels (the
+    settling delay covers Traefik's endpoint-propagation lag after readiness)
+    and put `spec[0].replicas` under lifecycle.ignore_changes (marker:
+    # SABLIER_MANAGED_REPLICAS) — the module only owns the request-path half.
     Probe exclusion: Uptime Kuma / blackbox / Go-http-client UAs get an
     immediate 200 without waking anything — enrolled monitors are shallow by
     design; the deep signal is the SablierWakeFailed alert (stacks/monitoring).
     Keyword-type monitors must be switched to status-only at enrollment.
   EOT
+  validation {
+    condition     = var.sablier == null || contains(["dynamic", "blocking"], coalesce(var.sablier.strategy, "dynamic"))
+    error_message = "sablier.strategy must be \"dynamic\" or \"blocking\"."
+  }
 }
 variable "skip_default_rate_limit" {
   type    = bool
@@ -436,10 +449,13 @@ resource "kubernetes_manifest" "buffering" {
 }
 
 # Scale-to-zero wake middleware — created per service when sablier is set
-# (ADR-0022). Blocking strategy everywhere (locked decision: hold the first
-# request, no waiting page). failOpen=true: if the Sablier API is down the
-# plugin passes requests through — running apps stay reachable, parked ones
-# 503 until Sablier returns (same posture as the old hand-parked state).
+# (ADR-0022). Strategy default = dynamic (revised 2026-07-12): an instant
+# themed loading page that polls until the workload is ready, then loads the
+# app — visitors see progress instead of a held connection, slow boots can't
+# hit the Cloudflare ~100s cap, and the endpoint-propagation race is absorbed
+# by the poll cadence. strategy = "blocking" remains for API-shaped paths.
+# failOpen=true: if the Sablier API is down the plugin passes requests
+# through — running apps stay reachable, parked ones 503 until it returns.
 resource "kubernetes_manifest" "sablier" {
   count = var.sablier != null ? 1 : 0
 
@@ -452,25 +468,36 @@ resource "kubernetes_manifest" "sablier" {
     }
     spec = {
       plugin = {
-        sablier = {
-          sablierUrl      = "http://sablier.sablier.svc.cluster.local:10000"
-          group           = coalesce(var.sablier.group, var.name)
-          sessionDuration = var.sablier.session_duration
-          failOpen        = true
-          # Monitors must never wake a parked workload NOR refresh its
-          # session: matching UAs get an immediate 200 (Go regexps).
-          # Uptime-Kuma = external monitors; Go-http-client = blackbox-
-          # exporter's default UA (and stray Go probes — enrolled apps have
-          # no legit Go-client consumers; revisit per-service if one appears).
-          ignoreUserAgent = [
-            "(?i)uptime-?kuma",
-            "(?i)blackbox",
-            "Go-http-client",
-          ]
-          blocking = {
-            timeout = var.sablier.blocking_timeout
+        sablier = merge(
+          {
+            sablierUrl      = "http://sablier.sablier.svc.cluster.local:10000"
+            group           = coalesce(var.sablier.group, var.name)
+            sessionDuration = var.sablier.session_duration
+            failOpen        = true
+            # Monitors must never wake a parked workload NOR refresh its
+            # session: matching UAs get an immediate 200 (Go regexps).
+            # Uptime-Kuma = external monitors; Go-http-client = blackbox-
+            # exporter's default UA (and stray Go probes — enrolled apps have
+            # no legit Go-client consumers; revisit if one appears).
+            ignoreUserAgent = [
+              "(?i)uptime-?kuma",
+              "(?i)blackbox",
+              "Go-http-client",
+            ]
+          },
+          var.sablier.strategy == "blocking" ? {
+            blocking = {
+              timeout = var.sablier.blocking_timeout
+            }
+            } : {
+            dynamic = {
+              displayName      = coalesce(var.sablier.display_name, var.name)
+              showDetails      = true
+              theme            = var.sablier.theme
+              refreshFrequency = var.sablier.refresh_frequency
+            }
           }
-        }
+        )
       }
     }
   }

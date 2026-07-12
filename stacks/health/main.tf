@@ -65,6 +65,9 @@ resource "kubernetes_deployment" "health" {
       # first request through the ingress (design doc 2026-07-12).
       "sablier.enable" = "true"
       "sablier.group"  = "health"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"

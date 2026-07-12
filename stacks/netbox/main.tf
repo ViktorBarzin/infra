@@ -76,6 +76,9 @@ resource "kubernetes_deployment" "netbox" {
       # 2026-03-14 OOM incident; now sablier wakes it on first visit.
       "sablier.enable" = "true"
       "sablier.group"  = "netbox"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

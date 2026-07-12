@@ -8,7 +8,7 @@ resource "kubernetes_namespace" "ebooks" {
   metadata {
     name = "ebooks"
     labels = {
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
   }
@@ -375,7 +375,7 @@ resource "kubernetes_deployment" "calibre-web-automated" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
@@ -506,7 +506,7 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
@@ -665,7 +665,7 @@ resource "kubernetes_deployment" "audiobookshelf" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
@@ -950,7 +950,7 @@ resource "kubernetes_deployment" "book_search" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
@@ -1010,6 +1010,6 @@ module "book_search_api_ingress" {
   service_name    = "book-search"
   tls_secret_name = var.tls_secret_name
   # auth = "none": Book Search API endpoints — API key auth handled by backend; forward-auth would block downloads.
-  auth            = "none"
-  ingress_path    = ["/api/download-url", "/api/download-status", "/api/send-to-kindle", "/shortcut"]
+  auth         = "none"
+  ingress_path = ["/api/download-url", "/api/download-status", "/api/send-to-kindle", "/shortcut"]
 }

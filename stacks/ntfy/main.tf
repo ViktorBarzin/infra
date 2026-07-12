@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "ntfy" {
   metadata {
     name = "ntfy"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }

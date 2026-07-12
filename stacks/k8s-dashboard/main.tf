@@ -31,7 +31,7 @@ resource "kubernetes_namespace" "k8s-dashboard" {
     name = "kubernetes-dashboard"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.cluster
+      tier               = local.tiers.cluster
       "keel.sh/enrolled" = "true"
     }
   }
@@ -90,7 +90,7 @@ resource "helm_release" "kubernetes-dashboard" {
 
 
 module "ingress" {
-  source           = "../../modules/kubernetes/ingress_factory"
+  source    = "../../modules/kubernetes/ingress_factory"
   namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
   name      = "kubernetes-dashboard"
   # Route through the token-injector: Authentik forward-auth (auth=required) gates

@@ -127,7 +127,7 @@ resource "kubernetes_deployment" "local_path_provisioner" {
     name      = "local-path-provisioner"
     namespace = kubernetes_namespace.local_path_storage.metadata[0].name
     labels = {
-      tier = "default"
+      tier               = "default"
       "keel.sh/enrolled" = "true"
     }
   }
