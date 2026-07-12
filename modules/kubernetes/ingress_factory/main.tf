@@ -115,6 +115,28 @@ variable "extra_middlewares" {
   type    = list(string)
   default = []
 }
+variable "sablier" {
+  type = object({
+    group            = optional(string)       # sablier group; defaults to var.name
+    session_duration = optional(string, "3h") # idle window before the group parks (ADR-0022 default)
+    blocking_timeout = optional(string, "5m") # how long the held first request waits for readiness
+  })
+  default     = null
+  description = <<-EOT
+    Scale-to-zero enrollment (ADR-0022). Non-null emits a per-ingress sablier
+    Middleware CR (blocking strategy — the first request is HELD until the
+    workload is ready; no waiting page) and appends it to the router chain
+    AFTER the auth middleware, so unauthenticated scanners never wake the app.
+    The TARGET Deployment(s) must also carry the `sablier.enable: "true"` +
+    `sablier.group: <group>` labels and put `spec[0].replicas` under
+    lifecycle.ignore_changes (marker: # SABLIER_MANAGED_REPLICAS) — the module
+    only owns the request-path half of enrollment.
+    Probe exclusion: Uptime Kuma / blackbox / Go-http-client UAs get an
+    immediate 200 without waking anything — enrolled monitors are shallow by
+    design; the deep signal is the SablierWakeFailed alert (stacks/monitoring).
+    Keyword-type monitors must be switched to status-only at enrollment.
+  EOT
+}
 variable "skip_default_rate_limit" {
   type    = bool
   default = false
@@ -330,6 +352,9 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         local.effective_anti_ai ? "traefik-anti-ai-headers@kubernetescrd" : null,
         local.auth_middleware,
         var.allow_local_access_only ? "traefik-local-only@kubernetescrd" : null,
+        # sablier sits AFTER every gate (auth, ip-allowlist) so only admitted
+        # requests can wake a parked workload (ADR-0022).
+        var.sablier != null ? "${var.namespace}-sablier-${var.name}@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
         var.max_body_size != null ? "${var.namespace}-buffering-${var.name}@kubernetescrd" : null,
       ], var.extra_middlewares)))
@@ -405,6 +430,47 @@ resource "kubernetes_manifest" "buffering" {
     spec = {
       buffering = {
         maxRequestBodyBytes = local.max_body_size_bytes
+      }
+    }
+  }
+}
+
+# Scale-to-zero wake middleware — created per service when sablier is set
+# (ADR-0022). Blocking strategy everywhere (locked decision: hold the first
+# request, no waiting page). failOpen=true: if the Sablier API is down the
+# plugin passes requests through — running apps stay reachable, parked ones
+# 503 until Sablier returns (same posture as the old hand-parked state).
+resource "kubernetes_manifest" "sablier" {
+  count = var.sablier != null ? 1 : 0
+
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "sablier-${var.name}"
+      namespace = var.namespace
+    }
+    spec = {
+      plugin = {
+        sablier = {
+          sablierUrl      = "http://sablier.sablier.svc.cluster.local:10000"
+          group           = coalesce(var.sablier.group, var.name)
+          sessionDuration = var.sablier.session_duration
+          failOpen        = true
+          # Monitors must never wake a parked workload NOR refresh its
+          # session: matching UAs get an immediate 200 (Go regexps).
+          # Uptime-Kuma = external monitors; Go-http-client = blackbox-
+          # exporter's default UA (and stray Go probes — enrolled apps have
+          # no legit Go-client consumers; revisit per-service if one appears).
+          ignoreUserAgent = [
+            "(?i)uptime-?kuma",
+            "(?i)blackbox",
+            "Go-http-client",
+          ]
+          blocking = {
+            timeout = var.sablier.blocking_timeout
+          }
+        }
       }
     }
   }

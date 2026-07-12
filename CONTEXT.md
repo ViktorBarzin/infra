@@ -71,8 +71,8 @@ The 0→N scale-up of an Enrolled Service triggered by the first request through
 _Avoid_: "cold start" for the whole event (cold start is the *duration* the wake costs, not the act).
 
 **Sablier session**:
-The per-group activity window (default 3h) that every real, non-probe request refreshes; expiry parks the group. Held only in Sablier's memory — a Sablier restart just restarts the window.
-_Avoid_: reading "session" as a user/auth session (it's per-Service-group, shared by all visitors).
+The per-group activity window (default 3h) that every real, non-probe request refreshes; expiry parks the group. Held only in Sablier's memory — and on restart Sablier PARKS every enrolled workload without a live session (`auto-stop-on-startup`, the deliberate clean-slate), so a restart means "everything enrolled re-wakes on its next request", not "windows continue".
+_Avoid_: reading "session" as a user/auth session (it's per-Service-group, shared by all visitors); assuming sessions survive a Sablier restart.
 
 ### GPU sharing
 

@@ -24,7 +24,7 @@ resource "kubernetes_namespace" "resume" {
   metadata {
     name = local.namespace
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -78,10 +78,17 @@ resource "kubernetes_deployment" "printer" {
     labels = {
       app  = "printer"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): wakes/parks together with the
+      # resume app (one sablier group) — resume's PDF printing depends on it.
+      "sablier.enable" = "true"
+      "sablier.group"  = "resume"
     }
   }
   spec {
-    replicas = 0 # Scaled down — browserless chromium causes node OOM
+    # Sablier-managed 0<->1 (group "resume"): parked when idle, woken by the
+    # first request through the resume ingress. 0 here = parked default on
+    # (re)create; live value is under ignore_changes.
+    replicas = 0
     selector {
       match_labels = {
         app = "printer"
@@ -158,6 +165,7 @@ resource "kubernetes_deployment" "printer" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -196,10 +204,15 @@ resource "kubernetes_deployment" "resume" {
     labels = {
       app  = "resume"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): group "resume" = resume + printer.
+      "sablier.enable" = "true"
+      "sablier.group"  = "resume"
     }
   }
   spec {
-    replicas = 0 # Scaled down with printer — depends on browserless chromium
+    # Sablier-managed 0<->1 (group "resume"): first request through the
+    # ingress wakes both this and printer; 3h idle parks them again.
+    replicas = 0
     strategy {
       type = "Recreate"
     }
@@ -345,6 +358,7 @@ resource "kubernetes_deployment" "resume" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -375,6 +389,11 @@ module "ingress" {
   namespace       = kubernetes_namespace.resume.metadata[0].name
   name            = "resume"
   tls_secret_name = var.tls_secret_name
+  # Scale-to-zero pilot (ADR-0022): first request wakes the resume group
+  # (resume + printer), 3h idle parks it. Held-request wake, no waiting page.
+  sablier = {
+    group = "resume"
+  }
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Resume"

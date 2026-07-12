@@ -1,7 +1,7 @@
 # Scale-to-zero for HTTP services — Sablier wake-on-request — design
 
 - **Date:** 2026-07-12
-- **Status:** draft (decisions locked in grilling session; pending Viktor's review of this doc)
+- **Status:** executing (approved by Viktor 2026-07-12; waves 0–1 implemented same day — see the As-built corrections section for deltas found during implementation)
 - **Owner:** Viktor (wizard)
 - **Decision record:** `docs/adr/0022-scale-to-zero-sablier-vendored-plugin.md`
 - **Builds on:** the hand-built wake-on-request precedent `stacks/android-emulator/gate.tf` (gate.py + idle-sleeper CronJob), Traefik per-service request metrics (`prometheus_chart_values.tpl` Traefik scrape job), ADR-0016 (T4 VRAM budget)
@@ -28,7 +28,51 @@ Secondary win: convenience — parking is already the habit (see the ~20
 | 4 | Engine | **Sablier v1.15+, plugin vendored as a Traefik *local* plugin, pinned, `failOpen: true`** | Only option with a real probe-exclusion story; one small pod; groups; maintained (Jul 2026). Yaegi risk bounded — see Failure modes |
 | 5 | Idle timeout | `sessionDuration: 3h` default, per-service override | Lazy by choice: candidates are weekly/monthly-use, 15m-vs-3h RAM delta is negligible, cold-start annoyance isn't. GPU tenants *should* override shorter (30m–1h) — T4 VRAM is scarcer than RAM |
 | 6 | Monitoring semantics | Probes excluded via `ignoreUserAgent` → enrolled monitors go **shallow** (green = ingress + wake layer up). Add one wake-failure alert | Monitors must not keep services awake. Real failure mode ("woke but never became ready") caught by kube-state metrics |
-| 7 | Pilot | **resume + netbox + whisper**, 1 week | Static sanity / heavy slow-boot Authentik-gated browser app / GPU API service. All three already parked — enrolling changes nothing until first visit |
+| 7 | Pilot | **resume + netbox + whisper**, 1 week — **as-built: resume group + netbox** (whisper is TCP-only and cannot enroll; see As-built corrections) | Static sanity / heavy slow-boot Authentik-gated browser app. All already parked — enrolling changes nothing until first visit |
+
+## As-built corrections (implementation, 2026-07-12)
+
+Found while implementing; each is folded into the sections below but recorded
+here so the deltas from the reviewed draft are explicit:
+
+1. **whisper cannot enroll — pilot is resume(+printer) + netbox.** whisper and
+   piper are exposed ONLY as raw TCP (`IngressRouteTCP`, Wyoming protocol,
+   dedicated Traefik entrypoints 10300/10200) — HTTP middleware never sees
+   their traffic. osm-routing is equally ineligible (no ingress at all;
+   consumed cluster-internally by real-estate-crawler via Service DNS, which
+   bypasses Traefik). Both stay hand-parked. The GPU/API pilot dimension moves
+   wholly to wave 2. Consolation: resume's companion `printer` deployment
+   makes the pilot exercise **groups** (resume+printer wake/park together).
+   New first-line eligibility rule: *the service must receive its real
+   traffic as HTTP through a Traefik ingress.*
+2. **No Traefik provider change was needed** — `allowEmptyServices` already
+   defaults to `true` for both kubernetes providers in the pinned chart
+   40.2.0.
+3. **Vendoring is chart-native**: chart 40.2.0 supports
+   `experimental.localPlugins` with `type: inlinePlugin` — the chart builds
+   the ConfigMap from in-repo source files
+   (`stacks/traefik/modules/traefik/sablier-plugin/`, upstream tag v1.3.0,
+   ~13KB, zero deps) and mounts it at `/plugins-local`. No initContainer, no
+   image, no registry fetch. A broken plugin does NOT block Traefik startup
+   (`abortOnPluginFailure` defaults false) — but it silently disables ALL
+   plugins including the existing `api-token-middleware` (paperless-mcp's
+   gate), so wave-0 verification checks plugin load + paperless-mcp.
+4. **Sablier server is hand-rolled TF, not the upstream helm chart** — chart
+   `sablier` 1.3.0 hardcodes `sablier-<release>` naming and imagePullPolicy
+   and has no serviceAnnotations/volumes surface. `stacks/sablier/main.tf`
+   deploys the pinned official image `sablierapp/sablier:1.15.0` with clean
+   naming, Prometheus scrape annotations, and repo-standard lifecycle blocks.
+   The reused OSS is the image + the vendored plugin.
+5. **A Sablier restart parks sessionless enrolled workloads** (upstream
+   `--provider.auto-stop-on-startup` defaults true; sessions are in-memory).
+   The draft claimed a restart "just restarts the window" — wrong. Actual
+   semantic: restart = clean slate; anything enrolled without a live session
+   scales to 0 and re-wakes on its next request. Accepted (restarts are
+   config-change-rare; enrolled services are rarely-used by definition).
+6. **Wake-target semantics confirmed**: Sablier does NOT remember pre-sleep
+   replica counts — it wakes to `sablier.active.replicas` (label/annotation,
+   default 1). All enrolled services here are replicas-1 apps, so the default
+   is correct; a future multi-replica enrollee must set that label.
 
 ## Options considered (July 2026 survey)
 
@@ -112,9 +156,11 @@ Key properties:
 - **Warm path cost:** one in-process plugin check per request (no extra network
   hop; Sablier API is only consulted per session semantics). No second proxy
   tier, unlike KEDA's interceptor.
-- **Sessions live in Sablier's memory** — a Sablier pod restart forgets
-  sessions; enrolled apps just get a fresh 3h window (benign; no persistence
-  needed for v1).
+- **Sessions live in Sablier's memory** — and on restart Sablier parks every
+  enrolled workload that has no live session (`auto-stop-on-startup`,
+  upstream default kept deliberately). Restart = clean slate: mid-session
+  users get re-woken by their next request (blocking hold ≈ boot time). No
+  persistence for v1; `--storage.file` exists upstream if this ever hurts.
 
 ## Implementation
 
@@ -169,6 +215,10 @@ sablier = {
 
 ### Enrollment checklist (every service, every wave)
 
+0. **Real traffic arrives as HTTP through a Traefik ingress.** TCP-only
+   services (whisper/piper Wyoming `IngressRouteTCP`) and ingress-less
+   cluster-internal services (osm-routing, consumed via Service DNS) can
+   never be woken by the middleware — ineligible, stay hand-parked.
 1. Request-driven only — no background jobs/queues/watchers that sleeping
    would silently kill (excludes calibre-web-automated's folder ingest, n8n
    crons, servarr).
@@ -229,13 +279,17 @@ to 30m–1h at enrollment.
   local-plugin vendoring + `allowEmptyServices` + the `ingress_factory`
   `sablier` variable + `SablierWakeFailed` alert. Zero services enrolled;
   verify Traefik rolls cleanly across all 3 replicas with the plugin loaded.
-- **Wave 1 — pilot (1 week):** enroll **resume** (static sanity), **netbox**
-  (heavy, slow boot, Authentik-gated, form-heavy), **whisper** (GPU, API
-  clients, blocking mode). All currently parked → enrolling is a no-op until
-  first visit. Success criteria: probes stay green without wakes (Sablier
-  metrics show zero probe-triggered sessions); first request wakes within
-  boot-time; sessions expire → replicas back to 0; no plugin errors across a
-  `rollout restart` of Traefik; no drift-detection noise on `replicas`.
+- **Wave 1 — pilot (1 week, as-built):** enroll the **resume group**
+  (resume + printer — also proves group wake/park) and **netbox** (heavy,
+  slow boot, Authentik-gated, form-heavy). whisper dropped — TCP-only, can't
+  enroll (As-built correction #1); the GPU/API dimension moves to wave 2.
+  All pilot services already parked → enrolling is a no-op until first
+  visit. Success criteria: probes stay green without wakes (Sablier metrics
+  show zero probe-triggered sessions); first request wakes within boot-time;
+  sessions expire → replicas back to 0; no plugin errors across a
+  `rollout restart` of Traefik (and paperless-mcp's api-token-middleware
+  still gates — shared plugin blast radius); no drift-detection noise on
+  `replicas`.
 - **Wave 2 — the parked set + groups:** remaining hand-parked services
   passing the checklist (postiz **group** incl. its always-running
   elasticsearch, grampsweb, dashy, osm-routing trio, openlobster, t3-afk…),

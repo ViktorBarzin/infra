@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "netbox" {
   metadata {
     name = "netbox"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -72,13 +72,18 @@ resource "kubernetes_deployment" "netbox" {
     labels = {
       app  = "netbox"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): was hand-parked since the
+      # 2026-03-14 OOM incident; now sablier wakes it on first visit.
+      "sablier.enable" = "true"
+      "sablier.group"  = "netbox"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
     }
   }
   spec {
-    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
+    # Sablier-managed 0<->1: parked when idle (3h), woken by the first
+    # authenticated request through the ingress.
     replicas = 0
     strategy {
       type = "Recreate"
@@ -215,6 +220,7 @@ resource "kubernetes_deployment" "netbox" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -246,6 +252,11 @@ module "ingress" {
   name            = "netbox"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  # Scale-to-zero pilot (ADR-0022): sablier middleware sits after the
+  # Authentik forward-auth, so only authenticated visits wake netbox.
+  sablier = {
+    group = "netbox"
+  }
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Netbox"
