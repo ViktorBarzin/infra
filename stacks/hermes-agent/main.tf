@@ -258,6 +258,12 @@ resource "kubernetes_deployment" "hermes_agent" {
         security_context {
           fs_group = 1000 # PVC + git-crypt writable by the hermes user (uid 1000)
         }
+        # PRIVATE ghcr.io/viktorbarzin/hermes-agent — the ghcr-credentials
+        # Secret is cloned into this namespace by the kyverno
+        # sync-ghcr-credentials allowlist policy (add "hermes-agent" there).
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
 
         # Init: clone the infra repo + unlock git-crypt (commit->CI apply path)
         init_container {
