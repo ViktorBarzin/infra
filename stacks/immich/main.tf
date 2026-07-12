@@ -439,6 +439,264 @@ resource "kubernetes_deployment" "immich_server" {
   }
 }
 
+# API tier of the worker split (docs/plans/2026-07-12-immich-horizontal-scaling-design.md):
+# serves ALL client traffic (HTTP + websockets — multi-node native via Immich's
+# socket.io Redis adapter, no sticky sessions). Runs NO background jobs and
+# needs NO GPU, so replicas spread across nodes for node-loss HA. Background
+# jobs + NVENC live in the single immich-worker (upstream #28051 caps that
+# tier at 1 replica).
+resource "kubernetes_deployment" "immich_api" {
+  metadata {
+    name      = "immich-api"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+
+    labels = {
+      app  = "immich-api"
+      tier = local.tiers.gpu
+    }
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+      # Keel keeps this tier on the same immich version as immich-worker
+      # (identical-digest requirement across replicas, plan §3.8).
+      "keel.sh/policy"       = "patch"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/pollSchedule" = "@every 1h"
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      metadata[0].annotations["kubernetes.io/change-cause"],
+      metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+    ]
+  }
+
+  spec {
+    replicas                  = 3
+    progress_deadline_seconds = 600
+
+    selector {
+      match_labels = {
+        app = "immich-api"
+      }
+    }
+
+    strategy {
+      type = "RollingUpdate"
+      rolling_update {
+        # maxSurge MUST stay 0: a surge pod's 1.5Gi request would push the
+        # namespace past its 24Gi request quota and wedge the roll (plan §5).
+        # 2 of 3 replicas always serve.
+        max_surge       = "0"
+        max_unavailable = "1"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          app = "immich-api"
+        }
+        annotations = {
+          "diun.enable"                = "true"
+          "diun.include_tags"          = "^\\d+\\.\\d+\\.\\d+$"
+          "reloader.stakater.com/auto" = "true"
+        }
+      }
+
+      spec {
+        topology_spread_constraint {
+          max_skew           = 1
+          topology_key       = "kubernetes.io/hostname"
+          when_unsatisfiable = "DoNotSchedule"
+          label_selector {
+            match_labels = {
+              app = "immich-api"
+            }
+          }
+        }
+        container {
+          name  = "immich-api"
+          image = "ghcr.io/immich-app/immich-server:${var.immich_version}"
+
+          port {
+            name           = "http"
+            container_port = 2283
+            protocol       = "TCP"
+          }
+
+          env {
+            # api worker only: HTTP/websocket serving + job enqueue; every
+            # background job (thumbs, transcode, ML fan-out) runs in
+            # immich-worker. docs.immich.app/administration/jobs-workers
+            name  = "IMMICH_WORKERS_INCLUDE"
+            value = "api"
+          }
+          env {
+            name  = "DB_DATABASE_NAME"
+            value = "immich"
+          }
+          env {
+            name  = "DB_HOSTNAME"
+            value = "immich-postgresql.immich.svc.cluster.local"
+          }
+          env {
+            name  = "DB_USERNAME"
+            value = "immich"
+          }
+          env {
+            name = "DB_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "immich-secrets"
+                key  = "db_password"
+              }
+            }
+          }
+          env {
+            name  = "IMMICH_MACHINE_LEARNING_URL"
+            value = "http://immich-machine-learning:3003"
+          }
+          env {
+            name  = "REDIS_HOSTNAME"
+            value = var.redis_host
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/api/server/ping"
+              port = "http"
+            }
+            initial_delay_seconds = 0
+            period_seconds        = 10
+            timeout_seconds       = 1
+            failure_threshold     = 3
+            success_threshold     = 1
+          }
+
+          readiness_probe {
+            http_get {
+              path = "/api/server/ping"
+              port = "http"
+            }
+            period_seconds    = 10
+            timeout_seconds   = 1
+            failure_threshold = 3
+            success_threshold = 1
+          }
+
+          startup_probe {
+            http_get {
+              path = "/api/server/ping"
+              port = "http"
+            }
+            period_seconds  = 10
+            timeout_seconds = 1
+            # Same 1h ceiling as the old combined pod: after a PG restart the
+            # startup path can wait on vector-table reindexing (2026-05-24).
+            failure_threshold = 360
+            success_threshold = 1
+          }
+
+          volume_mount {
+            name       = "backups"
+            mount_path = "/usr/src/app/upload/backups"
+          }
+          volume_mount {
+            name       = "encoded-video"
+            mount_path = "/usr/src/app/upload/encoded-video"
+          }
+          volume_mount {
+            name       = "library"
+            mount_path = "/usr/src/app/upload/library"
+          }
+          volume_mount {
+            name       = "profile"
+            mount_path = "/usr/src/app/upload/profile"
+          }
+          volume_mount {
+            name       = "thumbs"
+            mount_path = "/usr/src/app/upload/thumbs"
+          }
+          volume_mount {
+            name       = "upload"
+            mount_path = "/usr/src/app/upload/upload"
+          }
+          resources {
+            requests = {
+              cpu = "100m"
+              # API-only profile — the old 6.9Gi peaks belong to jobs (now in
+              # immich-worker). Lean so 3 replicas + cronjobs fit the 24Gi ns
+              # quota; re-measure after a week (plan §7).
+              memory = "1536Mi"
+            }
+            limits = {
+              memory = "4Gi"
+            }
+          }
+        }
+
+        volume {
+          name = "backups"
+          persistent_volume_claim {
+            claim_name = module.nfs_backups_host.claim_name
+          }
+        }
+        volume {
+          name = "encoded-video"
+          persistent_volume_claim {
+            claim_name = module.nfs_encoded_video_host.claim_name
+          }
+        }
+        volume {
+          name = "library"
+          persistent_volume_claim {
+            claim_name = module.nfs_library_host.claim_name
+          }
+        }
+        volume {
+          name = "profile"
+          persistent_volume_claim {
+            claim_name = module.nfs_profile_host.claim_name
+          }
+        }
+        volume {
+          name = "thumbs"
+          persistent_volume_claim {
+            claim_name = module.nfs_thumbs_host.claim_name
+          }
+        }
+        volume {
+          name = "upload"
+          persistent_volume_claim {
+            claim_name = module.nfs_upload_host.claim_name
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_pod_disruption_budget_v1" "immich_api" {
+  metadata {
+    name      = "immich-api"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+  spec {
+    min_available = "2"
+    selector {
+      match_labels = { app = "immich-api" }
+    }
+  }
+}
+
 resource "kubernetes_service" "immich-server" {
   metadata {
     name      = "immich-server"
