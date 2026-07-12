@@ -3069,11 +3069,23 @@ check_csi_ghost_drift() {
 
     # Single `qm list` (not once per VM) + one `qm config` per VM — keeps this
     # under a few seconds so it doesn't blow the parallel runner's budget.
+    # For running VMs with CSI disks, ALSO count the disks the live QEMU
+    # process actually carries (`info block` via qm monitor): a disk present
+    # in the config but absent from the runtime is a WEDGED HOTPLUG (the
+    # device_add never landed — QMP-timeout class) and every k8s mount of
+    # that volume fails with "device /dev/disk/by-id/wwn-... is not found"
+    # until the VM reboots (2026-07-12 n8n/k8s-node5 incident, memory #9580).
+    # The runtime grep uses `vm-+9999-+pvc` because runtime paths can render
+    # device-mapper style with doubled dashes (vm--9999--pvc...).
     local raw
     raw=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
-        root@192.168.1.127 'qm list 2>/dev/null | awk "NR>1{print \$1, \$2}" | while read -r vmid name; do
+        root@192.168.1.127 'qm list 2>/dev/null | awk "NR>1{print \$1, \$2, \$3}" | while read -r vmid name vstatus; do
             cnt=$(qm config "$vmid" 2>/dev/null | grep -cE "^scsi[0-9]+:.*vm-9999-pvc")
-            echo "$vmid|$name|$cnt"
+            rt=-1
+            if [ "$vstatus" = "running" ] && [ "$cnt" -gt 0 ]; then
+                rt=$(echo "info block" | timeout 8 qm monitor "$vmid" 2>/dev/null | grep -cE "vm-+9999-+pvc")
+            fi
+            echo "$vmid|$name|$cnt|$rt"
         done' 2>/dev/null || true)
 
     if [[ -z "$raw" ]]; then
@@ -3105,20 +3117,29 @@ worst = "PASS"
 rows = []
 for line in os.environ["SSH_RAW"].splitlines():
     parts = line.strip().split("|")
-    if len(parts) != 3:
+    if len(parts) != 4:
         continue
-    vmid, name, cnt = parts[0], parts[1], parts[2]
+    vmid, name, cnt, rt = parts[0], parts[1], parts[2], parts[3]
     if not cnt.isdigit():
         continue
     real = int(cnt)
+    try:
+        runtime = int(rt)
+    except ValueError:
+        runtime = -1
     # Only nodes that are k8s worker VMs (name matches a node with attachments
     # or looks like a k8s node) are interesting; skip non-k8s VMs with 0 disks.
     if real == 0 and name not in tracked:
         continue
     trk = tracked.get(name, 0)
     drift = real - trk
+    # Config-present but runtime-absent = wedged hotplug: every new mount on
+    # this node WILL fail until the VM reboots. runtime == -1 means the
+    # runtime was unreadable (VM stopped / qm monitor timeout) — skip the
+    # comparison rather than false-failing.
+    wedged = (real - runtime) if runtime >= 0 else 0
     status = "PASS"
-    if real >= 25:
+    if wedged > 0 or real >= 25:
         status = "FAIL"
     elif drift > 0 or real >= 20:
         status = "WARN"
@@ -3127,7 +3148,8 @@ for line in os.environ["SSH_RAW"].splitlines():
     elif status == "WARN" and worst != "FAIL":
         worst = "WARN"
     if status != "PASS":
-        rows.append(f"{name}: real={real} tracked={trk} ghosts={drift}")
+        rt_str = str(runtime) if runtime >= 0 else "n/a"
+        rows.append(f"{name}: real={real} runtime={rt_str} tracked={trk} ghosts={drift} wedged={wedged}")
 
 print(worst)
 print(" | ".join(rows) if rows else "all nodes reconciled")
@@ -3141,7 +3163,7 @@ PYEOF
     case "$status" in
         FAIL)
             [[ "$QUIET" == true ]] && section_always 47 "Proxmox CSI — Ghost-Disk Drift"
-            fail "Ghost-disk drift near LUN cap: $detail"
+            fail "CSI disk drift (wedged hotplug and/or near LUN cap): $detail"
             json_add "csi_ghost_drift" "FAIL" "$detail"
             ;;
         WARN)
@@ -3150,7 +3172,7 @@ PYEOF
             json_add "csi_ghost_drift" "WARN" "$detail"
             ;;
         *)
-            pass "No CSI ghost-disk drift — every node's scsi disks match k8s attachments"
+            pass "No CSI drift — config, QEMU runtime and k8s attachments all match"
             json_add "csi_ghost_drift" "PASS" "reconciled"
             ;;
     esac
