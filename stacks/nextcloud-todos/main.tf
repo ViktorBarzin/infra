@@ -168,14 +168,6 @@ resource "kubernetes_deployment" "nextcloud_todos" {
     template {
       metadata {
         labels = local.labels
-        annotations = {
-          # Prometheus scrapes the service-endpoints (annotations live on the
-          # Service below); the pod annotations here let the kubernetes-pods
-          # SD job also discover /metrics directly.
-          "prometheus.io/scrape" = "true"
-          "prometheus.io/path"   = "/metrics"
-          "prometheus.io/port"   = "8080"
-        }
       }
 
       spec {
@@ -308,12 +300,6 @@ resource "kubernetes_service" "nextcloud_todos" {
     name      = "nextcloud-todos"
     namespace = kubernetes_namespace.nextcloud_todos.metadata[0].name
     labels    = local.labels
-    annotations = {
-      # Prometheus kubernetes-service-endpoints SD scrapes /metrics here.
-      "prometheus.io/scrape" = "true"
-      "prometheus.io/path"   = "/metrics"
-      "prometheus.io/port"   = "8080"
-    }
   }
 
   spec {
@@ -346,6 +332,7 @@ module "ingress" {
   auth             = "none"
   anti_ai_scraping = false
   dns_type         = "proxied"
+  external_monitor = false
   namespace        = kubernetes_namespace.nextcloud_todos.metadata[0].name
   name             = "nextcloud-todos"
   port             = 8080

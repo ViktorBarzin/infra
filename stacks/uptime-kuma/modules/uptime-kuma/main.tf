@@ -741,25 +741,6 @@ locals {
       retry_interval              = 30
       max_retries                 = 3
     },
-    {
-      # Internal /healthz probe of the nextcloud-todos service. The `/cb`
-      # ingress carries the `[External]` HTTPS monitor (auto-created by
-      # external-monitor-sync), but those endpoints are HMAC-gated and only
-      # cover the callback path — this checks the app's own liveness inside
-      # the cluster on the ClusterIP svc. Plain HTTP, expects a clean 200.
-      name                        = "nextcloud-todos (/healthz)"
-      type                        = "http"
-      database_connection_string  = null
-      database_password_vault_key = null
-      hostname                    = null
-      port                        = null
-      url                         = "http://nextcloud-todos.nextcloud-todos.svc.cluster.local:8080/healthz"
-      accepted_statuscodes        = ["200-299"]
-      ignore_tls                  = false
-      interval                    = 60
-      retry_interval              = 30
-      max_retries                 = 3
-    },
   ]
 }
 
