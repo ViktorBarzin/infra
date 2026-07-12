@@ -106,13 +106,17 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.hermes_agent]
 }
 
-# git-crypt key so the infra checkout can decrypt secrets it reads
+# git-crypt key so the infra checkout can decrypt secrets it reads.
+# MUST be binary_data (not data): the key is a raw binary blob (magic
+# \x00GITCRYPTKEY). filebase64 returns base64; binary_data base64-DECODES it so
+# the mounted file is the real binary key. Putting it in `data` would serve the
+# base64 TEXT verbatim → `git-crypt unlock` errors "not a valid key file".
 resource "kubernetes_config_map" "git_crypt_key" {
   metadata {
     name      = "git-crypt-key"
     namespace = kubernetes_namespace.hermes_agent.metadata[0].name
   }
-  data = {
+  binary_data = {
     "key" = filebase64("${path.root}/../../.git/git-crypt/keys/default")
   }
 }
