@@ -17,7 +17,7 @@ locals {
   # ghcr (public package — anonymous pulls). Running tag is managed by the
   # Woodpecker deploy (kubectl set image); both image refs below are
   # ignore_changes'd, so this base only matters on (re)create.
-  image     = "ghcr.io/viktorbarzin/nextcloud-todos:${var.image_tag}"
+  image = "ghcr.io/viktorbarzin/nextcloud-todos:${var.image_tag}"
   labels = {
     app = "nextcloud-todos"
   }

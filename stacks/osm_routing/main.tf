@@ -12,7 +12,7 @@ resource "kubernetes_namespace" "osm-routing" {
       "istio-injection" : "disabled"
       tier                               = local.tiers.aux
       "resource-governance/custom-quota" = "true"
-      "keel.sh/enrolled" = "true"
+      "keel.sh/enrolled"                 = "true"
     }
   }
   lifecycle {

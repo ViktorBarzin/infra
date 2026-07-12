@@ -291,6 +291,9 @@ resource "kubernetes_labels" "postiz_sablier" {
   labels = {
     "sablier.enable" = "true"
     "sablier.group"  = "postiz"
+    # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+    # propagation so the first forwarded request never hits a 503 race.
+    "sablier.ready-after" = "5s"
   }
   depends_on = [helm_release.postiz]
 }
@@ -305,6 +308,9 @@ resource "kubernetes_deployment_v1" "es" {
       # serves temporal's visibility store, nothing else reads it.
       "sablier.enable" = "true"
       "sablier.group"  = "postiz"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
     }
   }
   spec {
@@ -432,6 +438,9 @@ resource "kubernetes_deployment_v1" "temporal" {
       # Scale-to-zero (ADR-0022): parks/wakes with the postiz group.
       "sablier.enable" = "true"
       "sablier.group"  = "postiz"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
     }
   }
   spec {

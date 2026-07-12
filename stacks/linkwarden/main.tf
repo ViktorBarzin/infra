@@ -18,7 +18,7 @@ resource "kubernetes_namespace" "linkwarden" {
   metadata {
     name = "linkwarden"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }

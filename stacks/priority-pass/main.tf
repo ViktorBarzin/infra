@@ -18,8 +18,8 @@ resource "kubernetes_namespace" "priority-pass" {
   metadata {
     name = "priority-pass"
     labels = {
-      "istio-injection" = "disabled"
-      tier              = local.tiers.aux
+      "istio-injection"  = "disabled"
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }

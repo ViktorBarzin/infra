@@ -15,7 +15,7 @@ resource "kubernetes_namespace" "n8n" {
   metadata {
     name = "n8n"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }

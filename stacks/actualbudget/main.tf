@@ -59,7 +59,7 @@ resource "kubernetes_namespace" "actualbudget" {
     name = "actualbudget"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
   }

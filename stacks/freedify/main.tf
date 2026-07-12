@@ -57,7 +57,7 @@ resource "kubernetes_namespace" "freedify" {
     name = "freedify"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
