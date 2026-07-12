@@ -64,6 +64,10 @@ locals {
     # module.ingress_icons): macOS/iOS/Android icon fetchers carry no session
     # cookies, so an Authentik 302 here breaks Add-to-Dock icons.
     "tasks-icons" = "https://tasks.viktorbarzin.me/apple-touch-icon.png"
+    # terminal PWA manifest + icons + webfonts (auth="none" path carve-out,
+    # stacks/terminal module.ingress_assets): the manifest fetch is
+    # credential-less by spec and OS icon fetchers carry no session cookies.
+    "terminal-pwa-assets" = "https://terminal.viktorbarzin.me/manifest.webmanifest"
     # NOTE: openclaw task-webhook (auth="none") is intentionally NOT probed — it
     # has no public DNS record (NXDOMAIN, external_monitor=false), so there is no
     # externally GET-able URL to probe. Its carve-out is internal-only.
