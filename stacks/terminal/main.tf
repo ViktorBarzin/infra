@@ -67,6 +67,14 @@ module "ingress" {
   name            = "terminal"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  # gzip/br/zstd the lobby HTML + the ~500 KB single-file frontend served by
+  # ttyd on this main route. ttyd serves the index raw (its local patch adds
+  # only ETag/no-cache), so compression lives here at the edge. Appended
+  # AFTER the factory's own chain (retry/auth/…); Traefik skips the WS
+  # upgrade and already-compressed bodies, so /ws and sixel are untouched.
+  extra_middlewares = [
+    "${kubernetes_namespace.terminal.metadata[0].name}-compress@kubernetescrd",
+  ]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Terminal"
@@ -74,6 +82,25 @@ module "ingress" {
     "gethomepage.dev/icon"         = "mdi-console"
     "gethomepage.dev/group"        = "Infrastructure"
     "gethomepage.dev/pod-selector" = ""
+  }
+}
+
+# Response compression for the main terminal route (referenced above via
+# extra_middlewares). Empty spec = Traefik defaults: gzip/br/zstd by
+# Accept-Encoding, ~1 KB minimum, built-in skip of already-compressed
+# content types. Same declaration style as the strip-prefix middlewares
+# below.
+resource "kubernetes_manifest" "terminal_compress" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "compress"
+      namespace = kubernetes_namespace.terminal.metadata[0].name
+    }
+    spec = {
+      compress = {}
+    }
   }
 }
 
@@ -201,14 +228,17 @@ resource "kubernetes_manifest" "clipboard_strip_prefix" {
   }
 }
 
-# Carve-out for the PWA manifest + icons + vendored webfonts on
-# terminal.viktorbarzin.me. The PWA manifest fetch is credential-less by
-# spec, and every OS icon fetcher (iOS Add-to-Home-Screen, Android WebAPK
-# install, macOS Safari Add-to-Dock) carries no session cookies — behind
-# forward-auth they get the Authentik 302 and the installed app falls back
-# to a letter monogram; cookie-less webfont fetches fail the same way.
-# Traefik prioritises these longer exact paths over the main "/" router,
-# so ONLY these nine static files bypass Authentik; the lobby shell,
+# Carve-out for the PWA manifest + icons + vendored webfonts + the push
+# service worker on terminal.viktorbarzin.me. The PWA manifest fetch is
+# credential-less by spec, and every OS icon fetcher (iOS Add-to-Home-Screen,
+# Android WebAPK install, macOS Safari Add-to-Dock) carries no session
+# cookies — behind forward-auth they get the Authentik 302 and the installed
+# app falls back to a letter monogram; cookie-less webfont fetches fail the
+# same way. /sw.js is the same class: the browser re-fetches the service
+# worker bytes on every update check WITHOUT the session cookie, so behind
+# forward-auth it would get the 302 and the worker could never register or
+# update. Traefik prioritises these longer exact paths over the main "/"
+# router, so ONLY these ten static files bypass Authentik; the lobby shell,
 # /token, /ws, /clipboard/ and /api/sessions/ stay gated by the routes
 # above. The files are served by exact-path GET handlers in
 # clipboard-upload (terminal-lobby repo) from a fixed whitelist — no
@@ -229,6 +259,7 @@ module "ingress_assets" {
     "/icon-192.png",
     "/icon-512.png",
     "/icon-512-maskable.png",
+    "/sw.js",
     "/fonts/JetBrainsMono-Regular.woff2",
     "/fonts/JetBrainsMono-Bold.woff2",
     "/fonts/JetBrainsMono-Italic.woff2",
