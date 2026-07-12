@@ -56,6 +56,24 @@ _Avoid_: "core service" (collides with the `0-core-*` Namespace tier name).
 A non-admin identity declared in `secret/platform → k8s_users` (JSON map). Owns one or more namespaces and one or more public subdomains. Also drives a **Workstation profile** (an identity has both a cluster facet and a workstation facet).
 _Avoid_: bare "user", "tenant".
 
+### Scaling
+
+**Parked**:
+A Service at `replicas=0` with all state preserved (PVCs, Service, Ingress, secrets) — reversibly off, one flip from revival. The standing decommission posture; parking is never deletion.
+_Avoid_: "disabled", "shut down", "removed" (all imply state loss or ceremony a park doesn't have).
+
+**Enrolled** (scale-to-zero):
+A Service opted into Sablier wake-on-request (ADR-0022): sablier middleware on its ingress + `sablier.enable`/`sablier.group` labels on its Deployment, `replicas` under `ignore_changes` (`# SABLIER_MANAGED_REPLICAS`). An Enrolled Service parks itself on session expiry and wakes on the first real request; its Uptime Kuma monitor is shallow by design.
+_Avoid_: "autoscaled" (no HPA anywhere — this is 0↔N wake, not load scaling); confusing with **GPU demand-gate** (gate = admit on free VRAM via CronJob; enrollment = wake on HTTP request — a workload must not be under both).
+
+**Wake**:
+The 0→N scale-up of an Enrolled Service triggered by the first request through the sablier middleware, which holds that request (blocking strategy) until the pod is ready.
+_Avoid_: "cold start" for the whole event (cold start is the *duration* the wake costs, not the act).
+
+**Sablier session**:
+The per-group activity window (default 3h) that every real, non-probe request refreshes; expiry parks the group. Held only in Sablier's memory — a Sablier restart just restarts the window.
+_Avoid_: reading "session" as a user/auth session (it's per-Service-group, shared by all visitors).
+
 ### GPU sharing
 
 **GPU slice**:
