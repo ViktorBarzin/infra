@@ -631,6 +631,52 @@ resource "vault_kubernetes_auth_backend_role" "terraform_state" {
   token_period                     = 518400 # periodic: auto-renews indefinitely
 }
 
+# --- Hermes Agent Policy & Role (Discord personal assistant) ---
+
+resource "vault_policy" "hermes_agent" {
+  name = "hermes-agent"
+  # Hermes v2 (stacks/hermes-agent; design docs/plans/2026-07-12-hermes-agent-
+  # v2-discord-claude-design.md). Viktor chose broad KV READ for his Discord
+  # assistant, delivered as a DEDICATED policy+role: independently revocable
+  # and no widening of the shared terraform-state role's SA×namespace product.
+  # DELIBERATE differences from terraform-state (adversarial-review findings):
+  #   - NO database/* grants — database/static-creds/pg-terraform-state would
+  #     let a steered agent mutate Terraform state directly, and Hermes never
+  #     runs terragrunt itself (its infra changes go commit → CI).
+  #   - Same denies: Vault's own admin secrets and the breakglass SSH key
+  #     must stay out of reach of an internet-facing (Discord) agent.
+  policy = <<-EOT
+    path "secret/data/*" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/*" {
+      capabilities = ["read", "list"]
+    }
+    path "secret/data/vault" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/vault" {
+      capabilities = ["deny"]
+    }
+    path "secret/data/claude-breakglass/*" {
+      capabilities = ["deny"]
+    }
+    path "secret/metadata/claude-breakglass/*" {
+      capabilities = ["deny"]
+    }
+  EOT
+}
+
+resource "vault_kubernetes_auth_backend_role" "hermes_agent" {
+  backend                          = vault_auth_backend.kubernetes.path
+  role_name                        = "hermes-agent"
+  bound_service_account_names      = ["hermes-agent"]
+  bound_service_account_namespaces = ["hermes-agent"]
+  token_policies                   = [vault_policy.hermes_agent.name]
+  token_ttl                        = 432000 # 5d (staggered: ci=7d, eso=10d, woodpecker=8d, openclaw=9d, terraform-state=6d)
+  token_period                     = 432000 # periodic: auto-renews indefinitely
+}
+
 # =============================================================================
 # Database Secrets Engine — Static Password Rotation
 # =============================================================================
