@@ -18,11 +18,6 @@
 # every enrolled workload that has no live session. For rarely-used enrolled
 # services that is the desired clean-slate; next request re-wakes them.
 
-variable "kube_config_path" {
-  type    = string
-  default = "~/.kube/config"
-}
-
 locals {
   namespace = "sablier"
   # Pin the app version (plugin v1.3.0 <-> server compatibility is verified
