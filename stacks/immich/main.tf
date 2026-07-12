@@ -377,7 +377,10 @@ resource "kubernetes_deployment" "immich_server" {
               memory = "7Gi"
             }
             limits = {
-              memory           = "7Gi"
+              # 30d peak is 8.1Gi and the 7Gi req=lim cut OOMKilled it 2026-07-12;
+              # limit decoupled from request so ingest/job spikes fit without
+              # raising the scheduler reservation. docs/research/immich-front-cache.md
+              memory           = "10Gi"
               "nvidia.com/gpu" = "1"
               # GPU VRAM budget (ADR-0016): schedule-time reservation + the
               # gpu-vram-watchdog recycle threshold. Bounds the onnxruntime
@@ -738,7 +741,9 @@ resource "kubernetes_deployment" "immich-machine-learning" {
               memory = "3584Mi"
             }
             limits = {
-              memory           = "3584Mi"
+              # Sat pinned at 3571/3584Mi with 6 OOMKills in 2.5d (2026-07-12);
+              # limit-only raise — request unchanged to avoid over-reserving.
+              memory           = "4608Mi"
               "nvidia.com/gpu" = "1"
               # GPU VRAM budget (ADR-0016): NVENC transcode footprint (~1.2 GiB).
               "viktorbarzin.me/gpumem" = "1800"
