@@ -77,7 +77,7 @@ resource "kubernetes_deployment" "immich-frame-emo" {
         container {
           # immich_v3: upstream compat tag for Immich v3 — see frame.tf for the
           # full story; repin to a versioned tag once upstream releases v3 support.
-          image = "ghcr.io/immichframe/immichframe:immich_v3"
+          image = "ghcr.io/immichframe/immichframe:v1.0.35.0"
           # Always-pull: nodes had a STALE cached immich_v3 (pre-v1.0.34,
           # before Immich-v3 album loading was fixed) and IfNotPresent kept
           # reusing it, breaking ExcludedAlbums. Force a fresh pull.
@@ -124,7 +124,6 @@ resource "kubernetes_deployment" "immich-frame-emo" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 }
