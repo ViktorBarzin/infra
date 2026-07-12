@@ -356,7 +356,9 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
                   "netsampler/*", "nousresearch/*", "nvidia/*",
                   "openresty/*", "opentripplanner/*", "owntracks/*",
                   "phpipam/*", "phpmyadmin/*", "privatebin/*", "prom/*",
-                  "prompve/*", "rancher/*", "rhasspy/*", "roundcube/*", "sclevine/*",
+                  # 2026-07-12: sablierapp (scale-to-zero wake layer, ADR-0022).
+                  "prompve/*", "rancher/*", "rhasspy/*", "roundcube/*",
+                  "sablierapp/*", "sclevine/*",
                   "shadowsocks/*", "shlinkio/*", "stirlingtools/*",
                   "technitium/*", "teddysun/*", "temporalio/*",
                   "typhonragewind/*", "tzahi12345/*", "vabene1111/*",
