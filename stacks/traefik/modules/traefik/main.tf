@@ -198,6 +198,34 @@ resource "helm_release" "traefik" {
           version    = "v0.1.4"
         }
       }
+      # Scale-to-zero wake middleware (ADR-0022). Vendored as a LOCAL plugin —
+      # source pinned in-repo at ./sablier-plugin/ (upstream tag v1.3.0,
+      # sablierapp/sablier-traefik-plugin; ~13KB, zero deps) — so Traefik
+      # startup never depends on plugins.traefik.io (traefik#13005 class) and
+      # a chart bump can never silently change the plugin. Upgrading the
+      # plugin = deliberately re-vendoring these files + re-verifying against
+      # the running Traefik version. The chart builds the ConfigMap and mounts
+      # it at /plugins-local (inlinePlugin). Consumed by per-ingress
+      # Middleware CRs emitted by ingress_factory's `sablier` variable
+      # (plugin key `sablier` in Middleware.spec.plugin.sablier).
+      # NOTE: one BROKEN plugin disables ALL plugins at startup (Traefik logs
+      # "Plugins are disabled because an error has occurred.") including
+      # api-token-middleware above — after any change here verify plugin load
+      # in the logs AND that paperless-mcp still gates.
+      localPlugins = {
+        sablier = {
+          moduleName = "github.com/sablierapp/sablier-traefik-plugin"
+          mountPath  = "/plugins-local/src/github.com/sablierapp/sablier-traefik-plugin"
+          type       = "inlinePlugin"
+          source = {
+            "go.mod"       = file("${path.module}/sablier-plugin/go.mod")
+            ".traefik.yml" = file("${path.module}/sablier-plugin/.traefik.yml")
+            "config.go"    = file("${path.module}/sablier-plugin/config.go")
+            "main.go"      = file("${path.module}/sablier-plugin/main.go")
+            "version.go"   = file("${path.module}/sablier-plugin/version.go")
+          }
+        }
+      }
     }
 
     # Prometheus metrics

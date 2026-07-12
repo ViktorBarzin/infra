@@ -28,6 +28,7 @@
 | uptime-kuma | Status monitoring | uptime-kuma |
 | crowdsec | Security/WAF (PostgreSQL backend) | crowdsec |
 | kyverno | Policy engine | kyverno |
+| sablier | Scale-to-zero wake layer (ADR-0022): scales enrolled Deployments (label `sablier.enable=true`) 0↔1 via a vendored Traefik plugin middleware; holds the first request, parks after idle session. `sablier.sablier.svc:10000` | sablier |
 
 ## Admin
 | Service | Description | Stack |

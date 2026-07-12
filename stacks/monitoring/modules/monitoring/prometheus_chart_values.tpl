@@ -289,6 +289,11 @@ alertmanager:
 # (storm 2026-06-26 08:42). Burstable: low request (minimal reservation) + a 512Mi
 # limit to absorb the relist peak. No CPU limit (cluster-wide policy).
 kube-state-metrics:
+  # Export the sablier.enable Deployment label on kube_deployment_labels so the
+  # SablierWakeFailed alert can scope to scale-to-zero-enrolled workloads
+  # (ADR-0022). KSM exports NO workload labels unless allowlisted here.
+  metricLabelsAllowlist:
+    - deployments=[sablier.enable]
   resources:
     requests:
       cpu: 100m
@@ -635,7 +640,7 @@ serverFiles:
           # annotations landed; memory_* hit the same wall on day one). New app => add
           # your metric prefix here.
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|kube_cronjob_status_last_successful_time|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*'
+            regex: 'memory_.+|tripit_.+|sablier_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -1596,6 +1601,42 @@ serverFiles:
             annotations:
               summary: "goldmane-edges-digest CronJob failing — new edges captured but not posted to #alerts"
               description: "The daily edge digest Job {{ $labels.job_name }} failed. Edges may still be landing in the goldmane_edges DB but no one is being notified of new namespace-pairs. `kubectl -n goldmane-edge-aggregator logs job/{{ $labels.job_name }}`."
+      # Scale-to-zero (ADR-0022): enrolled services' Uptime Kuma monitors are
+      # SHALLOW by design (Sablier's ignoreUserAgent answers probes 200 while
+      # the app sleeps), so the one deep failure mode — a wake that never
+      # becomes ready — must alert from kube-state signals instead. Scoped to
+      # deployments carrying the sablier.enable label (exported via the KSM
+      # metricLabelsAllowlist above).
+      - name: Scale-to-zero (Sablier)
+        rules:
+          # An enrolled deployment was woken (desired > 0) but has had
+          # unavailable replicas for 5m — someone knocked, the app tried to
+          # start, and it can't (bit-rotted image, dead DB creds, OOM). This
+          # is invisible to the shallow monitor, which keeps answering 200.
+          - alert: SablierWakeFailed
+            expr: |
+              kube_deployment_status_replicas_unavailable > 0
+              and on(namespace, deployment) kube_deployment_spec_replicas > 0
+              and on(namespace, deployment) kube_deployment_labels{label_sablier_enable="true"} == 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Scale-to-zero wake failed: {{ $labels.namespace }}/{{ $labels.deployment }} woke but is not becoming ready"
+              description: "The sablier-enrolled deployment was scaled up by a request but has unavailable replicas for 5m+. Its Uptime Kuma monitor stays GREEN (probe exclusion answers 200) — this alert is the only deep signal. `kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}`."
+          # Sablier itself down: failOpen means RUNNING apps stay reachable,
+          # but sleeping (parked) apps 503 on first visit until it returns —
+          # same posture as the pre-Sablier hand-parked state, so warning.
+          - alert: SablierDown
+            expr: |
+              kube_deployment_status_replicas_available{namespace="sablier",deployment="sablier"} < 1
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Sablier (scale-to-zero wake layer) has no available replica — sleeping services cannot wake"
+              description: "Enrolled services that are currently running are unaffected (plugin failOpen), but parked ones 503 on first request until Sablier recovers. `kubectl -n sablier describe deploy sablier`."
       - name: Infrastructure Health
         rules:
           - alert: HomeAssistantDown
