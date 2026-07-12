@@ -469,7 +469,11 @@ resource "kubernetes_deployment" "hermes_agent" {
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      spec[0].template[0].spec[0].init_container[0].image,
+      # NB: init_container[0].image is deliberately NOT ignored — the git-init
+      # init container must track the same hermes image as the main container
+      # (it needs git/git-crypt). Ignoring it once left the old parked stack's
+      # busybox init image live → `git: not found` CrashLoop (2026-07-12). Keel
+      # bumps both containers on a tag match, so drift isn't a concern.
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
