@@ -567,6 +567,80 @@ write_files:
       [Install]
       WantedBy=timers.target
 
+  # VPN OCI PoP-2 (vpn.viktorbarzin.me config portal, 2026-07-13) — a proxy
+  # egress via Oracle's IP, neither the home WAN nor Cloudflare, for censored
+  # networks. VLESS-REALITY :8443 (:443 is gatus/nginx, ADR-0020) + Shadowsocks
+  # :8388 (xray) + the dnstt DNS tunnel :53 -> a loopback SOCKS it egresses
+  # through. These files + oci-vpn-pop-setup.sh are the canonical rebuild recipe;
+  # the running VM was first configured live over break-glass SSH (2026-07-13) to
+  # avoid a rebuild. Secrets are templated from Vault (secret/viktor); the same
+  # UUID/SS password as the portal identity so one client config spans both PoPs.
+  - path: /usr/local/etc/xray/config.json
+    permissions: "0600"
+    content: |
+      {"log":{"loglevel":"warning"},"inbounds":[
+      {"tag":"reality","listen":"0.0.0.0","port":8443,"protocol":"vless","settings":{"clients":[{"id":"${oci_xray_uuid}"}],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"dest":"www.cloudflare.com:443","serverNames":["www.cloudflare.com"],"privateKey":"${oci_reality_privkey}","shortIds":["${oci_reality_shortid}"]}}},
+      {"tag":"ss","listen":"0.0.0.0","port":8388,"protocol":"shadowsocks","settings":{"method":"chacha20-ietf-poly1305","password":"${oci_xray_ss_password}","network":"tcp,udp"}},
+      {"tag":"socks-dnstt","listen":"127.0.0.1","port":1080,"protocol":"socks","settings":{"udp":true}}],
+      "outbounds":[{"protocol":"freedom"}]}
+  - path: /usr/local/etc/dnstt/server.key
+    permissions: "0600"
+    content: |
+      ${dnstt_privkey}
+  - path: /etc/systemd/system/xray.service
+    content: |
+      [Unit]
+      Description=Xray (VPN OCI PoP: REALITY:8443 + Shadowsocks:8388)
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      ExecStart=/usr/local/bin/xray run -c /usr/local/etc/xray/config.json
+      Restart=on-failure
+      RestartSec=3
+      LimitNOFILE=65535
+      [Install]
+      WantedBy=multi-user.target
+  - path: /usr/local/bin/oci-vpn-pop-setup.sh
+    permissions: "0700"
+    content: |
+      #!/bin/bash
+      # Install xray (pinned, sha256-verified release) + dnstt-server (built from
+      # pinned source — no upstream binary) and bring both up. Idempotent. dnstt
+      # binds the primary private IP (OCI NATs the public IP to it) because
+      # 0.0.0.0:53 collides with systemd-resolved's 127.0.0.5x stub.
+      set -euo pipefail
+      XRAY_VER=v26.3.27
+      XRAY_SHA=23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
+      if [ ! -x /usr/local/bin/xray ]; then
+        T=$(mktemp -d)
+        curl -fsSL -o "$T/xray.zip" "https://github.com/XTLS/Xray-core/releases/download/$XRAY_VER/Xray-linux-64.zip"
+        echo "$XRAY_SHA  $T/xray.zip" | sha256sum -c -
+        unzip -o -q "$T/xray.zip" xray -d /usr/local/bin/ && chmod 0755 /usr/local/bin/xray
+        rm -rf "$T"
+      fi
+      if [ ! -x /usr/local/bin/dnstt-server ]; then
+        SWAP=""
+        if [ "$(free -m | awk '/Mem:/{print $7}')" -lt 700 ] && [ ! -f /swapfile ]; then
+          fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && SWAP=1
+        fi
+        for i in $(seq 1 5); do apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y golang-go git && break || sleep 20; done
+        S=$(mktemp -d)
+        git clone --depth 1 https://www.bamsoftware.com/git/dnstt.git "$S"
+        ( cd "$S/dnstt-server" && GOFLAGS=-mod=mod GOCACHE=/tmp/gocache go build -trimpath -o /usr/local/bin/dnstt-server . )
+        chmod 0755 /usr/local/bin/dnstt-server
+        rm -rf "$S" /tmp/gocache
+        [ -n "$SWAP" ] && { swapoff /swapfile; rm -f /swapfile; } || true
+      fi
+      BIND_IP=$(ip -4 addr show ens3 | grep -oE 'inet 10\.[0-9.]+' | awk '{print $2}' | head -1)
+      printf '[Unit]\nDescription=dnstt DNS tunnel server (VPN OCI PoP)\nAfter=network-online.target xray.service\nWants=network-online.target\n[Service]\nExecStart=/usr/local/bin/dnstt-server -udp %s:53 -privkey-file /usr/local/etc/dnstt/server.key t.viktorbarzin.me 127.0.0.1:1080\nRestart=on-failure\nRestartSec=3\n[Install]\nWantedBy=multi-user.target\n' "$BIND_IP" > /etc/systemd/system/dnstt.service
+      for spec in "tcp 8443" "tcp 8388" "udp 8388" "udp 53"; do
+        P=$(echo "$spec" | cut -d' ' -f1); N=$(echo "$spec" | cut -d' ' -f2)
+        iptables -C INPUT -p "$P" --dport "$N" -j ACCEPT 2>/dev/null || iptables -I INPUT -p "$P" --dport "$N" -j ACCEPT
+      done
+      netfilter-persistent save
+      systemctl daemon-reload
+      systemctl enable --now xray.service dnstt.service
+
 runcmd:
   # (1) Open inbound FIRST — no egress needed, so gate O2 can pass even while
   # packages are still installing. OCI Ubuntu images ship an OS-level iptables
@@ -620,3 +694,7 @@ runcmd:
   - ln -sf /etc/nginx/sites-available/status /etc/nginx/sites-enabled/status
   - nginx -t && systemctl enable --now nginx && systemctl restart nginx
   - systemctl enable --now gatus.service wg-reresolve.timer
+  # (7) VPN OCI PoP-2 (ADR/portal 2026-07-13) — LAST, after egress + the main
+  # apt install: it fetches xray + builds dnstt (installs golang-go), heavy on
+  # the 1 GB box, so run it once everything else is up. Idempotent + retried.
+  - for i in $(seq 1 5); do bash /usr/local/bin/oci-vpn-pop-setup.sh && break || sleep 30; done

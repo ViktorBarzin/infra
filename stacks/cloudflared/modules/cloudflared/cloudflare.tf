@@ -179,6 +179,22 @@ resource "cloudflare_record" "backup_mx_a" {
   zone_id = var.cloudflare_zone_id
 }
 
+# dnstt DNS tunnel (VPN OCI PoP-2, vpn.viktorbarzin.me config portal,
+# 2026-07-13): delegate t.viktorbarzin.me to mx2, which runs dnstt-server on
+# :53/udp. A dnstt client encodes its tunnelled TCP stream into
+# <data>.t.viktorbarzin.me query labels sent through ANY recursive/DoH resolver;
+# the recursion is referred here and mx2 answers — so the tunnel rides plain DNS
+# and works on networks where only DNS/DoH escapes (the transport of last
+# resort). Nameserver is mx2.viktorbarzin.me, already A→92.5.132.215
+# (backup_mx_a above) so it is in-zone glue. NS records are never proxied.
+resource "cloudflare_record" "dnstt_ns" {
+  content = "mx2.viktorbarzin.me"
+  name    = "t"
+  ttl     = 1
+  type    = "NS"
+  zone_id = var.cloudflare_zone_id
+}
+
 # Backup MX at priority 20 — senders fall to it only when the primary (pri 1)
 # is unreachable. ARMED now that the drain path works end-to-end (gate O3:
 # mx2's WireGuard tunnel IP 10.3.2.10 is whitelisted past the primary's PTR
