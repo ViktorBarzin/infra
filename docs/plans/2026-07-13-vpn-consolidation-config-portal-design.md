@@ -113,6 +113,15 @@ All three OCI transports are live on `mx2` (Oracle `92.5.132.215`) and egress vi
 
 ---
 
+## 4c. Portal UX — group by remote + Tailscale enrollment (2026-07-13, LIVE)
+
+Two follow-ups after the OCI PoP landed, both live in the portal:
+
+- **Group proxies by remote (PoP).** Each proxy carries its egress PoP (Home / Cloudflare / OCI); the portal groups them and serves a **per-remote subscription** `/sub/<token>/pop/<pop>` so a client imports a whole endpoint (e.g. all-OCI) in one tap — alongside the existing aggregate `/sub/<token>` and per-transport `/sub/<token>/<transport>`.
+- **Tailscale via native Headscale enrollment** (NOT a proxy subscription — the `vless`/`ss` subscription format is xray-only, and the iOS clients V2Box/OneXRay are xray-based, so a mesh VPN can't ride it). The portal mints a **short-lived Headscale pre-auth key on demand** (`POST /api/tailscale/enroll` → Headscale API `headscale.headscale.svc:8080`, mapping the portal identity email → tailnet user id) and shows the login server + `tailscale up --login-server … --authkey …` command + phone steps. Mirrors the WireGuard client-side flow. Config: `secret/vpn-portal` `tailscale` block (login server, in-cluster API URL, a dedicated Headscale API key, key TTL).
+
+---
+
 ## 5. Target architecture
 
 ### 5.1 Multi-PoP topology
