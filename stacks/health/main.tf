@@ -135,6 +135,38 @@ resource "kubernetes_deployment" "health" {
             name  = "COOKIE_SECURE"
             value = "true"
           }
+          # Web Push VAPID identity (health repo ADR-0010): signs the
+          # rest-timer notifications that reach a locked iPhone (and mirror to
+          # a paired Apple Watch). All three from Vault secret/health via the
+          # kv ExternalSecret below; the app fails closed (feature off) when
+          # any is absent.
+          env {
+            name = "PUSH_VAPID_PRIVATE_KEY"
+            value_from {
+              secret_key_ref {
+                name = "health-kv-secrets"
+                key  = "push_vapid_private_key"
+              }
+            }
+          }
+          env {
+            name = "PUSH_VAPID_PUBLIC_KEY"
+            value_from {
+              secret_key_ref {
+                name = "health-kv-secrets"
+                key  = "push_vapid_public_key"
+              }
+            }
+          }
+          env {
+            name = "PUSH_VAPID_SUBJECT"
+            value_from {
+              secret_key_ref {
+                name = "health-kv-secrets"
+                key  = "push_vapid_subject"
+              }
+            }
+          }
           env {
             # ADR-0008 (health repo): identity for the internal LAN test host.
             # Only reached when no X-authentik-email header is present — i.e. via
@@ -322,13 +354,36 @@ resource "kubernetes_manifest" "external_secret_kv" {
       target = {
         name = "health-kv-secrets"
       }
-      data = [{
-        secretKey = "secret_key"
-        remoteRef = {
-          key      = "health"
-          property = "secret_key"
-        }
-      }]
+      data = [
+        {
+          secretKey = "secret_key"
+          remoteRef = {
+            key      = "health"
+            property = "secret_key"
+          }
+        },
+        {
+          secretKey = "push_vapid_private_key"
+          remoteRef = {
+            key      = "health"
+            property = "push_vapid_private_key"
+          }
+        },
+        {
+          secretKey = "push_vapid_public_key"
+          remoteRef = {
+            key      = "health"
+            property = "push_vapid_public_key"
+          }
+        },
+        {
+          secretKey = "push_vapid_subject"
+          remoteRef = {
+            key      = "health"
+            property = "push_vapid_subject"
+          }
+        },
+      ]
     }
   }
   depends_on = [kubernetes_namespace.health]
