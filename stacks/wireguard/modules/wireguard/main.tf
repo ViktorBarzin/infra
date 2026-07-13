@@ -198,6 +198,65 @@ resource "kubernetes_deployment" "wireguard" {
             }
           }
         }
+
+        # Reconciles portal-registered roaming peers onto the live wg0. The
+        # vpn-portal (secret/vpn-portal wg_peers) registers only client PUBLIC
+        # keys (client-side keygen); the ExternalSecret renders them to
+        # peers.txt ("<pubkey> <ip/32>" per line). This loop `wg set`s each
+        # (add/update) and removes peers it previously managed but that are no
+        # longer desired (rotate/revoke). It ONLY ever touches pubkeys present
+        # in peers.txt, so the STATIC peers baked into wg0.conf are never
+        # removed. peers.txt absent (no registrations yet) → no-op.
+        container {
+          name              = "wg-peer-sync"
+          image             = "sclevine/wg:latest"
+          image_pull_policy = "IfNotPresent"
+          command = ["/bin/sh", "-c", <<-EOT
+            set -u
+            STATE=/run/wg-managed/managed.list
+            DESIRED=/etc/wg-peers/peers.txt
+            mkdir -p /run/wg-managed; : > "$STATE"
+            while true; do
+              if wg show wg0 >/dev/null 2>&1 && [ -f "$DESIRED" ]; then
+                while read -r pk ip; do
+                  [ -z "$pk" ] && continue
+                  wg set wg0 peer "$pk" allowed-ips "$ip" || true
+                done < "$DESIRED"
+                desired=$(awk '{print $1}' "$DESIRED" | sort -u)
+                while read -r ppk; do
+                  [ -z "$ppk" ] && continue
+                  echo "$desired" | grep -qx "$ppk" || wg set wg0 peer "$ppk" remove || true
+                done < "$STATE"
+                awk '{print $1}' "$DESIRED" | sort -u > "$STATE"
+              fi
+              sleep 30
+            done
+          EOT
+          ]
+          volume_mount {
+            name       = "wg-peers"
+            mount_path = "/etc/wg-peers"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "wg-managed"
+            mount_path = "/run/wg-managed"
+          }
+          security_context {
+            capabilities {
+              add = ["NET_ADMIN"]
+            }
+          }
+          resources {
+            requests = {
+              cpu    = "5m"
+              memory = "16Mi"
+            }
+            limits = {
+              memory = "32Mi"
+            }
+          }
+        }
         volume {
           name = "wg0-key"
           secret {
@@ -210,6 +269,17 @@ resource "kubernetes_deployment" "wireguard" {
             name = "wg0-conf"
           }
         }
+        volume {
+          name = "wg-peers"
+          secret {
+            secret_name = "vpn-portal-wg-peers"
+            optional    = true
+          }
+        }
+        volume {
+          name = "wg-managed"
+          empty_dir {}
+        }
         dns_config {
           option {
             name  = "ndots"
@@ -217,6 +287,48 @@ resource "kubernetes_deployment" "wireguard" {
           }
         }
       }
+    }
+  }
+}
+
+# Renders the vpn-portal WireGuard peer list (secret/vpn-portal field wg_peers,
+# a JSON array of {publicKey,label,address,identity}) into a K8s secret keyed
+# `peers.txt` = "<publicKey> <address>" per line, consumed by the wg-peer-sync
+# sidecar. `optional`/no-peers → empty file → sidecar no-op.
+resource "kubernetes_manifest" "wg_peers_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "vpn-portal-wg-peers"
+      namespace = kubernetes_namespace.wireguard.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1m"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name           = "vpn-portal-wg-peers"
+        creationPolicy = "Owner"
+        template = {
+          engineVersion = "v2"
+          data = {
+            "peers.txt" = "{{ range ( .wg_peers | fromJson ) }}{{ .publicKey }} {{ .address }}\n{{ end }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "wg_peers"
+        remoteRef = {
+          key      = "vpn-portal"
+          property = "wg_peers"
+        }
+      }]
     }
   }
 }
