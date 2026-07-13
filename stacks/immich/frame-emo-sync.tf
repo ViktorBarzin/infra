@@ -41,8 +41,7 @@ resource "kubernetes_cron_job_v1" "frame-sync-emo" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 1
-    schedule                      = "0 4 * * 0" # Sundays 04:00
-    time_zone                     = "Europe/Sofia"
+    schedule                      = "0 2 * * 0" # Sundays 02:00 UTC (~04-05:00 Sofia)
     starting_deadline_seconds     = 300
     job_template {
       metadata {}
