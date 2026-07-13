@@ -1,6 +1,6 @@
 # VPN Consolidation, Multi-PoP Hardening & Config Portal — Design
 
-**Status:** Draft (grilled) · **Date:** 2026-07-13 · **Owner:** Viktor (wizard) · **Owning repo:** `infra`
+**Status:** Executing — config portal + **OCI PoP-2 (REALITY + Shadowsocks + dnstt) LIVE** · **Date:** 2026-07-13 · **Owner:** Viktor (wizard) · **Owning repo:** `infra`
 
 > Produced via `/grill-with-docs`. This is a **design** to be executed in later sessions,
 > not a change log of applied work. Supersedes the VPN sections of the stale
@@ -92,7 +92,24 @@ Each is a settled decision from the interview; **D1–D8** are the forward desig
 | **D-R1** | **Drop Cloudflare Workers VLESS.** | Error 1101 on new deploys (Nov-2024+); ToS-adverse on the homelab's CF account; burns the shared free Worker quota that the `outage-failover` worker depends on; `workers.dev` DNS-blocked in China. |
 | **D-R2** | **WireGuard = client-side keygen** (device makes the keypair; portal stores only the **public** key; "rotate" replaces "reprint"). | Server-side custody would make the new internet-facing portal a single point of *total* VPN compromise; contradicts the estate's own Headscale (client-side) precedent. |
 | **D-R3** | **The distribution plane must be at least as censorship-resistant as the transports it distributes.** Subscription reachable via a direct/grey-cloud path + **out-of-band QR bootstrap**, not Cloudflare-only. | A CF-proxied-only portal collapses in China exactly when needed, and the offline cache only helps *after* a successful first load. |
-| **D9** | **Add PoP-2 = the OCI Always-Free VM (`mx2`)** as a second endpoint for REALITY (on **443** there), dnstt, and optionally WireGuard. | A public IP that is neither the home IP nor Cloudflare — genuine egress diversification at **zero cost**; OCI's controllable firewall gives clean inbound `443/tcp` + `53/udp`. |
+| **D9** | **Add PoP-2 = the OCI Always-Free VM (`mx2`)** as a second endpoint for REALITY, Shadowsocks, and dnstt. | A public IP that is neither the home IP nor Cloudflare — genuine egress diversification at **zero cost**; OCI's controllable firewall gives clean inbound. |
+
+---
+
+## 4b. D9 implementation — OCI PoP-2 (BUILT + verified 2026-07-13)
+
+All three OCI transports are live on `mx2` (Oracle `92.5.132.215`) and egress via Oracle's IP; each verified end-to-end (`curl` through the transport → `ifconfig.me` = `92.5.132.215`):
+
+| Transport | Port | Notes |
+|---|---|---|
+| **VLESS-REALITY** | `:8443` | **Deviation from D9's "REALITY on 443":** `:443` is already gatus/nginx (ADR-0020), so REALITY took `:8443`. Still non-home/non-CF (the real diversification win); the port isn't REALITY's camouflage — the TLS-mimicry is. True-443 via an nginx `ssl_preread` SNI-split is a possible later refinement. |
+| **Shadowsocks** | `:8388` | chacha20-ietf-poly1305, same password as the portal identity. |
+| **dnstt DNS tunnel** | `:53/udp` | Delegated `t.viktorbarzin.me NS → mx2.viktorbarzin.me` (in-zone glue). dnstt-server → loopback SOCKS (xray freedom) egress. The last-resort transport for DNS-only networks. |
+
+- **xray** = pinned `v26.3.27`, native binary + systemd (no Docker on the 1 GB box). **dnstt** built from pinned source (no upstream binary release).
+- **Server config is IaC**: `stacks/backup-mx` — security-list ingress rules (`8443/tcp`, `8388/tcp+udp`, `53/udp`) + `cloud-init.yaml.tftpl` `oci-vpn-pop-setup.sh` (the canonical rebuild recipe; the running VM was brought up live over break-glass SSH to avoid a rebuild — `metadata` is `ignore_changes`). Secrets in Vault `secret/viktor` (`oci_reality_*`, `oci_xray_*`, `dnstt_server_*`).
+- **Portal**: the OCI transports surface as `reality_oci` + `ss_oci` proxies (own one-tap subscriptions) + a `dnstt` info block (params + client command — dnstt is not subscription-importable). Estate config in Vault `secret/vpn-portal`.
+- **Still open (future refinement, not blocking):** true-443 REALITY on OCI via SNI-split; WireGuard-on-OCI (D9's "optionally WireGuard") not built.
 
 ---
 

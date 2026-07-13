@@ -100,7 +100,15 @@ resource "kubernetes_deployment" "cloudflared" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    # KEEL_IGNORE_IMAGE: Keel bumps the cloudflared tag in-cluster via pod
+    # rollout (image is the bare `cloudflare/cloudflared`, Keel-enrolled via the
+    # label above). Without this, every apply reverts Keel's live pin (observed
+    # 2026.7.1 -> bare/latest) and needlessly rolls the tunnel that fronts every
+    # proxied service.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      spec[0].template[0].spec[0].container[0].image,
+    ]
   }
 }
 
