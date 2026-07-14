@@ -235,10 +235,14 @@ scripts.
 6. **Docs + monitoring:** update `docs/architecture/chrome-service.md`; alerts for
    session-idle-TTL breach, CPU wedge, broker down, seed-export failure.
 
-## Open items / risks
+## Decisions confirmed (2026-07-13)
 
-- **CPU-limit deviation (D11)** — confirm we accept the cluster-norm exception, or fall
-  back to 60 m-cap + CPU alert only.
+- **Viewport stays 1920×1080** (D9) — Viktor's call: more elements visible, easier
+  navigation, weighed above the modest script-tier caveat (R4).
+- **CPU-limit exception accepted** (D11) — the deliberate deviation from the "no CPU
+  limits" cluster norm ships as designed (single-session ephemeral pods, blast-radius case).
+
+## Open items / risks
 - **Seed fidelity** — cookies+localStorage covers the vast majority; a site needing
   IndexedDB/sessionStorage/DBSC-bound auth must use the master (`--shared-context`). Not a
   regression (that work was never poolable read-only), but a documented limit.
