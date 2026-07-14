@@ -309,17 +309,23 @@ module "ingress-public-gate" {
   host            = "android-emulator"
   service_name    = kubernetes_service.gate.metadata[0].name
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/icon" = "android.png"
+    "gethomepage.dev/name" = "Android Emulator"
+  }
 }
 
 module "ingress-public-novnc" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
-  namespace       = kubernetes_namespace.android-emulator.metadata[0].name
-  name            = "android-emulator-public-novnc"
-  host            = "android-emulator"
-  service_name    = kubernetes_service.novnc.metadata[0].name
-  ingress_path    = local.novnc_paths
-  tls_secret_name = var.tls_secret_name
+  source    = "../../modules/kubernetes/ingress_factory"
+  auth      = "required"
+  namespace = kubernetes_namespace.android-emulator.metadata[0].name
+  name      = "android-emulator-public-novnc"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "android-emulator"
+  service_name     = kubernetes_service.novnc.metadata[0].name
+  ingress_path     = local.novnc_paths
+  tls_secret_name  = var.tls_secret_name
   # see ingress-internal-novnc — noVNC's parallel module storm needs the
   # dedicated limiter.
   skip_default_rate_limit = true

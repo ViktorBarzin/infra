@@ -257,12 +257,14 @@ module "ingress" {
 # endpoints; `auth = "public"` would 302+cookie-dance and break CORS
 # preflight, so we stay at `auth = "none"`.
 module "ingress_api" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.insta2spotify.metadata[0].name
-  name            = "insta2spotify-api"
-  host            = "insta2spotify"
-  service_name    = "insta2spotify"
-  tls_secret_name = var.tls_secret_name
+  source    = "../../modules/kubernetes/ingress_factory"
+  namespace = kubernetes_namespace.insta2spotify.metadata[0].name
+  name      = "insta2spotify-api"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "insta2spotify"
+  service_name     = "insta2spotify"
+  tls_secret_name  = var.tls_secret_name
   # auth = "none": API endpoints consumed by browser fetch() XHRs; forward-auth 302 breaks CORS preflight.
   auth          = "none"
   ingress_path  = ["/api/identify", "/api/auth", "/api/health", "/api/history"]

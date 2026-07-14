@@ -368,15 +368,17 @@ resource "kubernetes_manifest" "derp_ingress_route" {
 }
 
 module "ingress-ui" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  auth            = "required"
-  namespace       = kubernetes_namespace.headscale.metadata[0].name
-  name            = "headscale-ui"
-  host            = "headscale"
-  service_name    = "headscale"
-  port            = 80
-  ingress_path    = ["/web"]
-  tls_secret_name = var.tls_secret_name
+  source    = "../../../../modules/kubernetes/ingress_factory"
+  auth      = "required"
+  namespace = kubernetes_namespace.headscale.metadata[0].name
+  name      = "headscale-ui"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "headscale"
+  service_name     = "headscale"
+  port             = 80
+  ingress_path     = ["/web"]
+  tls_secret_name  = var.tls_secret_name
 }
 
 resource "kubernetes_service" "headscale-server" {

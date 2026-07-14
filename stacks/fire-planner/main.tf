@@ -672,15 +672,17 @@ module "ingress" {
 # /simulate); read endpoints are open. Acceptable for a personal tool
 # whose only data is anonymous numeric projections.
 module "ingress_api" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "none"
-  namespace       = kubernetes_namespace.fire_planner.metadata[0].name
-  name            = "fire-planner-api"
-  host            = "fire-planner" # share effective_host with main ingress
-  service_name    = "fire-planner"
-  port            = 8080
-  ingress_path    = ["/api/"]
-  tls_secret_name = var.tls_secret_name
+  source    = "../../modules/kubernetes/ingress_factory"
+  dns_type  = "none"
+  namespace = kubernetes_namespace.fire_planner.metadata[0].name
+  name      = "fire-planner-api"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "fire-planner" # share effective_host with main ingress
+  service_name     = "fire-planner"
+  port             = 8080
+  ingress_path     = ["/api/"]
+  tls_secret_name  = var.tls_secret_name
   # auth = "none": XHR-based API endpoints; forward-auth 302+cookie-dance breaks CORS preflight and browser fetch().
   auth = "none"
 }

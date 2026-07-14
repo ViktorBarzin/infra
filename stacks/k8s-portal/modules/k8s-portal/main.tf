@@ -181,13 +181,15 @@ module "ingress" {
 # curl-able without auth). `auth = "public"` would 302+cookie-dance on
 # first visit, breaking automation that doesn't preserve cookies.
 module "ingress_setup_script" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.k8s_portal.metadata[0].name
-  name            = "k8s-portal-setup"
-  host            = "k8s-portal"
-  service_name    = "k8s-portal"
-  ingress_path    = ["/setup/script", "/agent"]
-  tls_secret_name = var.tls_secret_name
+  source    = "../../../../modules/kubernetes/ingress_factory"
+  namespace = kubernetes_namespace.k8s_portal.metadata[0].name
+  name      = "k8s-portal-setup"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "k8s-portal"
+  service_name     = "k8s-portal"
+  ingress_path     = ["/setup/script", "/agent"]
+  tls_secret_name  = var.tls_secret_name
   # auth = "none": Setup script + agent endpoint must be curl-able without auth (no cookies preserved in automation).
   auth = "none"
 }

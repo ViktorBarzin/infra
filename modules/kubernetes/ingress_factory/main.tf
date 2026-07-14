@@ -252,8 +252,16 @@ variable "homepage_group" {
 }
 
 variable "homepage_enabled" {
-  type    = bool
-  default = true
+  type        = bool
+  default     = true
+  description = <<-EOT
+    Emit gethomepage.dev/* annotations so the ingress gets a tile on
+    home.viktorbarzin.me. CONVENTION (dedupe sweep 2026-07-14): every
+    SECONDARY ingress of an app — path carve-outs, API/webhook hosts,
+    protocol endpoints, probe targets — must set this to false, otherwise
+    the directory shows duplicate tiles for one service (and the guessed
+    default icon of a multi-word name is a broken image). One app, one tile.
+  EOT
 }
 
 locals {

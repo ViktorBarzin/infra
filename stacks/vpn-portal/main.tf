@@ -176,6 +176,11 @@ module "ingress" {
   service_name     = kubernetes_service.vpn_portal.metadata[0].name
   port             = 80
   tls_secret_name  = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/icon"  = "wireguard.png"
+    "gethomepage.dev/name"  = "VPN Portal"
+    "gethomepage.dev/group" = "Identity & Security"
+  }
 }
 
 # /sub/<token> — machine subscription endpoint. VPN clients (Hiddify/v2rayN)
@@ -190,6 +195,8 @@ module "ingress_sub" {
   anti_ai_scraping = false
   namespace        = kubernetes_namespace.vpn_portal.metadata[0].name
   name             = "vpn-portal-sub"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   full_host        = "vpn.viktorbarzin.me"
   ingress_path     = ["/sub"]
   service_name     = kubernetes_service.vpn_portal.metadata[0].name

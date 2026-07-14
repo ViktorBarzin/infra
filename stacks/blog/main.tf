@@ -165,9 +165,11 @@ module "ingress" {
 module "ingress_net_diag" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": public read-only static file (curl|bash diagnostic script). No login, no PoW.
-  auth             = "none"
-  namespace        = kubernetes_namespace.website.metadata[0].name
-  name             = "blog-net-diag"
+  auth      = "none"
+  namespace = kubernetes_namespace.website.metadata[0].name
+  name      = "blog-net-diag"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = kubernetes_service.blog.metadata[0].name
   port             = "80"
   ingress_path     = ["/net-diag.sh"]

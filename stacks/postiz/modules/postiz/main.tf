@@ -191,13 +191,15 @@ resource "helm_release" "postiz" {
 # and rejects with error code 36001 (Postiz mistranslates this as "Invalid
 # Instagram image resolution"). Everything else stays behind Authentik.
 module "ingress_uploads_public" {
-  source       = "../../../../modules/kubernetes/ingress_factory"
-  dns_type     = "proxied"
-  namespace    = kubernetes_namespace.postiz.metadata[0].name
-  name         = "postiz-uploads"
-  host         = var.host
-  service_name = "postiz"
-  port         = 80
+  source    = "../../../../modules/kubernetes/ingress_factory"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.postiz.metadata[0].name
+  name      = "postiz-uploads"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = var.host
+  service_name     = "postiz"
+  port             = 80
   # auth = "none": Meta's IG Graph API fetcher needs unprotected /uploads/* to pull JPEGs (forward-auth 302 causes error 36001).
   auth            = "none"
   ingress_path    = ["/uploads"]

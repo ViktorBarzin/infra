@@ -412,4 +412,7 @@ module "ingress" {
   service_name    = kubernetes_service.t3_afk.metadata[0].name
   port            = 3773
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/icon" = "mdi-sleep"
+  }
 }

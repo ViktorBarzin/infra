@@ -16,8 +16,8 @@ resource "kubernetes_namespace" "instagram_poster" {
   metadata {
     name = local.namespace
     labels = {
-      tier              = var.tier
-      "istio-injection" = "disabled"
+      tier               = var.tier
+      "istio-injection"  = "disabled"
       "keel.sh/enrolled" = "true"
     }
   }
@@ -437,17 +437,19 @@ resource "kubernetes_service" "instagram_poster" {
 # sits behind Authentik forward-auth — same defense as every other UI on
 # the cluster, no random caller can pop items off the approval queue.
 module "ingress_image_public" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.instagram_poster.metadata[0].name
-  name            = "instagram-poster-image"
-  host            = "instagram-poster"
-  tls_secret_name = var.tls_secret_name
+  source    = "../../../../modules/kubernetes/ingress_factory"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.instagram_poster.metadata[0].name
+  name      = "instagram-poster-image"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "instagram-poster"
+  tls_secret_name  = var.tls_secret_name
   # auth = "none": Meta's content fetcher needs to render image derivatives without auth headers (Instagram photos).
-  auth            = "none"
-  ingress_path    = ["/image", "/original"]
-  port            = 80
-  service_name    = "instagram-poster"
+  auth         = "none"
+  ingress_path = ["/image", "/original"]
+  port         = 80
+  service_name = "instagram-poster"
 }
 
 module "ingress_protected" {
@@ -461,6 +463,10 @@ module "ingress_protected" {
   ingress_path    = ["/"]
   port            = 80
   service_name    = "instagram-poster"
+  extra_annotations = {
+    "gethomepage.dev/icon" = "instagram.png"
+    "gethomepage.dev/name" = "Instagram Poster"
+  }
 }
 
 # IG-archive dedup live ingest. Three CronJobs all curl back into the

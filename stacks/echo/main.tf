@@ -120,4 +120,7 @@ module "ingress" {
   namespace       = kubernetes_namespace.echo.metadata[0].name
   name            = "echo"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/icon" = "mdi-broadcast"
+  }
 }
