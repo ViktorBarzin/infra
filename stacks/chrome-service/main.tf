@@ -225,7 +225,7 @@ resource "kubernetes_deployment" "chrome_service" {
             # attach over the pod's shared network ns (Ubuntu 24.04
             # defaults Xvfb to -nolisten tcp). -ac disables X access
             # control; safe because Xvfb only listens on the pod's lo.
-            Xvfb :99 -screen 0 1280x720x24 -listen tcp -ac &
+            Xvfb :99 -screen 0 1920x1080x24 -listen tcp -ac &
             sleep 1
 
             mkdir -p /profile/chromium-data ${local.snapshot_dir}
@@ -260,7 +260,7 @@ resource "kubernetes_deployment" "chrome_service" {
               --password-store=basic \
               --use-mock-keychain \
               --window-position=0,0 \
-              --window-size=1280,720 \
+              --window-size=1920,1080 \
               about:blank
             EOT
           ]
@@ -282,8 +282,16 @@ resource "kubernetes_deployment" "chrome_service" {
 
           # Chrome's CDP endpoint serves /json/version once it's bound;
           # TCP-open is enough for readiness.
+          # Real CDP health check, NOT tcp_socket: a wedged Chrome on about:blank
+          # keeps :9222 OPEN so a TCP probe passes and the wedge runs undetected
+          # (the 6.5h-wedge class). GET /json/version only answers when the
+          # DevTools HTTP server is live. python3 is present (cdp_bridge.py runs
+          # in this container).
           liveness_probe {
-            tcp_socket { port = 9222 }
+            exec {
+              command = ["python3", "-c",
+              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9222/json/version',timeout=5).status==200 else 1)"]
+            }
             initial_delay_seconds = 30
             period_seconds        = 30
             failure_threshold     = 3
@@ -315,13 +323,16 @@ resource "kubernetes_deployment" "chrome_service" {
             read_only  = true
           }
 
+          # Raised from 1500Mi/2624Mi: the chrome container OOMKilled (exit 137)
+          # at the 2624Mi ceiling at 1280x720 (2026-07-12); 1920x1080 renders
+          # more, so give it headroom.
           resources {
             requests = {
               cpu    = "200m"
-              memory = "1500Mi"
+              memory = "2Gi"
             }
             limits = {
-              memory = "2624Mi"
+              memory = "4Gi"
             }
           }
         }
@@ -448,7 +459,7 @@ resource "kubernetes_deployment" "chrome_service" {
           name = "dshm"
           empty_dir {
             medium     = "Memory"
-            size_limit = "256Mi"
+            size_limit = "512Mi"
           }
         }
         volume {
