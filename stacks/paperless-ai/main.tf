@@ -231,9 +231,15 @@ resource "kubernetes_deployment" "paperless_ai" {
               memory = "2Gi"
             }
             limits = {
-              # torch + the sentence-transformers model load in-process for
-              # the RAG service; 4Gi covers Node + Python + ChromaDB.
-              memory = "4Gi"
+              # torch + sentence-transformers load in-process for the RAG
+              # service, AND both halves of the pod hold the FULL document
+              # corpus in RAM at startup: the Python RAG service parses the
+              # ~360MB documents.json cache (~2G inflated) while the Node
+              # scanner concurrently buffers all ~11.3k docs from the
+              # paperless API for its scan. At 4Gi the two peaks OOMKilled
+              # the pod in a crash-loop (2026-07-14, post Emo-import corpus
+              # scale). 8Gi = the edge-tier LimitRange ceiling.
+              memory = "8Gi"
             }
           }
 
