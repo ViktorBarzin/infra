@@ -428,13 +428,16 @@ module "anubis" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type          = "proxied"
-  namespace         = kubernetes_namespace.realestate-crawler.metadata[0].name
-  name              = "wrongmove"
-  service_name      = module.anubis.service_name
-  port              = module.anubis.service_port
+  source       = "../../modules/kubernetes/ingress_factory"
+  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  dns_type     = "proxied"
+  namespace    = kubernetes_namespace.realestate-crawler.metadata[0].name
+  name         = "wrongmove"
+  service_name = module.anubis.service_name
+  port         = module.anubis.service_port
+  # Anubis binds its JWT to X-Real-Ip; the header must not reach it (flaps per
+  # request across cloudflared pods for CF-tunneled traffic) — see ingress_factory.
+  strip_x_real_ip   = true
   extra_middlewares = ["traefik-x402@kubernetescrd"]
   anti_ai_scraping  = false
   tls_secret_name   = var.tls_secret_name
