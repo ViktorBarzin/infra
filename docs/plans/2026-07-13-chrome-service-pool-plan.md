@@ -45,6 +45,22 @@ flowchart TD
 Critical path: **P2 → P3 → P5**. P1 is independently shippable value. P4 (UI) and P6
 (warm-pool/quota/monitoring/docs) land after the API works.
 
+## Progress (2026-07-13, status: executing)
+
+- ✅ **Phase 1 — Master hardening: DONE, verified live.** Master Xvfb + Chrome window at
+  1920×1080 (confirmed via the running `Xvfb :99 -screen 0 1920x1080x24` args); the
+  `tcp_socket:9222` liveness replaced with a real CDP `/json/version` HTTP check (verified
+  answering Chrome/149, non-headless); chrome container mem raised 2624Mi→4Gi (it OOMed at
+  720p); dshm→512Mi. Applied via CI, pod rolled 3/3 Ready, 0 restarts.
+- ✅ **Phase 2 — Worker template: DONE (committed, inert).** `worker_entrypoint.sh` +
+  `files/broker/worker_pod.json` (CPU+mem limits, `activeDeadlineSeconds`, anti-affinity).
+- 🟡 **Phase 3 — Broker: core DONE + unit-tested (8/8 green), not yet deployed.** `broker.py`
+  pure logic (pod-spec build, free-worker pick, idle-reap) tested; k8s REST + cached seed +
+  `/sessions` + `/metrics` + acquire/release written. Remaining: RBAC (3.1), image + GHA
+  build (3.4), Deployment + ingress + apply (3.5).
+- ⬜ **Phase 4** FleetView UI · **Phase 5** CLI integration · **Phase 6** warm-pool, quota,
+  monitoring, docs — not started.
+
 **Conventions that bind every task** (from `infra/.claude/CLAUDE.md`):
 - Terraform-only; commit + push every applied change the same session; apply from the main
   checkout, never a worktree (git-crypt tfvars).
