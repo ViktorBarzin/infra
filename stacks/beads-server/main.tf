@@ -532,7 +532,7 @@ module "ingress" {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Dolt Workbench"
     "gethomepage.dev/description"  = "Beads task database UI"
-    "gethomepage.dev/icon"         = "dolt.png"
+    "gethomepage.dev/icon"         = "mdi-database"
     "gethomepage.dev/group"        = "Core Platform"
     "gethomepage.dev/pod-selector" = ""
   }

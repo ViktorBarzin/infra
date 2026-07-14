@@ -857,6 +857,10 @@ module "ingress" {
     "traefik-strip-auth-headers@kubernetescrd",
     "traefik-tripit-rate-limit@kubernetescrd",
   ]
+  extra_annotations = {
+    "gethomepage.dev/icon" = "mdi-airplane-takeoff"
+    "gethomepage.dev/name" = "TripIt"
+  }
 }
 
 # /api is served by TripIt's OWN authentication now (ADR-0028 #96 cutover):
@@ -882,6 +886,8 @@ module "ingress_app_api" {
   dns_type         = "none" # main module.ingress owns the DNS record for this host
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-app-api"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = "tripit"
   full_host        = "tripit.viktorbarzin.me"
   ingress_path     = ["/api"]
@@ -899,16 +905,18 @@ module "ingress_app_api" {
 # Service and never needs to be public); split out of the /api ingress by the
 # #96 cutover, which made /api self-authenticated.
 module "ingress_metrics" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
-  dns_type        = "none"
-  namespace       = kubernetes_namespace.tripit.metadata[0].name
-  name            = "tripit-metrics"
-  service_name    = "tripit"
-  full_host       = "tripit.viktorbarzin.me"
-  ingress_path    = ["/metrics"]
-  port            = 8080
-  tls_secret_name = var.tls_secret_name
+  source    = "../../modules/kubernetes/ingress_factory"
+  auth      = "required"
+  dns_type  = "none"
+  namespace = kubernetes_namespace.tripit.metadata[0].name
+  name      = "tripit-metrics"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  service_name     = "tripit"
+  full_host        = "tripit.viktorbarzin.me"
+  ingress_path     = ["/metrics"]
+  port             = 8080
+  tls_secret_name  = var.tls_secret_name
 }
 
 # Calendar feed carve-out for the same host: path /api/calendar served by the
@@ -924,6 +932,8 @@ module "ingress_calendar" {
   dns_type         = "none" # main `module.ingress` owns the DNS record for this host
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-calendar"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = "tripit"
   full_host        = "tripit.viktorbarzin.me"
   ingress_path     = ["/api/calendar"]
@@ -944,6 +954,8 @@ module "ingress_emails_confirm" {
   dns_type         = "none" # main `module.ingress` owns the DNS record for this host
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-emails-confirm"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = "tripit"
   full_host        = "tripit.viktorbarzin.me"
   ingress_path     = ["/api/emails/confirm"]
@@ -963,6 +975,8 @@ module "ingress_planner_slack" {
   dns_type         = "none" # main `module.ingress` owns the DNS record for this host
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-planner-slack"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = "tripit"
   full_host        = "tripit.viktorbarzin.me"
   ingress_path     = ["/api/planner/slack"]
@@ -986,6 +1000,8 @@ module "ingress_api" {
   dns_type         = "proxied"
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-api"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = "tripit"
   port             = 8080
   tls_secret_name  = var.tls_secret_name

@@ -1008,12 +1008,14 @@ module "book_search_ingress" {
 
 # API ingress - unprotected (API key auth handled by backend)
 module "book_search_api_ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.ebooks.metadata[0].name
-  name            = "book-search-api"
-  host            = "book-search"
-  service_name    = "book-search"
-  tls_secret_name = var.tls_secret_name
+  source    = "../../modules/kubernetes/ingress_factory"
+  namespace = kubernetes_namespace.ebooks.metadata[0].name
+  name      = "book-search-api"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "book-search"
+  service_name     = "book-search"
+  tls_secret_name  = var.tls_secret_name
   # auth = "none": Book Search API endpoints — API key auth handled by backend; forward-auth would block downloads.
   auth         = "none"
   ingress_path = ["/api/download-url", "/api/download-status", "/api/send-to-kindle", "/shortcut"]

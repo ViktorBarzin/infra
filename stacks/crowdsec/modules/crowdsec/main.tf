@@ -309,6 +309,9 @@ module "ingress" {
   name            = "crowdsec-web"
   auth            = "required"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/icon" = "crowdsec.png"
+  }
 }
 
 # CronJob to import public blocklists into CrowdSec

@@ -217,12 +217,14 @@ resource "kubernetes_service" "gateway" {
 # into the namespace. The gateway holds its own edge auth (the DEVICE_TOKEN
 # bearer), so no Authentik in front.
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  name            = "portal-assistant"
-  namespace       = kubernetes_namespace.portal_assistant.metadata[0].name
-  service_name    = kubernetes_service.gateway.metadata[0].name
-  port            = 8000
-  tls_secret_name = "tls-secret"
+  source = "../../modules/kubernetes/ingress_factory"
+  name   = "portal-assistant"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  namespace        = kubernetes_namespace.portal_assistant.metadata[0].name
+  service_name     = kubernetes_service.gateway.metadata[0].name
+  port             = 8000
+  tls_secret_name  = "tls-secret"
   # auth = "app": the gateway enforces its own DEVICE_TOKEN bearer on /v1/talk; Authentik would break the native Portal client (it has no browser login).
   auth          = "app"
   dns_type      = "proxied"

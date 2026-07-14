@@ -147,9 +147,11 @@ module "ingress" {
 module "ingress_scripts" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": public read-only static scripts + key list (iwr|iex). No login, no PoW.
-  auth             = "none"
-  namespace        = kubernetes_namespace.kms.metadata[0].name
-  name             = "kms-scripts"
+  auth      = "none"
+  namespace = kubernetes_namespace.kms.metadata[0].name
+  name      = "kms-scripts"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = kubernetes_service.kms-web-page.metadata[0].name
   port             = "80"
   ingress_path     = ["/scripts", "/keys.json"]
@@ -266,9 +268,11 @@ resource "kubernetes_service" "kms_diag" {
 module "ingress_diag" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": public telemetry collector, no login/PoW
-  auth             = "none"
-  namespace        = kubernetes_namespace.kms.metadata[0].name
-  name             = "kms-diag"
+  auth      = "none"
+  namespace = kubernetes_namespace.kms.metadata[0].name
+  name      = "kms-diag"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = kubernetes_service.kms_diag.metadata[0].name
   port             = "9102"
   ingress_path     = ["/diag"]

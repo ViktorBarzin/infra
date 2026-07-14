@@ -82,7 +82,7 @@ resource "kubernetes_deployment" "immich-frame-emo" {
           # before Immich-v3 album loading was fixed) and IfNotPresent kept
           # reusing it, breaking ExcludedAlbums. Force a fresh pull.
           image_pull_policy = "Always"
-          name  = "immich-frame-emo"
+          name              = "immich-frame-emo"
           resources {
             requests = {
               cpu    = "10m"
@@ -168,4 +168,8 @@ module "ingress_emo" {
   name             = "highlights-immich-emo"
   tls_secret_name  = var.tls_secret_name
   service_name     = "immich-frame-emo"
+  extra_annotations = {
+    "gethomepage.dev/icon" = "immich.png"
+    "gethomepage.dev/name" = "Immich Highlights (Emo)"
+  }
 }
