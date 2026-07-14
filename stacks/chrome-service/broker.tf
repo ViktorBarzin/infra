@@ -76,8 +76,10 @@ resource "kubernetes_deployment" "broker" {
             <<-EOT
             set -e
             export HOME=/tmp PYTHONUSERBASE=/tmp/py PIP_CACHE_DIR=/tmp/pipcache PIP_DISABLE_PIP_VERSION_CHECK=1
-            python3 -c 'import playwright' 2>/dev/null \
-              || pip install --user --quiet --no-warn-script-location playwright==1.48.0
+            # patchright (playwright drop-in) for the seed/screenshot subprocesses —
+            # avoids the Runtime.enable CDP leak on the master + the caller's page.
+            python3 -c 'import patchright' 2>/dev/null \
+              || pip install --user --quiet --no-warn-script-location patchright==1.61.1
             exec python3 /broker/broker.py
             EOT
           ]

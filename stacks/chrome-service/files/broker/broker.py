@@ -39,6 +39,10 @@ POOL_LABEL = "app=chrome-worker"
 
 _seed = {"at": 0.0, "json": None, "last_export_seconds": 0.0, "errors": 0}
 _seed_lock = threading.Lock()
+# Serializes the acquire pick-or-create decision (ThreadingHTTPServer → many
+# threads). Without it two concurrent /acquire calls can pick the same free warm
+# worker (TOCTOU) and collide sessions — breaking isolation.
+_acquire_lock = threading.Lock()
 
 
 # --------------------------------------------------------------- pure logic
@@ -110,7 +114,7 @@ def list_workers() -> list:
             "ready": ready,
             "phase": st.get("phase", ""),
             "ip": st.get("podIP", ""),
-            "released_at": float(released) if released else md["creationTimestamp"] and 0.0,
+            "released_at": float(released) if released else 0.0,
             "bare": not md.get("ownerReferences"),  # broker-created pods have no owner
         })
     return out
@@ -199,23 +203,25 @@ THUMB_TTL = 5         # seconds; bounds subprocess screenshots under FleetView p
 
 
 def thumbnail(session, ip):
-    """PNG bytes for a session's active page, cached THUMB_TTL. best-effort → b'' on error."""
+    """PNG bytes for a session's active page, cached THUMB_TTL. best-effort → b'' on error.
+    The screenshot subprocess runs OUTSIDE the lock so concurrent /thumb polls for
+    different sessions aren't serialized behind one ≤15s capture."""
     import subprocess
     with _thumbs_lock:
         cached = _thumbs.get(session)
-        now = time.time()
-        if cached and now - cached[0] < THUMB_TTL:
+        if cached and time.time() - cached[0] < THUMB_TTL:
             return cached[1]
-        if not ip:
-            return b""
-        try:
-            png = subprocess.check_output(
-                ["python3", SCREENSHOT_SCRIPT, f"http://{ip}:9222"],
-                timeout=15, stderr=subprocess.DEVNULL)
-        except Exception:
-            png = b""
-        _thumbs[session] = (now, png)
-        return png
+    if not ip:
+        return b""
+    try:
+        png = subprocess.check_output(
+            ["python3", SCREENSHOT_SCRIPT, f"http://{ip}:9222"],
+            timeout=15, stderr=subprocess.DEVNULL)
+    except Exception:
+        png = b""
+    with _thumbs_lock:
+        _thumbs[session] = (time.time(), png)
+    return png
 
 
 # ------------------------------------------------------------------ reaper
@@ -225,9 +231,13 @@ def reaper_loop():
             now = time.time()
             for w in list_workers():
                 if w["bare"]:
-                    # ephemeral bare burst pod: delete once idle past the TTL
-                    # (its 60m hard cap is activeDeadlineSeconds, enforced by k8s).
-                    if should_reap(w, now, idle_ttl=IDLE_TTL):
+                    # ephemeral bare burst pod: delete if terminal (Failed on
+                    # activeDeadline/OOM/crash, or Succeeded) — nothing else GCs a
+                    # bare Pod (restartPolicy Never, no owner), and a lingering
+                    # Failed pod keeps its session label + counts toward capacity,
+                    # eventually wedging the pool at MAX_WORKERS. Also delete once
+                    # idle past the TTL.
+                    if w["phase"] in ("Failed", "Succeeded") or should_reap(w, now, idle_ttl=IDLE_TTL):
                         release_worker(w)
                 elif w["session"]:
                     # warm-pool pod (Deployment-owned, no activeDeadlineSeconds):
@@ -346,26 +356,41 @@ class Handler(BaseHTTPRequestHandler):
         purpose = str(body.get("purpose", ""))[:200]
         import secrets
         session = secrets.token_hex(4)
-        workers = list_workers()
-        free = pick_free_worker(workers)
-        if free:
-            claim_worker(free["name"], session, owner, purpose)
-            return self._send(200, {"pod": free["name"], "cdpPort": 9222, "session": session,
-                                    "reused": True})
-        if sum(1 for w in workers) >= MAX_WORKERS:
-            return self._send(503, {"error": f"pool at capacity ({MAX_WORKERS}); retry shortly"})
-        name = worker_name(session)
+        # Pick-or-create under the lock so two concurrent acquires can't grab the
+        # same free worker or both burst past MAX_WORKERS. The pod-ready WAIT is
+        # done outside the lock (it's seconds — don't block other acquires on it).
+        with _acquire_lock:
+            workers = list_workers()
+            free = pick_free_worker(workers)
+            if free:
+                claim_worker(free["name"], session, owner, purpose)
+                return self._send(200, {"pod": free["name"], "cdpPort": 9222,
+                                        "session": session, "reused": True})
+            # Count only NON-terminal pods toward capacity (Failed/Succeeded orphans
+            # are GC'd by the reaper and must not wedge the pool).
+            active = sum(1 for w in workers if w["phase"] not in ("Failed", "Succeeded"))
+            if active >= MAX_WORKERS:
+                return self._send(503, {"error": f"pool at capacity ({MAX_WORKERS}); retry shortly"})
+            name = worker_name(session)
+            try:
+                create_worker(session, owner, purpose)
+            except Exception as e:
+                return self._send(500, {"error": f"create worker: {e}"})
         try:
-            create_worker(session, owner, purpose)
             wait_ready(name)
         except Exception as e:
-            return self._send(500, {"error": f"create worker: {e}"})
+            return self._send(500, {"error": f"worker not ready: {e}"})
         return self._send(200, {"pod": name, "cdpPort": 9222, "session": session, "reused": False})
 
     def _serve_static(self, path):
+        # Allowlist static asset extensions — STATIC_DIR also holds broker.py,
+        # seed_export.py, screenshot.py, worker_pod.json (mounted in the same
+        # ConfigMap dir); anything not an allowlisted asset → SPA fallback so the
+        # broker's own source is never served.
+        allowed = (".html", ".css", ".js", ".png", ".svg", ".ico", ".woff2")
         rel = "index.html" if path in ("/", "") else path.lstrip("/")
         full = os.path.normpath(os.path.join(STATIC_DIR, rel))
-        if not full.startswith(STATIC_DIR) or not os.path.isfile(full):
+        if not (full.startswith(STATIC_DIR + os.sep) and rel.endswith(allowed) and os.path.isfile(full)):
             full = os.path.join(STATIC_DIR, "index.html")  # SPA fallback
         if not os.path.isfile(full):
             return self._send(404, {"error": "not found"})

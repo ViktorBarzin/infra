@@ -15,7 +15,9 @@ CDP = os.environ.get("MASTER_CDP_URL", "http://chrome-service.chrome-service.svc
 
 
 def main() -> int:
-    from playwright.sync_api import sync_playwright
+    # patchright (playwright drop-in) avoids the Runtime.enable CDP leak, so even
+    # the read-only export against the master's context doesn't tip anti-bot.
+    from patchright.sync_api import sync_playwright
     with sync_playwright() as p:
         b = p.chromium.connect_over_cdp(CDP, timeout=20000)
         try:

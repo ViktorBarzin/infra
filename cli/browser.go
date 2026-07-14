@@ -374,7 +374,7 @@ func runBrowser(o browserOpts) error {
 
 	// Tear down every forward + release on Ctrl-C / SIGTERM too.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigCh)
 	go func() {
 		if _, ok := <-sigCh; ok {

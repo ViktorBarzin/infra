@@ -13,7 +13,10 @@ def main() -> int:
     if len(sys.argv) < 2:
         return 2
     cdp = sys.argv[1]
-    from playwright.sync_api import sync_playwright
+    # patchright, NOT playwright: this attaches to the CALLER's live page (a
+    # possibly anti-bot site) — stock playwright would enable Runtime on that CDP
+    # session, the exact fingerprint the pool exists to avoid (review #3).
+    from patchright.sync_api import sync_playwright
     with sync_playwright() as p:
         b = p.chromium.connect_over_cdp(cdp, timeout=10000)
         try:
