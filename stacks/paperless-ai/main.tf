@@ -11,7 +11,7 @@ resource "kubernetes_namespace" "paperless_ai" {
   metadata {
     name = local.namespace
     labels = {
-      tier = local.tiers.aux
+      tier = local.tiers.edge
     }
   }
   lifecycle {
@@ -98,7 +98,7 @@ resource "kubernetes_deployment" "paperless_ai" {
     namespace = local.namespace
     labels = {
       app  = "paperless-ai"
-      tier = local.tiers.aux
+      tier = local.tiers.edge
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
