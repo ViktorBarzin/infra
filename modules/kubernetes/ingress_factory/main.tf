@@ -165,15 +165,23 @@ variable "strip_x_real_ip" {
   default     = false
   description = <<-EOT
     Delete the X-Real-Ip request header before it reaches the backend
-    (traefik-drop-x-real-ip middleware). REQUIRED on every Anubis-fronted
-    ingress: Traefik stamps X-Real-Ip with its immediate TCP peer, which for
-    Cloudflare-tunneled traffic is a cloudflared pod IP that flaps per request
-    across the 3 replicas. Anubis binds its auth JWT to X-Real-Ip, so the flap
-    invalidated cookies mid-page-load and served challenge HTML to asset
-    requests (2026-07-14 home.viktorbarzin.me empty-page incident, see
-    docs/post-mortems/2026-07-14-anubis-x-real-ip-cookie-flap.md). With the
-    header absent, Anubis derives the client from X-Forwarded-For with private
-    hops stripped = the real, stable client IP.
+    (traefik-drop-x-real-ip middleware). Set true on PROXIED (Cloudflare)
+    Anubis-fronted ingresses ONLY: Traefik stamps X-Real-Ip with its immediate
+    TCP peer, which for CF-tunneled traffic is a cloudflared pod IP that flaps
+    per request across the 3 replicas. Anubis binds its auth cookie to
+    X-Real-Ip, so the flap invalidated cookies mid-page-load and served
+    challenge HTML to asset requests (2026-07-14 home.viktorbarzin.me
+    empty-page incident, see the post-mortem). With the header absent, Anubis
+    derives the client from X-Forwarded-For with private hops stripped = the
+    real, stable client IP.
+
+    DO NOT set on NON-PROXIED Anubis sites (f1, kms): there X-Real-Ip is the
+    stable real client (pfSense PROXY-protocol, no cloudflared), so stripping
+    it has no benefit and makes Anubis 500 ("X-Real-Ip header is not set") on
+    any request that also lacks XFF — e.g. in-cluster Uptime-Kuma probes. The
+    2026-07-14 follow-up incident (IngressErrorRate5xxHigh) traced to exactly
+    this. Proxied sites keep the strip; their in-cluster monitors carry a
+    synthetic XFF (see stacks/uptime-kuma ANUBIS_PROBE_HEADERS).
   EOT
 }
 variable "anti_ai_scraping" {

@@ -87,6 +87,34 @@ Not chosen: cloudflared → 1 replica (loses tunnel HA), a Traefik real-ip rewri
 (bigger surface; the vendored-plugin pattern exists but a builtin middleware suffices),
 Anubis version bump (validation semantics unverified).
 
+## Follow-up regression — the strip 500s header-less requests (same day, caught by `/cluster-health`)
+
+Applying `strip_x_real_ip` **uniformly to all 7 sites** was too broad and caused a
+second incident surfaced hours later by `IngressErrorRate5xxHigh` + several Anubis
+monitors flipping "down". Anubis's `check()` returns **HTTP 500
+`[misconfiguration] X-Real-Ip header is not set`** when a request has *neither*
+`X-Real-Ip` *nor* `X-Forwarded-For`. Real external users always carry XFF (CF/pfSense
+set it) so they were unaffected — but the in-cluster **Uptime-Kuma probes** resolve
+`*.viktorbarzin.me` to the internal Traefik LB (split-horizon DNS) and arrive with
+neither header, so on the stripped sites they 500'd every cycle (~13/hr/site), driving
+the alert.
+
+A live A/B confirmed the flap IS real (valid cookie + changed X-Real-Ip → re-challenge),
+so reverting the strip was not an option. Two-part fix:
+
+1. **Non-proxied sites (f1, kms) never needed the strip** — their X-Real-Ip is the
+   stable real client via pfSense PROXY-protocol (no cloudflared, no flap). Removed
+   `strip_x_real_ip` there; that alone fixes those two sites' probe 500s.
+2. **Proxied sites keep the strip** (flap is real). Their in-cluster Uptime-Kuma
+   monitors now send a synthetic public `X-Forwarded-For` (`203.0.113.10`, TEST-NET-3,
+   survives `XFF_STRIP_PRIVATE`) via the `external-monitor-sync` script
+   (`ANUBIS_PROBE_HEADERS`, scoped to `anubis-*` backends), so the probe gets the 200
+   challenge page instead of a 500 — restoring the pre-strip monitor behaviour.
+
+Lesson: a header-mangling middleware's blast radius includes every *header-less*
+client (health probes, in-cluster callers), not just the browser path you designed it
+for. Scope proxy-header rewrites to the path that actually needs them.
+
 ## Lessons / follow-ups
 
 - **Monitoring was structurally blind**: Uptime-Kuma probes the ingress and received the
