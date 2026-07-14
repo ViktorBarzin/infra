@@ -14,6 +14,14 @@ terraform {
 # Sharing a single ed25519 signing key across instances + COOKIE_DOMAIN at
 # the registrable domain means a token solved on one viktorbarzin.me subdomain
 # is honoured by every other Anubis-fronted site.
+#
+# CONSTRAINT: the fronting ingress_factory call MUST set strip_x_real_ip =
+# true. Anubis binds the JWT to X-Real-Ip (challenge metadata compare), and
+# Traefik stamps that header with its immediate TCP peer — for CF-tunneled
+# traffic a cloudflared pod IP that flaps per request, which invalidates the
+# cookie mid-page-load (2026-07-14 post-mortem). With the header stripped,
+# Anubis falls back to XFF_STRIP_PRIVATE'd X-Forwarded-For = the stable real
+# client IP.
 
 variable "name" {
   type        = string
