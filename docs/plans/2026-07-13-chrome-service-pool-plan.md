@@ -54,12 +54,21 @@ Critical path: **P2 → P3 → P5**. P1 is independently shippable value. P4 (UI
   720p); dshm→512Mi. Applied via CI, pod rolled 3/3 Ready, 0 restarts.
 - ✅ **Phase 2 — Worker template: DONE (committed, inert).** `worker_entrypoint.sh` +
   `files/broker/worker_pod.json` (CPU+mem limits, `activeDeadlineSeconds`, anti-affinity).
-- 🟡 **Phase 3 — Broker: core DONE + unit-tested (8/8 green), not yet deployed.** `broker.py`
-  pure logic (pod-spec build, free-worker pick, idle-reap) tested; k8s REST + cached seed +
-  `/sessions` + `/metrics` + acquire/release written. Remaining: RBAC (3.1), image + GHA
-  build (3.4), Deployment + ingress + apply (3.5).
-- ⬜ **Phase 4** FleetView UI · **Phase 5** CLI integration · **Phase 6** warm-pool, quota,
-  monitoring, docs — not started.
+- ✅ **Phase 3 — Broker: DONE + verified live end-to-end.** Deployed on the stock
+  playwright/python image (broker.py + templates + FleetView via ConfigMap, pip-installs
+  playwright at startup — NO custom image/GHA build, simpler than the plan's Task 3.4).
+  Broker SA (pods CRUD), Deployment 1/1, `chrome-fleet` Service + Authentik ingress, custom
+  namespace quota (16Gi — the Kyverno tier-4-aux 3Gi cap blocked worker creation; opted out
+  via `resource-governance/custom-quota=true`). **Verified: acquire → worker pod
+  Running/ready → CDP real Chrome 149 → `/seed` exported 86 cookies from the master →
+  `/sessions` + `/metrics` correct → release deleted the worker.**
+- 🟡 **Phase 4 — FleetView: backend + static UI DONE (served, title renders); live visual
+  check via the Authentik ingress pending.** Shipped as a single static dashboard (table +
+  best-effort screenshot thumbnails + kill), not a Svelte build — no npm in the critical
+  path; safe DOM (no innerHTML). Continuous screencast deferred (thumbnails auto-refresh).
+- 🟡 **Phase 5 — CLI: viewport+seed support staged in `browser_runner.js` (inert until CLI
+  rebuild); broker acquire/release + pod-targeted port-forward + patchright not yet wired.**
+- ⬜ **Phase 6** warm-pool Deployment, monitoring PrometheusRule, docs — not started.
 
 **Conventions that bind every task** (from `infra/.claude/CLAUDE.md`):
 - Terraform-only; commit + push every applied change the same session; apply from the main
