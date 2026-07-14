@@ -335,6 +335,87 @@ grants `emo-browser` `pods/portforward` in `excalidraw` (2026-07-02) so emo's
 agent can upload drawings via the port-forward + `X-Authentik-Username` recipe
 in his `~/.claude/CLAUDE.md`. Revoking the SA revokes those too.
 
+## Browser pool (broker + FleetView) — since 2026-07-14
+
+The single master pod above is the **identity browser**; concurrent agent load is
+served by an autoscaled **pool** of ephemeral, isolated worker pods. Design +
+plan: `docs/plans/2026-07-13-chrome-service-pool-{design,plan}.md`
+(published on plans.viktorbarzin.me); spec: GitHub issue ViktorBarzin/infra#79.
+
+```text
+  homelab browser run flow.js                 devvm (outside cluster)
+        │  1. kubectl port-forward svc/chrome-fleet :8080
+        ▼
+  chrome-broker (broker.tf) ── POST /acquire {owner,purpose} ─┐
+        │  SA chrome-broker: pods create/delete/patch          │
+        │  2. create labelled worker Pod (or reuse warm)       │
+        │  3. seed = on-demand storage_state() from MASTER ────┼──► chrome-service (master)
+        ▼                                                      │
+  chrome-worker-<sid>  (bare Pod, activeDeadlineSeconds=3600)  │
+        │  app=chrome-worker · CPU 4 / mem 4Gi limit           │
+        ▲  4. caller port-forwards pod/<name> :9222 (CDP)      │
+        │  5. runs patchright-core script (viewport 1920x1080) │
+        └─ 6. POST /release → Pod deleted ─────────────────────┘
+```
+
+**Roles.** The master (`chrome-service` Deployment) stays 1 replica: interactive
+noVNC login, the persistent profile PVC, the hourly `storage_state()` snapshot,
+tripit's fare scrape, and any `--shared-context` write-back work. The **pool** is
+separate stateless workers.
+
+**Broker** (`stacks/chrome-service/broker.tf`, `files/broker/broker.py`): a
+stdlib-Python service on the stock `playwright/python` image (broker.py +
+`worker_pod.json` + `seed_export.py` + `screenshot.py` + FleetView `index.html`
+via ConfigMap; pip-installs playwright at startup for the seed/screenshot
+**subprocesses** — no custom image, the `gate.py` pattern). Stateless: session
+state is reconstructed from pod labels each request (no Redis). k8s via the in-pod
+SA token/CA. API: `POST /acquire` {owner,purpose} → {pod,cdpPort,session};
+`POST /release` {session}; `GET /sessions`; `GET /seed` (fresh cached
+storage_state); `GET /metrics`; `GET /healthz`. SA `chrome-broker` = pods
+create/delete/get/list/patch (namespace-scoped; `rbac.tf`).
+
+**Workers.** One session per pod. **Bare burst pods** (broker-created from
+`worker_pod.json`): `activeDeadlineSeconds=3600` hard cap, deleted on release/idle
+(20m). **Warm pod** (`pool.tf`, `chrome-worker-warm` Deployment, replicas=1):
+always-ready standby, claimed by a session-label patch and returned to standby on
+release; no activeDeadlineSeconds — a stuck/wedged warm claim is deleted by the
+broker reaper (Deployment recreates it). **Selector gotcha:** the warm Deployment
+selects on `chrome-pool/role=warm` (NOT `app=chrome-worker`, which the bare burst
+pods also carry — else it would adopt+delete them). Both carry `app=chrome-worker`
+so the broker's `list_workers` finds warm + bare alike.
+
+**Blast radius (D11).** Each worker has a **CPU limit of 4 cores** — a deliberate
+exception to the cluster "no CPU limits" norm, because a single-session ephemeral
+browser pegging cores is always a bug (the 6.5h-swiftshader class). Plus the mem
+limit + hard deadline + `ChromeWorkerWedged` alert.
+
+**Quota.** The Kyverno tier-4-aux `tier-quota` caps `requests.memory` at 3Gi —
+far too small for burst-6. The ns is labelled `resource-governance/custom-quota=true`
+(Kyverno then deletes its generated quota) and `broker.tf` defines `chrome-pool`
+(requests.memory 16Gi / limits.memory 40Gi / requests.cpu 4 / pods 14) — the
+burst ceiling + runaway-create backstop (broker also self-limits to MAX_WORKERS=6).
+
+**Seed model.** Pool sessions derive the master's login **read-only**: the broker
+exports cookies+localStorage on-demand via `storage_state()` over CDP (cached
+~10s), and `browser_runner.js` injects it into a fresh context. Never written
+back. IndexedDB/sessionStorage are not captured — those sites use `--shared-context`
+(master). `connect_over_cdp().close()` only disconnects; it never kills the master.
+
+**FleetView** (`chrome-fleet.viktorbarzin.me`, Authentik-gated): a static
+dashboard served by the broker — live session table (owner, purpose, current URL
+from CDP `/json/list`, age) + best-effort screenshot thumbnails + kill. Prometheus:
+`browser_active_sessions{owner}`, `browser_pool_workers{state}`,
+`browser_seed_export_seconds/_errors_total`. Alerts (group "Chrome Pool"):
+`ChromePoolBrokerDown`, `ChromeWorkerWedged`, `ChromePoolSeedExportFailing`,
+`ChromePoolQuotaExhausted`.
+
+**CLI.** `homelab browser` uses the pool by default (acquire → port-forward the
+named worker pod → run → release; falls back to the master if the broker is down).
+`--shared-context` → master; `--no-seed` → clean context; `--viewport WxH`/`--tall`
+→ context viewport (default 1920×1080 DPR1); `homelab browser ls` lists sessions.
+CDP client is **patchright-core** (playwright-core drop-in that closes the
+`Runtime.enable` anti-bot leak).
+
 ## Limits + risks
 
 - **Anti-bot vs stealth arms race** — when an upstream beats us (DRM

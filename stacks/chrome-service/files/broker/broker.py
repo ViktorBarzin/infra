@@ -224,8 +224,22 @@ def reaper_loop():
         try:
             now = time.time()
             for w in list_workers():
-                if w["bare"] and should_reap(w, now, idle_ttl=IDLE_TTL):
-                    release_worker(w)
+                if w["bare"]:
+                    # ephemeral bare burst pod: delete once idle past the TTL
+                    # (its 60m hard cap is activeDeadlineSeconds, enforced by k8s).
+                    if should_reap(w, now, idle_ttl=IDLE_TTL):
+                        release_worker(w)
+                elif w["session"]:
+                    # warm-pool pod (Deployment-owned, no activeDeadlineSeconds):
+                    # if a claim outlives the hard cap (caller died without
+                    # releasing, or a wedge), delete it — the Deployment recreates
+                    # a fresh standby, clearing the stuck session and any wedge.
+                    try:
+                        started = float(w.get("started") or now)
+                    except ValueError:
+                        started = now
+                    if now - started > DEADLINE:
+                        kube("DELETE", f"/api/v1/namespaces/{NS}/pods/{w['name']}")
         except Exception:
             pass
         time.sleep(30)
