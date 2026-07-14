@@ -333,9 +333,10 @@ module "ingress" {
   name         = "f1"
   service_name = module.anubis.service_name
   port         = module.anubis.service_port
-  # Anubis binds its JWT to X-Real-Ip; the header must not reach it (flaps per
-  # request across cloudflared pods for CF-tunneled traffic) — see ingress_factory.
-  strip_x_real_ip   = true
+  # NOTE: no strip_x_real_ip here. f1 is dns_type=non-proxied — traffic arrives
+  # via pfSense PROXY-protocol, so Traefik stamps X-Real-Ip with the STABLE real
+  # client (no cloudflared flap). Stripping it only broke headerless in-cluster
+  # probes (Anubis 500 "X-Real-Ip header is not set"). Strip is proxied-only.
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false
   extra_middlewares = ["traefik-x402@kubernetescrd"]
