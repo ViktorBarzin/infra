@@ -329,3 +329,71 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
   }
 }
+
+# Daily incremental refresh of the RAG semantic index. The index is only
+# built on demand (documents_count would silently stale as new documents
+# are added and enriched); this hits the Node UI's authenticated RAG route,
+# which indexes just the documents not yet in ChromaDB/BM25 (force=false).
+# 04:30 UTC: outside the 22:00-00:00 Proxmox backup window and before the
+# 05:00 PVE daily-backup. M2M key = the same api_key the Node<->Python
+# services share (Vault secret/paperless-ai via ESO).
+resource "kubernetes_cron_job_v1" "rag_index_refresh" {
+  metadata {
+    name      = "rag-index-refresh"
+    namespace = local.namespace
+    labels = {
+      app = "paperless-ai"
+    }
+  }
+  spec {
+    schedule                      = "30 4 * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 2
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 1
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            container {
+              name  = "refresh"
+              image = "curlimages/curl:latest"
+              command = ["/bin/sh", "-c", <<-EOT
+                curl -sf --max-time 120 -X POST \
+                  -H "Content-Type: application/json" \
+                  -H "x-api-key: $${API_KEY}" \
+                  -d '{"force":false}' \
+                  http://paperless-ai.paperless-ai.svc.cluster.local/api/rag/index
+              EOT
+              ]
+              env {
+                name = "API_KEY"
+                value_from {
+                  secret_key_ref {
+                    name = "paperless-ai-secrets"
+                    key  = "api_key"
+                  }
+                }
+              }
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  memory = "64Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+}
