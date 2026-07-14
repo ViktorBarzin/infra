@@ -908,6 +908,40 @@ serverFiles:
               severity: warning
             annotations:
               summary: "gpu-vram-watchdog has no available replica for 15m — runtime VRAM enforcement (over-budget recycle) is OFF. Budget still scheduler-enforced."
+      # chrome-service browser pool (broker + FleetView + worker pods). The
+      # broker exposes browser_* gauges (job=kubernetes-pods). A CPU-wedged worker
+      # is the 6.5h-swiftshader class — the CPU limit caps it at 4 cores and the
+      # 60m activeDeadline reaps it; this fires well before that so it's visible.
+      - name: Chrome Pool
+        rules:
+          - alert: ChromePoolBrokerDown
+            expr: kube_deployment_status_replicas_available{namespace="chrome-service", deployment="chrome-broker"} < 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "chrome-broker has no available replica for 5m — the browser pool can't hand out sessions (homelab browser falls back to the master)."
+          - alert: ChromeWorkerWedged
+            expr: sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="chrome-service", pod=~"chrome-worker.*"}[5m])) > 3
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pool worker {{ $labels.pod }} pegging >3 cores for 10m — the wedged-browser signature. CPU limit caps it at 4; the 60m activeDeadline (bare) / broker reaper (warm) will recycle it."
+          - alert: ChromePoolSeedExportFailing
+            expr: increase(browser_seed_export_errors_total{namespace="chrome-service"}[15m]) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "chrome-broker storage_state seed export from the master is failing (>0 errors/15m) — pool sessions can't inherit logged-in cookies. Check the master browser + CDP."
+          - alert: ChromePoolQuotaExhausted
+            expr: kube_resourcequota{namespace="chrome-service", resource="count/pods", type="used"} / kube_resourcequota{namespace="chrome-service", resource="count/pods", type="hard"} > 0.9
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "chrome-service pod quota >90% used for 10m — the pool may be unable to burst new workers. Raise the chrome-pool ResourceQuota or investigate leaked sessions."
       - name: R730 Host
         rules:
           - alert: HighCPUTemperature
