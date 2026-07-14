@@ -105,8 +105,21 @@ kubectl scale -n immich deploy/immich-machine-learning --replicas=1
 | `qwen3vl-4b` | `Qwen/Qwen3-VL-4B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
 
 `qwen3-8b` (text-only) is the Tier-0 triage model for
-`recruiter-responder`; the `qwen3vl-*` / `minicpm-v` models serve the
-vision use cases.
+`recruiter-responder`, and the enrichment + RAG-answer model for
+`paperless-ai`; the `qwen3vl-*` / `minicpm-v` models serve the vision
+use cases.
+
+**`qwen3-8b` runs with `--reasoning off`** (2026-07-13). Qwen3 defaults
+to thinking under `--jinja`, which returns an *empty* `message.content`
+(all output lands in `reasoning_content`), usually exhausts `max_tokens`
+mid-thought, and makes every call ~50x slower — paperless-ai's JSON
+enrichment failed outright on it. The flag is scoped to `qwen3-8b` in
+the `stacks/llama-cpp/main.tf` cmd builder; vision models keep default
+reasoning. Per-request `chat_template_kwargs: {enable_thinking:false}`
+is the deprecated equivalent (recruiter-responder still sends it —
+harmless). If a future consumer genuinely needs chain-of-thought from
+this model, add a separate llama-swap model alias rather than flipping
+the shared default.
 
 llama.cpp build pinned via the `llama-swap:cuda` image (ships a
 recent llama.cpp ≥ b9095, which includes Qwen3-VL projection fix
