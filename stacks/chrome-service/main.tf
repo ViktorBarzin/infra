@@ -30,6 +30,11 @@ resource "kubernetes_namespace" "chrome_service" {
       tier                                    = local.tiers.aux
       "chrome-service.viktorbarzin.me/server" = "true"
       "keel.sh/enrolled"                      = "true"
+      # Opt out of the Kyverno-generated tier-4-aux tier-quota (3Gi requests.memory
+      # — far too small for the burst-6 worker pool). We define our own quota in
+      # broker.tf (kubernetes_resource_quota.pool). The tier-4-aux LimitRange still
+      # applies (max 4Gi/container, which all our containers respect).
+      "resource-governance/custom-quota" = "true"
     }
   }
   lifecycle {
