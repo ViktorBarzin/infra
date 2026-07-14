@@ -313,6 +313,10 @@ module "ingress_api" {
     group    = "health"
     strategy = "blocking"
   }
+  # auth = "none": bearer-token push-ingest endpoint (health ADR-0012) — iOS
+  # Shortcuts can't do the forward-auth dance; the app validates per-user
+  # hashed tokens itself, strip-auth-headers kills spoofed X-authentik-*, and
+  # the /api/ingest path allowlist keeps every other route unreachable here.
   auth              = "none"
   dns_type          = "non-proxied"
   namespace         = kubernetes_namespace.health.metadata[0].name
