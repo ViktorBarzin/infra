@@ -45,6 +45,21 @@ flowchart TD
 Critical path: **P2 → P3 → P5**. P1 is independently shippable value. P4 (UI) and P6
 (warm-pool/quota/monitoring/docs) land after the API works.
 
+## Progress (2026-07-14, status: DONE — all phases live + verified)
+
+**All six phases implemented, applied via CI, and verified on the live cluster.**
+Spec: ViktorBarzin/infra#79. Verified: `homelab browser run` acquires an isolated
+worker → real Chrome 149 @ 1920×1080 → `/seed` injects the master's cookies →
+`browser ls` lists it → release deletes it; the warm pod is reused (`reused:true`)
+and returns to standby on release; all 4 Chrome Pool alerts loaded in Prometheus.
+
+- ✅ Phase 1 master hardening · ✅ Phase 2 worker template · ✅ Phase 3 broker +
+  FleetView + RBAC + custom quota · ✅ Phase 4 FleetView (static dashboard) ·
+  ✅ Phase 5 CLI pool-by-default + patchright + viewport + `ls` · ✅ Phase 6
+  warm pool + reaper + monitoring alerts + docs.
+
+<details><summary>Original phase-by-phase log</summary>
+
 ## Progress (2026-07-13, status: executing)
 
 - ✅ **Phase 1 — Master hardening: DONE, verified live.** Master Xvfb + Chrome window at
@@ -69,6 +84,8 @@ Critical path: **P2 → P3 → P5**. P1 is independently shippable value. P4 (UI
 - 🟡 **Phase 5 — CLI: viewport+seed support staged in `browser_runner.js` (inert until CLI
   rebuild); broker acquire/release + pod-targeted port-forward + patchright not yet wired.**
 - ⬜ **Phase 6** warm-pool Deployment, monitoring PrometheusRule, docs — not started.
+
+</details>
 
 **Conventions that bind every task** (from `infra/.claude/CLAUDE.md`):
 - Terraform-only; commit + push every applied change the same session; apply from the main
