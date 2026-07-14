@@ -87,15 +87,11 @@ resource "kubernetes_deployment" "novelapp" {
     name      = "novelapp"
     namespace = kubernetes_namespace.novelapp.metadata[0].name
     labels = {
+      # Deliberately NOT sablier-enrolled (un-enrolled 2026-07-14, Viktor):
+      # shared with Gheorghe — cold starts hurt him; cheap to keep always-on
+      # at the right-sized 320Mi. Do not re-enroll.
       app  = "novelapp"
       tier = local.tiers.aux
-      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
-      # first request through the ingress (design doc 2026-07-12).
-      "sablier.enable" = "true"
-      "sablier.group"  = "novelapp"
-      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
-      # propagation so the first forwarded request never hits a 503 race.
-      "sablier.ready-after" = "5s"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
@@ -121,7 +117,6 @@ resource "kubernetes_deployment" "novelapp" {
       metadata[0].annotations["kubernetes.io/change-cause"],              # Keel writes this on each auto-upgrade
       metadata[0].annotations["deployment.kubernetes.io/revision"],       # K8s increments this on every rollout
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1 — Keel writes on update
-      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
   spec {
@@ -217,12 +212,14 @@ resource "kubernetes_deployment" "novelapp" {
             container_port = 3000
           }
           resources {
+            # Right-sized 640Mi -> 320Mi on the 2026-07-14 un-enroll (live
+            # working set ~156Mi; 2x headroom) so always-on pins less memory.
             requests = {
-              memory = "640Mi"
+              memory = "320Mi"
               cpu    = "10m"
             }
             limits = {
-              memory = "640Mi"
+              memory = "320Mi"
             }
           }
         }
@@ -254,10 +251,6 @@ resource "kubernetes_service" "novelapp" {
 
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
-  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
-  sablier = {
-    group = "novelapp"
-  }
   # auth = "app": novelapp handles its own auth via NextAuth + Google OAuth
   # (AUTH_URL/AUTH_SECRET/GOOGLE_CLIENT_{ID,SECRET} env vars above). Putting
   # Authentik forward-auth in front double-gates the app and breaks iOS/Android
