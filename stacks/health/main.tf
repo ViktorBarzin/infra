@@ -297,6 +297,36 @@ module "ingress_test" {
   }
 }
 
+# https://health-api.viktorbarzin.me — PUBLIC auth-free push-ingest host
+# (health repo ADR-0012, plan 2026-07-14-apple-health-auto-sync). Serves ONLY
+# /api/ingest: the iOS Shortcut automations (workout-end + morning) POST the
+# user's Apple Health samples here with a per-user bearer token the app
+# validates itself (SHA-256 at rest, revocable in Settings). auth = "none"
+# because Shortcuts cannot do the forward-auth dance; the spoofing hole that
+# opens is closed twice — strip-auth-headers removes any client-injected
+# X-authentik-* before the app sees it, and the path allowlist keeps every
+# other route unreachable on this host. Sablier "blocking": a programmatic
+# POST must be held while the pod wakes, never answered with the wake page.
+module "ingress_api" {
+  source = "../../modules/kubernetes/ingress_factory"
+  sablier = {
+    group    = "health"
+    strategy = "blocking"
+  }
+  auth              = "none"
+  dns_type          = "non-proxied"
+  namespace         = kubernetes_namespace.health.metadata[0].name
+  name              = "health-api"
+  service_name      = kubernetes_service.health.metadata[0].name
+  tls_secret_name   = var.tls_secret_name
+  ingress_path      = ["/api/ingest"]
+  max_body_size     = "5m"
+  extra_middlewares = ["traefik-strip-auth-headers@kubernetescrd"]
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
+}
+
 resource "kubernetes_manifest" "external_secret_db" {
   field_manager {
     force_conflicts = true
