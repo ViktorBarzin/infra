@@ -2,6 +2,21 @@
 
 Last updated: 2026-04-10
 
+> **Amendment (2026-07-13) — not yet folded into the body below (a full rewrite
+> is design Phase 0).** Two additions since this was written:
+> - **mx2 is now VPN PoP-2, not "mail drain only."** The Oracle Always-Free box
+>   also terminates VLESS-REALITY (`:8443`), Shadowsocks (`:8388`), and a dnstt
+>   DNS tunnel (`:53/udp`), all egressing via Oracle's IP — a path that is
+>   neither the home WAN nor Cloudflare (the diversification a censored-network
+>   client needs). Server config + rebuild recipe:
+>   [`backup-mx.md`](../runbooks/backup-mx.md) → "VPN OCI PoP-2".
+> - **A config-distribution portal** ([vpn.viktorbarzin.me](https://vpn.viktorbarzin.me),
+>   `stacks/vpn-portal`) now hands out every proxy config as auto-updating
+>   subscription URLs (grouped by remote: Home / Cloudflare / OCI), registers
+>   WireGuard devices with client-side keygen, and enrolls devices into the
+>   Headscale tailnet on demand (short-lived pre-auth keys). Full design:
+>   [`docs/plans/2026-07-13-vpn-consolidation-config-portal-design.md`](../plans/2026-07-13-vpn-consolidation-config-portal-design.md).
+
 ## Overview
 
 Remote access to the homelab is provided through a hybrid VPN architecture: WireGuard site-to-site tunnels connect physical locations (Sofia, London, Valchedrym), while Headscale (self-hosted Tailscale control server) provides mesh overlay networking for roaming clients. Split DNS architecture ensures resilience: AdGuard serves as the global DNS resolver for all VPN clients, while Technitium handles internal `.lan` domains. This design prevents tunnel dependency for public DNS resolution — if the Cloudflared tunnel goes down, clients can still access the internet.
