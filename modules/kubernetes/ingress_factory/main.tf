@@ -160,6 +160,22 @@ variable "skip_default_rate_limit" {
   type    = bool
   default = false
 }
+variable "strip_x_real_ip" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Delete the X-Real-Ip request header before it reaches the backend
+    (traefik-drop-x-real-ip middleware). REQUIRED on every Anubis-fronted
+    ingress: Traefik stamps X-Real-Ip with its immediate TCP peer, which for
+    Cloudflare-tunneled traffic is a cloudflared pod IP that flaps per request
+    across the 3 replicas. Anubis binds its auth JWT to X-Real-Ip, so the flap
+    invalidated cookies mid-page-load and served challenge HTML to asset
+    requests (2026-07-14 home.viktorbarzin.me empty-page incident, see
+    docs/post-mortems/2026-07-14-anubis-x-real-ip-cookie-flap.md). With the
+    header absent, Anubis derives the client from X-Forwarded-For with private
+    hops stripped = the real, stable client IP.
+  EOT
+}
 variable "anti_ai_scraping" {
   type    = bool
   default = null # null = auto (enabled when not protected, disabled when protected)
@@ -363,6 +379,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
     namespace = var.namespace
     annotations = merge({
       "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact(concat([
+        var.strip_x_real_ip ? "traefik-drop-x-real-ip@kubernetescrd" : null,
         "traefik-retry@kubernetescrd",
         "traefik-error-pages@kubernetescrd",
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",

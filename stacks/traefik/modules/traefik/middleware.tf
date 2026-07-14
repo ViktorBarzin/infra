@@ -550,6 +550,35 @@ resource "kubernetes_manifest" "middleware_x402" {
   depends_on = [helm_release.traefik, kubernetes_service.x402_gateway]
 }
 
+# Deletes X-Real-Ip so the backend derives the client from X-Forwarded-For.
+# Traefik stamps X-Real-Ip with its immediate TCP peer; for Cloudflare-tunneled
+# traffic that peer is a cloudflared pod IP that flaps per request across the
+# 3 replicas. Anubis binds its auth JWT to X-Real-Ip, so the flap invalidated
+# cookies mid-page-load and served challenge HTML to the SPA's asset requests
+# (2026-07-14 home.viktorbarzin.me empty-page incident). With the header
+# absent, Anubis falls back to XFF with private hops stripped = the real,
+# stable client IP. Attached via ingress_factory strip_x_real_ip = true —
+# required on every Anubis-fronted ingress.
+resource "kubernetes_manifest" "middleware_drop_x_real_ip" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "drop-x-real-ip"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      headers = {
+        customRequestHeaders = {
+          "X-Real-Ip" = "" # empty value = delete the header
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 # X-Robots-Tag header to discourage compliant AI crawlers
 resource "kubernetes_manifest" "middleware_anti_ai_headers" {
   manifest = {
