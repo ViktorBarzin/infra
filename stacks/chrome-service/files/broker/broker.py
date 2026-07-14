@@ -26,8 +26,9 @@ API = "https://%s:%s" % (
 TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 MASTER_CDP = os.environ.get("MASTER_CDP_URL", "http://chrome-service.chrome-service.svc:9222")
-STATIC_DIR = os.environ.get("STATIC_DIR", "/app/static")
-TEMPLATE_PATH = os.environ.get("WORKER_POD_TEMPLATE", "/app/worker_pod.json")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.environ.get("STATIC_DIR", _HERE)  # index.html sits beside broker.py
+TEMPLATE_PATH = os.environ.get("WORKER_POD_TEMPLATE", os.path.join(_HERE, "worker_pod.json"))
 PORT = int(os.environ.get("PORT", "8080"))
 
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "6"))       # burst ceiling (design D6)
@@ -163,28 +164,58 @@ def current_url(ip):
 
 
 # ------------------------------------------------------------------ seed
+SEED_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed_export.py")
+
+
 def storage_state():
     """Fresh cookies+localStorage from the LIVE master, cached SEED_TTL seconds so an
-    acquire-burst shares one export. connect_over_cdp().close() only disconnects the CDP
-    client — it never kills the master (verified: same semantics as browser_runner.js)."""
+    acquire-burst shares one export. Runs seed_export.py as a SUBPROCESS (keeps Playwright's
+    sync API off the HTTP server's worker threads); connect_over_cdp().close() only
+    disconnects — it never kills the master (same semantics as browser_runner.js)."""
+    import subprocess
     with _seed_lock:
         now = time.time()
         if _seed["json"] is not None and now - _seed["at"] < SEED_TTL:
             return _seed["json"]
         t0 = time.time()
         try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                b = p.chromium.connect_over_cdp(MASTER_CDP, timeout=20000)
-                try:
-                    st = b.contexts[0].storage_state()
-                finally:
-                    b.close()
+            out = subprocess.check_output(
+                ["python3", SEED_SCRIPT],
+                env={**os.environ, "MASTER_CDP_URL": MASTER_CDP},
+                timeout=30, stderr=subprocess.PIPE)
+            st = json.loads(out)
             _seed.update(at=now, json=st, last_export_seconds=time.time() - t0)
             return st
         except Exception:
             _seed["errors"] += 1
             raise
+
+
+# ------------------------------------------------------------------ thumbnails
+SCREENSHOT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screenshot.py")
+_thumbs = {}          # session -> (ts, png_bytes)
+_thumbs_lock = threading.Lock()
+THUMB_TTL = 5         # seconds; bounds subprocess screenshots under FleetView polling
+
+
+def thumbnail(session, ip):
+    """PNG bytes for a session's active page, cached THUMB_TTL. best-effort → b'' on error."""
+    import subprocess
+    with _thumbs_lock:
+        cached = _thumbs.get(session)
+        now = time.time()
+        if cached and now - cached[0] < THUMB_TTL:
+            return cached[1]
+        if not ip:
+            return b""
+        try:
+            png = subprocess.check_output(
+                ["python3", SCREENSHOT_SCRIPT, f"http://{ip}:9222"],
+                timeout=15, stderr=subprocess.DEVNULL)
+        except Exception:
+            png = b""
+        _thumbs[session] = (now, png)
+        return png
 
 
 # ------------------------------------------------------------------ reaper
@@ -270,6 +301,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, storage_state())
             except Exception as e:
                 return self._send(502, {"error": f"seed export failed: {e}"})
+        if path == "/thumb":
+            from urllib.parse import parse_qs, urlparse
+            sess = parse_qs(urlparse(self.path).query).get("session", [""])[0]
+            pod = next((w for w in list_workers() if w["session"] == sess and sess), None)
+            png = thumbnail(sess, pod["ip"]) if pod else b""
+            if not png:
+                return self._send(204, b"", "image/png")
+            return self._send(200, png, "image/png")
         # static FleetView SPA
         return self._serve_static(path)
 

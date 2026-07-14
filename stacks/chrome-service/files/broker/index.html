@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FleetView — chrome-service pool</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
+  header { padding: 16px 20px; border-bottom: 1px solid #21262d; display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; }
+  .stat { color: #7d8590; }
+  .stat b { color: #e6edf3; }
+  main { padding: 16px 20px; }
+  .empty { color: #7d8590; padding: 40px 0; text-align: center; }
+  .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  .card { border: 1px solid #21262d; border-radius: 10px; overflow: hidden; background: #161b22; }
+  .thumb { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #0d1117; display: block; border-bottom: 1px solid #21262d; }
+  .body { padding: 10px 12px; }
+  .row { display: flex; justify-content: space-between; gap: 8px; margin: 2px 0; }
+  .k { color: #7d8590; }
+  .v { text-align: right; word-break: break-all; }
+  .owner { font-weight: 600; }
+  .url { color: #58a6ff; font-size: 13px; }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; }
+  .ready { background: #12331d; color: #3fb950; }
+  .booting { background: #3a2e12; color: #d29922; }
+  button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid #f85149; background: transparent; color: #f85149; cursor: pointer; margin-top: 8px; }
+  button:hover { background: #f85149; color: #fff; }
+  footer { color: #7d8590; padding: 0 20px 20px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🖥 FleetView</h1>
+  <span class="stat">active <b id="s-busy">–</b></span>
+  <span class="stat">warm <b id="s-warm">–</b></span>
+  <span class="stat">total <b id="s-total">–</b></span>
+  <span class="stat">updated <b id="s-upd">–</b></span>
+</header>
+<main>
+  <div id="empty" class="empty">No active sessions. Workers spin up when an agent acquires one.</div>
+  <div id="cards" class="cards"></div>
+</main>
+<footer>chrome-service pool · sessions refresh every 4s · thumbnails are best-effort live captures</footer>
+<script>
+// All dynamic values (owner/purpose/url from agents + scraped pages) are set via
+// textContent, never innerHTML — they are semi-trusted and must not inject markup.
+const $ = (id) => document.getElementById(id);
+function age(started) {
+  if (!started) return "–";
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - Number(started));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m " + (s % 60) + "s";
+  return Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m";
+}
+async function kill(session) {
+  if (!confirm("Kill session " + session + "?")) return;
+  await fetch("/release", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session }) });
+  refresh();
+}
+function row(k, v, vClass) {
+  const r = document.createElement("div"); r.className = "row";
+  const ks = document.createElement("span"); ks.className = "k"; ks.textContent = k;
+  const vs = document.createElement("span"); vs.className = "v" + (vClass ? " " + vClass : "");
+  vs.textContent = v || "–";
+  r.append(ks, vs); return r;
+}
+function card(s) {
+  const el = document.createElement("div"); el.className = "card";
+  const img = document.createElement("img"); img.className = "thumb";
+  if (s.session) {
+    img.src = "/thumb?session=" + encodeURIComponent(s.session) + "&t=" + Date.now();
+    img.onerror = () => { img.style.visibility = "hidden"; };
+  }
+  const body = document.createElement("div"); body.className = "body";
+  const head = document.createElement("div"); head.className = "row";
+  const owner = document.createElement("span"); owner.className = "owner"; owner.textContent = s.owner || "unknown";
+  const badge = document.createElement("span");
+  badge.className = "badge " + (s.ready ? "ready" : "booting");
+  badge.textContent = s.ready ? "ready" : "booting";
+  head.append(owner, badge);
+  const btn = document.createElement("button"); btn.textContent = "Kill";
+  btn.onclick = () => kill(s.session);
+  body.append(head, row("purpose", s.purpose), row("page", s.url, "url"),
+    row("age", age(s.started)), row("pod", s.name), btn);
+  el.append(img, body);
+  return el;
+}
+async function refresh() {
+  try {
+    const r = await fetch("/sessions");
+    const { sessions } = await r.json();
+    const active = sessions.filter((s) => s.session);
+    $("s-busy").textContent = active.length;
+    $("s-warm").textContent = sessions.filter((s) => !s.session && s.ready).length;
+    $("s-total").textContent = sessions.length;
+    $("s-upd").textContent = new Date().toLocaleTimeString();
+    const cards = $("cards");
+    cards.replaceChildren(...active.map(card));
+    $("empty").style.display = active.length ? "none" : "block";
+  } catch (e) { $("s-upd").textContent = "error"; }
+}
+refresh();
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>

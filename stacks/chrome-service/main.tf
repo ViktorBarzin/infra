@@ -511,6 +511,9 @@ resource "kubernetes_config_map_v1" "snapshot_scripts" {
     # 0.0.0.0:9222 → 127.0.0.1:9223 (Chromium silently ignores
     # --remote-debugging-address on stock builds; see cdp_bridge.py).
     "cdp_bridge.py" = file("${path.module}/files/cdp_bridge.py")
+    # Pool worker Chrome launcher (mounted into broker-created worker pods, which
+    # also reuse cdp_bridge.py above). See files/broker/worker_pod.json.
+    "worker_entrypoint.sh" = file("${path.module}/files/worker_entrypoint.sh")
   }
 }
 
