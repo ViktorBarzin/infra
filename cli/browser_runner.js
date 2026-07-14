@@ -5,7 +5,8 @@
 // arrive via HOMELAB_* env vars set by the Go CLI.
 'use strict';
 const fs = require('fs');
-const { chromium } = require('playwright-core');
+// patchright-core: playwright-core drop-in that avoids the Runtime.enable CDP leak.
+const { chromium } = require('patchright-core');
 
 async function main() {
   const cdpURL = process.env.HOMELAB_CDP_URL;
