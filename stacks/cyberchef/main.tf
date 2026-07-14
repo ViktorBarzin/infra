@@ -136,12 +136,15 @@ module "ingress" {
   sablier = {
     group = "cyberchef"
   }
-  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type          = "proxied"
-  namespace         = kubernetes_namespace.cyberchef.metadata[0].name
-  name              = "cc"
-  service_name      = module.anubis.service_name
-  port              = module.anubis.service_port
+  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  dns_type     = "proxied"
+  namespace    = kubernetes_namespace.cyberchef.metadata[0].name
+  name         = "cc"
+  service_name = module.anubis.service_name
+  port         = module.anubis.service_port
+  # Anubis binds its JWT to X-Real-Ip; the header must not reach it (flaps per
+  # request across cloudflared pods for CF-tunneled traffic) — see ingress_factory.
+  strip_x_real_ip   = true
   extra_middlewares = ["traefik-x402@kubernetescrd"]
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false
