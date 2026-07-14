@@ -235,6 +235,15 @@ resource "kubernetes_service" "health" {
       port        = 80
       target_port = 3000
     }
+    port {
+      # The FastAPI port, exposed ONLY for the health-api ingest route
+      # (ADR-0012) — the public host's /api/ingest goes straight to uvicorn,
+      # skipping the SvelteKit hop whose global CSRF guard rejects the
+      # Shortcut's cross-origin text/plain POST.
+      name        = "api"
+      port        = 8000
+      target_port = 8000
+    }
   }
 }
 
@@ -324,6 +333,7 @@ module "ingress_api" {
   service_name      = kubernetes_service.health.metadata[0].name
   tls_secret_name   = var.tls_secret_name
   ingress_path      = ["/api/ingest"]
+  port              = "8000"
   max_body_size     = "5m"
   extra_middlewares = ["traefik-strip-auth-headers@kubernetescrd"]
   extra_annotations = {
