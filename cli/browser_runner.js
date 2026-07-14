@@ -17,11 +17,20 @@ async function main() {
   const shared = process.env.HOMELAB_BROWSER_SHARED === '1';
   const keepOpen = process.env.HOMELAB_BROWSER_KEEP_OPEN === '1';
   const screenshotPath = process.env.HOMELAB_BROWSER_SCREENSHOT || '';
+  // Viewport for a fresh context. Default 1920x1080 DPR1 (high-res vision tier,
+  // Viktor's bigger-screen decision); --tall / --viewport override via the CLI.
+  // Playwright's newContext() ignores the Xvfb screen size, so this is what
+  // actually sizes the page (see docs/plans chrome-service-pool-design R4).
+  const vpEnv = process.env.HOMELAB_VIEWPORT || '1920,1080';
+  const [vw, vh] = vpEnv.split(',').map((n) => parseInt(n, 10));
+  // Seed file (the broker's on-demand storage_state export) — inject the master's
+  // cookies+localStorage into the fresh context, read-only. Absent for --shared-context.
+  const seedPath = process.env.HOMELAB_STORAGE_STATE || '';
 
   const browser = await chromium.connectOverCDP(cdpURL);
 
   // Fresh isolated context by default (safe for the shared browser + concurrent
-  // callers); --shared-context reuses the warmed persistent profile.
+  // callers); --shared-context reuses the warmed persistent profile on the MASTER.
   let context;
   let createdContext = false;
   if (shared) {
@@ -33,7 +42,10 @@ async function main() {
       createdContext = true;
     }
   } else {
-    context = await browser.newContext();
+    const ctxOpts = { deviceScaleFactor: 1 };
+    if (vw > 0 && vh > 0) ctxOpts.viewport = { width: vw, height: vh };
+    if (seedPath && fs.existsSync(seedPath)) ctxOpts.storageState = seedPath;
+    context = await browser.newContext(ctxOpts);
     createdContext = true;
   }
 
