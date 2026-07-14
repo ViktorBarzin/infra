@@ -195,10 +195,12 @@ module "ingress_fleet" {
   }
 }
 
-# Hard ceiling: the broker self-limits to MAX_WORKERS=6, but a namespace pod quota
-# guarantees a broker bug can never runaway-create browsers and pressure the cluster.
-# master(1) + broker(1) + warm(1) + burst(6) + backup/harvester CronJob pods(≈2) +
-# headroom = 14. count/pods caps pod COUNT only (no request/limit enforcement).
+# Custom namespace quota (replaces the Kyverno tier-4-aux tier-quota — the ns is
+# labelled resource-governance/custom-quota=true, so Kyverno stops generating it).
+# Sized for the pool: master(2Gi) + broker(0.25Gi) + burst-6 workers(2Gi req / 4Gi
+# lim each) + backup/harvester CronJob pods. requests.memory is the ceiling that
+# bounds a full burst; count/pods is the runaway-create backstop (broker also
+# self-limits to MAX_WORKERS=6). limits.memory headroom covers 6×4Gi worker limits.
 resource "kubernetes_resource_quota" "pool" {
   metadata {
     name      = "chrome-pool"
@@ -206,7 +208,10 @@ resource "kubernetes_resource_quota" "pool" {
   }
   spec {
     hard = {
-      "count/pods" = "14"
+      "requests.cpu"    = "4"
+      "requests.memory" = "16Gi"
+      "limits.memory"   = "40Gi"
+      "count/pods"      = "14"
     }
   }
 }
