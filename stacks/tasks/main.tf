@@ -291,6 +291,9 @@ module "ingress" {
   name            = "tasks"
   port            = 8000
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/icon" = "mdi-format-list-checks"
+  }
 }
 
 # Carve-out for the PWA icon assets + web manifest. macOS Safari's

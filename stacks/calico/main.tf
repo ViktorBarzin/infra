@@ -239,7 +239,7 @@ module "ingress_whisker" {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/name"        = "Whisker"
     "gethomepage.dev/description" = "Calico flow observability (who-talks-to-whom)"
-    "gethomepage.dev/icon"        = "calico.png"
+    "gethomepage.dev/icon"        = "mdi-graph-outline"
     "gethomepage.dev/group"       = "Infrastructure"
   }
 }

@@ -120,6 +120,45 @@ resource "oci_core_security_list" "backup_mx" {
       max = 22
     }
   }
+  # VPN OCI PoP-2 (vpn.viktorbarzin.me config portal, 2026-07-13): proxy egress
+  # paths that are neither the home WAN IP nor Cloudflare — the diversification
+  # a censored-network client needs. VLESS-REALITY on :8443 (:443 is taken by
+  # gatus/nginx, ADR-0020), Shadowsocks on :8388 (tcp+udp), and the dnstt DNS
+  # tunnel on :53 (udp). xray + dnstt-server provisioning lives in cloud-init
+  # (the canonical rebuild recipe); the running VM was brought up live over the
+  # break-glass SSH to avoid a rebuild. Mirrors the VM's own iptables.
+  ingress_security_rules {
+    protocol = "6"
+    source   = "0.0.0.0/0"
+    tcp_options {
+      min = 8443
+      max = 8443
+    }
+  }
+  ingress_security_rules {
+    protocol = "6"
+    source   = "0.0.0.0/0"
+    tcp_options {
+      min = 8388
+      max = 8388
+    }
+  }
+  ingress_security_rules {
+    protocol = "17"
+    source   = "0.0.0.0/0"
+    udp_options {
+      min = 8388
+      max = 8388
+    }
+  }
+  ingress_security_rules {
+    protocol = "17"
+    source   = "0.0.0.0/0"
+    udp_options {
+      min = 53
+      max = 53
+    }
+  }
   egress_security_rules {
     protocol    = "all"
     destination = "0.0.0.0/0"
@@ -178,6 +217,15 @@ resource "oci_core_instance" "mx2" {
       # template guards every alerting block on non-empty) instead of
       # breaking the plan or the VM.
       alertmanager_slack_api_url = try(data.vault_kv_secret_v2.platform.data["alertmanager_slack_api_url"], "")
+      # VPN OCI PoP-2 (vpn.viktorbarzin.me config portal, 2026-07-13): secrets
+      # for the xray REALITY/Shadowsocks + dnstt provisioning in the setup
+      # script below. Same UUID/SS password as the portal identity so one client
+      # config works across the home and OCI PoPs.
+      oci_xray_uuid       = data.vault_kv_secret_v2.viktor.data["oci_xray_uuid"]
+      oci_xray_ss_password = data.vault_kv_secret_v2.viktor.data["oci_xray_ss_password"]
+      oci_reality_privkey = data.vault_kv_secret_v2.viktor.data["oci_reality_privkey"]
+      oci_reality_shortid = data.vault_kv_secret_v2.viktor.data["oci_reality_shortid"]
+      dnstt_privkey       = data.vault_kv_secret_v2.viktor.data["dnstt_server_privkey"]
     }))
   }
 

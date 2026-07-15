@@ -343,7 +343,7 @@ next apply (discovery keyed on
 `sharing-strategy=time-slicing`, `nvidia.com/gpu.replicas=100`, so many pods
 share the single T4; request `nvidia.com/gpu: 1` for a slice, not the whole card):
 - immich-machine-learning (CLIP smart-search + facial recognition, CUDA)
-- immich-server (NVENC/NVDEC video transcoding — `ffmpeg.accel=nvenc` + `accelDecode=true`)
+- immich-worker (NVENC/NVDEC video transcoding — `ffmpeg.accel=nvenc` + `accelDecode=true`; ex immich-server — since the 2026-07-12 worker split the GPU-free `immich-api` replicas serve clients, only this job tier holds a GPU slice)
 - Frigate (object-detection inference)
 - llama-cpp / llama-swap (LLM inference)
 - nvidia-exporter + gpu-pod-exporter (DCGM metrics)

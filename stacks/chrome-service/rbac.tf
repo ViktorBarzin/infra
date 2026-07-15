@@ -93,3 +93,52 @@ resource "kubernetes_cluster_role_binding" "emo_browser_readonly" {
     namespace = kubernetes_namespace.chrome_service.metadata[0].name
   }
 }
+
+# --- Broker ServiceAccount ------------------------------------------------
+# The chrome-broker (broker.tf) manages the worker POOL: it creates one bare Pod
+# per session, claims/releases the warm-pool pod by patching its session label,
+# and deletes bare pods on release/idle-reap. Namespace-scoped pods CRUD only —
+# NO deployments, NO cluster scope. (Note: the wizard/emo `homelab browser`
+# callers keep their existing `pods/portforward create` grant above, which is
+# namespace-wide and already covers port-forwarding to a NAMED worker pod — no
+# new port-forward RBAC needed for the pool.)
+resource "kubernetes_service_account" "broker" {
+  metadata {
+    name      = "chrome-broker"
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "broker" {
+  metadata {
+    name      = "chrome-broker"
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get", "list", "watch", "create", "delete", "patch"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/log"]
+    verbs      = ["get"]
+  }
+}
+
+resource "kubernetes_role_binding" "broker" {
+  metadata {
+    name      = "chrome-broker"
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.broker.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.broker.metadata[0].name
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+  }
+}

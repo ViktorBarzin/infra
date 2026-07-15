@@ -237,6 +237,36 @@ wouldn't, the cloud-init mirror has drifted and that is the bug to fix.
   the outage outlives failure-threshold 3. Inbound mail caught in the window
   queues on mx2 and drains — expected, not a failure.
 
+## VPN OCI PoP-2 (config portal, added 2026-07-13)
+
+`mx2` doubles as **PoP-2** for the VPN config portal (`vpn.viktorbarzin.me`) — a
+proxy egress via Oracle's IP that is **neither the home WAN nor Cloudflare**, the
+diversification a censored-network client needs. Three transports, all egressing
+through Oracle and each verified end-to-end (`curl` via the transport →
+`ifconfig.me` == `92.5.132.215`):
+
+| Transport | Listener | Binary / unit | Notes |
+|---|---|---|---|
+| VLESS-REALITY | `:8443/tcp` | `xray` (`v26.3.27`) / `xray.service` | `:443` is gatus/nginx (ADR-0020), so REALITY is on `:8443`. Decoy SNI `www.cloudflare.com`. |
+| Shadowsocks | `:8388/tcp+udp` | same `xray` | chacha20-ietf-poly1305; same password as the portal identity. |
+| dnstt DNS tunnel | `:53/udp` | `dnstt-server` / `dnstt.service` | Binds the **primary private IP** (`ens3`, OCI NATs the public IP to it — `0.0.0.0:53` collides with systemd-resolved's `127.0.0.5x` stub). Forwards to a loopback SOCKS (xray freedom). |
+
+- **DNS delegation**: `t.viktorbarzin.me NS → mx2.viktorbarzin.me` (in-zone glue; `stacks/cloudflared`). A dnstt client resolves `<data>.t.viktorbarzin.me` through any DoH resolver → referred here.
+- **Secrets** (Vault `secret/viktor`): `oci_reality_privkey` / `oci_reality_pubkey` / `oci_reality_shortid`, `oci_xray_uuid`, `oci_xray_ss_password`, `dnstt_server_privkey` / `dnstt_server_pubkey`.
+- **IaC**: security-list ingress (`8443/tcp`, `8388/tcp+udp`, `53/udp`) in `stacks/backup-mx/main.tf`; provisioning in `cloud-init.yaml.tftpl` (`oci-vpn-pop-setup.sh` — installs pinned xray, builds dnstt from source, writes configs/units, opens iptables). Since `metadata` is `ignore_changes`, the running VM was configured live over break-glass SSH; the cloud-init is the rebuild recipe (see rebuild note below).
+- **On REBUILD** (`terraform taint` + apply): cloud-init runs `oci-vpn-pop-setup.sh` last (it installs `golang-go` to build dnstt — heavy on the 1 GB box, so a transient swapfile guards it). Verify with the drill below.
+
+Verify the PoP live (from any host that can reach it):
+
+```bash
+# reachability
+for p in 8443 8388; do nc -z -w4 92.5.132.215 $p && echo "$p ok"; done
+# REALITY + SS egress (needs xray client; see the portal e2e in vpn-portal/)
+# dnstt: dnstt-client -doh https://cloudflare-dns.com/dns-query \
+#   -pubkey <secret/viktor:dnstt_server_pubkey> t.viktorbarzin.me 127.0.0.1:1080
+# then: curl --socks5-hostname 127.0.0.1:1080 https://ifconfig.me  # -> 92.5.132.215
+```
+
 ## Gotchas learned during bring-up (2026-07-08)
 
 - **OCI egress TCP 25 is blocked tenancy-wide** — the drain works only because

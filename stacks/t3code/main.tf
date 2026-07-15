@@ -108,6 +108,8 @@ module "ingress_probe" {
   dns_type         = "none" # main `module.ingress` owns the DNS record for this host
   namespace        = kubernetes_namespace.t3code.metadata[0].name
   name             = "t3-probe"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = kubernetes_service.t3code.metadata[0].name
   full_host        = "t3.viktorbarzin.me"
   ingress_path     = ["/probe"]

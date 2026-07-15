@@ -246,6 +246,9 @@ module "ingress" {
   tls_secret_name         = var.tls_secret_name
   allow_local_access_only = true
   ssl_redirect            = false
+  extra_annotations = {
+    "gethomepage.dev/icon" = "nvidia.png"
+  }
 }
 
 # resource "kubernetes_ingress_v1" "nvidia-exporter" {

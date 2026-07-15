@@ -217,52 +217,13 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_TIKA_GOTENBERG_ENDPOINT"
             value = "http://gotenberg.paperless-ngx.svc.cluster.local:3000"
           }
-          # Processing concurrency for the bulk Emo import (~13.7k docs, mostly
-          # scanned/office => OCR/convert-bound). 4 workers: 6 OOMKilled the pod
-          # (crept past the 8Gi tier-defaults LimitRange cap over ~6h; that cap
-          # is shared across the edge tier, not worth raising for one ns). 4
-          # fits with headroom (4 workers measured ~1.3Gi). OCR temp stays on
-          # ephemeral scratch (fast); the consume QUEUE is on the PVC so a
-          # restart never loses queued work. Watch etcd apply latency. Revert
-          # workers/threads/mem to defaults once import is done.
-          env {
-            name  = "PAPERLESS_TASK_WORKERS"
-            value = "4"
-          }
-          env {
-            name  = "PAPERLESS_THREADS_PER_WORKER"
-            value = "1"
-          }
           # Skip the redundant OCR'd archive PDF for inputs that already carry a
-          # text layer (born-digital PDFs + office->PDF via Gotenberg). Big
-          # speed/IO saver for emo's work-doc set; scanned docs still OCR+archive.
+          # text layer (born-digital PDFs + office->PDF via Gotenberg). Kept as
+          # standing config after the 2026-06/07 Emo bulk import: big speed/IO
+          # saver, harmless for scanned docs (they still OCR+archive).
           env {
             name  = "PAPERLESS_OCR_SKIP_ARCHIVE_FILE"
             value = "with_text"
-          }
-          # Bulk-import ingest path = the CONSUME DIRECTORY on the PVC (not the
-          # API). post_document writes each upload to ephemeral scratch then
-          # queues it in redis -> a pod or redis restart loses in-flight work
-          # ("File not found"). The consume dir instead lives on the encrypted
-          # PVC, and POLLING re-scans the whole dir every 60s (watchdog snapshot
-          # resets on startup, so files dropped while paperless was down are
-          # picked up too) with a size+mtime stability check (won't grab a
-          # half-copied file). Net: restart-safe, self-healing bulk ingest — the
-          # folder IS the durable queue. RECURSIVE walks subdirs (source tree is
-          # copied in with structure, avoiding basename collisions). Owner+tag
-          # are applied by a consumption workflow scoped to the import subdir.
-          # Revert (remove these three env blocks) once the import is done.
-          env {
-            name  = "PAPERLESS_CONSUMPTION_DIR"
-            value = "/usr/src/paperless/data/consume"
-          }
-          env {
-            name  = "PAPERLESS_CONSUMER_RECURSIVE"
-            value = "true"
-          }
-          env {
-            name  = "PAPERLESS_CONSUMER_POLLING"
-            value = "60"
           }
           volume_mount {
             name       = "data"
@@ -335,9 +296,8 @@ resource "kubernetes_service" "paperless-ngx" {
 # --- Tika + Gotenberg: Office/email -> text/PDF conversion for paperless ---
 # Apache Tika extracts text+metadata; Gotenberg renders Office formats to PDF.
 # Paperless routes Office/email docs through these (PAPERLESS_TIKA_* above).
-# Stateless (no PVC), pinned images. 3 replicas during the bulk import: a
-# single LibreOffice instance 503s under concurrent paperless workers; the
-# Service load-balances office conversions across the replicas.
+# Stateless (no PVC), pinned images. 1 replica each at steady state (they were
+# scaled to 3x/2x for the 2026-06/07 Emo bulk import and reverted after).
 resource "kubernetes_deployment" "gotenberg" {
   metadata {
     name      = "gotenberg"
@@ -348,7 +308,7 @@ resource "kubernetes_deployment" "gotenberg" {
     }
   }
   spec {
-    replicas = 3
+    replicas = 1
     selector {
       match_labels = {
         app = "gotenberg"
@@ -433,7 +393,7 @@ resource "kubernetes_deployment" "tika" {
     }
   }
   spec {
-    replicas = 2
+    replicas = 1
     selector {
       match_labels = {
         app = "tika"

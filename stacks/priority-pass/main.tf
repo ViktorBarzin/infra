@@ -177,6 +177,9 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   auth            = "required"
   max_body_size   = "10m"
+  extra_annotations = {
+    "gethomepage.dev/icon" = "mdi-airplane"
+  }
 }
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)

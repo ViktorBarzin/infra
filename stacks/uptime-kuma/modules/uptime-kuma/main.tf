@@ -432,6 +432,12 @@ DEFAULT_PATH = "/"
 # When an explicit probe path is set we expect a real healthz: tighten codes.
 STATUSCODES_LENIENT = ["200-299", "300-399", "400-499"]
 STATUSCODES_STRICT = ["200-299"]
+# Synthetic client IP for probes of Anubis-fronted hosts. Anubis 500s a request
+# with no client IP; this in-cluster probe carries none. TEST-NET-3 (RFC5737)
+# is a documentation range Anubis treats as a public client (survives
+# XFF_STRIP_PRIVATE), so the probe gets the PoW challenge page (200) not a 500.
+ANUBIS_PROBE_IP = "203.0.113.10"
+ANUBIS_PROBE_HEADERS = '{"X-Forwarded-For": "203.0.113.10"}'
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 API_SERVER = f"https://{os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc.cluster.local')}:{os.environ.get('KUBERNETES_SERVICE_PORT', '443')}"
 
@@ -478,7 +484,18 @@ def load_from_api():
         # and avoids every sync re-updating unchanged monitors.
         url = f"https://{host}{path}" if path else f"https://{host}"
         statuscodes = STATUSCODES_STRICT if path else STATUSCODES_LENIENT
-        targets.append({"name": label, "url": url, "statuscodes": statuscodes})
+        # Anubis-fronted ingresses reject a request that carries no client IP
+        # with HTTP 500 ("X-Real-Ip header is not set"). This in-cluster probe
+        # resolves *.viktorbarzin.me to the internal Traefik LB (split-horizon)
+        # and arrives with neither X-Real-Ip nor XFF, so it needs a synthetic
+        # XFF (see ANUBIS_PROBE_HEADERS). Detect by the backend service (anubis-*).
+        svc_names = [
+            ((p.get("backend") or {}).get("service") or {}).get("name", "")
+            for r in ((ing.get("spec") or {}).get("rules") or [])
+            for p in (((r.get("http") or {}).get("paths")) or [])
+        ]
+        is_anubis = any(s.startswith("anubis-") for s in svc_names)
+        targets.append({"name": label, "url": url, "statuscodes": statuscodes, "anubis": is_anubis})
     return targets
 
 
@@ -540,7 +557,7 @@ for t in targets:
     targets_by_name[monitor_name] = t
     if monitor_name not in existing_external:
         print(f"Creating monitor: {monitor_name} -> {t['url']}")
-        api.add_monitor(
+        add_kwargs = dict(
             type=MonitorType.HTTP,
             name=monitor_name,
             url=t["url"],
@@ -548,6 +565,9 @@ for t in targets:
             maxretries=3,
             accepted_statuscodes=t["statuscodes"],
         )
+        if t.get("anubis"):
+            add_kwargs["headers"] = ANUBIS_PROBE_HEADERS
+        api.add_monitor(**add_kwargs)
         created += 1
         time.sleep(0.3)
 
@@ -560,14 +580,19 @@ for monitor_name, t in targets_by_name.items():
         continue
     current_url = existing.get("url")
     current_codes = existing.get("accepted_statuscodes") or []
-    if current_url == t["url"] and current_codes == t["statuscodes"]:
+    # Anubis monitors need the synthetic XFF header. Detect drift by IP presence
+    # (not exact-string) so kuma's own header re-formatting doesn't churn.
+    header_drift = bool(t.get("anubis")) and ANUBIS_PROBE_IP not in (existing.get("headers") or "")
+    if current_url == t["url"] and current_codes == t["statuscodes"] and not header_drift:
         continue
-    print(f"Updating monitor {monitor_name}: {current_url} -> {t['url']} (codes {current_codes} -> {t['statuscodes']})")
-    api.edit_monitor(
-        existing["id"],
+    print(f"Updating monitor {monitor_name}: {current_url} -> {t['url']} (codes {current_codes} -> {t['statuscodes']}, header_drift={header_drift})")
+    edit_kwargs = dict(
         url=t["url"],
         accepted_statuscodes=t["statuscodes"],
     )
+    if t.get("anubis"):
+        edit_kwargs["headers"] = ANUBIS_PROBE_HEADERS
+    api.edit_monitor(existing["id"], **edit_kwargs)
     updated += 1
     time.sleep(0.3)
 

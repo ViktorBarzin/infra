@@ -39,6 +39,11 @@ locals {
   # non-Authentik response (200/3xx-non-authentik/400/404/426/…) when the
   # carve-out is intact. Probed every 60s; alert fires only on an Authentik 302.
   authentik_walloff_targets = {
+    # vpn-portal /sub token subscription (auth="none" carve-out, stacks/vpn-portal
+    # module.ingress_sub): VPN clients poll it with a per-user token and cannot do
+    # OIDC. A 404 for a bogus token = backend up + not walled off; an Authentik
+    # 302 here would silently break every client's config auto-update.
+    "vpn-portal-sub" = "https://vpn.viktorbarzin.me/sub/uptime-probe"
     # meshcentral agent/relay paths (auth="none"): native mesh-cert clients.
     # /agent.ashx 404s without WebSocket upgrade headers — non-redirect = OK.
     "meshcentral-agent" = "https://meshcentral.viktorbarzin.me/agent.ashx"

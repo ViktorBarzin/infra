@@ -317,9 +317,13 @@ module "ingress" {
   auth = "app"
   # Owner-only admin surface: resolvable everywhere, routable only from home
   # LANs/WG/VPN; pair with the allowlist middleware per ADR-0021.
-  dns_type          = "internal"
-  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
-  external_monitor  = false
+  dns_type = "internal"
+  # The SPA cold-loads ~40-60 chunks in one burst; over the cloudflared path
+  # Traefik sees one client IP, so the default 10/50 limiter 429s the tail.
+  # Dedicated 100/1000 limiter (SPA cold-load pattern), allowlist gates first.
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-home-lans-only@kubernetescrd", "traefik-executor-rate-limit@kubernetescrd"]
+  external_monitor        = false
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Executor"
@@ -350,6 +354,24 @@ resource "kubernetes_cron_job_v1" "executor_backup" {
           metadata {}
           spec {
             restart_policy = "Never"
+            # /data is the app's RWO block volume: it attaches to ONE node and
+            # the always-on executor pod holds that attach, so the backup pod
+            # must land on the same node (RWO mounts twice only there). The
+            # first run had no constraint, landed on node5 vs executor on
+            # node2, and wedged in ContainerCreating for 27h. Required (not
+            # drone-logbook's preferred) — executor is never sablier-parked.
+            affinity {
+              pod_affinity {
+                required_during_scheduling_ignored_during_execution {
+                  label_selector {
+                    match_labels = {
+                      app = "executor"
+                    }
+                  }
+                  topology_key = "kubernetes.io/hostname"
+                }
+              }
+            }
             container {
               name  = "backup"
               image = "python:3.12-alpine"

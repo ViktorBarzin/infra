@@ -86,4 +86,7 @@ module "prometheus-query-ingress" {
   ssl_redirect            = false
   port                    = 80
   ingress_path            = ["/api/v1/query"]
+  extra_annotations = {
+    "gethomepage.dev/icon" = "prometheus.png"
+  }
 }

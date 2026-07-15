@@ -110,9 +110,11 @@ module "ingress-outpost" {
   # Authentik forward-auth outpost callback path — protecting this with
   # forward-auth would loop the outpost back onto itself.
   # auth = "none": Authentik outpost callback path for forward-auth flow; protecting with forward-auth creates circular dependency.
-  auth             = "none"
-  namespace        = kubernetes_namespace.authentik.metadata[0].name
-  name             = "authentik-outpost"
+  auth      = "none"
+  namespace = kubernetes_namespace.authentik.metadata[0].name
+  name      = "authentik-outpost"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   host             = "authentik"
   service_name     = "ak-outpost-authentik-embedded-outpost"
   port             = 9000

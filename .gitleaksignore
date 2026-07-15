@@ -9,3 +9,9 @@ stacks/recruiter-responder/secrets/privkey.pem:private-key:1
 # secret is committed.
 stacks/nextcloud-todos/main.tf:curl-auth-user:383
 stacks/nextcloud-todos/main.tf:curl-auth-user:400
+
+# False positive: the `jfrog-identity-token` rule matches the bare 64-hex Xray
+# release SHA256 (XRAY_SHA) in the OCI VPN PoP cloud-init setup script. It is a
+# PUBLIC release checksum (Xray-core v26.3.27 .dgst), not a secret — the actual
+# xray/dnstt secrets are templated from Vault (${oci_*}/${dnstt_privkey}).
+stacks/backup-mx/cloud-init.yaml.tftpl:jfrog-identity-token:613

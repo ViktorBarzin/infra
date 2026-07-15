@@ -30,6 +30,11 @@ resource "kubernetes_namespace" "chrome_service" {
       tier                                    = local.tiers.aux
       "chrome-service.viktorbarzin.me/server" = "true"
       "keel.sh/enrolled"                      = "true"
+      # Opt out of the Kyverno-generated tier-4-aux tier-quota (3Gi requests.memory
+      # — far too small for the burst-6 worker pool). We define our own quota in
+      # broker.tf (kubernetes_resource_quota.pool). The tier-4-aux LimitRange still
+      # applies (max 4Gi/container, which all our containers respect).
+      "resource-governance/custom-quota" = "true"
     }
   }
   lifecycle {
@@ -225,7 +230,7 @@ resource "kubernetes_deployment" "chrome_service" {
             # attach over the pod's shared network ns (Ubuntu 24.04
             # defaults Xvfb to -nolisten tcp). -ac disables X access
             # control; safe because Xvfb only listens on the pod's lo.
-            Xvfb :99 -screen 0 1280x720x24 -listen tcp -ac &
+            Xvfb :99 -screen 0 1920x1080x24 -listen tcp -ac &
             sleep 1
 
             mkdir -p /profile/chromium-data ${local.snapshot_dir}
@@ -260,7 +265,7 @@ resource "kubernetes_deployment" "chrome_service" {
               --password-store=basic \
               --use-mock-keychain \
               --window-position=0,0 \
-              --window-size=1280,720 \
+              --window-size=1920,1080 \
               about:blank
             EOT
           ]
@@ -282,8 +287,16 @@ resource "kubernetes_deployment" "chrome_service" {
 
           # Chrome's CDP endpoint serves /json/version once it's bound;
           # TCP-open is enough for readiness.
+          # Real CDP health check, NOT tcp_socket: a wedged Chrome on about:blank
+          # keeps :9222 OPEN so a TCP probe passes and the wedge runs undetected
+          # (the 6.5h-wedge class). GET /json/version only answers when the
+          # DevTools HTTP server is live. python3 is present (cdp_bridge.py runs
+          # in this container).
           liveness_probe {
-            tcp_socket { port = 9222 }
+            exec {
+              command = ["python3", "-c",
+              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9222/json/version',timeout=5).status==200 else 1)"]
+            }
             initial_delay_seconds = 30
             period_seconds        = 30
             failure_threshold     = 3
@@ -315,13 +328,16 @@ resource "kubernetes_deployment" "chrome_service" {
             read_only  = true
           }
 
+          # Raised from 1500Mi/2624Mi: the chrome container OOMKilled (exit 137)
+          # at the 2624Mi ceiling at 1280x720 (2026-07-12); 1920x1080 renders
+          # more, so give it headroom.
           resources {
             requests = {
               cpu    = "200m"
-              memory = "1500Mi"
+              memory = "2Gi"
             }
             limits = {
-              memory = "2624Mi"
+              memory = "4Gi"
             }
           }
         }
@@ -448,7 +464,7 @@ resource "kubernetes_deployment" "chrome_service" {
           name = "dshm"
           empty_dir {
             medium     = "Memory"
-            size_limit = "256Mi"
+            size_limit = "512Mi"
           }
         }
         volume {
@@ -500,6 +516,9 @@ resource "kubernetes_config_map_v1" "snapshot_scripts" {
     # 0.0.0.0:9222 → 127.0.0.1:9223 (Chromium silently ignores
     # --remote-debugging-address on stock builds; see cdp_bridge.py).
     "cdp_bridge.py" = file("${path.module}/files/cdp_bridge.py")
+    # Pool worker Chrome launcher (mounted into broker-created worker pods, which
+    # also reuse cdp_bridge.py above). See files/broker/worker_pod.json.
+    "worker_entrypoint.sh" = file("${path.module}/files/worker_entrypoint.sh")
   }
 }
 
