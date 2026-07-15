@@ -614,6 +614,9 @@ locals {
       command            = ["python", "-m", "tripit_api", "ingest-mail"]
       suspend            = false
       imap_pw_secret_key = "PLANS_IMAP_PASSWORD"
+      # A sweep is normally <90s; with concurrency_policy=Forbid a hung run would
+      # block every future sweep, so bound it (2026-07-15 ingest resilience).
+      active_deadline_seconds = 600
       extra_env = {
         LLM_MODE     = "llamacpp"
         LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
@@ -720,7 +723,11 @@ resource "kubernetes_cron_job_v1" "tripit_worker" {
         labels = local.labels
       }
       spec {
-        backoff_limit              = 1
+        # 1 gave only 2 pod attempts ~10s apart, so a sub-minute cluster-DNS /
+        # IMAP blip failed the whole job (the 2026-07-15 ingest failures). 3
+        # attempts span the K8s backoff window past a typical blip.
+        backoff_limit              = 3
+        active_deadline_seconds    = lookup(each.value, "active_deadline_seconds", null)
         ttl_seconds_after_finished = 86400
         template {
           metadata {
