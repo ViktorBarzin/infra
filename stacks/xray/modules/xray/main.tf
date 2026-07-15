@@ -214,29 +214,33 @@ module "ingress_ws" {
   source = "../../../../modules/kubernetes/ingress_factory"
   # VPN protocol (WebSocket transport) — native xray clients, not browsers.
   # auth = "none": VPN protocol (WebSocket transport) — native xray clients, not browsers; forward-auth incompatible.
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.xray.metadata[0].name
-  name            = "xray-ws"
-  service_name    = "xray"
-  host            = "xray-ws"
-  port            = 8443
-  tls_secret_name = var.tls_secret_name
+  auth      = "none"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.xray.metadata[0].name
+  name      = "xray-ws"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  service_name     = "xray"
+  host             = "xray-ws"
+  port             = 8443
+  tls_secret_name  = var.tls_secret_name
 }
 
 module "ingress_grpc" {
   source = "../../../../modules/kubernetes/ingress_factory"
   # VPN protocol (gRPC transport) — native xray clients, not browsers.
   # auth = "none": VPN protocol (gRPC transport) — native xray clients, not browsers; forward-auth incompatible.
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.xray.metadata[0].name
-  name            = "xray-grpc"
-  service_name    = "xray"
-  host            = "xray-grpc"
-  port            = 9443
-  tls_secret_name = var.tls_secret_name
-  ingress_path    = ["/grpc-vpn"]
+  auth      = "none"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.xray.metadata[0].name
+  name      = "xray-grpc"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  service_name     = "xray"
+  host             = "xray-grpc"
+  port             = 9443
+  tls_secret_name  = var.tls_secret_name
+  ingress_path     = ["/grpc-vpn"]
   extra_annotations = {
     "traefik.ingress.kubernetes.io/service.serversscheme" = "h2c"
   }

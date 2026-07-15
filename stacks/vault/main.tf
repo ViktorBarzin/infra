@@ -677,6 +677,33 @@ resource "vault_kubernetes_auth_backend_role" "hermes_agent" {
   token_period                     = 432000 # periodic: auto-renews indefinitely
 }
 
+resource "vault_policy" "vpn_portal" {
+  name = "vpn-portal"
+  # stacks/vpn-portal — the VPN config portal at vpn.viktorbarzin.me reads its
+  # own config AND writes the WireGuard peer list (client-side keygen registers
+  # only public keys). Least-privilege: create+read+update on its ONE KV path.
+  # (Created live via the Vault API on 2026-07-13 while this stack had an
+  # in-flight provider-floor edit; this HCL adopts the existing role/policy.)
+  policy = <<-EOT
+    path "secret/data/vpn-portal" {
+      capabilities = ["create", "read", "update"]
+    }
+    path "secret/metadata/vpn-portal" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+resource "vault_kubernetes_auth_backend_role" "vpn_portal" {
+  backend                          = vault_auth_backend.kubernetes.path
+  role_name                        = "vpn-portal"
+  bound_service_account_names      = ["vpn-portal"]
+  bound_service_account_namespaces = ["vpn-portal"]
+  token_policies                   = [vault_policy.vpn_portal.name]
+  token_ttl                        = 345600 # 4d (staggered from ci=7d, eso=10d, woodpecker=8d, openclaw=9d, terraform-state=6d, hermes=5d)
+  token_period                     = 345600 # periodic: auto-renews indefinitely
+}
+
 # =============================================================================
 # Database Secrets Engine — Static Password Rotation
 # =============================================================================

@@ -160,6 +160,30 @@ variable "skip_default_rate_limit" {
   type    = bool
   default = false
 }
+variable "strip_x_real_ip" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Delete the X-Real-Ip request header before it reaches the backend
+    (traefik-drop-x-real-ip middleware). Set true on PROXIED (Cloudflare)
+    Anubis-fronted ingresses ONLY: Traefik stamps X-Real-Ip with its immediate
+    TCP peer, which for CF-tunneled traffic is a cloudflared pod IP that flaps
+    per request across the 3 replicas. Anubis binds its auth cookie to
+    X-Real-Ip, so the flap invalidated cookies mid-page-load and served
+    challenge HTML to asset requests (2026-07-14 home.viktorbarzin.me
+    empty-page incident, see the post-mortem). With the header absent, Anubis
+    derives the client from X-Forwarded-For with private hops stripped = the
+    real, stable client IP.
+
+    DO NOT set on NON-PROXIED Anubis sites (f1, kms): there X-Real-Ip is the
+    stable real client (pfSense PROXY-protocol, no cloudflared), so stripping
+    it has no benefit and makes Anubis 500 ("X-Real-Ip header is not set") on
+    any request that also lacks XFF — e.g. in-cluster Uptime-Kuma probes. The
+    2026-07-14 follow-up incident (IngressErrorRate5xxHigh) traced to exactly
+    this. Proxied sites keep the strip; their in-cluster monitors carry a
+    synthetic XFF (see stacks/uptime-kuma ANUBIS_PROBE_HEADERS).
+  EOT
+}
 variable "anti_ai_scraping" {
   type    = bool
   default = null # null = auto (enabled when not protected, disabled when protected)
@@ -236,8 +260,16 @@ variable "homepage_group" {
 }
 
 variable "homepage_enabled" {
-  type    = bool
-  default = true
+  type        = bool
+  default     = true
+  description = <<-EOT
+    Emit gethomepage.dev/* annotations so the ingress gets a tile on
+    home.viktorbarzin.me. CONVENTION (dedupe sweep 2026-07-14): every
+    SECONDARY ingress of an app — path carve-outs, API/webhook hosts,
+    protocol endpoints, probe targets — must set this to false, otherwise
+    the directory shows duplicate tiles for one service (and the guessed
+    default icon of a multi-word name is a broken image). One app, one tile.
+  EOT
 }
 
 locals {
@@ -363,6 +395,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
     namespace = var.namespace
     annotations = merge({
       "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact(concat([
+        var.strip_x_real_ip ? "traefik-drop-x-real-ip@kubernetescrd" : null,
         "traefik-retry@kubernetescrd",
         "traefik-error-pages@kubernetescrd",
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",

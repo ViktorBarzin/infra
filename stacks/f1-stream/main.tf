@@ -326,13 +326,17 @@ module "anubis" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type          = "non-proxied"
-  namespace         = kubernetes_namespace.f1-stream.metadata[0].name
-  name              = "f1"
-  service_name      = module.anubis.service_name
-  port              = module.anubis.service_port
+  source       = "../../modules/kubernetes/ingress_factory"
+  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  dns_type     = "non-proxied"
+  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
+  name         = "f1"
+  service_name = module.anubis.service_name
+  port         = module.anubis.service_port
+  # NOTE: no strip_x_real_ip here. f1 is dns_type=non-proxied — traffic arrives
+  # via pfSense PROXY-protocol, so Traefik stamps X-Real-Ip with the STABLE real
+  # client (no cloudflared flap). Stripping it only broke headerless in-cluster
+  # probes (Anubis 500 "X-Real-Ip header is not set"). Strip is proxied-only.
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false
   extra_middlewares = ["traefik-x402@kubernetescrd"]

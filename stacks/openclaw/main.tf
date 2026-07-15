@@ -2199,4 +2199,7 @@ module "openlobster_ingress" {
   host            = "openlobster"
   port            = 80
   auth            = "required"
+  extra_annotations = {
+    "gethomepage.dev/icon" = "openclaw.png"
+  }
 }

@@ -98,26 +98,69 @@ func TestCDPHealthy(t *testing.T) {
 	}
 }
 
-func TestBuildPortForwardArgs(t *testing.T) {
-	got := buildPortForwardArgs(18080)
+func TestBuildPortForwardArgsMaster(t *testing.T) {
+	got := buildPortForwardArgs("svc/chrome-service", 18080, 9222)
 	want := []string{"-n", "chrome-service", "port-forward", "svc/chrome-service", "18080:9222"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("buildPortForwardArgs =\n %v\nwant\n %v", got, want)
+		t.Fatalf("buildPortForwardArgs(master) =\n %v\nwant\n %v", got, want)
+	}
+}
+
+func TestBuildPortForwardArgsWorkerPodTarget(t *testing.T) {
+	// The pool path forwards to a NAMED worker pod, not the Service (which would
+	// load-balance to a random pool pod). Covered by the existing namespace-wide
+	// pods/portforward grant.
+	got := buildPortForwardArgs("pod/chrome-worker-abc123", 12345, 9222)
+	want := []string{"-n", "chrome-service", "port-forward", "pod/chrome-worker-abc123", "12345:9222"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildPortForwardArgs(worker) =\n %v\nwant\n %v", got, want)
+	}
+}
+
+func TestParseAcquire(t *testing.T) {
+	pod, port, session, err := parseAcquire([]byte(`{"pod":"chrome-worker-abc123","cdpPort":9222,"session":"abc123","reused":false}`))
+	if err != nil {
+		t.Fatalf("parseAcquire: %v", err)
+	}
+	if pod != "chrome-worker-abc123" || port != 9222 || session != "abc123" {
+		t.Fatalf("parseAcquire = %q %d %q", pod, port, session)
+	}
+	// an error body (broker at capacity) must surface as an error, not empty success
+	if _, _, _, err := parseAcquire([]byte(`{"error":"pool at capacity (6); retry shortly"}`)); err == nil {
+		t.Fatalf("parseAcquire must error on an {\"error\":...} broker response")
+	}
+	if _, _, _, err := parseAcquire([]byte(`not json`)); err == nil {
+		t.Fatalf("parseAcquire must error on malformed JSON")
+	}
+}
+
+func TestResolveViewport(t *testing.T) {
+	// --tall wins; explicit --viewport next; default empty (runner defaults to 1920x1080)
+	if v := resolveViewport(browserOpts{tall: true}); v != "1280,2000" {
+		t.Fatalf("--tall viewport = %q, want 1280,2000", v)
+	}
+	if v := resolveViewport(browserOpts{viewport: "2560,1440"}); v != "2560,1440" {
+		t.Fatalf("--viewport passthrough = %q", v)
+	}
+	if v := resolveViewport(browserOpts{}); v != "" {
+		t.Fatalf("no viewport flag should yield empty (runner default), got %q", v)
 	}
 }
 
 func TestBrowserClientPackageJSONPinsVersion(t *testing.T) {
 	pj := browserClientPackageJSON()
-	if !strings.Contains(pj, `"playwright-core": "`+playwrightVersion+`"`) {
-		t.Fatalf("package.json must pin playwright-core to %s; got:\n%s", playwrightVersion, pj)
+	if !strings.Contains(pj, `"`+clientPackage+`": "`+clientVersion+`"`) {
+		t.Fatalf("package.json must pin %s to %s; got:\n%s", clientPackage, clientVersion, pj)
 	}
 }
 
-func TestPlaywrightVersionPinnedToServerMinor(t *testing.T) {
-	// chrome-service runs mcr.microsoft.com/playwright:v1.48.0-noble; the CDP
-	// client minor MUST match (protocol changes between minors).
-	if !strings.HasPrefix(playwrightVersion, "1.48.") {
-		t.Fatalf("playwrightVersion = %q, must be 1.48.x to match the chrome-service image", playwrightVersion)
+func TestClientIsPatchright(t *testing.T) {
+	// The CDP client is patchright-core (a playwright-core drop-in that avoids the
+	// Runtime.enable leak Cloudflare/DataDome watch for). connect_over_cdp is
+	// version-tolerant, and the chrome-service browser is real Chrome (newer than
+	// the old 1.48 pin), so tracking a current patchright is correct.
+	if clientPackage != "patchright-core" {
+		t.Fatalf("clientPackage = %q, want patchright-core (closes the Runtime.enable CDP leak)", clientPackage)
 	}
 }
 

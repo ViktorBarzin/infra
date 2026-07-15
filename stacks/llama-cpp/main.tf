@@ -48,8 +48,10 @@ locals {
     # Q4_K_M, ~4.7GB, 32k native context (capped at 16k here — plenty
     # for recruiter emails + extraction prompt + JSON output).
     # Unsloth's GGUF: well-maintained, includes Q4_K_M. Qwen3 is a
-    # thinking-capable model; recruiter-responder disables thinking via
-    # `enable_thinking=false` in the chat-template kwargs.
+    # thinking-capable model; thinking is force-disabled server-side for
+    # qwen3-8b via `--reasoning off` in the cmd builder below (2026-07-13 — see
+    # that comment). recruiter-responder also sends enable_thinking=false
+    # per-request; the server flag makes it the default for all consumers.
     qwen3-8b = {
       hf_repo        = "unsloth/Qwen3-8B-GGUF"
       gguf_pattern   = "*Q4_K_M*.gguf"
@@ -87,7 +89,14 @@ locals {
           "-np 1",
           "--jinja",
           "-fa on",
-        ]))
+          # qwen3-8b: force reasoning OFF. Qwen3 defaults to thinking under
+          # --jinja, which returns an EMPTY message.content (all output goes to
+          # reasoning_content) and blows the token budget -> paperless-ai gets
+          # no JSON, every enrichment call fails, and each call is ~50x slower.
+          # `--reasoning off` is llama.cpp's supported control (it deprecates
+          # the enable_thinking chat-template kwarg recruiter-responder uses).
+          # Scoped to qwen3-8b via mid; vision models keep default reasoning.
+        ], mid == "qwen3-8b" ? ["--reasoning off"] : []))
         ttl           = 600 # unload after 10 min idle
         checkEndpoint = "/health"
       }

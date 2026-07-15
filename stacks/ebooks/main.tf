@@ -437,15 +437,13 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
     name      = "annas-archive-stacks"
     namespace = kubernetes_namespace.ebooks.metadata[0].name
     labels = {
+      # Deliberately NOT sablier-enrolled (un-enrolled 2026-07-14, Viktor):
+      # book-search consumes this service SERVER-SIDE via ClusterIP
+      # (STACKS_URL in book-search/backend/annas.py) — that path can never
+      # trigger a sablier wake, so a parked instance silently kills the
+      # Anna's Archive download pipeline. Always-on; do not re-enroll.
       app  = "annas-archive-stacks"
       tier = local.tiers.edge
-      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
-      # first visit to stacks.viktorbarzin.me (Viktor's pick, 2026-07-12).
-      "sablier.enable" = "true"
-      "sablier.group"  = "annas-archive"
-      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
-      # propagation so the first forwarded request never hits a 503 race.
-      "sablier.ready-after" = "5s"
     }
   }
   spec {
@@ -522,7 +520,6 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -549,11 +546,7 @@ resource "kubernetes_service" "annas-archive-stacks" {
 }
 
 module "stacks_ingress" {
-  source = "../../modules/kubernetes/ingress_factory"
-  # Scale-to-zero (ADR-0022): loading-page wake, 3h idle park.
-  sablier = {
-    group = "annas-archive"
-  }
+  source          = "../../modules/kubernetes/ingress_factory"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.ebooks.metadata[0].name
   name            = "stacks"
@@ -1015,12 +1008,14 @@ module "book_search_ingress" {
 
 # API ingress - unprotected (API key auth handled by backend)
 module "book_search_api_ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.ebooks.metadata[0].name
-  name            = "book-search-api"
-  host            = "book-search"
-  service_name    = "book-search"
-  tls_secret_name = var.tls_secret_name
+  source    = "../../modules/kubernetes/ingress_factory"
+  namespace = kubernetes_namespace.ebooks.metadata[0].name
+  name      = "book-search-api"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "book-search"
+  service_name     = "book-search"
+  tls_secret_name  = var.tls_secret_name
   # auth = "none": Book Search API endpoints — API key auth handled by backend; forward-auth would block downloads.
   auth         = "none"
   ingress_path = ["/api/download-url", "/api/download-status", "/api/send-to-kindle", "/shortcut"]

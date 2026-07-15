@@ -854,13 +854,16 @@ resource "kubernetes_service" "phpmyadmin" {
   }
 }
 module "ingress" {
-  source            = "../../../../modules/kubernetes/ingress_factory"
-  dns_type          = "proxied"
-  namespace         = kubernetes_namespace.dbaas.metadata[0].name
-  name              = "pma"
-  tls_secret_name   = var.tls_secret_name
-  auth              = "required"
-  extra_annotations = {}
+  source          = "../../../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.dbaas.metadata[0].name
+  name            = "pma"
+  tls_secret_name = var.tls_secret_name
+  auth            = "required"
+  extra_annotations = {
+    "gethomepage.dev/icon" = "phpmyadmin.png"
+    "gethomepage.dev/name" = "phpMyAdmin"
+  }
 }
 
 

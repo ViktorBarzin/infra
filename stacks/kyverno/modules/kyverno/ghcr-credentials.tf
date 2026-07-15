@@ -52,6 +52,10 @@ locals {
     # Discord assistant, spec infra#75). Deployment + git-init initContainer
     # reference the cloned secret.
     "hermes-agent",
+    # vpn-portal: PRIVATE ghcr.io/viktorbarzin/vpn-portal (VPN config portal at
+    # vpn.viktorbarzin.me, spec infra#76). Deployment references the cloned
+    # secret; package default-private (GitHub has no visibility API).
+    "vpn-portal",
   ]
 }
 

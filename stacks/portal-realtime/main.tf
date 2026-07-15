@@ -240,12 +240,14 @@ resource "kubernetes_service" "realtime" {
 # Kyverno-synced into the namespace. NO max_body_size: a Buffering middleware
 # would break the streaming WebSocket.
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  name            = "portal-realtime"
-  namespace       = kubernetes_namespace.portal_realtime.metadata[0].name
-  service_name    = kubernetes_service.realtime.metadata[0].name
-  port            = 8000
-  tls_secret_name = "tls-secret"
+  source = "../../modules/kubernetes/ingress_factory"
+  name   = "portal-realtime"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  namespace        = kubernetes_namespace.portal_realtime.metadata[0].name
+  service_name     = kubernetes_service.realtime.metadata[0].name
+  port             = 8000
+  tls_secret_name  = "tls-secret"
   # auth = "app": the agent enforces its own DEVICE_TOKEN edge gate on /ws;
   # Authentik would break the native Portal client (it has no browser login).
   auth     = "app"

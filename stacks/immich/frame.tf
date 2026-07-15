@@ -163,4 +163,8 @@ module "ingress" {
   name             = "highlights-immich"
   tls_secret_name  = var.tls_secret_name
   service_name     = "immich-frame"
+  extra_annotations = {
+    "gethomepage.dev/icon" = "immich.png"
+    "gethomepage.dev/name" = "Immich Highlights"
+  }
 }

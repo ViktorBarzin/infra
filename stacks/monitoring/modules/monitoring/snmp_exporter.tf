@@ -157,4 +157,7 @@ module "snmp-exporter-ingress" {
   allow_local_access_only = true
   ssl_redirect            = false
   port                    = 9116
+  extra_annotations = {
+    "gethomepage.dev/icon" = "mdi-lan"
+  }
 }

@@ -1,0 +1,74 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "__NAME__",
+    "namespace": "chrome-service",
+    "labels": {
+      "app": "chrome-worker",
+      "chrome-pool/owner": "__OWNER__",
+      "chrome-pool/session": "__SESSION__"
+    },
+    "annotations": {
+      "chrome-pool/purpose": "__PURPOSE__",
+      "chrome-pool/started": "__STARTED__"
+    }
+  },
+  "spec": {
+    "activeDeadlineSeconds": 3600,
+    "restartPolicy": "Never",
+    "imagePullSecrets": [{"name": "registry-credentials"}],
+    "securityContext": {
+      "runAsUser": 1000,
+      "runAsGroup": 1000,
+      "fsGroup": 1000,
+      "seccompProfile": {"type": "RuntimeDefault"}
+    },
+    "affinity": {
+      "podAntiAffinity": {
+        "preferredDuringSchedulingIgnoredDuringExecution": [
+          {
+            "weight": 100,
+            "podAffinityTerm": {
+              "topologyKey": "kubernetes.io/hostname",
+              "labelSelector": {"matchLabels": {"app": "chrome-worker"}}
+            }
+          }
+        ]
+      }
+    },
+    "containers": [
+      {
+        "name": "chrome",
+        "image": "ghcr.io/viktorbarzin/chrome-service-browser:latest",
+        "imagePullPolicy": "IfNotPresent",
+        "command": ["bash", "/scripts/worker_entrypoint.sh"],
+        "env": [
+          {"name": "DISPLAY", "value": ":99"},
+          {"name": "HOME", "value": "/profile"}
+        ],
+        "ports": [{"name": "cdp", "containerPort": 9222}],
+        "readinessProbe": {
+          "tcpSocket": {"port": 9222},
+          "initialDelaySeconds": 3,
+          "periodSeconds": 3,
+          "failureThreshold": 30
+        },
+        "resources": {
+          "requests": {"cpu": "250m", "memory": "2Gi"},
+          "limits": {"cpu": "4", "memory": "4Gi"}
+        },
+        "volumeMounts": [
+          {"name": "profile", "mountPath": "/profile"},
+          {"name": "dshm", "mountPath": "/dev/shm"},
+          {"name": "scripts", "mountPath": "/scripts", "readOnly": true}
+        ]
+      }
+    ],
+    "volumes": [
+      {"name": "profile", "emptyDir": {}},
+      {"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "512Mi"}},
+      {"name": "scripts", "configMap": {"name": "snapshot-scripts", "defaultMode": 365}}
+    ]
+  }
+}

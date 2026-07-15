@@ -368,4 +368,7 @@ module "ingress" {
   port             = 8080
   ingress_path     = ["/cb"]
   tls_secret_name  = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/icon" = "mdi-email-fast"
+  }
 }
