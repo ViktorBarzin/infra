@@ -2558,7 +2558,13 @@ serverFiles:
         rules:
           - alert: TraefikDown
             expr: up{job="traefik"} == 0
-            for: 2m
+            # 5m (was 2m): a routine Traefik roll — Keel patch auto-upgrade or a
+            # terragrunt apply — cycles all 3 replicas in ~2min, during which a
+            # terminating pod's scrape target lingers at up==0 and tripped this
+            # critical alert every upgrade (e.g. 3.7.7->3.7.8, 2026-07-15). 5m
+            # rides out any normal rolling update; a genuine total-ingress
+            # outage persists well past 5m and still fires.
+            for: 5m
             labels:
               severity: critical
             annotations:
