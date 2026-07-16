@@ -130,9 +130,10 @@ mtmd Flash-Attention regression fix
 
 ### Text-model upgrade evaluation (2026-07-16 — all rejected)
 
-qwen3-8b was benchmarked on-card against three upgrade candidates; all lost on
-this **Turing (SM 7.5) T4**, so qwen3-8b stays (33 tok/s gen, f16 KV, the
-fastest usable text model this GPU supports today):
+qwen3-8b was benchmarked on-card against five candidates across two rounds (the
+second from a deep HF-survey workflow); all lost on this **Turing (SM 7.5) T4**,
+so qwen3-8b stays (33 tok/s gen, f16 KV, the fastest usable text model this GPU
+supports today):
 
 - **q8_0 KV cache** — ~40–70× slower *generation* (Turing has no quantized-KV
   fused flash-attn kernel, so even symmetric q8_0/q8_0 falls off the fast path;
@@ -144,6 +145,13 @@ fastest usable text model this GPU supports today):
   offload → slow prefill); e4b was faster + ~⅓ the VRAM but weaker on
   paperless-ai enrichment (mislabeled correspondent) and wraps JSON in
   ` ```fences `.
+- **granite-4.1-8b + qwen3-4b-2507** (round 2, deep HF survey) — granite's DENSE
+  arch IS fast on Turing (35 tok/s) but only **tied** qwen3-8b on a 5-doc
+  real-document correspondent A/B (incl. Bulgarian) while still fencing JSON +
+  a ~64 s cold-prefill warmup; qwen3-4b mislabeled correspondent. Neither a
+  clear win. (Aside confirmed here: paperless-ai's `SYSTEM_PROMPT` already says
+  *"correspondent = the sender, never the recipient"* — extraction is already
+  correct in prod; no prompt change was needed.)
 
 Method, numbers, and the broader SoTA survey:
 `docs/research/2026-07-16-local-llm-sota-and-upgrade.md`.
