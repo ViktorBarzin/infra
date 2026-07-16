@@ -147,6 +147,8 @@ is gone cluster-wide; right-size later with `krr` but do not drop below 2Gi.
    a second (Stirling) login. Fix: `SECURITY_ENABLELOGIN=false` env →
    Authentik forward-auth is the single gate, `/` serves openly. Probe points at
    the auth-free `/api/v1/info/status` (stays 200 regardless of login state).
+   **Superseded by the OIDC follow-up below** — login was re-enabled and wired
+   to Authentik SSO on Viktor's request; the probe endpoint choice still holds.
 
 ## Rollback
 
@@ -162,8 +164,50 @@ reads the same `/configs` volume, so rollback is clean.
   running image is `2.13.2` and the version banner shows v2.
 - Exercise: open a PDF → add text, draw, place a signature.
 
+## Update — user login via Authentik OIDC (2026-07-16 follow-up)
+
+Viktor asked to enable Stirling's **user/login mode** and link it to Authentik.
+So the auth model changed from "login off, forward-auth is the single gate" to
+**Stirling login ON, wired to Authentik via generic OIDC (SSO)**:
+
+- **Ingress `auth = "required"` → `"app"`** — Stirling is now the gate; Authentik
+  forward-auth is removed so it can't intercept the OIDC callback.
+- **New `stacks/stirling-pdf/authentik.tf`** — an `authentik_provider_oauth2`
+  (confidential client `stirling-pdf`, RS256 signing key) + `authentik_application`
+  (slug `stirling-pdf` → issuer `…/application/o/stirling-pdf/`) + a
+  **"Stirling PDF Users"** group bound to the app (only members can complete the
+  flow). Mirrors the postiz pattern.
+- **Stirling OIDC env** (`main.tf`): `SECURITY_ENABLELOGIN=true`,
+  `LOGINMETHOD=all` (SSO + local fallback for admin bootstrap), `OAUTH2_ENABLED=true`,
+  `OAUTH2_PROVIDER=authentik` (→ callback `/login/oauth2/code/authentik`, registered
+  strict in Authentik), `OAUTH2_ISSUER`, `OAUTH2_CLIENTID`/`CLIENTSECRET` (straight
+  from the provider), `OAUTH2_USEASUSERNAME=email`, `OAUTH2_AUTOCREATEUSER=true`.
+- **Existing accounts preserved** — the embedded H2 user DB (`/configs/stirling-pdf-DB-*.mv.db`)
+  persists across the v1→v2 upgrade; SSO auto-provisions the Authentik identity
+  (keyed by email). `loginMethod=all` keeps the local admin reachable to promote
+  the SSO user to admin if needed.
+
+```mermaid
+sequenceDiagram
+    actor U as User (browser)
+    participant S as Stirling-PDF (auth="app")
+    participant AK as Authentik (IdP)
+    U->>S: GET / (no session)
+    S-->>U: 302 → Authentik authorize
+    U->>AK: SSO login (group: Stirling PDF Users)
+    AK-->>S: callback /login/oauth2/code/authentik + code
+    S->>AK: exchange code → ID token (email claim)
+    S-->>U: session; user auto-created by email
+```
+
+**Trade-off flagged:** `auth="app"` means Stirling's login is the internet-facing
+gate (Cloudflare + CrowdSec still front it); the group binding limits who can SSO.
+Also, with no forward-auth, an unauthenticated hit now *wakes* the scaled-to-zero
+pod (then meets Stirling's login) — a minor cost for an aux tool.
+
 ## References
 
+- Stirling-PDF OAuth2/OIDC SSO — https://docs.stirlingpdf.com/Configuration/OAuth%20SSO%20Configuration/
 - Stirling-PDF v2 docs — https://docs.stirlingpdf.com/ (Read & Annotate; Sign; Migration v1→v2)
 - Keel semver policies — house convention: `patch` default, `minor`/`major` overrides
 - Memory #9838 — paperless-ngx `force` backward-roll incident (2026-07-14)
