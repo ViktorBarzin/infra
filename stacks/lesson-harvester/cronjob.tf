@@ -1,5 +1,5 @@
-# Learn Later playlist poller. Shipped SUSPENDED — flip suspend=false once the
-# YouTube API key + playlist id are in Vault secret/lesson-harvester.
+# Learn Later playlist poller — ENABLED 2026-07-16 (YouTube API key + playlist id
+# are in Vault secret/lesson-harvester; smoke-tested: playlist reads, poll ingests).
 resource "kubernetes_cron_job_v1" "poll" {
   metadata {
     name      = "lesson-harvester-poll"
@@ -8,7 +8,7 @@ resource "kubernetes_cron_job_v1" "poll" {
   }
   spec {
     schedule                      = "0 * * * *"
-    suspend                       = true
+    suspend                       = false
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3
