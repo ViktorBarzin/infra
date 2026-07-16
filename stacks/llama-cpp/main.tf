@@ -58,6 +58,30 @@ locals {
       gpu_layers     = 99
       text_only      = true
     }
+    # --- Text-model upgrade candidates under evaluation (2026-07-16) ---
+    # Gemma 4 (Google, Apache-2.0, first-class llama.cpp support). Served
+    # TEXT-ONLY (glob excludes the BF16-only mmproj, sidestepping the Turing
+    # no-BF16 issue). A/B'd against qwen3-8b as a successor; DIFFERENT arch
+    # than the rejected qwen3.5-9b, so expected performant on the T4.
+    # `--reasoning off` (via text_only) is inert for Gemma (non-thinking).
+    # Migrate consumers only after on-card speed+JSON checks; remove loser(s).
+    # See docs/research/2026-07-16-local-llm-sota-and-upgrade.md.
+    gemma-4-12b = {
+      hf_repo        = "unsloth/gemma-4-12B-it-GGUF"
+      gguf_pattern   = "*Q4_K_M*.gguf"
+      mmproj_pattern = ""
+      ctx_size       = 16384
+      gpu_layers     = 99
+      text_only      = true
+    }
+    gemma-4-e4b = {
+      hf_repo        = "unsloth/gemma-4-E4B-it-GGUF"
+      gguf_pattern   = "*Q4_K_M*.gguf"
+      mmproj_pattern = ""
+      ctx_size       = 16384
+      gpu_layers     = 99
+      text_only      = true
+    }
   }
 
   # YAML config rendered into the ConfigMap. llama-swap reads /app/config.yaml.
