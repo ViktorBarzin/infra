@@ -113,12 +113,59 @@ resource "kubernetes_deployment" "stirling-pdf" {
           # LIMIT: at 1Gi it caps MaxMetaspaceSize=128m, too small for v2's class
           # graph → OutOfMemoryError: Metaspace → -XX:+ExitOnOutOfMemoryError
           # crashloop (verified live 2026-07-16). At 2Gi it sets MaxMeta=192m and
-          # boots in ~28s. Also disable v2's OWN login (default ON in the standard
-          # image, unlike v1) so / serves openly behind Authentik forward-auth —
-          # the single gate — instead of returning 401 (double login + failed probe).
+          # boots in ~28s.
+          #
+          # Auth (2026-07-16): Stirling's OWN login is ENABLED and wired to
+          # Authentik via generic OIDC — one SSO login, users auto-provisioned.
+          # loginMethod=all keeps local username/password as an admin-bootstrap +
+          # fallback path alongside SSO. Ingress is auth="app" (Stirling is the
+          # gate; forward-auth is NOT in front, so the OIDC callback isn't
+          # intercepted). client_id/secret + issuer come from authentik.tf; the
+          # "Stirling PDF Users" Authentik group binding gates who can complete
+          # the flow. provider=authentik → callback /login/oauth2/code/authentik.
           env {
             name  = "SECURITY_ENABLELOGIN"
-            value = "false"
+            value = "true"
+          }
+          env {
+            name  = "SECURITY_LOGINMETHOD"
+            value = "all" # oauth2 (SSO) + local username/password fallback
+          }
+          env {
+            name  = "SECURITY_OAUTH2_ENABLED"
+            value = "true"
+          }
+          env {
+            name  = "SECURITY_OAUTH2_PROVIDER"
+            value = "authentik"
+          }
+          env {
+            name  = "SECURITY_OAUTH2_ISSUER"
+            value = "https://authentik.viktorbarzin.me/application/o/stirling-pdf/"
+          }
+          env {
+            name  = "SECURITY_OAUTH2_CLIENTID"
+            value = authentik_provider_oauth2.stirling_pdf.client_id
+          }
+          env {
+            name  = "SECURITY_OAUTH2_CLIENTSECRET"
+            value = authentik_provider_oauth2.stirling_pdf.client_secret
+          }
+          env {
+            name  = "SECURITY_OAUTH2_SCOPES"
+            value = "openid, profile, email"
+          }
+          env {
+            name  = "SECURITY_OAUTH2_USEASUSERNAME"
+            value = "email"
+          }
+          env {
+            name  = "SECURITY_OAUTH2_AUTOCREATEUSER"
+            value = "true"
+          }
+          env {
+            name  = "SECURITY_OAUTH2_BLOCKREGISTRATION"
+            value = "false" # the Authentik group binding is the real access gate
           }
           resources {
             # Tier-4-aux Burstable (request < limit); CPU request only (no
@@ -219,7 +266,11 @@ module "ingress" {
   sablier = {
     group = "stirling-pdf"
   }
-  auth            = "required"
+  # auth = "app": Stirling's own login (enableLogin=true) wired to Authentik via
+  # OIDC (authentik.tf) is the gate; forward-auth must NOT be in front or it
+  # would intercept the OIDC callback. Access is restricted by the "Stirling PDF
+  # Users" Authentik group bound to the application. (Anti-AI on by default.)
+  auth            = "app"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.stirling-pdf.metadata[0].name
   name            = "stirling-pdf"
