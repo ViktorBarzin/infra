@@ -147,8 +147,9 @@ is gone cluster-wide; right-size later with `krr` but do not drop below 2Gi.
    a second (Stirling) login. Fix: `SECURITY_ENABLELOGIN=false` env →
    Authentik forward-auth is the single gate, `/` serves openly. Probe points at
    the auth-free `/api/v1/info/status` (stays 200 regardless of login state).
-   **Superseded by the OIDC follow-up below** — login was re-enabled and wired
-   to Authentik SSO on Viktor's request; the probe endpoint choice still holds.
+   **Final state: local login.** Login was re-enabled on Viktor's request; SSO
+   was attempted but Stirling paywalls OIDC (see the reverted follow-up below),
+   so it's LOCAL username/password (`loginMethod=normal`). Probe choice holds.
 
 ## Rollback
 
@@ -165,6 +166,17 @@ reads the same `/configs` volume, so rollback is clean.
 - Exercise: open a PDF → add text, draw, place a signature.
 
 ## Update — user login via Authentik OIDC (2026-07-16 follow-up)
+
+> **⛔ REVERTED same day — Stirling paywalls OIDC.** The wiring below is
+> mechanically correct and was applied, but at login Stirling returned
+> `OAuth login blocked for new user … no paid license for auto-creation`:
+> **OAuth2/OIDC SSO is a Server-tier ($99/mo) feature**, and the free tier
+> blocks auto-provisioning of new SSO users → infinite login loop. Per the
+> zero-cost rule, SSO was removed and Stirling reverted to **LOCAL
+> username/password login** (`loginMethod=normal`, `auth="app"` kept). The
+> Authentik app/provider/group were destroyed. Kept here as the record of why
+> SSO isn't used. (SAML is also enterprise-only; there is no free header/proxy
+> auth mode.)
 
 Viktor asked to enable Stirling's **user/login mode** and link it to Authentik.
 So the auth model changed from "login off, forward-auth is the single gate" to

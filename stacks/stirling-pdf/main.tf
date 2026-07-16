@@ -115,57 +115,21 @@ resource "kubernetes_deployment" "stirling-pdf" {
           # crashloop (verified live 2026-07-16). At 2Gi it sets MaxMeta=192m and
           # boots in ~28s.
           #
-          # Auth (2026-07-16): Stirling's OWN login is ENABLED and wired to
-          # Authentik via generic OIDC — one SSO login, users auto-provisioned.
-          # loginMethod=all keeps local username/password as an admin-bootstrap +
-          # fallback path alongside SSO. Ingress is auth="app" (Stirling is the
-          # gate; forward-auth is NOT in front, so the OIDC callback isn't
-          # intercepted). client_id/secret + issuer come from authentik.tf; the
-          # "Stirling PDF Users" Authentik group binding gates who can complete
-          # the flow. provider=authentik → callback /login/oauth2/code/authentik.
+          # Auth (2026-07-16): Stirling's OWN login, LOCAL username/password
+          # ONLY. OIDC/SSO was attempted but Stirling PAYWALLS OAuth2 (Server
+          # tier, $99/mo) — the free tier blocked auto-user-creation ("no paid
+          # license for auto-creation" → login loop), so SSO was removed
+          # (Viktor, zero-cost rule). Existing local accounts live in the
+          # embedded H2 DB (/configs/stirling-pdf-DB-*.mv.db). Ingress auth="app":
+          # Stirling's login is the single gate (Cloudflare + CrowdSec front it;
+          # anti-AI on). Probe stays on the auth-free /api/v1/info/status.
           env {
             name  = "SECURITY_ENABLELOGIN"
             value = "true"
           }
           env {
             name  = "SECURITY_LOGINMETHOD"
-            value = "all" # oauth2 (SSO) + local username/password fallback
-          }
-          env {
-            name  = "SECURITY_OAUTH2_ENABLED"
-            value = "true"
-          }
-          env {
-            name  = "SECURITY_OAUTH2_PROVIDER"
-            value = "authentik"
-          }
-          env {
-            name  = "SECURITY_OAUTH2_ISSUER"
-            value = "https://authentik.viktorbarzin.me/application/o/stirling-pdf/"
-          }
-          env {
-            name  = "SECURITY_OAUTH2_CLIENTID"
-            value = authentik_provider_oauth2.stirling_pdf.client_id
-          }
-          env {
-            name  = "SECURITY_OAUTH2_CLIENTSECRET"
-            value = authentik_provider_oauth2.stirling_pdf.client_secret
-          }
-          env {
-            name  = "SECURITY_OAUTH2_SCOPES"
-            value = "openid, profile, email"
-          }
-          env {
-            name  = "SECURITY_OAUTH2_USEASUSERNAME"
-            value = "email"
-          }
-          env {
-            name  = "SECURITY_OAUTH2_AUTOCREATEUSER"
-            value = "true"
-          }
-          env {
-            name  = "SECURITY_OAUTH2_BLOCKREGISTRATION"
-            value = "false" # the Authentik group binding is the real access gate
+            value = "normal" # local username/password only (SSO is paywalled)
           }
           resources {
             # Tier-4-aux Burstable (request < limit); CPU request only (no
@@ -266,10 +230,9 @@ module "ingress" {
   sablier = {
     group = "stirling-pdf"
   }
-  # auth = "app": Stirling's own login (enableLogin=true) wired to Authentik via
-  # OIDC (authentik.tf) is the gate; forward-auth must NOT be in front or it
-  # would intercept the OIDC callback. Access is restricted by the "Stirling PDF
-  # Users" Authentik group bound to the application. (Anti-AI on by default.)
+  # auth = "app": Stirling's own local login (enableLogin=true, loginMethod=normal)
+  # is the gate. SSO/OIDC was dropped — Stirling paywalls OAuth2 ($99/mo), blocked
+  # on the free tier. Cloudflare + CrowdSec front the login page; anti-AI on.
   auth            = "app"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.stirling-pdf.metadata[0].name

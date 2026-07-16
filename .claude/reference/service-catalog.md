@@ -105,7 +105,7 @@
 | drone-logbook | DJI flight-log analyzer (Open DroneLog, upstream image) — dronelog.viktorbarzin.me | drone-logbook |
 | navidrome | Music streaming | navidrome |
 | networking-toolbox | Network tools | networking-toolbox |
-| stirling-pdf | PDF editor + tools (v2: sign/draw/annotate/add-text + convert/OCR; Keel `major`; Authentik OIDC SSO, `auth=app`) — stirling-pdf.viktorbarzin.me | stirling-pdf |
+| stirling-pdf | PDF editor + tools (v2: sign/draw/annotate/add-text + convert/OCR; Keel `major`; LOCAL login `auth=app` — SSO/OIDC paywalled by Stirling) — stirling-pdf.viktorbarzin.me | stirling-pdf |
 | speedtest | Speed testing | speedtest |
 | freedify | Music streaming (factory pattern) | freedify |
 | phpipam | IP Address Management (IPAM) + auto-discovery | phpipam |
