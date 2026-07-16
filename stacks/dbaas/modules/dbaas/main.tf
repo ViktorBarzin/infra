@@ -1349,6 +1349,31 @@ resource "null_resource" "pg_job_hunter_db" {
   }
 }
 
+# Create lesson_harvester database for the lesson-harvester service.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-lesson-harvester`, 7d rotation).
+resource "null_resource" "pg_lesson_harvester_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "lesson_harvester"
+    username = "lesson_harvester"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'lesson_harvester'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE lesson_harvester WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'lesson_harvester'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE lesson_harvester OWNER lesson_harvester"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE lesson_harvester TO lesson_harvester"
+        '
+    EOT
+  }
+}
+
 # Create tripit database for the TripIt travel app (FastAPI + SvelteKit SPA).
 # Role password is managed by Vault Database Secrets Engine (static role
 # `pg-tripit`, 7d rotation). Tables live in schema `tripit` (alembic creates
