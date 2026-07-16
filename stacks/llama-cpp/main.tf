@@ -9,9 +9,11 @@ locals {
   # (3.9k★, v211, May 2026).
   llamaswap_image = "ghcr.io/mostlygeek/llama-swap:cuda"
 
-  # Three vision models for the benchmark sweep. All Apache-2.0, all GGUF
+  # Model set: two vision VLMs (qwen3vl-8b/4b) + two text-only LLMs (qwen3-8b
+  # and its successor qwen3.5-9b, mid-migration). All Apache-2.0, all GGUF
   # Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob). Image long-edge
-  # capped at 1024 px to keep prefill <2s on the T4.
+  # capped at 1024 px to keep prefill <2s on the T4. (minicpm-v-4.5 was dropped
+  # 2026-07-16 — unused, "nothing special" in the 2026-05-10 benchmark.)
   #
   # Filenames are matched by glob in the download Job (huggingface_hub
   # snapshot_download with allow_patterns). Stable symlinks model.gguf /
@@ -22,14 +24,6 @@ locals {
   models = {
     qwen3vl-8b = {
       hf_repo        = "Qwen/Qwen3-VL-8B-Instruct-GGUF"
-      gguf_pattern   = "*Q4_K_M*.gguf"
-      mmproj_pattern = "*mmproj*.gguf"
-      ctx_size       = 3072
-      gpu_layers     = 99
-      text_only      = false
-    }
-    minicpm-v-4-5 = {
-      hf_repo        = "openbmb/MiniCPM-V-4_5-gguf"
       gguf_pattern   = "*Q4_K_M*.gguf"
       mmproj_pattern = "*mmproj*.gguf"
       ctx_size       = 3072
@@ -54,6 +48,20 @@ locals {
     # per-request; the server flag makes it the default for all consumers.
     qwen3-8b = {
       hf_repo        = "unsloth/Qwen3-8B-GGUF"
+      gguf_pattern   = "*Q4_K_M*.gguf"
+      mmproj_pattern = ""
+      ctx_size       = 16384
+      gpu_layers     = 99
+      text_only      = true
+    }
+    # Successor to qwen3-8b (Qwen3.5 generation, 2026-03, Apache-2.0, dense
+    # ~9.65B). Text consumers (recruiter-responder, nextcloud-todos,
+    # paperless-ai) are being migrated here one at a time. Natively multimodal
+    # but served TEXT-ONLY (no mmproj); reasoning forced off + q8_0 KV via the
+    # text_only branch in the cmd builder below. GGUF: unsloth, Q4_K_M.
+    # See docs/research/2026-07-16-local-llm-sota-and-upgrade.md.
+    "qwen3.5-9b" = {
+      hf_repo        = "unsloth/Qwen3.5-9B-GGUF"
       gguf_pattern   = "*Q4_K_M*.gguf"
       mmproj_pattern = ""
       ctx_size       = 16384
@@ -89,14 +97,24 @@ locals {
           "-np 1",
           "--jinja",
           "-fa on",
-          # qwen3-8b: force reasoning OFF. Qwen3 defaults to thinking under
-          # --jinja, which returns an EMPTY message.content (all output goes to
-          # reasoning_content) and blows the token budget -> paperless-ai gets
-          # no JSON, every enrichment call fails, and each call is ~50x slower.
-          # `--reasoning off` is llama.cpp's supported control (it deprecates
-          # the enable_thinking chat-template kwarg recruiter-responder uses).
-          # Scoped to qwen3-8b via mid; vision models keep default reasoning.
-        ], mid == "qwen3-8b" ? ["--reasoning off"] : []))
+          ],
+          # Text models: symmetric q8_0 KV-cache quant (halves KV VRAM for <1%
+          # quality loss; needs -fa on). SYMMETRIC ONLY — the llama-swap :cuda
+          # image is built without GGML_CUDA_FA_ALL_QUANTS, so an asymmetric K/V
+          # pair (e.g. q4_0+q8_0) has no fused FA kernel and silently runs
+          # ~25-45x slower (ggml-org/llama.cpp#24485). Vision models keep f16 KV
+          # — at ctx 3072 the KV is tiny, so quantizing it saves nothing. Turing
+          # (T4) is a first-class llama.cpp FA target. See docs/research/
+          # 2026-07-16-local-llm-sota-and-upgrade.md.
+          cfg.text_only ? ["--cache-type-k q8_0", "--cache-type-v q8_0"] : [],
+          # Thinking-capable Qwen text models: force reasoning OFF. Qwen3/Qwen3.5
+          # default to thinking under --jinja, returning EMPTY message.content
+          # (all output -> reasoning_content) + blowing the token budget:
+          # paperless-ai gets no JSON, every enrichment fails, ~50x slower.
+          # `--reasoning off` is llama.cpp's supported control (deprecates the
+          # enable_thinking chat-template kwarg recruiter-responder sends).
+          # Scoped to text models via text_only; vision keeps default reasoning.
+        cfg.text_only ? ["--reasoning off"] : []))
         ttl           = 600 # unload after 10 min idle
         checkEndpoint = "/health"
       }
@@ -376,8 +394,13 @@ resource "kubernetes_deployment" "llama_swap" {
               # DiskPressure (models live on the PVC; normal usage is <100Mi).
               "ephemeral-storage" = "10Gi"
               "nvidia.com/gpu"    = "1"
-              # GPU VRAM budget (ADR-0016): one model at a time; qwen3-8b @16k
-              # peak ~4.35 GiB + headroom (the protected recruiter-responder tenant).
+              # GPU VRAM budget (ADR-0016): one model at a time. Real resident is
+              # ~7 GiB (qwen3-8b @16k measured ~6996 MiB; the old 4.35 GiB was
+              # weights-only cudaMalloc). qwen3.5-9b @16k + q8_0 KV ~6.8-7.2 GiB.
+              # Value left at 5000: the watchdog is DRY_RUN and the scheduler
+              # enforces sum(gpumem) <= 14000 (currently 13300), so raising this
+              # needs the ADR-0016 budget retune (rebalance immich-ml + llama-swap
+              # together) — a separate pending decision.
               "viktorbarzin.me/gpumem" = "5000"
             }
           }
