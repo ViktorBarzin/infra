@@ -19,6 +19,7 @@ locals {
     "tuya-bridge",
     "f1-stream",
     "job-hunter",
+    "lesson-harvester",
     "instagram-poster",
     "payslip-ingest",
     "wealthfolio",

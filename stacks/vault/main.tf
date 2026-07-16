@@ -742,6 +742,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-health", "pg-linkwarden",
     "pg-affine", "pg-woodpecker", "pg-claude-memory",
     "pg-terraform-state", "pg-payslip-ingest", "pg-job-hunter",
+    "pg-lesson-harvester",
     "pg-wealthfolio-sync", "pg-fire-planner",
     "pg-postiz", "pg-instagram-poster",
     "pg-recruiter-responder", "pg-tripit",
@@ -907,6 +908,14 @@ resource "vault_database_secret_backend_static_role" "pg_job_hunter" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-job-hunter"
   username        = "job_hunter"
+  rotation_period = 604800
+}
+
+resource "vault_database_secret_backend_static_role" "pg_lesson_harvester" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-lesson-harvester"
+  username        = "lesson_harvester"
   rotation_period = 604800
 }
 
