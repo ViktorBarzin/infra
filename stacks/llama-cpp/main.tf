@@ -63,6 +63,32 @@ locals {
       gpu_layers     = 99
       text_only      = true
     }
+    # --- Round-2 text-upgrade eval (2026-07-16, after the deep HF survey) ---
+    # Both DENSE + mature llama.cpp arch (expected FAST on Turing, unlike the
+    # rejected qwen3.5/gemma-4), Apache-2.0, served text-only. A/B'd vs qwen3-8b
+    # INCLUDING a real Bulgarian paperless-ai doc (make-or-break for Granite,
+    # which covers only 12 langs / no Cyrillic). Remove loser(s) after the test.
+    # granite-4.1-8b: quality-UPGRADE candidate (IFEval 87, RAG/tool/JSON; DENSE
+    #   granite arch = llama.cpp build_llama path, NOT the 4.0-H Mamba hybrid).
+    # qwen3-4b-2507: operational win (same qwen3 arch, ~5GB fits under immich
+    #   contention, quality parity, keeps Bulgarian, native non-thinking).
+    # See docs/research/2026-07-16-local-llm-sota-and-upgrade.md.
+    "granite-4.1-8b" = {
+      hf_repo        = "ibm-granite/granite-4.1-8b-GGUF"
+      gguf_pattern   = "*Q4_K_M*.gguf"
+      mmproj_pattern = ""
+      ctx_size       = 16384
+      gpu_layers     = 99
+      text_only      = true
+    }
+    qwen3-4b-2507 = {
+      hf_repo        = "unsloth/Qwen3-4B-Instruct-2507-GGUF"
+      gguf_pattern   = "*Q4_K_M*.gguf"
+      mmproj_pattern = ""
+      ctx_size       = 16384
+      gpu_layers     = 99
+      text_only      = true
+    }
   }
 
   # YAML config rendered into the ConfigMap. llama-swap reads /app/config.yaml.
