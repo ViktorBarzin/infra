@@ -1,6 +1,6 @@
 # Local LLM stack — state of the art & upgrade options (mid-2026)
 
-**Status:** draft / research — recommendation pending Viktor's decision (no changes applied)
+**Status:** EXECUTED 2026-07-16 — Viktor chose "Tier 1 + text upgrade". On-card verification REJECTED both proposed upgrades (q8_0 KV and qwen3.5-9b are both ~40× too slow on our Turing T4); only the minicpm-v-4.5 cleanup stuck. qwen3-8b stays. **Read §0.1 first — it supersedes the optimistic claims below.**
 **Date:** 2026-07-16
 **Owner:** Viktor (decision) / Claude (research + synthesis)
 **Scope:** the `llama-cpp` stack (`llama-swap` + `llama.cpp`) on the shared Tesla T4 — serving layer, the text model, and the vision models — and whether any of them can be usefully upgraded **on the hardware we already have**.
@@ -21,6 +21,29 @@ Three findings, one per layer:
 Plus one **strategic option**: Qwen3.5-9B is natively multimodal and its vision path *appears* to run on our stack, so it *could* collapse the text + vision-8B slots into one model — attractive but VRAM-tight and unproven on our exact build; gate it behind a spike.
 
 Everything here is **free** (open-weight, self-hosted) and **reversible** (add-new-model-then-repoint-consumers, one at a time).
+
+---
+
+## 0.1 Execution outcome (2026-07-16) — both upgrades REJECTED on-card
+
+Viktor approved "Tier 1 + text upgrade." On empirical on-card verification (the gate *before* migrating any consumer), **both headline recommendations failed on our Turing T4** and were reverted. **This section supersedes §0 points 1–2 and §3.2/§4 below — read it first.**
+
+| Change tried | Result on the T4 (llama.cpp b9879) | Disposition |
+|---|---|---|
+| **q8_0 KV cache** (the §3.2 "free win") | qwen3-8b generation **0.58 tok/s** vs **33 tok/s** on f16 KV — **~40–70× slower**. Prefill stayed fine (~143 tok/s); only token *generation* cratered. | **REVERTED** (commit `b8c059cb`). KV stays f16. |
+| **qwen3.5-9b** text upgrade (§4) | Loads, health-passes, runs — but generates **~0.5 tok/s regardless of KV type**; ~40× too slow to use. Not contention (GPU util 16%). | **REMOVED** (commit `9bcd3bc3`). qwen3-8b stays. |
+| **Drop minicpm-v-4.5** (§5) | Unused; freed ~11 GB on the models PVC. | **DONE** — the one change that stuck. |
+
+**Root causes (verified on-card):**
+- **q8_0 KV → slow on Turing:** on SM 7.5 the fused flash-attention kernel has **no quantized-KV path**, so even *symmetric* q8_0/q8_0 falls back to a crawl during generation. The research's "symmetric q8_0 is safe on the fused path" (§3.2) is true for Ampere+ in the cited sources but **NOT for Turing** — an over-generalization the on-card test caught.
+- **qwen3.5-9b → slow on Turing:** the `qwen3_5` architecture *loads and runs* on b9879 but has **no performant CUDA path on SM 7.5** yet — exactly the "runnable but not performant" trap §5/§6 flagged for VLMs, here realized for the text model. KV-independent (same ~0.5 tok/s on f16 and q8_0). llama.cpp qwen3_5 support is functional, not fast.
+
+**Net result:** `qwen3-8b` (Q4_K_M, f16 KV, 16k ctx, reasoning off) remains the text model at **33 tok/s** — empirically the *correct* config for this hardware. `minicpm-v-4.5` dropped. Serving stack otherwise confirmed optimal (llama.cpp + llama-swap, `-fa on`, f16 KV). **No consumer was migrated** — the verification gate held; blast radius was a ~15-min self-inflicted qwen3-8b slowdown, reverted.
+
+**Still-valid options (not yet tried), pending Viktor:**
+- **Gemma 4** (12B or E4B) as the text upgrade — a *different* architecture (not qwen3_5), well-supported in llama.cpp with ggml-org pre-quant GGUFs, so it may be performant where qwen3_5 isn't. Untested on-card.
+- **Revisit qwen3.5** when llama.cpp lands an optimized `qwen3_5` CUDA path (watch upstream).
+- Vision slot: the §5 verdict is unaffected (keep Qwen3-VL-4B/8B; the optional Gemma-4 E4B A/B still stands).
 
 ---
 
