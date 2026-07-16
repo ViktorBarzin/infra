@@ -12,12 +12,17 @@ locals {
   # Model set: two vision VLMs (qwen3vl-8b/4b) + one text-only LLM (qwen3-8b).
   # All Apache-2.0, GGUF Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob).
   # Image long-edge capped at 1024 px to keep prefill <2s on the T4.
-  # 2026-07-16 cleanup/eval: dropped unused minicpm-v-4.5; EVALUATED but
-  # REJECTED qwen3.5-9b as a qwen3-8b successor — it loads & runs on llama.cpp
-  # b9879 but generates at only ~0.5 tok/s on the Turing T4 (~40x too slow; the
-  # qwen3_5 arch has no performant CUDA path on SM7.5 yet). Also tried q8_0 KV
-  # cache — same ~40-70x slowdown on Turing, reverted. qwen3-8b (33 tok/s on
-  # f16 KV) stays. See docs/research/2026-07-16-local-llm-sota-and-upgrade.md.
+  # 2026-07-16 cleanup/eval (docs/research/2026-07-16-local-llm-sota-and-upgrade.md):
+  # dropped unused minicpm-v-4.5. Three text-model upgrades were evaluated
+  # ON-CARD and ALL REJECTED, so qwen3-8b (33 tok/s, f16 KV) stays as the best
+  # text model this hardware supports today:
+  #   - q8_0 KV cache: ~40-70x slower generation on Turing (no quantized-KV
+  #     fused FA kernel on SM7.5). Reverted.
+  #   - qwen3.5-9b: ~0.5 tok/s generation (qwen3_5 arch has no performant CUDA
+  #     path on SM7.5 in b9879). Removed.
+  #   - gemma-4 12b + e4b: 12b too big for the contended T4; e4b was fast + small
+  #     but weaker on enrichment (mislabeled correspondent) + wraps JSON in
+  #     ```fences. Removed. No available model beat qwen3-8b here.
   #
   # Filenames are matched by glob in the download Job (huggingface_hub
   # snapshot_download with allow_patterns). Stable symlinks model.gguf /
@@ -52,30 +57,6 @@ locals {
     # per-request; the server flag makes it the default for all consumers.
     qwen3-8b = {
       hf_repo        = "unsloth/Qwen3-8B-GGUF"
-      gguf_pattern   = "*Q4_K_M*.gguf"
-      mmproj_pattern = ""
-      ctx_size       = 16384
-      gpu_layers     = 99
-      text_only      = true
-    }
-    # --- Text-model upgrade candidates under evaluation (2026-07-16) ---
-    # Gemma 4 (Google, Apache-2.0, first-class llama.cpp support). Served
-    # TEXT-ONLY (glob excludes the BF16-only mmproj, sidestepping the Turing
-    # no-BF16 issue). A/B'd against qwen3-8b as a successor; DIFFERENT arch
-    # than the rejected qwen3.5-9b, so expected performant on the T4.
-    # `--reasoning off` (via text_only) is inert for Gemma (non-thinking).
-    # Migrate consumers only after on-card speed+JSON checks; remove loser(s).
-    # See docs/research/2026-07-16-local-llm-sota-and-upgrade.md.
-    gemma-4-12b = {
-      hf_repo        = "unsloth/gemma-4-12B-it-GGUF"
-      gguf_pattern   = "*Q4_K_M*.gguf"
-      mmproj_pattern = ""
-      ctx_size       = 16384
-      gpu_layers     = 99
-      text_only      = true
-    }
-    gemma-4-e4b = {
-      hf_repo        = "unsloth/gemma-4-E4B-it-GGUF"
       gguf_pattern   = "*Q4_K_M*.gguf"
       mmproj_pattern = ""
       ctx_size       = 16384
