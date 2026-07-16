@@ -109,17 +109,28 @@ resource "kubernetes_deployment" "stirling-pdf" {
           # the semver policy has an ordered base to compare on a fresh recreate.
           image = "stirlingtools/stirling-pdf:2.13.2"
           name  = "stirling-pdf"
+          # v2's entrypoint DYNAMICALLY sizes the JVM from the container memory
+          # LIMIT: at 1Gi it caps MaxMetaspaceSize=128m, too small for v2's class
+          # graph → OutOfMemoryError: Metaspace → -XX:+ExitOnOutOfMemoryError
+          # crashloop (verified live 2026-07-16). At 2Gi it sets MaxMeta=192m and
+          # boots in ~28s. Also disable v2's OWN login (default ON in the standard
+          # image, unlike v1) so / serves openly behind Authentik forward-auth —
+          # the single gate — instead of returning 401 (double login + failed probe).
+          env {
+            name  = "SECURITY_ENABLELOGIN"
+            value = "false"
+          }
           resources {
-            # v2 is a Spring-Boot JVM + React bundle — heavier than v1's
-            # tools-only backend. Tier-4-aux Burstable (request < limit); CPU
-            # request only (no cluster-wide CPU limits). Watch with krr and bump
-            # the 1Gi ceiling if OCR/office-conversion pushes past it.
+            # Tier-4-aux Burstable (request < limit); CPU request only (no
+            # cluster-wide CPU limits). 2Gi is the metaspace floor for v2, not
+            # slack — do not drop below it. Watch with krr; bump if heavy
+            # OCR/office-conversion pushes past it.
             requests = {
               cpu    = "250m"
-              memory = "512Mi"
+              memory = "768Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "2Gi"
             }
           }
 
@@ -130,10 +141,11 @@ resource "kubernetes_deployment" "stirling-pdf" {
           # reports Ready the instant the process starts, so Sablier forwards
           # the held request into a not-yet-serving JVM → 502. startup gates a
           # ~120s boot budget; readiness keeps the pod out of the Service until
-          # it actually serves 200 on / (works across v1 and v2).
+          # it serves. Probe /api/v1/info/status — the auth-free health endpoint
+          # (/ is login-gated on the standard image; status stays 200 regardless).
           startup_probe {
             http_get {
-              path = "/"
+              path = "/api/v1/info/status"
               port = 8080
             }
             initial_delay_seconds = 5
@@ -143,7 +155,7 @@ resource "kubernetes_deployment" "stirling-pdf" {
           }
           readiness_probe {
             http_get {
-              path = "/"
+              path = "/api/v1/info/status"
               port = 8080
             }
             period_seconds    = 10
