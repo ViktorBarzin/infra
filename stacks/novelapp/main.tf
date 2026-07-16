@@ -88,8 +88,8 @@ resource "kubernetes_deployment" "novelapp" {
     namespace = kubernetes_namespace.novelapp.metadata[0].name
     labels = {
       # Deliberately NOT sablier-enrolled (un-enrolled 2026-07-14, Viktor):
-      # shared with Gheorghe — cold starts hurt him; cheap to keep always-on
-      # at the right-sized 320Mi. Do not re-enroll.
+      # shared with Gheorghe — cold starts hurt him; keep always-on
+      # at 640Mi (see resources note re the 320Mi OOM loop). Do not re-enroll.
       app  = "novelapp"
       tier = local.tiers.aux
     }
@@ -212,14 +212,19 @@ resource "kubernetes_deployment" "novelapp" {
             container_port = 3000
           }
           resources {
-            # Right-sized 640Mi -> 320Mi on the 2026-07-14 un-enroll (live
-            # working set ~156Mi; 2x headroom) so always-on pins less memory.
+            # 640Mi (reverted from the 2026-07-14 320Mi right-size). The 320Mi
+            # was sized from the IDLE working set (~156Mi, 2x) with no headroom
+            # for request-time spikes; under real traffic novelapp (public Next.js,
+            # SSR) briefly spikes past 320Mi and the cgroup OOM-killer killed it
+            # ~10x/23h once it was restored to always-on (steady WS ~200Mi but
+            # the spikes are sub-scrape so metrics never showed >211Mi). 640Mi is
+            # the proven pre-right-size value. Do not re-trim from idle metrics.
             requests = {
-              memory = "320Mi"
+              memory = "640Mi"
               cpu    = "10m"
             }
             limits = {
-              memory = "320Mi"
+              memory = "640Mi"
             }
           }
         }
