@@ -99,23 +99,24 @@ kubectl scale -n immich deploy/immich-machine-learning --replicas=1
 
 | ID | HF repo | Quant | Ctx | mmproj |
 |----|---------|-------|-----|--------|
-| `qwen3-8b` | `Qwen/Qwen3-8B-GGUF` | Q4_K_M | 16384 | no (text-only) |
+| `qwen3-8b` | `unsloth/Qwen3-8B-GGUF` | Q4_K_M | 16384 | no (text-only) |
 | `qwen3vl-8b` | `Qwen/Qwen3-VL-8B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
-| `minicpm-v-4-5` | `openbmb/MiniCPM-V-4_5-gguf` | Q4_K_M | 3072 | yes |
 | `qwen3vl-4b` | `Qwen/Qwen3-VL-4B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
+
+(`minicpm-v-4-5` was dropped 2026-07-16 — unused, "nothing special" in the
+2026-05-10 benchmark.)
 
 `qwen3-8b` (text-only) is the Tier-0 triage model for
 `recruiter-responder`, and the enrichment + RAG-answer model for
-`paperless-ai`; the `qwen3vl-*` / `minicpm-v` models serve the vision
-use cases.
+`paperless-ai`; the `qwen3vl-*` models serve the vision use cases.
 
 **`qwen3-8b` runs with `--reasoning off`** (2026-07-13). Qwen3 defaults
 to thinking under `--jinja`, which returns an *empty* `message.content`
 (all output lands in `reasoning_content`), usually exhausts `max_tokens`
 mid-thought, and makes every call ~50x slower — paperless-ai's JSON
 enrichment failed outright on it. The flag is scoped to `qwen3-8b` in
-the `stacks/llama-cpp/main.tf` cmd builder; vision models keep default
-reasoning. Per-request `chat_template_kwargs: {enable_thinking:false}`
+the `stacks/llama-cpp/main.tf` cmd builder (gated on `text_only`, currently
+just `qwen3-8b`); vision models keep default reasoning. Per-request `chat_template_kwargs: {enable_thinking:false}`
 is the deprecated equivalent (recruiter-responder still sends it —
 harmless). If a future consumer genuinely needs chain-of-thought from
 this model, add a separate llama-swap model alias rather than flipping
@@ -126,6 +127,26 @@ recent llama.cpp ≥ b9095, which includes Qwen3-VL projection fix
 [#20899](https://github.com/ggml-org/llama.cpp/issues/20899) and
 mtmd Flash-Attention regression fix
 [#16962](https://github.com/ggml-org/llama.cpp/issues/16962)).
+
+### Text-model upgrade evaluation (2026-07-16 — all rejected)
+
+qwen3-8b was benchmarked on-card against three upgrade candidates; all lost on
+this **Turing (SM 7.5) T4**, so qwen3-8b stays (33 tok/s gen, f16 KV, the
+fastest usable text model this GPU supports today):
+
+- **q8_0 KV cache** — ~40–70× slower *generation* (Turing has no quantized-KV
+  fused flash-attn kernel, so even symmetric q8_0/q8_0 falls off the fast path;
+  prefill stayed fine). Do **not** re-enable KV-quant on the T4.
+- **qwen3.5-9b** — ~0.5 tok/s generation regardless of KV; the `qwen3_5`
+  architecture loads and runs on b9879 but has no performant CUDA path on
+  SM 7.5 yet. Revisit if/when upstream optimizes it.
+- **gemma-4 12b / e4b** — 12b too big for the contended card (partial CPU
+  offload → slow prefill); e4b was faster + ~⅓ the VRAM but weaker on
+  paperless-ai enrichment (mislabeled correspondent) and wraps JSON in
+  ` ```fences `.
+
+Method, numbers, and the broader SoTA survey:
+`docs/research/2026-07-16-local-llm-sota-and-upgrade.md`.
 
 ## Endpoints
 

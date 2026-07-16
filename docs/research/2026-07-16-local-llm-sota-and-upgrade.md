@@ -1,6 +1,6 @@
 # Local LLM stack — state of the art & upgrade options (mid-2026)
 
-**Status:** EXECUTED 2026-07-16 — Viktor chose "Tier 1 + text upgrade". On-card verification REJECTED both proposed upgrades (q8_0 KV and qwen3.5-9b are both ~40× too slow on our Turing T4); only the minicpm-v-4.5 cleanup stuck. qwen3-8b stays. **Read §0.1 first — it supersedes the optimistic claims below.**
+**Status:** DONE 2026-07-16 — Viktor chose "Tier 1 + text upgrade", then "try Gemma 4". On-card verification REJECTED all THREE text-model upgrades (q8_0 KV, qwen3.5-9b, gemma-4) on our Turing T4; only the minicpm-v-4.5 cleanup stuck. qwen3-8b (33 tok/s) stays. **Read §0.1 first — it supersedes the optimistic claims below.**
 **Date:** 2026-07-16
 **Owner:** Viktor (decision) / Claude (research + synthesis)
 **Scope:** the `llama-cpp` stack (`llama-swap` + `llama.cpp`) on the shared Tesla T4 — serving layer, the text model, and the vision models — and whether any of them can be usefully upgraded **on the hardware we already have**.
@@ -24,14 +24,16 @@ Everything here is **free** (open-weight, self-hosted) and **reversible** (add-n
 
 ---
 
-## 0.1 Execution outcome (2026-07-16) — both upgrades REJECTED on-card
+## 0.1 Execution outcome (2026-07-16) — all text-model upgrades REJECTED on-card
 
-Viktor approved "Tier 1 + text upgrade." On empirical on-card verification (the gate *before* migrating any consumer), **both headline recommendations failed on our Turing T4** and were reverted. **This section supersedes §0 points 1–2 and §3.2/§4 below — read it first.**
+Viktor approved "Tier 1 + text upgrade," then "try Gemma 4." On empirical on-card verification (the gate *before* migrating any consumer), **all three evaluated text-model upgrades failed on our Turing T4**. **This section supersedes §0 points 1–2 and §3.2/§4 below — read it first.**
 
 | Change tried | Result on the T4 (llama.cpp b9879) | Disposition |
 |---|---|---|
 | **q8_0 KV cache** (the §3.2 "free win") | qwen3-8b generation **0.58 tok/s** vs **33 tok/s** on f16 KV — **~40–70× slower**. Prefill stayed fine (~143 tok/s); only token *generation* cratered. | **REVERTED** (commit `b8c059cb`). KV stays f16. |
 | **qwen3.5-9b** text upgrade (§4) | Loads, health-passes, runs — but generates **~0.5 tok/s regardless of KV type**; ~40× too slow to use. Not contention (GPU util 16%). | **REMOVED** (commit `9bcd3bc3`). qwen3-8b stays. |
+| **gemma-4-12b** (§5 alt) | Cold prefill **0.08 tok/s**; ~7.7 GB → too big for the T4 alongside frigate (partial CPU offload). | **REMOVED** (commit `a07cce1c`). Too big. |
+| **gemma-4-e4b** (§5 alt) | Warm **47 tok/s gen / 236 prefill** (faster than qwen3-8b!), ~3 GB VRAM, Apache-2.0 — BUT weaker on paperless-ai enrichment (put the *recipient* as correspondent, not the sender) and wraps JSON in ```fences. Tied qwen3-8b only on triage/RAG. | **REMOVED** (commit `a07cce1c`). Not a clean win. |
 | **Drop minicpm-v-4.5** (§5) | Unused; freed ~11 GB on the models PVC. | **DONE** — the one change that stuck. |
 
 **Root causes (verified on-card):**
@@ -40,10 +42,14 @@ Viktor approved "Tier 1 + text upgrade." On empirical on-card verification (the 
 
 **Net result:** `qwen3-8b` (Q4_K_M, f16 KV, 16k ctx, reasoning off) remains the text model at **33 tok/s** — empirically the *correct* config for this hardware. `minicpm-v-4.5` dropped. Serving stack otherwise confirmed optimal (llama.cpp + llama-swap, `-fa on`, f16 KV). **No consumer was migrated** — the verification gate held; blast radius was a ~15-min self-inflicted qwen3-8b slowdown, reverted.
 
-**Still-valid options (not yet tried), pending Viktor:**
-- **Gemma 4** (12B or E4B) as the text upgrade — a *different* architecture (not qwen3_5), well-supported in llama.cpp with ggml-org pre-quant GGUFs, so it may be performant where qwen3_5 isn't. Untested on-card.
-- **Revisit qwen3.5** when llama.cpp lands an optimized `qwen3_5` CUDA path (watch upstream).
-- Vision slot: the §5 verdict is unaffected (keep Qwen3-VL-4B/8B; the optional Gemma-4 E4B A/B still stands).
+**Final decision (Viktor, 2026-07-16): keep qwen3-8b; all candidates removed.** After testing all the way down, **no available model beats qwen3-8b on this hardware** for these jobs. gemma-4-e4b came closest (faster + ⅓ the VRAM) but its enrichment quality gap + JSON-fencing friction did not justify moving the real services off a proven 8B model.
+
+**Left for the future (not now):**
+- **Revisit qwen3.5** when llama.cpp lands an optimized `qwen3_5` CUDA path (watch upstream) — the model is genuinely better on paper; this is purely a support-maturity problem.
+- **Re-try gemma-4-e4b** if the enrichment gap is closed (bare-JSON via GBNF grammar / a tighter prompt) AND the VRAM win becomes worth the churn (e.g. if GPU contention worsens).
+- Vision slot: the §5 verdict stands (keep Qwen3-VL-4B/8B).
+
+**Standing lesson:** on the Turing T4, treat any new model architecture or KV-quant change as guilty-until-proven — measure tokens/sec on-card BEFORE migrating consumers. Three plausible, well-sourced upgrades all failed here for hardware/support reasons no amount of desk research could have predicted without running them.
 
 ---
 
