@@ -71,8 +71,9 @@ flowchart TD
     subgraph change["Terraform change (stacks/stirling-pdf)"]
         C1["annotations: keel.sh/policy = major<br/>(removed from ignore_changes)"]
         C2["image seed → 2.13.2 (semver)<br/>(kept in ignore_changes; Keel owns live tag)"]
-        C3["resources → req 250m/512Mi, limit 1Gi"]
-        C4["+ startup & readiness probes on /"]
+        C3["resources → req 250m/768Mi, limit 2Gi<br/>(JVM metaspace floor for v2)"]
+        C4["+ startup & readiness probes on /api/v1/info/status"]
+        C5["env SECURITY_ENABLELOGIN=false<br/>(disable v2 login → single Authentik gate)"]
     end
 
     subgraph after["After — v2, auto-tracked"]
@@ -123,12 +124,29 @@ sequenceDiagram
 | | v1 (before) | v2 (after) |
 |---|---|---|
 | CPU request | 25m | **250m** (JVM boot) |
-| Mem request | 320Mi | **512Mi** |
-| Mem limit | 512Mi | **1Gi** |
+| Mem request | 320Mi | **768Mi** |
+| Mem limit | 512Mi | **2Gi** |
 | QoS | Burstable | Burstable (tier-4-aux) |
 
-Goldilocks/VPA is gone cluster-wide; right-size later with `krr` if OCR /
-office-conversion pushes past 1 Gi.
+**2Gi is a floor, not slack** — see the metaspace gotcha below. Goldilocks/VPA
+is gone cluster-wide; right-size later with `krr` but do not drop below 2Gi.
+
+## Gotchas found during execution (both fixed + verified live)
+
+1. **1Gi → JVM Metaspace OOM crashloop.** v2's entrypoint sizes the JVM from
+   the container memory *limit*: at `1024MB` it caps `MaxMetaspaceSize=128m`,
+   too small for v2's class graph → `OutOfMemoryError: Metaspace` →
+   `-XX:+ExitOnOutOfMemoryError` self-terminates (`exitCode 0`, *not* a kernel
+   OOMKill/137) → CrashLoopBackOff. At **2Gi** the entrypoint sets
+   `MaxMeta=192m` and the app boots in ~28s. My initial ~1 GB estimate was
+   wrong for the standard image (it bundles LibreOffice/unoserver/Xvfb/tesseract/
+   calibre/ghostscript alongside the JVM).
+2. **v2 enables its OWN login by default** (`security.enableLogin: true` in the
+   standard image) — unlike v1, which served openly. So `/` returned **401**:
+   the startup probe on `/` failed, *and* a real user behind Authentik would hit
+   a second (Stirling) login. Fix: `SECURITY_ENABLELOGIN=false` env →
+   Authentik forward-auth is the single gate, `/` serves openly. Probe points at
+   the auth-free `/api/v1/info/status` (stays 200 regardless of login state).
 
 ## Rollback
 
