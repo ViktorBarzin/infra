@@ -26,7 +26,7 @@ Everything here is **free** (open-weight, self-hosted) and **reversible** (add-n
 
 ## 0.1 Execution outcome (2026-07-16) — all text-model upgrades REJECTED on-card
 
-Viktor approved "Tier 1 + text upgrade," then "try Gemma 4." On empirical on-card verification (the gate *before* migrating any consumer), **all three evaluated text-model upgrades failed on our Turing T4**. **This section supersedes §0 points 1–2 and §3.2/§4 below — read it first.**
+Viktor approved "Tier 1 + text upgrade," then "try Gemma 4," then a deep HF-survey workflow ("research in depth") that surfaced Granite-4.1-8b + Qwen3-4B-2507 for a final round. On empirical on-card verification (the gate *before* migrating any consumer), **all FIVE evaluated text-model upgrades — across two rounds — failed to beat qwen3-8b on our Turing T4**. **This section supersedes §0 points 1–2 and §3.2/§4 below — read it first.**
 
 | Change tried | Result on the T4 (llama.cpp b9879) | Disposition |
 |---|---|---|
@@ -34,6 +34,8 @@ Viktor approved "Tier 1 + text upgrade," then "try Gemma 4." On empirical on-car
 | **qwen3.5-9b** text upgrade (§4) | Loads, health-passes, runs — but generates **~0.5 tok/s regardless of KV type**; ~40× too slow to use. Not contention (GPU util 16%). | **REMOVED** (commit `9bcd3bc3`). qwen3-8b stays. |
 | **gemma-4-12b** (§5 alt) | Cold prefill **0.08 tok/s**; ~7.7 GB → too big for the T4 alongside frigate (partial CPU offload). | **REMOVED** (commit `a07cce1c`). Too big. |
 | **gemma-4-e4b** (§5 alt) | Warm **47 tok/s gen / 236 prefill** (faster than qwen3-8b!), ~3 GB VRAM, Apache-2.0 — BUT weaker on paperless-ai enrichment (put the *recipient* as correspondent, not the sender) and wraps JSON in ```fences. Tied qwen3-8b only on triage/RAG. | **REMOVED** (commit `a07cce1c`). Not a clean win. |
+| **granite-4.1-8b** (round 2, deep survey top pick) | DENSE granite arch = FAST on Turing (35 tok/s gen, confirmed — not the 4.0-H Mamba hybrid). On a 5-doc real-paperless correspondent A/B (incl. Bulgarian) only **TIED** qwen3-8b (both correct; Granite marginally cleaner on 2/5), while still **fencing JSON even under `response_format=json_object`** + a ~64s cold-prefill warmup. | **REMOVED**. Not a clear win. |
+| **qwen3-4b-2507** (round 2) | Fastest (48 tok/s gen, 1485 prefill, no warmup), ~5 GB (contention win), keeps Bulgarian — BUT mislabeled correspondent (recipient) in both EN + BG (the 4B regression). | **REMOVED**. Fine for simple jobs, not correspondent-critical enrichment. |
 | **Drop minicpm-v-4.5** (§5) | Unused; freed ~11 GB on the models PVC. | **DONE** — the one change that stuck. |
 
 **Root causes (verified on-card):**
@@ -42,14 +44,16 @@ Viktor approved "Tier 1 + text upgrade," then "try Gemma 4." On empirical on-car
 
 **Net result:** `qwen3-8b` (Q4_K_M, f16 KV, 16k ctx, reasoning off) remains the text model at **33 tok/s** — empirically the *correct* config for this hardware. `minicpm-v-4.5` dropped. Serving stack otherwise confirmed optimal (llama.cpp + llama-swap, `-fa on`, f16 KV). **No consumer was migrated** — the verification gate held; blast radius was a ~15-min self-inflicted qwen3-8b slowdown, reverted.
 
-**Final decision (Viktor, 2026-07-16): keep qwen3-8b; all candidates removed.** After testing all the way down, **no available model beats qwen3-8b on this hardware** for these jobs. gemma-4-e4b came closest (faster + ⅓ the VRAM) but its enrichment quality gap + JSON-fencing friction did not justify moving the real services off a proven 8B model.
+**Final decision (Viktor, 2026-07-16): keep qwen3-8b; all candidates removed.** After testing all the way down — including a deep multi-agent HF-survey workflow and a real-document A/B — **no available model beats qwen3-8b on this hardware** for these jobs. Granite-4.1-8b (the survey's top pick) only *tied* it on real docs while adding JSON-fencing + cold-warmup costs.
+
+**A free win the validation surfaced (no migration needed):** qwen3-8b's one-sample Bulgarian correspondent "miss" was PROMPT AMBIGUITY in *my synthetic test*, not a capability gap — with a clear "sender not recipient" prompt qwen3-8b got all 5 real docs right. Checked paperless-ai's live `SYSTEM_PROMPT`: it **already** states *"CORRESPONDENT: the sender or issuer … never use the recipient or an address,"* so correspondent extraction is already correct in prod — **no change required.** (Kept as a note for any future consumer whose correspondent prompt is vaguer.)
 
 **Left for the future (not now):**
-- **Revisit qwen3.5** when llama.cpp lands an optimized `qwen3_5` CUDA path (watch upstream) — the model is genuinely better on paper; this is purely a support-maturity problem.
-- **Re-try gemma-4-e4b** if the enrichment gap is closed (bare-JSON via GBNF grammar / a tighter prompt) AND the VRAM win becomes worth the churn (e.g. if GPU contention worsens).
+- **Revisit qwen3.5** when llama.cpp lands an optimized `qwen3_5` CUDA path (watch upstream) — genuinely better on paper; purely a support-maturity problem.
+- **Re-try granite-4.1-8b or gemma-4-e4b** only if their operational costs stop mattering (bare-JSON via a GBNF grammar solved; for granite, its untested RAG/tool-calling edge on recruiter-responder; for gemma, the VRAM win under worse GPU contention).
 - Vision slot: the §5 verdict stands (keep Qwen3-VL-4B/8B).
 
-**Standing lesson:** on the Turing T4, treat any new model architecture or KV-quant change as guilty-until-proven — measure tokens/sec on-card BEFORE migrating consumers. Three plausible, well-sourced upgrades all failed here for hardware/support reasons no amount of desk research could have predicted without running them.
+**Standing lesson:** on the Turing T4, treat any new model architecture or KV-quant change as guilty-until-proven — measure tokens/sec on-card BEFORE migrating consumers, and validate quality on REAL docs (a single synthetic sample gave a false "Granite beats qwen3-8b" signal that a 5-doc real A/B corrected to a tie). Five plausible, well-sourced upgrades — two rounds, including a deep multi-agent HF survey — all failed to beat the incumbent here, for hardware/support/prompt reasons no amount of desk research could have predicted without running them.
 
 ---
 
