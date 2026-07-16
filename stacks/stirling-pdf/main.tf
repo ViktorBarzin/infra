@@ -70,6 +70,20 @@ resource "kubernetes_deployment" "stirling-pdf" {
       # propagation so the first forwarded request never hits a 503 race.
       "sablier.ready-after" = "5s"
     }
+    # v1→v2 upgrade (2026-07-16): auto-track latest SAFELY via the semver-ordered
+    # `major` policy — NOT `force`. force ignores semver ordering and rolled
+    # paperless-ngx 2.20.15→1.5.0 within minutes (2026-07-14, memory #9838); it
+    # is house-banned on upstream multi-tag repos and stirlingtools/stirling-pdf
+    # is exactly that. `major` auto-takes every HIGHER semver (incl. future
+    # majors), is monotonic so it can never roll backward, and performs the
+    # initial 0.33.1→2.x jump itself. These keys are intentionally OUT of
+    # ignore_changes below so TF reconciles the live patch→major flip; Kyverno's
+    # +(keel.sh/policy)=patch is add-if-absent, so this explicit value wins.
+    annotations = {
+      "keel.sh/policy"       = "major"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/pollSchedule" = "@every 1h"
+    }
   }
   spec {
     replicas = 1
@@ -89,20 +103,52 @@ resource "kubernetes_deployment" "stirling-pdf" {
       }
       spec {
         container {
-          image = "stirlingtools/stirling-pdf:latest"
+          # Semver seed for Keel's `major` policy (recreate-correct only — Keel
+          # owns the LIVE tag via ignore_changes and bumps 0.33.1→this→newer).
+          # `latest` == v2 today; a semver tag (not `:latest`) is required so
+          # the semver policy has an ordered base to compare on a fresh recreate.
+          image = "stirlingtools/stirling-pdf:2.13.2"
           name  = "stirling-pdf"
           resources {
+            # v2 is a Spring-Boot JVM + React bundle — heavier than v1's
+            # tools-only backend. Tier-4-aux Burstable (request < limit); CPU
+            # request only (no cluster-wide CPU limits). Watch with krr and bump
+            # the 1Gi ceiling if OCR/office-conversion pushes past it.
             requests = {
-              cpu    = "25m"
-              memory = "320Mi"
+              cpu    = "250m"
+              memory = "512Mi"
             }
             limits = {
-              memory = "512Mi"
+              memory = "1Gi"
             }
           }
 
           port {
             container_port = 8080
+          }
+          # JVM cold-start on a Sablier wake is ~15-25s. Without probes the pod
+          # reports Ready the instant the process starts, so Sablier forwards
+          # the held request into a not-yet-serving JVM → 502. startup gates a
+          # ~120s boot budget; readiness keeps the pod out of the Service until
+          # it actually serves 200 on / (works across v1 and v2).
+          startup_probe {
+            http_get {
+              path = "/"
+              port = 8080
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 3
+            failure_threshold     = 40
+            timeout_seconds       = 3
+          }
+          readiness_probe {
+            http_get {
+              path = "/"
+              port = 8080
+            }
+            period_seconds    = 10
+            timeout_seconds   = 3
+            failure_threshold = 3
           }
           volume_mount {
             name       = "configs"
@@ -121,9 +167,9 @@ resource "kubernetes_deployment" "stirling-pdf" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      # keel.sh/policy|trigger|pollSchedule are NOT ignored here — TF owns them
+      # so the explicit `major` policy above reconciles over Kyverno's
+      # add-if-absent `patch` default and flips the live deployment (2026-07-16).
       metadata[0].annotations["keel.sh/match-tag"],
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
