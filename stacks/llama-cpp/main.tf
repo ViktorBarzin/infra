@@ -98,15 +98,13 @@ locals {
           "--jinja",
           "-fa on",
           ],
-          # Text models: symmetric q8_0 KV-cache quant (halves KV VRAM for <1%
-          # quality loss; needs -fa on). SYMMETRIC ONLY — the llama-swap :cuda
-          # image is built without GGML_CUDA_FA_ALL_QUANTS, so an asymmetric K/V
-          # pair (e.g. q4_0+q8_0) has no fused FA kernel and silently runs
-          # ~25-45x slower (ggml-org/llama.cpp#24485). Vision models keep f16 KV
-          # — at ctx 3072 the KV is tiny, so quantizing it saves nothing. Turing
-          # (T4) is a first-class llama.cpp FA target. See docs/research/
-          # 2026-07-16-local-llm-sota-and-upgrade.md.
-          cfg.text_only ? ["--cache-type-k q8_0", "--cache-type-v q8_0"] : [],
+          # NB: q8_0 KV-cache quant was tried here 2026-07-16 and REVERTED. On
+          # the T4 (Turing SM7.5) it collapsed generation to ~0.58 tok/s
+          # (~40-70x slower) for BOTH qwen3-8b and qwen3.5-9b — the fused
+          # flash-attn kernel has no quantized-KV path on Turing, so even
+          # symmetric q8_0/q8_0 falls back to a crawl (prefill stayed fast at
+          # ~143 tok/s; generation was the casualty). KV stays f16.
+          # See docs/research/2026-07-16-local-llm-sota-and-upgrade.md.
           # Thinking-capable Qwen text models: force reasoning OFF. Qwen3/Qwen3.5
           # default to thinking under --jinja, returning EMPTY message.content
           # (all output -> reasoning_content) + blowing the token budget:
