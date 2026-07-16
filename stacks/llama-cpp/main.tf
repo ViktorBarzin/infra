@@ -13,16 +13,21 @@ locals {
   # All Apache-2.0, GGUF Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob).
   # Image long-edge capped at 1024 px to keep prefill <2s on the T4.
   # 2026-07-16 cleanup/eval (docs/research/2026-07-16-local-llm-sota-and-upgrade.md):
-  # dropped unused minicpm-v-4.5. Three text-model upgrades were evaluated
-  # ON-CARD and ALL REJECTED, so qwen3-8b (33 tok/s, f16 KV) stays as the best
-  # text model this hardware supports today:
+  # dropped unused minicpm-v-4.5. Five text-model upgrade candidates were
+  # evaluated ON-CARD across two rounds and ALL REJECTED, so qwen3-8b (33 tok/s,
+  # f16 KV) stays as the best text model this hardware supports today:
   #   - q8_0 KV cache: ~40-70x slower generation on Turing (no quantized-KV
   #     fused FA kernel on SM7.5). Reverted.
   #   - qwen3.5-9b: ~0.5 tok/s generation (qwen3_5 arch has no performant CUDA
   #     path on SM7.5 in b9879). Removed.
-  #   - gemma-4 12b + e4b: 12b too big for the contended T4; e4b was fast + small
-  #     but weaker on enrichment (mislabeled correspondent) + wraps JSON in
-  #     ```fences. Removed. No available model beat qwen3-8b here.
+  #   - gemma-4 12b + e4b: 12b too big; e4b fast+small but weaker enrichment
+  #     (mislabeled correspondent) + fenced JSON. Removed.
+  #   - granite-4.1-8b + qwen3-4b-2507 (round 2, deep HF survey): granite's dense
+  #     arch IS fast on Turing but only TIED qwen3-8b on a 5-doc correspondent
+  #     A/B (incl. Bulgarian) while still fencing JSON + carrying a cold-prefill
+  #     warmup; qwen3-4b mislabeled correspondent. Neither a clear win. Removed.
+  #   Real finding: a clear "sender not recipient" prompt fixes correspondent for
+  #   qwen3-8b itself — no migration needed.
   #
   # Filenames are matched by glob in the download Job (huggingface_hub
   # snapshot_download with allow_patterns). Stable symlinks model.gguf /
@@ -57,32 +62,6 @@ locals {
     # per-request; the server flag makes it the default for all consumers.
     qwen3-8b = {
       hf_repo        = "unsloth/Qwen3-8B-GGUF"
-      gguf_pattern   = "*Q4_K_M*.gguf"
-      mmproj_pattern = ""
-      ctx_size       = 16384
-      gpu_layers     = 99
-      text_only      = true
-    }
-    # --- Round-2 text-upgrade eval (2026-07-16, after the deep HF survey) ---
-    # Both DENSE + mature llama.cpp arch (expected FAST on Turing, unlike the
-    # rejected qwen3.5/gemma-4), Apache-2.0, served text-only. A/B'd vs qwen3-8b
-    # INCLUDING a real Bulgarian paperless-ai doc (make-or-break for Granite,
-    # which covers only 12 langs / no Cyrillic). Remove loser(s) after the test.
-    # granite-4.1-8b: quality-UPGRADE candidate (IFEval 87, RAG/tool/JSON; DENSE
-    #   granite arch = llama.cpp build_llama path, NOT the 4.0-H Mamba hybrid).
-    # qwen3-4b-2507: operational win (same qwen3 arch, ~5GB fits under immich
-    #   contention, quality parity, keeps Bulgarian, native non-thinking).
-    # See docs/research/2026-07-16-local-llm-sota-and-upgrade.md.
-    "granite-4.1-8b" = {
-      hf_repo        = "ibm-granite/granite-4.1-8b-GGUF"
-      gguf_pattern   = "*Q4_K_M*.gguf"
-      mmproj_pattern = ""
-      ctx_size       = 16384
-      gpu_layers     = 99
-      text_only      = true
-    }
-    qwen3-4b-2507 = {
-      hf_repo        = "unsloth/Qwen3-4B-Instruct-2507-GGUF"
       gguf_pattern   = "*Q4_K_M*.gguf"
       mmproj_pattern = ""
       ctx_size       = 16384
