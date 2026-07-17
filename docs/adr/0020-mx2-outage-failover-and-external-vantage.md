@@ -111,11 +111,11 @@ All verified as-of 2026-07-08:
   quota, inline-HTML last resort — the engineered worst case equals the
   status quo (raw 530s), never a new outage class.
 - **UPDATE 2026-07-17 — coverage gap RESOLVED + quota fix (consolidation done).**
-  The `rybbit-analytics` head-injection was folded into this TF-managed
-  `outage-failover` Worker (`worker_failover.js` now does analytics injection on
-  healthy HTML for `SITE_IDS` hosts AND the outage page on 530/521-523), and the
-  out-of-band `rybbit-analytics` Worker + its ~25 dashboard routes were retired.
+  The out-of-band `rybbit-analytics` Worker + its ~25 dashboard routes were
+  retired, and this TF-managed `outage-failover` Worker took over their routes.
   So the apex + former rybbit hosts now DO get the outage page (gap closed).
+  (The Rybbit head-injection was briefly folded into `worker_failover.js` then
+  STRIPPED the same day — see the analytics note below.)
   **Trigger:** a plain `*.viktorbarzin.me/*` wildcard billed a Worker invocation
   on ROUTE MATCH for every proxied host — `terminal.viktorbarzin.me` (ttyd/WS)
   alone was ≈55% of zone traffic — driving the free 100k/day quota to 94.5% on
@@ -135,10 +135,16 @@ All verified as-of 2026-07-08:
     set `true`.
   - The same-zone grey-cloud `fetch()` failure still holds, so the page stays
     BAKED INTO the script (unchanged).
-  - **Follow-up:** six `SITE_IDS` keys are stale hostnames (actualbudget→budget-*,
-    crowdsec→crowdsec-web, cyberchef→cc, paperless-ngx→paperless-ai, privatebin→pb,
-    uptime-kuma→uptime); carried over verbatim (they inject on nothing today).
-    Remapping to the real hosts needs the matching Rybbit dashboard site config.
+  - **Analytics injection REMOVED (same day).** Investigation found Rybbit is
+    completely unconfigured — Postgres `sites`/`users` = 0 rows, ClickHouse
+    `events` has only 119 rows (all 2026-04-12..13, none since), and `site_id` is a
+    numeric serial while the worker injected HEX IDs (da853…) matching neither the
+    schema nor any site. So injection has been dead since ~2026-04-13 (when the
+    Traefik rewrite-body plugin that used to inject broke on v3.6); the CF worker
+    created 2026-04-17 to replace it never actually injected. The `SITE_IDS` map +
+    HTMLRewriter were stripped → `outage-failover` is now pure failover. To restore
+    analytics: create Rybbit sites (dashboard) → numeric IDs → re-add injection +
+    fix the HTMLRewriter no-op. `compatibility_date=2024-01-01` kept as hygiene.
 - **mx2 gains ~140 MB of tenants** (gatus under `MemoryMax=128M` + nginx)
   under the ADR-0019 mail-priority rule: the mail queue always wins.
 - **Port 443 opens to the world** on mx2 — OCI security list + OS iptables —

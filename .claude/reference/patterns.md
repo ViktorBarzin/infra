@@ -43,7 +43,7 @@ Default `anti_ai_scraping = true` in ingress_factory. Disable per-service: `anti
 4. **Tarpit/poison content** (standalone at poison.viktorbarzin.me, `stacks/poison-fountain/`). Currently scaled to `replicas = 0` — fail-open path means no live traffic, no penalty.
 
 Trap links (formerly a layer) removed April 2026 — rewrite-body plugin broken on Traefik v3.6.12 (Yaegi bugs). `strip-accept-encoding` and `anti-ai-trap-links` middlewares deleted.
-Rybbit analytics injection is folded into the `outage-failover` Worker (`stacks/cloudflared/modules/cloudflared/worker_failover.js`, HTMLRewriter, 26 site-ID mappings) — consolidated 2026-07-17 from the retired out-of-band `rybbit-analytics` Worker (ADR-0020). It runs on the `*.viktorbarzin.me` wildcard + apex minus carve-out hosts (terminal/matrix/vault/… — quota).
+Rybbit analytics injection is GONE (2026-07-17). It was briefly folded into the `outage-failover` Worker during the CF-quota consolidation, then stripped the same day: the Rybbit instance is unconfigured (0 sites/users, analytics dead since ~2026-04-13, and the worker's hex site-IDs never matched Rybbit's numeric schema), so injection did nothing. The `outage-failover` Worker (`stacks/cloudflared/modules/cloudflared/worker_failover.js`) is now pure outage-failover on the `*.viktorbarzin.me` wildcard + apex minus carve-outs (ADR-0020). To restore analytics: set up Rybbit sites → numeric IDs → re-add injection.
 Key files: `modules/kubernetes/anubis_instance/`, `stacks/poison-fountain/`, `stacks/cloudflared/modules/cloudflared/worker_failover.js`, `stacks/traefik/modules/traefik/main.tf`
 
 ## Terragrunt Architecture
