@@ -21,6 +21,12 @@ resource "cloudflare_worker_script" "outage_failover" {
     jsonencode(file("${path.module}/error_page.html")),
   )
   module = true # ES module Worker (export default { fetch })
+  # REQUIRED for HTMLRewriter analytics injection to work. Carried over from the
+  # retired rybbit-analytics wrangler.toml (which set 2024-01-01). With an empty/
+  # ancient compat date the fetch()+HTMLRewriter path silently no-ops on origin
+  # HTML (injection never fires); the failover branch is unaffected. Verified:
+  # dropping it broke injection on every tracked host 2026-07-17.
+  compatibility_date = "2024-01-01"
 }
 
 # Zone routes — coverage model "wildcard minus carve-outs" (Viktor's call,
