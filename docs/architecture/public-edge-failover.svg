@@ -39,12 +39,12 @@
   <text x="298" y="257" font-size="11" fill="#52514e">route *.viktorbarzin.me/* · pass-through;</text>
   <text x="298" y="272" font-size="11" fill="#52514e">intercepts 530/521–523 (browser GET/HTML)</text>
   <text x="298" y="287" font-size="11" fill="#52514e">→ 503 + Retry-After, baked-in status page</text>
-  <text x="298" y="302" font-size="11" fill="#52514e">quota 100k/day (~20k used) · fail-open</text>
+  <text x="298" y="302" font-size="11" fill="#52514e">quota 100k/day (~30k used) · fail-open</text>
 
-  <rect x="286" y="322" width="248" height="60" rx="8" fill="none" stroke="#eda100" stroke-width="1.5" stroke-dasharray="3 3"/>
-  <text x="298" y="343" font-size="12" font-weight="600" fill="#0b0b0b">known gap: rybbit-analytics Worker</text>
-  <text x="298" y="359" font-size="11" fill="#52514e">26 per-host routes (apex, www, immich…)</text>
-  <text x="298" y="374" font-size="11" fill="#52514e">pre-empt the wildcard → no failover page</text>
+  <rect x="286" y="322" width="248" height="60" rx="8" fill="none" stroke="#2e9e5b" stroke-width="1.5" stroke-dasharray="3 3"/>
+  <text x="298" y="343" font-size="12" font-weight="600" fill="#0b0b0b">consolidated 2026-07-17: one Worker</text>
+  <text x="298" y="359" font-size="11" fill="#52514e">analytics + failover; wildcard + apex</text>
+  <text x="298" y="374" font-size="11" fill="#52514e">minus carve-outs (terminal/matrix/…)</text>
 
   <text x="286" y="412" font-size="11" fill="#52514e">CrowdSec edge ban list · bot fight mode</text>
 

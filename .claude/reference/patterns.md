@@ -43,8 +43,8 @@ Default `anti_ai_scraping = true` in ingress_factory. Disable per-service: `anti
 4. **Tarpit/poison content** (standalone at poison.viktorbarzin.me, `stacks/poison-fountain/`). Currently scaled to `replicas = 0` — fail-open path means no live traffic, no penalty.
 
 Trap links (formerly a layer) removed April 2026 — rewrite-body plugin broken on Traefik v3.6.12 (Yaegi bugs). `strip-accept-encoding` and `anti-ai-trap-links` middlewares deleted.
-Rybbit analytics injection now via Cloudflare Worker (`stacks/rybbit/worker/`, HTMLRewriter, wildcard route `*.viktorbarzin.me/*`, 28 site ID mappings).
-Key files: `modules/kubernetes/anubis_instance/`, `stacks/poison-fountain/`, `stacks/rybbit/worker/`, `stacks/traefik/modules/traefik/main.tf`
+Rybbit analytics injection is folded into the `outage-failover` Worker (`stacks/cloudflared/modules/cloudflared/worker_failover.js`, HTMLRewriter, 26 site-ID mappings) — consolidated 2026-07-17 from the retired out-of-band `rybbit-analytics` Worker (ADR-0020). It runs on the `*.viktorbarzin.me` wildcard + apex minus carve-out hosts (terminal/matrix/vault/… — quota).
+Key files: `modules/kubernetes/anubis_instance/`, `stacks/poison-fountain/`, `stacks/cloudflared/modules/cloudflared/worker_failover.js`, `stacks/traefik/modules/traefik/main.tf`
 
 ## Terragrunt Architecture
 - Root `terragrunt.hcl`: DRY providers, backend, variable loading, `generate "tiers"` block

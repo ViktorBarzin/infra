@@ -106,22 +106,39 @@ All verified as-of 2026-07-08:
 
 ## Consequences
 
-- **The Worker sits on the hot path of ALL proxied traffic.** Contained by
+- **The Worker sits on the hot path of proxied traffic.** Contained by
   design: pure pass-through outside the narrow intercept set, FAIL OPEN on
   quota, inline-HTML last resort — the engineered worst case equals the
   status quo (raw 530s), never a new outage class.
-- **KNOWN COVERAGE GAP (as-built 2026-07-08):** the dashboard-managed
-  `rybbit-analytics` Worker holds ~26 per-host routes (apex, www, immich,
-  nextcloud, mail, f1, …); Cloudflare runs only the single most-specific
-  route per request, so those hosts bypass the failover Worker and still
-  show raw Cloudflare errors during an outage (an apex route for this Worker
-  is impossible while rybbit owns `viktorbarzin.me/*` — API error 10020).
-  Additionally, Worker `fetch()` to the same-zone grey-cloud `status` host
-  was observed failing, so the outage page is BAKED INTO the script at
-  deploy time (`error_page.html`, injected by `worker.tf`; live status loads
-  client-side from the gatus API). Planned fix: consolidate rybbit's
-  head-injection into this TF-managed Worker and retire the out-of-band
-  script + routes — pending decision (out-of-band production config).
+- **UPDATE 2026-07-17 — coverage gap RESOLVED + quota fix (consolidation done).**
+  The `rybbit-analytics` head-injection was folded into this TF-managed
+  `outage-failover` Worker (`worker_failover.js` now does analytics injection on
+  healthy HTML for `SITE_IDS` hosts AND the outage page on 530/521-523), and the
+  out-of-band `rybbit-analytics` Worker + its ~25 dashboard routes were retired.
+  So the apex + former rybbit hosts now DO get the outage page (gap closed).
+  **Trigger:** a plain `*.viktorbarzin.me/*` wildcard billed a Worker invocation
+  on ROUTE MATCH for every proxied host — `terminal.viktorbarzin.me` (ttyd/WS)
+  alone was ≈55% of zone traffic — driving the free 100k/day quota to 94.5% on
+  2026-07-16. **Coverage model chosen (Viktor):** *wildcard minus carve-outs* —
+  the Worker runs on the wildcard + apex EXCEPT "no-worker" carve-out routes for
+  the quota hogs / non-browsable hosts (terminal, terminal-ro, matrix, vault, t3,
+  t3-afk, xray-grpc, xray-ws, rybbit). Result ≈30k/day (~3x headroom); every
+  browsable host keeps outage coverage; the carve-outs show the raw CF error
+  (accepted — WS/API/transport). **Not self-limiting** (a future high-traffic
+  host re-burns until carved out) — accepted because fail-open makes it degrade to
+  passthrough, and the quota email/analytics catch it.
+  - **fail-open correction:** `request_limit_fail_open` IS exposed by the CF
+    routes API (the original "dashboard-only" note above was wrong), but is NOT in
+    the cloudflare v4 provider — so it is set OUT-OF-BAND via API (drift the
+    provider won't manage) and MUST be re-asserted `true` on the wildcard + apex
+    routes after any recreate. It was found `false` (fail-CLOSED) on 2026-07-17 and
+    set `true`.
+  - The same-zone grey-cloud `fetch()` failure still holds, so the page stays
+    BAKED INTO the script (unchanged).
+  - **Follow-up:** six `SITE_IDS` keys are stale hostnames (actualbudget→budget-*,
+    crowdsec→crowdsec-web, cyberchef→cc, paperless-ngx→paperless-ai, privatebin→pb,
+    uptime-kuma→uptime); carried over verbatim (they inject on nothing today).
+    Remapping to the real hosts needs the matching Rybbit dashboard site config.
 - **mx2 gains ~140 MB of tenants** (gatus under `MemoryMax=128M` + nginx)
   under the ADR-0019 mail-priority rule: the mail queue always wins.
 - **Port 443 opens to the world** on mx2 — OCI security list + OS iptables —

@@ -156,7 +156,9 @@ served from **mx2**, the offsite OCI VM (ADR-0020): gatus probes the public
 services every 60s from outside the homelab, so the page shows live up/down
 state and stays reachable even when the cluster, its WAN, or the Cloudflare
 tunnel are down. During such an outage the outage-failover Cloudflare Worker
-serves this page's `/error.html` to visitors of every proxied host.
+serves this page's `/error.html` to visitors of every proxied host except the
+carve-out hosts (terminal, matrix, vault, t3, xray-*, rybbit — quota/non-browsable,
+see `stacks/cloudflared/.../worker.tf`), which show the raw Cloudflare error.
 
 (The previous GitHub-Pages implementation — Uptime-Kuma snapshots pushed every
 5 minutes by the status-page CronJob — was disabled 2026-05-26 and superseded
