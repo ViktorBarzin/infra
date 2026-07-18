@@ -101,12 +101,12 @@ Channel 3:  A4 [32G] ──── A8 [32G]  ──── A12[ 8G ]     = 72 GB  
 | 203 | k8s-node3 | running | 8 | 32GB | vmbr1:vlan20 | 256G | Worker |
 | 204 | k8s-node4 | running | 8 | 32GB | vmbr1:vlan20 | 256G | Worker |
 | 205 | k8s-node5 | running | 8 | 32GB | vmbr1:vlan20 | 256G | Worker (10.0.20.105, joined 2026-05-26) |
-| 206 | k8s-node6 | running | 8 | 32GB | vmbr1:vlan20 | 256G | Worker (10.0.20.106, joined 2026-05-26) |
+| ~~206~~ | ~~k8s-node6~~ | **destroyed** | — | — | — | — | Decommissioned 2026-07-01, but VM 206 was left stopped with `onboot=1` and **zombie-rejoined** on the 2026-07-18 power-outage reboot (stale kubelet config, no providerID → proxmox-csi crashloop). Drained + Node object deleted + `qm destroy 206 --purge` 2026-07-18. See `docs/post-mortems/2026-07-18-sofia-power-outage-unclean-shutdown.md`. |
 | 220 | docker-registry | running | 4 | 4GB | vmbr1:vlan20 | 64G | MAC DE:AD:BE:EF:22:22 (10.0.20.10) |
 | 300 | Windows10 | running | 16 | 8GB | vmbr0 | 100G | Windows VM |
 | ~~9000~~ | ~~truenas~~ | **stopped/decommissioned** | — | — | — | — | NFS migrated to Proxmox host (192.168.1.127) at `/srv/nfs` and `/srv/nfs-ssd` |
 
-**Total VM RAM allocated**: ~288 GB nominal across running VMs vs 272 GB physical — OVERCOMMITTED (ballooning enabled on K8s workers, host swap in use; see memory id=535/2543). K8s rows live-verified via `kubectl get nodes` capacity 2026-06-11 (master 32G, node1 48G, node2-6 32G; the old 16/32/24GB figures predated the 2026-04-02 resize and node5/6).
+**Total VM RAM allocated**: ~256 GB nominal across running VMs vs 272 GB physical — within physical since node6's 2026-07-18 removal freed 32 GB (previously ~288 GB / overcommitted; ballooning still enabled on K8s workers, see memory id=535/2543). K8s rows live-verified via `kubectl get nodes` capacity 2026-06-11 (master 32G, node1 48G, node2-5 32G; the old 16/32/24GB figures predated the 2026-04-02 resize). Cluster is 6 nodes: k8s-master + k8s-node1-5.
 
 ## VM Templates
 | VMID | Name | Purpose |
