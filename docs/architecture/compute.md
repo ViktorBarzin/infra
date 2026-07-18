@@ -23,7 +23,6 @@ graph TB
         NODE3["VM 203: k8s-node3<br/>8c / 32GB"]
         NODE4["VM 204: k8s-node4<br/>8c / 32GB"]
         NODE5["VM 205: k8s-node5<br/>8c / 32GB"]
-        NODE6["VM 206: k8s-node6<br/>8c / 32GB"]
     end
 
     subgraph K8s["Kubernetes Cluster v1.34.8"]
@@ -79,9 +78,10 @@ graph TB
 | k8s-node3 | 203 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node4 | 204 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node5 | 205 | 8 | 32GB | vmbr1:vlan20 (10.0.20.105) | Worker (joined 2026-05-26) | None |
-| k8s-node6 | 206 | 8 | 32GB | vmbr1:vlan20 (10.0.20.106) | Worker (joined 2026-05-26) | None |
 
-**Total Cluster Resources**: 64 vCPUs, ~240GB RAM (k8s-node1 16c/48GB + master and 5 workers at 8c/32GB each)
+<!-- k8s-node6 (VMID 206) removed 2026-07-18: decommissioned 2026-07-01 but zombie-rejoined on the power-outage reboot (onboot=1); drained + Node deleted + VM destroyed. See docs/post-mortems/2026-07-18-sofia-power-outage-unclean-shutdown.md -->
+
+**Total Cluster Resources**: 56 vCPUs, ~208GB RAM (k8s-node1 16c/48GB + master and 4 workers at 8c/32GB each)
 
 > **All Linux VMs are hand-managed in Proxmox, NOT in Terraform**
 > (decided 2026-05-26, commit 44c3770a). The telmate/proxmox v3.0.2
