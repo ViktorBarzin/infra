@@ -130,86 +130,18 @@ resource "helm_release" "nvidia-gpu-operator" {
   depends_on = [kubernetes_config_map.time_slicing_config]
 }
 
-resource "kubernetes_deployment" "nvidia-exporter" {
-  metadata {
-    name      = "nvidia-exporter"
-    namespace = kubernetes_namespace.nvidia.metadata[0].name
-    labels = {
-      app  = "nvidia-exporter"
-      tier = var.tier
-      # 2026-05-26: Keel tag-rewrote :latest → :4.5.2-4.8.1-ubuntu22.04
-      # and the new image OOMs at 192Mi. Adding both LABEL + ANNOTATION
-      # to opt out of Keel cluster-wide auto-update — bump nvidia images
-      # in a separate planned change once we've sized the memory limit.
-      "keel.sh/policy" = "never"
-    }
-    annotations = {
-      "keel.sh/policy" = "never"
-    }
-  }
-  spec {
-    replicas = 1
-    selector {
-      match_labels = {
-        app = "nvidia-exporter"
-      }
-    }
-    template {
-      metadata {
-        labels = {
-          app = "nvidia-exporter"
-        }
-      }
-      spec {
-        node_selector = {
-          "nvidia.com/gpu.present" : "true"
-        }
-        toleration {
-          key      = "nvidia.com/gpu"
-          operator = "Equal"
-          value    = "true"
-          effect   = "NoSchedule"
-        }
-        container {
-          image = "nvidia/dcgm-exporter:latest"
-          name  = "nvidia-exporter"
-          port {
-            container_port = 9400
-          }
-          security_context {
-            privileged = true
-            capabilities {
-              add = ["SYS_ADMIN"]
-            }
-          }
-          resources {
-            requests = {
-              memory = "256Mi"
-            }
-            limits = {
-              # Bumped 192Mi → 512Mi (2026-05-26): dcgm-exporter
-              # 4.5.2-4.8.1-ubuntu22.04 OOMKills at 192Mi. Older versions
-              # ran comfortably under 192Mi but post-bump we need headroom.
-              memory           = "512Mi"
-              "nvidia.com/gpu" = "1"
-            }
-          }
-        }
-        dns_config {
-          option {
-            name  = "ndots"
-            value = "2"
-          }
-        }
-      }
-    }
-  }
-  depends_on = [helm_release.nvidia-gpu-operator]
-  lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
-  }
-}
+# CONSOLIDATED 2026-07-18 (Viktor: "fix the nvidia issues, consolidate tf"):
+# the standalone `nvidia-exporter` dcgm-exporter Deployment was REMOVED. It was
+# redundant with the GPU-operator's own `nvidia-dcgm-exporter` (both dcgm-exporter
+# on the same time-sliced T4) and crashlooped fighting over DCGM's exclusive
+# profiling module after the 2026-07-18 reboot changed init order
+# ("Profiling module returned an unrecoverable error"; post-mortem
+# docs/post-mortems/2026-07-18-sofia-power-outage-unclean-shutdown.md, bead
+# code-9d5p). The Service below now points at the operator's dcgm-exporter pods
+# (app=nvidia-dcgm-exporter, :9400), which serve the same device-level metrics
+# incl. the four HA-Sofia tesla_t4_gpu_* fields (GPU_TEMP/POWER_USAGE/GPU_UTIL/
+# FB_USED, verified live). The Service + ingress keep the stable endpoint so the
+# HA REST sensors + the Prometheus scrape need no repointing.
 
 resource "kubernetes_service" "nvidia-exporter" {
   metadata {
@@ -221,8 +153,11 @@ resource "kubernetes_service" "nvidia-exporter" {
   }
 
   spec {
+    # Points at the GPU-operator's dcgm-exporter pods (see consolidation note
+    # above), not a standalone deployment. Overlapping the operator's own
+    # Service selector is fine — a pod can back multiple Services.
     selector = {
-      app = "nvidia-exporter"
+      app = "nvidia-dcgm-exporter"
     }
     port {
       name        = "http"
