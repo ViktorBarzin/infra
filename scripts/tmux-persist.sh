@@ -19,6 +19,13 @@
 #             each saved conversation (claude --resume <uuid>). Per-session
 #             idempotent: existing names are left alone, so it is safe both at
 #             boot (tmux-persist-restore.service) and after a partial loss.
+#   history — list a user's session HISTORY (name, cwd, uuid, last-seen,
+#             ALIVE/dead). Every save MERGES the live set into
+#             /var/lib/tmux-persist/<user>.history.tsv and NEVER drops a dead
+#             session, so past sessions stay pickable after they die (the
+#             manifest only holds the live set, so it alone loses them).
+#   restore-one <user> <name|uuid> — recreate ONE session from the history,
+#             resuming its conversation. Backs a "pick which to restore" flow.
 #
 # v1 limitation: one window/pane per session is captured (the workstation
 # usage pattern — one named claude conversation per tmux session).
@@ -91,6 +98,7 @@ save() {
     n=$(wc -l < "$tmp")
     if (( n > 0 )); then
       install -m 0600 "$tmp" "$STATE_DIR/$u.tsv"
+      merge_history "$u" "$tmp"
       log "saved $n session(s) for $u"
     else
       log "no live sessions for $u (stale socket or dead server) — keeping last manifest"
@@ -128,8 +136,73 @@ restore() {
   done
 }
 
+# --- session history ----------------------------------------------------------
+# The manifest (<user>.tsv) only holds the CURRENTLY-live set (for boot
+# auto-restore), so a save after a partial loss drops dead sessions from it. The
+# history (<user>.history.tsv: name, cwd, uuid, first_seen, last_seen) is MERGED
+# on every save and never loses a dead session, so past sessions stay pickable
+# (`history` to list, `restore-one` to bring one back). Keyed by uuid (fallback
+# name); retained 30 days / newest 60.
+merge_history() {
+  local u="$1" live="$2" hist tmp now
+  hist="$STATE_DIR/$u.history.tsv"; now="$(date +%s)"; touch "$hist"
+  tmp="$(mktemp)"
+  # Use FILENAME (not FNR==NR) to tell the two files apart — FNR==NR mis-detects
+  # when the history file is empty (first run), which would blank the timestamps.
+  awk -F'\t' -v OFS='\t' -v now="$now" -v H="$hist" '
+    FILENAME==H { k=($3!=""?$3:$1); nm[k]=$1; cd[k]=$2; uu[k]=$3; fs[k]=$4; ls[k]=$5; keys[k]=1; next }
+    { k=($3!=""?$3:$1); nm[k]=$1; cd[k]=$2; uu[k]=$3; if (!(k in fs) || fs[k]=="") fs[k]=now; ls[k]=now; keys[k]=1 }
+    END { for (k in keys) print nm[k], cd[k], (uu[k]!=""?uu[k]:"-"), fs[k], ls[k] }
+  ' "$hist" "$live" \
+    | sort -t$'\t' -k5,5nr \
+    | awk -F'\t' -v cut="$(( now - 30*86400 ))" 'NR<=60 && $5+0>=cut' > "$tmp"
+  install -m 0600 "$tmp" "$hist"; rm -f "$tmp"
+}
+
+history_list() {
+  local only="${1:-}" u hist now nm cd uu fs ls state ago
+  now="$(date +%s)"
+  for u in $(users); do
+    [[ -z "$only" || "$u" == "$only" ]] || continue
+    hist="$STATE_DIR/$u.history.tsv"
+    if [[ ! -s "$hist" ]]; then echo "[$u] no session history yet"; continue; fi
+    echo "== $u — session history (newest first) =="
+    printf '  %-22s %-32s %-10s %-8s %s\n' NAME CWD RESUME LAST STATE
+    while IFS=$'\t' read -r nm cd uu fs ls; do
+      [[ -n "$nm" ]] || continue
+      state=dead
+      if runuser -u "$u" -- tmux has-session -t "=$nm" 2>/dev/null; then state=ALIVE; fi
+      ago=$(( (now - ls) / 60 ))
+      printf '  %-22s %-32s %-10s %5dm   %s\n' "$nm" "${cd:0:32}" "${uu:0:8}" "$ago" "$state"
+    done < <(sort -t$'\t' -k5,5nr "$hist")
+  done
+}
+
+restore_one() {
+  local u="$1" sel="$2" hist line sess cwd uuid cmd
+  users | grep -qxF "$u" || { echo "[tmux-persist] restore-one: '$u' is not a known terminal user" >&2; return 2; }
+  hist="$STATE_DIR/$u.history.tsv"
+  [[ -s "$hist" ]] || { echo "[tmux-persist] no history for $u" >&2; return 1; }
+  line="$(awk -F'\t' -v s="$sel" '$1==s || $3==s || ($3!="" && index($3,s)==1) {print; exit}' "$hist")"
+  [[ -n "$line" ]] || { echo "[tmux-persist] no history entry matching '$sel' for $u" >&2; return 1; }
+  IFS=$'\t' read -r sess cwd uuid _ _ <<<"$line"
+  [[ "$uuid" == "-" ]] && uuid=""   # "-" is the history's "no conversation" placeholder
+  if tmux_as "$u" has-session -t "=$sess" 2>/dev/null; then log "$u:$sess already live"; return 0; fi
+  [[ -d "$cwd" ]] || cwd="$(getent passwd "$u" | cut -d: -f6)"
+  if [[ -n "$uuid" ]]; then
+    cmd="claude --dangerously-skip-permissions --resume $uuid --name \"$sess\"; echo; echo '  claude exited — shell preserved'; exec bash -l"
+  else
+    cmd="exec bash -l"
+  fi
+  tmux_as "$u" new-session -d -s "$sess" -c "$cwd" "$cmd" \
+    && log "restored $u:$sess${uuid:+ (resume ${uuid:0:8})}" \
+    || { log "WARN: failed to restore $u:$sess"; return 1; }
+}
+
 case "$MODE" in
   save) save ;;
   restore) restore "${2:-}" ;;
-  *) echo "usage: tmux-persist save | restore [user]" >&2; exit 1 ;;
+  history) history_list "${2:-}" ;;
+  restore-one) restore_one "${2:?usage: restore-one <user> <name|uuid>}" "${3:?usage: restore-one <user> <name|uuid>}" ;;
+  *) echo "usage: tmux-persist save | restore [user] | history [user] | restore-one <user> <name|uuid>" >&2; exit 1 ;;
 esac
