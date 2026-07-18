@@ -111,9 +111,14 @@ resource "kubernetes_config_map" "caddyfile" {
       	# serves the monorepo's plans/ tree (published HTML plan snapshots,
       	# infra#72); every other host — learn.viktorbarzin.me and the
       	# readiness probe's host-less requests — serves learn/ as before.
+      	# plans.viktorbarzin.me: Viktor (vbarzin) + emo (emil.barzin) — emo was
+      	# granted read access 2026-07-18 to share the power-outage post-mortem
+      	# (Viktor's call; emo is a Home Server Admin insider). learn.viktorbarzin.me
+      	# below stays Viktor-only. Usernames are the Authentik-injected
+      	# X-Authentik-Username (full email form), verified via the Authentik API.
       	@plans_owner {
       		host plans.viktorbarzin.me
-      		header_regexp X-Authentik-Username ^vbarzin(@.*)?$
+      		header_regexp X-Authentik-Username ^(vbarzin|emil\.barzin)(@.*)?$
       	}
       	@learn_owner {
       		not host plans.viktorbarzin.me
