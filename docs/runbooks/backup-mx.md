@@ -89,34 +89,30 @@ degrades to its inline-HTML fallback) — and the pfSense peer
 
 ## The pfSense side (WireGuard peer)
 
-mx2 is one peer on pfSense `tun_wg0` (config `/usr/local/etc/wireguard/tun_wg0.conf`,
-started by an `earlyshellcmd`), alongside the London/Sofia site tunnels.
-Reproducer (idempotent, applies live without an interface reconnect, and installs
-the boot-recovery hook below):
+mx2 is a proper WireGuard **package peer** on pfSense `tun_wg0` — stored in
+config.xml under `installedpackages/wireguard/peers`, exactly like the
+London/Sofia site peers. The WireGuard package regenerates
+`/usr/local/etc/wireguard/tun_wg0.conf` from config.xml on every boot, so mx2
+**survives reboots and config restores natively** — no boot hook needed.
+
+Add / verify it via **Services > WireGuard > Peers** (tunnel `tun_wg0`, public
+key `jxwL9ZmO…`, Allowed IPs `10.3.2.10/32`, then Apply), or reproduce on the CLI
+(idempotent, applies in place without blipping the site peers):
 
 ```sh
 scp scripts/pfsense-backup-mx-wg.sh admin@10.0.20.1:/tmp/ && ssh admin@10.0.20.1 'sh /tmp/pfsense-backup-mx-wg.sh'
 ```
 
-No firewall rule needed — `opt2` (tun_wg0) already has an any→any allow.
+No firewall rule needed — `opt2` (tun_wg0) already has an any→any allow. Verify:
+`ssh admin@10.0.20.1 'wg show tun_wg0 peers | wc -l'` → **3** (valchedrym, london, mx2).
 
-**DURABILITY — mx2 is wiped from `tun_wg0.conf` on every pfSense reboot
-(root-caused 2026-07-18; see [post-mortem](../post-mortems/2026-07-18-sofia-power-outage-unclean-shutdown.md)).**
-The pfSense WireGuard **PACKAGE regenerates `tun_wg0.conf` from config.xml on
-boot**. The site peers (London/Sofia) are package-managed (present in config.xml)
-and survive; mx2 is intentionally a **hand-added** peer (deliberately kept out of
-the package config so it never touches the site-to-site tunnels), so it is
-**dropped on every regeneration**. A bare `wg set` — or appending to the conf —
-is therefore NOT durable. The Sofia power outage rebooted pfSense, mx2 vanished,
-and the queue stuck with `connect to 10.0.20.1:25: Connection timed out`.
-
-The fix (installed by the reproducer script above) is a **boot-recovery
-shellcmd**: a bare-string `system/shellcmd` entry that pfSense core runs on boot;
-it backgrounds, waits for a site peer to reappear (= the WG package sync is done),
-then re-adds mx2 live. Verify it is present:
-`ssh admin@10.0.20.1 'grep -c jxwL9Zm /cf/conf/config.xml'` → **≥1**.
-(A fully package-native alternative — adding mx2 as a WireGuard *package* peer via
-the UI — would remove the hook; not done, to avoid editing the site-tunnel config.)
+> **History (2026-07-18):** mx2 had been added only as a *hand/live* peer (not a
+> package peer), so the pfSense reboot during the Sofia power outage regenerated
+> `tun_wg0.conf` without it and broke the drain (`connect to 10.0.20.1:25:
+> Connection timed out`; ~16 emails deferred on mx2 — held, not lost). Fixed by
+> promoting mx2 to a proper package peer (above); an interim boot-recovery
+> `shellcmd` workaround was added then removed once the package peer was in place.
+> See the [post-mortem](../post-mortems/2026-07-18-sofia-power-outage-unclean-shutdown.md).
 
 ## Operations
 
@@ -131,14 +127,15 @@ the UI — would remove the hook; not done, to avoid editing the site-tunnel con
   since ADR-0020; certbot auto-renews (`certbot-bootstrap.timer` + the renew
   timer); port 80 stays open.
 - **Verify the drain path** (from mx2): `python3 -c "import smtplib;s=smtplib.SMTP('10.0.20.1',25);print(s.ehlo(),s.mail('t@gmail.com'),s.rcpt('spam@viktorbarzin.me'));s.quit()"` → expect RCPT `250`.
-- **Drain stuck with `connect to 10.0.20.1[10.0.20.1]:25: Connection timed out`**
-  (classically after a pfSense reboot): mx2's WG peer was wiped from `tun_wg0`
-  (see DURABILITY above). Diagnose — on mx2: `sudo wg show wg0 latest-handshakes`
-  is stale (hours) and `ping -c2 10.0.20.1` fails; on pfSense:
-  `wg show tun_wg0 peers | grep -c jxwL9Zm` = `0`. **Fix**: re-run
-  `scripts/pfsense-backup-mx-wg.sh` on pfSense (re-adds the peer live **and**
-  reinstalls the boot-recovery shellcmd), then `sudo postqueue -f` on mx2 to
-  drain. The boot-recovery hook prevents recurrence on the next reboot.
+- **Drain stuck with `connect to 10.0.20.1[10.0.20.1]:25: Connection timed out`**:
+  mx2's WG peer is missing from `tun_wg0`. Diagnose — on mx2:
+  `sudo wg show wg0 latest-handshakes` is stale (hours) and `ping -c2 10.0.20.1`
+  fails; on pfSense: `wg show tun_wg0 peers | grep -c jxwL9Zm` = `0` (and check
+  `grep -c jxwL9Zm /cf/conf/config.xml` — if `0`, mx2 was dropped from the package
+  config). **Fix**: re-add mx2 as a WG **package peer** — Services > WireGuard >
+  Peers, or re-run `scripts/pfsense-backup-mx-wg.sh` — then `sudo postqueue -f` on
+  mx2. As a package peer it is regenerated into the conf on every boot, so this
+  should not recur.
 
 ## Primary-side drain exemption
 
