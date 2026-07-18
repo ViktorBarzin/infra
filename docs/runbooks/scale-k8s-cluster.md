@@ -12,9 +12,9 @@ Use when block-PVC pressure, memory pressure, or planned workload growth require
 | k8s-node3 | 203 | 32 GiB | 256G | |
 | k8s-node4 | 204 | 32 GiB | 256G | |
 | k8s-node5 | 205 | 32 GiB | 256G | Added 2026-05-26 (LUN-cap incident) |
-| k8s-node6 | 206 | 32 GiB | 256G | Added 2026-05-26 (LUN-cap incident) |
+| ~~k8s-node6~~ | ~~206~~ | — | — | Added 2026-05-26; **removed + VM destroyed 2026-07-18** (zombie-rejoined after the power-outage reboot — see post-mortem) |
 
-Capacity envelope (6 workers): **174 block-PVC slots**, ~192 GiB memory, ~96 vCPU, GPU on node1 only. Pod cap is kubelet-default 110/node.
+Capacity envelope (5 workers): **~145 block-PVC slots**, ~160 GiB memory, ~80 vCPU, GPU on node1 only. Pod cap is kubelet-default 110/node.
 
 ## Binding constraints — read these first
 

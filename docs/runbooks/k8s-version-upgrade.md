@@ -46,7 +46,7 @@ Job 0 — preflight       (pinned: k8s-node1)
   ├── Push k8s_upgrade_in_flight=1, k8s_upgrade_started_timestamp=$(date +%s)
   ├── Trigger backup-etcd Job, wait, verify snapshot byte count
   ├── SSH master: containerd skew fix (if master < workers)
-  ├── SSH all 7 nodes: apt repo URL rewrite (only kind=minor)
+  ├── SSH all 6 nodes: apt repo URL rewrite (only kind=minor)
   └── spawn_next → k8s-upgrade-master-<target_version>
   ▼
 
