@@ -108,7 +108,10 @@ locals {
     "k8s-node3"  = { vmid = 203, proxmox_node = "pve" }
     "k8s-node4"  = { vmid = 204, proxmox_node = "pve" }
     "k8s-node5"  = { vmid = 205, proxmox_node = "pve" }
-    "k8s-node6"  = { vmid = 206, proxmox_node = "pve" }
+    # k8s-node6 (VMID 206) removed 2026-07-18 — decommissioned + VM destroyed
+    # (it had zombie-rejoined after the power-outage reboot; see post-mortem
+    # 2026-07-18-sofia-power-outage-unclean-shutdown.md). Was also in the
+    # ghost-reconcile NODES map, which 500'd on the missing 206.conf until removed.
   }
 }
 
