@@ -77,7 +77,7 @@ resource "kubernetes_config_map" "ghost_reconcile_script" {
       PVE = os.environ["PVE_URL"].rstrip("/")
       PVE_TOK = os.environ["PVE_TOKEN_ID"] + "=" + os.environ["PVE_TOKEN_SECRET"]
       PG = os.environ.get("PUSHGATEWAY", "")
-      NODES = {201:"k8s-node1",202:"k8s-node2",203:"k8s-node3",204:"k8s-node4",205:"k8s-node5",206:"k8s-node6"}
+      NODES = {201:"k8s-node1",202:"k8s-node2",203:"k8s-node3",204:"k8s-node4",205:"k8s-node5"}
 
       _ktok = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
       _kctx = ssl.create_default_context(cafile="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
