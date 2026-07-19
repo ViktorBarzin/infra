@@ -347,6 +347,17 @@ module "ingress" {
   name            = "nextcloud"
   tls_secret_name = var.tls_secret_name
   port            = 8080
+  # Fix Apple CalDAV/CardDAV discovery (2026-07-19). Nextcloud's shipped
+  # .htaccess redirects /.well-known/{caldav,carddav} -> /remote.php/dav/ but
+  # builds the redirect from apache's own scheme; behind Traefik's TLS
+  # termination apache sees http, so it emits an http:// Location. Apple's
+  # ATS-hardened dataaccessd refuses the https->http downgrade, discovery fails
+  # (405 "can't figure out its principalPath") and the account degrades to
+  # read-only (reads work off cached collection URLs, writes never leave the
+  # device). This middleware answers discovery at the ingress with a clean
+  # https redirect, before the request reaches Nextcloud. See
+  # kubernetes_manifest.wellknown_dav_redirect below.
+  extra_middlewares = ["nextcloud-wellknown-dav@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled"         = "true"
     "gethomepage.dev/name"            = "Nextcloud"
@@ -358,6 +369,31 @@ module "ingress" {
     "gethomepage.dev/widget.url"      = "https://nextcloud.viktorbarzin.me"
     "gethomepage.dev/widget.username" = local.homepage_credentials["nextcloud"]["username"]
     "gethomepage.dev/widget.password" = local.homepage_credentials["nextcloud"]["password"]
+  }
+}
+
+# Traefik Middleware: answer CalDAV/CardDAV service discovery with a clean
+# *https* redirect so Apple clients (dataaccessd) can resolve their principalPath
+# and push writes. Referenced by module.ingress as
+# "nextcloud-wellknown-dav@kubernetescrd" (Traefik cross-provider ref format
+# "<namespace>-<name>@kubernetescrd"). Root cause + why this lives at Traefik
+# rather than in Nextcloud: see the extra_middlewares comment on module.ingress.
+resource "kubernetes_manifest" "wellknown_dav_redirect" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "wellknown-dav"
+      namespace = kubernetes_namespace.nextcloud.metadata[0].name
+    }
+    spec = {
+      redirectRegex = {
+        # Match the full URL; capture the host so the redirect preserves it.
+        regex       = "^https?://([^/]+)/\\.well-known/(caldav|carddav)/?$"
+        replacement = "https://$${1}/remote.php/dav/"
+        permanent   = true
+      }
+    }
   }
 }
 

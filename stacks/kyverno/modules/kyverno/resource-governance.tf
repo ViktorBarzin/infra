@@ -835,6 +835,15 @@ resource "kubectl_manifest" "mutate_ndots" {
               {
                 resources = {
                   kinds = ["Pod"]
+                  # CREATE-only: dnsConfig is immutable post-create, so mutating
+                  # on UPDATE is pure downside. A pod created while this webhook
+                  # was DOWN (e.g. cold boot / outage recovery) stores
+                  # dnsConfig=null; without this scope, the recovered webhook
+                  # then tries to inject dnsConfig on the job-controller's
+                  # finalizer-removal UPDATE, which the apiserver rejects as a
+                  # forbidden pod-spec change -> pod stuck Terminating forever,
+                  # uncleanable via API (2026-07-18 outage; reboot self-heal).
+                  operations = ["CREATE"]
                 }
               }
             ]
