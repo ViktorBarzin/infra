@@ -4,6 +4,6 @@ type: middleware
 
 import: github.com/viktorbarzin/real-ip-plugin
 
-summary: "Rewrites X-Real-Ip to the true client IP for Cloudflare-tunneled traffic: Cf-Connecting-Ip if present, else the first public entry in X-Forwarded-For, else leaves the existing X-Real-Ip untouched."
+summary: "Rewrites X-Real-Ip to the true client IP, deciding trust by the unspoofable TCP peer: when the peer is a trusted proxy (trustedProxyCIDRs, default the cluster pod CIDR where cloudflared runs) it uses Cf-Connecting-Ip, else the first public X-Forwarded-For entry; for any other peer it sets X-Real-Ip to the peer itself, so clients cannot spoof it."
 
 testData: {}

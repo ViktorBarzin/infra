@@ -550,19 +550,13 @@ resource "kubernetes_manifest" "middleware_x402" {
   depends_on = [helm_release.traefik, kubernetes_service.x402_gateway]
 }
 
-# Deletes X-Real-Ip so the backend derives the client from X-Forwarded-For.
-# Traefik stamps X-Real-Ip with its immediate TCP peer; for Cloudflare-tunneled
-# traffic that peer is a cloudflared pod IP that flaps per request across the
-# 3 replicas. Anubis binds its auth JWT to X-Real-Ip, so the flap invalidated
-# cookies mid-page-load and served challenge HTML to the SPA's asset requests
-# (2026-07-14 home.viktorbarzin.me empty-page incident). With the header
-# absent, Anubis falls back to XFF with private hops stripped = the real,
-# stable client IP. Attached via ingress_factory strip_x_real_ip = true —
-# required on every Anubis-fronted ingress.
-# Rewrites X-Real-Ip to the true client via the vendored real-ip plugin
-# (Cf-Connecting-Ip / first public XFF entry / else leave peer). Defined here
-# but NOT attached to any route yet — the ingress_factory default chain picks
-# it up in a later stage, at which point drop-x-real-ip below is retired.
+# real-ip: rewrites X-Real-Ip to the true client. Trusts Cf-Connecting-Ip only
+# from the cloudflared pod peer (trustedProxyCIDRs = the pod CIDR); for any other
+# peer it sets X-Real-Ip = the TCP peer — so the value is stable AND unspoofable
+# by clients. Attached to every Anubis-fronted site via extra_middlewares (Anubis
+# binds its auth JWT to X-Real-Ip). Replaced the old drop-x-real-ip strip, which
+# fixed the 2026-07-14 home.viktorbarzin.me cookie flap but 500'd header-less
+# requests (no X-Real-Ip and no XFF).
 # MUST be kubectl_manifest, NOT kubernetes_manifest: a plugin-shaped Middleware
 # spec (spec.plugin.<name>) breaks kubernetes_manifest's type inference and
 # taints on every apply — same reason the sablier Middleware uses kubectl.
@@ -582,26 +576,6 @@ resource "kubectl_manifest" "middleware_real_ip" {
       }
     }
   })
-
-  depends_on = [helm_release.traefik]
-}
-
-resource "kubernetes_manifest" "middleware_drop_x_real_ip" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "drop-x-real-ip"
-      namespace = kubernetes_namespace.traefik.metadata[0].name
-    }
-    spec = {
-      headers = {
-        customRequestHeaders = {
-          "X-Real-Ip" = "" # empty value = delete the header
-        }
-      }
-    }
-  }
 
   depends_on = [helm_release.traefik]
 }
