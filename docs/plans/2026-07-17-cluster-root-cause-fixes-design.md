@@ -1,6 +1,6 @@
 # Cluster root-cause fixes — design
 
-- **Status:** draft (brainstorm output; awaiting review → implementation plan)
+- **Status:** Fix 1 **paused after adversarial gate** (2026-07-19) — plugin shipped + hardened, kms canary live; fleet-wide rollout held pending a redesign. Fixes 2 & 3 not started. See "Post-adversarial-review update" under Fix 1.
 - **Date:** 2026-07-17
 - **Owner:** Viktor / wizard
 - **Scope:** 3 systemic fixes. Explicitly **out of scope** (deferred by decision): the sablier-un-enroll / idle-right-size safeguard class (the novelapp replicas=0 and 320Mi-OOM bites) — parked cheap-to-resume.
@@ -55,7 +55,7 @@ Prefer a vetted OSS local plugin (there are mature Traefik "real IP from Cloudfl
 ### Error handling / edge cases
 - **Non-proxied (f1, kms):** no `CF-Connecting-IP`; XFF via pfSense PROXY carries the real client → correct. If XFF is also absent, leave the peer (already the real client on the direct path).
 - **In-cluster / headerless (monitors, cluster callers):** no CF/XFF → leave the peer (the caller's pod IP) → **non-empty**, so Anubis returns its 200 challenge, never a 500. This is what closes the hole the strip opened.
-- **Spoofing:** the plugin only trusts `CF-Connecting-IP` (set by CF, and CrowdSec edge-blocks bypass attempts) and public XFF entries; a client-forged XFF is already the pre-existing trust model (PoW still required). No new exposure vs today.
+- **Spoofing (CORRECTED 2026-07-19 — the original claim here was wrong):** `CF-Connecting-IP` is **not** a Traefik-managed forwarded header, so `entryPoints…forwardedHeaders.trustedIPs` never strips it — a client on any **non-CF path** (all non-proxied sites; a proxied site reached direct-to-origin at the WAN IP + SNI) can set it and have the plugin stamp it into `X-Real-Ip`. Proven live: `Cf-Connecting-IP: 127.0.0.1` → Anubis logged `x-real-ip=127.0.0.1`. The shipped hardening adds an `isPublic()` guard on the CF branch (rejects private/loopback/link-local/CGNAT), so injection is now bounded to an arbitrary **public** IP — but `X-Real-Ip` is **still client-influenceable off the CF path and is NOT a trust boundary**: never key authz/allowlists on it (use `RemoteAddr` / access-log `ClientHost` for security, XFF-via-authentik for identity). Impact today is latent — Anubis is the only consumer and only binds the client's *own* PoW cookie. ~~Original: the plugin only trusts CF-Connecting-IP (set by CF)… No new exposure vs today.~~
 - **CrowdSec unaffected:** proxied enforcement is at the CF edge, direct is nftables/ETP=Local — neither relies on Traefik's `X-Real-Ip` header.
 
 ### Testing / verification
@@ -66,6 +66,16 @@ Prefer a vetted OSS local plugin (there are mature Traefik "real IP from Cloudfl
 
 ### Rollout / risk
 **Highest blast radius in this spec** — the plugin runs on *every* ingress request. Per `planning.md` §2b, gate with **blind adversarial-challenger review** before applying, and stage: (1) plugin loaded but attached to one test ingress → verify; (2) one Anubis site → verify + drop its strip; (3) default chain fleet-wide + remove strip everywhere. Rollback = remove the middleware from the default chain (single revert); the strip removal is the last step so the known-good state is always reachable.
+
+### Post-adversarial-review update (2026-07-19)
+Stages 1–2 shipped (plugin vendored + loaded fleet-wide; attached to the **kms** Anubis canary — verified: WAN 200 with `x-real-ip` = real client, headerless 200 not 500, zero check-failures). Then two **blind** challenger subagents (`planning.md` §2b) + independent live verification gated the fleet-wide step. Both returned **SAFE-WITH-CONDITIONS**; the functional axis is clean (nothing consumes `X-Real-Ip` — rate-limit/ipAllowList/CrowdSec key on `RemoteAddr`/`ClientHost`, x402/authentik on XFF, 0 backend hits), but two findings make the **fleet-wide default-chain step the wrong trade-off**:
+
+- **F1 — fleet SPOF (availability).** No Yaegi plugin is in the default chain today (all native/forwardAuth); real-ip would be the *first*. A plugin-load failure — e.g. a Yaegi incompat after a routine Traefik auto-upgrade, which disables *all* plugins — would then 404 **every** router instead of just the Anubis/sablier subset.
+- **F2 — spoofing surface (security, latent).** See the corrected "Spoofing" bullet above. Fleet-wide would spread a client-influenceable `X-Real-Ip` to ~40 ingresses for a benefit (uniform `X-Real-Ip`) that has **no current consumer**.
+
+**Decision (Viktor, 2026-07-19): PAUSE & rethink.** Shipped and kept: the plugin (kms canary live) and the **`isPublic()` CF-branch hardening** (spoof to `127.0.0.1` now rejected → real peer; public CF still stamped; 12/12 tests). **Held (not applied):** Stage 3 — the default-chain fleet-wide attach and the `strip_x_real_ip` removal everywhere. `drop-x-real-ip` + the proxied-site strip remain the live mechanism on the other 6 Anubis sites.
+
+**Open questions for the rethink:** (a) for `X-Real-Ip` to be a *trusted* platform primitive the plugin must only honor `CF-Connecting-IP`/XFF when the **peer is in Traefik's trusted set** (cloudflared/CF-edge IPs) — a trusted-peer check it currently lacks; (b) correct chain position is *after* the `drop-x-real-ip` slot, **not** "first" as written above (else the strip wipes the re-derivation during the transition window); (c) add a plugin-load canary/alert + gate every Traefik upgrade on re-verifying `realip` loads, before any fleet default-chain adoption; (d) reconsider whether anubis-sites-only (7 ingresses via `extra_middlewares`) is the right permanent scope vs the fleet default.
 
 ---
 
