@@ -120,11 +120,10 @@ module "ingress" {
   name         = "kms"
   service_name = module.anubis.service_name
   port         = module.anubis.service_port
-  # real-ip middleware (first in extra_middlewares) sets X-Real-Ip from the
-  # trusted peer — stable + client-unspoofable. Replaces the old strip (retired
-  # 2026-07-19); kms is non-proxied (pfSense PROXY-protocol) so the peer is
-  # already the real client.
-  extra_middlewares = ["traefik-real-ip@kubernetescrd", "traefik-x402@kubernetescrd"]
+  # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
+  # ingress_factory for anubis-* backends. kms is non-proxied (pfSense
+  # PROXY-protocol) so the peer is already the real client.
+  extra_middlewares = ["traefik-x402@kubernetescrd"]
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false
   extra_annotations = {

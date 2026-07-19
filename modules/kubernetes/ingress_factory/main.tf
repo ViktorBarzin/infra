@@ -370,7 +370,13 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
     name      = var.name
     namespace = var.namespace
     annotations = merge({
-      "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact(concat([
+      "traefik.ingress.kubernetes.io/router.middlewares" = join(",", distinct(compact(concat([
+        # Anubis-fronted ingresses (service_name = "anubis-*") auto-attach the
+        # real-ip plugin FIRST, so Anubis binds its cookie to a stable,
+        # client-unspoofable X-Real-Ip with zero per-site wiring. Carve-out
+        # ingresses that point at the bare backend (not anubis-*) correctly skip
+        # it. distinct() dedupes if a site also lists real-ip in extra_middlewares.
+        startswith(var.service_name, "anubis-") ? "traefik-real-ip@kubernetescrd" : null,
         "traefik-retry@kubernetescrd",
         "traefik-error-pages@kubernetescrd",
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
@@ -384,7 +390,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.sablier != null ? "${var.namespace}-sablier-${var.name}@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
         var.max_body_size != null ? "${var.namespace}-buffering-${var.name}@kubernetescrd" : null,
-      ], var.extra_middlewares)))
+      ], var.extra_middlewares))))
       "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
       }, local.homepage_defaults, var.extra_annotations,
       var.dns_type != "none" ? { "cloudflare.viktorbarzin.me/dns-type" = var.dns_type } : {},
