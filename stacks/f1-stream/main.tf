@@ -345,7 +345,7 @@ module "ingress" {
   # probes (Anubis 500 "X-Real-Ip header is not set"). Strip is proxied-only.
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false
-  extra_middlewares = ["traefik-x402@kubernetescrd"]
+  extra_middlewares = ["traefik-real-ip@kubernetescrd", "traefik-x402@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "F1 Stream"
