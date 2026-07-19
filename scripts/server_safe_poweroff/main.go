@@ -1,106 +1,394 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/nightlyone/lockfile"
 )
 
-const upsMinutesRemainingThreshold = 20
-
+// idracCredentials carries the iDRAC base URL ("https://<host>") plus basic-auth
+// creds. idrac_utils.go derives the Redfish system + reset-action URLs from url.
 type idracCredentials = struct {
 	url      string
 	username string
 	password string
 }
 
-func main() {
-	idracUsername := flag.String("idracUsername", "root", "iDRAC username")
-	idracPassword := flag.String("idracPassword", "calvin", "iDRAC password")
-	idracHost := flag.String("idracHost", "192.168.1.4", "iDRAC host")
-	flag.Parse()
-	defer glog.Flush()
-	// lock, err := tryGetLock()
-	// if err != nil {
-	// 	glog.Fatalf("Failed to acquire lock:  %v", err)
-	// }
-	// defer lock.Unlock()
+// config is the fully-resolved runtime configuration (flag defaults, then env
+// override — env wins so secrets can be sourced out-of-band, e.g. from Vault).
+type config struct {
+	idrac                idracCredentials
+	snmpTarget           string
+	snmpCommunity        string
+	pushgatewayURL       string
+	stateFile            string
+	disableFile          string
+	shutdownMinMinutes   int   // shut down when UPS minutes-remaining < this while on battery
+	powerOnMinChargePct  int   // only power on when UPS charge% >= this
+	mainsStableDwellSecs int64 // and mains has been continuously on-line >= this
+}
 
-	glog.Info("Checking server power state")
-	idracCredentials := idracCredentials{
-		url:      "https://" + *idracHost,
-		username: *idracUsername,
-		password: *idracPassword,
+// watchdogState persists between the 10-minute runs (the process is stateless
+// otherwise). It backs both the mains-stability dwell timer and the latched
+// "last actuation attempt + outcome" observability signals.
+type watchdogState struct {
+	MainsOnlineSince    int64 `json:"mains_online_since"`    // unix s; 0 = on battery / unknown
+	LastShutdownAttempt int64 `json:"last_shutdown_attempt"` // unix s; 0 = never
+	LastShutdownError   bool  `json:"last_shutdown_error"`
+	LastPowerOnAttempt  int64 `json:"last_power_on_attempt"` // unix s; 0 = never
+	LastPowerOnError    bool  `json:"last_power_on_error"`
+}
+
+// metrics is the snapshot pushed to the Prometheus Pushgateway at the end of
+// every run (best-effort; a failed push never fails the run).
+type metrics struct {
+	up                int // 1 iff iDRAC power-state AND UPS SNMP were both read OK
+	actuationDisabled int
+	haveServer        bool
+	serverOn          int
+	haveUPS           bool
+	onMains           int
+	chargePct         int64
+	minutesRemaining  int64
+	secondsOnBattery  int64
+	batteryStatus     int64
+	mainsStableSecs   int64
+
+	// latched from state; always pushed so the alerts survive across runs
+	lastShutdownAttempt int64
+	lastShutdownError   int
+	lastPowerOnAttempt  int64
+	lastPowerOnError    int
+}
+
+func main() {
+	cfg := loadConfig()
+
+	m := &metrics{}
+	runErr := run(cfg, m)
+	if runErr != nil {
+		glog.Errorf("watchdog run error: %v", runErr)
 	}
-	powerState, err := checkPowerState(idracCredentials)
+	pushMetrics(cfg, m) // best-effort; must run even after a run error
+	glog.Flush()
+	if runErr != nil {
+		os.Exit(1)
+	}
+}
+
+func loadConfig() config {
+	idracUsername := flag.String("idracUsername", "root", "iDRAC username (env IDRAC_USERNAME)")
+	idracPassword := flag.String("idracPassword", "calvin", "iDRAC password (env IDRAC_PASSWORD)")
+	idracHost := flag.String("idracHost", "192.168.1.4", "iDRAC host (env IDRAC_HOST)")
+	snmpTarget := flag.String("snmpTarget", "192.168.1.5", "UPS SNMP target (env SNMP_TARGET)")
+	snmpCommunity := flag.String("snmpCommunity", "Public0", "UPS SNMP community (env SNMP_COMMUNITY)")
+	pushgateway := flag.String("pushgateway", "http://10.0.20.100:30091", "Prometheus Pushgateway base URL; empty disables (env PUSHGATEWAY_URL)")
+	stateFile := flag.String("stateFile", "powercheck-state.json", "watchdog state file (env STATE_FILE)")
+	disableFile := flag.String("disableFile", "powercheck.disable", "if this file exists, run in DRY-RUN: log decisions, issue no iDRAC reset (env DISABLE_FILE)")
+	shutdownMinMinutes := flag.Int("shutdownMinMinutes", 20, "shut down when UPS minutes-remaining drops below this while on battery (env SHUTDOWN_MIN_MINUTES)")
+	powerOnMinChargePct := flag.Int("powerOnMinChargePct", 50, "only power on when UPS charge percentage is at least this (env POWERON_MIN_CHARGE_PCT)")
+	mainsStableDwellMinutes := flag.Int("mainsStableDwellMinutes", 10, "only power on after mains has been continuously on-line for this many minutes (env MAINS_STABLE_DWELL_MINUTES)")
+	flag.Parse()
+
+	host := envStr("IDRAC_HOST", *idracHost)
+	return config{
+		idrac: idracCredentials{
+			url:      "https://" + host,
+			username: envStr("IDRAC_USERNAME", *idracUsername),
+			password: envStr("IDRAC_PASSWORD", *idracPassword),
+		},
+		snmpTarget:           envStr("SNMP_TARGET", *snmpTarget),
+		snmpCommunity:        envStr("SNMP_COMMUNITY", *snmpCommunity),
+		pushgatewayURL:       envStr("PUSHGATEWAY_URL", *pushgateway),
+		stateFile:            envStr("STATE_FILE", *stateFile),
+		disableFile:          envStr("DISABLE_FILE", *disableFile),
+		shutdownMinMinutes:   int(envInt("SHUTDOWN_MIN_MINUTES", int64(*shutdownMinMinutes))),
+		powerOnMinChargePct:  int(envInt("POWERON_MIN_CHARGE_PCT", int64(*powerOnMinChargePct))),
+		mainsStableDwellSecs: envInt("MAINS_STABLE_DWELL_MINUTES", int64(*mainsStableDwellMinutes)) * 60,
+	}
+}
+
+func run(cfg config, m *metrics) error {
+	st := loadState(cfg.stateFile)
+	syncMetricsFromState(m, st) // so latched signals are pushed even on early return
+
+	glog.Info("Checking server power state via iDRAC Redfish")
+	powerState, err := checkPowerState(cfg.idrac)
 	if err != nil {
-		glog.Fatalf("Failed to check power state: %v", err)
+		return fmt.Errorf("check power state: %w", err)
+	}
+	m.haveServer = true
+	if powerState == "On" {
+		m.serverOn = 1
 	}
 	glog.Infof("Server power state: %s", powerState)
 
-	glog.Info("Checking UPS state")
-	snmp := getSNMPClient()
-	// Connect to the SNMP agent
-	err = snmp.Connect()
-	if err != nil {
-		log.Fatalf("Failed to connect to UPS SNMP agent: %v", err)
+	glog.Info("Checking UPS state via SNMP")
+	snmp := getSNMPClient(cfg.snmpTarget, cfg.snmpCommunity)
+	if err := snmp.Connect(); err != nil {
+		st.MainsOnlineSince = 0 // unknown mains -> restart the dwell (fail-safe)
+		saveState(cfg.stateFile, st)
+		return fmt.Errorf("connect UPS SNMP %s: %w", cfg.snmpTarget, err)
 	}
 	defer snmp.Conn.Close()
 
-	upsState, err := getPowerState(snmp)
+	ups, err := getPowerState(snmp)
 	if err != nil {
-		glog.Fatalf("Failed to get UPS power state: %v", err)
+		st.MainsOnlineSince = 0
+		saveState(cfg.stateFile, st)
+		return fmt.Errorf("read UPS SNMP: %w", err)
+	}
+	m.haveUPS = true
+	m.chargePct = int64(ups.chargePercent)
+	m.minutesRemaining = int64(ups.minutesRemaining)
+	m.secondsOnBattery = ups.secondsOnBattery
+	m.batteryStatus = int64(ups.batteryStatus)
+
+	// On mains iff line voltage present AND the UPS reports zero elapsed time on
+	// battery. Both together avoid acting during the transfer transient.
+	onMains := ups.inputVoltage > 0 && ups.secondsOnBattery == 0
+	if onMains {
+		m.onMains = 1
 	}
 
-	if powerState == "On" {
-		handleWhenServerOn(upsState, idracCredentials)
-	} else if powerState == "Off" {
-		handleWhenServerOff(upsState, idracCredentials)
-	} else {
-		glog.Fatalf("Unknown server state %s", powerState)
-	}
-}
-func handleWhenServerOn(upsState UPSPowerState, idracCredentials idracCredentials) {
-	if upsState.inputVoltage > 0 {
-		glog.Infof("UPS is on AC power: %d. Nothing to do.\n", upsState.inputVoltage)
-		return
-	} else {
-		glog.Warningln("UPS is on Battery power")
-		if upsState.minutesRemaining < upsMinutesRemainingThreshold {
-			glog.Warningf("Minutes remaining is too low - %d Turning off server.", upsState.minutesRemaining)
-			// Perform a graceful shutdown of the server
-			performGracefulShutdown(idracCredentials)
-		} else {
-			glog.Warningf("Minutes remaining is %d. Server will not be shutdown yet.", upsState.minutesRemaining)
-			return
+	// Mains-stability dwell tracking (persisted; the process itself is stateless).
+	now := time.Now().Unix()
+	if onMains {
+		if st.MainsOnlineSince == 0 {
+			st.MainsOnlineSince = now // first observation of mains back
 		}
+	} else {
+		st.MainsOnlineSince = 0 // on battery -> reset the dwell
+	}
+	var mainsStableSecs int64
+	if onMains && st.MainsOnlineSince > 0 && now >= st.MainsOnlineSince {
+		mainsStableSecs = now - st.MainsOnlineSince
+	}
+	m.mainsStableSecs = mainsStableSecs
+	m.up = 1
+
+	dryRun := fileExists(cfg.disableFile)
+	if dryRun {
+		m.actuationDisabled = 1
+		glog.Warningf("Actuation DISABLED (%s present) — decisions logged as [DRY-RUN], no iDRAC reset will be issued.", cfg.disableFile)
+	}
+
+	switch powerState {
+	case "On":
+		handleWhenServerOn(cfg, ups, onMains, dryRun, &st)
+	case "Off":
+		handleWhenServerOff(cfg, ups, onMains, mainsStableSecs, dryRun, &st)
+	default:
+		saveState(cfg.stateFile, st)
+		return fmt.Errorf("unknown server power state %q", powerState)
+	}
+
+	saveState(cfg.stateFile, st)
+	syncMetricsFromState(m, st)
+	return nil
+}
+
+func handleWhenServerOn(cfg config, ups UPSPowerState, onMains, dryRun bool, st *watchdogState) {
+	if onMains {
+		glog.Infof("Server On, UPS on mains (input %dV, charge %d%%). Nothing to do.", ups.inputVoltage, ups.chargePercent)
+		return
+	}
+	glog.Warningf("Server On, UPS on BATTERY (%ds on battery, charge %d%%, ~%d min remaining).",
+		ups.secondsOnBattery, ups.chargePercent, ups.minutesRemaining)
+	if ups.minutesRemaining >= cfg.shutdownMinMinutes {
+		glog.Warningf("Minutes remaining %d >= threshold %d. Not shutting down yet.", ups.minutesRemaining, cfg.shutdownMinMinutes)
+		return
+	}
+	if dryRun {
+		glog.Warningf("[DRY-RUN] minutes %d < %d — WOULD issue GracefulShutdown.", ups.minutesRemaining, cfg.shutdownMinMinutes)
+		return
+	}
+	glog.Warningf("Minutes remaining %d < threshold %d. Issuing iDRAC GracefulShutdown.", ups.minutesRemaining, cfg.shutdownMinMinutes)
+	st.LastShutdownAttempt = time.Now().Unix()
+	if err := performGracefulShutdown(cfg.idrac); err != nil {
+		st.LastShutdownError = true
+		glog.Errorf("GRACEFUL SHUTDOWN FAILED: %v", err)
+		return
+	}
+	st.LastShutdownError = false
+	glog.Warning("Graceful shutdown request accepted by iDRAC.")
+}
+
+func handleWhenServerOff(cfg config, ups UPSPowerState, onMains bool, mainsStableSecs int64, dryRun bool, st *watchdogState) {
+	if !onMains {
+		glog.Warningf("Server Off, UPS still on BATTERY (%ds, charge %d%%). Not powering on.", ups.secondsOnBattery, ups.chargePercent)
+		return
+	}
+	// UPS-safe power-on gate: BOTH conditions must hold, else we risk a
+	// power-cycle loop that drains a UPS which never recharges (Viktor 2026-07-19).
+	if ups.chargePercent < cfg.powerOnMinChargePct {
+		glog.Infof("Server Off, on mains but charge %d%% < %d%% threshold. Holding power-on until the battery recovers.",
+			ups.chargePercent, cfg.powerOnMinChargePct)
+		return
+	}
+	if mainsStableSecs < cfg.mainsStableDwellSecs {
+		glog.Infof("Server Off, on mains and charge %d%% OK, but mains only stable for %ds < %ds dwell. Waiting (anti power-cycle-loop).",
+			ups.chargePercent, mainsStableSecs, cfg.mainsStableDwellSecs)
+		return
+	}
+	if dryRun {
+		glog.Warningf("[DRY-RUN] mains stable %ds, charge %d%% >= %d%% — WOULD issue power ON.",
+			mainsStableSecs, ups.chargePercent, cfg.powerOnMinChargePct)
+		return
+	}
+	glog.Warningf("Server Off, mains stable for %ds and charge %d%% >= %d%%. Issuing iDRAC power ON.",
+		mainsStableSecs, ups.chargePercent, cfg.powerOnMinChargePct)
+	st.LastPowerOnAttempt = time.Now().Unix()
+	if err := performPowerOn(cfg.idrac); err != nil {
+		st.LastPowerOnError = true
+		glog.Errorf("POWER-ON FAILED: %v", err)
+		return
+	}
+	st.LastPowerOnError = false
+	glog.Warning("Power-on request accepted by iDRAC.")
+}
+
+// ---- state ----
+
+func loadState(path string) watchdogState {
+	var s watchdogState
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			glog.Warningf("state read %s: %v (using empty state)", path, err)
+		}
+		return s
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		glog.Warningf("state parse %s: %v (using empty state)", path, err)
+		return watchdogState{}
+	}
+	return s
+}
+
+func saveState(path string, s watchdogState) {
+	b, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		glog.Errorf("state marshal: %v", err)
+		return
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		glog.Errorf("state write %s: %v", tmp, err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil { // atomic replace
+		glog.Errorf("state rename %s -> %s: %v", tmp, path, err)
 	}
 }
 
-func handleWhenServerOff(upsState UPSPowerState, idracCredentials idracCredentials) {
-	if upsState.inputVoltage > 0 {
-		glog.Infof("UPS is on AC power: %d\n", upsState.inputVoltage)
-		if upsState.minutesRemaining < upsMinutesRemainingThreshold {
-			glog.Infof("UPS battery is still too low - %d minutes remaining. Not turning on server yet.\n", upsState.minutesRemaining)
-		} else {
-			glog.Infof("UPS is on AC power and battery has charged - %d minutes remaining. Turning on server...\n", upsState.minutesRemaining)
-			// Perform startup of the server
-			performPowerOn(idracCredentials)
-		}
-	} else {
-		glog.Warningln("UPS is still on battery power")
+func syncMetricsFromState(m *metrics, st watchdogState) {
+	m.lastShutdownAttempt = st.LastShutdownAttempt
+	m.lastShutdownError = b2i(st.LastShutdownError)
+	m.lastPowerOnAttempt = st.LastPowerOnAttempt
+	m.lastPowerOnError = b2i(st.LastPowerOnError)
+}
+
+// ---- metrics push (best-effort) ----
+
+func pushMetrics(cfg config, m *metrics) {
+	if cfg.pushgatewayURL == "" {
 		return
 	}
+	var b strings.Builder
+	writeGauge(&b, "powercheck_last_run_timestamp_seconds", "Unix time of the last watchdog run that reached the push step.", time.Now().Unix())
+	writeGauge(&b, "powercheck_up", "1 iff this run read iDRAC power-state AND UPS SNMP successfully.", int64(m.up))
+	writeGauge(&b, "powercheck_actuation_disabled", "1 if the disable-file was present and actuation was skipped (dry-run).", int64(m.actuationDisabled))
+	if m.haveServer {
+		writeGauge(&b, "powercheck_server_power_on", "1 if iDRAC reports PowerState=On, 0 if Off.", int64(m.serverOn))
+	}
+	if m.haveUPS {
+		writeGauge(&b, "powercheck_ups_on_mains", "1 if UPS is on utility/mains power, 0 on battery.", int64(m.onMains))
+		writeGauge(&b, "powercheck_ups_charge_percent", "UPS estimated battery charge remaining (percent).", m.chargePct)
+		writeGauge(&b, "powercheck_ups_minutes_remaining", "UPS estimated runtime remaining (minutes).", m.minutesRemaining)
+		writeGauge(&b, "powercheck_ups_seconds_on_battery", "Elapsed seconds on battery (0 on mains).", m.secondsOnBattery)
+		writeGauge(&b, "powercheck_ups_battery_status", "UPS battery status (2=normal, 3=low, 0=unknown).", m.batteryStatus)
+		writeGauge(&b, "powercheck_mains_stable_seconds", "Seconds mains has been continuously on-line (0 on battery).", m.mainsStableSecs)
+	}
+	writeGauge(&b, "powercheck_last_shutdown_attempt_timestamp_seconds", "Unix time of the last GracefulShutdown POST attempt (0=never).", m.lastShutdownAttempt)
+	writeGauge(&b, "powercheck_last_shutdown_error", "1 if the last shutdown POST failed, 0 if it succeeded.", int64(m.lastShutdownError))
+	writeGauge(&b, "powercheck_last_poweron_attempt_timestamp_seconds", "Unix time of the last power-On POST attempt (0=never).", m.lastPowerOnAttempt)
+	writeGauge(&b, "powercheck_last_poweron_error", "1 if the last power-on POST failed, 0 if it succeeded.", int64(m.lastPowerOnError))
+
+	url := strings.TrimRight(cfg.pushgatewayURL, "/") + "/metrics/job/powercheck"
+	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(b.String()))
+	if err != nil {
+		glog.Warningf("pushgateway build request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "text/plain")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		glog.Warningf("pushgateway push failed (best-effort): %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		glog.Warningf("pushgateway push HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return
+	}
+	glog.Infof("Pushed watchdog metrics to %s", url)
 }
+
+func writeGauge(b *strings.Builder, name, help string, value int64) {
+	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s gauge\n%s %d\n", name, help, name, name, value)
+}
+
+// ---- small helpers ----
+
+func envStr(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		return v
+	}
+	return def
+}
+
+func envInt(key string, def int64) int64 {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+		glog.Warningf("env %s=%q is not an integer; using default %d", key, v, def)
+	}
+	return def
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// tryGetLock is retained (currently unused) for a future single-flight guard.
 func tryGetLock() (*lockfile.Lockfile, error) {
 	lock, err := lockfile.New("/tmp/server_safe_poweroff.pid")
 	if err != nil {
 		log.Fatalf("Failed to create lock file: %v", err)
 	}
-	err = lock.TryLock()
-	if err != nil {
+	if err := lock.TryLock(); err != nil {
 		return nil, err
 	}
 	return &lock, nil
