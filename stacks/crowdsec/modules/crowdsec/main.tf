@@ -316,6 +316,13 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.crowdsec.metadata[0].name
   name            = "crowdsec-web"
+  # Pin service_name explicitly (== name, so routing is unchanged) so
+  # ingress_factory's real-ip auto-attach — startswith(var.service_name,
+  # "anubis-") at ingress_factory/main.tf — doesn't hit the module's null
+  # default and abort the whole crowdsec apply. Kept local to this stack; the
+  # shared-module null-guard is a broader regression left to the in-flight
+  # ingress_factory work (fixing it there forces a full-platform re-apply).
+  service_name    = "crowdsec-web"
   auth            = "required"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
