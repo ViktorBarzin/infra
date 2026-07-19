@@ -134,3 +134,20 @@ for. Scope proxy-header rewrites to the path that actually needs them.
   fingerprints "the client IP" must be fed the real client IP end-to-end, or the binding
   breaks the moment a hop scales past 1 replica. The failure needed a pod restart to
   detonate, days after the enabling conditions landed.
+
+## Resolution (2026-07-19)
+
+The stop-gap strip (`drop-x-real-ip` middleware + `strip_x_real_ip`) was **superseded and
+retired** in favour of a peer-trust `real-ip` Traefik plugin
+(`stacks/traefik/modules/traefik/real-ip-plugin/`). The plugin rewrites `X-Real-Ip` to the
+true client, deciding trust by the **unspoofable TCP peer**: it honours `Cf-Connecting-Ip`
+only when the peer is a cloudflared pod (`trustedProxyCIDRs = 10.10.0.0/16`) and otherwise
+sets `X-Real-Ip` = the peer. This fixes the cookie flap on proxied sites AND removes the
+header-less 500 on non-proxied ones (it only ever *sets* `X-Real-Ip`, never deletes it), and
+it closes a spoofing hole the strip approach masked — `X-Real-Ip` is no longer
+client-forgeable on any path (a raw `X-Real-Ip`, a forged `X-Forwarded-For`, or a forged
+`Cf-Connecting-Ip` from a non-cloudflared peer are all ignored). Attached to all 7
+Anubis sites via `extra_middlewares` (anubis-only, **not** the fleet default chain, to keep
+the first Yaegi plugin off the ~33 non-Anubis routers). Design + rollout:
+`docs/plans/2026-07-17-cluster-root-cause-fixes-design.md` (Fix 1). The monitoring
+follow-up (scrape Anubis `:9090`, validated/issued ratio alert) remains open as Fix 2.
