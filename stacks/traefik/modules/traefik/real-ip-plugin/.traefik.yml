@@ -1,0 +1,9 @@
+displayName: Real IP
+
+type: middleware
+
+import: github.com/viktorbarzin/real-ip-plugin
+
+summary: "Rewrites X-Real-Ip to the true client IP for Cloudflare-tunneled traffic: Cf-Connecting-Ip if present, else the first public entry in X-Forwarded-For, else leaves the existing X-Real-Ip untouched."
+
+testData: {}

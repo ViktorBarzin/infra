@@ -225,6 +225,21 @@ resource "helm_release" "traefik" {
             "version.go"   = file("${path.module}/sablier-plugin/version.go")
           }
         }
+        # Rewrites X-Real-Ip to the true client for Cloudflare-tunneled
+        # traffic (Cf-Connecting-Ip / first public XFF entry / else leave the
+        # existing X-Real-Ip untouched). Vendored as a LOCAL plugin, same
+        # rationale as sablier above. NOT YET ATTACHED to any route/Middleware
+        # — this only registers it with Traefik; a later task wires it in.
+        realip = {
+          moduleName = "github.com/viktorbarzin/real-ip-plugin"
+          mountPath  = "/plugins-local/src/github.com/viktorbarzin/real-ip-plugin"
+          type       = "inlinePlugin"
+          source = {
+            "go.mod"       = file("${path.module}/real-ip-plugin/go.mod")
+            ".traefik.yml" = file("${path.module}/real-ip-plugin/.traefik.yml")
+            "main.go"      = file("${path.module}/real-ip-plugin/main.go")
+          }
+        }
       }
     }
 
