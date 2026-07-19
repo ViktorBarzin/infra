@@ -198,64 +198,104 @@ func run(cfg config, m *metrics) error {
 	return nil
 }
 
-func handleWhenServerOn(cfg config, ups UPSPowerState, onMains, dryRun bool, st *watchdogState) {
+// powerAction is the decision the watchdog algorithm reaches for a given
+// (server power state, UPS state). Extracted as pure functions (decideWhenOn /
+// decideWhenOff) so the algorithm is unit-testable — a power outage can be
+// SIMULATED with fabricated UPS inputs without touching the real iDRAC/UPS/host.
+type powerAction int
+
+const (
+	actNone              powerAction = iota // server On, on mains — nothing to do
+	actWaitOnBattery                        // server On, on battery, runtime still above threshold
+	actShutdown                             // server On, on battery, runtime below threshold — shut down
+	actHoldOnBattery                        // server Off, still on battery — do NOT power on
+	actHoldLowCharge                        // server Off, on mains, charge below threshold — hold
+	actHoldMainsUnstable                    // server Off, on mains, charge OK, mains not stable long enough — hold
+	actPowerOn                              // server Off, on mains, charge OK, mains stable — power on
+)
+
+// decideWhenOn is the shutdown-side algorithm (server power state == On).
+func decideWhenOn(ups UPSPowerState, onMains bool, shutdownMinMinutes int) powerAction {
 	if onMains {
+		return actNone
+	}
+	if ups.minutesRemaining >= shutdownMinMinutes {
+		return actWaitOnBattery
+	}
+	return actShutdown
+}
+
+// decideWhenOff is the UPS-safe-gated power-on algorithm (server power state ==
+// Off). Power-on requires BOTH a recharged battery (>= minChargePct) AND stable
+// mains for a dwell period — the two gates that prevent a power-cycle loop
+// across repeated short outages that never let the UPS recharge.
+func decideWhenOff(ups UPSPowerState, onMains bool, mainsStableSecs int64, minChargePct int, dwellSecs int64) powerAction {
+	if !onMains {
+		return actHoldOnBattery
+	}
+	if ups.chargePercent < minChargePct {
+		return actHoldLowCharge
+	}
+	if mainsStableSecs < dwellSecs {
+		return actHoldMainsUnstable
+	}
+	return actPowerOn
+}
+
+func handleWhenServerOn(cfg config, ups UPSPowerState, onMains, dryRun bool, st *watchdogState) {
+	switch decideWhenOn(ups, onMains, cfg.shutdownMinMinutes) {
+	case actNone:
 		glog.Infof("Server On, UPS on mains (input %dV, charge %d%%). Nothing to do.", ups.inputVoltage, ups.chargePercent)
-		return
+	case actWaitOnBattery:
+		glog.Warningf("Server On, UPS on BATTERY (%ds, charge %d%%, ~%d min remaining) — %d min >= threshold %d, not shutting down yet.",
+			ups.secondsOnBattery, ups.chargePercent, ups.minutesRemaining, ups.minutesRemaining, cfg.shutdownMinMinutes)
+	case actShutdown:
+		if dryRun {
+			glog.Warningf("[DRY-RUN] Server On, on BATTERY, minutes %d < %d — WOULD issue GracefulShutdown.", ups.minutesRemaining, cfg.shutdownMinMinutes)
+			return
+		}
+		glog.Warningf("Server On, on BATTERY, minutes %d < threshold %d. Issuing iDRAC GracefulShutdown.", ups.minutesRemaining, cfg.shutdownMinMinutes)
+		st.LastShutdownAttempt = time.Now().Unix()
+		if err := performGracefulShutdown(cfg.idrac); err != nil {
+			st.LastShutdownError = true
+			glog.Errorf("GRACEFUL SHUTDOWN FAILED: %v", err)
+			return
+		}
+		st.LastShutdownError = false
+		glog.Warning("Graceful shutdown request accepted by iDRAC.")
 	}
-	glog.Warningf("Server On, UPS on BATTERY (%ds on battery, charge %d%%, ~%d min remaining).",
-		ups.secondsOnBattery, ups.chargePercent, ups.minutesRemaining)
-	if ups.minutesRemaining >= cfg.shutdownMinMinutes {
-		glog.Warningf("Minutes remaining %d >= threshold %d. Not shutting down yet.", ups.minutesRemaining, cfg.shutdownMinMinutes)
-		return
-	}
-	if dryRun {
-		glog.Warningf("[DRY-RUN] minutes %d < %d — WOULD issue GracefulShutdown.", ups.minutesRemaining, cfg.shutdownMinMinutes)
-		return
-	}
-	glog.Warningf("Minutes remaining %d < threshold %d. Issuing iDRAC GracefulShutdown.", ups.minutesRemaining, cfg.shutdownMinMinutes)
-	st.LastShutdownAttempt = time.Now().Unix()
-	if err := performGracefulShutdown(cfg.idrac); err != nil {
-		st.LastShutdownError = true
-		glog.Errorf("GRACEFUL SHUTDOWN FAILED: %v", err)
-		return
-	}
-	st.LastShutdownError = false
-	glog.Warning("Graceful shutdown request accepted by iDRAC.")
 }
 
 func handleWhenServerOff(cfg config, ups UPSPowerState, onMains bool, mainsStableSecs int64, dryRun bool, st *watchdogState) {
-	if !onMains {
+	// UPS-safe power-on gate: power on ONLY when the battery has recharged AND
+	// mains has been stable for a dwell — else we risk a power-cycle loop that
+	// drains a UPS which never recharges (Viktor 2026-07-19).
+	switch decideWhenOff(ups, onMains, mainsStableSecs, cfg.powerOnMinChargePct, cfg.mainsStableDwellSecs) {
+	case actHoldOnBattery:
 		glog.Warningf("Server Off, UPS still on BATTERY (%ds, charge %d%%). Not powering on.", ups.secondsOnBattery, ups.chargePercent)
-		return
-	}
-	// UPS-safe power-on gate: BOTH conditions must hold, else we risk a
-	// power-cycle loop that drains a UPS which never recharges (Viktor 2026-07-19).
-	if ups.chargePercent < cfg.powerOnMinChargePct {
+	case actHoldLowCharge:
 		glog.Infof("Server Off, on mains but charge %d%% < %d%% threshold. Holding power-on until the battery recovers.",
 			ups.chargePercent, cfg.powerOnMinChargePct)
-		return
-	}
-	if mainsStableSecs < cfg.mainsStableDwellSecs {
+	case actHoldMainsUnstable:
 		glog.Infof("Server Off, on mains and charge %d%% OK, but mains only stable for %ds < %ds dwell. Waiting (anti power-cycle-loop).",
 			ups.chargePercent, mainsStableSecs, cfg.mainsStableDwellSecs)
-		return
-	}
-	if dryRun {
-		glog.Warningf("[DRY-RUN] mains stable %ds, charge %d%% >= %d%% — WOULD issue power ON.",
+	case actPowerOn:
+		if dryRun {
+			glog.Warningf("[DRY-RUN] Server Off, mains stable %ds, charge %d%% >= %d%% — WOULD issue power ON.",
+				mainsStableSecs, ups.chargePercent, cfg.powerOnMinChargePct)
+			return
+		}
+		glog.Warningf("Server Off, mains stable for %ds and charge %d%% >= %d%%. Issuing iDRAC power ON.",
 			mainsStableSecs, ups.chargePercent, cfg.powerOnMinChargePct)
-		return
+		st.LastPowerOnAttempt = time.Now().Unix()
+		if err := performPowerOn(cfg.idrac); err != nil {
+			st.LastPowerOnError = true
+			glog.Errorf("POWER-ON FAILED: %v", err)
+			return
+		}
+		st.LastPowerOnError = false
+		glog.Warning("Power-on request accepted by iDRAC.")
 	}
-	glog.Warningf("Server Off, mains stable for %ds and charge %d%% >= %d%%. Issuing iDRAC power ON.",
-		mainsStableSecs, ups.chargePercent, cfg.powerOnMinChargePct)
-	st.LastPowerOnAttempt = time.Now().Unix()
-	if err := performPowerOn(cfg.idrac); err != nil {
-		st.LastPowerOnError = true
-		glog.Errorf("POWER-ON FAILED: %v", err)
-		return
-	}
-	st.LastPowerOnError = false
-	glog.Warning("Power-on request accepted by iDRAC.")
 }
 
 // ---- state ----
