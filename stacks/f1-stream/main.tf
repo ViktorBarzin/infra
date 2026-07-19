@@ -280,8 +280,8 @@ module "tls_secret" {
 
 
 # f1-stream serves its SvelteKit SPA via the FastAPI `/{path}` catch-all
-# and exposes 14 JSON/proxy routes at root (/schedule, /streams, /embed,
-# /embed-asset, /relay, /proxy, /extract, /extractors, /health). A flat
+# and exposes JSON/proxy routes at root (/schedule, /streams, /replays/events,
+# /embed, /embed-asset, /relay, /proxy, /extract, /extractors, /health). A flat
 # Anubis catch-all CHALLENGE breaks the SPA's XHRs with "Unexpected token
 # '<', '<!doctype '" because the schedule fetch lands on the challenge HTML.
 # Custom policy: ALLOW the known JSON routes + SvelteKit `_app/` assets
@@ -311,8 +311,14 @@ module "anubis" {
       # (carve-out per route via separate Ingress objects) is brittle and
       # because the data they expose (stream URLs, schedule metadata) is not
       # the AI-scraping target — the HTML/SPA is.
+      # NB: `replays/events` (the Replays page's data XHR) MUST be listed too.
+      # It was added after this rule; while missing, any request whose Anubis
+      # cookie didn't validate (the IP-sensitive cookie flap) fell through to
+      # catchall-challenge and got the PoW HTML back — so the SPA's res.json()
+      # threw "Unexpected token '<', '<!doctype '" and the Replays refresh
+      # "crashed". Only the `/replays` HTML *page* stays challenged (like /watch).
       - name: f1-data-routes
-        path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|schedule|streams)(/|\?|$)
+        path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|replays/events|schedule|streams)(/|\?|$)
         action: ALLOW
       # Allow non-GET methods unconditionally — AI scrapers GET the body,
       # they don't POST. Mutating XHRs and CORS preflight need to bypass.
