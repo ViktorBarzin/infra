@@ -124,7 +124,7 @@ module "ingress" {
   # via pfSense PROXY-protocol, so Traefik stamps X-Real-Ip with the STABLE real
   # client (no cloudflared flap). Stripping it only broke headerless in-cluster
   # probes (Anubis 500 "X-Real-Ip header is not set"). Strip is proxied-only.
-  extra_middlewares = ["traefik-x402@kubernetescrd"]
+  extra_middlewares = ["traefik-real-ip@kubernetescrd", "traefik-x402@kubernetescrd"]
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false
   extra_annotations = {
