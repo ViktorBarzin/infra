@@ -56,3 +56,23 @@ func TestMalformedCFFallsThrough(t *testing.T) {
 		t.Fatal("a malformed CF-Connecting-IP must fall through to XFF")
 	}
 }
+func TestCFLoopbackNotTrusted(t *testing.T) {
+	if serve(http.Header{"Cf-Connecting-Ip": {"127.0.0.1"}, "X-Real-Ip": {"10.10.9.9"}}) != "10.10.9.9" {
+		t.Fatal("a spoofed loopback CF-Connecting-IP must not be trusted; leave the existing X-Real-Ip")
+	}
+}
+func TestCFPrivateNotTrusted(t *testing.T) {
+	if serve(http.Header{"Cf-Connecting-Ip": {"10.9.9.9"}, "X-Real-Ip": {"10.10.9.9"}}) != "10.10.9.9" {
+		t.Fatal("a spoofed private CF-Connecting-IP must not be trusted; leave the existing X-Real-Ip")
+	}
+}
+func TestCFPublicStillStamped(t *testing.T) {
+	if serve(http.Header{"Cf-Connecting-Ip": {"8.8.8.8"}}) != "8.8.8.8" {
+		t.Fatal("a public CF-Connecting-IP is the real client and must still be stamped")
+	}
+}
+func TestCFPrivateFallsThroughToPublicXFF(t *testing.T) {
+	if serve(http.Header{"Cf-Connecting-Ip": {"192.168.1.5"}, "X-Forwarded-For": {"203.0.113.9"}}) != "203.0.113.9" {
+		t.Fatal("a spoofed private CF-Connecting-IP must fall through to the public XFF, not block it")
+	}
+}

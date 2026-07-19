@@ -33,7 +33,7 @@ func isPublic(ip string) bool {
 }
 
 func (r *RealIP) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	if cf := strings.TrimSpace(req.Header.Get("Cf-Connecting-Ip")); cf != "" && net.ParseIP(cf) != nil {
+	if cf := strings.TrimSpace(req.Header.Get("Cf-Connecting-Ip")); isPublic(cf) {
 		req.Header.Set("X-Real-Ip", cf)
 	} else if xff := strings.Join(req.Header.Values("X-Forwarded-For"), ","); xff != "" {
 		for _, part := range strings.Split(xff, ",") {
