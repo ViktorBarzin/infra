@@ -108,8 +108,15 @@ sed -i "s/^[[:space:]]*exit_timeout = .*/  exit_timeout = '5m'/" /etc/containerd
 
 # 5. logind + kubelet systemd unit — total kubelet shutdown 310s, so
 # logind InhibitDelay > that and kubelet TimeoutStopSec > that.
+# NOTE the zz- prefix: logind merges drop-ins from /etc, /run and /usr/lib
+# by filename, last-wins. Ubuntu ships
+# /usr/lib/systemd/logind.conf.d/unattended-upgrades-logind-maxdelay.conf
+# (InhibitDelayMaxSec=30); a plainly-named file (e.g. kubelet-shutdown.conf)
+# sorts BEFORE "unattended-*" and loses, silently capping graceful shutdown
+# at 30s. zz- sorts last so ours wins. Remove the old losing name if present.
 mkdir -p /etc/systemd/logind.conf.d
-cat > /etc/systemd/logind.conf.d/kubelet-shutdown.conf <<'LOGIND_CONF'
+rm -f /etc/systemd/logind.conf.d/kubelet-shutdown.conf
+cat > /etc/systemd/logind.conf.d/zz-kubelet-shutdown.conf <<'LOGIND_CONF'
 [Login]
 InhibitDelayMaxSec=480
 LOGIND_CONF
