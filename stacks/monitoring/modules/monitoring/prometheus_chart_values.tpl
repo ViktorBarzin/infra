@@ -506,7 +506,7 @@ serverFiles:
             action: drop
           # Whitelist: only keep essential apiserver metrics (prevents regression to 250K samples/scrape)
           - source_labels: [__name__]
-            regex: 'apiserver_request_total|apiserver_request_duration_seconds_sum|apiserver_request_duration_seconds_count|apiserver_requested_deprecated_apis|workqueue_depth|up'
+            regex: 'apiserver_request_total|apiserver_request_duration_seconds_sum|apiserver_request_duration_seconds_count|apiserver_requested_deprecated_apis|workqueue_depth|up|etcd_request_duration_seconds_sum|etcd_request_duration_seconds_count'
             action: keep
       - job_name: kubernetes-nodes
         scheme: https
@@ -1123,6 +1123,52 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Power outage - input voltage: {{ $value | printf \"%.0f\" }}V (threshold: <150V)"
+          # --- NAS power watchdog (scripts/server_safe_poweroff, code-xgcg) ---
+          # These fire once the fixed watchdog is deployed to the NAS and pushes
+          # to Pushgateway job=powercheck. Until it is deployed, only
+          # PowercheckWatchdogNeverReported fires (a deploy nudge).
+          - alert: PowercheckWatchdogNeverReported
+            expr: absent(powercheck_last_run_timestamp_seconds{job="powercheck"})
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "NAS power watchdog has never pushed metrics — binary/Synology-task/pushgateway path not live yet"
+          - alert: PowercheckWatchdogStale
+            expr: time() - powercheck_last_run_timestamp_seconds{job="powercheck"} > 1800
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "NAS power watchdog silent for {{ $value | humanizeDuration }} (>30m = 3 missed 10-min cycles)"
+          - alert: PowercheckUnhealthy
+            expr: powercheck_up{job="powercheck"} == 0
+            for: 12m
+            labels:
+              severity: warning
+            annotations:
+              summary: "NAS power watchdog cannot read iDRAC power-state and/or UPS SNMP — cannot protect the host"
+          - alert: PowercheckShutdownPostFailed
+            expr: powercheck_last_shutdown_error{job="powercheck"} == 1
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "NAS watchdog GracefulShutdown POST FAILED — the shutdown safety path is broken"
+          - alert: PowercheckPowerOnPostFailed
+            expr: powercheck_last_poweron_error{job="powercheck"} == 1
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "NAS watchdog power-On POST FAILED — the (now sole) power-on path is broken"
+          - alert: PowercheckShutdownIneffective
+            expr: powercheck_server_power_on{job="powercheck"} == 1 and (time() - powercheck_last_shutdown_attempt_timestamp_seconds{job="powercheck"}) > 300 and (time() - powercheck_last_shutdown_attempt_timestamp_seconds{job="powercheck"}) < 1800
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Watchdog issued a GracefulShutdown but the server is STILL ON — shutdown ineffective"
           - alert: HighPowerUsage
             expr: r730_idrac_amperageProbeReading{amperageProbeLocationName="System Board Pwr Consumption"} > 300
             for: 60m
@@ -2286,6 +2332,19 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} pods stuck in ContainerCreating on {{ $labels.node }}"
+          # etcd request latency as SEEN BY THE APISERVER (client-side). Compensating
+          # control for the accepted decision to keep etcd on the shared HDD (code-oflt /
+          # 2026-07-19): a reboot IO storm makes etcd fsync stall, which shows up here as
+          # elevated apiserver->etcd latency and flaps the control plane. Watch-only — no
+          # etcd change; the metric is now kept in the kubernetes-apiservers scrape whitelist.
+          # Threshold is conservative; recalibrate once baseline data has accumulated.
+          - alert: EtcdRequestLatencyHigh
+            expr: (sum(rate(etcd_request_duration_seconds_sum{job="kubernetes-apiservers"}[5m])) / sum(rate(etcd_request_duration_seconds_count{job="kubernetes-apiservers"}[5m]))) > 0.5
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "apiserver->etcd avg request latency {{ $value | printf \"%.2f\" }}s (>0.5s for 10m) — etcd likely slow on the shared HDD; control-plane recovery at risk on reboot"
           - alert: KubeletRuntimeOperationsLatency
             expr: histogram_quantile(0.99, sum by (instance, operation_type, le) (rate(kubelet_runtime_operations_duration_seconds_bucket[10m]))) > 60
             for: 10m

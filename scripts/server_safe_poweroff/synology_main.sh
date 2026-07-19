@@ -3,6 +3,10 @@
 # This is used to run the main program on synology nas and log all messages to synology's log system
 
 cd /var/services/homes/Administrator/server-power-cycle
+# Load iDRAC creds / SNMP community from an out-of-band env file (chmod 600,
+# NOT in git) so root/calvin + the SNMP community aren't baked into the binary.
+# Also honours POWERON_MIN_CHARGE_PCT / MAINS_STABLE_DWELL_MINUTES overrides.
+[ -f ./powercheck.env ] && set -a && . ./powercheck.env && set +a
 echo "Starting powercheck"
 ./powercheck-armv8 -log_dir=./logs
 
