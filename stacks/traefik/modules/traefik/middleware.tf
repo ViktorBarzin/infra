@@ -576,7 +576,9 @@ resource "kubectl_manifest" "middleware_real_ip" {
     }
     spec = {
       plugin = {
-        realip = {}
+        realip = {
+          trustedProxyCIDRs = ["10.10.0.0/16"]
+        }
       }
     }
   })
