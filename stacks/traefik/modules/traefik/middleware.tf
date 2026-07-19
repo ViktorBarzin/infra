@@ -559,6 +559,28 @@ resource "kubernetes_manifest" "middleware_x402" {
 # absent, Anubis falls back to XFF with private hops stripped = the real,
 # stable client IP. Attached via ingress_factory strip_x_real_ip = true —
 # required on every Anubis-fronted ingress.
+# Rewrites X-Real-Ip to the true client via the vendored real-ip plugin
+# (Cf-Connecting-Ip / first public XFF entry / else leave peer). Defined here
+# but NOT attached to any route yet — the ingress_factory default chain picks
+# it up in a later stage, at which point drop-x-real-ip below is retired.
+resource "kubernetes_manifest" "middleware_real_ip" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "real-ip"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      plugin = {
+        realip = {}
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
 resource "kubernetes_manifest" "middleware_drop_x_real_ip" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
