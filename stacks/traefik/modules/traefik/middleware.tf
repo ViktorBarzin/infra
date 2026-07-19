@@ -563,8 +563,11 @@ resource "kubernetes_manifest" "middleware_x402" {
 # (Cf-Connecting-Ip / first public XFF entry / else leave peer). Defined here
 # but NOT attached to any route yet — the ingress_factory default chain picks
 # it up in a later stage, at which point drop-x-real-ip below is retired.
-resource "kubernetes_manifest" "middleware_real_ip" {
-  manifest = {
+# MUST be kubectl_manifest, NOT kubernetes_manifest: a plugin-shaped Middleware
+# spec (spec.plugin.<name>) breaks kubernetes_manifest's type inference and
+# taints on every apply — same reason the sablier Middleware uses kubectl.
+resource "kubectl_manifest" "middleware_real_ip" {
+  yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
     kind       = "Middleware"
     metadata = {
@@ -576,7 +579,7 @@ resource "kubernetes_manifest" "middleware_real_ip" {
         realip = {}
       }
     }
-  }
+  })
 
   depends_on = [helm_release.traefik]
 }
