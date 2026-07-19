@@ -74,6 +74,11 @@ resource "null_resource" "gpu_node_config" {
     command = <<-EOT
       set -euo pipefail
       for node in $(kubectl get nodes -l feature.node.kubernetes.io/pci-10de.present=true -o jsonpath='{.items[*].metadata.name}'); do
+        # `kubectl taint --overwrite` keys on key+EFFECT, so setting NoSchedule
+        # does NOT replace an existing nvidia.com/gpu:PreferNoSchedule taint —
+        # they'd COEXIST (both effects on the node). Remove any stale
+        # PreferNoSchedule first, then set NoSchedule. Both idempotent.
+        kubectl taint nodes "$node" nvidia.com/gpu:PreferNoSchedule- 2>/dev/null || true
         kubectl taint nodes "$node" nvidia.com/gpu=true:NoSchedule --overwrite
       done
     EOT
@@ -91,7 +96,7 @@ resource "null_resource" "gpu_node_config" {
   # (dedicated anti-affinity would be redundant — omitted).
   triggers = {
     namespace    = kubernetes_namespace.nvidia.metadata[0].name
-    command_hash = "dynamic-taint-v2-noschedule"
+    command_hash = "dynamic-taint-v3-noschedule-remove-prefer"
   }
 }
 
