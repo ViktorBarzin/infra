@@ -241,6 +241,22 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
             read_only  = true
           }
 
+          # startup_probe gates liveness/readiness until MySQL first answers.
+          # Without it, after an UNCLEAN stop (power-loss reboot) InnoDB crash
+          # recovery can exceed the liveness budget (30s + 3*10s ~= 60s) and the
+          # kubelet SIGKILLs mysqld mid-recovery (exit 137) -> restart -> recovery
+          # restarts -> crashloop. 30*10s = 5min budget covers recovery for this
+          # DB's size; liveness only arms after the first successful ping.
+          # (reboot self-heal, 2026-07-19; code-avx0 sibling for InnoDB recovery)
+          startup_probe {
+            exec {
+              command = ["mysqladmin", "ping", "-h", "localhost"]
+            }
+            period_seconds    = 10
+            timeout_seconds   = 5
+            failure_threshold = 30
+          }
+
           liveness_probe {
             exec {
               command = ["mysqladmin", "ping", "-h", "localhost"]
