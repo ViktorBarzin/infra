@@ -376,7 +376,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         # client-unspoofable X-Real-Ip with zero per-site wiring. Carve-out
         # ingresses that point at the bare backend (not anubis-*) correctly skip
         # it. distinct() dedupes if a site also lists real-ip in extra_middlewares.
-        startswith(var.service_name, "anubis-") ? "traefik-real-ip@kubernetescrd" : null,
+        var.service_name != null && startswith(var.service_name, "anubis-") ? "traefik-real-ip@kubernetescrd" : null,
         "traefik-retry@kubernetescrd",
         "traefik-error-pages@kubernetescrd",
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
