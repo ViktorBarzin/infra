@@ -140,10 +140,10 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
       name: viktor/nextcloud-webdav-whitelist
       description: "Nextcloud WebDAV paths carry the account name 'admin' — not admin-panel probing"
       whitelist:
-        reason: "Nextcloud-iOS/desktop PROPFIND 404s on /remote.php/dav/files/admin/... are legit sync misses; crowdsecurity/http-admin-interface-probing matches 'admin' in the path and banned the client's shared egress IP (Viktor's London Hyperoptic line, 2026-07-19). Nextcloud's own auth (401/403) still gates the endpoint."
+        reason: "Nextcloud-iOS/desktop PROPFIND 404s on /remote.php/dav/files/admin/... are legit sync misses; crowdsecurity/http-admin-interface-probing matches 'admin' in the path and banned the client's shared egress IP (Viktor's London Hyperoptic line, 2026-07-19). Scoped by traefik_router_name (traefik CLF access logs do NOT populate target_fqdn) plus the Nextcloud-exclusive /remote.php/ prefix. Nextcloud's own auth (401/403) still gates it."
         expression:
           - >
-            evt.Parsed.target_fqdn == "nextcloud.viktorbarzin.me" &&
+            evt.Parsed.traefik_router_name contains "nextcloud-viktorbarzin-me" &&
             evt.Parsed.request startsWith "/remote.php/"
     YAML
   }
