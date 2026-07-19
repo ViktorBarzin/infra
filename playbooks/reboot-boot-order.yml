@@ -33,12 +33,18 @@
     vm_roster:
       - { vmid: 101,  name: pfsense,         state: active,   order: 1,  up: 90, down: 60 }
       - { vmid: 220,  name: docker-registry, state: active,   order: 5,  up: 15, down: 60 }
-      - { vmid: 200,  name: k8s-master,      state: active,   order: 10, up: 90, down: 120 }
-      - { vmid: 201,  name: k8s-node1,       state: active,   order: 20, up: 45, down: 120 }
-      - { vmid: 202,  name: k8s-node2,       state: active,   order: 21, up: 45, down: 120 }
-      - { vmid: 203,  name: k8s-node3,       state: active,   order: 22, up: 45, down: 120 }
-      - { vmid: 204,  name: k8s-node4,       state: active,   order: 23, up: 45, down: 120 }
-      - { vmid: 205,  name: k8s-node5,       state: active,   order: 24, up: 45, down: 120 }
+      # k8s nodes use down=180 (not 120): kubelet graceful-node-shutdown drains
+      # pods lowest-priority-tier first, and 180s gives it headroom to reach and
+      # drain the database tier (tier-1-cluster, 90s grace) before the host
+      # force-stops the VM. Nodes shut down sequentially in reverse order; the
+      # DBs sit mid-sequence so they drain within the UPS budget even in the
+      # (pathological) all-hang case — real drain is far less than the ceiling.
+      - { vmid: 200,  name: k8s-master,      state: active,   order: 10, up: 90, down: 180 }
+      - { vmid: 201,  name: k8s-node1,       state: active,   order: 20, up: 45, down: 180 }
+      - { vmid: 202,  name: k8s-node2,       state: active,   order: 21, up: 45, down: 180 }
+      - { vmid: 203,  name: k8s-node3,       state: active,   order: 22, up: 45, down: 180 }
+      - { vmid: 204,  name: k8s-node4,       state: active,   order: 23, up: 45, down: 180 }
+      - { vmid: 205,  name: k8s-node5,       state: active,   order: 24, up: 45, down: 180 }
       - { vmid: 102,  name: devvm,           state: active,   order: 30, up: 15, down: 120 }
       - { vmid: 103,  name: home-assistant,  state: active,   order: 31, up: 15, down: 60 }
       - { vmid: 300,  name: Windows10,       state: active,   order: 32, up: 15, down: 120 }
