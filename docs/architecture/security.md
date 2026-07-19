@@ -41,7 +41,7 @@ graph TB
     Agent -.->|report| LAPI
     LAPI -.->|all decisions incl. CAPI| FWB
     FWB -.->|program drop rules| NFT
-    LAPI -.->|ban/captcha decisions, CAPI excluded| CFsync
+    LAPI -.->|ban decisions, CAPI excluded| CFsync
     CFsync -.->|push IP list| CFedge
 
     style CFedge fill:#f9f,stroke:#333
@@ -126,7 +126,7 @@ for the supersession history — there is no longer an inline Traefik bouncer.)
   **`crowdsec_ban`** + a zone-scoped WAF custom rule `(ip.src in $crowdsec_ban)`
   → **block** action, which covers every proxied host in the zone.
 - Fed by the **`crowdsec-cf-sync` CronJob** (namespace `rybbit`, every 2 min,
-  pure-stdlib Python in a ConfigMap). It pulls local **ban/captcha ip-scoped**
+  pure-stdlib Python in a ConfigMap). It pulls local **ban ip-scoped**
   decisions and pushes them into the CF list, but **EXCLUDES the ~31k CAPI
   community blocklist** — that set is far too large for a CF Rules List (the CF
   account hard-limits to **one** list), and CAPI is already covered in-kernel on
@@ -139,9 +139,10 @@ for the supersession history — there is no longer an inline Traefik bouncer.)
   uses for LAPI. An earlier `backoff_limit=2` fired 3 rapid POSTs/cycle and
   escalated the throttle into a stuck state that left the list empty — a
   self-inflicted DoS that this change prevents.
-- **Block-only**: the single-list limit precludes a separate
-  captcha/managed-challenge list, so both ban and captcha decisions are enforced
-  as a plain block at the edge.
+- **Block-only, ban-only**: the single-list limit precludes a separate
+  captcha/managed-challenge list, and the sync pushes **ban decisions only** —
+  captcha-type decisions are NOT synced or enforced anywhere (the interactive
+  captcha path went away with the removed Traefik plugin; see below).
 - **Auth carve-out:** the WAF rule excludes `authentik.viktorbarzin.me` +
   `public-auth.viktorbarzin.me` (`… and not (http.host in {…})`). A CrowdSec hit
   must never wall a user out of the login / WebAuthn flow they authenticate
