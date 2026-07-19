@@ -1,0 +1,117 @@
+---
+# playbooks/reboot-boot-order.yml
+#
+# Reboot self-heal — Phase 3 (bead code-yqdf): codify Proxmox VM boot config.
+#
+# CONFIG ONLY — this playbook NEVER starts/stops/reboots/migrates a VM. It only
+# writes `onboot` + `startup=order,up,down` metadata, which takes effect on the
+# host's NEXT boot.
+#
+# WHY: on the 2026-07-18 power-return the workers booted BEFORE the firewall/DNS
+# (pfSense) and the control plane (k8s-master) — because those had no `startup`
+# order set and *unordered VMs boot last*. This sets a coherent staggered order:
+# pfSense -> docker-registry -> k8s-master -> workers (staggered) -> non-cluster
+# tail. It also runs an anti-zombie guard: any onboot=1 non-template VM NOT in
+# the roster is forced onboot=0 (the k8s-node6/206 zombie-rejoin class).
+#
+# RUN (from repo root; claim presence first: scripts/presence claim host:proxmox-1):
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/reboot-boot-order.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/reboot-boot-order.yml
+#   report-only guard: ... -e enforce_decommission_onboot=false
+
+- name: Codify Proxmox VM boot order (reboot self-heal Phase 3)
+  hosts: keyserver
+  gather_facts: false
+
+  vars:
+    # true = force onboot=0 on unmanaged onboot=1 VMs; false = report only.
+    enforce_decommission_onboot: true
+    decommission_ignore: []
+
+    # Roster = single source of truth. Verified against live `qm list` 2026-07-19.
+    # active   -> onboot=1 + startup=order,up,down ; disabled -> onboot=0.
+    vm_roster:
+      - { vmid: 101,  name: pfsense,         state: active,   order: 1,  up: 90, down: 60 }
+      - { vmid: 220,  name: docker-registry, state: active,   order: 5,  up: 15, down: 60 }
+      - { vmid: 200,  name: k8s-master,      state: active,   order: 10, up: 90, down: 120 }
+      - { vmid: 201,  name: k8s-node1,       state: active,   order: 20, up: 45, down: 120 }
+      - { vmid: 202,  name: k8s-node2,       state: active,   order: 21, up: 45, down: 120 }
+      - { vmid: 203,  name: k8s-node3,       state: active,   order: 22, up: 45, down: 120 }
+      - { vmid: 204,  name: k8s-node4,       state: active,   order: 23, up: 45, down: 120 }
+      - { vmid: 205,  name: k8s-node5,       state: active,   order: 24, up: 45, down: 120 }
+      - { vmid: 102,  name: devvm,           state: active,   order: 30, up: 15, down: 120 }
+      - { vmid: 103,  name: home-assistant,  state: active,   order: 31, up: 15, down: 60 }
+      - { vmid: 300,  name: Windows10,       state: active,   order: 32, up: 15, down: 120 }
+      - { vmid: 105,  name: pbs,             state: disabled }
+      - { vmid: 9000, name: truenas,         state: disabled }
+
+  tasks:
+    - name: Discover VMIDs present (qm list — also proves this is a PVE host)
+      ansible.builtin.command: qm list
+      register: qm_list_raw
+      changed_when: false
+      check_mode: false
+
+    - name: Parse present VMIDs
+      ansible.builtin.set_fact:
+        all_vmids: "{{ qm_list_raw.stdout_lines[1:] | map('regex_search', '\\d+') | select('string') | map('int') | list }}"
+
+    - name: Gather qm config per VM
+      ansible.builtin.command: "qm config {{ item }}"
+      loop: "{{ all_vmids }}"
+      loop_control: { label: "{{ item }}" }
+      register: qm_configs
+      changed_when: false
+      check_mode: false
+
+    - name: Index qm config by VMID
+      ansible.builtin.set_fact:
+        cfg: "{{ cfg | default({}) | combine({ item.item: item.stdout }) }}"
+      loop: "{{ qm_configs.results }}"
+      loop_control: { label: "{{ item.item }}" }
+
+    - name: Compute anti-zombie candidates (onboot=1, non-template, not in roster)
+      ansible.builtin.set_fact:
+        zombie_candidates: >-
+          {{ (qm_configs.results
+              | selectattr('stdout', 'search', '(?m)^onboot: 1')
+              | rejectattr('stdout', 'search', '(?m)^template: 1')
+              | map(attribute='item') | list)
+             | difference(vm_roster | map(attribute='vmid') | list)
+             | difference(decommission_ignore) | list }}
+
+    - name: "REPORT — anti-zombie candidates (forced onboot=0 when enforce=true)"
+      ansible.builtin.debug:
+        msg: "zombie_candidates={{ zombie_candidates }} enforce={{ enforce_decommission_onboot }} ignored={{ decommission_ignore }}"
+
+    - name: Converge active roster VMs (onboot=1 + startup order/up/down)
+      ansible.builtin.command: "qm set {{ item.vmid }} --onboot 1 --startup order={{ item.order }},up={{ item.up }},down={{ item.down }}"
+      loop: "{{ vm_roster | selectattr('state', 'equalto', 'active') | list }}"
+      loop_control: { label: "{{ item.vmid }} ({{ item.name }})" }
+      when:
+        - item.vmid in all_vmids
+        - >-
+          ('startup: order=' ~ item.order ~ ',up=' ~ item.up ~ ',down=' ~ item.down) not in (cfg[item.vmid] | default(''))
+          or ('onboot: 1' not in (cfg[item.vmid] | default('')))
+
+    - name: Ensure declared-disabled roster VMs do not auto-start (onboot=0)
+      ansible.builtin.command: "qm set {{ item.vmid }} --onboot 0"
+      loop: "{{ vm_roster | selectattr('state', 'equalto', 'disabled') | list }}"
+      loop_control: { label: "{{ item.vmid }} ({{ item.name }})" }
+      when:
+        - item.vmid in all_vmids
+        - "'onboot: 1' in (cfg[item.vmid] | default(''))"
+
+    - name: "GUARD — force onboot=0 on unmanaged onboot=1 VMs (anti-zombie)"
+      ansible.builtin.command: "qm set {{ item }} --onboot 0"
+      loop: "{{ zombie_candidates }}"
+      loop_control: { label: "{{ item }}" }
+      when: enforce_decommission_onboot | bool
+
+    - name: "SUMMARY"
+      ansible.builtin.debug:
+        msg: >-
+          Anti-zombie onboot=0 applied to:
+          {{ zombie_candidates if enforce_decommission_onboot | bool else '[] (report-only)' }}.
+          Decommission = DESTROY (qm destroy <vmid> --purge) — this playbook only
+          sets onboot/startup metadata; it never deletes a VM or reboots one.
