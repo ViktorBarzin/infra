@@ -165,6 +165,11 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
         }
       }
       spec {
+        # 90s (was default 30) so InnoDB fast-shutdown finishes cleanly on a
+        # node/host shutdown instead of self-SIGKILLing -> InnoDB crash recovery
+        # on boot (2026-07-19 shutdown tuning; complements the startup_probe).
+        termination_grace_period_seconds = 90
+
         affinity {
           node_affinity {
             required_during_scheduling_ignored_during_execution {
