@@ -87,6 +87,17 @@ resource "helm_release" "proxmox_csi" {
     # Request bumped from 64Mi → 1024Mi (2026-05-23) so the pod is reserved
     # for the unlock burst instead of risking OOM under node pressure.
     node = {
+      # reboot-self-heal Phase 2: node.tolerations REPLACES the chart's default
+      # list, so the 3 defaults (karpenter/unschedulable/disk-pressure) are
+      # re-listed here alongside the GPU toleration. Without nvidia.com/gpu the
+      # CSI node plugin is evicted from the GPU-tainted k8s-node1 (breaks volume
+      # attach on node1 — CRITICAL).
+      tolerations = [
+        { key = "karpenter.sh/disrupted", operator = "Exists", effect = "NoSchedule" },
+        { key = "node.kubernetes.io/unschedulable", operator = "Exists", effect = "NoSchedule" },
+        { key = "node.kubernetes.io/disk-pressure", operator = "Exists", effect = "NoSchedule" },
+        { key = "nvidia.com/gpu", operator = "Exists", effect = "NoSchedule" },
+      ]
       plugin = {
         resources = {
           requests = { cpu = "10m", memory = "1024Mi" }

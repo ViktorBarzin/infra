@@ -66,6 +66,15 @@ loki:
 minio:
   enabled: false
 
+# reboot-self-heal Phase 2: tolerate the GPU taint so the loki-canary DaemonSet
+# keeps a pod on k8s-node1 when nvidia.com/gpu flips to NoSchedule. (Chart
+# default lokiCanary.tolerations is [] — this is the only toleration added.)
+lokiCanary:
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
 deploymentMode: SingleBinary
 
 singleBinary:
