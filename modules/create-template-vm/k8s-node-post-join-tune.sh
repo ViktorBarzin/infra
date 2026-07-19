@@ -58,13 +58,21 @@ cfg.pop('shutdownGracePeriodCriticalPods', None)
 cfg.pop('shutdownGracePeriodByPodPriority', None)
 cfg['containerLogMaxSize'] = '10Mi'
 cfg['containerLogMaxFiles'] = 3
+# Per-tier grace sized from MEASURED drain times + declared grace (2026-07-19):
+#   traefik (tier-0-core) measured 26s draining connections, declares 60 -> 60
+#   apps declare 30 (default) -> raise 20->30 so they aren't cut at 20
+#   dawarich (tier-3-edge) declares 60 -> 60
+#   CNPG measured 4s (declares 1800 upstream-default) -> DB tier 90 is ample
+# Raising a tier cap is ~free: kubelet advances the instant a tier's pods exit,
+# so a higher cap only ever helps a genuinely slow pod. Total (sum) = 390s;
+# the host VM down= timeout (180s) is the real ceiling and covers realistic drains.
 cfg['shutdownGracePeriodByPodPriority'] = [
-    {'priority': 0,          'shutdownGracePeriodSeconds': 20},
-    {'priority': 200000,     'shutdownGracePeriodSeconds': 20},
-    {'priority': 400000,     'shutdownGracePeriodSeconds': 30},
+    {'priority': 0,          'shutdownGracePeriodSeconds': 30},
+    {'priority': 200000,     'shutdownGracePeriodSeconds': 30},
+    {'priority': 400000,     'shutdownGracePeriodSeconds': 60},
     {'priority': 600000,     'shutdownGracePeriodSeconds': 30},
     {'priority': 800000,     'shutdownGracePeriodSeconds': 90},
-    {'priority': 1000000,    'shutdownGracePeriodSeconds': 30},
+    {'priority': 1000000,    'shutdownGracePeriodSeconds': 60},
     {'priority': 1200000,    'shutdownGracePeriodSeconds': 30},
     {'priority': 2000000000, 'shutdownGracePeriodSeconds': 30},
     {'priority': 2000001000, 'shutdownGracePeriodSeconds': 30},

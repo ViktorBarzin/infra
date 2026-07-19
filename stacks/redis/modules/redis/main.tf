@@ -204,7 +204,9 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
         }
       }
       spec {
-        termination_grace_period_seconds = 30
+        # 90s (was 30) so a slow AOF/RDB flush finishes cleanly on shutdown
+        # instead of self-SIGKILLing at 30 (2026-07-19 shutdown tuning).
+        termination_grace_period_seconds = 90
 
         container {
           name    = "redis"
