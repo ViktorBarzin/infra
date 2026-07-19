@@ -122,10 +122,9 @@ module "ingress" {
   name         = "json"
   service_name = module.anubis.service_name
   port         = module.anubis.service_port
-  # Anubis binds its JWT to X-Real-Ip; the real-ip middleware (first in the chain)
-  # rewrites it to the true client from the trusted cloudflared peer (spoof-safe),
-  # so the cookie stays stable — replaces the old drop-x-real-ip strip.
-  extra_middlewares = ["traefik-real-ip@kubernetescrd", "traefik-x402@kubernetescrd"]
+  # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
+  # ingress_factory for anubis-* backends — no per-site wiring needed.
+  extra_middlewares = ["traefik-x402@kubernetescrd"]
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false
   extra_annotations = {

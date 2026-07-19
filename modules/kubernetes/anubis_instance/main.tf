@@ -15,9 +15,9 @@ terraform {
 # the registrable domain means a token solved on one viktorbarzin.me subdomain
 # is honoured by every other Anubis-fronted site.
 #
-# X-REAL-IP: Anubis binds its cookie to X-Real-Ip. Attach the shared real-ip
-# middleware (traefik-real-ip@kubernetescrd, first in extra_middlewares) on EVERY
-# Anubis-fronted site — it rewrites X-Real-Ip to the true client, trusting
+# X-REAL-IP: Anubis binds its cookie to X-Real-Ip. ingress_factory AUTO-ATTACHES
+# the shared real-ip middleware (traefik-real-ip@kubernetescrd) for any anubis-*
+# backend — no per-site wiring. It rewrites X-Real-Ip to the true client, trusting
 # Cf-Connecting-Ip only from the cloudflared pod peer (trustedProxyCIDRs = the
 # pod CIDR) and otherwise using the unspoofable TCP peer, so the value is stable
 # AND client-unspoofable on both proxied and non-proxied paths. This replaced the
