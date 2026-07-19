@@ -339,10 +339,10 @@ module "ingress" {
   name         = "f1"
   service_name = module.anubis.service_name
   port         = module.anubis.service_port
-  # NOTE: no strip_x_real_ip here. f1 is dns_type=non-proxied — traffic arrives
-  # via pfSense PROXY-protocol, so Traefik stamps X-Real-Ip with the STABLE real
-  # client (no cloudflared flap). Stripping it only broke headerless in-cluster
-  # probes (Anubis 500 "X-Real-Ip header is not set"). Strip is proxied-only.
+  # real-ip middleware (first in extra_middlewares) sets X-Real-Ip from the
+  # trusted peer — stable + client-unspoofable. Replaces the old strip (retired
+  # 2026-07-19); f1 is non-proxied (pfSense PROXY-protocol) so the peer is
+  # already the real client.
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false
   extra_middlewares = ["traefik-real-ip@kubernetescrd", "traefik-x402@kubernetescrd"]

@@ -15,17 +15,16 @@ terraform {
 # the registrable domain means a token solved on one viktorbarzin.me subdomain
 # is honoured by every other Anubis-fronted site.
 #
-# X-REAL-IP CONSTRAINT (path-dependent — do NOT blanket-apply):
-#  - PROXIED (Cloudflare) sites: the fronting ingress_factory call MUST set
-#    strip_x_real_ip = true. Anubis's cookie validation is IP-sensitive, and
-#    Traefik stamps X-Real-Ip with its immediate TCP peer — for CF-tunneled
-#    traffic a cloudflared pod IP that flaps per request, invalidating the
-#    cookie mid-page-load (2026-07-14 blank-page post-mortem). Stripped, Anubis
-#    falls back to XFF_STRIP_PRIVATE'd X-Forwarded-For = the stable real client.
-#  - NON-PROXIED sites (f1, kms): do NOT strip. X-Real-Ip is already the stable
-#    real client (pfSense PROXY-protocol, no cloudflared). Stripping there makes
-#    Anubis 500 ("X-Real-Ip header is not set") on any header-less request
-#    (in-cluster Uptime-Kuma probes) — the 2026-07-14 follow-up 5xx incident.
+# X-REAL-IP: Anubis binds its cookie to X-Real-Ip. Attach the shared real-ip
+# middleware (traefik-real-ip@kubernetescrd, first in extra_middlewares) on EVERY
+# Anubis-fronted site — it rewrites X-Real-Ip to the true client, trusting
+# Cf-Connecting-Ip only from the cloudflared pod peer (trustedProxyCIDRs = the
+# pod CIDR) and otherwise using the unspoofable TCP peer, so the value is stable
+# AND client-unspoofable on both proxied and non-proxied paths. This replaced the
+# old per-site strip_x_real_ip / drop-x-real-ip middleware (retired 2026-07-19),
+# which fixed the 2026-07-14 blank-page flap on proxied sites but 500'd
+# header-less requests on non-proxied ones. Post-mortem:
+# docs/post-mortems/2026-07-14-anubis-x-real-ip-cookie-flap.md.
 
 variable "name" {
   type        = string
