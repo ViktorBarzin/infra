@@ -74,14 +74,24 @@ resource "null_resource" "gpu_node_config" {
     command = <<-EOT
       set -euo pipefail
       for node in $(kubectl get nodes -l feature.node.kubernetes.io/pci-10de.present=true -o jsonpath='{.items[*].metadata.name}'); do
-        kubectl taint nodes "$node" nvidia.com/gpu=true:PreferNoSchedule --overwrite
+        kubectl taint nodes "$node" nvidia.com/gpu=true:NoSchedule --overwrite
       done
     EOT
   }
 
+  # reboot-self-heal Phase 2 (code-j3tx): flipped PreferNoSchedule -> NoSchedule
+  # so non-GPU pods CANNOT pack the GPU node on a reboot reschedule and starve
+  # frigate/llama-swap (the 2026-07-18 ~3h Pending). NoSchedule does NOT evict
+  # running pods — it only shapes future scheduling — so this is safe to apply
+  # live; it takes effect on the next reschedule/reboot. PREREQUISITE (done): the
+  # 8 non-tolerating system DaemonSets gained an nvidia.com/gpu toleration first
+  # (proxmox-csi-node etc.), else NoSchedule would keep them off node1. GPU
+  # tenants + those DaemonSets tolerate; everything else (immich-postgresql,
+  # CNPG, authentik, ...) has no gpu toleration so NoSchedule alone excludes it
+  # (dedicated anti-affinity would be redundant — omitted).
   triggers = {
     namespace    = kubernetes_namespace.nvidia.metadata[0].name
-    command_hash = "dynamic-taint-v1"
+    command_hash = "dynamic-taint-v2-noschedule"
   }
 }
 
