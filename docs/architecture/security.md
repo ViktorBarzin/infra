@@ -147,10 +147,21 @@ for the supersession history — there is no longer an inline Traefik bouncer.)
   must never wall a user out of the login / WebAuthn flow they authenticate
   through; auth keeps `traefik-rate-limit` for brute-force protection.
 
-**Whitelist** (`stacks/crowdsec/whitelist.yaml`): a CrowdSec whitelist covers
-RFC1918 + the tailnet + internal CIDRs (plus one specific external IP), so
-internal users are never enforced. Internal access uses split-horizon DNS
-straight to Traefik, and direct internal clients are RFC1918 — both whitelisted.
+**Whitelist** (the `crowdsec-whitelist` configmap in
+`stacks/crowdsec/modules/crowdsec/main.tf`, mounted into the agents at
+`parsers/s02-enrich/whitelist.yaml`): a CrowdSec whitelist covers RFC1918 + the
+tailnet + internal CIDRs (plus one specific external IP), so internal users are
+never enforced. Internal access uses split-horizon DNS straight to Traefik, and
+direct internal clients are RFC1918 — both whitelisted. Two path-scoped
+whitelists suppress false positives on first-party apps' own traffic:
+`viktor/immich-asset-paths-whitelist` (auth-gated `/api/assets|timeline|…`
+timeline bursts) and `viktor/nextcloud-webdav-whitelist`
+(`nextcloud.viktorbarzin.me` `/remote.php/` — Nextcloud-iOS PROPFIND 404s carry
+the account name `admin` in the path and otherwise trip
+`crowdsecurity/http-admin-interface-probing`, banning the client's shared egress
+IP; 2026-07-19). Note: the whitelist file is a `subPath` mount, so editing the
+configmap requires **restarting the `crowdsec-agent` DaemonSet** to pick it up
+(subPath mounts don't hot-update).
 
 #### Why the Traefik bouncer plugin was removed
 
