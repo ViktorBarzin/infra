@@ -11,6 +11,12 @@ image:
   tag: "v1.7.8"
 
 agent:
+  # reboot-self-heal Phase 2: tolerate the GPU taint so the log-parsing agent
+  # keeps a pod on k8s-node1 when nvidia.com/gpu flips to NoSchedule.
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
   resources:
     requests:
       cpu: 25m

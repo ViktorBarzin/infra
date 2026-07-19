@@ -35,6 +35,13 @@ resource "helm_release" "metallb" {
       frr = {
         enabled = false
       }
+      # reboot-self-heal Phase 2: ADDITIVE — control-plane/master tolerations
+      # still come from speaker.tolerateMaster=true (chart default, untouched);
+      # this only ADDS the GPU toleration so the speaker keeps a pod on the
+      # GPU-tainted k8s-node1 when nvidia.com/gpu flips to NoSchedule.
+      tolerations = [
+        { key = "nvidia.com/gpu", operator = "Exists", effect = "NoSchedule" },
+      ]
     }
   })]
 }

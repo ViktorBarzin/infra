@@ -107,6 +107,16 @@ resource "helm_release" "kured" {
         "prometheus.io/path"   = "/metrics"
       }
     }
+    # reboot-self-heal Phase 2: the kured chart REPLACES its default
+    # control-plane/master tolerations when `tolerations` is set, so both are
+    # re-listed here (replicating the chart default exactly) alongside the GPU
+    # toleration — kured must still reboot the control-plane AND keep a pod on
+    # the GPU-tainted k8s-node1.
+    tolerations = [
+      { key = "node-role.kubernetes.io/control-plane", effect = "NoSchedule" },
+      { key = "node-role.kubernetes.io/master", effect = "NoSchedule" },
+      { key = "nvidia.com/gpu", operator = "Exists", effect = "NoSchedule" },
+    ]
   })]
 }
 
@@ -211,6 +221,13 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
           effect   = "NoSchedule"
           key      = "node-role.kubernetes.io/master"
           operator = "Equal"
+        }
+        # reboot-self-heal Phase 2: keep the sentinel gate on the GPU-tainted
+        # k8s-node1 when nvidia.com/gpu flips to NoSchedule.
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Exists"
+          effect   = "NoSchedule"
         }
         container {
           name              = "gate"

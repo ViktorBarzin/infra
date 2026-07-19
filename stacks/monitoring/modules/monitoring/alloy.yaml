@@ -282,8 +282,13 @@ controller:
   # Schedule on control-plane node too so we can tail /var/log/kubernetes/audit.log
   # from kube-apiserver. Without this, K8s audit log shipping (wave 1 K2-K9 alert
   # rules) has no source. control-plane has the standard NoSchedule taint.
+  # reboot-self-heal Phase 2: also tolerate the GPU taint so alloy keeps shipping
+  # logs from k8s-node1 when nvidia.com/gpu flips to NoSchedule.
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "nvidia.com/gpu"
       operator: "Exists"
       effect: "NoSchedule"
 
