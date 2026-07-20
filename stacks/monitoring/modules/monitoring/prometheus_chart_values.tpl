@@ -1467,7 +1467,7 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "Tuya Cloud API rejecting calls ({{ $value }} devices affected) — renew subscription at iot.tuya.com (code 28841002 = expired trial) or rotate TINYTUYA_API_KEY"
+              summary: "Tuya Cloud rejecting calls for a certain auth/permission/subscription reason ({{ $value }} device(s) affected) — transient 501/5xx errors no longer trip this alert. Find the actual code in the bridge logs: kubectl -n tuya-bridge logs deploy/tuya-bridge | grep auth=true  (28841002 = trial expired, renew at iot.tuya.com; 1106 = permission deny; ERR_CLOUDKEY = bad key/secret, rotate TINYTUYA_API_KEY)."
           - alert: ProxmoxMetricsMissing
             expr: absent(pve_up)
             for: 10m
