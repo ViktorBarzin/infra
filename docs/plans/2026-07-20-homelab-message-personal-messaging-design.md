@@ -73,7 +73,7 @@ So any "send as me" path is an unofficial client. The realistic families, all To
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph agent["Agent session"]
         V["Viktor"] -->|"'reply to Alice: ...'"| C["Claude"]
         C -->|preview recipient + text| V
