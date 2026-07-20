@@ -404,6 +404,199 @@ resource "kubernetes_manifest" "tmux_api_strip_prefix" {
 }
 
 # =============================================================================
+# terminal-lobby v2 backend (roadmap pillars #1 + #6) — two new DevVM services
+# behind the SAME terminal.viktorbarzin.me host, gated by Authentik like
+# tmux-api. Application code lives in the terminal-lobby repo; this stack owns
+# only the K8s Service/Endpoints/IngressRoutes.
+#
+#   session-events :7685 → normalized event stream + prompt/cancel/permission
+#                          control channel. Routes are served at ROOT with path
+#                          params (/events/{session}, /permission/{id},
+#                          /prompt/{session}, /cancel/{session}) → PathPrefix,
+#                          NO strip. The /hooks/* endpoints are loopback-only in
+#                          code (localhostOnly) and MUST NEVER be routed here.
+#   file-api       :7686 → per-user file read/write/list for the preview/editor
+#                          surface. Serves /files/list|read|write; the /files
+#                          prefix is VERBATIM (no strip), mirroring session-events.
+# =============================================================================
+
+# --- session-events (:7685) --------------------------------------------------
+resource "kubernetes_service" "session_events" {
+  metadata {
+    name      = "session-events"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+    labels = {
+      app = "session-events"
+    }
+  }
+
+  spec {
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 7685
+    }
+  }
+}
+
+resource "kubernetes_endpoints" "session_events" {
+  metadata {
+    name      = "session-events"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+  }
+
+  subset {
+    address {
+      ip = "10.0.10.10"
+    }
+    port {
+      name = "http"
+      port = 7685
+    }
+  }
+}
+
+# IngressRoute: the four authed session-events root paths → session-events.
+# NO strip-prefix — session-events serves /events/{session} etc. verbatim.
+# /hooks/* is deliberately absent: it is loopback-only and must stay off the
+# public ingress.
+resource "kubernetes_manifest" "session_events_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "session-events"
+      namespace = kubernetes_namespace.terminal.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/permission/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`))"
+        kind  = "Rule"
+        middlewares = [
+          {
+            name      = "authentik-forward-auth"
+            namespace = "traefik"
+          }
+        ]
+        services = [{
+          name = "session-events"
+          port = 80
+        }]
+      }]
+      tls = {
+        secretName = var.tls_secret_name
+      }
+    }
+  }
+}
+
+# --- file-api (:7686) --------------------------------------------------------
+resource "kubernetes_service" "file_api" {
+  metadata {
+    name      = "file-api"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+    labels = {
+      app = "file-api"
+    }
+  }
+
+  spec {
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 7686
+    }
+  }
+}
+
+resource "kubernetes_endpoints" "file_api" {
+  metadata {
+    name      = "file-api"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+  }
+
+  subset {
+    address {
+      ip = "10.0.10.10"
+    }
+    port {
+      name = "http"
+      port = 7686
+    }
+  }
+}
+
+# IngressRoute: /files/* → file-api, authed, NO strip (file-api's own routes
+# carry the /files prefix).
+resource "kubernetes_manifest" "file_api_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "file-api"
+      namespace = kubernetes_namespace.terminal.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match = "Host(`terminal.viktorbarzin.me`) && PathPrefix(`/files/`)"
+        kind  = "Rule"
+        middlewares = [
+          {
+            name      = "authentik-forward-auth"
+            namespace = "traefik"
+          }
+        ]
+        services = [{
+          name = "file-api"
+          port = 80
+        }]
+      }]
+      tls = {
+        secretName = var.tls_secret_name
+      }
+    }
+  }
+}
+
+# IngressRoute: /term.html → clipboard-upload (which serves it from its static
+# whitelist). AUTHED (unlike the public fonts/manifest/icons carve-out): the SPA
+# frames it same-origin so the session cookie flows; the terminal connection it
+# opens (/ws + /token) stays authed on ttyd regardless. NO strip — clipboard
+# serves the exact path /term.html.
+resource "kubernetes_manifest" "term_html_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "terminal-term-html"
+      namespace = kubernetes_namespace.terminal.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match = "Host(`terminal.viktorbarzin.me`) && Path(`/term.html`)"
+        kind  = "Rule"
+        middlewares = [
+          {
+            name      = "authentik-forward-auth"
+            namespace = "traefik"
+          }
+        ]
+        services = [{
+          name = "clipboard-upload"
+          port = 80
+        }]
+      }]
+      tls = {
+        secretName = var.tls_secret_name
+      }
+    }
+  }
+}
+
+# =============================================================================
 # Webterminal probe (added 2026-05-17 after a Traefik replica came up with a
 # partial routing table — only the IngressRoute CRDs registered; the
 # kubernetes_ingress for terminal.viktorbarzin.me was missing, so ~70% of
