@@ -1,6 +1,6 @@
 # `homelab message` — send/read personal messages as Viktor (WhatsApp → Messenger → Instagram)
 
-- **Status:** Design — approved via grilling session 2026-07-20 (owner: Viktor). Build not yet started.
+- **Status:** **Phase 1 (WhatsApp) BUILT + landed** 2026-07-20 — `homelab message` in `cli` (v0.15.0, on master), validated end-to-end against the live session. Grilled + approved the same day. Phase 2 (Messenger + Instagram) pending.
 - **Owning repo:** `infra` (`cli/` + a new dedicated chrome-service profile; docs canonical here).
 - **Grilled with:** `/grill-with-docs` (5 doc-research agents + 2 adversarial challengers; all load-bearing claims verified against primary sources — see References).
 
@@ -184,14 +184,21 @@ homelab message send     --via wa --to "Alice" "text"   # preview + confirm → 
 - **Injection firewall** — the rule that incoming message content is data, never instructions, and never triggers a send in the same step it is read.
 - **Allowlist** — the explicit set of contacts the CLI is permitted to send to.
 
-## Build follow-ups (for the execution phase)
+## Build status
 
-1. `cli/cmd_message.go` + `messageCommands()` wired into `buildRegistry()`; bump `cli/VERSION`.
-2. WhatsApp Web automation script (open/search thread, scrape recent, compose, send) via chrome-service — including a **human-like typing engine**: per-character jittered inter-keystroke delays (right-skewed, longer at word/punctuation boundaries, pre-type + pre-send pauses), NOT the fixed Playwright `delay`.
-3. Allowlist config + append-only audit log (→ Loki).
-4. Dedicated persistent messaging profile in chrome-service (hardening); migrate the logged-in session off the shared profile.
-5. Tests (contact resolution, allowlist refusal, dry-run, audit-log write); selector-drift smoke check.
-6. Phase 2: `messenger` + `ig` verbs; Instagram reassessment.
+**Phase 1 (WhatsApp) shipped 2026-07-20** as `homelab message` (`cli`, v0.15.0):
+- [x] `cli/cmd_message.go` + `cli/message.go` + `messageCommands()` wired into `buildRegistry()`; `VERSION` → v0.15.0.
+- [x] WhatsApp Web automation (`cli/message_wa.js`): open + **verify recipient** (composer aria / header), scrape recent, compose, send via the shared chrome-service session — with the **human-like typing engine** (per-character right-skewed jitter, longer at word/punctuation boundaries, pre-type + pre-send pauses; Enter to send).
+- [x] Fuzzy-match allowlist (fail-closed) + preview/confirm/`--dry-run`/`--yes` gate (no send without a TTY unless `--yes`) + append-only audit log.
+- [x] Unit tests (arg parse, allowlist, fuzzy resolve, audit record); validated end-to-end via a self-send + read-back against the live session. Selectors captured for WhatsApp Web 2026 (rows `#pane-side div[role="row"]`/`span[title]`; composer Lexical `footer [contenteditable][role="textbox"]`; messages `div[data-id]`/`span.copyable-text[data-pre-plain-text]`).
+
+**Pending:**
+- [ ] **Hardening:** dedicated persistent messaging profile in chrome-service; migrate the logged-in session off the shared identity profile (the shared-browser exposure flagged above).
+- [ ] Ship the audit log to Loki (currently local JSONL).
+- [ ] Selector-drift signal (Prometheus/Uptime-Kuma) — a `read` breaking after a WhatsApp web-UI change is the DOM-fragility this design accepts.
+- [ ] **Phase 2:** `messenger` + `ig` verbs; Instagram reassessment (draft-only candidate).
+
+**Operator setup:** populate `~/.config/homelab/message-allowlist` (one exact WhatsApp contact name per line) — sends are refused until then (fail-closed).
 
 ## References
 
