@@ -3,7 +3,8 @@
   "model": "claude-opus-4-8",
   "hooks": {
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "/usr/local/bin/claude-tmux-state done 2>/dev/null || true", "timeout": 5 }] }
+      { "hooks": [{ "type": "command", "command": "/usr/local/bin/claude-tmux-state done 2>/dev/null || true", "timeout": 5 }] },
+      { "hooks": [{ "type": "command", "command": "/usr/local/bin/claude-se-hook session-start", "timeout": 8 }] }
     ],
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "/usr/local/bin/claude-tmux-state running 2>/dev/null || true", "timeout": 5 }] }
