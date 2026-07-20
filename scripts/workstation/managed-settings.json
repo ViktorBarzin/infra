@@ -10,7 +10,8 @@
       { "hooks": [{ "type": "command", "command": "/usr/local/bin/claude-tmux-state running 2>/dev/null || true", "timeout": 5 }] }
     ],
     "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "/usr/local/bin/claude-tmux-state running 2>/dev/null || true", "timeout": 5 }] }
+      { "hooks": [{ "type": "command", "command": "/usr/local/bin/claude-tmux-state running 2>/dev/null || true", "timeout": 5 }] },
+      { "hooks": [{ "type": "command", "command": "/usr/local/bin/claude-se-hook permission-request", "timeout": 100 }] }
     ],
     "PostToolUse": [
       { "hooks": [{ "type": "command", "command": "/usr/local/bin/claude-tmux-state running 2>/dev/null || true", "timeout": 5 }] }
