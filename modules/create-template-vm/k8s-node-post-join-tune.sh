@@ -58,24 +58,27 @@ cfg.pop('shutdownGracePeriodCriticalPods', None)
 cfg.pop('shutdownGracePeriodByPodPriority', None)
 cfg['containerLogMaxSize'] = '10Mi'
 cfg['containerLogMaxFiles'] = 3
-# Per-tier grace sized from MEASURED drain times + declared grace (2026-07-19):
-#   traefik (tier-0-core) measured 26s draining connections, declares 60 -> 60
-#   apps declare 30 (default) -> raise 20->30 so they aren't cut at 20
-#   dawarich (tier-3-edge) declares 60 -> 60
-#   CNPG measured 4s (declares 1800 upstream-default) -> DB tier 90 is ample
-# Raising a tier cap is ~free: kubelet advances the instant a tier's pods exit,
-# so a higher cap only ever helps a genuinely slow pod. Total (sum) = 390s;
-# the host VM down= timeout (180s) is the real ceiling and covers realistic drains.
+# Per-tier grace CORRECTED from a live drill (2026-07-20). A full-node graceful
+# drill measured a 9-min uncapped drain: kubelet does NOT short-circuit when a
+# whole node drains -- it consumes close to each tier's full grace in sequence,
+# so the tier caps ARE the drain time (the earlier per-pod delete tests, 4-26s,
+# were misleading). The host VM down= (180s) is the binding ceiling, so the goal
+# is to reach the DATABASE tier FAST and give it maximal grace within 180s:
+#   apps (0/200k) 10s, edge/gpu (400k/600k) 15s  -> DB tier reached at ~50s
+#   DB tier (800k) 90s                            -> DBs drain 50-140s (<180) OK
+#   core (1M, traefik ~26s) 30s                   -> 140-170s (<180) OK
+#   gpu-workload + system/node 15s                -> tail; force-killed at 180s
+# Apps tolerate SIGKILL; databases do not -- this deliberately favours DBs.
 cfg['shutdownGracePeriodByPodPriority'] = [
-    {'priority': 0,          'shutdownGracePeriodSeconds': 30},
-    {'priority': 200000,     'shutdownGracePeriodSeconds': 30},
-    {'priority': 400000,     'shutdownGracePeriodSeconds': 60},
-    {'priority': 600000,     'shutdownGracePeriodSeconds': 30},
+    {'priority': 0,          'shutdownGracePeriodSeconds': 10},
+    {'priority': 200000,     'shutdownGracePeriodSeconds': 10},
+    {'priority': 400000,     'shutdownGracePeriodSeconds': 15},
+    {'priority': 600000,     'shutdownGracePeriodSeconds': 15},
     {'priority': 800000,     'shutdownGracePeriodSeconds': 90},
-    {'priority': 1000000,    'shutdownGracePeriodSeconds': 60},
-    {'priority': 1200000,    'shutdownGracePeriodSeconds': 30},
-    {'priority': 2000000000, 'shutdownGracePeriodSeconds': 30},
-    {'priority': 2000001000, 'shutdownGracePeriodSeconds': 30},
+    {'priority': 1000000,    'shutdownGracePeriodSeconds': 30},
+    {'priority': 1200000,    'shutdownGracePeriodSeconds': 15},
+    {'priority': 2000000000, 'shutdownGracePeriodSeconds': 15},
+    {'priority': 2000001000, 'shutdownGracePeriodSeconds': 15},
 ]
 with open('/var/lib/kubelet/config.yaml', 'w') as f:
     yaml.dump(cfg, f, default_flow_style=False)
