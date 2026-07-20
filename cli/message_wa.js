@@ -114,25 +114,26 @@ async function doSend() {
 async function doRead() {
   if (!TO) throw new Error('read requires --to');
   const opened = await openFuzzy(TO);
-  // WhatsApp Web (2026) has no message-in/out classes: messages are div[data-id]
-  // carrying span.copyable-text[data-pre-plain-text="[time, date] Sender: "].
-  // Direction is derived by comparing the parsed sender to the opened contact
-  // (1:1 chats): sender == contact ⇒ incoming, else outgoing.
-  const msgs = await page.evaluate((arg) => {
-    const { limit, contact } = arg;
-    const app = document.querySelector('div[role="application"]') || document.body;
+  // WhatsApp Web (2026) exposes no direction on the message DOM — the old
+  // .message-in/.message-out classes, the tick-icon (data-icon="msg-*"), and the
+  // span.copyable-text[data-pre-plain-text] sender are ALL gone. The robust,
+  // build-independent signal is geometry: outgoing bubbles are right-aligned in
+  // the conversation column (#main), incoming left. Classify by the bubble's
+  // centre-x vs the column midpoint.
+  const msgs = await page.evaluate((limit) => {
     const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-    const els = [...app.querySelectorAll('div[data-id]')].filter((e) => e.querySelector('span.copyable-text'));
+    const anchor = document.querySelector('#main') || document.querySelector('div[role="application"]') || document.body;
+    const p = anchor.getBoundingClientRect();
+    const mid = p.left + p.width / 2;
+    const els = [...anchor.querySelectorAll('div[data-id]')].filter((e) => e.querySelector('span.copyable-text'));
     return els.slice(-limit).map((e) => {
       const cp = e.querySelector('span.copyable-text');
-      const pre = cp.getAttribute('data-pre-plain-text') || '';
-      const m = pre.match(/^\[[^\]]*\]\s*(.*?):\s*$/);
-      const sender = m ? m[1].trim() : '';
+      const r = cp.getBoundingClientRect();
+      const dir = r.left + r.width / 2 > mid ? 'out' : 'in';
       const inner = cp.querySelector('span.selectable-text, span._ao3e') || cp;
-      const dir = sender && contact && sender === contact ? 'in' : 'out';
       return { dir, text: clean(inner.innerText).slice(0, 1500) };
     }).filter((m) => m.text);
-  }, { limit: LIMIT, contact: opened });
+  }, LIMIT);
   console.log(`--- ${opened} (last ${msgs.length}) ---`);
   for (const m of msgs) console.log((m.dir === 'out' ? '→ ' : '← ') + m.text);
   return { read: msgs.length, opened };
