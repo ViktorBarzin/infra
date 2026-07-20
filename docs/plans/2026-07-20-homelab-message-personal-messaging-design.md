@@ -123,7 +123,7 @@ sequenceDiagram
     C->>CLI: send --via wa --to "Alice" "..." --yes
     CLI->>ALLOW: resolve → allowlisted contact (else refuse)
     CLI->>AUD: record who / what / when / network
-    CLI->>B: type in composer, human-paced delay, send
+    CLI->>B: type char-by-char (randomised inter-key jitter), send
     B->>R: delivered as Viktor
     CLI-->>C: sent (audit id)
     C-->>V: done ✓
@@ -137,6 +137,9 @@ sequenceDiagram
 4. **Human-paced, low volume, warm-only.** Randomised delays, a low daily send cap (warn/block above it), existing contacts only. This is the lever that maps to platform behavioural detection.
 5. **`--dry-run`** resolves the recipient and prints the message without sending.
 6. **Append-only audit log** of every send (recipient, network, text hash/preview, timestamp), shipped to Loki like other logs.
+7. **Human-like typing (anti-bot-detection).** Messages are typed **character-by-character with a non-deterministic inter-keystroke delay** — never instant-pasted (an instant full-string fill is itself a bot tell). Delays are drawn from a realistic, right-skewed distribution rather than a constant: an illustrative base of ~60–150 ms/char with per-character jitter, **longer pauses after spaces and punctuation** (word/sentence boundaries), occasional rare "thinking" pauses, plus small randomised delays **before** starting to type and **before** pressing send. Implementation note: Playwright/patchright's built-in per-key `delay` option is a *fixed constant* — insufficient; the jitter must be applied in a per-character loop (`pressSequentially` / `keyboard.type` with a randomised sleep between characters). Parameters are illustrative and tuned at build time.
+
+> **Honest scope:** keystroke jitter defends against *client-side* input-behaviour fingerprinting (Meta's web apps are heavily instrumented). It does **not** move the dominant ban levers — message volume, egress IP, and warm-vs-cold recipients — so it is defence-in-depth layered on §4, not a safety upgrade on its own.
 
 ## Isolation (mitigating shared-browser exposure)
 
@@ -184,7 +187,7 @@ homelab message send     --via wa --to "Alice" "text"   # preview + confirm → 
 ## Build follow-ups (for the execution phase)
 
 1. `cli/cmd_message.go` + `messageCommands()` wired into `buildRegistry()`; bump `cli/VERSION`.
-2. WhatsApp Web automation script (open/search thread, scrape recent, compose, human-paced send) via chrome-service.
+2. WhatsApp Web automation script (open/search thread, scrape recent, compose, send) via chrome-service — including a **human-like typing engine**: per-character jittered inter-keystroke delays (right-skewed, longer at word/punctuation boundaries, pre-type + pre-send pauses), NOT the fixed Playwright `delay`.
 3. Allowlist config + append-only audit log (→ Loki).
 4. Dedicated persistent messaging profile in chrome-service (hardening); migrate the logged-in session off the shared profile.
 5. Tests (contact resolution, allowlist refusal, dry-run, audit-log write); selector-drift smoke check.
