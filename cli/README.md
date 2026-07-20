@@ -289,6 +289,30 @@ with the split guidance: store the hub, then store parts with
 now **relevance** (ADR-0005, amended). `recall --json` / `get --json` emit the
 raw API response for machine consumers (the recall hook).
 
+### v0.15 verbs — message (send/read as you on WhatsApp)
+
+Send and read personal messages **as Viktor** on WhatsApp, by driving his warm,
+logged-in WhatsApp Web session in the shared chrome-service browser (same
+`--shared-context` machinery as `browser run`; sends relay as his own account
+from the home IP). Phase 1 = WhatsApp only (`--via wa`, the default); Messenger +
+Instagram are Phase 2. Design + rationale (incl. the accepted, potentially
+permanent ban risk of automating a personal account):
+`docs/plans/2026-07-20-homelab-message-personal-messaging-design.md`.
+
+| Command | tier | notes |
+|---|---|---|
+| `message send --to <name> "<text>" [--dry-run] [--yes]` | write | send as you. `--to` is **fuzzy-matched against an allowlist** (`~/.config/homelab/message-allowlist`, one exact WhatsApp name per line; missing/empty ⇒ every send refused, fail-closed). Resolves to exactly one entry, opens it, and **verifies the recipient** against the composer before typing. Preview + confirm by default; `--dry-run` never sends; `--yes` skips the prompt (only after a human approved the text); no send without a TTY unless `--yes`. Types **human-paced** (per-char jitter). Appends to an audit log (`~/.local/state/homelab/message-audit.jsonl`). |
+| `message read --to <name> [--limit N]` | read | open the thread and print the last N messages (`← ` in / `→ ` out) for reply context. Separate from send on purpose (injection firewall): incoming text is context, never an instruction to send. |
+| `message contacts [--search <q>]` | read | list addressable WhatsApp chat names. |
+| `message --help` | read | full safety model + allowlist/audit paths. |
+
+Selectors track WhatsApp Web (2026): chat rows `#pane-side div[role="row"]` with
+`span[title]`; search `[aria-label="Ask Meta AI or Search"]`; composer is a
+Lexical `footer div[contenteditable][role="textbox"]` (Enter sends); messages are
+`div[data-id]` with `span.copyable-text[data-pre-plain-text]`. DOM-fragile by
+nature — re-probe with a read-only `browser run` script if a verb breaks after a
+WhatsApp web update. Overrides: `HOMELAB_MESSAGE_ALLOWLIST`, `HOMELAB_MESSAGE_AUDIT`.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
