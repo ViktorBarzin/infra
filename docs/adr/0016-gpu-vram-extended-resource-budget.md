@@ -2,8 +2,9 @@
 
 The single Tesla T4 (16 GB, ~15360 MiB usable) on `k8s-node1` is **time-sliced**
 (`nvidia.com/gpu` advertised ×100, `migStrategy: none`) and shared by ~9 tenants
-(immich-ml, immich-server, frigate, llama-swap, portal-stt, tts,
-ebook2audiobook, ytdlp, android-emulator). Time-slicing grants a *scheduling
+(immich-ml, immich-worker, frigate, llama-swap, stremio, tts,
+ebook2audiobook, ytdlp, android-emulator; portal-stt decommissioned 2026-07-21
+— its slot went to the stremio NVENC transcode server, infra#80). Time-slicing grants a *scheduling
 turn, not memory* — the scheduler is blind to VRAM, so the tenants can
 collectively overallocate the card. On 2026-06-02 immich-ml's unbounded
 onnxruntime OCR arena grew from ~2 GB to **10.7 GB**, starved llama-swap's
@@ -57,9 +58,11 @@ pieces, **no device-plugin/driver change, time-slicing untouched**:
    minus ~1.4 GB driver/CUDA-context/exporter slack), via a reconcile Job +
    CronJob that `kubectl patch node --subresource=status` (dynamic over
    `nvidia.com/gpu.present=true` nodes; re-asserts after node re-register).
-   Every GPU tenant declares `resources.limits."viktorbarzin.me/gpumem"` (immich-ml
-   3000, llama-swap 5000, frigate 2000, immich-server 1800, portal-stt 1500 — sum
-   ≤ advertised). Extended resources are **non-overcommittable** (request==limit,
+   Every GPU tenant declares `resources.limits."viktorbarzin.me/gpumem"` (live
+   2026-07-21: immich-worker 3000, llama-swap 5000, frigate 2300, immich-ml 1800,
+   stremio 1500 = 13600 ≤ 14000 advertised — stremio took the 1500 slot freed by
+   decommissioning portal-stt, so no node-budget bump was needed; infra#80). Extended
+   resources are **non-overcommittable** (request==limit,
    integer), so the scheduler refuses to co-schedule past the card → overflow
    `Pending`. On-demand batch tenants (tts/ebook2audiobook/ytdlp) keep the
    free-VRAM demand-gate and fill the real slack rather than holding a reserved seat.
