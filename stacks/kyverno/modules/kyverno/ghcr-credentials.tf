@@ -57,6 +57,9 @@ locals {
     # vpn.viktorbarzin.me, spec infra#76). Deployment references the cloned
     # secret; package default-private (GitHub has no visibility API).
     "vpn-portal",
+    # stremio: PRIVATE ghcr.io/viktorbarzin/stremio-nvenc (NVENC Stremio server,
+    # infra#80). Deployment references the cloned ghcr-credentials secret.
+    "stremio",
   ]
 }
 
