@@ -88,6 +88,7 @@
 | jsoncrack | JSON visualizer | jsoncrack |
 | servarr | Media automation (Sonarr/Radarr/etc) | servarr |
 | aiostreams | Stremio stream aggregator (Real-Debrid + Torrentio/Comet/StremThru Torz/Knaben; **MediaFusion removed 2026-06-07** — broken upstream `500`). `auth=app` (own UUID+password); stream-probe tests **both series+movie paths** with per-source breakdown (`aiostreams_streams_{comet,torrentio,stremthru_torz,knaben}`) + `aiostreams_error_streams` + `aiostreams_movie_stream_count`, success gated on Comet (workhorse) being alive; weekly NFS config + Stremio-account-collection backups to `/srv/nfs/aiostreams-backup/`. PG-backed user config (Comet timeout bumped 5s→10s 2026-06-07). | servarr/aiostreams |
+| stremio | Self-hosted Stremio **streaming server** with NVENC transcoding (custom image `ghcr.io/viktorbarzin/stremio-nvenc`: tsaridas layout re-based to Debian/glibc + jellyfin-ffmpeg 4.4.1-4 NVENC; needs `procps`). Browser-usable at `stremio.viktorbarzin.me`, **non-proxied** (bypasses CF CDN-video ToS), gated by the image's own **HTTP basic-auth on ALL paths incl. the `/{infohash}` torrent path** (Authentik breaks Stremio's browser client). One T4 time-slice + reserved `gpumem=1500` (freed by decommissioning portal-stt). Torrenting kept as a debrid backup (Sofia egress). Stateless — `/data` emptyDir + ephemeral-storage cap. infra#80. | stremio |
 | ntfy | Push notifications | ntfy |
 | cyberchef | Data transformation | cyberchef |
 | diun | Docker image update notifier — detects new versions, fires webhook to n8n upgrade agent | diun |
