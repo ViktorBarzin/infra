@@ -46,11 +46,10 @@ resource "kubernetes_namespace" "stremio" {
   }
 }
 
-module "tls_secret" {
-  source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = kubernetes_namespace.stremio.metadata[0].name
-  tls_secret_name = var.tls_secret_name
-}
+# TLS: the wildcard `tls-secret` is auto-synced into every namespace by the
+# Kyverno `sync-tls-secret` ClusterPolicy (match: all Namespaces), so this stack
+# does NOT call setup_tls_secret (which reads a per-stack secrets/fullchain.pem
+# this stack doesn't ship). The ingress references tls_secret_name directly.
 
 # basic-auth USERNAME/PASSWORD from Vault secret/stremio -> k8s Secret stremio-secrets.
 resource "kubernetes_manifest" "external_secret" {
