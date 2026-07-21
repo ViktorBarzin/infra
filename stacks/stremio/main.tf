@@ -141,16 +141,16 @@ resource "kubernetes_deployment" "stremio" {
             name  = "APP_PATH"
             value = "/data"
           }
-          # NVENC needs the `video` driver capability; operator injects only
-          # compute,utility by default. `compute` covers the nvenc-linux probe's
-          # CUDA context.
+          # NVENC needs the `video` driver capability; the operator injects only
+          # compute,utility by default (compute covers the nvenc-linux probe's CUDA
+          # context, utility covers nvidia-smi). Scoped narrowly rather than `all`
+          # — no broader caps are needed. NVIDIA_VISIBLE_DEVICES is intentionally
+          # left to the device plugin (injected from the nvidia.com/gpu=1 request,
+          # like every sibling GPU stack) — hardcoding `all` would override the
+          # per-container time-slice isolation.
           env {
             name  = "NVIDIA_DRIVER_CAPABILITIES"
-            value = "all"
-          }
-          env {
-            name  = "NVIDIA_VISIBLE_DEVICES"
-            value = "all"
+            value = "compute,utility,video"
           }
 
           volume_mount {
@@ -187,6 +187,11 @@ resource "kubernetes_deployment" "stremio" {
           }
 
           resources {
+            # Burstable QoS is intentional here (not the requests==limits rule for
+            # stable GPU workloads): idle RSS is ~62Mi and only spikes during an
+            # active transcode, so a lean 512Mi request avoids reserving 2Gi on the
+            # memory-contended GPU node1 (code-j3tx packing hazard) while the 2Gi
+            # limit gives transcode headroom.
             requests = {
               cpu                 = "100m"
               memory              = "512Mi"
