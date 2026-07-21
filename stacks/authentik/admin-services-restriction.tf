@@ -18,6 +18,7 @@ resource "authentik_policy_expression" "admin_services_restriction" {
   expression = trimspace(<<-EOT
     ADMIN_ONLY_HOSTS = {
         "terminal.viktorbarzin.me",
+        "terminal-dev.viktorbarzin.me",
         "ac.viktorbarzin.me",
         "frigate.viktorbarzin.me",
         "netbox.viktorbarzin.me",
