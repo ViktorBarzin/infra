@@ -139,7 +139,7 @@ resource "kubernetes_manifest" "tmux_api_dev_ingressroute" {
   }
 }
 
-# /events/ /permission/ /prompt/ /cancel/ → session-events (NO strip; served
+# /events/ /prompt/ /cancel/ → session-events (NO strip; served
 # verbatim). /hooks/* stays loopback-only and is deliberately NOT routed.
 resource "kubernetes_manifest" "session_events_dev_ingressroute" {
   manifest = {
@@ -152,7 +152,7 @@ resource "kubernetes_manifest" "session_events_dev_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal-dev.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/permission/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`))"
+        match = "Host(`terminal-dev.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`))"
         kind  = "Rule"
         middlewares = [
           { name = "authentik-forward-auth", namespace = "traefik" },

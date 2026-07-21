@@ -409,12 +409,12 @@ resource "kubernetes_manifest" "tmux_api_strip_prefix" {
 # tmux-api. Application code lives in the terminal-lobby repo; this stack owns
 # only the K8s Service/Endpoints/IngressRoutes.
 #
-#   session-events :7685 → normalized event stream + prompt/cancel/permission
-#                          control channel. Routes are served at ROOT with path
-#                          params (/events/{session}, /permission/{id},
-#                          /prompt/{session}, /cancel/{session}) → PathPrefix,
-#                          NO strip. The /hooks/* endpoints are loopback-only in
-#                          code (localhostOnly) and MUST NEVER be routed here.
+#   session-events :7685 → normalized event stream + prompt/cancel control
+#                          channel. Routes are served at ROOT with path params
+#                          (/events/{session}, /prompt/{session},
+#                          /cancel/{session}) → PathPrefix, NO strip. The
+#                          /hooks/* endpoints are loopback-only in code
+#                          (localhostOnly) and MUST NEVER be routed here.
 #   file-api       :7686 → per-user file read/write/list for the preview/editor
 #                          surface. Serves /files/list|read|write; the /files
 #                          prefix is VERBATIM (no strip), mirroring session-events.
@@ -471,7 +471,7 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/permission/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`))"
+        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`))"
         kind  = "Rule"
         middlewares = [
           {
