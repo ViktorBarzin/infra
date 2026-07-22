@@ -88,3 +88,30 @@ resource "cloudflare_worker_route" "outage_failover_carveout" {
   pattern  = "${each.value}.viktorbarzin.me/*"
   # No script_name → "no worker" route; overrides the wildcard for this host.
 }
+
+# --- Cinemeta reverse-proxy (infra#80 follow-up, 2026-07-22) --------------------
+# Viktor's Meta-managed Mac firewall (uberAgent) blocks *.strem.io, so the
+# Stremio web client's Cinemeta catalog/meta fetches ("Popular"/"Featured") fail
+# there. This Worker re-serves Cinemeta through cinemeta.viktorbarzin.me (a host
+# the firewall allows) — fetching v3-cinemeta.strem.io from the CF edge and
+# following its catalog 307 server-side, so the browser never touches strem.io.
+# Logic + rationale: worker_cinemeta.js. The manifest id is rewritten to
+# com.viktorbarzin.cinemeta-proxy so it installs as a distinct addon.
+#
+# The cinemeta.viktorbarzin.me/* route is MORE SPECIFIC than the outage-failover
+# *.viktorbarzin.me wildcard above, so it overrides it (the Worker runs here
+# instead of outage-failover). cinemeta rides the proxied `*` wildcard CNAME
+# (ADR-0021), so no dedicated DNS record is needed.
+resource "cloudflare_worker_script" "cinemeta_proxy" {
+  account_id         = var.cloudflare_account_id
+  name               = "cinemeta-proxy"
+  content            = file("${path.module}/worker_cinemeta.js")
+  module             = true
+  compatibility_date = "2024-01-01"
+}
+
+resource "cloudflare_worker_route" "cinemeta_proxy" {
+  zone_id     = var.cloudflare_zone_id
+  pattern     = "cinemeta.viktorbarzin.me/*"
+  script_name = cloudflare_worker_script.cinemeta_proxy.name
+}
