@@ -646,11 +646,13 @@ locals {
     }
     # Proactive nudges (travel-agent merged into tripit, beads code-muqi).
     # London-local schedules (timeZone honoured by K8s 1.27+). NUDGES_ENABLED
-    # gates the workers; Slack + Dawarich providers selected here. The app_env
-    # base already sets WEATHER_PROVIDER=openmeteo + PUSH_PROVIDER=webpush.
-    # SLACK_BOT_TOKEN + DAWARICH_API_KEY arrive via env_from tripit-secrets;
-    # SLACK_CHANNEL (#travel) falls back to the config default. DAWARICH_BASE_URL
-    # uses the PUBLIC host deliberately: Dawarich is a Rails app whose host
+    # gates the workers. Delivery is PWA web-push ONLY — Slack nudge fan-out was
+    # retired once PWA notifications covered the same ground, so SLACK_PROVIDER is
+    # left at its `fake` default here (the SLACK_BOT_TOKEN in tripit-secrets still
+    # backs the inbound planner Slack webhook, not nudges). The app_env base
+    # already sets WEATHER_PROVIDER=openmeteo + PUSH_PROVIDER=webpush;
+    # DAWARICH_API_KEY arrives via env_from tripit-secrets. DAWARICH_BASE_URL uses
+    # the PUBLIC host deliberately: Dawarich is a Rails app whose host
     # authorization 403s the in-cluster *.svc Host header, so we reach it through
     # the ingress (auth=none, api_key-gated) instead.
     transport-nudge = {
@@ -660,7 +662,6 @@ locals {
       suspend  = false
       extra_env = {
         NUDGES_ENABLED    = "true"
-        SLACK_PROVIDER    = "slack"
         LOCATION_PROVIDER = "dawarich"
         DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
       }
@@ -672,7 +673,6 @@ locals {
       suspend  = false
       extra_env = {
         NUDGES_ENABLED    = "true"
-        SLACK_PROVIDER    = "slack"
         LOCATION_PROVIDER = "dawarich"
         DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
       }
