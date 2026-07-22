@@ -267,3 +267,167 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = ""
   }
 }
+
+# =============================================================================
+# cinemeta proxy — cinemeta.viktorbarzin.me (infra#80 follow-up, 2026-07-22)
+# =============================================================================
+# Viktor's Meta-managed Mac has an endpoint firewall (uberAgent) that blocks
+# *.strem.io, so the Stremio web client's Cinemeta catalog/meta fetches
+# ("Popular", "Featured", ...) fail there — the Stremio home board's rows never
+# load. This tiny nginx re-serves Cinemeta through cinemeta.viktorbarzin.me (a
+# host the firewall allows): it fetches v3-cinemeta.strem.io itself and follows
+# Cinemeta's catalog 307 to cinemeta-catalogs.strem.io server-side, so the
+# browser never requests a strem.io hostname. Config + rationale in
+# cinemeta-nginx.conf. The account's official com.linvo.cinemeta was removed in
+# favour of this proxy (installed at #1 via addonCollectionSet, id
+# com.viktorbarzin.cinemeta-proxy), so ALL devices now use it.
+#
+# In-cluster (behind Traefik) rather than a CF Worker specifically so the host
+# resolves BOTH publicly (CF `*` wildcard -> tunnel -> Traefik) AND internally
+# (Technitium ingress-DNS-sync -> apex -> Traefik) — a Worker only exists at the
+# edge, leaving home-LAN (Technitium) clients on NXDOMAIN. Also draws no CF
+# Worker quota (cinemeta is carved out of the outage-failover wildcard Worker in
+# stacks/cloudflared). Public catalog data only — no auth, no user data.
+resource "kubernetes_config_map" "cinemeta_proxy_nginx" {
+  metadata {
+    name      = "cinemeta-proxy-nginx"
+    namespace = local.namespace
+  }
+  data = {
+    "default.conf" = file("${path.module}/cinemeta-nginx.conf")
+  }
+}
+
+resource "kubernetes_deployment" "cinemeta_proxy" {
+  metadata {
+    name      = "cinemeta-proxy"
+    namespace = local.namespace
+    labels    = { app = "cinemeta-proxy", tier = local.tiers.gpu }
+  }
+  spec {
+    # 2 replicas: this is on the critical path for Cinemeta on EVERY device now,
+    # so survive a single node drain/crash. Stateless pure proxy.
+    replicas = 2
+    strategy {
+      type = "RollingUpdate"
+      rolling_update {
+        max_surge       = 1
+        max_unavailable = 0 # a new pod is Ready before an old one leaves
+      }
+    }
+    selector { match_labels = { app = "cinemeta-proxy" } }
+    template {
+      metadata { labels = { app = "cinemeta-proxy" } }
+      spec {
+        # NOT GPU-pinned (plain nginx). Spread the 2 replicas across nodes.
+        affinity {
+          pod_anti_affinity {
+            preferred_during_scheduling_ignored_during_execution {
+              weight = 100
+              pod_affinity_term {
+                topology_key = "kubernetes.io/hostname"
+                label_selector {
+                  match_labels = { app = "cinemeta-proxy" }
+                }
+              }
+            }
+          }
+        }
+        container {
+          name              = "nginx"
+          image             = "nginx:1.27"
+          image_pull_policy = "IfNotPresent"
+
+          port {
+            container_port = 8080
+            name           = "http"
+          }
+
+          volume_mount {
+            name       = "nginx-conf"
+            mount_path = "/etc/nginx/conf.d/default.conf"
+            sub_path   = "default.conf"
+            read_only  = true
+          }
+
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
+            period_seconds    = 10
+            failure_threshold = 3
+          }
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 30
+            failure_threshold     = 3
+          }
+
+          resources {
+            # Burstable, tiny — nginx idle RSS ~10-20Mi; it only shuttles small
+            # JSON. Explicit so the tier-gpu LimitRange defaults don't inflate it.
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "64Mi"
+            }
+          }
+        }
+
+        volume {
+          name = "nginx-conf"
+          config_map {
+            name = kubernetes_config_map.cinemeta_proxy_nginx.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+    ]
+  }
+}
+
+resource "kubernetes_service" "cinemeta_proxy" {
+  metadata {
+    name      = "cinemeta-proxy"
+    namespace = local.namespace
+    labels    = { app = "cinemeta-proxy" }
+  }
+  spec {
+    selector = { app = "cinemeta-proxy" }
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 8080
+    }
+  }
+}
+
+module "cinemeta_ingress" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": Cinemeta catalog/meta is PUBLIC data (no user data). The
+  # Stremio web client fetches it client-side via stremio-core (WASM), which can
+  # neither complete Authentik's OAuth 302 nor solve an Anubis PoW challenge — so
+  # both are disabled. The proxy exposes only Cinemeta's read-only JSON.
+  auth             = "none"
+  anti_ai_scraping = false # stremio-core fetch can't solve PoW; it's an API host
+  # Proxied: rides the CF `*` wildcard publicly AND gets an internal Technitium
+  # record from the ingress-DNS-sync, so cinemeta.viktorbarzin.me resolves on
+  # both the public internet and the home LAN. (Carved out of the outage-failover
+  # Worker in stacks/cloudflared so it draws no Worker quota.)
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.stremio.metadata[0].name
+  name            = "cinemeta"
+  service_name    = kubernetes_service.cinemeta_proxy.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+}
