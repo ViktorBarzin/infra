@@ -317,7 +317,12 @@ resource "kubernetes_deployment" "cinemeta_proxy" {
     }
     selector { match_labels = { app = "cinemeta-proxy" } }
     template {
-      metadata { labels = { app = "cinemeta-proxy" } }
+      metadata {
+        labels = { app = "cinemeta-proxy" }
+        # Roll the pods whenever the nginx config changes (ConfigMap updates don't
+        # restart mounted-file consumers on their own).
+        annotations = { "checksum/config" = sha256(file("${path.module}/cinemeta-nginx.conf")) }
+      }
       spec {
         # NOT GPU-pinned (plain nginx). Spread the 2 replicas across nodes.
         affinity {
