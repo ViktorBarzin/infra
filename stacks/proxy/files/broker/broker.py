@@ -165,6 +165,18 @@ def build_pod(sid, country, owner):
                     "command": ["bash", "-c", "ulimit -n 65536; exec /entrypoint.sh"],
                     "securityContext": {"runAsUser": 1000, "runAsGroup": 1000},
                     "ports": [{"name": "http", "containerPort": 6080}],
+                    # Readiness gates the session as ready ONLY once websockify is
+                    # actually serving :6080 (which happens after the WG tunnel +
+                    # Xvfb + chromium are up, ~30-60s). Without this the broker
+                    # reports ready the instant containers start, the UI opens the
+                    # noVNC URL too early, Traefik has no live backend, and the user
+                    # gets a 502/Cloudflare error. failureThreshold*period = ~2min.
+                    "readinessProbe": {
+                        "tcpSocket": {"port": 6080},
+                        "initialDelaySeconds": 5,
+                        "periodSeconds": 3,
+                        "failureThreshold": 40,
+                    },
                     "resources": {"requests": {"cpu": "10m", "memory": "64Mi"}, "limits": {"memory": "256Mi"}},
                 },
             ],
