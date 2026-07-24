@@ -1,30 +1,30 @@
-# geo-browser
+# proxy
 
 On-demand, per-country **remote browser** tunnelled through NordVPN. Open
-`geo.viktorbarzin.me` (Authentik-gated), pick a country, and get a full Chromium
+`proxy.viktorbarzin.me` (Authentik-gated), pick a country, and get a full Chromium
 in the browser (noVNC) whose traffic egresses from a NordVPN exit in that
 country. Sessions are ephemeral and auto-close after 60 minutes.
 
-Design + rationale: `docs/plans/2026-07-24-geo-browser-nordvpn-design.md`.
+Design + rationale: `docs/plans/2026-07-24-proxy-nordvpn-design.md`.
 
 ## How it works
 
 ```
-user ──▶ geo.viktorbarzin.me/ (Authentik)  ──▶ geo-broker (country picker + API)
+user ──▶ proxy.viktorbarzin.me/ (Authentik)  ──▶ proxy-broker (country picker + API)
                                                    │  POST /api/session {country}
                                                    ▼
                                    creates, per session:
-                                     Pod  geo-<token>  [ gluetun(WG,country) + chromium + noVNC ]
-                                     Svc  geo-<token>  → :6080
-                                     Ing  geo-<token>  /s/<token>  (auth=none, stripPrefixRegex)
-user ──▶ geo.viktorbarzin.me/s/<token>/vnc.html ──▶ noVNC view of the in-country browser
+                                     Pod  proxy-<token>  [ gluetun(WG,country) + chromium + noVNC ]
+                                     Svc  proxy-<token>  → :6080
+                                     Ing  proxy-<token>  /s/<token>  (auth=none, stripPrefixRegex)
+user ──▶ proxy.viktorbarzin.me/s/<token>/vnc.html ──▶ noVNC view of the in-country browser
 ```
 
 - **Broker** (`files/broker/broker.py`, pure-stdlib on a stock `python:3.12-slim`
   image, ConfigMap-mounted — no custom image/GHA, the chrome-broker pattern):
   serves the UI + JSON API, creates/reaps session objects via the apiserver, and
   re-fetches the NordLynx key from NordVPN's API (via the account token in Vault
-  `secret/geo-browser`) into the `geo-nord-wg` Secret at each spawn.
+  `secret/proxy`) into the `nordvpn-wg` Secret at each spawn.
 - **Session pod** — three containers sharing ONE netns so the browser egresses
   through the tunnel: `gluetun` (NordVPN **WireGuard**, kernelspace, UNPRIVILEGED
   with `NET_ADMIN`+`SYS_MODULE`, kill-switch, `FIREWALL_INPUT_PORTS=6080` so
@@ -50,10 +50,10 @@ user ──▶ geo.viktorbarzin.me/s/<token>/vnc.html ──▶ noVNC view of th
 
 ## Operate
 
-- Health/metrics: `geo-broker` `/healthz`, `/metrics` (`geo_sessions_active`).
-- List/kill sessions: the UI, or `kubectl get pods -n geo-browser -l app=geo-session`.
+- Health/metrics: `proxy-broker` `/healthz`, `/metrics` (`proxy_sessions_active`).
+- List/kill sessions: the UI, or `kubectl get pods -n proxy -l app=proxy-session`.
 - NordVPN token rotates the NordLynx key account-wide; the broker re-fetches per
-  spawn, so no manual key handling. Token lives in Vault `secret/geo-browser`.
+  spawn, so no manual key handling. Token lives in Vault `secret/proxy`.
 - gluetun image is `ghcr.io/qdm12/gluetun` — pin it if the `:latest`
   OpenVPN-2.6.20 `handshake-window` bug (gluetun #3306) ever affects the WG path.
 

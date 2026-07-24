@@ -1,4 +1,4 @@
-# geo-browser — on-demand per-country NordVPN remote browser.
+# proxy — on-demand per-country NordVPN remote browser.
 #
 # A pure-stdlib Python broker (files/broker/broker.py, ConfigMap-mounted on a
 # stock python image — the chrome-broker pattern, NO custom image/GHA) serves an
@@ -12,7 +12,7 @@
 # list. It IS on ghcr_private_namespaces (stacks/kyverno) for the private
 # chrome-service-browser pull.
 #
-# Design: docs/plans/2026-07-24-geo-browser-nordvpn-design.md
+# Design: docs/plans/2026-07-24-proxy-nordvpn-design.md
 
 variable "tls_secret_name" {
   type      = string
@@ -20,12 +20,12 @@ variable "tls_secret_name" {
 }
 
 locals {
-  namespace = "geo-browser"
-  host      = "geo.viktorbarzin.me"
-  labels    = { app = "geo-browser" }
+  namespace = "proxy"
+  host      = "proxy.viktorbarzin.me"
+  labels    = { app = "proxy" }
 }
 
-resource "kubernetes_namespace" "geo_browser" {
+resource "kubernetes_namespace" "proxy" {
   metadata {
     name = local.namespace
     labels = {
@@ -50,30 +50,30 @@ resource "kubernetes_manifest" "es_secrets" {
     apiVersion = "external-secrets.io/v1"
     kind       = "ExternalSecret"
     metadata = {
-      name      = "geo-browser-secrets"
+      name      = "proxy-secrets"
       namespace = local.namespace
     }
     spec = {
       refreshInterval = "1h"
       secretStoreRef  = { name = "vault-kv", kind = "ClusterSecretStore" }
-      target          = { name = "geo-browser-secrets" }
-      dataFrom        = [{ extract = { key = "geo-browser" } }]
+      target          = { name = "proxy-secrets" }
+      dataFrom        = [{ extract = { key = "proxy" } }]
     }
   }
-  depends_on = [kubernetes_namespace.geo_browser]
+  depends_on = [kubernetes_namespace.proxy]
 }
 
 # --- Broker RBAC — namespaced CRUD on the objects it manages per session ------
 resource "kubernetes_service_account" "broker" {
   metadata {
-    name      = "geo-broker"
+    name      = "proxy-broker"
     namespace = local.namespace
   }
 }
 
 resource "kubernetes_role" "broker" {
   metadata {
-    name      = "geo-broker"
+    name      = "proxy-broker"
     namespace = local.namespace
   }
   rule {
@@ -95,7 +95,7 @@ resource "kubernetes_role" "broker" {
 
 resource "kubernetes_role_binding" "broker" {
   metadata {
-    name      = "geo-broker"
+    name      = "proxy-broker"
     namespace = local.namespace
   }
   role_ref {
@@ -117,15 +117,15 @@ resource "kubectl_manifest" "strip_session" {
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
     kind       = "Middleware"
-    metadata   = { name = "geo-strip-session", namespace = local.namespace }
+    metadata   = { name = "strip-session", namespace = local.namespace }
     spec       = { stripPrefixRegex = { regex = ["^/s/[^/]+"] } }
   })
-  depends_on = [kubernetes_namespace.geo_browser]
+  depends_on = [kubernetes_namespace.proxy]
 }
 
 resource "kubernetes_config_map_v1" "broker_scripts" {
   metadata {
-    name      = "geo-broker-scripts"
+    name      = "proxy-broker-scripts"
     namespace = local.namespace
     labels    = local.labels
   }
@@ -137,9 +137,9 @@ resource "kubernetes_config_map_v1" "broker_scripts" {
 
 resource "kubernetes_deployment" "broker" {
   metadata {
-    name      = "geo-broker"
+    name      = "proxy-broker"
     namespace = local.namespace
-    labels    = merge(local.labels, { app = "geo-broker" })
+    labels    = merge(local.labels, { app = "proxy-broker" })
     annotations = {
       "reloader.stakater.com/auto" = "true"
     }
@@ -154,11 +154,11 @@ resource "kubernetes_deployment" "broker" {
       }
     }
     selector {
-      match_labels = { app = "geo-broker" }
+      match_labels = { app = "proxy-broker" }
     }
     template {
       metadata {
-        labels = { app = "geo-broker" }
+        labels = { app = "proxy-broker" }
         annotations = {
           "prometheus.io/scrape" = "true"
           "prometheus.io/port"   = "8080"
@@ -206,7 +206,7 @@ resource "kubernetes_deployment" "broker" {
             name = "NORDVPN_TOKEN"
             value_from {
               secret_key_ref {
-                name = "geo-browser-secrets"
+                name = "proxy-secrets"
                 key  = "nordvpn_token"
               }
             }
@@ -262,12 +262,12 @@ resource "kubernetes_deployment" "broker" {
 
 resource "kubernetes_service" "broker" {
   metadata {
-    name      = "geo-broker"
+    name      = "proxy-broker"
     namespace = local.namespace
-    labels    = merge(local.labels, { app = "geo-broker" })
+    labels    = merge(local.labels, { app = "proxy-broker" })
   }
   spec {
-    selector = { app = "geo-broker" }
+    selector = { app = "proxy-broker" }
     port {
       name        = "http"
       port        = 8080
@@ -283,16 +283,16 @@ resource "kubernetes_service" "broker" {
 module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
   dns_type        = "proxied"
-  namespace       = kubernetes_namespace.geo_browser.metadata[0].name
-  name            = "geo"
-  host            = "geo"
+  namespace       = kubernetes_namespace.proxy.metadata[0].name
+  name            = "proxy"
+  host            = "proxy"
   service_name    = kubernetes_service.broker.metadata[0].name
   port            = 8080
   tls_secret_name = var.tls_secret_name
   auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
-    "gethomepage.dev/name"        = "Geo-Browser"
+    "gethomepage.dev/name"        = "Proxy"
     "gethomepage.dev/description" = "Remote browser via NordVPN, any country"
     "gethomepage.dev/icon"        = "chromium.png"
     "gethomepage.dev/group"       = "Infrastructure"
@@ -302,9 +302,9 @@ module "ingress" {
 # Namespace quota: broker + up to 4 session pods (each ~1.9Gi req / ~3.5Gi lim
 # across gluetun+chrome+novnc). count/pods is the runaway-create backstop
 # (broker self-limits to MAX_SESSIONS=4); requests.memory bounds a full house.
-resource "kubernetes_resource_quota" "geo" {
+resource "kubernetes_resource_quota" "proxy" {
   metadata {
-    name      = "geo-browser"
+    name      = "proxy"
     namespace = local.namespace
   }
   spec {
