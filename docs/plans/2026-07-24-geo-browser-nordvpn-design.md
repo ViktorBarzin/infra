@@ -1,7 +1,7 @@
 # Geo-Browser — browse from any country via NordVPN
 
-**Status:** Draft (grilling session, 2026-07-24) · **Owner:** Viktor
-**Committed first step:** Phase-0 spike (browser-only, one hardcoded country)
+**Status:** Draft — **Phase-0 spike PASSED** (routing core proven 2026-07-24) · **Owner:** Viktor
+**Committed first step:** Phase-0 spike (browser-only, one hardcoded country) — ✅ done
 **Adversarially reviewed:** two blind challenger agents (findings folded in below)
 
 ---
@@ -33,13 +33,43 @@ page, usable from any device including locked-down ones.
 |---|----------|--------|-----|
 | 1 | Audience | Viktor + a few trusted people, Authentik-gated | Contains ToS/abuse to personal use; fits the connection cap |
 | 2 | Delivery surface | Both eventually; **browser first** | Browser = zero-config anywhere; proxy = native speed (deferred) |
-| 3 | Tunnel protocol | **OpenVPN + service credentials** | Stable creds; avoids NordLynx key-extraction fragility (#8307/#8308) |
+| 3 | Tunnel protocol | **WireGuard / NordLynx** (reversed from OpenVPN after the spike) | OpenVPN service creds were stale (7× `AUTH_FAILED`); WireGuard **proven working** via the stored account token, and it's faster. Service re-fetches the NordLynx key via the durable token at each spawn (handles rotation, #8307) |
 | 4 | Provisioning | **On-demand + idle-teardown** | Matches "dynamic"; only active countries consume resources |
 | 5 | Selection / wake | **Portal-driven** (vpn-portal UI) | One Authentik-gated surface = picker + wake; no always-on router |
 | 6 | Proxy reachability (deferred) | Public WAN endpoints | Consistent with existing OCI-exposed proxies |
 | 7 | Browser state | **Ephemeral per session** | Privacy + isolation; nothing to back up |
 | 8 | Concurrency ceiling | **4 concurrent** (self-imposed resource limit) | See correction below — NordVPN's real cap is 10, so 4 is headroom, not the Nord limit |
 | 9 | Home | vpn-portal = UI; **separate RBAC'd broker** = pod spawner | vpn-portal has no k8s RBAC; broker must own pod-CRUD (like chrome-broker) |
+
+## Phase-0 spike — OUTCOME (validated 2026-07-24, local docker on devvm)
+
+The spike **passed its core objective**: NordVPN per-country egress with leak-free
+DNS, proven end-to-end before any cluster work.
+
+- **Egress proven in-country.** A sibling container sharing gluetun's netns
+  egressed via NordVPN **Japan**: `ip=192.166.247.191, loc=JP`, org
+  `AS147049 PacketHub` (NordVPN's hosting ASN). DNS resolved **through the
+  tunnel** (the ipinfo lookup returned the JP exit), so the shared-netns model
+  routes both traffic and DNS correctly.
+- **Protocol reversed to WireGuard** (decision #3). The stored **OpenVPN service
+  credentials are stale** — NordVPN returned **7× `AUTH_FAILED`** on a
+  TLS-completing JP server (`jp732`). The **same account is active over
+  WireGuard**: the stored 64-char access token → `GET
+  api.nordvpn.com/v1/users/services/credentials` (HTTP 200) yields the current
+  44-char NordLynx key → gluetun `VPN_TYPE=wireguard` connects and egresses.
+  So the service will **re-fetch the NordLynx key via the durable token at each
+  pod spawn** (token = durable secret, key = derived — this neutralises most of
+  the #8307 rotation fragility).
+- **gluetun image `ghcr.io/qdm12/gluetun:latest` works** (no #3306 handshake
+  bug on our path); its WG healthcheck reported "unhealthy" and cycled servers,
+  but the **data path worked regardless** — that's a healthcheck-tuning detail,
+  not a failure.
+- **Not yet exercised** (deferred to Phase 1, where they belong — they're k8s
+  concerns): the explicit kill-switch drop test, the `dnsPolicy:None` k8s DNS
+  fix, and the noVNC visual through the tunnel.
+
+**Verdict:** the riskiest unknown (NordVPN egress + leak-free routing in a
+shared netns) is retired. Phase 1 (k8s productionisation) is unblocked.
 
 ## Adversarial review — what broke and how the design changed
 
@@ -48,7 +78,8 @@ cluster. Five of the load-bearing claims changed the design:
 
 1. **NordVPN SOCKS5 is dead (Feb 2025).** The "simplest" alternative — Chromium
    `--proxy-server=socks5h://…nordvpn…` with no tunnel — **is impossible**;
-   NordVPN retired proxy servers. → We **must** run a real tunnel (OpenVPN).
+   NordVPN retired proxy servers. → We **must** run a real tunnel (now
+   **WireGuard**, per the spike outcome above).
 2. **`/dev/net/tun` has zero in-cluster precedent and won't work with `NET_ADMIN`
    alone.** The device cgroup denies `open()` → `Operation not permitted`. It
    needs **`privileged: true`** (via the Kyverno namespace exclude-list, the
