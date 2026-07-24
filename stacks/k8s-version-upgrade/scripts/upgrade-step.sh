@@ -310,8 +310,11 @@ spawn_next() {
       scheduling_block=$'      nodeSelector:\n        kubernetes.io/hostname: k8s-master\n      tolerations:\n        - key: node-role.kubernetes.io/control-plane\n          operator: Exists\n          effect: NoSchedule' ;;
     "")
       scheduling_block="" ;;
+    # A specific worker (the master phase runs on 'worker_nodes | head -1' = node1).
+    # node1's nvidia.com/gpu taint is NoSchedule since 2026-07-19 (code-j3tx), so the
+    # job needs the GPU toleration to land there; harmless no-op on non-GPU workers.
     *)
-      scheduling_block=$'      nodeSelector:\n        kubernetes.io/hostname: '"$NEXT_RUN_ON" ;;
+      scheduling_block=$'      nodeSelector:\n        kubernetes.io/hostname: '"$NEXT_RUN_ON"$'\n      tolerations:\n        - key: nvidia.com/gpu\n          operator: Exists\n          effect: NoSchedule' ;;
   esac
 
   export JOB_NAME="$job_name"

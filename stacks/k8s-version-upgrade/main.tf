@@ -534,10 +534,15 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   fi
                 fi
 
+                # Preflight pins to node1 (the "first worker"). Since node1's
+                # nvidia.com/gpu taint was flipped PreferNoSchedule->NoSchedule on
+                # 2026-07-19 (code-j3tx reboot-self-heal), the Job also needs the GPU
+                # toleration or it hangs Pending forever (PodStuckPending, healthcheck
+                # 2026-07-21). Harmless no-op should node1 ever lose the taint.
                 export JOB_NAME PHASE_NEXT=preflight TARGET_NODE_NEXT="" \
                        TARGET_VERSION="$TARGET" TARGET_VERSION_LABEL="$${TARGET//./-}" \
                        KIND="$KIND" IMAGE="$${IMAGE}" \
-                       SCHEDULING_BLOCK=$'      nodeSelector:\n        kubernetes.io/hostname: k8s-node1'
+                       SCHEDULING_BLOCK=$'      nodeSelector:\n        kubernetes.io/hostname: k8s-node1\n      tolerations:\n        - key: nvidia.com/gpu\n          operator: Exists\n          effect: NoSchedule'
 
                 python3 -c 'import os,sys;sys.stdout.write(os.path.expandvars(sys.stdin.read()))' \
                   < /template/job-template.yaml \

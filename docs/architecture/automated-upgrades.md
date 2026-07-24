@@ -262,8 +262,8 @@ envsubst on /template/job-template.yaml | kubectl apply -f -
   │ spawns Job 0 = k8s-upgrade-preflight-<target_version>
   ▼
 
-Job 0 — preflight       (pinned: first worker)
-Job 1 — master upgrade  (pinned: first worker)     drains k8s-master
+Job 0 — preflight       (pinned: first worker = node1; +nvidia.com/gpu tol)
+Job 1 — master upgrade  (pinned: first worker = node1; +nvidia.com/gpu tol)  drains k8s-master
 Job 2..N — worker       (pinned: k8s-master)       drains each worker still off-target
                                                    ← control-plane toleration; one Job
                                                      per worker, enumerated live from
@@ -345,7 +345,7 @@ The cluster has a single control plane (no HA). A failed `kubeadm upgrade apply`
 
 - **Mandatory etcd snapshot before every run** (even patch). Recovery point if master breaks.
 - **Halt-on-alert before every drain**. Reuses the same Prometheus ignore-list regex kured uses — any unrelated cluster-health alert blocks. Three gate alerts catch upgrade-specific half-states (version skew, missing snapshot, stalled chain).
-- **Job pinning eliminates self-preemption**. Each Job's pod runs on a node that is NOT its drain target: the master-drain Job runs on the first worker; every worker-drain Job runs on k8s-master (already upgraded, control-plane toleration). The worker set is enumerated live from `kubectl get nodes`, so new nodes are covered with no script change; SSH targets are node InternalIPs (no DNS dependency).
+- **Job pinning eliminates self-preemption**. Each Job's pod runs on a node that is NOT its drain target: the master-drain Job runs on the first worker; every worker-drain Job runs on k8s-master (already upgraded, control-plane toleration). The worker set is enumerated live from `kubectl get nodes`, so new nodes are covered with no script change; SSH targets are node InternalIPs (no DNS dependency). **The first worker is k8s-node1, which carries `nvidia.com/gpu:NoSchedule` (flipped from PreferNoSchedule 2026-07-19, code-j3tx), so the preflight and master-drain Jobs also carry a matching GPU toleration — without it they hang Pending indefinitely (fixed 2026-07-24 after a ~5-day preflight stall surfaced by a cluster health check).**
 - **Sequential workers with 10-min inter-node soak**. Same risk-bounding as the 24h OS-reboot soak, but tightened because kubelet failures surface within minutes — not hours.
 - **Master upgrade goes first, workers last**. If master breaks, the cluster is already degraded so further worker upgrades would just delay recovery. By upgrading master first, we either succeed (workers can roll afterward) or fail loud (operator triages before any worker is touched).
 - **No auto-rollback**. kubeadm doesn't support clean downgrade; the snapshot + manual apt rollback in the runbook is the recovery path.
