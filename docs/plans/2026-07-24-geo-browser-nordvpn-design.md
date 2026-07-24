@@ -1,6 +1,6 @@
 # Geo-Browser — browse from any country via NordVPN
 
-**Status:** Draft — **Phase-0 spike + Phase-1a in-cluster feasibility PASSED** (2026-07-24, least-privilege footprint) · **Owner:** Viktor
+**Status:** **EXECUTING — Phase 1 (remote browser) SHIPPED & verified e2e 2026-07-24** at `geo.viktorbarzin.me`; proxy surface deferred · **Owner:** Viktor
 **Committed first step:** Phase-0 spike (browser-only, one hardcoded country) — ✅ done
 **Adversarially reviewed:** two blind challenger agents (findings folded in below)
 
@@ -88,6 +88,43 @@ So the permanent build runs **unprivileged with full Kyverno enforcement** — t
 single biggest cost in the original design is gone. **Remaining Phase-1 build:**
 the RBAC'd broker (per-country pods on demand, WG key re-fetched via the token),
 per-session noVNC-WS routing, and vpn-portal integration.
+
+## Phase 1 — SHIPPED (2026-07-24), verified end-to-end
+
+Live at **`geo.viktorbarzin.me`** (Authentik-gated). Stack: `stacks/geo-browser`
+(README there); private-image pull allowlisted via `stacks/kyverno`
+(`ghcr_private_namespaces`).
+
+**As-built** (matches the design, with the reversals above folded in):
+
+- **Broker** — pure-stdlib `broker.py` on stock `python:3.12-slim`,
+  ConfigMap-mounted (no custom image/GHA). Serves the country-picker UI + JSON
+  API; creates a Pod+Service+Ingress per session via the apiserver (own SA +
+  namespaced CRUD Role); re-fetches the NordLynx key via the Vault-stored token
+  into `geo-nord-wg` at spawn; reaps at the 60 min deadline; ceiling 4.
+- **Session pod** — `gluetun`(WireGuard, kernelspace, unprivileged
+  `NET_ADMIN`+`SYS_MODULE`) + `chrome-service-browser` + `chrome-service-novnc`,
+  one shared netns, `dnsPolicy: None`→gluetun DoT.
+- **noVNC routing** — per-session `/s/<128-bit-token>` Ingress (auth=none, one
+  static `stripPrefixRegex` middleware); token is the capability. Priority
+  1000 so it beats the UI's `/` router.
+
+**Verified live:** UI `/` → 302 Authentik; session egress **Tokyo, JP**
+(NordVPN); noVNC `vnc.html` **HTTP 200** and WebSocket **HTTP 101** end-to-end
+through Traefik; `geo_sessions_active` metric + cap working.
+
+**Build gotchas worth keeping:**
+- **`FIREWALL_INPUT_PORTS=6080` is required** on gluetun — its kill-switch drops
+  *inbound* to the noVNC port (Traefik) otherwise, so `vnc.html` hung with a
+  bare TLS-completes-then-timeout (HTTP 000). Loopback tests (`exec … localhost`)
+  don't catch this; only a cross-pod request does.
+- `tls-secret` auto-clones into the ns (Kyverno `synchronize`); no
+  `setup_tls_secret`. `chrome-service-browser` is **private** ghcr → the ns must
+  be on `ghcr_private_namespaces`.
+
+**Still deferred:** public SOCKS5/Shadowsocks proxy surface, subscription-URL
+integration, persistent per-user profiles, warm pool, programmatic
+egress-country verify, vpn-portal link-in.
 
 ## Adversarial review — what broke and how the design changed
 
