@@ -76,8 +76,14 @@ server:
       value: "true"
     - name: AUTHENTIK_EMAIL__USERNAME
       value: "noreply@viktorbarzin.me"
+    # Display name is generic ("No Reply"), NOT an app name: this is the GLOBAL
+    # from for ALL Authentik mail — admin notifications (e.g. the
+    # update_available alert) as well as any recovery/enrollment mail — and the
+    # notification transport has no per-message from override. Was "TripIt"
+    # (leaked onto admin notifications); made generic 2026-07-24. The address
+    # noreply@viktorbarzin.me is unchanged, so SASL/SPF/deliverability are too.
     - name: AUTHENTIK_EMAIL__FROM
-      value: "TripIt <noreply@viktorbarzin.me>"
+      value: "No Reply <noreply@viktorbarzin.me>"
     - name: AUTHENTIK_EMAIL__PASSWORD
       valueFrom:
         secretKeyRef:
@@ -194,8 +200,14 @@ worker:
       value: "true"
     - name: AUTHENTIK_EMAIL__USERNAME
       value: "noreply@viktorbarzin.me"
+    # Display name is generic ("No Reply"), NOT an app name: this is the GLOBAL
+    # from for ALL Authentik mail — admin notifications (e.g. the
+    # update_available alert) as well as any recovery/enrollment mail — and the
+    # notification transport has no per-message from override. Was "TripIt"
+    # (leaked onto admin notifications); made generic 2026-07-24. The address
+    # noreply@viktorbarzin.me is unchanged, so SASL/SPF/deliverability are too.
     - name: AUTHENTIK_EMAIL__FROM
-      value: "TripIt <noreply@viktorbarzin.me>"
+      value: "No Reply <noreply@viktorbarzin.me>"
     - name: AUTHENTIK_EMAIL__PASSWORD
       valueFrom:
         secretKeyRef:
