@@ -111,12 +111,9 @@ resource "authentik_flow_stage_binding" "proxy_b_login" {
   order  = 40
 }
 
-resource "authentik_invitation" "proxy_invite_link" {
-  name       = "proxy-signup-invite"
-  flow       = authentik_flow.proxy_enrollment.uuid
-  single_use = false
-}
-
-output "proxy_invite_url" {
-  value = "https://authentik.viktorbarzin.me/if/flow/${authentik_flow.proxy_enrollment.slug}/?itoken=${authentik_invitation.proxy_invite_link.id}"
-}
+# The invitation TOKEN itself is a RUNTIME object (the goauthentik provider has
+# no invitation resource — only the stage above), created via the Authentik API
+# against this flow. Create/rotate it with:
+#   POST /api/v3/stages/invitation/invitations/  { "name": "...", "flow": "<proxy-signup flow uuid>", "single_use": false }
+# The invite URL is then:
+#   https://authentik.viktorbarzin.me/if/flow/proxy-signup/?itoken=<invitation pk>
