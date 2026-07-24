@@ -35,7 +35,7 @@ envsubst on /template/job-template.yaml  | kubectl apply -f -
   │ creates k8s-upgrade-preflight-<target_version>
   ▼
 
-Job 0 — preflight       (pinned: k8s-node1)
+Job 0 — preflight       (pinned: k8s-node1, +nvidia.com/gpu:NoSchedule toleration)
   ├── compat-gate: addon/API/containerd support for target (else BLOCK-actionable+alert / HOLD-quiet)
   ├── All nodes Ready + no Mem/Disk pressure
   ├── halt-on-alert (kured-style ignore-list)
