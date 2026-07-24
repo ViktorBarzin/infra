@@ -1,6 +1,6 @@
 # Geo-Browser — browse from any country via NordVPN
 
-**Status:** Draft — **Phase-0 spike PASSED** (routing core proven 2026-07-24) · **Owner:** Viktor
+**Status:** Draft — **Phase-0 spike + Phase-1a in-cluster feasibility PASSED** (2026-07-24, least-privilege footprint) · **Owner:** Viktor
 **Committed first step:** Phase-0 spike (browser-only, one hardcoded country) — ✅ done
 **Adversarially reviewed:** two blind challenger agents (findings folded in below)
 
@@ -71,6 +71,24 @@ DNS, proven end-to-end before any cluster work.
 **Verdict:** the riskiest unknown (NordVPN egress + leak-free routing in a
 shared netns) is retired. Phase 1 (k8s productionisation) is unblocked.
 
+### Phase-1a — in-cluster feasibility PASSED (2026-07-24)
+
+Ported the proven spec into a **throwaway in-cluster pod** (deleted after) to
+validate the k8s-specific unknowns at the **least-privilege** footprint:
+
+- A `NET_ADMIN`+`SYS_MODULE`, **non-privileged** pod in a **non-excluded**
+  namespace is **admitted by Kyverno** — no exclude-list change.
+- gluetun uses **kernelspace WireGuard** in-cluster (no `/dev/net/tun`, no
+  device-plugin). Pod ran 2/2 on `k8s-node3`.
+- A sibling container sharing the netns egressed **NordVPN Japan**
+  (`93.118.42.136`, Tokyo, AS58325), with **DNS through the tunnel** via
+  `dnsPolicy: None` + `dnsConfig.nameservers: [127.0.0.1]`.
+
+So the permanent build runs **unprivileged with full Kyverno enforcement** — the
+single biggest cost in the original design is gone. **Remaining Phase-1 build:**
+the RBAC'd broker (per-country pods on demand, WG key re-fetched via the token),
+per-session noVNC-WS routing, and vpn-portal integration.
+
 ## Adversarial review — what broke and how the design changed
 
 Two blind challengers were briefed to *disprove* the design against the real
@@ -85,7 +103,11 @@ cluster. Five of the load-bearing claims changed the design:
    needs **`privileged: true`** (via the Kyverno namespace exclude-list, the
    `android-emulator` pattern) **or** a **`generic-device-plugin`** DaemonSet
    advertising tun (no privileged, but a new cluster component). WireGuard here
-   uses `SYS_MODULE`+kernel netdev, *not* tun — not a precedent.
+   uses `SYS_MODULE`+kernel netdev, *not* tun — not a precedent. **→ RESOLVED
+   (Phase-1a, 2026-07-24):** with WireGuard, gluetun uses **kernelspace** WG —
+   proven in-cluster running **unprivileged** with just `NET_ADMIN`+`SYS_MODULE`,
+   admitted by Kyverno in a non-excluded ns, egressing Japan with tunnel DNS. No
+   privileged, no device-plugin, no exclude-list change needed.
 3. **DNS leak, confirmed live.** The Chromium container's `/etc/resolv.conf`
    points at CoreDNS `10.96.0.10`; gluetun can't rewrite a sibling container's
    resolv.conf. → Browser resolves via home WAN IP (leak + home-geo answers).
@@ -178,8 +200,9 @@ sequenceDiagram
 
 - [ ] gluetun image from **ghcr**, **pinned** (not `:latest`); periodic
       `gluetun update -providers nordvpn` server-list refresh.
-- [ ] Tun access: **privileged + Kyverno ns exclude** (spike/fast) **or**
-      **generic-device-plugin** (production/no-privileged) — decide after spike.
+- [x] Tun access: **RESOLVED — kernel-WG needs neither.** Run **unprivileged**
+      with `NET_ADMIN`+`SYS_MODULE` in a non-excluded ns (proven in-cluster
+      2026-07-24). No privileged, no device-plugin, no Kyverno exclude.
 - [ ] `dnsPolicy: None` + `dnsConfig → 127.0.0.1` + `ignore_changes[dns_config]`.
 - [ ] `FIREWALL_OUTBOUND_SUBNETS = 10.10.0.0/16,10.96.0.0/12,<node subnet>`.
 - [ ] Egress verify via gluetun control server + `web-api.nordvpn.com/v1/ips/info`.
