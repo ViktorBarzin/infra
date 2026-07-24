@@ -69,6 +69,14 @@ resource "authentik_policy_expression" "admin_services_restriction" {
     if host == "t3.viktorbarzin.me":
         return ak_is_group_member(request.user, name="T3 Users")
 
+    # Proxy-only accounts: a "Proxy Users" member who is NOT an admin may reach
+    # ONLY the proxy remote-browser service — denied on every other
+    # Authentik-gated host. (Invited self-signup accounts land in this group;
+    # see stacks/authentik/proxy-enrollment.tf.) Placed before the
+    # allow-any-authenticated fallthrough so it genuinely restricts them.
+    if ak_is_group_member(request.user, name="Proxy Users") and not ak_is_group_member(request.user, name=ADMIN_GROUP):
+        return host == "proxy.viktorbarzin.me"
+
     # Not an admin-only host: allow any authenticated user.
     if host not in ADMIN_ONLY_HOSTS:
         return True
