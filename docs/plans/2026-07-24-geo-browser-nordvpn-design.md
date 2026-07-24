@@ -1,6 +1,12 @@
 # Geo-Browser — browse from any country via NordVPN
 
-**Status:** **EXECUTING — Phase 1 (remote browser) SHIPPED & verified e2e 2026-07-24** at `geo.viktorbarzin.me`; proxy surface deferred · **Owner:** Viktor
+**Status:** **SHIPPED 2026-07-24** — remote browser live at **`proxy.viktorbarzin.me`** (renamed from geo), lag-tuned, access-scoped. SOCKS proxy surface **cancelled**. Remaining: self-signup invite link · **Owner:** Viktor
+
+> **Update (2026-07-24, later same day) — post-ship iteration:**
+> - **Renamed** `geo-browser` → `proxy` (stack, namespace, host `proxy.viktorbarzin.me`). The SOCKS5/Shadowsocks **proxy surface is CANCELLED** (Viktor) — the remote browser is the whole product, so the name no longer clashes.
+> - **Lag tuning (CF-safe):** session browser dropped 1080p→**720p** + noVNC client `resize=scale`+`quality`/`compression`. **Selkies/WebRTC (linuxserver/chromium) was evaluated and RULED OUT** for the default path: its client bundle needs `RTCPeerConnection`+STUN/TURN (UDP media), which **Cloudflare can't carry** and the gluetun-kill-switched pod has no UDP endpoint for. Would only work via **coturn** (we run one — `turn.viktorbarzin.me`, shared-secret) as a TURN relay, or on a direct/LAN path — held as a future "smoother + GPU-NVENC" option if 720p noVNC isn't enough.
+> - **Access scoping:** new **`Proxy Users`** Authentik group; the catch-all forward-auth policy now restricts a non-admin member to **only** `proxy.viktorbarzin.me` (denied on every other gated host). Add someone (after a first Google login auto-provisions them) → proxy-only access.
+> - **Next:** a self-signup **invite link** — an Authentik enrollment flow + invitation stage + `user_write(create_users_group = Proxy Users)` so invited accounts auto-land in the proxy-only group (design verified against the goauthentik provider; ~10 resources, needs a live invite-walk to confirm).
 **Committed first step:** Phase-0 spike (browser-only, one hardcoded country) — ✅ done
 **Adversarially reviewed:** two blind challenger agents (findings folded in below)
 
