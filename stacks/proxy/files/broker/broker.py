@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""geo-browser broker — on-demand per-country NordVPN browser sessions.
+"""proxy broker — on-demand per-country NordVPN browser sessions.
 
 Serves an Authentik-gated country-picker UI and, per request, creates an
 ephemeral Pod (gluetun WireGuard tunnel + headful Chromium + noVNC, all sharing
@@ -7,7 +7,7 @@ one netns so the browser egresses through the tunnel) plus a per-session
 Service + Ingress. Reaps sessions at a hard deadline and enforces a concurrency
 ceiling. Pure stdlib; talks to the apiserver via the in-pod ServiceAccount
 token (the chrome-broker pattern). Design:
-docs/plans/2026-07-24-geo-browser-nordvpn-design.md
+docs/plans/2026-07-24-proxy-nordvpn-design.md
 """
 import base64
 import json
@@ -22,7 +22,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ------------------------------------------------------------------ config
-NS = os.environ.get("NAMESPACE", "geo-browser")
+NS = os.environ.get("NAMESPACE", "proxy")
 API = "https://%s:%s" % (
     os.environ.get("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc"),
     os.environ.get("KUBERNETES_SERVICE_PORT", "443"),
@@ -31,9 +31,9 @@ _TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 _CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-HOST = os.environ.get("HOST", "geo.viktorbarzin.me")
-TLS_SECRET = os.environ.get("TLS_SECRET", "geo-browser-tls")
-STRIP_MW = os.environ.get("STRIP_MIDDLEWARE", "%s-geo-strip-session@kubernetescrd" % NS)
+HOST = os.environ.get("HOST", "proxy.viktorbarzin.me")
+TLS_SECRET = os.environ.get("TLS_SECRET", "proxy-tls")
+STRIP_MW = os.environ.get("STRIP_MIDDLEWARE", "%s-strip-session@kubernetescrd" % NS)
 NORDVPN_TOKEN = os.environ.get("NORDVPN_TOKEN", "")
 MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "4"))
 DEADLINE = int(os.environ.get("SESSION_DEADLINE_SECONDS", "3600"))  # hard cap
@@ -91,12 +91,12 @@ def ensure_wg_secret():
     key = nordvpn_wg_key()
     body = {
         "apiVersion": "v1", "kind": "Secret",
-        "metadata": {"name": "geo-nord-wg", "namespace": NS},
+        "metadata": {"name": "nordvpn-wg", "namespace": NS},
         "type": "Opaque", "stringData": {"wg_key": key},
     }
     st, _ = k8s("POST", "/api/v1/namespaces/%s/secrets" % NS, body)
     if st == 409:
-        k8s("PATCH", "/api/v1/namespaces/%s/secrets/geo-nord-wg" % NS,
+        k8s("PATCH", "/api/v1/namespaces/%s/secrets/nordvpn-wg" % NS,
             {"stringData": {"wg_key": key}}, content_type="application/merge-patch+json")
 
 
@@ -106,26 +106,26 @@ def _label(s):
 
 
 def _name(sid):
-    return "geo-" + sid
+    return "proxy-" + sid
 
 
 def build_pod(sid, country, owner):
     chrome_cmd = (
         "set -e\n"
-        "Xvfb :99 -screen 0 1920x1080x24 -listen tcp -ac &\n"
+        "Xvfb :99 -screen 0 1280x720x24 -listen tcp -ac &\n"
         "sleep 2\n"
         "exec /opt/google/chrome/chrome --no-sandbox --disable-dev-shm-usage "
         "--no-first-run --no-default-browser-check --password-store=basic "
         "--use-mock-keychain --user-data-dir=/tmp/chrome-data "
-        "--window-size=1920,1080 --start-maximized about:blank\n"
+        "--window-size=1280,720 --start-maximized about:blank\n"
     )
     return {
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {
             "name": _name(sid), "namespace": NS,
-            "labels": {"app": "geo-session", "geo/session": sid,
-                       "geo/country": _label(country), "geo/owner": _label(owner)},
-            "annotations": {"geo/started": str(int(time.time())), "geo/country-name": country},
+            "labels": {"app": "proxy-session", "proxy/session": sid,
+                       "proxy/country": _label(country), "proxy/owner": _label(owner)},
+            "annotations": {"proxy/started": str(int(time.time())), "proxy/country-name": country},
         },
         "spec": {
             "restartPolicy": "Never",
@@ -149,7 +149,7 @@ def build_pod(sid, country, owner):
                         # INPUT otherwise, so the noVNC WS/HTTP would hang.
                         {"name": "FIREWALL_INPUT_PORTS", "value": "6080"},
                         {"name": "WIREGUARD_PRIVATE_KEY",
-                         "valueFrom": {"secretKeyRef": {"name": "geo-nord-wg", "key": "wg_key"}}},
+                         "valueFrom": {"secretKeyRef": {"name": "nordvpn-wg", "key": "wg_key"}}},
                     ],
                     "resources": {"requests": {"memory": "64Mi"}, "limits": {"memory": "192Mi"}},
                 },
@@ -176,8 +176,8 @@ def build_service(sid):
     return {
         "apiVersion": "v1", "kind": "Service",
         "metadata": {"name": _name(sid), "namespace": NS,
-                     "labels": {"app": "geo-session", "geo/session": sid}},
-        "spec": {"selector": {"geo/session": sid},
+                     "labels": {"app": "proxy-session", "proxy/session": sid}},
+        "spec": {"selector": {"proxy/session": sid},
                  "ports": [{"name": "novnc", "port": 6080, "targetPort": 6080}]},
     }
 
@@ -187,7 +187,7 @@ def build_ingress(sid):
         "apiVersion": "networking.k8s.io/v1", "kind": "Ingress",
         "metadata": {
             "name": _name(sid), "namespace": NS,
-            "labels": {"app": "geo-session", "geo/session": sid},
+            "labels": {"app": "proxy-session", "proxy/session": sid},
             "annotations": {
                 "traefik.ingress.kubernetes.io/router.entrypoints": "websecure",
                 # static stripPrefixRegex middleware (^/s/<token>) — keeps the
@@ -211,7 +211,7 @@ def build_ingress(sid):
 
 # ------------------------------------------------------------------ sessions
 def list_sessions():
-    st, obj = k8s("GET", "/api/v1/namespaces/%s/pods?labelSelector=app%%3Dgeo-session" % NS)
+    st, obj = k8s("GET", "/api/v1/namespaces/%s/pods?labelSelector=app%%3Dproxy-session" % NS)
     out = []
     for p in obj.get("items", []):
         md = p.get("metadata", {})
@@ -222,14 +222,14 @@ def list_sessions():
         cs = status.get("containerStatuses", [])
         ready = bool(cs) and all(c.get("ready") for c in cs) and status.get("phase") == "Running"
         out.append({
-            "session": labels.get("geo/session"),
-            "country": md.get("annotations", {}).get("geo/country-name", labels.get("geo/country")),
-            "owner": labels.get("geo/owner"),
-            "started": int(md.get("annotations", {}).get("geo/started", "0")),
+            "session": labels.get("proxy/session"),
+            "country": md.get("annotations", {}).get("proxy/country-name", labels.get("proxy/country")),
+            "owner": labels.get("proxy/owner"),
+            "started": int(md.get("annotations", {}).get("proxy/started", "0")),
             "phase": status.get("phase"),
             "ready": ready,
-            "url": "/s/%s/vnc.html?path=s/%s/websockify&autoconnect=true&resize=remote" % (
-                labels.get("geo/session"), labels.get("geo/session")),
+            "url": "/s/%s/vnc.html?path=s/%s/websockify&autoconnect=true&resize=scale&quality=6&compression=6" % (
+                labels.get("proxy/session"), labels.get("proxy/session")),
         })
     return out
 
@@ -251,7 +251,7 @@ def create_session(country, owner):
         k8s("POST", "/api/v1/namespaces/%s/services" % NS, build_service(sid))
         k8s("POST", "/apis/networking.k8s.io/v1/namespaces/%s/ingresses" % NS, build_ingress(sid))
     return {"session": sid, "country": country,
-            "url": "/s/%s/vnc.html?path=s/%s/websockify&autoconnect=true&resize=remote" % (sid, sid)}
+            "url": "/s/%s/vnc.html?path=s/%s/websockify&autoconnect=true&resize=scale&quality=6&compression=6" % (sid, sid)}
 
 
 def delete_session(sid):
@@ -312,10 +312,10 @@ class H(BaseHTTPRequestHandler):
                 n = len(list_sessions())
             except Exception:
                 n = -1
-            body = ("# HELP geo_sessions_active Active geo-browser sessions\n"
-                    "# TYPE geo_sessions_active gauge\ngeo_sessions_active %d\n"
-                    "# HELP geo_max_sessions Concurrency ceiling\n"
-                    "# TYPE geo_max_sessions gauge\ngeo_max_sessions %d\n" % (n, MAX_SESSIONS))
+            body = ("# HELP proxy_sessions_active Active proxy sessions\n"
+                    "# TYPE proxy_sessions_active gauge\nproxy_sessions_active %d\n"
+                    "# HELP proxy_max_sessions Concurrency ceiling\n"
+                    "# TYPE proxy_max_sessions gauge\nproxy_max_sessions %d\n" % (n, MAX_SESSIONS))
             return self._send(200, body, "text/plain; version=0.0.4")
         if self.path == "/api/countries":
             return self._send(200, json.dumps({"countries": COUNTRIES, "max": MAX_SESSIONS}))
@@ -357,7 +357,7 @@ def main():
     except Exception as e:
         print("startup: ensure_wg_secret failed (will retry on demand):", e, flush=True)
     threading.Thread(target=reaper, daemon=True).start()
-    print("geo-broker listening on :%d (ns=%s host=%s max=%d)" % (PORT, NS, HOST, MAX_SESSIONS), flush=True)
+    print("proxy-broker listening on :%d (ns=%s host=%s max=%d)" % (PORT, NS, HOST, MAX_SESSIONS), flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
 
 
