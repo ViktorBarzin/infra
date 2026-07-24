@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Geo-Browser</title>
+<style>
+  :root { color-scheme: light dark; --bg:#0f1220; --card:#191d2f; --mut:#8b91a7; --acc:#5b8cff; --ok:#3fb950; --bd:#2a3050; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:#e8eaf3; }
+  .wrap { max-width:760px; margin:0 auto; padding:28px 18px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--mut); margin:0 0 22px; }
+  .card { background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:18px; margin-bottom:18px; }
+  label { display:block; font-size:13px; color:var(--mut); margin-bottom:6px; }
+  select, button { font:inherit; }
+  select { width:100%; padding:11px 12px; border-radius:9px; border:1px solid var(--bd); background:#0f1424; color:#e8eaf3; }
+  .row { display:flex; gap:10px; align-items:flex-end; }
+  .row > div { flex:1; }
+  button { padding:11px 18px; border:0; border-radius:9px; background:var(--acc); color:#fff; cursor:pointer; font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.ghost { background:transparent; border:1px solid var(--bd); color:#e8eaf3; font-weight:500; padding:7px 12px; }
+  .sess { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--bd); }
+  .sess:first-child { border-top:0; }
+  .sess .c { flex:1; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:20px; background:#20263f; color:var(--mut); }
+  .badge.ready { background:#12351d; color:var(--ok); }
+  a.open { color:var(--acc); text-decoration:none; font-weight:600; }
+  .empty { color:var(--mut); font-size:14px; }
+  .note { color:var(--mut); font-size:12.5px; margin-top:14px; }
+  #msg { min-height:18px; font-size:13px; color:var(--acc); margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🌍 Geo-Browser</h1>
+  <p class="sub">Open a remote browser that surfs from a country of your choice, tunnelled through NordVPN.</p>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="country">Country</label>
+        <select id="country"></select>
+      </div>
+      <button id="launch">Launch</button>
+    </div>
+    <div id="msg"></div>
+    <div class="note">Sessions are ephemeral (fresh browser, nothing saved) and auto-close after 60 minutes. Up to <span id="max">4</span> can run at once.</div>
+  </div>
+
+  <div class="card">
+    <label>Active sessions</label>
+    <div id="sessions"></div>
+  </div>
+</div>
+
+<script>
+// All dynamic values are inserted via textContent / setAttribute — never
+// innerHTML — so server-derived strings can't inject markup.
+const $ = s => document.querySelector(s);
+async function j(url, opts){ const r = await fetch(url, opts); if(!r.ok) throw new Error(((await r.json().catch(()=>({}))).error)||r.status); return r.json(); }
+function el(tag, cls, text){ const n=document.createElement(tag); if(cls) n.className=cls; if(text!=null) n.textContent=text; return n; }
+
+async function loadCountries(){
+  const d = await j('/api/countries');
+  $('#max').textContent = d.max;
+  const sel = $('#country'); sel.textContent='';
+  d.countries.forEach(c => { const o=el('option',null,c); o.value=c; sel.appendChild(o); });
+}
+
+function render(sessions){
+  const box = $('#sessions'); box.textContent='';
+  if(!sessions.length){ box.appendChild(el('div','empty','None yet.')); return; }
+  sessions.sort((a,b)=>b.started-a.started).forEach(s=>{
+    const row = el('div','sess');
+    const c = el('div','c'); c.appendChild(el('span',null,s.country||'?')); row.appendChild(c);
+    row.appendChild(el('span','badge'+(s.ready?' ready':''), s.ready?'ready':(s.phase||'starting')));
+    if(s.ready){ const a=el('a','open','Open ↗'); a.href=s.url; a.target='_blank'; a.rel='noopener'; row.appendChild(a); }
+    const kill = el('button','ghost','Close');
+    kill.onclick = async ()=>{ kill.disabled=true; try{ await j('/api/session/'+encodeURIComponent(s.session),{method:'DELETE'}); }catch(e){} refresh(); };
+    row.appendChild(kill);
+    box.appendChild(row);
+  });
+}
+
+async function refresh(){ try{ render((await j('/api/sessions')).sessions); }catch(e){} }
+
+$('#launch').onclick = async ()=>{
+  const btn=$('#launch'), country=$('#country').value;
+  btn.disabled=true; $('#msg').textContent='Starting a browser in '+country+'… (tunnel handshake ~30-60s)';
+  try{
+    const res = await j('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({country})});
+    for(let i=0;i<40;i++){
+      await new Promise(r=>setTimeout(r,3000));
+      const list=(await j('/api/sessions')).sessions; render(list);
+      const s=list.find(x=>x.session===res.session);
+      if(s && s.ready){ $('#msg').textContent='Ready — opening…'; window.open(res.url,'_blank','noopener'); break; }
+    }
+  }catch(e){ $('#msg').textContent='Error: '+e.message; }
+  btn.disabled=false; refresh();
+};
+
+loadCountries(); refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>

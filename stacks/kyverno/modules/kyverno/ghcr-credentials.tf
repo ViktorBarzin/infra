@@ -60,6 +60,11 @@ locals {
     # stremio: PRIVATE ghcr.io/viktorbarzin/stremio-nvenc (NVENC Stremio server,
     # infra#80). Deployment references the cloned ghcr-credentials secret.
     "stremio",
+    # geo-browser: the per-session browser pods pull the PRIVATE
+    # ghcr.io/viktorbarzin/chrome-service-browser image (broker-created Pods
+    # reference the cloned ghcr-credentials secret). The gluetun + noVNC images
+    # are public. Design: docs/plans/2026-07-24-geo-browser-nordvpn-design.md
+    "geo-browser",
   ]
 }
 
