@@ -154,6 +154,8 @@ All new users must use an invitation link to register. The invitation-enrollment
 
 Group membership is auto-assigned from the invitation's `fixed_data` field. This prevents open registration while maintaining SSO convenience.
 
+**Google social signup is a special case (2026-07-25, `stacks/authentik/google-social-signup.tf`).** An Authentik invitation lives in the flow *plan*, which is abandoned when the browser leaves for Google's OAuth screen — so a social signup that starts on `invitation-enrollment` returns from `/source/oauth/callback/google/` with no `itoken` and the InvitationStage denies with *"Invalid invite/invite not found."* This is why invite-gated Google signup never worked through the shared flow. Fix: the **Google source's `enrollment_flow` is a dedicated `google-proxy-enrollment`** (write + login, no password prompt). The invite is bridged across the OAuth redirect via the **Postgres cache keyed by the round-trip-stable browser session key**: a `capture-proxy-invite` policy on the invite landing sets `proxy_invite_ok:<session_key>` iff the itoken resolves to a proxy invite, and a `validate-proxy-invite` policy on the enrollment write-stage denies unless that flag is set — otherwise it stamps `attributes.proxy_only=true` + a username (the invitation's `fixed_data` does NOT reach the user on this path, so proxy_only is set by the policy, not the invite) and posts to Slack `#alerts`. A direct hit on the Google source with no invite is denied. GitHub/Facebook still route social enrollment through `invitation-enrollment` and share the original broken-invite limitation.
+
 ### OIDC Applications
 
 Authentik provides OIDC for 10 applications:
