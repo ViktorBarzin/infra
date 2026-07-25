@@ -76,11 +76,17 @@ module "tls_secret" {
 }
 
 
+# The actual-server `tag` on all three instances below MUST stay aligned with the
+# jhonderson/actual-http-api tag (currently 26.5.2): the http-api's embedded client
+# migrates the budget file's data format on each bank-sync, and a lagging web client
+# then can't open the migrated file ("client is too old"). Always bump both together.
+# (2026-07-25: server was stuck at 26.4.0 while http-api reached 26.5.2 → Anca's web
+# UI broke with "client too old", even in incognito, since the file was already 26.5.x.)
 # https://budget-viktor.viktorbarzin.me/
 module "viktor" {
   source                     = "./factory"
   name                       = "viktor"
-  tag                        = "26.4.0"
+  tag                        = "26.5.2"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
@@ -104,7 +110,7 @@ module "viktor" {
 module "anca" {
   source                     = "./factory"
   name                       = "anca"
-  tag                        = "26.4.0"
+  tag                        = "26.5.2"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
@@ -131,7 +137,7 @@ module "anca" {
 module "emo" {
   source                     = "./factory"
   name                       = "emo"
-  tag                        = "26.4.0"
+  tag                        = "26.5.2"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
