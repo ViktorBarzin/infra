@@ -14,7 +14,7 @@ FROM lscr.io/linuxserver/baseimage-kasmvnc:ubuntujammy
 # which fails `apt-get update`; drop it (node is already installed in the base).
 RUN grep -rl nodesource /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
     apt-get update && \
-    apt-get install -y --no-install-recommends wget gnupg ca-certificates fonts-liberation && \
+    apt-get install -y --no-install-recommends wget gnupg ca-certificates fonts-liberation wmctrl xdotool && \
     wget -qO- https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg && \
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
     apt-get update && \
