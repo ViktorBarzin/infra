@@ -242,9 +242,13 @@ resource "kubernetes_deployment" "broker" {
           # :latest drifts + the pull-through cache serves it stale). This is the
           # digest validated end-to-end in the neko + neko<->coturn spikes
           # (memory #10242/#10247). Bump on a deliberate neko upgrade.
+          # GPU/NVENC variant (nvidia-chromium), digest-pinned — hardware H.264 on
+          # the T4 (~0.9 core vs ~4.4 software x264). Runs after the broker's Xorg
+          # GLX-disable initContainer (memory #10279). Same v3 env schema as the
+          # plain chromium image, so only the capture pipeline + GPU scheduling differ.
           env {
             name  = "NEKO_IMAGE"
-            value = "ghcr.io/m1k1o/neko/chromium@sha256:8caebd42dade3c8903dad07a39f0fbd1ad238357e5cfbbc207201c52b70f678e"
+            value = "ghcr.io/m1k1o/neko/nvidia-chromium:3.1.4@sha256:0a00e6d56b3c09615c59eba944c4b513497058bbe1c231419f2ffb6743d11ed7"
           }
           # coturn shared-secret (use-auth-secret) — the broker mints per-browser
           # ephemeral TURN-REST creds so neko relays its WebRTC media through

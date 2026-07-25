@@ -75,10 +75,25 @@ NEKO_PORT = int(os.environ.get("NEKO_PORT", "8080"))
 # is via the coturn relay candidate, not this host candidate).
 NEKO_UDPMUX = int(os.environ.get("NEKO_UDPMUX", "59000"))
 # Default virtual-desktop resolution. neko admins can change it LIVE from the UI
-# (screen-size menu, any value via xrandr). On SOFTWARE x264 (current) 1080p is
-# the smooth sweet spot (~1.2 cores); 1440p burns ~4.4 cores and lags — that's
-# what the GPU/NVENC path (in progress) fixes, after which this goes back up.
-NEKO_SCREEN = os.environ.get("NEKO_SCREEN", "1920x1080@30")
+# (screen-size menu, any value via xrandr). GPU/NVENC hardware-encodes it, so
+# 1440p is smooth (~0.9 core, ~230 MiB VRAM); admins can push to 4K live.
+NEKO_SCREEN = os.environ.get("NEKO_SCREEN", "2560x1440@30")
+# GPU hardware-H.264 (NVENC) capture pipeline — offloads the encode from CPU x264
+# (~4.4 cores at 1440p) to the T4 (~0.9 core). Verified end-to-end (memory #10279):
+# the stock nvidia-chromium image runs once GLX is disabled in Xorg (initContainer
+# below; we only need the GPU for encode, not render).
+NEKO_GPU = os.environ.get("NEKO_GPU", "1") == "1"
+NEKO_PIPELINE = os.environ.get(
+    "NEKO_PIPELINE",
+    "ximagesrc display-name={display} show-pointer=true use-damage=false "
+    "! videoconvert ! queue ! video/x-raw,format=NV12 "
+    "! nvh264enc name=encoder preset=2 gop-size=25 spatial-aq=true temporal-aq=true "
+    "bitrate=8000 vbv-buffer-size=8000 rc-mode=6 "
+    "! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream ! appsink name=appsink")
+# per-browser T4 VRAM budget slot (measured ~311 MiB actual). 384 fits the current
+# ~400 MiB free budget without a gpumem_total_mib bump; a 2nd GPU browser needs the
+# budget raised (stacks/nvidia gpumem_total_mib) or a smaller per-slot value.
+GPUMEM_MIB = os.environ.get("GPUMEM_MIB", "384")
 # coturn: neko (in-cluster, gluetun netns whose DNS can't resolve cluster names)
 # reaches coturn for its BACKEND relay allocation via an IP in gluetun's
 # FIREWALL_OUTBOUND_SUBNETS (the LB IP, added there). The user's real browser
@@ -346,7 +361,7 @@ def _neko_env(userkey, token):
         ice_backend.append({"urls": [COTURN_BACKEND_URL], "username": u, "credential": p})
         ice_frontend.insert(0, {"urls": [COTURN_FRONTEND_URL], "username": u, "credential": p})
     locked_pw = hmac.new(TOKEN_SALT, (userkey + ":locked").encode(), hashlib.sha256).hexdigest()[:24]
-    return [
+    env = [
         {"name": "NEKO_DESKTOP_SCREEN", "value": NEKO_SCREEN},
         {"name": "NEKO_MEMBER_PROVIDER", "value": "multiuser"},
         {"name": "NEKO_MEMBER_MULTIUSER_USER_PASSWORD", "value": locked_pw},
@@ -360,9 +375,54 @@ def _neko_env(userkey, token):
         {"name": "NEKO_WEBRTC_ICESERVERS_BACKEND", "value": json.dumps(ice_backend)},
         {"name": "NEKO_WEBRTC_ICESERVERS_FRONTEND", "value": json.dumps(ice_frontend)},
     ]
+    if NEKO_GPU:
+        env += [
+            {"name": "NEKO_CAPTURE_VIDEO_CODEC", "value": "h264"},
+            {"name": "NEKO_CAPTURE_VIDEO_PIPELINE", "value": NEKO_PIPELINE},
+            {"name": "NVIDIA_VISIBLE_DEVICES", "value": "all"},
+            {"name": "NVIDIA_DRIVER_CAPABILITIES", "value": "all"},
+        ]
+    return env
 
 
 def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey, token):
+    neko_mounts = [
+        {"name": "profile", "mountPath": "/home/neko/.config/chromium"},
+        {"name": "shm", "mountPath": "/dev/shm"},
+        {"name": "chrome-policy", "mountPath": "/etc/chromium/policies/managed", "readOnly": True}]
+    volumes = [
+        {"name": "profile", "persistentVolumeClaim": {"claimName": _pvc_name(userkey)}},
+        {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "1Gi"}},
+        {"name": "chrome-policy", "configMap": {"name": "proxy-chrome-policy"}}]
+    init_containers = []
+    # Software x264 default: ~1.2 cores at 1080p (bursts, no CPU limit). Spread
+    # browsers across the node2-5 workers.
+    neko_resources = {"requests": {"cpu": "1", "memory": "2560Mi"}, "limits": {"memory": "2560Mi"}}
+    placement = {"affinity": {"podAntiAffinity": {"preferredDuringSchedulingIgnoredDuringExecution": [{
+        "weight": 100, "podAffinityTerm": {"topologyKey": "kubernetes.io/hostname",
+            "labelSelector": {"matchLabels": {"app": "proxy-browser"}}}}]}}}
+    if NEKO_GPU:
+        # NVENC hardware encode on the T4 (memory #10279): pin to the GPU node with
+        # a time-sliced GPU slice + a gpumem budget slot, and fix the stock nvidia
+        # image's Xorg crash via an initContainer that prepends a GLX-disabling
+        # Module section to /etc/neko/xorg.conf (we only need the GPU for ENCODE).
+        init_containers = [{
+            "name": "xorg-glx-fix", "image": NEKO_IMAGE, "imagePullPolicy": "IfNotPresent",
+            "command": ["sh", "-c",
+                        'printf \'Section "Module"\\n  Disable "glx"\\nEndSection\\n\' '
+                        '| cat - /etc/neko/xorg.conf > /xorg/xorg.conf'],
+            "volumeMounts": [{"name": "xorg", "mountPath": "/xorg"}],
+            "resources": {"requests": {"cpu": "10m", "memory": "32Mi"}, "limits": {"memory": "64Mi"}}}]
+        neko_mounts.append({"name": "xorg", "mountPath": "/etc/neko/xorg.conf", "subPath": "xorg.conf"})
+        volumes.append({"name": "xorg", "emptyDir": {}})
+        neko_resources = {
+            "requests": {"cpu": "1", "memory": "3584Mi",
+                         "nvidia.com/gpu": "1", "viktorbarzin.me/gpumem": GPUMEM_MIB},
+            "limits": {"memory": "3584Mi",
+                       "nvidia.com/gpu": "1", "viktorbarzin.me/gpumem": GPUMEM_MIB}}
+        placement = {"nodeSelector": {"nvidia.com/gpu.present": "true"},
+                     "tolerations": [{"key": "nvidia.com/gpu", "operator": "Equal",
+                                      "value": "true", "effect": "NoSchedule"}]}
     return {
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": _br_name(userkey), "namespace": NS,
@@ -402,34 +462,22 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
                 # audio) — smooth video KasmVNC can't do. Signaling/UI on :8080
                 # (behind the per-user subdomain ingress); media relays through
                 # coturn so authenticated users reach it from anywhere. The token
-                # is neko's member USER password (?usr=proxy&pwd=<token> auto-login).
+                # is neko's member ADMIN password (?usr=proxy&pwd=<token> auto-login).
                 # Chromium profile persists on the PVC; a memory /dev/shm + the
-                # infobar-suppressing managed policy are mounted in.
+                # infobar-suppressing managed policy are mounted in. On GPU (below)
+                # the video is NVENC-hardware-encoded on the T4.
                 {"name": "neko", "image": NEKO_IMAGE, "imagePullPolicy": "IfNotPresent",
                  "env": _neko_env(userkey, token),
                  "ports": [{"name": "http", "containerPort": NEKO_PORT},
                            {"name": "media", "containerPort": NEKO_UDPMUX, "protocol": "UDP"}],
                  "readinessProbe": {"tcpSocket": {"port": NEKO_PORT}, "initialDelaySeconds": 8,
                                     "periodSeconds": 3, "failureThreshold": 90},
-                 "volumeMounts": [
-                     {"name": "profile", "mountPath": "/home/neko/.config/chromium"},
-                     {"name": "shm", "mountPath": "/dev/shm"},
-                     {"name": "chrome-policy", "mountPath": "/etc/chromium/policies/managed", "readOnly": True}],
-                 # ~2-3 cores while 1440p video plays (~0 idle) — request 1.5 so the
-                 # scheduler reserves enough that the encoder isn't CFS-throttled
-                 # under contention; no CPU limit (house policy) so it still bursts
-                 # to the node's free cores. Mem 2.5Gi: neko + Chromium + memory shm.
-                 "resources": {"requests": {"cpu": "1500m", "memory": "2560Mi"}, "limits": {"memory": "2560Mi"}}},
+                 "volumeMounts": neko_mounts,
+                 "resources": neko_resources},
             ],
-            # Spread browsers across the (node2-5) workers so several active-video
-            # streams don't pile onto one node.
-            "affinity": {"podAntiAffinity": {"preferredDuringSchedulingIgnoredDuringExecution": [{
-                "weight": 100, "podAffinityTerm": {"topologyKey": "kubernetes.io/hostname",
-                    "labelSelector": {"matchLabels": {"app": "proxy-browser"}}}}]}},
-            "volumes": [
-                {"name": "profile", "persistentVolumeClaim": {"claimName": _pvc_name(userkey)}},
-                {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "1Gi"}},
-                {"name": "chrome-policy", "configMap": {"name": "proxy-chrome-policy"}}],
+            "initContainers": init_containers,
+            "volumes": volumes,
+            **placement,
         },
     }
 
