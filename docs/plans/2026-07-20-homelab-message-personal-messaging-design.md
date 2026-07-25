@@ -1,6 +1,6 @@
 # `homelab message` — send/read personal messages as Viktor (WhatsApp → Messenger → Instagram)
 
-- **Status:** **Phase 1 (WhatsApp) BUILT + landed** 2026-07-20 — `homelab message` in `cli` (v0.15.0, on master), validated end-to-end against the live session. Grilled + approved the same day. Phase 2 (Messenger + Instagram) pending.
+- **Status:** **WhatsApp + Messenger BUILT + landed** — `homelab message` in `cli` (v0.15.2, on master): Phase 1 WhatsApp (`--via wa`) 2026-07-20, Phase 2 **Facebook Messenger** (`--via messenger`) 2026-07-25, both validated live. Grilled + approved 2026-07-20. **Instagram deliberately NOT built** (Viktor's call 2026-07-25 — highest ban risk; revisit as draft-only if ever).
 - **Owning repo:** `infra` (`cli/` + a new dedicated chrome-service profile; docs canonical here).
 - **Grilled with:** `/grill-with-docs` (5 doc-research agents + 2 adversarial challengers; all load-bearing claims verified against primary sources — see References).
 
@@ -192,11 +192,16 @@ homelab message send     --via wa --to "Alice" "text"   # preview + confirm → 
 - [x] Fuzzy-match allowlist (fail-closed) + preview/confirm/`--dry-run`/`--yes` gate (no send without a TTY unless `--yes`) + append-only audit log.
 - [x] Unit tests (arg parse, allowlist, fuzzy resolve, audit record); validated end-to-end via a self-send + read-back against the live session. Selectors captured for WhatsApp Web 2026 (rows `#pane-side div[role="row"]`/`span[title]`; composer Lexical `footer [contenteditable][role="textbox"]`; messages `div[data-id]`/`span.copyable-text[data-pre-plain-text]`).
 
+**Phase 2 (Messenger) shipped 2026-07-25** as `--via messenger` (`cli`, v0.15.2):
+- [x] `cli/message_messenger.js` (messenger.com automation); `runMessageAutomation` picks the per-platform script by `--via` (wa|messenger; fb/whatsapp aliases). Same safety model reused unchanged (allowlist, preview/confirm, recipient verification via the `"Write to <name>"` composer aria, jitter typing, audit). Preview label now names the platform.
+- [x] Messenger selectors captured (2026): threads `a[href*="/t/"]`; search `[aria-label="Search Messenger"]`; composer Lexical `[contenteditable][role="textbox"][aria-label^="Write to"]` (Enter sends); messages carry `aria-label="…by <Sender>:"` / `"You sent…"` — direction from the explicit sender. Validated live: login, discovery, read, dry-run, Lexical typing (no self-chat on Messenger, so the first real send is user-approved).
+- [x] **Instagram: NOT built** — Viktor chose to skip it 2026-07-25 (most ban-aggressive; his real social account). `--via ig` is refused. Revisit as draft-only if ever wanted.
+
 **Pending:**
 - [ ] **Hardening:** dedicated persistent messaging profile in chrome-service; migrate the logged-in session off the shared identity profile (the shared-browser exposure flagged above).
 - [ ] Ship the audit log to Loki (currently local JSONL).
-- [ ] Selector-drift signal (Prometheus/Uptime-Kuma) — a `read` breaking after a WhatsApp web-UI change is the DOM-fragility this design accepts.
-- [ ] **Phase 2:** `messenger` + `ig` verbs; Instagram reassessment (draft-only candidate).
+- [ ] Selector-drift signal (Prometheus/Uptime-Kuma) — a verb breaking after a web-UI change is the DOM-fragility this design accepts.
+- [ ] Per-platform allowlists (one shared list today; a name allowlisted for WhatsApp is also allowed on Messenger). Optional aliases so a nickname (e.g. "emo") resolves to the saved title ("Tate").
 
 **Operator setup:** populate `~/.config/homelab/message-allowlist` (one exact WhatsApp contact name per line) — sends are refused until then (fail-closed).
 
