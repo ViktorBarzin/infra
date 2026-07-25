@@ -45,6 +45,7 @@ while true; do
     --no-sandbox --disable-dev-shm-usage \
     --user-data-dir=/config/profile \
     --no-first-run --no-default-browser-check \
+    --hide-crash-restore-bubble \
     --password-store=basic --use-mock-keychain \
     --start-maximized about:blank
   kill %1 2>/dev/null
