@@ -78,22 +78,12 @@ data "authentik_flow" "invitation_enrollment" {
 # -----------------------------------------------------------------------------
 # The dedicated Google-source enrollment flow.
 # -----------------------------------------------------------------------------
-import {
-  to = authentik_flow.google_proxy_enrollment
-  id = "google-proxy-enrollment"
-}
-
 resource "authentik_flow" "google_proxy_enrollment" {
   name           = "Google Proxy Enrollment"
   slug           = "google-proxy-enrollment"
   title          = "Join via Google"
   designation    = "enrollment"
   authentication = "none"
-}
-
-import {
-  to = authentik_flow_stage_binding.gpe_write
-  id = "36693e86-9ac1-4a8c-95e6-8e0c0168dc3b"
 }
 
 resource "authentik_flow_stage_binding" "gpe_write" {
@@ -104,11 +94,6 @@ resource "authentik_flow_stage_binding" "gpe_write" {
   # keep re-evaluation on so the stamp lands and the deny works on a bare hit.
   evaluate_on_plan     = true
   re_evaluate_policies = true
-}
-
-import {
-  to = authentik_flow_stage_binding.gpe_login
-  id = "0b4a533d-adb3-44b7-b99a-094bfcf73e14"
 }
 
 resource "authentik_flow_stage_binding" "gpe_login" {
@@ -123,11 +108,6 @@ resource "authentik_flow_stage_binding" "gpe_login" {
 # capture-proxy-invite: on the invite landing, stash "this session showed a valid
 # proxy invite" in the cache (keyed by the round-trip-stable session key).
 # -----------------------------------------------------------------------------
-import {
-  to = authentik_policy_expression.capture_proxy_invite
-  id = "73ae84ce-5db5-4361-948f-83f71b553b39"
-}
-
 resource "authentik_policy_expression" "capture_proxy_invite" {
   name = "capture-proxy-invite"
   expression = trimspace(<<-EOT
@@ -154,11 +134,6 @@ EOT
   )
 }
 
-import {
-  to = authentik_policy_binding.capture_on_invite
-  id = "ee7263a5-df19-4d2c-9454-d880acc0b54b"
-}
-
 resource "authentik_policy_binding" "capture_on_invite" {
   target = data.authentik_flow.invitation_enrollment.id
   policy = authentik_policy_expression.capture_proxy_invite.id
@@ -169,11 +144,6 @@ resource "authentik_policy_binding" "capture_on_invite" {
 # validate-proxy-invite: gate the enrollment on the cached invite flag; stamp
 # proxy_only + username; post to Slack #alerts (synchronously, deduped).
 # -----------------------------------------------------------------------------
-import {
-  to = authentik_policy_expression.validate_proxy_invite
-  id = "821376b4-44c8-4439-aabc-bf19facd96c7"
-}
-
 resource "authentik_policy_expression" "validate_proxy_invite" {
   name = "validate-proxy-invite"
   expression = trimspace(<<-EOT
@@ -210,11 +180,6 @@ EOT
   )
 }
 
-import {
-  to = authentik_policy_binding.validate_on_write
-  id = "6e79e724-3e1f-4a61-870a-9c2b2a979d12"
-}
-
 resource "authentik_policy_binding" "validate_on_write" {
   target = authentik_flow_stage_binding.gpe_write.id
   policy = authentik_policy_expression.validate_proxy_invite.id
@@ -225,11 +190,6 @@ resource "authentik_policy_binding" "validate_on_write" {
 # Slack transport used (synchronously) by validate-proxy-invite. Reuses the
 # #alerts webhook. send_once is set but irrelevant on the direct-call path.
 # -----------------------------------------------------------------------------
-import {
-  to = authentik_event_transport.slack_proxy_signup
-  id = "96cf36c1-261a-476a-a3bb-d04992904d3b"
-}
-
 resource "authentik_event_transport" "slack_proxy_signup" {
   name        = "slack-proxy-signup"
   mode        = "webhook_slack"
