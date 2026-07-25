@@ -1,6 +1,6 @@
 # Paperless-ngx Mail Ingest (docs@viktorbarzin.me)
 
-Last updated: 2026-07-03 (initial build)
+Last updated: 2026-07-25
 
 Forward any email with document attachments to **`docs@viktorbarzin.me`** and
 paperless-ngx ingests the attachments, owned by the paperless account mapped
@@ -93,12 +93,12 @@ The map lives in **two places by design** — keep them in sync:
 ## Design notes / caveats
 
 - **Why not the catch-all?** Mail to unknown `@viktorbarzin.me` addresses
-  lands in `spam@`, which the TripIt `ingest-plans` CronJob sweeps every
-  15 min: it marks everything `\Seen`, LLM-parses mail from linked senders and
-  replies with ack/failure emails. Forwarded bank statements would get
-  "couldn't parse a trip" replies. `docs@` being a real mailbox bypasses that
-  path entirely; TripIt, the `smoke-test@` roundtrip probe, and `dmarc@` are
-  untouched.
+  lands in `spam@`. TripIt's `tripit-mail-listener` watches that mailbox with
+  IMAP IDLE and reconciles mail addressed to `plans@` immediately; the
+  `ingest-plans` CronJob repeats the read-only sweep every 15 minutes as a
+  repair path. Mail from linked senders is LLM-parsed and gets an ack/failure
+  reply. `docs@` being a real mailbox bypasses that path entirely; TripIt, the
+  `smoke-test@` roundtrip probe, and `dmarc@` are untouched.
 - **Spoofing:** the sender match is on the From header. Rspamd verifies
   SPF/DKIM/DMARC on inbound mail, but gmail.com publishes `p=none`, so a
   crafted spoof could ingest documents into a family member's account. Accepted
