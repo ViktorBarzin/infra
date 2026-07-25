@@ -1,70 +1,91 @@
 # proxy
 
-On-demand, per-country **remote browser** tunnelled through NordVPN. Open
-`proxy.viktorbarzin.me`, pick a country, and get a full Chromium in the browser
-(noVNC) whose traffic egresses from a NordVPN exit in that country. Sessions are
-ephemeral and auto-close after 60 minutes.
+Per-user **persistent remote browsers**, each surfing from a country of your
+choice through NordVPN. Log in at `proxy.viktorbarzin.me`, pick a country, and
+get your own Chromium (noVNC) whose traffic egresses from a NordVPN exit in that
+country. Your logins and tabs are saved in an encrypted profile across visits.
 
-> **Auth: currently PUBLIC (`auth = "none"`, Viktor 2026-07-25).** The UI is
-> open with no login — an internet-reachable remote browser egressing via the
-> NordVPN account (broker still caps at `MAX_SESSIONS=4`). Re-gate by setting the
-> ingress `auth = "required"` in `main.tf`. The `Proxy Users` group / `proxy_only`
-> policy / social invite (`stacks/authentik/proxy-enrollment.tf`) stay in place
-> but dormant while ungated.
+Design + rationale: `docs/plans/2026-07-25-proxy-scale-design.md`
+(scale-up) · `docs/plans/2026-07-24-proxy-nordvpn-design.md` (original).
 
-Design + rationale: `docs/plans/2026-07-24-proxy-nordvpn-design.md`.
-
-## How it works
+## Architecture — shared per-country gateways + per-user browsers
 
 ```
-user ──▶ proxy.viktorbarzin.me/ (Authentik)  ──▶ proxy-broker (country picker + API)
-                                                   │  POST /api/session {country}
-                                                   ▼
-                                   creates, per session:
-                                     Pod  proxy-<token>  [ gluetun(WG,country) + chromium + noVNC ]
-                                     Svc  proxy-<token>  → :6080
-                                     Ing  proxy-<token>  /s/<token>  (auth=none, stripPrefixRegex)
-user ──▶ proxy.viktorbarzin.me/s/<token>/vnc.html ──▶ noVNC view of the in-country browser
+user ─▶ proxy.viktorbarzin.me/ (Authentik login)  ─▶ proxy-broker (per-user API)
+                                                        │ POST /api/browser {country}
+                                                        ▼
+                    per COUNTRY (shared, ≤ MAX_COUNTRIES-RESERVED = 6 concurrent):
+                      Pod  proxy-gw-<i>   [ gluetun(NordVPN,country) + wg-server ]
+                      Svc  proxy-gw-<i>   (ClusterIP :51820/UDP — stable WG endpoint)
+                      CM   proxy-gw-<i>-peers   (broker-maintained; sidecar reconciles wg0)
+
+                    per USER (persistent):
+                      PVC  proxy-profile-<user>  (encrypted, RWO — the Chromium profile)
+                      Pod  proxy-br-<user>   [ gluetun(custom-WG → gateway) + chromium + noVNC ]
+                      Svc/Ing  proxy-br-<user>   /s/<token> (auth=none, token-gated)
+user ─▶ proxy.viktorbarzin.me/s/<token>/vnc.html ─▶ noVNC view of the in-country browser
 ```
 
-- **Broker** (`files/broker/broker.py`, pure-stdlib on a stock `python:3.12-slim`
-  image, ConfigMap-mounted — no custom image/GHA, the chrome-broker pattern):
-  serves the UI + JSON API, creates/reaps session objects via the apiserver, and
-  re-fetches the NordLynx key from NordVPN's API (via the account token in Vault
-  `secret/proxy`) into the `nordvpn-wg` Secret at each spawn.
-- **Session pod** — three containers sharing ONE netns so the browser egresses
-  through the tunnel: `gluetun` (NordVPN **WireGuard**, kernelspace, UNPRIVILEGED
-  with `NET_ADMIN`+`SYS_MODULE`, kill-switch, `FIREWALL_INPUT_PORTS=6080` so
-  Traefik can reach noVNC, `FIREWALL_OUTBOUND_SUBNETS` for cluster replies) +
-  `chrome-service-browser` (headful Chromium under Xvfb, `--no-sandbox`) +
-  `chrome-service-novnc` (x11vnc + websockify on :6080). `dnsPolicy: None` +
-  `dnsConfig 127.0.0.1` routes DNS through gluetun's resolver (no leak).
-- **noVNC routing**: each session gets a `/s/<token>` Ingress (auth=none — an
-  Authentik forward-auth would break the WebSocket) referencing a single static
-  `stripPrefixRegex` middleware; the unguessable 128-bit token IS the gate.
+The **NordVPN ~10-tunnel account cap therefore limits concurrent COUNTRIES**
+(`pool.MAX_COUNTRIES - RESERVED_SLOTS`, default 8-2=6), **not users** — many
+browsers share one country's single tunnel. Proven end-to-end by Spike G
+(memory #10214): a browser pod egresses NordVPN with no home-IP leak.
+
+- **Broker** (`files/broker/`, pure-stdlib `python:3.12-slim`, ConfigMap-mounted —
+  no custom image/GHA). `broker.py` serves the UI + JSON API and orchestrates
+  gateways + browsers; `pool.py` (gateway-pool decisions) and `wgkeys.py`
+  (X25519 WireGuard keygen) are pure + **unit-tested** (`*_test.py`, 27 tests).
+- **Gateway pod** = `gluetun` (NordVPN WireGuard) + a `wg-server` sidecar
+  (linuxserver/wireguard) that, once `tun0` is up, brings up `wg0`, adds the
+  forwarding rules (`ip_forward` via pod `securityContext.sysctls` + MASQUERADE
+  + FORWARD-accept + the gluetun return-path `ip rule ... lookup main pref 90`)
+  and **reconciles peers** from the mounted `proxy-gw-<i>-peers` ConfigMap every
+  10s (survives restarts, no `kubectl exec`). Pinned to `node2-5` (the workers
+  where `net.ipv4.ip_forward` is kubelet-allowed) via the
+  `proxy.viktorbarzin.me/gateway=true` node label.
+- **Browser pod** = `gluetun` in **custom-WireGuard** mode dialling its country
+  gateway's Service ClusterIP (leak-proof: gluetun's kill-switch) + headful
+  Chromium (`--user-data-dir=/profile`, the mounted PVC) + noVNC (:6080). One
+  per user, keyed on the `X-authentik-username` identity header.
+
+## Auth
+
+`auth = "required"` — Authentik forward-auth gates the UI + API; each user's
+browser + encrypted profile keys on their identity. The per-user `/s/<token>`
+noVNC ingress stays `auth = "none"` (an Authentik forward-auth breaks the noVNC
+WebSocket) — the unguessable per-user token (`HMAC(salt, userkey)`) is the gate.
 
 ## Guardrails
 
-- **Concurrency ceiling 4** (`MAX_SESSIONS`) — a self-imposed cluster-resource
-  limit, well under NordVPN's ~10-connection cap; the oldest is evicted when a
-  5th is requested.
-- **Hard deadline 60 min** (`activeDeadlineSeconds`); the reaper cleans up the
-  Pod+Service+Ingress trio for finished/expired sessions.
-- Least-privilege: NO privileged pods, NO `/dev/net/tun`, NO Kyverno security
-  exclude — full pod-security enforcement retained. The namespace is only on
-  `ghcr_private_namespaces` (stacks/kyverno) for the private
+- **Concurrency**: gateways capped at `MAX_COUNTRIES - RESERVED_SLOTS` (`pool.py`),
+  one gateway per distinct country (same NordLynx key on two tunnels to the same
+  country flaps); browsers are one-per-user. `RESERVED_SLOTS=2` keeps NordVPN
+  tunnels free for Viktor's own devices.
+- **Persistence**: profiles are encrypted PVCs (`proxmox-lvm-encrypted`), no
+  backup — a rare loss = re-login. Deleting a browser KEEPS its profile.
+- **Reaping**: an idle gateway (no browsers for `GW_IDLE_SECONDS=600`) is reaped,
+  freeing its tunnel slot; the reaper also re-asserts peers each cycle.
+- Least-privilege: session pods run UNPRIVILEGED (`NET_ADMIN`+`SYS_MODULE`, no
+  `/dev/net/tun`/privileged). The one posture addition is the opt-in
+  `net.ipv4.ip_forward` unsafe-sysctl on node2-5 (infra#81; contained to the
+  pod netns). ns on `ghcr_private_namespaces` (kyverno) for the private
   `chrome-service-browser` pull.
 
 ## Operate
 
-- Health/metrics: `proxy-broker` `/healthz`, `/metrics` (`proxy_sessions_active`).
-- List/kill sessions: the UI, or `kubectl get pods -n proxy -l app=proxy-session`.
+- Health/metrics: `proxy-broker` `/healthz`, `/metrics` (`proxy_gateways_active`,
+  `proxy_browsers_active`, `proxy_max_countries`).
+- List: `kubectl get pods -n proxy -l 'app in (proxy-gateway,proxy-browser)'`.
+- Run the broker tests: `cd files/broker && python3 -m unittest pool_test wgkeys_test`.
 - NordVPN token rotates the NordLynx key account-wide; the broker re-fetches per
-  spawn, so no manual key handling. Token lives in Vault `secret/proxy`.
-- gluetun image is `ghcr.io/qdm12/gluetun` — pin it if the `:latest`
-  OpenVPN-2.6.20 `handshake-window` bug (gluetun #3306) ever affects the WG path.
+  gateway spawn (token in Vault `secret/proxy`).
 
 ## Deferred (see the design doc)
 
-Public SOCKS5/Shadowsocks proxy surface, subscription-URL integration,
-persistent per-user profiles, warm pool, programmatic egress-country verify.
+- **Phase 3 — Headscale exit nodes**: `tailscale --advertise-exit-node` on the
+  gateways so tailnet users route their own traffic through NordVPN (same
+  forwarding primitive; unblocked by Spike G).
+- **Selkies/WebRTC display** (smoother than noVNC): needs coturn's public TURN
+  path reachable — a pfSense NAT + DNS record (Spike A: currently NXDOMAIN).
+- Social self-signup for non-admins is handled by the Authentik enrollment flow
+  (separate work in `stacks/authentik`).
