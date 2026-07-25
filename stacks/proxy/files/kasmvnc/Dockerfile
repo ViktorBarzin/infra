@@ -21,5 +21,8 @@ RUN grep -rl nodesource /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
     apt-get install -y --no-install-recommends google-chrome-stable && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# /defaults/autostart is run by the KasmVNC session (abc user) as the single app.
+# /defaults/autostart is run by the KasmVNC session (abc user) as the single app;
+# /custom-cont-init.d/*.sh run at container init (root) to refresh the autostart,
+# tune video encoding, and clear a crashed-fullscreen restore on existing profiles.
 COPY root/ /
+RUN chmod +x /custom-cont-init.d/99-proxy-setup.sh /defaults/autostart
