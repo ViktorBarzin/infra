@@ -20,9 +20,10 @@ NordVPN**. One NordVPN account, within its ~10-tunnel cap, zero new cost.
 
 ```mermaid
 flowchart LR
-  G["Spike G: forwarding gateway"]:::done --> P2["Phase 2: browser build"]:::wip
-  A["Spike A: coturn"]:::todo --> P2
-  P1["Phase 1: auth (concurrent session)"]:::wip --> RG["re-gate proxy"]:::todo
+  G["Spike G: forwarding gateway"]:::done --> P2["Phase 2: per-user browser — LIVE"]:::done
+  A["Spike A: coturn → noVNC"]:::done --> P2
+  RG["re-gate proxy auth"]:::done --> P2
+  P1["Phase 1: auth signup (concurrent session)"]:::wip
   P2 --> P3["Phase 3: exit nodes"]:::todo
   classDef done fill:#1b5e20,color:#fff,stroke:#2e7d32
   classDef wip fill:#e65100,color:#fff,stroke:#ef6c00
@@ -39,12 +40,18 @@ flowchart LR
   leak** (baseline home IP → tunnelled NL IP). The full recipe — incl. the
   non-obvious return-path `ip rule ... lookup main pref 90` that works around
   gluetun's fwmark policy routing — is captured in memory #10214.
-- **🟠 Phase 2 — per-user browser: started.** The gateway-pool decision logic
-  (one-gateway-per-country, ~8-country cap w/ 2 reserved, subnet/IP allocation,
-  idle reaping) landed as a pure, unit-tested module (`pool.py`, 22 tests green).
-  Next: wire it into the broker (gateway + browser pod builders, dynamic WG peer
-  registration, encrypted per-user PVCs) + **Spike A** (coturn reachability →
-  Selkies, else tuned noVNC).
+- **✅ Phase 2 — per-user browser: BUILT + LIVE + verified end-to-end.** The
+  broker was rewritten (greenfield) for the shared-gateway model: `POST
+  /api/browser {country}` mints WireGuard keys (`wgkeys.py`, X25519), spins up a
+  shared per-country gateway pod, an encrypted per-user PVC, and a browser pod
+  (gluetun custom-WireGuard → gateway + Chromium + noVNC), and registers the
+  peer via a ConfigMap the gateway sidecar reconciles. **Live test:** a browser
+  egressed **NordVPN NL (86.106.20.118), no home-IP leak**; the encrypted
+  profile PVC survived a browser delete (persistence). Re-gated to
+  `auth=required` (per-user identity). Display is **tuned noVNC** (Spike A:
+  coturn's public TURN path is NXDOMAIN + needs a pfSense NAT — deferred).
+  Logic + keygen are pure + unit-tested (27 tests). Gateways pinned to the
+  `ip_forward`-enabled workers (node2-5) via a node label.
 - **🟠 Phase 1 — auth: owned by a concurrent session.** A parallel agent session
   is implementing the invite-gated Google social signup + `#alerts` (the same
   root cause this plan predicted — invite lost across the OAuth round-trip); it
