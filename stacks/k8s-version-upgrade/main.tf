@@ -417,6 +417,44 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   exit 0
                 fi
 
+                # --- Reconcile a leaked in_flight latch (RC1, 2026-07-25) ------------
+                # in_flight is set in the preflight pod and cleared ONLY in the postflight
+                # pod, N Jobs away, on a never-expiring Pushgateway gauge. ANY interruption
+                # between the two (killswitch, set -e abort, hung drain, SIGKILL on a node
+                # reboot/eviction, spawn_next failure, or a manual off-schedule partial run)
+                # freezes in_flight=1 forever -> a false K8sUpgradeStalled that also blocks
+                # kured. kubectl (not the metric) is the ground truth for Job presence, so
+                # this reconcile survives every leak path INCLUDING SIGKILL, which a shell
+                # EXIT trap cannot. Guard: clear only when NO chain Job is Active AND the
+                # latch is set AND its start is >12h stale -> a live or mid-chain run
+                # (fresh start, or a phase Job Active) is NEVER touched. DELETE of the whole
+                # job=k8s-version-upgrade group also drops the orphan target_minor; blocked/
+                # held get re-pushed by the next preflight. Deleting terminal chain Jobs
+                # stops the "chain advanced" skip below from stranding a fresh spawn (the
+                # memory-10190 manual-resume wedge). Runs BEFORE version detection so a
+                # leaked latch is cleared even when the cluster is already up to date.
+                PGMETRICS='http://prometheus-prometheus-pushgateway.monitoring:9091/metrics'
+                PGUP='http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/k8s-version-upgrade'
+                ACTIVE_CHAIN=$(/usr/local/bin/kubectl -n k8s-upgrade get jobs -l app=k8s-upgrade-chain \
+                  -o jsonpath='{range .items[*]}{.status.active}{"\n"}{end}' 2>/dev/null \
+                  | grep -E '^[1-9]' | head -1 || true)
+                PGDATA=$(curl -sf "$PGMETRICS" 2>/dev/null || true)
+                INFLIGHT=$(echo "$PGDATA" | awk '/^k8s_upgrade_in_flight\{/ {printf "%d\n", ($2+0)}' | head -1)
+                STARTED=$(echo "$PGDATA" | awk '/^k8s_upgrade_started_timestamp\{/ {printf "%d\n", ($2+0)}' | head -1)
+                NOW=$(date +%s)
+                if [ -z "$ACTIVE_CHAIN" ] && [ "$INFLIGHT" = "1" ] && [ -n "$STARTED" ] && [ "$STARTED" != "0" ] && [ "$(( NOW - STARTED ))" -gt 43200 ]; then
+                  AGE_H=$(( (NOW - STARTED) / 3600 ))
+                  slack "reconcile: leaked in_flight latch (no active chain Job, started $${AGE_H}h ago) — clearing stale gauge + annotations + terminal Jobs"
+                  echo "reconcile: clearing leaked in_flight latch (stale $${AGE_H}h, no active chain Job)"
+                  curl -sf -X DELETE "$PGUP" >/dev/null 2>&1 || echo "warn: pushgateway group delete failed"
+                  /usr/local/bin/kubectl annotate ns k8s-upgrade \
+                    'viktorbarzin.me/k8s-upgrade-in-flight-' \
+                    'viktorbarzin.me/k8s-upgrade-target-' \
+                    'viktorbarzin.me/k8s-upgrade-snapshot-path-' >/dev/null 2>&1 || true
+                  /usr/local/bin/kubectl -n k8s-upgrade delete job -l app=k8s-upgrade-chain >/dev/null 2>&1 || true
+                fi
+                # --- end reconcile ---------------------------------------------------
+
                 # 1. Detect running version — use the OLDEST kubelet across
                 # all nodes so partial chains (e.g. master upgraded but
                 # workers still pending) don't trick the chain into

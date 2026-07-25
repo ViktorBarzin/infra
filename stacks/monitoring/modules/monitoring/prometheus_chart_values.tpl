@@ -639,8 +639,11 @@ serverFiles:
           # unless its prefix is admitted below (tripit_* had been eaten since its
           # annotations landed; memory_* hit the same wall on day one). New app => add
           # your metric prefix here.
+          # NB kube_job_status_active is required by the K8sUpgradeStalled live-job
+          # guard (stacks/k8s-version-upgrade) — removing it re-opens the sticky-latch
+          # false-critical (the guard would evaluate against an empty series).
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|sablier_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*'
+            regex: 'memory_.+|tripit_.+|sablier_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -2510,21 +2513,31 @@ serverFiles:
               severity: warning
             annotations:
               summary: "ResourceQuota {{ $labels.namespace }}/{{ $labels.resourcequota }} {{ $labels.resource }} at {{ $value | printf \"%.1f\" }} — workloads may fail to reschedule"
-          # K8sVersionSkew: kubelet on any node disagrees with the apiserver's gitVersion.
-          # Catches a half-done kubeadm rollout — e.g. master at 1.34.5 but a worker
-          # still on 1.34.2 after the agent aborted mid-flight. Distinct gitVersion
-          # count >1 across kubernetes-nodes + kubernetes-apiservers means skew exists.
-          # 30m for: gives a normal rolling upgrade (master + 4 workers + 10-min soaks
-          # ≈ 60-90 min) room to be in mid-progress without firing during a healthy
-          # run — but only because Prometheus only counts a node post-restart, and the
-          # agent's soak between workers exceeds 10min anyway.
+          # K8sVersionSkew: >1 distinct kubelet version across the fleet = a half-done
+          # kubeadm rollout (e.g. master at 1.35.7 but workers still on 1.35.6 after the
+          # chain was interrupted mid-flight — the exact resting state a leaked-latch
+          # incident leaves behind).
+          # REBUILT 2026-07-25: the old expr keyed on kubernetes_build_info{job=~
+          # "kubernetes-nodes|kubernetes-apiservers"}, which is NOT scraped anywhere —
+          # it returned no data, so this alert could never fire and the half-done state
+          # had no working detector (RC5). Rebuilt on kube_node_info.kubelet_version,
+          # which IS kept in the kubernetes-service-endpoints keep-regex above.
+          # The `unless on() (<chain job>.active > 0)` clause restricts firing to AT REST:
+          # a healthy in-progress upgrade (a phase Job Active) is suppressed, so this adds
+          # no new weekly noise. Keyed on active>0 (NOT mere series existence), so a
+          # lingering COMPLETED/terminal chain Job — active=0, series still present for its
+          # 7d TTL — does NOT mask a real at-rest skew. Fails OPEN: if the job metric is
+          # ever pruned, active>0 is empty and the alert still fires. It is
+          # Pushgateway-independent, so it is the durable ground-truth backstop for a
+          # leaked in_flight latch at rest.
           - alert: K8sVersionSkew
-            expr: count(count by (git_version) (kubernetes_build_info{job=~"kubernetes-nodes|kubernetes-apiservers"})) > 1
-            for: 30m
+            expr: count(count by (kubelet_version) (kube_node_info)) > 1 unless on() (kube_job_status_active{namespace="k8s-upgrade", job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*"} > 0)
+            for: 15m
             labels:
               severity: warning
+              subsystem: k8s-upgrade
             annotations:
-              summary: "Kubelet/apiserver gitVersion skew detected — possible half-done k8s upgrade. Inspect: kubectl get nodes -o jsonpath='{.items[*].status.nodeInfo.kubeletVersion}'"
+              summary: "Kubelet version skew at rest — a half-done k8s upgrade (no chain Job running). Inspect: kubectl get nodes -o custom-columns=NODE:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion"
           # EtcdPreUpgradeSnapshotMissing: the k8s-version-upgrade agent pushes
           # `k8s_upgrade_in_flight=1` + `k8s_upgrade_snapshot_taken=0` at Stage 0,
           # then sets snapshot_taken=1 in Stage 2 after etcdctl confirms the
@@ -2538,21 +2551,28 @@ serverFiles:
               severity: critical
             annotations:
               summary: "K8s upgrade is in flight but no etcd snapshot was recorded — pipeline pre-flight failed silently"
-          # K8sUpgradeStalled: the v2 Job-chain pushes `k8s_upgrade_started_timestamp`
-          # in preflight and resets `k8s_upgrade_in_flight=0` in postflight. If
-          # in_flight=1 persists for >90 min, a Job in the chain failed
-          # (backoffLimit=1), got preempted/evicted, or is hung. Manual recovery:
-          # `kubectl -n k8s-upgrade get jobs` → identify failed/stuck Job → delete
-          # it → fix root cause → re-create the same Job. Next-Job creation in each
-          # phase is idempotent (deterministic name = `k8s-upgrade-<phase>-<target>`)
-          # so re-running won't duplicate downstream Jobs.
+          # K8sUpgradeStalled: the Job-chain pushes `k8s_upgrade_started_timestamp` in
+          # preflight and resets `k8s_upgrade_in_flight=0` in postflight, N Job-hops
+          # away. HARDENED 2026-07-25: the old expr keyed on the in_flight latch ALONE,
+          # so ANY interruption between preflight and postflight (killswitch, set -e
+          # abort, hung drain, SIGKILL on a node reboot, spawn_next failure, or a manual
+          # off-schedule partial run) left the never-expiring Pushgateway latch at 1 and
+          # fired this critical FOREVER — a false positive that also blocked kured
+          # (RC1/RC2/RC4). The `and on() (sum(kube_job_status_active{…}) > 0)` clause now
+          # requires a chain Job to ACTUALLY be running, so a bare stale latch can no
+          # longer fire it; the detection-CronJob reconcile (stacks/k8s-version-upgrade
+          # main.tf) clears a leaked latch within 12h. Threshold raised 90m→4h so a
+          # genuinely-slow-but-healthy run (5 workers + soaks, etcd on shared HDD) does
+          # not false-page + block kured. EtcdPreUpgradeSnapshotMissing is deliberately
+          # NOT guarded the same way (its snapshot runs while the master Job is Active —
+          # a guard would only mask a real failure).
           - alert: K8sUpgradeStalled
-            expr: k8s_upgrade_in_flight == 1 and (time() - k8s_upgrade_started_timestamp) > 5400
+            expr: k8s_upgrade_in_flight == 1 and (time() - k8s_upgrade_started_timestamp) > 14400 and on() (sum(kube_job_status_active{namespace="k8s-upgrade", job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*"}) > 0)
             for: 5m
             labels:
               severity: critical
             annotations:
-              summary: "K8s upgrade has been in flight for >90 min — chain is stuck. Check: kubectl -n k8s-upgrade get jobs"
+              summary: "K8s upgrade chain Job running >4h — genuinely stuck. Check: kubectl -n k8s-upgrade get jobs"
           # K8sUpgradeChainJobFailed: catches a TERMINALLY-failed phase Job even
           # when it aborts BEFORE pushing k8s_upgrade_in_flight=1 (the preflight
           # gates — nodes-ready, halt-on-alert, settle-window, kubeadm-plan — all
