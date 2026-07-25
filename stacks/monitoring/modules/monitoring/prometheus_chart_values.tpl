@@ -2530,6 +2530,10 @@ serverFiles:
           # ever pruned, active>0 is empty and the alert still fires. It is
           # Pushgateway-independent, so it is the durable ground-truth backstop for a
           # leaked in_flight latch at rest.
+          # NOTE: while firing (a genuine at-rest skew), this warning also PAUSES kured
+          # (kured blocks node reboots on ANY firing alert) — intended: don't reboot
+          # nodes mid-broken-upgrade. It self-clears when the chain converges every node
+          # to target, at which point kured resumes.
           - alert: K8sVersionSkew
             expr: count(count by (kubelet_version) (kube_node_info)) > 1 unless on() (kube_job_status_active{namespace="k8s-upgrade", job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*"} > 0)
             for: 15m
