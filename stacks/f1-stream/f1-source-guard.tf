@@ -42,10 +42,13 @@ resource "kubernetes_manifest" "f1_stream_guard_secrets" {
           }
         },
         {
+          # REPO-scoped PAT (read:repository) so the guard can count recent
+          # auto-fix commits for the cooldown. forgejo_push_token is package-only
+          # and 403s the commits API — see the claude-agent-service ExternalSecret.
           secretKey = "forgejo_token"
           remoteRef = {
             key      = "ci/global"
-            property = "forgejo_push_token"
+            property = "forgejo_repo_token"
           }
         },
       ]

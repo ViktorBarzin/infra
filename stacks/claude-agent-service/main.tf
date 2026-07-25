@@ -66,17 +66,18 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
-          # Forgejo push token for opening PRs on forgejo.viktorbarzin.me
-          # (exec agent uses the Forgejo API via curl + $FORGEJO_TOKEN, and
-          # git push over HTTPS via the url.insteadOf rewrite in git-init).
-          # SECURITY: this is the viktor-scoped admin PAT (write:package +
-          # repo) shared by Woodpecker — see secret/ci/global/forgejo_push_token.
-          # The shared claude-agent pod (all agents on it) can now push to
-          # and open PRs against any repo this token can reach.
+          # Forgejo REPO-scoped PAT (read+write:repository) so the exec agent can
+          # clone/branch/push Forgejo repos and open PRs via the API. The old
+          # forgejo_push_token here was package-registry-scoped ONLY (no
+          # read/write:repository), so git clone/push + the PR API silently 403'd.
+          # secret/ci/global/forgejo_repo_token is viktor's git PAT (2026-07-25).
+          # SECURITY: the shared claude-agent pod (all agents) can now clone/push
+          # + open PRs on any Forgejo repo this PAT reaches — f1-source-fixer needs
+          # it to land f1-stream link fixes on the canonical Forgejo master.
           secretKey = "FORGEJO_TOKEN"
           remoteRef = {
             key      = "ci/global"
-            property = "forgejo_push_token"
+            property = "forgejo_repo_token"
           }
         },
         {
