@@ -289,7 +289,13 @@ module "ingress" {
   service_name    = kubernetes_service.broker.metadata[0].name
   port            = 8080
   tls_secret_name = var.tls_secret_name
-  auth            = "required"
+  # auth = "none": Viktor asked to drop the Authentik gate (2026-07-25, "turn off
+  # authentik for now"). Accepted risk: this is a publicly-reachable remote
+  # browser that egresses via the NordVPN account. The broker still hard-caps
+  # concurrent sessions (MAX_SESSIONS=4). Re-gate by reverting to auth="required".
+  # The Proxy Users group / proxy_only policy / social invite stay in place but
+  # dormant while ungated.
+  auth = "none"
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/name"        = "Proxy"
