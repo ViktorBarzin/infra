@@ -35,8 +35,18 @@ open a PR, never push master). Obey the MODE exactly.
 
 ## The repo
 
-- Canonical: Forgejo `viktor/f1-stream`. Clone (git credentials are pre-wired in
-  this pod via `url.insteadOf` for both forgejo.viktorbarzin.me and github.com):
+- Canonical: Forgejo `viktor/f1-stream`. FIRST configure git for this container —
+  the pod exposes a repo-scoped `$FORGEJO_TOKEN` in the env; reference the env var
+  only, so the token VALUE never appears in any command or log:
+
+  ```
+  git config --global user.name  "f1-source-fixer"
+  git config --global user.email "claude-agent@viktorbarzin.me"
+  git config --global url."https://viktor:$FORGEJO_TOKEN@forgejo.viktorbarzin.me/".insteadOf "https://forgejo.viktorbarzin.me/"
+  ```
+
+  Then clone/branch/push with CLEAN urls (the insteadOf injects the token on the
+  wire, keeping it out of logs and git output):
   `git clone https://forgejo.viktorbarzin.me/viktor/f1-stream.git /tmp/f1-stream`
 - Work on a branch: `git -C /tmp/f1-stream checkout -b source-fix/<utc-ish-label>`.
 - The rotating constants live per-extractor in `backend/extractors/<source>.py`:
