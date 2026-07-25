@@ -74,7 +74,9 @@ NEKO_PORT = int(os.environ.get("NEKO_PORT", "8080"))
 # is in its own gluetun netns, and no per-user NodePort is needed (external reach
 # is via the coturn relay candidate, not this host candidate).
 NEKO_UDPMUX = int(os.environ.get("NEKO_UDPMUX", "59000"))
-NEKO_SCREEN = os.environ.get("NEKO_SCREEN", "1280x720@30")
+# Default virtual-desktop resolution. neko admins can change it LIVE from the UI
+# (screen-size menu); higher = sharper but more x264 CPU + bandwidth.
+NEKO_SCREEN = os.environ.get("NEKO_SCREEN", "1920x1080@30")
 # coturn: neko (in-cluster, gluetun netns whose DNS can't resolve cluster names)
 # reaches coturn for its BACKEND relay allocation via an IP in gluetun's
 # FIREWALL_OUTBOUND_SUBNETS (the LB IP, added there). The user's real browser
@@ -326,8 +328,10 @@ def build_br_secret(userkey, priv):
 
 
 def _neko_env(userkey, token):
-    """neko v3 env. The token is the member USER password (?pwd auto-login); an
-    admin password is derived (locks admin, not the user token). WebRTC media
+    """neko v3 env. The token is the member ADMIN password (?pwd auto-login) — it's
+    the owner's own single-user browser, so they get full control (change the live
+    resolution, etc.); the user-role password is a derived locked value (unused).
+    WebRTC media
     relays through coturn: BACKEND = coturn LB IP (neko in-cluster reaches it
     direct via gluetun FIREWALL_OUTBOUND_SUBNETS; the relay it gets is on coturn's
     external-ip=WAN), FRONTEND = coturn public domain + STUN for the user's
@@ -339,12 +343,12 @@ def _neko_env(userkey, token):
     if u:
         ice_backend.append({"urls": [COTURN_BACKEND_URL], "username": u, "credential": p})
         ice_frontend.insert(0, {"urls": [COTURN_FRONTEND_URL], "username": u, "credential": p})
-    admin_pw = hmac.new(TOKEN_SALT, (userkey + ":admin").encode(), hashlib.sha256).hexdigest()[:24]
+    locked_pw = hmac.new(TOKEN_SALT, (userkey + ":locked").encode(), hashlib.sha256).hexdigest()[:24]
     return [
         {"name": "NEKO_DESKTOP_SCREEN", "value": NEKO_SCREEN},
         {"name": "NEKO_MEMBER_PROVIDER", "value": "multiuser"},
-        {"name": "NEKO_MEMBER_MULTIUSER_USER_PASSWORD", "value": token},
-        {"name": "NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD", "value": admin_pw},
+        {"name": "NEKO_MEMBER_MULTIUSER_USER_PASSWORD", "value": locked_pw},
+        {"name": "NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD", "value": token},
         {"name": "NEKO_SESSION_IMPLICIT_HOSTING", "value": "true"},
         {"name": "NEKO_SESSION_MERCIFUL_RECONNECT", "value": "true"},
         {"name": "NEKO_SERVER_BIND", "value": "0.0.0.0:%d" % NEKO_PORT},
