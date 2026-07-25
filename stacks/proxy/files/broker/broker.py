@@ -75,8 +75,9 @@ NEKO_PORT = int(os.environ.get("NEKO_PORT", "8080"))
 # is via the coturn relay candidate, not this host candidate).
 NEKO_UDPMUX = int(os.environ.get("NEKO_UDPMUX", "59000"))
 # Default virtual-desktop resolution. neko admins can change it LIVE from the UI
-# (screen-size menu); higher = sharper but more x264 CPU + bandwidth.
-NEKO_SCREEN = os.environ.get("NEKO_SCREEN", "1920x1080@30")
+# (screen-size menu, any value via xrandr); higher = sharper but more x264 CPU +
+# bandwidth (1080p ~1.2 cores, 1440p ~2-3, 4K ~4-5; no GPU encode here).
+NEKO_SCREEN = os.environ.get("NEKO_SCREEN", "2560x1440@30")
 # coturn: neko (in-cluster, gluetun netns whose DNS can't resolve cluster names)
 # reaches coturn for its BACKEND relay allocation via an IP in gluetun's
 # FIREWALL_OUTBOUND_SUBNETS (the LB IP, added there). The user's real browser
@@ -413,10 +414,11 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
                      {"name": "profile", "mountPath": "/home/neko/.config/chromium"},
                      {"name": "shm", "mountPath": "/dev/shm"},
                      {"name": "chrome-policy", "mountPath": "/etc/chromium/policies/managed", "readOnly": True}],
-                 # ~1.2 cores while a video plays (~0 idle) — request ~1 core so the
-                 # scheduler doesn't over-pack + CFS-throttle the encoder; no CPU
-                 # limit (house policy). Mem 2.5Gi: neko + Chromium + the memory shm.
-                 "resources": {"requests": {"cpu": "1", "memory": "2560Mi"}, "limits": {"memory": "2560Mi"}}},
+                 # ~2-3 cores while 1440p video plays (~0 idle) — request 1.5 so the
+                 # scheduler reserves enough that the encoder isn't CFS-throttled
+                 # under contention; no CPU limit (house policy) so it still bursts
+                 # to the node's free cores. Mem 2.5Gi: neko + Chromium + memory shm.
+                 "resources": {"requests": {"cpu": "1500m", "memory": "2560Mi"}, "limits": {"memory": "2560Mi"}}},
             ],
             # Spread browsers across the (node2-5) workers so several active-video
             # streams don't pile onto one node.
