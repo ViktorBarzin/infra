@@ -57,8 +57,11 @@ GW_IDLE_SECONDS = int(os.environ.get("GW_IDLE_SECONDS", "600"))  # reap empty ga
 PORT = int(os.environ.get("PORT", "8080"))
 GLUETUN_IMAGE = os.environ.get("GLUETUN_IMAGE", "ghcr.io/qdm12/gluetun:latest")
 WGTOOLS_IMAGE = os.environ.get("WGTOOLS_IMAGE", "ghcr.io/linuxserver/wireguard:latest")
-BROWSER_IMAGE = os.environ.get("BROWSER_IMAGE", "ghcr.io/viktorbarzin/chrome-service-browser:latest")
-NOVNC_IMAGE = os.environ.get("NOVNC_IMAGE", "ghcr.io/viktorbarzin/chrome-service-novnc:19d0f0933a8ec75be6cfa077db88e0f8c3760f40")
+# KasmVNC + Chrome browser image (audio + client-driven resolution + FullHD
+# H.264 over the WebSocket ingress — see files/kasmvnc/). One container replaces
+# the old Xvfb+chromium+x11vnc+websockify stack.
+KASMVNC_IMAGE = os.environ.get("KASMVNC_IMAGE", "ghcr.io/viktorbarzin/proxy-kasmvnc-browser:latest")
+KASMVNC_PORT = int(os.environ.get("KASMVNC_PORT", "6080"))
 PROFILE_STORAGE_CLASS = os.environ.get("PROFILE_STORAGE_CLASS", "proxmox-lvm-encrypted")
 PROFILE_SIZE = os.environ.get("PROFILE_SIZE", "2Gi")
 GATEWAY_NODE_LABEL = os.environ.get("GATEWAY_NODE_LABEL", "proxy.viktorbarzin.me/gateway")
@@ -156,8 +159,11 @@ def _pvc_name(userkey):
 
 
 def _url(token):
-    return ("/s/%s/vnc.html?path=s/%s/websockify&autoconnect=true"
-            "&resize=scale&quality=6&compression=6" % (token, token))
+    # KasmVNC serves its web client at the ingress root and index.html
+    # autoconnects (resize=remote + audio + a control bar with resolution/audio/
+    # quality settings). The stripPrefix (^/s/<token>) + the client's RELATIVE
+    # asset paths make the /s/<token> subpath work.
+    return "/s/%s/" % token
 
 
 # ------------------------------------------------------------------ gateway objects
@@ -273,15 +279,6 @@ def build_br_secret(userkey, priv):
 
 
 def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey, token):
-    chrome_cmd = (
-        "set -e\n"
-        "Xvfb :99 -screen 0 1280x720x24 -listen tcp -ac &\n"
-        "sleep 2\n"
-        "exec /opt/google/chrome/chrome --no-sandbox --disable-dev-shm-usage "
-        "--no-first-run --no-default-browser-check --password-store=basic "
-        "--use-mock-keychain --user-data-dir=/profile "
-        "--window-size=1280,720 --start-maximized about:blank\n"
-    )
     return {
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": _br_name(userkey), "namespace": NS,
@@ -294,6 +291,8 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
             "restartPolicy": "Always",
             "dnsPolicy": "None", "dnsConfig": {"nameservers": ["127.0.0.1"]},
             "imagePullSecrets": [{"name": "ghcr-credentials"}],
+            # No runAsNonRoot: the KasmVNC (LinuxServer) image starts as root for
+            # s6-overlay then drops to PUID/PGID 1000; fsGroup 1000 owns the PVC.
             "securityContext": {"fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
             "containers": [
                 {"name": "gluetun", "image": GLUETUN_IMAGE,
@@ -305,26 +304,29 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
                      {"name": "WIREGUARD_ENDPOINT_PORT", "value": "51820"},
                      {"name": "WIREGUARD_PUBLIC_KEY", "value": gw_pub},
                      {"name": "WIREGUARD_ADDRESSES", "value": wg_ip + "/32"},
-                     {"name": "FIREWALL_INPUT_PORTS", "value": "6080"},
+                     {"name": "FIREWALL_INPUT_PORTS", "value": str(KASMVNC_PORT)},
                      {"name": "FIREWALL_OUTBOUND_SUBNETS", "value": "10.10.0.0/16,10.96.0.0/12"},
                      {"name": "WIREGUARD_PRIVATE_KEY",
                       "valueFrom": {"secretKeyRef": {"name": _br_name(userkey) + "-wg",
                                                      "key": "WIREGUARD_PRIVATE_KEY"}}},
                  ],
                  "resources": {"requests": {"cpu": "20m", "memory": "80Mi"}, "limits": {"memory": "256Mi"}}},
-                {"name": "chrome", "image": BROWSER_IMAGE, "imagePullPolicy": "IfNotPresent",
-                 "command": ["bash", "-c", chrome_cmd],
-                 "securityContext": {"runAsUser": 1000, "runAsGroup": 1000},
-                 "env": [{"name": "DISPLAY", "value": ":99"}, {"name": "HOME", "value": "/profile"}],
-                 "volumeMounts": [{"name": "profile", "mountPath": "/profile"}],
-                 "resources": {"requests": {"cpu": "250m", "memory": "1536Mi"}, "limits": {"memory": "3Gi"}}},
-                {"name": "novnc", "image": NOVNC_IMAGE, "imagePullPolicy": "IfNotPresent",
-                 "command": ["bash", "-c", "ulimit -n 65536; exec /entrypoint.sh"],
-                 "securityContext": {"runAsUser": 1000, "runAsGroup": 1000},
-                 "ports": [{"name": "http", "containerPort": 6080}],
-                 "readinessProbe": {"tcpSocket": {"port": 6080}, "initialDelaySeconds": 5,
-                                    "periodSeconds": 3, "failureThreshold": 60},
-                 "resources": {"requests": {"cpu": "10m", "memory": "64Mi"}, "limits": {"memory": "256Mi"}}},
+                # KasmVNC + Chrome in one container: audio, dynamic resolution, and
+                # FullHD H.264 over the WebSocket. Serves HTTP on KASMVNC_PORT for
+                # Traefik; PASSWORD unset = no KasmVNC auth (the /s/<token> token is
+                # the gate). Profile persists on the PVC mounted at /config.
+                {"name": "kasmvnc", "image": KASMVNC_IMAGE, "imagePullPolicy": "Always",
+                 "env": [
+                     {"name": "CUSTOM_PORT", "value": str(KASMVNC_PORT)},
+                     {"name": "PUID", "value": "1000"},
+                     {"name": "PGID", "value": "1000"},
+                     {"name": "TITLE", "value": "proxy"},
+                 ],
+                 "ports": [{"name": "http", "containerPort": KASMVNC_PORT}],
+                 "readinessProbe": {"tcpSocket": {"port": KASMVNC_PORT}, "initialDelaySeconds": 10,
+                                    "periodSeconds": 3, "failureThreshold": 90},
+                 "volumeMounts": [{"name": "profile", "mountPath": "/config"}],
+                 "resources": {"requests": {"cpu": "300m", "memory": "1600Mi"}, "limits": {"memory": "3584Mi"}}},
             ],
             "volumes": [{"name": "profile", "persistentVolumeClaim": {"claimName": _pvc_name(userkey)}}],
         },
