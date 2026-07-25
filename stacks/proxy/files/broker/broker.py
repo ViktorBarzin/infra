@@ -484,8 +484,12 @@ def create_browser(user, country):
         priv, pub = wgkeys.genkeypair()
         _apply("/api/v1/namespaces/%s/persistentvolumeclaims" % NS, _pvc_name(userkey), build_pvc(userkey))
         _apply("/api/v1/namespaces/%s/secrets" % NS, _br_name(userkey) + "-wg", build_br_secret(userkey, priv))
-        k8s("POST", "/api/v1/namespaces/%s/pods" % NS,
-            build_br_pod(userkey, country, gw["idx"], wg_ip, gw["pubkey"], gw["endpoint_ip"], pub, token))
+        body = build_br_pod(userkey, country, gw["idx"], wg_ip, gw["pubkey"], gw["endpoint_ip"], pub, token)
+        for _ in range(30):   # wait out a terminating same-name pod (switch-country / recreate race)
+            st, _ = k8s("POST", "/api/v1/namespaces/%s/pods" % NS, body)
+            if st != 409:
+                break
+            time.sleep(1)
         _apply("/api/v1/namespaces/%s/services" % NS, _br_name(userkey), build_br_service(userkey))
         _apply("/apis/networking.k8s.io/v1/namespaces/%s/ingresses" % NS, _br_name(userkey),
                build_br_ingress(userkey, token))
