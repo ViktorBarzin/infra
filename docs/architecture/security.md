@@ -220,6 +220,22 @@ This prevents resource exhaustion and enforces governance without manual quota m
 
 Cosign `verify-images` is **deferred** beyond wave 1 — needs image-signing infrastructure (Sigstore / cosign + KMS) before it can enforce meaningfully.
 
+#### Node sysctl posture (`allowedUnsafeSysctls`)
+
+Kubelet on the general worker nodes (node2–node5) allows exactly ONE unsafe
+sysctl: **`net.ipv4.ip_forward`** (Viktor-approved 2026-07-25, infra#81). Nodes
+otherwise allow zero unsafe sysctls. A pod opts in per-pod via
+`securityContext.sysctls`; the sysctl is **network-namespaced**, so it affects
+only that pod's own netns — never the host or other pods — and Kyverno still
+blocks privileged / host-namespace pods (no Kyverno policy touches sysctls).
+Needed by the `proxy` shared per-country NordVPN gateway + Headscale exit nodes,
+which FORWARD foreign-origin traffic onto gluetun's `tun0` (impossible without
+`ip_forward=1` in the pod netns; the runtime mounts `/proc/sys` read-only, so it
+cannot be set at runtime even with `NET_ADMIN`). Managed in
+`modules/create-template-vm/k8s-node-post-join-tune.sh` (source of truth, all
+future nodes); master + GPU node1 were not live-rolled (no gateway schedules
+there) and pick it up on re-provision.
+
 #### Operational Policies
 
 | Policy | Purpose | Mode |

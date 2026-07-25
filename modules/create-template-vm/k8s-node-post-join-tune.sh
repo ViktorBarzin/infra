@@ -58,6 +58,15 @@ cfg.pop('shutdownGracePeriodCriticalPods', None)
 cfg.pop('shutdownGracePeriodByPodPriority', None)
 cfg['containerLogMaxSize'] = '10Mi'
 cfg['containerLogMaxFiles'] = 3
+# Allow pods to opt into net.ipv4.ip_forward via securityContext.sysctls
+# (Viktor-approved 2026-07-25, infra#81). Needed by the proxy shared per-country
+# NordVPN gateway + Headscale exit nodes: both FORWARD foreign-origin traffic
+# onto gluetun's tun0, which requires ip_forward=1 in the pod netns. The runtime
+# mounts /proc/sys read-only, so a pod cannot set it at runtime even with
+# NET_ADMIN — the kubelet must allow it as an unsafe (but network-namespaced,
+# per-pod-contained) sysctl. Only pods that explicitly request it are affected,
+# in their own netns; Kyverno still blocks privileged/host-namespace pods.
+cfg['allowedUnsafeSysctls'] = sorted(set(cfg.get('allowedUnsafeSysctls') or []) | {'net.ipv4.ip_forward'})
 # Per-tier grace CORRECTED from a live drill (2026-07-20). A full-node graceful
 # drill measured a 9-min uncapped drain: kubelet does NOT short-circuit when a
 # whole node drains -- it consumes close to each tier's full grace in sequence,
