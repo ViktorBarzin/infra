@@ -76,17 +76,23 @@ module "tls_secret" {
 }
 
 
-# The actual-server `tag` on all three instances below MUST stay aligned with the
-# jhonderson/actual-http-api tag (currently 26.5.2): the http-api's embedded client
-# migrates the budget file's data format on each bank-sync, and a lagging web client
-# then can't open the migrated file ("client is too old"). Always bump both together.
-# (2026-07-25: server was stuck at 26.4.0 while http-api reached 26.5.2 → Anca's web
-# UI broke with "client too old", even in incognito, since the file was already 26.5.x.)
+# FULL-AUTO upgrades (Viktor, 2026-07-25): keel.sh/policy=minor is set LIVE (kubectl
+# annotate) on the actual-server AND actual-http-api deployments so Keel auto-tracks new
+# minors. ACCEPTED RISK: the two are separately-released images (actual-server max 26.6.0
+# vs jhonderson/actual-http-api max 26.6.1) that BOTH migrate the same budget file, so an
+# independent bump can leave the web client "too old" (or bank-sync stale) until the other
+# catches up. The bank-sync side is caught by BankSyncStale; the web side is user-visible.
+# The keel.sh/policy annotation is ignore_changed (Keel/Kyverno-managed) so TF does NOT
+# restore it on a deployment RECREATE — re-annotate keel.sh/policy=minor after any recreate.
+# var.tag below is ONLY the create-time seed: image is KEEL_IGNORE_IMAGE (Keel owns the live
+# tag) and diun is disabled (include_tags inert). Both instances currently on 26.6.0.
+# History: 2026-07-25 server was stuck at 26.4.0 while http-api reached 26.5.2 → Anca's web
+# UI broke ("client too old", even in incognito) since the file was already migrated to 26.5.x.
 # https://budget-viktor.viktorbarzin.me/
 module "viktor" {
   source                     = "./factory"
   name                       = "viktor"
-  tag                        = "26.5.2"
+  tag                        = "26.6.0"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
@@ -110,7 +116,7 @@ module "viktor" {
 module "anca" {
   source                     = "./factory"
   name                       = "anca"
-  tag                        = "26.5.2"
+  tag                        = "26.6.0"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
@@ -137,7 +143,7 @@ module "anca" {
 module "emo" {
   source                     = "./factory"
   name                       = "emo"
-  tag                        = "26.5.2"
+  tag                        = "26.6.0"
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
