@@ -1,13 +1,14 @@
-# Vault OIDC authorization fence (ADR-0020). The "Vault" Authentik application had
+# Vault OIDC authorization fence. Added for tripit ADR-0020 (external self-signup),
+# but it STANDS ALONE now that tripit ADR-0028 retired that design — the
+# "TripIt External" group + enrollment flow are gone (torn down 2026-06-20), yet
+# this remains a general Vault-OIDC control. The "Vault" Authentik application had
 # NO authorization binding (audit 2026-06-15: any authenticated identity could
 # complete Vault OIDC login and receive Vault's built-in `default`-policy token —
 # token self-management/cubbyhole, no secret access, but still more than an
 # outside user should hold). Bind it to "Allow Login Users" so only established
 # homelab users can log in: they inherit that base group via its children
 # (Home Server Admins / Headscale Users / Wrongmove Users — verified live that
-# `User.all_groups()` includes the parent), while publicly self-enrolled
-# "TripIt External" users (deliberately PARENTLESS, so NOT in Allow Login Users)
-# are denied at the Vault consent step. Closes the one OIDC app the forward-auth
+# `User.all_groups()` includes the parent). Closes the one OIDC app the forward-auth
 # fence cannot reach; the other sensitive OIDC apps already bind a trusted group.
 #
 # The Vault application itself stays UI-managed (like the other OIDC apps); this

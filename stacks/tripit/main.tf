@@ -970,16 +970,17 @@ resource "kubernetes_service" "tripit" {
 
 # Main host — the SPA shell is served PUBLICLY so an unauthenticated visitor
 # gets the app's own landing page (Log in / Sign up) instead of a forced
-# Authentik 302 (tripit ADR-0020). The app gates itself (it probes /api/me); all
-# data + the authenticated surface live under /api, which module.ingress_app_api
-# below keeps behind forward-auth. The static SPA assets carry no secrets and no
+# Authentik 302. The app gates itself (it probes /api/me); all data + the
+# authenticated surface live under /api, which module.ingress_app_api below
+# serves under TripIt's OWN session auth (tripit ADR-0028 #96 — Authentik
+# forward-auth was removed). The static SPA assets carry no secrets and no
 # auth-trusting code, and strip-auth-headers ensures a spoofed X-authentik-* can
 # never reach the backend through this public path.
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": serves the public SPA shell + landing page; the app gates
-  # itself and every data route lives behind /api (kept under forward-auth by
-  # module.ingress_app_api). Static assets are non-sensitive.
+  # itself and every data route lives behind /api (self-authenticated by
+  # module.ingress_app_api, tripit ADR-0028). Static assets are non-sensitive.
   auth             = "none"
   anti_ai_scraping = false # installable PWA, not scrapable content — Anubis PoW would break it
   dns_type         = "proxied"
