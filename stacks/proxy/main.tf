@@ -210,7 +210,7 @@ resource "kubernetes_deployment" "broker" {
           # stacks/proxy/files/kasmvnc/**.
           env {
             name  = "KASMVNC_IMAGE"
-            value = "ghcr.io/viktorbarzin/proxy-kasmvnc-browser:97aa88602bd8ac33ceb28d9ce1373a1fd060512c"
+            value = "ghcr.io/viktorbarzin/proxy-kasmvnc-browser:392fb097adc4ae31d7a7413bdbbd74b87cb215dc"
           }
           env {
             name  = "PORT"
