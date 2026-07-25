@@ -3,17 +3,33 @@
 # loop survives a browser crash without killing the pod. Profile persists on the
 # per-user PVC mounted at /config (Chrome writes to /config/profile).
 export HOME=/config
+export DISPLAY=${DISPLAY:-:1}
 mkdir -p /config/profile
-# --start-maximized (NOT --start-fullscreen: fullscreen hides the address bar/
-# tabs so users can't navigate). The KasmVNC session dynamically resizes the X
-# screen to the client (resize=remote); openbox keeps a maximized window filling
-# it. Chrome's own window controls (address bar, tabs) stay visible.
+
+# Chrome persists a per-profile fullscreen window state, and --start-maximized
+# does NOT override it — a browser last left fullscreen reopens fullscreen with
+# no address bar/tabs (users can't navigate). After each launch, force the window
+# out of fullscreen and maximize it (openbox is EWMH-compliant), so the address
+# bar is always visible. Runs only briefly at startup, so the user can still
+# fullscreen e.g. a video afterwards.
+force_windowed() {
+  for _ in $(seq 1 12); do
+    sleep 2
+    WID=$(wmctrl -lx 2>/dev/null | grep -i 'chrome' | awk '{print $1}' | head -1)
+    [ -z "$WID" ] && continue
+    wmctrl -i -r "$WID" -b remove,fullscreen 2>/dev/null
+    wmctrl -i -r "$WID" -b add,maximized_vert,maximized_horz 2>/dev/null
+  done
+}
+
 while true; do
+  force_windowed &
   /usr/bin/google-chrome-stable \
     --no-sandbox --disable-dev-shm-usage \
     --user-data-dir=/config/profile \
     --no-first-run --no-default-browser-check \
     --password-store=basic --use-mock-keychain \
     --start-maximized about:blank
+  kill %1 2>/dev/null
   sleep 2
 done
