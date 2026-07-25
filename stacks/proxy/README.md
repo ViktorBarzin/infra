@@ -2,7 +2,8 @@
 
 Per-user **persistent remote browsers**, each surfing from a country of your
 choice through NordVPN. Log in at `proxy.viktorbarzin.me`, pick a country, and
-get your own Chromium (noVNC) whose traffic egresses from a NordVPN exit in that
+get your own Chrome — streamed via **KasmVNC** with audio, adjustable resolution,
+and smooth FullHD video — whose traffic egresses from a NordVPN exit in that
 country. Your logins and tabs are saved in an encrypted profile across visits.
 
 Design + rationale: `docs/plans/2026-07-25-proxy-scale-design.md`
@@ -21,9 +22,9 @@ user ─▶ proxy.viktorbarzin.me/ (Authentik login)  ─▶ proxy-broker (per-u
 
                     per USER (persistent):
                       PVC  proxy-profile-<user>  (encrypted, RWO — the Chromium profile)
-                      Pod  proxy-br-<user>   [ gluetun(custom-WG → gateway) + chromium + noVNC ]
+                      Pod  proxy-br-<user>   [ gluetun(custom-WG → gateway) + KasmVNC+Chrome ]
                       Svc/Ing  proxy-br-<user>   /s/<token> (auth=none, token-gated)
-user ─▶ proxy.viktorbarzin.me/s/<token>/vnc.html ─▶ noVNC view of the in-country browser
+user ─▶ proxy.viktorbarzin.me/s/<token>/ ─▶ KasmVNC view (audio + resolution + FullHD)
 ```
 
 The **NordVPN ~10-tunnel account cap therefore limits concurrent COUNTRIES**
@@ -44,15 +45,20 @@ browsers share one country's single tunnel. Proven end-to-end by Spike G
   where `net.ipv4.ip_forward` is kubelet-allowed) via the
   `proxy.viktorbarzin.me/gateway=true` node label.
 - **Browser pod** = `gluetun` in **custom-WireGuard** mode dialling its country
-  gateway's Service ClusterIP (leak-proof: gluetun's kill-switch) + headful
-  Chromium (`--user-data-dir=/profile`, the mounted PVC) + noVNC (:6080). One
-  per user, keyed on the `X-authentik-username` identity header.
+  gateway's Service ClusterIP (leak-proof: gluetun's kill-switch) + a single
+  **KasmVNC + Chrome** container (`files/kasmvnc/`, image
+  `ghcr.io/viktorbarzin/proxy-kasmvnc-browser`, built on GHA) serving HTTP on
+  :6080. KasmVNC gives **audio** (PulseAudio → browser), **client-driven dynamic
+  resolution**, and **FullHD H.264/WebCodecs video** — all over the WebSocket
+  ingress, no coturn/TURN. Chrome is the single autostart app; the profile
+  persists on the PVC at `/config`. One per user, keyed on the
+  `X-authentik-username` identity header.
 
 ## Auth
 
 `auth = "required"` — Authentik forward-auth gates the UI + API; each user's
 browser + encrypted profile keys on their identity. The per-user `/s/<token>`
-noVNC ingress stays `auth = "none"` (an Authentik forward-auth breaks the noVNC
+ingress stays `auth = "none"` (an Authentik forward-auth breaks the KasmVNC
 WebSocket) — the unguessable per-user token (`HMAC(salt, userkey)`) is the gate.
 
 ## Guardrails
@@ -68,8 +74,8 @@ WebSocket) — the unguessable per-user token (`HMAC(salt, userkey)`) is the gat
 - Least-privilege: session pods run UNPRIVILEGED (`NET_ADMIN`+`SYS_MODULE`, no
   `/dev/net/tun`/privileged). The one posture addition is the opt-in
   `net.ipv4.ip_forward` unsafe-sysctl on node2-5 (infra#81; contained to the
-  pod netns). ns on `ghcr_private_namespaces` (kyverno) for the private
-  `chrome-service-browser` pull.
+  pod netns). ns on `ghcr_private_namespaces` (kyverno) for the
+  `proxy-kasmvnc-browser` image pull.
 
 ## Operate
 
@@ -85,7 +91,9 @@ WebSocket) — the unguessable per-user token (`HMAC(salt, userkey)`) is the gat
 - **Phase 3 — Headscale exit nodes**: `tailscale --advertise-exit-node` on the
   gateways so tailnet users route their own traffic through NordVPN (same
   forwarding primitive; unblocked by Spike G).
-- **Selkies/WebRTC display** (smoother than noVNC): needs coturn's public TURN
-  path reachable — a pfSense NAT + DNS record (Spike A: currently NXDOMAIN).
+- **Selkies/WebRTC display** (only marginally smoother than KasmVNC's WebSocket
+  H.264 on very fast motion): would need coturn's public TURN path reachable — a
+  pfSense NAT + DNS record (Spike A: currently NXDOMAIN). KasmVNC already delivers
+  audio + resolution + FullHD without it, so this is optional.
 - Social self-signup for non-admins is handled by the Authentik enrollment flow
   (separate work in `stacks/authentik`).
