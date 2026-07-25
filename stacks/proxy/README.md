@@ -1,9 +1,16 @@
 # proxy
 
 On-demand, per-country **remote browser** tunnelled through NordVPN. Open
-`proxy.viktorbarzin.me` (Authentik-gated), pick a country, and get a full Chromium
-in the browser (noVNC) whose traffic egresses from a NordVPN exit in that
-country. Sessions are ephemeral and auto-close after 60 minutes.
+`proxy.viktorbarzin.me`, pick a country, and get a full Chromium in the browser
+(noVNC) whose traffic egresses from a NordVPN exit in that country. Sessions are
+ephemeral and auto-close after 60 minutes.
+
+> **Auth: currently PUBLIC (`auth = "none"`, Viktor 2026-07-25).** The UI is
+> open with no login — an internet-reachable remote browser egressing via the
+> NordVPN account (broker still caps at `MAX_SESSIONS=4`). Re-gate by setting the
+> ingress `auth = "required"` in `main.tf`. The `Proxy Users` group / `proxy_only`
+> policy / social invite (`stacks/authentik/proxy-enrollment.tf`) stay in place
+> but dormant while ungated.
 
 Design + rationale: `docs/plans/2026-07-24-proxy-nordvpn-design.md`.
 
