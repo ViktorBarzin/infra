@@ -13,12 +13,18 @@ mkdir -p /config/profile
 # bar is always visible. Runs only briefly at startup, so the user can still
 # fullscreen e.g. a video afterwards.
 force_windowed() {
-  for _ in $(seq 1 12); do
+  for _ in $(seq 1 15); do
     sleep 2
-    WID=$(wmctrl -lx 2>/dev/null | grep -i 'chrome' | awk '{print $1}' | head -1)
+    WID=$(xdotool search --onlyvisible --class google-chrome 2>/dev/null | head -1)
     [ -z "$WID" ] && continue
-    wmctrl -i -r "$WID" -b remove,fullscreen 2>/dev/null
-    wmctrl -i -r "$WID" -b add,maximized_vert,maximized_horz 2>/dev/null
+    # Chrome re-applies its OWN fullscreen after a wmctrl remove, so toggle it off
+    # the way Chrome understands: send F11 (verified live), then maximize.
+    if xprop -id "$WID" _NET_WM_STATE 2>/dev/null | grep -q _NET_WM_STATE_FULLSCREEN; then
+      xdotool windowactivate --sync "$WID" 2>/dev/null
+      xdotool key --clearmodifiers F11 2>/dev/null
+      sleep 1
+      wmctrl -i -r "$WID" -b add,maximized_vert,maximized_horz 2>/dev/null
+    fi
   done
 }
 
