@@ -10,16 +10,25 @@
 mkdir -p /config/.config/openbox
 cp /defaults/autostart /config/.config/openbox/autostart
 
-# 2) Tune KasmVNC encoding so Video Mode (H.264/WebCodecs, downscale-and-stream)
-#    triggers for a small fast-changing region (a video player), not just when
-#    45% of the screen changes for 5s. Without this, full-motion video stutters
-#    on the slow per-rectangle encoder even at 320p. Written to the user config
-#    (~/.vnc = /config/.vnc), which KasmVNC merges over the system defaults.
+# 2) Tune KasmVNC (1.3.3) encoding so Video Mode triggers for a small
+#    fast-changing region (a video player), not just when 45% of the screen
+#    changes for 5s. In Video Mode KasmVNC streams the changed region as a
+#    frame-paced WebP/JPEG sequence (parallel-encoded) instead of the slow
+#    per-rectangle path that re-encodes the whole player every frame — the
+#    latter is why full-motion video stutters even at 320p. Keys validated
+#    against /usr/local/share/kasmvnc/kasmvnc_defaults.yaml on the live image
+#    (there is NO H.264/codec/video_streaming_mode key in 1.3.3 — video quality
+#    is jpeg_quality/webp_quality inside video_encoding_mode). Written to the
+#    user config (~/.vnc = /config/.vnc), merged over the system defaults.
+#    logging.level:info makes Xvnc log each Video Mode enter/exit so the fix is
+#    verifiable from the pod logs.
 mkdir -p /config/.vnc
 cat > /config/.vnc/kasmvnc.yaml <<'YAML'
 encoding:
   max_frame_rate: 30
   video_encoding_mode:
+    jpeg_quality: 6
+    webp_quality: 6
     max_resolution:
       width: 1280
       height: 720
@@ -28,10 +37,8 @@ encoding:
       area_threshold: 15%
     exit_video_encoding_mode:
       time_threshold: 2
-  video_streaming_mode:
-    codec: auto
-    quality: 22
-    gop: 30
+    logging:
+      level: info
 YAML
 
 # 3) Don't reopen the previous fullscreen window. A hard pod-kill leaves Chrome
