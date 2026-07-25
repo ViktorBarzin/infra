@@ -65,6 +65,9 @@ locals {
     # reference the cloned ghcr-credentials secret). The gluetun + noVNC images
     # are public. Design: docs/plans/2026-07-24-geo-browser-nordvpn-design.md
     "proxy",
+    # interview-prep-app: PRIVATE ghcr.io/viktorbarzin/interview-prep-app
+    # (static SvelteKit interview-prep PWA). Deployment references the cloned secret.
+    "interview-prep-app",
   ]
 }
 
