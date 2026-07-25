@@ -63,6 +63,41 @@ resource "kubernetes_manifest" "es_secrets" {
   depends_on = [kubernetes_namespace.proxy]
 }
 
+# coturn use-auth-secret — the broker mints per-browser ephemeral TURN-REST creds
+# from this so neko relays its WebRTC media through coturn (infra#81). Synced from
+# Vault secret/coturn -> proxy-turn Secret (the broker reads TURN_SECRET from it).
+resource "kubernetes_manifest" "es_turn" {
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "proxy-turn"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef  = { name = "vault-kv", kind = "ClusterSecretStore" }
+      target          = { name = "proxy-turn" }
+      data            = [{ secretKey = "turn_secret", remoteRef = { key = "coturn", property = "turn_secret" } }]
+    }
+  }
+  depends_on = [kubernetes_namespace.proxy]
+}
+
+# Chromium managed policy mounted into every neko browser: suppress the
+# "--no-sandbox / unsupported flag" infobar cleanly (neko's chromium runs
+# --no-sandbox in-pod where Chrome's own sandbox can't init).
+resource "kubernetes_config_map_v1" "chrome_policy" {
+  metadata {
+    name      = "proxy-chrome-policy"
+    namespace = local.namespace
+    labels    = local.labels
+  }
+  data = {
+    "policy.json" = jsonencode({ CommandLineFlagSecurityWarningsEnabled = false })
+  }
+}
+
 # --- Broker RBAC — namespaced CRUD on the objects it manages per session ------
 resource "kubernetes_service_account" "broker" {
   metadata {
@@ -203,14 +238,25 @@ resource "kubernetes_deployment" "broker" {
             name  = "GW_IDLE_SECONDS"
             value = "600"
           }
-          # Pin the KasmVNC browser image to the immutable commit-SHA tag, NOT
-          # :latest — the ghcr pull-through cache serves a stale :latest, so a
-          # freshly-built :latest doesn't reach new browser pods (house SHA-tag
-          # convention). Bump this to the newest build's SHA after rebuilding
-          # stacks/proxy/files/kasmvnc/**.
+          # neko (WebRTC H.264 + Opus audio) browser image, DIGEST-pinned (upstream
+          # :latest drifts + the pull-through cache serves it stale). This is the
+          # digest validated end-to-end in the neko + neko<->coturn spikes
+          # (memory #10242/#10247). Bump on a deliberate neko upgrade.
           env {
-            name  = "KASMVNC_IMAGE"
-            value = "ghcr.io/viktorbarzin/proxy-kasmvnc-browser:8d2a113c2b7bed5afde656df75f56a2094544c1c"
+            name  = "NEKO_IMAGE"
+            value = "ghcr.io/m1k1o/neko/chromium@sha256:8caebd42dade3c8903dad07a39f0fbd1ad238357e5cfbbc207201c52b70f678e"
+          }
+          # coturn shared-secret (use-auth-secret) — the broker mints per-browser
+          # ephemeral TURN-REST creds so neko relays its WebRTC media through
+          # coturn (reachable from anywhere). Synced from Vault secret/coturn.
+          env {
+            name = "TURN_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "proxy-turn"
+                key  = "turn_secret"
+              }
+            }
           }
           env {
             name  = "PORT"
@@ -271,7 +317,7 @@ resource "kubernetes_deployment" "broker" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
     ]
   }
-  depends_on = [kubernetes_manifest.es_secrets]
+  depends_on = [kubernetes_manifest.es_secrets, kubernetes_manifest.es_turn]
 }
 
 resource "kubernetes_service" "broker" {
@@ -320,10 +366,12 @@ module "ingress" {
 }
 
 # Namespace quota: broker + up to ~6 country gateways (each ~130Mi req across
-# gluetun+wgserver) + up to ~10 user browsers (each ~1.7Gi req / ~3.5Gi lim
-# across gluetun+chrome+novnc). count/pods is the runaway-create backstop; the
-# broker self-limits countries to MAX_COUNTRIES-RESERVED (pool.py), browsers are
-# one-per-user; requests.memory bounds a full house.
+# gluetun+wgserver) + user browsers. Each neko browser reserves ~1 core (matches
+# ~1.2-core active-video cost so the scheduler doesn't over-pack + CFS-throttle
+# the x264 encoder) + ~2.6Gi (neko + Chromium + the memory /dev/shm). requests.cpu
+# is the real binding limit — 10 supports ~9 concurrent browsers + gateways;
+# raise it (competes with other node2-5 tenants) if more simultaneous video is
+# needed. count/pods is the runaway-create backstop; browsers are one-per-user.
 resource "kubernetes_resource_quota" "proxy" {
   metadata {
     name      = "proxy"
@@ -331,9 +379,9 @@ resource "kubernetes_resource_quota" "proxy" {
   }
   spec {
     hard = {
-      "requests.cpu"    = "4"
-      "requests.memory" = "20Gi"
-      "limits.memory"   = "40Gi"
+      "requests.cpu"    = "10"
+      "requests.memory" = "28Gi"
+      "limits.memory"   = "34Gi"
       "count/pods"      = "28"
     }
   }
