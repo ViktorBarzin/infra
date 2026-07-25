@@ -49,6 +49,11 @@ _CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 HOST = os.environ.get("HOST", "proxy.viktorbarzin.me")
+# Per-browser subdomain base: each browser is served at proxy-<token>.<BASE_DOMAIN>
+# (rides the zone-wide * wildcard DNS + wildcard TLS). KasmVNC's web client uses
+# an ABSOLUTE websocket path (/websockify), so a shared-host /s/<token> stripPrefix
+# can't route it — a dedicated subdomain per browser serves KasmVNC at its own root.
+BASE_DOMAIN = os.environ.get("BASE_DOMAIN", HOST.split(".", 1)[1] if "." in HOST else HOST)
 TLS_SECRET = os.environ.get("TLS_SECRET", "proxy-tls")
 STRIP_MW = os.environ.get("STRIP_MIDDLEWARE", "%s-strip-session@kubernetescrd" % NS)
 NORDVPN_TOKEN = os.environ.get("NORDVPN_TOKEN", "")
@@ -158,12 +163,16 @@ def _pvc_name(userkey):
     return "proxy-profile-" + userkey
 
 
+def _br_host(token):
+    return "proxy-%s.%s" % (token, BASE_DOMAIN)
+
+
 def _url(token):
-    # KasmVNC serves its web client at the ingress root and index.html
-    # autoconnects (resize=remote + audio + a control bar with resolution/audio/
-    # quality settings). The stripPrefix (^/s/<token>) + the client's RELATIVE
-    # asset paths make the /s/<token> subpath work.
-    return "/s/%s/" % token
+    # Each browser gets its own subdomain so KasmVNC's absolute /websockify + all
+    # its assets resolve to that browser (no stripPrefix). The unguessable token
+    # IS the subdomain, and the gate. Rides the * wildcard DNS + wildcard TLS.
+    # index.html autoconnects (resize=remote + audio + control bar).
+    return "https://%s/" % _br_host(token)
 
 
 # ------------------------------------------------------------------ gateway objects
@@ -342,17 +351,20 @@ def build_br_service(userkey):
 
 
 def build_br_ingress(userkey, token):
+    host = _br_host(token)
     return {"apiVersion": "networking.k8s.io/v1", "kind": "Ingress",
             "metadata": {"name": _br_name(userkey), "namespace": NS,
                          "labels": {"app": "proxy-browser", "proxy/user": userkey},
+                         # No auth middleware: an Authentik forward-auth breaks the
+                         # KasmVNC WebSocket, so the unguessable per-user subdomain
+                         # is the gate. Own subdomain => KasmVNC serves at root and
+                         # its absolute /websockify + assets route to this browser.
                          "annotations": {
-                             "traefik.ingress.kubernetes.io/router.entrypoints": "websecure",
-                             "traefik.ingress.kubernetes.io/router.middlewares": STRIP_MW,
-                             "traefik.ingress.kubernetes.io/router.priority": "1000"}},
+                             "traefik.ingress.kubernetes.io/router.entrypoints": "websecure"}},
             "spec": {"ingressClassName": "traefik",
-                     "tls": [{"hosts": [HOST], "secretName": TLS_SECRET}],
-                     "rules": [{"host": HOST, "http": {"paths": [{
-                         "path": "/s/" + token, "pathType": "Prefix",
+                     "tls": [{"hosts": [host], "secretName": TLS_SECRET}],
+                     "rules": [{"host": host, "http": {"paths": [{
+                         "path": "/", "pathType": "Prefix",
                          "backend": {"service": {"name": _br_name(userkey), "port": {"number": 6080}}}}]}}]}}
 
 
