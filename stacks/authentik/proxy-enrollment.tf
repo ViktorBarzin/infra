@@ -8,11 +8,16 @@ resource "authentik_group" "proxy_users" {
   name = "Proxy Users"
 }
 
-# SELF-SIGNUP INVITE (email OR social/Google):
+# SELF-SIGNUP INVITE (email + GitHub/Facebook via this flow; GOOGLE via its own):
 # Rather than a bespoke flow, we REUSE Authentik's existing shared, invite-gated
 # `invitation-enrollment` flow — it already renders the email/password prompt
 # AND the Google/GitHub/Facebook buttons (its identification stage lists those
-# sources). Scoping is done per-invitation, WITHOUT touching that shared flow:
+# sources). NOTE (2026-07-25): the GOOGLE path no longer completes through this
+# flow — an invitation can't survive the OAuth round-trip, so the Google source's
+# enrollment_flow is now the dedicated `google-proxy-enrollment` with a
+# session-cache invite bridge (see stacks/authentik/google-social-signup.tf).
+# GitHub/Facebook still use this flow and share the broken-invite limitation.
+# Scoping is done per-invitation, WITHOUT touching that shared flow:
 #
 #   The proxy invitation sets  fixed_data = { "attributes.proxy_only": true }.
 #   The invitation stage merges fixed_data into prompt_data; UserWriteStage
