@@ -29,6 +29,17 @@ force_windowed() {
 }
 
 while true; do
+  # Only (re)launch when NO chrome process is alive. Without this guard, if
+  # chrome exits but leaves an orphan holding the /config/profile singleton lock
+  # (a crash — the very case this loop recovers from), the next launch just hands
+  # the URL to the surviving instance ("Opening in existing browser session") and
+  # returns immediately, so the loop spins and opens a new about:blank tab every
+  # 2s (tab flood). Waiting for chrome to be truly gone makes relaunch a real
+  # crash-recovery, not a tab spammer.
+  if pgrep -x chrome >/dev/null 2>&1; then
+    sleep 3
+    continue
+  fi
   force_windowed &
   /usr/bin/google-chrome-stable \
     --no-sandbox --disable-dev-shm-usage \
