@@ -107,7 +107,10 @@ resource "kubernetes_config_map" "coturn_config" {
       no-tlsv1_1
 
       # Performance
-      total-quota=100
+      # 100 -> 200: a single neko session transiently opens up to ~9 relay
+      # allocations during ICE (backend RTP+RTCP + frontend + retries), settling
+      # to ~2-4; 200 gives comfortable headroom for the proxy browsers (infra#81).
+      total-quota=200
       stale-nonce=600
       max-bps=0
     EOF
@@ -178,12 +181,15 @@ resource "kubernetes_deployment" "coturn" {
           }
 
           resources {
+            # Bumped from 10m/64Mi (idle) to relay for the proxy neko browsers
+            # (infra#81): each HD stream relays ~2-2.5 Mbps each way; sized for
+            # ~10 concurrent. No CPU limit (house policy — CFS throttling).
             requests = {
-              cpu    = "10m"
-              memory = "64Mi"
+              cpu    = "250m"
+              memory = "256Mi"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
         }
