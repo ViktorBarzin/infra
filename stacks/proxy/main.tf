@@ -203,6 +203,15 @@ resource "kubernetes_deployment" "broker" {
             name  = "GW_IDLE_SECONDS"
             value = "600"
           }
+          # Pin the KasmVNC browser image to the immutable commit-SHA tag, NOT
+          # :latest — the ghcr pull-through cache serves a stale :latest, so a
+          # freshly-built :latest doesn't reach new browser pods (house SHA-tag
+          # convention). Bump this to the newest build's SHA after rebuilding
+          # stacks/proxy/files/kasmvnc/**.
+          env {
+            name  = "KASMVNC_IMAGE"
+            value = "ghcr.io/viktorbarzin/proxy-kasmvnc-browser:0df4ec0d29409491a207abb090bd7c3502345fdf"
+          }
           env {
             name  = "PORT"
             value = "8080"
