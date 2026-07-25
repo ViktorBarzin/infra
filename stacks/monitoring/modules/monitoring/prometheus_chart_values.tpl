@@ -2513,6 +2513,11 @@ serverFiles:
               severity: warning
             annotations:
               summary: "ResourceQuota {{ $labels.namespace }}/{{ $labels.resourcequota }} {{ $labels.resource }} at {{ $value | printf \"%.1f\" }} — workloads may fail to reschedule"
+          # ── Upgrade Gates (k8s-version-upgrade pipeline) ────────────────────
+          # Self-heal design (2026-07-25): a leaked k8s_upgrade_in_flight latch is
+          # cleared by the detection-CronJob reconcile AND guarded here so it can't
+          # false-fire; full write-up in docs/runbooks/k8s-version-upgrade.md
+          # ("Leaked-latch self-heal") + docs/architecture/automated-upgrades.md.
           # K8sVersionSkew: >1 distinct kubelet version across the fleet = a half-done
           # kubeadm rollout (e.g. master at 1.35.7 but workers still on 1.35.6 after the
           # chain was interrupted mid-flight — the exact resting state a leaked-latch
