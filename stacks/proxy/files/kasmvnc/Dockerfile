@@ -10,7 +10,10 @@ FROM lscr.io/linuxserver/baseimage-kasmvnc:ubuntujammy
 
 # Real Google Chrome (the jammy `chromium` apt package is a snap stub that fails
 # headless). Non-snap, headless-capable, matches the old chrome-service image.
-RUN apt-get update && \
+# The LinuxServer base ships a NodeSource apt source (node_18.x) that now 404s,
+# which fails `apt-get update`; drop it (node is already installed in the base).
+RUN grep -rl nodesource /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
+    apt-get update && \
     apt-get install -y --no-install-recommends wget gnupg ca-certificates fonts-liberation && \
     wget -qO- https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg && \
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
