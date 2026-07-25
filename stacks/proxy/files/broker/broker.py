@@ -75,9 +75,10 @@ NEKO_PORT = int(os.environ.get("NEKO_PORT", "8080"))
 # is via the coturn relay candidate, not this host candidate).
 NEKO_UDPMUX = int(os.environ.get("NEKO_UDPMUX", "59000"))
 # Default virtual-desktop resolution. neko admins can change it LIVE from the UI
-# (screen-size menu, any value via xrandr); higher = sharper but more x264 CPU +
-# bandwidth (1080p ~1.2 cores, 1440p ~2-3, 4K ~4-5; no GPU encode here).
-NEKO_SCREEN = os.environ.get("NEKO_SCREEN", "2560x1440@30")
+# (screen-size menu, any value via xrandr). On SOFTWARE x264 (current) 1080p is
+# the smooth sweet spot (~1.2 cores); 1440p burns ~4.4 cores and lags — that's
+# what the GPU/NVENC path (in progress) fixes, after which this goes back up.
+NEKO_SCREEN = os.environ.get("NEKO_SCREEN", "1920x1080@30")
 # coturn: neko (in-cluster, gluetun netns whose DNS can't resolve cluster names)
 # reaches coturn for its BACKEND relay allocation via an IP in gluetun's
 # FIREWALL_OUTBOUND_SUBNETS (the LB IP, added there). The user's real browser
