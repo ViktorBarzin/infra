@@ -404,6 +404,35 @@ resource "kubernetes_persistent_volume_claim" "personal_documents" {
   }
 }
 
+locals {
+  mail_listener_labels = {
+    app       = "tripit-mail-listener"
+    component = "mail-listener"
+  }
+
+  # Shared verbatim by the realtime listener and the 15-minute repair CronJob
+  # so their extraction/routing behavior cannot drift.
+  mail_ingest_env = {
+    LLM_MODE     = "llamacpp"
+    LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+    # Text extraction needs the 8B model to retain flight numbers. qwen3-8b
+    # crashes on the current CUDA image, while qwen3vl-8b is proven live;
+    # attachments stay on the smaller vision model (ADR-0033 fallback remains).
+    LLM_MODEL           = "qwen3vl-8b"
+    LLM_VISION_MODEL    = "qwen3vl-4b"
+    MAIL_INGEST_ENABLED = "true"
+    # Forwarded Reels require POI-level Nominatim, isolated from the global
+    # city-level OpenMeteo geocoder used by weather/tours (ADR-0031).
+    REEL_GEOCODER_PROVIDER = "nominatim"
+    IMAP_HOST              = "mailserver.mailserver.svc.cluster.local"
+    IMAP_PORT              = "993"
+    IMAP_USER              = "spam@viktorbarzin.me"
+    IMAP_FOLDER            = "INBOX"
+    IMAP_USE_SSL           = "true"
+    IMAP_SEARCH            = "TO \"plans@viktorbarzin.me\""
+  }
+}
+
 resource "kubernetes_deployment" "tripit" {
   metadata {
     name      = "tripit"
@@ -575,6 +604,131 @@ resource "kubernetes_deployment" "tripit" {
   ]
 }
 
+# Realtime email trigger (#134): Dovecot IMAP IDLE wakes this dedicated worker,
+# which runs the SAME reconciliation as ingest-plans. Distinct labels are
+# load-bearing: service/tripit selects app=tripit and must never route HTTP to
+# this non-HTTP pod. Recreate keeps one listener; the PostgreSQL advisory lease
+# still serializes it against the repair CronJob.
+resource "kubernetes_deployment" "mail_listener" {
+  metadata {
+    name      = "tripit-mail-listener"
+    namespace = kubernetes_namespace.tripit.metadata[0].name
+    labels = merge(local.mail_listener_labels, {
+      tier = local.tiers.aux
+    })
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+  }
+
+  spec {
+    replicas                  = 1
+    progress_deadline_seconds = 900
+    strategy {
+      type = "Recreate"
+    }
+
+    selector {
+      match_labels = local.mail_listener_labels
+    }
+
+    template {
+      metadata {
+        labels = local.mail_listener_labels
+      }
+
+      spec {
+        termination_grace_period_seconds = 600
+
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+
+        container {
+          name    = "listener"
+          image   = local.image
+          command = ["python", "-m", "tripit_api", "listen-mail"]
+
+          env_from {
+            secret_ref { name = "tripit-secrets" }
+          }
+          env_from {
+            secret_ref { name = "tripit-db-creds" }
+          }
+
+          dynamic "env" {
+            for_each = merge(local.app_env, local.mail_ingest_env)
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+
+          # spam@ mailbox password; explicit env overrides the unrelated Gmail
+          # IMAP_PASSWORD that arrives through tripit-secrets env_from.
+          env {
+            name = "IMAP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "tripit-secrets"
+                key  = "PLANS_IMAP_PASSWORD"
+              }
+            }
+          }
+
+          volume_mount {
+            name       = "documents"
+            mount_path = "/data/documents"
+          }
+
+          readiness_probe {
+            exec {
+              command = ["sh", "-c", "test -f /tmp/tripit-mail-listener-ready"]
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 5
+            failure_threshold     = 3
+          }
+
+          resources {
+            requests = { cpu = "50m", memory = "256Mi" }
+            limits   = { memory = "512Mi" }
+          }
+        }
+
+        volume {
+          name = "documents"
+          persistent_volume_claim {
+            claim_name = module.documents_nfs.claim_name
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — deploy pipeline manages SHA
+      metadata[0].annotations["kubernetes.io/change-cause"],
+      metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    ]
+  }
+
+  depends_on = [
+    kubernetes_manifest.external_secret,
+    kubernetes_manifest.db_external_secret,
+  ]
+}
+
 # Worker CronJobs share the app image + secret/env wiring. Defined via a map so
 # the jobs stay identical except for schedule, subcommand, and the suspend flag.
 locals {
@@ -597,8 +751,9 @@ locals {
     }
     # Forward-to-parse — the SOLE ingest channel: forward any booking
     # confirmation to plans@viktorbarzin.me (which the @viktorbarzin.me catch-all
-    # delivers into the spam@ mailbox), and this job ingests it. Polls spam@
-    # read-only, filtered by IMAP SEARCH to mail addressed To plans@ — so only
+    # delivers into the spam@ mailbox). The realtime listener is the normal
+    # trigger; this remains the independent 15-minute repair path. Both poll
+    # spam@ read-only, filtered by IMAP SEARCH to mail addressed To plans@, so only
     # deliberate forwards are processed, not the rest of the catch-all junk. The
     # sender is routed to a registered user (primary email or a verified linked
     # address); mail from anyone else is ignored — there is no default-owner
@@ -617,32 +772,7 @@ locals {
       # A sweep is normally <90s; with concurrency_policy=Forbid a hung run would
       # block every future sweep, so bound it (2026-07-15 ingest resilience).
       active_deadline_seconds = 600
-      extra_env = {
-        LLM_MODE     = "llamacpp"
-        LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
-        # Text body extraction uses an 8B model (reliably emits flight_number);
-        # boarding-pass image attachments use the 4B vision model. llama-swap loads
-        # each on demand. Was qwen3vl-4b for both, which dropped flight numbers and
-        # duplicated schedule-change emails (2026-06-16). Switched qwen3-8b ->
-        # qwen3vl-8b (2026-06-22): the qwen3-8b GGUF SEGFAULTS on the current
-        # llama-swap :cuda image ("failed to create context"), which broke ALL mail
-        # ingest; qwen3vl-8b loads and extracts flight numbers + places reliably.
-        # (ADR-0033 adds a claude-agent-service fallback for the next llama outage.)
-        LLM_MODEL           = "qwen3vl-8b"
-        LLM_VISION_MODEL    = "qwen3vl-4b"
-        MAIL_INGEST_ENABLED = "true"
-        # Reel→Wishlist ingest (tripit ADR-0031): geocode forwarded-reel venues at
-        # POI level via Nominatim (venue -> lat/lon + city + country), isolated from
-        # the global GEOCODER_PROVIDER=openmeteo which stays city-level for
-        # weather/tours. Only this CronJob runs the reel route (ingest-mail).
-        REEL_GEOCODER_PROVIDER = "nominatim"
-        IMAP_HOST              = "mailserver.mailserver.svc.cluster.local"
-        IMAP_PORT              = "993"
-        IMAP_USER              = "spam@viktorbarzin.me"
-        IMAP_FOLDER            = "INBOX"
-        IMAP_USE_SSL           = "true"
-        IMAP_SEARCH            = "TO \"plans@viktorbarzin.me\""
-      }
+      extra_env               = local.mail_ingest_env
     }
     # Proactive nudges (travel-agent merged into tripit, beads code-muqi).
     # London-local schedules (timeZone honoured by K8s 1.27+). NUDGES_ENABLED
