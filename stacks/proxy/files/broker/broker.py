@@ -50,9 +50,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 HOST = os.environ.get("HOST", "proxy.viktorbarzin.me")
 # Per-browser subdomain base: each browser is served at proxy-<token>.<BASE_DOMAIN>
-# (rides the zone-wide * wildcard DNS + wildcard TLS). KasmVNC's web client uses
-# an ABSOLUTE websocket path (/websockify), so a shared-host /s/<token> stripPrefix
-# can't route it — a dedicated subdomain per browser serves KasmVNC at its own root.
+# (rides the zone-wide * wildcard DNS + wildcard TLS). A dedicated subdomain per
+# browser keeps each neko's signaling WebSocket + assets at its own root (the
+# unguessable token IS the subdomain and the gate).
 BASE_DOMAIN = os.environ.get("BASE_DOMAIN", HOST.split(".", 1)[1] if "." in HOST else HOST)
 TLS_SECRET = os.environ.get("TLS_SECRET", "proxy-tls")
 STRIP_MW = os.environ.get("STRIP_MIDDLEWARE", "%s-strip-session@kubernetescrd" % NS)
@@ -62,11 +62,35 @@ GW_IDLE_SECONDS = int(os.environ.get("GW_IDLE_SECONDS", "600"))  # reap empty ga
 PORT = int(os.environ.get("PORT", "8080"))
 GLUETUN_IMAGE = os.environ.get("GLUETUN_IMAGE", "ghcr.io/qdm12/gluetun:latest")
 WGTOOLS_IMAGE = os.environ.get("WGTOOLS_IMAGE", "ghcr.io/linuxserver/wireguard:latest")
-# KasmVNC + Chrome browser image (audio + client-driven resolution + FullHD
-# H.264 over the WebSocket ingress — see files/kasmvnc/). One container replaces
-# the old Xvfb+chromium+x11vnc+websockify stack.
-KASMVNC_IMAGE = os.environ.get("KASMVNC_IMAGE", "ghcr.io/viktorbarzin/proxy-kasmvnc-browser:latest")
-KASMVNC_PORT = int(os.environ.get("KASMVNC_PORT", "6080"))
+# neko (WebRTC H.264 + Opus audio) streams headful Chromium — smooth video +
+# audio, unlike KasmVNC's software WebP tiles (infra#81). One container; serves
+# the signaling/UI on HTTP :8080 (behind the per-user subdomain ingress) and
+# streams WebRTC media relayed through coturn so authenticated users reach it
+# from anywhere. Upstream image, digest-pinned (house SHA rule).
+NEKO_IMAGE = os.environ.get(
+    "NEKO_IMAGE", "ghcr.io/m1k1o/neko/chromium:latest")
+NEKO_PORT = int(os.environ.get("NEKO_PORT", "8080"))
+# Fixed per-pod WebRTC media mux port — no cross-pod collision since each browser
+# is in its own gluetun netns, and no per-user NodePort is needed (external reach
+# is via the coturn relay candidate, not this host candidate).
+NEKO_UDPMUX = int(os.environ.get("NEKO_UDPMUX", "59000"))
+NEKO_SCREEN = os.environ.get("NEKO_SCREEN", "1280x720@30")
+# coturn: neko (in-cluster, gluetun netns whose DNS can't resolve cluster names)
+# reaches coturn for its BACKEND relay allocation via an IP in gluetun's
+# FIREWALL_OUTBOUND_SUBNETS (the LB IP, added there). The user's real browser
+# reaches coturn's FRONTEND (STUN + TURN) via the public domain (WAN NAT). coturn
+# advertises relay candidates on its external-ip=WAN either way.
+COTURN_BACKEND_URL = os.environ.get("COTURN_BACKEND_URL", "turn:10.0.20.200:3478")
+COTURN_FRONTEND_URL = os.environ.get("COTURN_FRONTEND_URL", "turn:turn.viktorbarzin.me:3478")
+COTURN_STUN_URL = os.environ.get("COTURN_STUN_URL", "stun:turn.viktorbarzin.me:3478")
+COTURN_REALM = os.environ.get("COTURN_REALM", "viktorbarzin.me")
+# TURN-REST ephemeral cred (coturn use-auth-secret). The cred is embedded in the
+# neko env at browser-creation time; a later client connection re-allocates with
+# it, so the TTL must exceed the browser's lifetime. Browsers are persistent, so
+# mint long (30d); a browser outliving the TTL needs a recreate to re-mint
+# (reaper-driven in-place rotation is a follow-up — neko env is static).
+TURN_SECRET = os.environ.get("TURN_SECRET", "")
+TURN_TTL = int(os.environ.get("TURN_TTL", str(30 * 24 * 3600)))  # 30 days
 PROFILE_STORAGE_CLASS = os.environ.get("PROFILE_STORAGE_CLASS", "proxmox-lvm-encrypted")
 PROFILE_SIZE = os.environ.get("PROFILE_SIZE", "2Gi")
 GATEWAY_NODE_LABEL = os.environ.get("GATEWAY_NODE_LABEL", "proxy.viktorbarzin.me/gateway")
@@ -151,6 +175,19 @@ def _token(userkey):
     return hmac.new(TOKEN_SALT, userkey.encode(), hashlib.sha256).hexdigest()[:32]
 
 
+def mint_turn_cred(name):
+    """coturn use-auth-secret ephemeral credential (TURN REST API):
+    username = "<unix-expiry>:<name>", password = base64(HMAC-SHA1(secret, username)).
+    Returns (username, password); ("","") if no TURN_SECRET (relay disabled)."""
+    if not TURN_SECRET:
+        return "", ""
+    username = "%d:%s" % (int(time.time()) + TURN_TTL, name)
+    pwd = base64.b64encode(
+        hmac.new(TURN_SECRET.encode(), username.encode(), hashlib.sha1).digest()
+    ).decode()
+    return username, pwd
+
+
 def _gw_name(idx):
     return "proxy-gw-%d" % idx
 
@@ -168,11 +205,12 @@ def _br_host(token):
 
 
 def _url(token):
-    # Each browser gets its own subdomain so KasmVNC's absolute /websockify + all
-    # its assets resolve to that browser (no stripPrefix). The unguessable token
-    # IS the subdomain, and the gate. Rides the * wildcard DNS + wildcard TLS.
-    # index.html autoconnects (resize=remote + audio + control bar).
-    return "https://%s/" % _br_host(token)
+    # Each browser gets its own subdomain so neko's WebSocket signaling + assets
+    # resolve to that browser. The unguessable token IS the subdomain AND neko's
+    # member password, so ?usr=proxy&pwd=<token> auto-connects with no prompt
+    # (the token is already the subdomain — no new secret exposed). Rides the *
+    # wildcard DNS + wildcard TLS. Entry is Authentik-gated upstream at the broker.
+    return "https://%s/?usr=proxy&pwd=%s" % (_br_host(token), token)
 
 
 # ------------------------------------------------------------------ gateway objects
@@ -287,6 +325,37 @@ def build_br_secret(userkey, priv):
             "type": "Opaque", "stringData": {"WIREGUARD_PRIVATE_KEY": priv}}
 
 
+def _neko_env(userkey, token):
+    """neko v3 env. The token is the member USER password (?pwd auto-login); an
+    admin password is derived (locks admin, not the user token). WebRTC media
+    relays through coturn: BACKEND = coturn LB IP (neko in-cluster reaches it
+    direct via gluetun FIREWALL_OUTBOUND_SUBNETS; the relay it gets is on coturn's
+    external-ip=WAN), FRONTEND = coturn public domain + STUN for the user's
+    browser. Ephemeral TURN-REST creds; FRONTEND always keeps STUN (an empty
+    frontend makes Chrome emit an unresolvable mDNS candidate → no connection)."""
+    u, p = mint_turn_cred(_br_name(userkey))
+    ice_backend = []
+    ice_frontend = [{"urls": [COTURN_STUN_URL]}]
+    if u:
+        ice_backend.append({"urls": [COTURN_BACKEND_URL], "username": u, "credential": p})
+        ice_frontend.insert(0, {"urls": [COTURN_FRONTEND_URL], "username": u, "credential": p})
+    admin_pw = hmac.new(TOKEN_SALT, (userkey + ":admin").encode(), hashlib.sha256).hexdigest()[:24]
+    return [
+        {"name": "NEKO_DESKTOP_SCREEN", "value": NEKO_SCREEN},
+        {"name": "NEKO_MEMBER_PROVIDER", "value": "multiuser"},
+        {"name": "NEKO_MEMBER_MULTIUSER_USER_PASSWORD", "value": token},
+        {"name": "NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD", "value": admin_pw},
+        {"name": "NEKO_SESSION_IMPLICIT_HOSTING", "value": "true"},
+        {"name": "NEKO_SESSION_MERCIFUL_RECONNECT", "value": "true"},
+        {"name": "NEKO_SERVER_BIND", "value": "0.0.0.0:%d" % NEKO_PORT},
+        {"name": "NEKO_SERVER_PROXY", "value": "true"},
+        {"name": "NEKO_WEBRTC_ICELITE", "value": "false"},
+        {"name": "NEKO_WEBRTC_UDPMUX", "value": str(NEKO_UDPMUX)},
+        {"name": "NEKO_WEBRTC_ICESERVERS_BACKEND", "value": json.dumps(ice_backend)},
+        {"name": "NEKO_WEBRTC_ICESERVERS_FRONTEND", "value": json.dumps(ice_frontend)},
+    ]
+
+
 def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey, token):
     return {
         "apiVersion": "v1", "kind": "Pod",
@@ -300,8 +369,8 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
             "restartPolicy": "Always",
             "dnsPolicy": "None", "dnsConfig": {"nameservers": ["127.0.0.1"]},
             "imagePullSecrets": [{"name": "ghcr-credentials"}],
-            # No runAsNonRoot: the KasmVNC (LinuxServer) image starts as root for
-            # s6-overlay then drops to PUID/PGID 1000; fsGroup 1000 owns the PVC.
+            # neko runs as UID 1000 (its chromium uses --no-sandbox, so no setuid
+            # sandbox / privileged needed); fsGroup 1000 owns the profile PVC.
             "securityContext": {"fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
             "containers": [
                 {"name": "gluetun", "image": GLUETUN_IMAGE,
@@ -313,31 +382,47 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
                      {"name": "WIREGUARD_ENDPOINT_PORT", "value": "51820"},
                      {"name": "WIREGUARD_PUBLIC_KEY", "value": gw_pub},
                      {"name": "WIREGUARD_ADDRESSES", "value": wg_ip + "/32"},
-                     {"name": "FIREWALL_INPUT_PORTS", "value": str(KASMVNC_PORT)},
-                     {"name": "FIREWALL_OUTBOUND_SUBNETS", "value": "10.10.0.0/16,10.96.0.0/12"},
+                     # 8080 signaling (from Traefik) + the WebRTC media mux port.
+                     {"name": "FIREWALL_INPUT_PORTS", "value": "%d,%d" % (NEKO_PORT, NEKO_UDPMUX)},
+                     # Cluster CIDRs + the coturn LB IP so neko reaches coturn DIRECT
+                     # (not through the NordVPN tunnel) for its relay allocation.
+                     {"name": "FIREWALL_OUTBOUND_SUBNETS", "value": "10.10.0.0/16,10.96.0.0/12,10.0.20.200/32"},
                      {"name": "WIREGUARD_PRIVATE_KEY",
                       "valueFrom": {"secretKeyRef": {"name": _br_name(userkey) + "-wg",
                                                      "key": "WIREGUARD_PRIVATE_KEY"}}},
                  ],
                  "resources": {"requests": {"cpu": "20m", "memory": "80Mi"}, "limits": {"memory": "256Mi"}}},
-                # KasmVNC + Chrome in one container: audio, dynamic resolution, and
-                # FullHD H.264 over the WebSocket. Serves HTTP on KASMVNC_PORT for
-                # Traefik; PASSWORD unset = no KasmVNC auth (the /s/<token> token is
-                # the gate). Profile persists on the PVC mounted at /config.
-                {"name": "kasmvnc", "image": KASMVNC_IMAGE, "imagePullPolicy": "Always",
-                 "env": [
-                     {"name": "CUSTOM_PORT", "value": str(KASMVNC_PORT)},
-                     {"name": "PUID", "value": "1000"},
-                     {"name": "PGID", "value": "1000"},
-                     {"name": "TITLE", "value": "proxy"},
-                 ],
-                 "ports": [{"name": "http", "containerPort": KASMVNC_PORT}],
-                 "readinessProbe": {"tcpSocket": {"port": KASMVNC_PORT}, "initialDelaySeconds": 10,
+                # neko: headful Chromium streamed via WebRTC (H.264 video + Opus
+                # audio) — smooth video KasmVNC can't do. Signaling/UI on :8080
+                # (behind the per-user subdomain ingress); media relays through
+                # coturn so authenticated users reach it from anywhere. The token
+                # is neko's member USER password (?usr=proxy&pwd=<token> auto-login).
+                # Chromium profile persists on the PVC; a memory /dev/shm + the
+                # infobar-suppressing managed policy are mounted in.
+                {"name": "neko", "image": NEKO_IMAGE, "imagePullPolicy": "IfNotPresent",
+                 "env": _neko_env(userkey, token),
+                 "ports": [{"name": "http", "containerPort": NEKO_PORT},
+                           {"name": "media", "containerPort": NEKO_UDPMUX, "protocol": "UDP"}],
+                 "readinessProbe": {"tcpSocket": {"port": NEKO_PORT}, "initialDelaySeconds": 8,
                                     "periodSeconds": 3, "failureThreshold": 90},
-                 "volumeMounts": [{"name": "profile", "mountPath": "/config"}],
-                 "resources": {"requests": {"cpu": "300m", "memory": "1600Mi"}, "limits": {"memory": "3584Mi"}}},
+                 "volumeMounts": [
+                     {"name": "profile", "mountPath": "/home/neko/.config/chromium"},
+                     {"name": "shm", "mountPath": "/dev/shm"},
+                     {"name": "chrome-policy", "mountPath": "/etc/chromium/policies/managed", "readOnly": True}],
+                 # ~1.2 cores while a video plays (~0 idle) — request ~1 core so the
+                 # scheduler doesn't over-pack + CFS-throttle the encoder; no CPU
+                 # limit (house policy). Mem 2.5Gi: neko + Chromium + the memory shm.
+                 "resources": {"requests": {"cpu": "1", "memory": "2560Mi"}, "limits": {"memory": "2560Mi"}}},
             ],
-            "volumes": [{"name": "profile", "persistentVolumeClaim": {"claimName": _pvc_name(userkey)}}],
+            # Spread browsers across the (node2-5) workers so several active-video
+            # streams don't pile onto one node.
+            "affinity": {"podAntiAffinity": {"preferredDuringSchedulingIgnoredDuringExecution": [{
+                "weight": 100, "podAffinityTerm": {"topologyKey": "kubernetes.io/hostname",
+                    "labelSelector": {"matchLabels": {"app": "proxy-browser"}}}}]}},
+            "volumes": [
+                {"name": "profile", "persistentVolumeClaim": {"claimName": _pvc_name(userkey)}},
+                {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "1Gi"}},
+                {"name": "chrome-policy", "configMap": {"name": "proxy-chrome-policy"}}],
         },
     }
 
@@ -347,7 +432,7 @@ def build_br_service(userkey):
             "metadata": {"name": _br_name(userkey), "namespace": NS,
                          "labels": {"app": "proxy-browser", "proxy/user": userkey}},
             "spec": {"selector": {"proxy/user": userkey},
-                     "ports": [{"name": "novnc", "port": 6080, "targetPort": 6080}]}}
+                     "ports": [{"name": "http", "port": NEKO_PORT, "targetPort": NEKO_PORT}]}}
 
 
 def build_br_ingress(userkey, token):
@@ -356,16 +441,16 @@ def build_br_ingress(userkey, token):
             "metadata": {"name": _br_name(userkey), "namespace": NS,
                          "labels": {"app": "proxy-browser", "proxy/user": userkey},
                          # No auth middleware: an Authentik forward-auth breaks the
-                         # KasmVNC WebSocket, so the unguessable per-user subdomain
-                         # is the gate. Own subdomain => KasmVNC serves at root and
-                         # its absolute /websockify + assets route to this browser.
+                         # neko signaling WebSocket, so the unguessable per-user
+                         # subdomain (+ the token as neko's member password) is the
+                         # gate. Entry is Authentik-gated upstream at the broker UI.
                          "annotations": {
                              "traefik.ingress.kubernetes.io/router.entrypoints": "websecure"}},
             "spec": {"ingressClassName": "traefik",
                      "tls": [{"hosts": [host], "secretName": TLS_SECRET}],
                      "rules": [{"host": host, "http": {"paths": [{
                          "path": "/", "pathType": "Prefix",
-                         "backend": {"service": {"name": _br_name(userkey), "port": {"number": 6080}}}}]}}]}}
+                         "backend": {"service": {"name": _br_name(userkey), "port": {"number": NEKO_PORT}}}}]}}]}}
 
 
 # ------------------------------------------------------------------ state reads
