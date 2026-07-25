@@ -4,12 +4,16 @@
 # per-user PVC mounted at /config (Chrome writes to /config/profile).
 export HOME=/config
 mkdir -p /config/profile
+# --start-maximized (NOT --start-fullscreen: fullscreen hides the address bar/
+# tabs so users can't navigate). The KasmVNC session dynamically resizes the X
+# screen to the client (resize=remote); openbox keeps a maximized window filling
+# it. Chrome's own window controls (address bar, tabs) stay visible.
 while true; do
   /usr/bin/google-chrome-stable \
     --no-sandbox --disable-dev-shm-usage \
     --user-data-dir=/config/profile \
     --no-first-run --no-default-browser-check \
     --password-store=basic --use-mock-keychain \
-    --start-maximized --start-fullscreen about:blank
+    --start-maximized about:blank
   sleep 2
 done
