@@ -1,0 +1,15 @@
+#!/bin/bash
+# Single-app KasmVNC session: run Chrome as the whole "desktop". The restart
+# loop survives a browser crash without killing the pod. Profile persists on the
+# per-user PVC mounted at /config (Chrome writes to /config/profile).
+export HOME=/config
+mkdir -p /config/profile
+while true; do
+  /usr/bin/google-chrome-stable \
+    --no-sandbox --disable-dev-shm-usage \
+    --user-data-dir=/config/profile \
+    --no-first-run --no-default-browser-check \
+    --password-store=basic --use-mock-keychain \
+    --start-maximized --start-fullscreen about:blank
+  sleep 2
+done
