@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Proxy</title>
 <style>
-  :root { color-scheme: light dark; --bg:#0f1220; --card:#191d2f; --mut:#8b91a7; --acc:#5b8cff; --ok:#3fb950; --bd:#2a3050; }
+  :root { color-scheme: light dark; --bg:#0f1220; --card:#191d2f; --mut:#8b91a7; --acc:#5b8cff; --ok:#3fb950; --warn:#d29922; --bd:#2a3050; }
   * { box-sizing: border-box; }
   body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:#e8eaf3; }
-  .wrap { max-width:760px; margin:0 auto; padding:28px 18px 60px; }
+  .wrap { max-width:680px; margin:0 auto; padding:28px 18px 60px; }
   h1 { font-size:22px; margin:0 0 4px; }
   .sub { color:var(--mut); margin:0 0 22px; }
   .card { background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:18px; margin-bottom:18px; }
@@ -19,38 +19,39 @@
   .row > div { flex:1; }
   button { padding:11px 18px; border:0; border-radius:9px; background:var(--acc); color:#fff; cursor:pointer; font-weight:600; }
   button:disabled { opacity:.5; cursor:default; }
-  button.ghost { background:transparent; border:1px solid var(--bd); color:#e8eaf3; font-weight:500; padding:7px 12px; }
-  .sess { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--bd); }
-  .sess:first-child { border-top:0; }
-  .sess .c { flex:1; }
-  .badge { font-size:12px; padding:2px 8px; border-radius:20px; background:#20263f; color:var(--mut); }
+  button.ghost { background:transparent; border:1px solid var(--bd); color:#e8eaf3; font-weight:500; padding:8px 14px; }
+  .status { display:flex; align-items:center; gap:12px; }
+  .status .c { flex:1; font-weight:600; }
+  .badge { font-size:12px; padding:3px 10px; border-radius:20px; background:#20263f; color:var(--mut); }
   .badge.ready { background:#12351d; color:var(--ok); }
-  a.open { color:var(--acc); text-decoration:none; font-weight:600; }
+  .badge.warn { background:#3a2f12; color:var(--warn); }
+  a.open { color:#fff; background:var(--acc); padding:9px 16px; border-radius:9px; text-decoration:none; font-weight:600; }
   .empty { color:var(--mut); font-size:14px; }
   .note { color:var(--mut); font-size:12.5px; margin-top:14px; }
-  #msg { min-height:18px; font-size:13px; color:var(--acc); margin-top:8px; }
+  #msg { min-height:18px; font-size:13px; color:var(--acc); margin-top:10px; }
+  .actions { display:flex; gap:10px; margin-top:14px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>🌍 Proxy</h1>
-  <p class="sub">Open a remote browser that surfs from a country of your choice, tunnelled through NordVPN.</p>
+  <p class="sub">Your own remote browser that surfs from a country of your choice, tunnelled through NordVPN. Your logins and open tabs are saved between visits.</p>
 
   <div class="card">
     <div class="row">
       <div>
-        <label for="country">Country</label>
+        <label for="country">Exit country</label>
         <select id="country"></select>
       </div>
       <button id="launch">Launch</button>
     </div>
     <div id="msg"></div>
-    <div class="note">Sessions are ephemeral (fresh browser, nothing saved) and auto-close after 60 minutes. Up to <span id="max">4</span> can run at once.</div>
+    <div class="note">You get one persistent browser. Pick a country at launch; relaunch to switch (your profile follows you). The tunnel handshake takes ~60–90s on a fresh launch. Up to <span id="max">6</span> countries run across all users at once.</div>
   </div>
 
   <div class="card">
-    <label>Active sessions</label>
-    <div id="sessions"></div>
+    <label>Your browser</label>
+    <div id="mybrowser"><div class="empty">None yet — launch one above.</div></div>
   </div>
 </div>
 
@@ -63,38 +64,37 @@ function el(tag, cls, text){ const n=document.createElement(tag); if(cls) n.clas
 
 async function loadCountries(){
   const d = await j('/api/countries');
-  $('#max').textContent = d.max;
+  $('#max').textContent = d.max_countries;
   const sel = $('#country'); sel.textContent='';
   d.countries.forEach(c => { const o=el('option',null,c); o.value=c; sel.appendChild(o); });
 }
 
-function render(sessions){
-  const box = $('#sessions'); box.textContent='';
-  if(!sessions.length){ box.appendChild(el('div','empty','None yet.')); return; }
-  sessions.sort((a,b)=>b.started-a.started).forEach(s=>{
-    const row = el('div','sess');
-    const c = el('div','c'); c.appendChild(el('span',null,s.country||'?')); row.appendChild(c);
-    row.appendChild(el('span','badge'+(s.ready?' ready':''), s.ready?'ready':(s.phase||'starting')));
-    if(s.ready){ const a=el('a','open','Open ↗'); a.href=s.url; a.target='_blank'; a.rel='noopener'; row.appendChild(a); }
-    const kill = el('button','ghost','Close');
-    kill.onclick = async ()=>{ kill.disabled=true; try{ await j('/api/session/'+encodeURIComponent(s.session),{method:'DELETE'}); }catch(e){} refresh(); };
-    row.appendChild(kill);
-    box.appendChild(row);
-  });
+function render(b){
+  const box = $('#mybrowser'); box.textContent='';
+  if(!b){ box.appendChild(el('div','empty','None yet — launch one above.')); return; }
+  const row = el('div','status');
+  const c = el('div','c'); c.appendChild(el('span',null,'📍 '+(b.country||'?'))); row.appendChild(c);
+  row.appendChild(el('span','badge'+(b.ready?' ready':' warn'), b.ready?'ready':(b.phase||'starting')));
+  if(b.ready){ const a=el('a','open','Open ↗'); a.href=b.url; a.target='_blank'; a.rel='noopener'; row.appendChild(a); }
+  box.appendChild(row);
+  const actions = el('div','actions');
+  const stop = el('button','ghost','Stop browser');
+  stop.onclick = async ()=>{ stop.disabled=true; $('#msg').textContent='Stopping…'; try{ await j('/api/browser',{method:'DELETE'}); }catch(e){} $('#msg').textContent=''; refresh(); };
+  actions.appendChild(stop);
+  box.appendChild(actions);
 }
 
-async function refresh(){ try{ render((await j('/api/sessions')).sessions); }catch(e){} }
+async function refresh(){ try{ render((await j('/api/me')).browser); }catch(e){} }
 
 $('#launch').onclick = async ()=>{
   const btn=$('#launch'), country=$('#country').value;
-  btn.disabled=true; $('#msg').textContent='Starting a browser in '+country+'… (tunnel handshake ~30-60s)';
+  btn.disabled=true; $('#msg').textContent='Launching your browser in '+country+'… (tunnel handshake ~60–90s)';
   try{
-    const res = await j('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({country})});
-    for(let i=0;i<40;i++){
+    const res = await j('/api/browser',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({country})});
+    for(let i=0;i<50;i++){
       await new Promise(r=>setTimeout(r,3000));
-      const list=(await j('/api/sessions')).sessions; render(list);
-      const s=list.find(x=>x.session===res.session);
-      if(s && s.ready){ $('#msg').textContent='Ready — opening…'; window.open(res.url,'_blank','noopener'); break; }
+      const b=(await j('/api/me')).browser; render(b);
+      if(b && b.ready && b.country===country){ $('#msg').textContent='Ready — opening…'; window.open(res.url,'_blank','noopener'); break; }
     }
   }catch(e){ $('#msg').textContent='Error: '+e.message; }
   btn.disabled=false; refresh();

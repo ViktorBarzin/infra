@@ -78,8 +78,12 @@ resource "kubernetes_role" "broker" {
   }
   rule {
     api_groups = [""]
-    resources  = ["pods", "services", "secrets"]
-    verbs      = ["get", "list", "watch", "create", "delete", "patch"]
+    # pods/services/secrets: gateway + browser pods and their per-object secrets.
+    # configmaps: per-gateway WireGuard peers list (the broker maintains it; the
+    # gateway sidecar reconciles wg0 from it). persistentvolumeclaims: per-user
+    # encrypted browser profiles. "update" is needed for PUT-replace (_apply).
+    resources = ["pods", "services", "secrets", "configmaps", "persistentvolumeclaims"]
+    verbs     = ["get", "list", "watch", "create", "delete", "patch", "update"]
   }
   rule {
     api_groups = [""]
@@ -131,6 +135,8 @@ resource "kubernetes_config_map_v1" "broker_scripts" {
   }
   data = {
     "broker.py"  = file("${path.module}/files/broker/broker.py")
+    "pool.py"    = file("${path.module}/files/broker/pool.py")
+    "wgkeys.py"  = file("${path.module}/files/broker/wgkeys.py")
     "index.html" = file("${path.module}/files/broker/index.html")
   }
 }
@@ -190,13 +196,12 @@ resource "kubernetes_deployment" "broker" {
             name  = "TLS_SECRET"
             value = var.tls_secret_name
           }
+          # Reap a country gateway (freeing its NordVPN tunnel slot) after it has
+          # carried no browsers for this long. Browsers themselves are persistent
+          # (no deadline) — the profile PVC survives regardless.
           env {
-            name  = "MAX_SESSIONS"
-            value = "4"
-          }
-          env {
-            name  = "SESSION_DEADLINE_SECONDS"
-            value = "3600"
+            name  = "GW_IDLE_SECONDS"
+            value = "600"
           }
           env {
             name  = "PORT"
@@ -289,13 +294,13 @@ module "ingress" {
   service_name    = kubernetes_service.broker.metadata[0].name
   port            = 8080
   tls_secret_name = var.tls_secret_name
-  # auth = "none": Viktor asked to drop the Authentik gate (2026-07-25, "turn off
-  # authentik for now"). Accepted risk: this is a publicly-reachable remote
-  # browser that egresses via the NordVPN account. The broker still hard-caps
-  # concurrent sessions (MAX_SESSIONS=4). Re-gate by reverting to auth="required".
-  # The Proxy Users group / proxy_only policy / social invite stay in place but
-  # dormant while ungated.
-  auth = "none"
+  # Authentik forward-auth gates the UI + API: the broker keys each user's own
+  # persistent browser + encrypted profile on the X-authentik-username identity
+  # header, so login is required (re-gated 2026-07-25 for the per-user scale-up,
+  # infra#81 — greenfield, no users to disrupt). The per-session noVNC ingresses
+  # the broker creates (/s/<token>) stay auth=none — an Authentik forward-auth
+  # breaks the noVNC WebSocket — gated instead by the unguessable per-user token.
+  auth = "required"
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/name"        = "Proxy"
@@ -305,9 +310,11 @@ module "ingress" {
   }
 }
 
-# Namespace quota: broker + up to 4 session pods (each ~1.9Gi req / ~3.5Gi lim
-# across gluetun+chrome+novnc). count/pods is the runaway-create backstop
-# (broker self-limits to MAX_SESSIONS=4); requests.memory bounds a full house.
+# Namespace quota: broker + up to ~6 country gateways (each ~130Mi req across
+# gluetun+wgserver) + up to ~10 user browsers (each ~1.7Gi req / ~3.5Gi lim
+# across gluetun+chrome+novnc). count/pods is the runaway-create backstop; the
+# broker self-limits countries to MAX_COUNTRIES-RESERVED (pool.py), browsers are
+# one-per-user; requests.memory bounds a full house.
 resource "kubernetes_resource_quota" "proxy" {
   metadata {
     name      = "proxy"
@@ -315,10 +322,27 @@ resource "kubernetes_resource_quota" "proxy" {
   }
   spec {
     hard = {
-      "requests.cpu"    = "2"
-      "requests.memory" = "9Gi"
-      "limits.memory"   = "16Gi"
-      "count/pods"      = "8"
+      "requests.cpu"    = "4"
+      "requests.memory" = "20Gi"
+      "limits.memory"   = "40Gi"
+      "count/pods"      = "28"
     }
+  }
+}
+
+# Gateway pods request the net.ipv4.ip_forward unsafe sysctl, which the kubelet
+# only allows on the general workers node2-5 (allowedUnsafeSysctls, infra#81 —
+# NOT master/GPU-node1). A pod requesting it elsewhere is rejected SysctlForbidden,
+# so we label those nodes and nodeSelector gateways onto them. kubernetes_labels
+# manages only this one label (coexists with node's other labels).
+resource "kubernetes_labels" "gateway_nodes" {
+  for_each    = toset(["k8s-node2", "k8s-node3", "k8s-node4", "k8s-node5"])
+  api_version = "v1"
+  kind        = "Node"
+  metadata {
+    name = each.value
+  }
+  labels = {
+    "proxy.viktorbarzin.me/gateway" = "true"
   }
 }
