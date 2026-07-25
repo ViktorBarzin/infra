@@ -63,10 +63,10 @@
 | kadir.tugan@gmail.com | Kadir | internal | Wrongmove Users |
 
 ## Login Sources
-- **Google** (OAuth) -- user matching by identifier
+- **Google** (OAuth) -- user matching by identifier. **Enrollment flow = `google-proxy-enrollment`** (TF: `stacks/authentik/google-social-signup.tf`), NOT `invitation-enrollment`. Invite-gated proxy self-signup: a `capture-proxy-invite` policy on the invite landing stashes "valid proxy invite seen" in the session-keyed Postgres cache (`proxy_invite_ok:<session_key>`, the only thing that survives the Google OAuth round-trip — the flow plan / itoken do not); `validate-proxy-invite` on the enrollment write-stage DENIES unless that flag is set, else stamps `attributes.proxy_only=true` + a username (from the Google email) and posts to Slack `#alerts` synchronously. A direct hit on `/source/oauth/login/google/` with no invite is denied. WHY this exists: an Authentik invitation can't ride through the source OAuth redirect, so the original invite-gated social signup never worked (memory #10194 residual). The source→flow linkage is set at runtime (source is not TF-managed).
 - **GitHub** (OAuth) -- user matching by email_link
 - **Facebook** (OAuth) -- user matching by email_link
-- All sources use `invitation-enrollment` as enrollment flow (new users require invitation)
+- GitHub/Facebook still use `invitation-enrollment` as enrollment flow (new users require invitation) — and are subject to the SAME broken-invite-through-OAuth limitation as Google was; only Google has the session-cache bridge so far.
 
 ## Authorization Flows
 - **Explicit consent** (`default-provider-authorization-explicit-consent`): Shows consent screen — no provider uses it since 2026-06-10
