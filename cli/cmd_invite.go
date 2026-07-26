@@ -51,20 +51,46 @@ Google/passkey, and enters the code — they land in <name> and nothing else.
 
 // --- pure, tested helpers --------------------------------------------------
 
-// inviteAlphabet is 32 unambiguous chars (no 0/O/1/I/L) for a typeable code.
+// inviteAlphabet is 32 unambiguous chars for a typeable code: A-Z without I/O
+// and digits without 0/1, so there is no O/0 or I/1 confusion. 32 divides 256,
+// so byte % 32 introduces no modulo bias.
 const inviteAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
-// genInviteCode returns an 8-char code from inviteAlphabet (~10^12 space).
+// inviteCodeLen is the number of symbols in a generated code. 6 symbols of the
+// 32-char alphabet ≈ 1.07e9 combinations — ample for single-use, expiring,
+// server-validated invites, and short enough to type comfortably.
+const inviteCodeLen = 6
+
+// genInviteCode returns a canonical (undashed, upper-case) invite code.
 func genInviteCode() (string, error) {
-	b := make([]byte, 8)
+	b := make([]byte, inviteCodeLen)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	out := make([]byte, 8)
+	out := make([]byte, inviteCodeLen)
 	for i, c := range b {
 		out[i] = inviteAlphabet[int(c)%len(inviteAlphabet)]
 	}
 	return string(out), nil
+}
+
+// normalizeCode canonicalizes a user-typed code so matching is forgiving:
+// upper-case, with spaces and dashes removed. Stored codes are already canonical.
+func normalizeCode(s string) string {
+	s = strings.ToUpper(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "-", "")
+	s = strings.ReplaceAll(s, " ", "")
+	return s
+}
+
+// formatCode inserts a single dash at the midpoint for readability
+// (R7KM4Q -> R7K-M4Q). Codes are always stored and compared without the dash.
+func formatCode(code string) string {
+	if len(code) < 2 {
+		return code
+	}
+	mid := len(code) / 2
+	return code[:mid] + "-" + code[mid:]
 }
 
 // parseExpiry turns "7d" / "48h" / "30m" into a Duration ("d" = 24h; the Go
@@ -313,10 +339,10 @@ func inviteCreate(args []string) error {
 	if err := c.createInvite(payload); err != nil {
 		return err
 	}
-	fmt.Printf("invite code: %s\n", code)
+	fmt.Printf("invite code: %s\n", formatCode(code))
 	fmt.Printf("  group:     %s\n", group)
 	fmt.Printf("  single-use: %v   expires: %s\n", uses == 1, time.Now().Add(dur).Format("2006-01-02 15:04 MST"))
-	fmt.Printf("  → share the code; the invitee signs in at any gated service (Google/passkey) and enters it.\n")
+	fmt.Printf("  → share the code; the invitee signs in at any gated service (Google/passkey) and enters it (case- and dash-insensitive).\n")
 	return nil
 }
 
@@ -334,7 +360,7 @@ func inviteList(args []string) error {
 		return nil
 	}
 	for _, i := range invites {
-		fmt.Printf("%-8s  group=%-20s single-use=%-5v expires=%s\n", i.code(), i.group(), i.SingleUse, i.Expires)
+		fmt.Printf("%-9s  group=%-20s single-use=%-5v expires=%s\n", formatCode(i.code()), i.group(), i.SingleUse, i.Expires)
 	}
 	return nil
 }
@@ -344,6 +370,7 @@ func inviteRevoke(args []string) error {
 	if code == "" {
 		return fmt.Errorf("usage: homelab invite revoke <code>")
 	}
+	code = normalizeCode(code)
 	c, err := newAkClient()
 	if err != nil {
 		return err

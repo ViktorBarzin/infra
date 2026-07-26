@@ -13,8 +13,8 @@ func TestGenInviteCode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("genInviteCode: %v", err)
 		}
-		if len(c) != 8 {
-			t.Fatalf("code %q length = %d, want 8", c, len(c))
+		if len(c) != inviteCodeLen {
+			t.Fatalf("code %q length = %d, want %d", c, len(c), inviteCodeLen)
 		}
 		for _, r := range c {
 			if !strings.ContainsRune(inviteAlphabet, r) {
@@ -23,8 +23,39 @@ func TestGenInviteCode(t *testing.T) {
 		}
 		seen[c] = true
 	}
-	if len(seen) < 190 { // 200 draws from ~10^12 should essentially never collide
+	if len(seen) < 190 { // 200 draws from ~10^9 should essentially never collide
 		t.Fatalf("only %d unique codes in 200 draws — entropy too low", len(seen))
+	}
+}
+
+func TestNormalizeCode(t *testing.T) {
+	cases := map[string]string{
+		"r7k-m4q":  "R7KM4Q", // lower-case + dash
+		"R7K M4Q":  "R7KM4Q", // internal space
+		" r7km4q ": "R7KM4Q", // surrounding whitespace
+		"R7KM4Q":   "R7KM4Q", // already canonical
+		"p8m8-y4xw": "P8M8Y4XW", // legacy 8-char still normalizes
+	}
+	for in, want := range cases {
+		if got := normalizeCode(in); got != want {
+			t.Errorf("normalizeCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestFormatCode(t *testing.T) {
+	cases := map[string]string{
+		"R7KM4Q":   "R7K-M4Q",   // 6 chars -> 3-3
+		"P8M8Y4XW": "P8M8-Y4XW", // legacy 8 chars -> 4-4 still renders
+	}
+	for in, want := range cases {
+		if got := formatCode(in); got != want {
+			t.Errorf("formatCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// A displayed code must normalize back to its canonical stored form.
+	if got := normalizeCode(formatCode("R7KM4Q")); got != "R7KM4Q" {
+		t.Errorf("round-trip normalize(format(R7KM4Q)) = %q, want R7KM4Q", got)
 	}
 }
 
