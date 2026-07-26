@@ -194,11 +194,10 @@ EOT
   )
 }
 
-resource "authentik_policy_binding" "validate_on_write" {
-  target = authentik_flow_stage_binding.gpe_write.id
-  policy = authentik_policy_expression.validate_proxy_invite.id
-  order  = 0
-}
+# validate_on_write REMOVED (infra#82 Phase 3): the invite is now validated by the
+# invite-code prompt (invite-flow.tf) BEFORE the write stage, so the write no
+# longer needs the cache-bridge validate. The validate-proxy-invite policy is left
+# orphaned here and deleted in the Phase-4 bridge cleanup.
 
 # -----------------------------------------------------------------------------
 # assign-proxy-group: add the just-enrolled user to the "Proxy Users" group, so
@@ -231,11 +230,9 @@ EOT
   )
 }
 
-resource "authentik_policy_binding" "assign_proxy_group_on_login" {
-  target = authentik_flow_stage_binding.gpe_login.id
-  policy = authentik_policy_expression.assign_proxy_group.id
-  order  = 0
-}
+# assign_proxy_group_on_login REMOVED (infra#82 Phase 3): replaced by
+# assign_invite_group_on_login (invite-flow.tf), which adds the invite's
+# target_group instead of hardcoding "Proxy Users".
 
 # -----------------------------------------------------------------------------
 # Slack transport used (synchronously) by validate-proxy-invite. Reuses the
