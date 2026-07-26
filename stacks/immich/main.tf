@@ -352,8 +352,12 @@ resource "kubernetes_deployment" "immich_server" {
           resources {
             requests = {
               cpu = "100m"
-              # 7-day peak ~5.65Gi; right-sized 8Gi->7Gi 2026-07-06 (node-loss headroom).
-              memory = "7Gi"
+              # 14d median ~2.9Gi / peak ~8.6Gi. Request lowered 7Gi->3584Mi 2026-07-26 —
+              # REVERSES the 2026-07-06 reserve-peak call: reserving peak on every worker
+              # over-sums the N-1 total and fired ClusterCannotTolerateNonGpuNodeLoss (+ the
+              # code-j3tx node1-reboot starvation). Spikes ride the 10Gi limit below
+              # (Burstable); node-OOM risk unchanged (limit untouched).
+              memory = "3584Mi"
             }
             limits = {
               # 30d peak is 8.1Gi and the 7Gi req=lim cut OOMKilled it 2026-07-12;
@@ -790,8 +794,10 @@ resource "kubernetes_deployment" "immich-postgres" {
           resources {
             requests = {
               cpu = "100m"
-              # 7-day peak ~2.57Gi; right-sized 5Gi->4Gi 2026-07-06 (node-loss headroom).
-              memory = "4Gi"
+              # 14d median ~2.3Gi / peak ~3.6Gi. Request lowered 4Gi->3Gi 2026-07-26
+              # (reverses the 2026-07-06 reserve-peak call) to free N-1 scheduler headroom;
+              # 3Gi req stays above observed peak, spikes ride the 4Gi limit (Burstable).
+              memory = "3Gi"
             }
             limits = {
               memory = "4Gi"

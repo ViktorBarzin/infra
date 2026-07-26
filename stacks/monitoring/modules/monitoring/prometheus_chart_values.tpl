@@ -358,7 +358,11 @@ server:
   resources:
     requests:
       cpu: 100m
-      memory: 4Gi
+      # Request lowered 4Gi->3Gi 2026-07-26 to free N-1 scheduler headroom
+      # (ClusterCannotTolerateNonGpuNodeLoss). Limit stays 4Gi — the ">= 4Gi"
+      # note above is about the cgroup LIMIT (WAL-replay OOM), which is preserved;
+      # real working-set is 14d median ~1.4Gi / peak ~2.6Gi.
+      memory: 3Gi
     limits:
       memory: 4Gi
   livenessProbeInitialDelay: 300
