@@ -93,6 +93,11 @@ host = request.context.get("host", "")
 if not host:
     return True
 
+# BREAK-GLASS (Viktor's explicit invariant, 2026-07-26): admins ALWAYS pass,
+# evaluated BEFORE the table so no generator/table state can lock out the owner.
+if ak_is_group_member(request.user, name="authentik Admins") or ak_is_group_member(request.user, name="Home Server Admins"):
+    return True
+
 # HOST_GROUPS is GENERATED from ingress `allowed-groups` annotations (see below).
 allowed = HOST_GROUPS.get(host)
 if not allowed:
@@ -101,16 +106,26 @@ return any(ak_is_group_member(request.user, name=g) for g in allowed)
 ```
 
 Every prior special case becomes a **row**:
-- `chrome` identity allow-list → the `Chrome Users` group (kept tighter than admin).
+- `chrome` identity allow-list → the `Chrome Users` group.
 - `t3` → `["T3 Users"]`, `proxy` → `["Proxy Users", "Home Server Admins"]`.
 - `k8s` dashboard carve-out → `["kubernetes-admins", "kubernetes-power-users",
   "kubernetes-namespace-owners", "Home Server Admins"]`.
+- `postiz` → `["Postiz Users", "Home Server Admins"]` (added after the live
+  zero-lockout audit found Anca in `Postiz Users` on a forward-auth host).
 - `proxy_only` **attribute** path is deleted — confinement is now pure `Proxy Users`
   membership.
 
-**Admins are not god-mode.** They reach everything only because `Home Server Admins` is
-the *default* row; `chrome` and `t3` deliberately omit it (tighter than admin,
-preserving today's behavior).
+**Admin access is guaranteed at all times.** The break-glass bypass above admits
+`authentik Admins` / `Home Server Admins` on *every* forward-auth host, before the
+table is even consulted — so the flip can only ever *expand* an admin's access,
+never shrink it, regardless of generator or table state. The per-host rows gate
+non-admins precisely. (This supersedes the earlier "chrome/t3 tighter than admin"
+idea — the owner's no-lockout requirement takes priority; those hosts still admit
+only their group for non-admins.)
+
+**TripIt note:** TripIt's only `auth="required"` ingress is `/metrics` (admin-only
+by default); TripIt-the-app is `auth="none"` and TripIt Users are gated by its
+OIDC app binding (infra#82), *not* this table — so no `tripit` row is needed here.
 
 ## Source of truth + generator
 
