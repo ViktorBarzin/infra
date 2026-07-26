@@ -140,3 +140,6 @@ resource "kubectl_manifest" "sync_ghcr_credentials" {
     kubernetes_cluster_role_binding.kyverno_background_secret_manager,
   ]
 }
+
+# re-fire 2026-07-25: ensure the interview-prep-app allowlist entry is applied
+# (prior pipeline superseded before apply).
