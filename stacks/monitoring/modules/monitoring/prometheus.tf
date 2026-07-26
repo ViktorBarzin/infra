@@ -54,7 +54,17 @@ resource "helm_release" "prometheus" {
   # version    = "15.0.2"
   version = "25.8.2"
 
-  timeout = 900 # 15 min — Recreate strategy + iSCSI reattach is slow
+  # wait=false: do NOT block the apply on the slow Recreate + WAL-replay roll.
+  # Blocking held an ~15-min in-flight `helm upgrade` that Woodpecker's
+  # cancel-on-new-push SIGKILLed mid-flight, wedging the release in
+  # `pending-upgrade` (#6073 — recurred 4x on 2026-07-26) and taking the later
+  # stacks in the same CI run down with it (immich never applied). With
+  # wait=false helm writes the manifests and returns in ~1-2s; the pod still
+  # rolls async (expected ~1-2min prometheus blip, memory #8956) and a failed
+  # roll is caught by PrometheusDown + cluster_healthcheck #18, not by a blocked
+  # apply. The helm-unstick CronJob (helm_unstick.tf) mops up any residual wedge.
+  wait    = false
+  timeout = 900 # ceiling for the (now non-blocking) rollout
   # force_update disabled 2026-04-23: caused Helm to try replacing the bound
   # pushgateway PVC (added in rev 188, see commit e51c104), which is immutable.
   # Re-enable temporarily only when a StatefulSet volumeClaimTemplate change needs --force.
