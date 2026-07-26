@@ -122,6 +122,20 @@ try:
 except Exception:
     token = None
 sk = getattr(http.session, "session_key", None)
+# A FRESH/incognito visitor has no session_key yet: authentik's session engine
+# mints it lazily on the first save, and this policy runs on the FIRST executor
+# request BEFORE that save. So sk was None, the guard below skipped, and the
+# invite flag was never written -> validate-proxy-invite then denied every
+# clean-browser signup with "No Pending user to login" (root-caused 2026-07-26;
+# it only ever worked for testers who already had an authentik session). Force
+# the key now, ONLY when there is an itoken to bridge, so capture and the
+# post-OAuth validate share one stable session_key.
+if token and not sk:
+    try:
+        http.session.save()
+        sk = http.session.session_key
+    except Exception:
+        sk = None
 if token and sk:
     try:
         inv = Invitation.objects.get(pk=token)
