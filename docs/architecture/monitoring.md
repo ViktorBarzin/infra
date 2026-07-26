@@ -247,9 +247,9 @@ spec:
 #### Infrastructure Alerts
 - **OOMKill**: Container killed due to out-of-memory
 - **PodReplicaMismatch**: Deployment/StatefulSet replica count doesn't match desired
-- **ClusterMemoryRequestsHigh**: Cluster memory requests >85%
-- **ContainerNearOOM**: Container using >85% of memory limit
-- **PodUnschedulable**: Pod cannot be scheduled due to resource constraints
+- **ClusterCannotTolerateNonGpuNodeLoss**: N-1 memory-request headroom — the busiest non-GPU node's requests exceed the free capacity on the rest of the pool (the real headroom alert; `ClusterMemoryRequestsHigh`/`ContainerNearOOM` never existed)
+- **ContainerOOMKilled**: a container was OOM-killed
+- **PodStuckPending**: pod scheduled-but-not-starting / unschedulable (FailedMount / attach-wedge / image-pull / resource)
 - **CPUTemp**: CPU temperature threshold exceeded
 - **SSDWrites**: Excessive SSD write volume
 - **NFSResponsiveness**: NFS mount latency issues
