@@ -201,6 +201,43 @@ resource "authentik_policy_binding" "validate_on_write" {
 }
 
 # -----------------------------------------------------------------------------
+# assign-proxy-group: add the just-enrolled user to the "Proxy Users" group, so
+# proxy signups are VISIBLE + manageable as a group (Viktor's explicit ask,
+# 2026-07-26 -- "a link that lets a user sign up and be added to the proxy users
+# group"), not only via the invisible proxy_only attribute. Bound to the
+# enrollment LOGIN stage, which runs AFTER the write stage has created + saved
+# the user, so context["pending_user"] exists and can be added to the M2M (the
+# write stage's policies run before the user exists, so the group can't be added
+# there). admin-services-restriction already grants proxy access to "Proxy Users"
+# members, so group membership is now the primary grant; the proxy_only attribute
+# stays as belt-and-suspenders. Side-effect-in-policy mirrors
+# validate-proxy-invite's established pattern in this flow. Always returns True so
+# it never blocks login.
+# -----------------------------------------------------------------------------
+resource "authentik_policy_expression" "assign_proxy_group" {
+  name = "assign-proxy-group"
+  expression = trimspace(<<-EOT
+from authentik.core.models import Group
+u = request.context.get("pending_user")
+if u is not None and getattr(u, "pk", None):
+    try:
+        g = Group.objects.filter(name="Proxy Users").first()
+        if g is not None:
+            u.ak_groups.add(g)
+    except Exception:
+        pass
+return True
+EOT
+  )
+}
+
+resource "authentik_policy_binding" "assign_proxy_group_on_login" {
+  target = authentik_flow_stage_binding.gpe_login.id
+  policy = authentik_policy_expression.assign_proxy_group.id
+  order  = 0
+}
+
+# -----------------------------------------------------------------------------
 # Slack transport used (synchronously) by validate-proxy-invite. Reuses the
 # #alerts webhook. send_once is set but irrelevant on the direct-call path.
 # -----------------------------------------------------------------------------
