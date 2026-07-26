@@ -1,6 +1,6 @@
 ---
 title: Proxy visit tracking — capture, dashboard, daily digest
-status: approved
+status: done
 date: 2026-07-26
 owner: Viktor
 project: infra
