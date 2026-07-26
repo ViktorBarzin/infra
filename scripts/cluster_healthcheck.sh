@@ -2311,14 +2311,18 @@ ts = None
 for line in sys.stdin:
     if line.startswith("#"):
         continue
-    if "backup_last_success_timestamp" in line and "offsite-backup-sync" in line:
+    if "backup_last_success_timestamp" in line and "offsite-backup-sync" in line and ts is None:
         m = re.search(r"\s([0-9.eE+]+)\s*$", line.strip())
         if m:
             try:
                 ts = float(m.group(1))
-                break
             except ValueError:
                 pass
+    # NOTE: intentionally NO early `break` — the parent shell runs `set -o pipefail`,
+    # so exiting stdin early makes the upstream `echo "$metrics"` take SIGPIPE and the
+    # whole $(...) exit non-zero -> a spurious "Parse error" (WARN) whenever this
+    # metric was not the last line. The `ts is None` guard keeps first-match
+    # semantics while draining to EOF. (Fixed 2026-07-26.)
 if ts is None:
     print("missing")
 else:
