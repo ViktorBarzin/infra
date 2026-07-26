@@ -117,3 +117,6 @@ module "ingress" {
     "gethomepage.dev/pod-selector" = "app=interview-prep-app"
   }
 }
+
+# re-fire apply 2026-07-25: prior merge pipeline (832) was superseded by a
+# following push before applying (infra CI HEAD~1/supersession gap, mem #5028).
