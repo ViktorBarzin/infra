@@ -85,6 +85,8 @@ module "ingress" {
   # on first visit. Cross-origin clients (native app / app.t3.codes) are
   # intentionally NOT supported here — deferred until the native app is published.
   auth = "required"
+  # ADR-0023: only T3 Users reach t3 (non-admin T3 users need this row); admins via bypass.
+  allowed_groups = ["T3 Users"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "T3 Code"

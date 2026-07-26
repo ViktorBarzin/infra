@@ -360,6 +360,8 @@ module "ingress" {
   # the broker creates (/s/<token>) stay auth=none — an Authentik forward-auth
   # breaks the noVNC WebSocket — gated instead by the unguessable per-user token.
   auth = "required"
+  # ADR-0023: proxy guests (Proxy Users) reach ONLY this host; admins via bypass.
+  allowed_groups = ["Proxy Users", "Home Server Admins"]
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/name"        = "Proxy"

@@ -101,11 +101,14 @@ module "ingress" {
   # access AND injects X-authentik-username; the injector maps that to the user's
   # ServiceAccount token and sets Authorization: Bearer so the dashboard skips its
   # token-paste login. See dashboard_injector.tf.
-  service_name     = "dashboard-token-injector"
-  host             = "k8s"
-  dns_type         = "proxied"
-  tls_secret_name  = var.tls_secret_name
-  auth             = "required"
+  service_name    = "dashboard-token-injector"
+  host            = "k8s"
+  dns_type        = "proxied"
+  tls_secret_name = var.tls_secret_name
+  auth            = "required"
+  # ADR-0023: k8s RBAC groups reach the dashboard login page (the pasted SA token
+  # is the real gate); admins via bypass. Non-admin namespace-owners need this row.
+  allowed_groups   = ["kubernetes-admins", "kubernetes-power-users", "kubernetes-namespace-owners", "Home Server Admins"]
   backend_protocol = "HTTP"
   port             = 80
   extra_annotations = {
