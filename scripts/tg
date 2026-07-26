@@ -133,6 +133,11 @@ if $is_tf_op && [ -n "$STACK_NAME" ]; then
   if ! "$REPO_ROOT/scripts/check-ingress-auth-comments.py" "$REPO_ROOT/stacks/$STACK_NAME"; then
     exit 1
   fi
+  # ADR-0023: every allowed_groups value on a forward-auth ingress must name a
+  # real Authentik group — a typo silently locks users out under default-deny.
+  if ! "$REPO_ROOT/scripts/check-allowed-groups.py" "$REPO_ROOT/stacks/$STACK_NAME"; then
+    exit 1
+  fi
 fi
 
 # Acquire lock for mutating operations (Tier 0 only — Tier 1 uses pg_advisory_lock)

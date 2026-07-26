@@ -1,105 +1,100 @@
-# Catch-all forward-auth restriction: gate the admin-only hostnames to the
-# "Home Server Admins" group. Bound to the "Domain wide catch all" application
-# (binding stays UI-managed; only the expression is adopted here).
+# Forward-auth authorization — default-deny host->groups table (ADR-0023, infra#84).
 #
-# Adopted into Terraform 2026-06-04 to add a carve-out: the Kubernetes Dashboard
-# (k8s.viktorbarzin.me) ALSO admits the kubernetes-* RBAC groups, so
-# namespace-owners (e.g. gheorghe) can reach the dashboard login page. The
-# dashboard itself enforces per-namespace access via the pasted ServiceAccount
-# token (stacks/rbac/modules/rbac/dashboard-sa.tf) — this policy only controls
-# who reaches the page. All other admin-only hosts remain Home-Server-Admins-only.
+# All ~100 auth="required" hosts share ONE catch-all provider + this ONE expression
+# policy (Authentik domain-level forward-auth cannot bind per-app policies). The
+# table below is GENERATED from the live ingress inventory: ingress_factory stamps
+# `authentik.viktorbarzin.me/allowed-groups` on every forward-auth ingress, and the
+# kubernetes_resources data source reads them at apply time. "Who logs in where" is
+# therefore declared on the ingress; this file only materialises + enforces it.
+#
+# Semantics (top to bottom):
+#   1. empty host  -> grant (the OAuth authorize step of proxy OIDC clients has no
+#      host; the per-request check, host set, does the real gating).
+#   2. BREAK-GLASS -> admins (authentik Admins / Home Server Admins) ALWAYS pass,
+#      evaluated BEFORE the table so no generator/table state can lock out the owner
+#      (Viktor's explicit invariant, 2026-07-26). Non-admins are unaffected.
+#   3. table lookup -> grant iff the user is in one of the host's allowed groups;
+#      unlisted host or no-matching-group -> DENY (default-deny).
+#
+# Access is GROUP MEMBERSHIP ONLY: the former chrome per-identity list is now the
+# `Chrome Users` group and the proxy_only attribute path is gone (chrome_users.tf,
+# and the per-app rows in the owning stacks). The binding to the "Domain wide catch
+# all" application stays UI-managed; only the expression is adopted here.
 import {
   to = authentik_policy_expression.admin_services_restriction
   id = "07a11b85-8f37-4844-aebb-ac9c112ec87c"
 }
 
+# Live ingress inventory (cluster-wide). Prior art: stacks/nextcloud/main.tf.
+data "kubernetes_resources" "ingresses" {
+  api_version = "networking.k8s.io/v1"
+  kind        = "Ingress"
+}
+
+locals {
+  # The forward-auth middleware every auth="required" ingress carries. We key off
+  # this (not a hardcoded host list) so the table auto-covers every forward-auth
+  # app — including ones whose stack hasn't been re-applied since Phase 1 (they
+  # default to Home Server Admins below, staying admin-reachable + non-admin-denied).
+  _forward_auth_mw = "traefik-authentik-forward-auth@kubernetescrd"
+
+  _fa_ingresses = [
+    for o in data.kubernetes_resources.ingresses.objects : o
+    if strcontains(
+      try(o.metadata.annotations["traefik.ingress.kubernetes.io/router.middlewares"], ""),
+      local._forward_auth_mw
+    )
+  ]
+
+  # (host, groups) pairs. Missing annotation -> the safe default. trimspace drops
+  # any stray whitespace from the comma-join.
+  _fa_pairs = flatten([
+    for o in local._fa_ingresses : [
+      for r in try(o.spec.rules, []) : {
+        host = try(r.host, "")
+        groups = [
+          for g in split(",", try(o.metadata.annotations["authentik.viktorbarzin.me/allowed-groups"], "Home Server Admins")) :
+          trimspace(g) if trimspace(g) != ""
+        ]
+      } if try(r.host, "") != ""
+    ]
+  ])
+
+  _fa_hosts = distinct([for p in local._fa_pairs : p.host])
+
+  # host -> unioned allowed groups (union handles path carve-out ingresses that
+  # share a host). This is the generated table rendered into the policy below.
+  host_groups = {
+    for h in local._fa_hosts :
+    h => distinct(flatten([for p in local._fa_pairs : p.groups if p.host == h]))
+  }
+}
+
 resource "authentik_policy_expression" "admin_services_restriction" {
   name = "admin-services-restriction"
   expression = trimspace(<<-EOT
-    ADMIN_ONLY_HOSTS = {
-        "terminal.viktorbarzin.me",
-        "terminal-dev.viktorbarzin.me",
-        "ac.viktorbarzin.me",
-        "frigate.viktorbarzin.me",
-        "netbox.viktorbarzin.me",
-        "trading.viktorbarzin.me",
-        "speedtest.viktorbarzin.me",
-        "meshcentral.viktorbarzin.me",
-        "k8s.viktorbarzin.me",
-        "dashy.viktorbarzin.me",
-        "prowlarr.viktorbarzin.me",
-        "qbittorrent.viktorbarzin.me",
-        "listenarr.viktorbarzin.me",
-        "shlink.viktorbarzin.me",
-        "openclaw.viktorbarzin.me",
-        "openlobster.viktorbarzin.me",
-        "wealthfolio.viktorbarzin.me",
-    }
-
-    ADMIN_GROUP = "Home Server Admins"
-
-    # The K8s Dashboard additionally admits the Kubernetes RBAC groups. Access
-    # to the page is not the security boundary — the pasted ServiceAccount token
-    # is (per-namespace admin + cluster read-only). See dashboard-sa.tf.
-    K8S_DASHBOARD_HOST = "k8s.viktorbarzin.me"
-    K8S_DASHBOARD_GROUPS = [
-        "Home Server Admins",
-        "kubernetes-admins",
-        "kubernetes-power-users",
-        "kubernetes-namespace-owners",
-    ]
+    # GENERATED default-deny forward-auth authorization (ADR-0023, infra#84).
+    # HOST_GROUPS is rendered from live ingress allowed-groups annotations at
+    # `terragrunt apply` time — edit access on the ingress, never here.
+    HOST_GROUPS = ${jsonencode(local.host_groups)}
 
     host = request.context.get("host", "")
 
-    # chrome-service noVNC (chrome.viktorbarzin.me) exposes LIVE logged-in browser
-    # sessions from the SHARED persistent profile. Originally Viktor-only.
-    # 2026-06-28 (Viktor's explicit decision): emo SHARES Viktor's browser, so emo
-    # (emil.barzin / emil.barzin@gmail.com) is allowed in for noVNC form-filling +
-    # captcha solving. Trade-off accepted: emo can therefore reach Viktor's warmed
-    # sessions (the CLI half is the emo-browser ServiceAccount in
-    # stacks/chrome-service/rbac.tf). akadmin kept as break-glass. Match username OR
-    # email so neither attribute alone can lock anyone out.
-    CHROME_ALLOWED = {"akadmin", "akadmin@viktorbarzin.me", "vbarzin@gmail.com", "emil.barzin", "emil.barzin@gmail.com"}
-    if host == "chrome.viktorbarzin.me":
-        return request.user.username in CHROME_ALLOWED or request.user.email in CHROME_ALLOWED
-
-    # t3 Workstation edge gate: only members of "T3 Users" may reach t3.
-    # Placed BEFORE the ADMIN_ONLY_HOSTS early-return (t3 is intentionally not in
-    # that set — it must not require Home-Server-Admins, just T3 Users membership).
-    if host == "t3.viktorbarzin.me":
-        return ak_is_group_member(request.user, name="T3 Users")
-
-    # Proxy-only accounts: a non-admin who is either in the "Proxy Users" group
-    # (manual add) OR carries the proxy_only attribute (set by the proxy signup
-    # invitation's fixed_data {"attributes.proxy_only": true} — covers BOTH the
-    # email/password AND social/Google self-signup paths via the shared
-    # invitation-enrollment flow) may reach ONLY the proxy remote-browser
-    # service — denied on every other Authentik-gated host. Placed before the
-    # allow-any-authenticated fallthrough so it genuinely restricts them.
-    proxy_only_attr = getattr(request.user, "attributes", {}).get("proxy_only")
-    if (ak_is_group_member(request.user, name="Proxy Users") or proxy_only_attr) and not ak_is_group_member(request.user, name=ADMIN_GROUP):
-        # This policy is evaluated at TWO points. The per-request forward-auth
-        # check has the target host in context["host"]; but the OAuth *authorize*
-        # step (the proxy provider is an OIDC client, so first access redirects to
-        # /application/o/authorize/) has NO host -- context holds only oauth_* keys
-        # -- so host == "". We MUST grant on the empty host, or the proxy_only user
-        # is denied at authorize and can never establish a session to reach the
-        # proxy at all (root-caused 2026-07-26 from a live outpost probe: every
-        # other branch already grants on empty host at authorize and relies on the
-        # per-request check to confine). The per-request check (host populated)
-        # still denies every non-proxy host, so confinement is preserved.
-        return (not host) or host == "proxy.viktorbarzin.me"
-
-    # Not an admin-only host: allow any authenticated user.
-    if host not in ADMIN_ONLY_HOSTS:
+    # (1) OAuth authorize step of proxy OIDC clients has no host -> grant; the
+    # per-request check (host populated) does the real gating.
+    if not host:
         return True
 
-    # K8s Dashboard: allow admins OR any Kubernetes RBAC group.
-    if host == K8S_DASHBOARD_HOST:
-        return any(ak_is_group_member(request.user, name=g) for g in K8S_DASHBOARD_GROUPS)
+    # (2) BREAK-GLASS: admins ALWAYS reach every forward-auth host. Evaluated
+    # BEFORE the table so no generator/table state can ever lock out the owner.
+    if ak_is_group_member(request.user, name="authentik Admins") or ak_is_group_member(request.user, name="Home Server Admins"):
+        return True
 
-    # Every other admin-only host: Home Server Admins only.
-    return ak_is_group_member(request.user, name=ADMIN_GROUP)
+    # (3) Default-deny table: grant iff the user is in one of the host's groups.
+    allowed = HOST_GROUPS.get(host)
+    if not allowed:
+        return False
+    return any(ak_is_group_member(request.user, name=g) for g in allowed)
   EOT
   )
 }
