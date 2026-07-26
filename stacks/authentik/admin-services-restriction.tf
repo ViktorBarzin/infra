@@ -78,7 +78,17 @@ resource "authentik_policy_expression" "admin_services_restriction" {
     # allow-any-authenticated fallthrough so it genuinely restricts them.
     proxy_only_attr = getattr(request.user, "attributes", {}).get("proxy_only")
     if (ak_is_group_member(request.user, name="Proxy Users") or proxy_only_attr) and not ak_is_group_member(request.user, name=ADMIN_GROUP):
-        return host == "proxy.viktorbarzin.me"
+        # This policy is evaluated at TWO points. The per-request forward-auth
+        # check has the target host in context["host"]; but the OAuth *authorize*
+        # step (the proxy provider is an OIDC client, so first access redirects to
+        # /application/o/authorize/) has NO host -- context holds only oauth_* keys
+        # -- so host == "". We MUST grant on the empty host, or the proxy_only user
+        # is denied at authorize and can never establish a session to reach the
+        # proxy at all (root-caused 2026-07-26 from a live outpost probe: every
+        # other branch already grants on empty host at authorize and relies on the
+        # per-request check to confine). The per-request check (host populated)
+        # still denies every non-proxy host, so confinement is preserved.
+        return (not host) or host == "proxy.viktorbarzin.me"
 
     # Not an admin-only host: allow any authenticated user.
     if host not in ADMIN_ONLY_HOSTS:
