@@ -222,7 +222,9 @@ module "ingress" {
   service_name    = "postiz"
   port            = 80
   auth            = "required" # Authentik forward-auth on the UI / API path
-  ingress_path    = ["/"]
+  # ADR-0023: Postiz Users (non-admin social-media sharers) reach postiz; admins via bypass.
+  allowed_groups = ["Postiz Users", "Home Server Admins"]
+  ingress_path   = ["/"]
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
