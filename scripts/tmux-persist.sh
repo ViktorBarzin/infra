@@ -8,10 +8,11 @@
 #
 #   save    — snapshot every roster user's live tmux sessions to
 #             /var/lib/tmux-persist/<user>.tsv (name, cwd, claude session
-#             uuid). The uuid is sniffed from the claude process's OPEN
-#             transcript fd (~/.claude/projects/<slug>/<uuid>.jsonl), so it is
-#             correct regardless of how the session was launched (fresh via
-#             start-claude.sh or an explicit --resume). Runs every 5 min via
+#             uuid). The uuid comes from the claude process's argv — the
+#             `--session-id` a fresh start-claude.sh launch pins, or the
+#             `--resume` a restore carries — so it is correct per-process
+#             regardless of how the session was launched (see uuid_of_claude
+#             for the nameless-session fallbacks). Runs every 5 min via
 #             tmux-persist-save.timer. A snapshot that captures no live sessions
 #             (no server, OR a stale socket left behind by an OOM-killed server)
 #             keeps the user's last manifest, so it can't be wiped before restore.
@@ -53,23 +54,40 @@ claude_pid_under() {
   return 1
 }
 
-# Conversation uuid of a claude process ($1 pid, $2 user, $3 cwd). Two sources
-# (claude does NOT hold its transcript fd open, so fd-sniffing doesn't work):
-#  1. argv `--resume <uuid>` — covers every session this script's restore (or a
-#     manual recovery) created, making the save/restore loop self-sustaining;
-#  2. newest <uuid>.jsonl in the user's cwd-slug project dir created at/after
-#     the process start — covers fresh launcher-started sessions.
+# Conversation uuid of a claude process ($1 pid, $2 user, $3 cwd, $4 tmux session
+# name [optional]). Sources, in order (claude does NOT hold its transcript fd open,
+# so fd-sniffing doesn't work):
+#  1. an EXPLICIT id in argv — `--session-id <uuid>` (fresh launcher sessions since
+#     2026-07-26) or `--resume <uuid>` (this script's own restores + manual recovery).
+#     Authoritative and per-process, so it can't confuse concurrent sessions.
+#  2. FALLBACK for a claude started without an explicit id: among transcripts touched
+#     since this process started, prefer the one whose OWN recorded name (its first
+#     custom-title / agent-name, written from --name at creation) matches the tmux
+#     session — this disambiguates concurrent sessions that share one cwd-slug dir.
+#  3. LAST RESORT: newest <uuid>.jsonl by mtime in the cwd-slug dir. This alone
+#     mis-attributes concurrent same-cwd sessions (it returns whichever conversation
+#     is most active for EVERY pane) — the bug that source 1 exists to avoid; kept
+#     only so a nameless one-off session still restores something.
 # Always returns 0; empty output means "no conversation" (restored as a shell).
 uuid_of_claude() {
-  local uuid slug dir start f
+  local uuid slug dir start f sess="${4:-}" p t
   uuid="$(tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null \
-          | grep -A1 -x -- '--resume' | tail -1 \
+          | grep -A1 -xE -- '--session-id|--resume' | tail -1 \
           | grep -oE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || true)"
   [[ -n "$uuid" ]] && { echo "$uuid"; return 0; }
   slug="${3//\//-}"; slug="${slug//./-}"
   dir="$(getent passwd "$2" | cut -d: -f6)/.claude/projects/$slug"
   [[ -d "$dir" ]] || return 0
   start=$(( $(date +%s) - $(ps -o etimes= -p "$1" 2>/dev/null | tr -d ' ' || echo 0) - 5 ))
+  # 2. name-aware: newest transcript (touched since start) whose own name == $sess.
+  if [[ -n "$sess" ]]; then
+    while read -r _ p; do
+      t="$(grep -m1 -oE '"(customTitle|agentName)":"[^"]*"' "$p" 2>/dev/null \
+           | head -1 | sed -E 's/.*:"(.*)"$/\1/')"
+      [[ "$t" == "$sess" ]] && { f="$(basename "$p")"; echo "${f%.jsonl}"; return 0; }
+    done < <(find "$dir" -maxdepth 1 -name '*.jsonl' -newermt "@$start" -printf '%T@ %p\n' 2>/dev/null | sort -rn)
+  fi
+  # 3. last resort: newest by mtime.
   f="$(find "$dir" -maxdepth 1 -name '*.jsonl' -newermt "@$start" -printf '%T@ %f\n' 2>/dev/null \
        | sort -rn | head -1 | awk '{print $2}' || true)"
   [[ -n "$f" ]] && echo "${f%.jsonl}"
@@ -86,7 +104,7 @@ save() {
     while IFS=$'\t' read -r sess pane_pid pane_cwd; do
       [[ -n "$sess" ]] || continue
       uuid=""
-      if cpid="$(claude_pid_under "$pane_pid")"; then uuid="$(uuid_of_claude "$cpid" "$u" "$pane_cwd")"; fi
+      if cpid="$(claude_pid_under "$pane_pid")"; then uuid="$(uuid_of_claude "$cpid" "$u" "$pane_cwd" "$sess")"; fi
       printf '%s\t%s\t%s\n' "$sess" "$pane_cwd" "$uuid" >> "$tmp"
     done < <(tmux_as "$u" list-panes -a -F $'#{session_name}\t#{pane_pid}\t#{pane_current_path}' 2>/dev/null \
              | sort -u -t$'\t' -k1,1)

@@ -216,6 +216,7 @@ install -m 0755 "$SCRIPTS/t3-cgroup-snap.sh"  /usr/local/bin/t3-cgroup-snap
 install -m 0755 "$SCRIPTS/t3-backup-state.sh" /usr/local/bin/t3-backup-state
 install -m 0755 "$SCRIPTS/t3-mint"            /usr/local/bin/t3-mint
 install -m 0755 "$HERE/claude-auth-sync.sh"   /usr/local/bin/claude-auth-sync
+install -m 0755 "$SCRIPTS/tmux-persist.sh"    /usr/local/bin/tmux-persist   # web-terminal session save/restore (units below)
 # 9b) t3-dispatch: unprivileged system account + compiled Go binary (build-if-absent)
 id -u t3-dispatch >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin t3-dispatch
 if [[ ! -x /usr/local/bin/t3-dispatch ]]; then
@@ -254,6 +255,7 @@ for u in t3-serve@.service \
          t3-cgroup-snap.service \
          t3-backup-state.service t3-backup-state.timer \
          t3-provision-users.service t3-provision-users.timer \
+         tmux-persist-save.service tmux-persist-save.timer tmux-persist-restore.service \
          t3-dispatch.service; do
   install -m 0644 "$SCRIPTS/$u" "/etc/systemd/system/$u"
 done
