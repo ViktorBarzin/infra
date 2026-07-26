@@ -165,6 +165,19 @@ variable "anti_ai_scraping" {
   default = null # null = auto (enabled when not protected, disabled when protected)
 }
 
+# Forward-auth authorization (ADR-0023). Only meaningful when auth = "required":
+# the Authentik groups permitted to reach this host. Stamped as an annotation
+# (authentik.viktorbarzin.me/allowed-groups) that the authentik stack reads at
+# apply time to render the default-deny host->groups table in the
+# admin-services-restriction policy. Access is GROUP MEMBERSHIP ONLY.
+# Default ["Home Server Admins"]: a new admin tool is reachable by admins the
+# moment it deploys and denied to everyone else. Widen per-app for non-admin
+# access (e.g. ["TripIt Users", "Home Server Admins"]).
+variable "allowed_groups" {
+  type    = list(string)
+  default = ["Home Server Admins"]
+}
+
 variable "dns_type" {
   type        = string
   default     = "none"
@@ -266,6 +279,14 @@ locals {
     var.auth == "public" ? "traefik-authentik-forward-auth-public@kubernetescrd" :
     null
   )
+
+  # Forward-auth authorization annotation (ADR-0023). Only forward-auth
+  # (auth = "required") ingresses carry it; the authentik stack reads it to
+  # build the default-deny host->groups table. Emitting it on every required
+  # ingress (via the var default) keeps that table complete by construction.
+  allowed_groups_annotations = var.auth == "required" ? {
+    "authentik.viktorbarzin.me/allowed-groups" = join(",", var.allowed_groups)
+  } : {}
 
   # External monitor enabled by default when the ingress has a public DNS
   # record (either CF-proxied or direct A/AAAA). 'internal' records resolve
@@ -395,6 +416,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
       }, local.homepage_defaults, var.extra_annotations,
       var.dns_type != "none" ? { "cloudflare.viktorbarzin.me/dns-type" = var.dns_type } : {},
       local.external_monitor_annotations,
+      local.allowed_groups_annotations,
     )
   }
 
