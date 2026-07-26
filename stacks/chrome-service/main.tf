@@ -591,8 +591,6 @@ module "ingress" {
   name            = "chrome"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
-  # ADR-0023: live shared-browser sessions — Chrome Users only (admins via bypass).
-  allowed_groups = ["Chrome Users"]
   # noVNC defaults to /vnc.html — auto-redirect / there.
   ingress_path = ["/"]
   extra_annotations = {
