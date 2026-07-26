@@ -1150,13 +1150,14 @@ variable "pg_cluster_image" {
 # Ensure the CNPG cluster manifest exists (idempotent kubectl apply)
 resource "null_resource" "pg_cluster" {
   triggers = {
-    instances     = "3"
-    image         = var.pg_cluster_image
-    storage_size  = "20Gi"
-    storage_class = "proxmox-lvm-encrypted"
-    memory_limit  = "3Gi"
-    pg_params     = "v5-shared1024-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500"
-    affinity      = "required-hostname-v1"
+    instances      = "3"
+    image          = var.pg_cluster_image
+    storage_size   = "20Gi"
+    storage_class  = "proxmox-lvm-encrypted"
+    memory_limit   = "3Gi"
+    memory_request = "2560Mi" # req < limit (Burstable); bumping this trigger forces the null_resource re-apply, 2026-07-26
+    pg_params      = "v5-shared1024-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500"
+    affinity       = "required-hostname-v1"
   }
 
   provisioner "local-exec" {
@@ -1237,7 +1238,10 @@ resource "null_resource" "pg_cluster" {
         resources:
           requests:
             cpu: "50m"
-            memory: "3Gi"
+            # Request lowered 3Gi->2560Mi 2026-07-26 (Burstable) to free N-1 scheduler
+            # headroom on node4 (ClusterCannotTolerateNonGpuNodeLoss). 2560Mi stays above
+            # every member's 14d peak (~2.4Gi); limit unchanged at 3Gi (node-OOM safe).
+            memory: "2560Mi"
           limits:
             memory: "3Gi"
       EOF
