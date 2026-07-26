@@ -188,8 +188,6 @@ module "ingress_fleet" {
   # FleetView is an admin control surface (lists + kills agent sessions) — gate
   # every request with Authentik. The broker has no auth of its own.
   auth = "required"
-  # ADR-0023: admin control surface — Chrome Users only (admins via bypass).
-  allowed_groups = ["Chrome Users"]
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/name"        = "FleetView"
