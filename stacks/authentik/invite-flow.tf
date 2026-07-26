@@ -18,7 +18,7 @@ resource "authentik_stage_prompt_field" "invite_code" {
   label       = "Invite code"
   type        = "text"
   required    = true
-  placeholder = "Enter your invite code"
+  placeholder = "e.g. R7K-M4Q"
   order       = 100
 }
 
@@ -33,9 +33,12 @@ from authentik.stages.invitation.models import Invitation
 from django.utils import timezone
 # setdefault so our writes to prompt_data persist to the write stage.
 pd = request.context.setdefault("prompt_data", {})
-code = (pd.get("invite_code") or "").strip()
+# Normalize the typed code so matching is forgiving: upper-case, no dashes/spaces.
+# Codes are minted/displayed as e.g. R7K-M4Q but stored canonical ("R7KM4Q").
+code = (pd.get("invite_code") or "").strip().upper().replace("-", "").replace(" ", "")
 if not code:
     return False
+pd["invite_code"] = code
 inv = None
 for cand in Invitation.objects.filter(fixed_data__code=code):
     if cand.expires and cand.expires < timezone.now():
@@ -86,7 +89,7 @@ if u is None or not getattr(u, "pk", None):
     return True
 attrs = u.attributes or {}
 pd = request.context.get("prompt_data", {}) or {}
-code = attrs.get("invite_code") or (pd.get("invite_code") or "").strip()
+code = attrs.get("invite_code") or (pd.get("invite_code") or "").strip().upper().replace("-", "").replace(" ", "")
 tg = attrs.get("invite_group")
 if not tg and code:
     inv0 = Invitation.objects.filter(fixed_data__code=code).first()
