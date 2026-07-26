@@ -21,6 +21,7 @@ decision logic lives in pool.py, key generation in wgkeys.py (both unit-tested).
 Design: docs/plans/2026-07-25-proxy-scale-design.md
 """
 import base64
+import datetime
 import hashlib
 import hmac
 import json
@@ -94,6 +95,11 @@ NEKO_PIPELINE = os.environ.get(
 # ~400 MiB free budget without a gpumem_total_mib bump; a 2nd GPU browser needs the
 # budget raised (stacks/nvidia gpumem_total_mib) or a smaller per-slot value.
 GPUMEM_MIB = os.environ.get("GPUMEM_MIB", "384")
+# The shared T4 fits ~1 proxy browser alongside the other GPU tenants. A new
+# browser beyond this cap is rejected up-front (clean "at capacity") so it never
+# creates a WaitForFirstConsumer PVC that can't schedule (-> PVCStuckPending).
+# Bump if the GPU budget frees up. The reaper is the backstop either way.
+GPU_BROWSERS_MAX = int(os.environ.get("GPU_BROWSERS_MAX", "1"))
 # coturn: neko (in-cluster, gluetun netns whose DNS can't resolve cluster names)
 # reaches coturn for its BACKEND relay allocation via an IP in gluetun's
 # FIREWALL_OUTBOUND_SUBNETS (the LB IP, added there). The user's real browser
@@ -385,15 +391,21 @@ def _neko_env(userkey, token):
     return env
 
 
-def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey, token):
+def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey, token, owner=""):
     neko_mounts = [
         {"name": "profile", "mountPath": "/home/neko/.config/chromium"},
         {"name": "shm", "mountPath": "/dev/shm"},
-        {"name": "chrome-policy", "mountPath": "/etc/chromium/policies/managed", "readOnly": True}]
+        {"name": "chrome-policy", "mountPath": "/etc/chromium/policies/managed", "readOnly": True},
+        # visit tracking (spec infra#83): source a one-line /etc/chromium.d file
+        # that appends --remote-debugging-port=9222 so the visit-collector
+        # sidecar can read page navigations over CDP on loopback.
+        {"name": "visit-collector", "mountPath": "/etc/chromium.d/50-remote-debug",
+         "subPath": "50-remote-debug", "readOnly": True}]
     volumes = [
         {"name": "profile", "persistentVolumeClaim": {"claimName": _pvc_name(userkey)}},
         {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "1Gi"}},
-        {"name": "chrome-policy", "configMap": {"name": "proxy-chrome-policy"}}]
+        {"name": "chrome-policy", "configMap": {"name": "proxy-chrome-policy"}},
+        {"name": "visit-collector", "configMap": {"name": "proxy-visit-collector"}}]
     init_containers = []
     # Software x264 default: ~1.2 cores at 1080p (bursts, no CPU limit). Spread
     # browsers across the node2-5 workers.
@@ -429,7 +441,7 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
                      "labels": {"app": "proxy-browser", "proxy/user": userkey,
                                 "proxy/gw-idx": str(gw_idx), "proxy/country": _label(country)},
                      "annotations": {"proxy/country-name": country, "proxy/wg-pub": pubkey,
-                                     "proxy/wg-ip": wg_ip, "proxy/token": token,
+                                     "proxy/wg-ip": wg_ip, "proxy/token": token, "proxy/owner": owner,
                                      "proxy/started": str(int(time.time()))}},
         "spec": {
             "restartPolicy": "Always",
@@ -474,6 +486,21 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
                                     "periodSeconds": 3, "failureThreshold": 90},
                  "volumeMounts": neko_mounts,
                  "resources": neko_resources},
+                # visit-collector (spec infra#83): reads Chromium's CDP on
+                # loopback (shared pod netns) and logs page visits (URL + title)
+                # to stdout -> Alloy -> Loki, attributed to this user by the pod
+                # name. Observe-only; never touches the egress/traffic path.
+                {"name": "visit-collector",
+                 "image": "docker.io/library/python:3.12-alpine",
+                 "imagePullPolicy": "IfNotPresent",
+                 "command": ["python3", "/app/visit_collector.py"],
+                 "env": [{"name": "PROXY_USER", "value": owner},
+                         {"name": "CDP_URL", "value": "http://127.0.0.1:9222"}],
+                 "volumeMounts": [{"name": "visit-collector",
+                                   "mountPath": "/app/visit_collector.py",
+                                   "subPath": "visit_collector.py", "readOnly": True}],
+                 "resources": {"requests": {"cpu": "10m", "memory": "32Mi"},
+                               "limits": {"memory": "96Mi"}}},
             ],
             "initContainers": init_containers,
             "volumes": volumes,
@@ -617,14 +644,20 @@ def create_browser(user, country):
         if existing and existing["country"] == country and not existing["dead"]:
             return {"country": country, "url": _url(token), "token": token}
         if existing:                      # switching country / recovering a dead pod
-            _delete_browser_pod(userkey)  # keep the PVC
+            _delete_browser_pod(userkey)  # keep the PVC (reuses this user's slot)
+        elif NEKO_GPU and len([b for b in list_browsers() if not b.get("dead")]) >= GPU_BROWSERS_MAX:
+            # Brand-new browser but the GPU browser slot(s) are taken: reject
+            # cleanly instead of creating a PVC+pod that can't schedule. A
+            # WaitForFirstConsumer PVC whose pod never schedules sits Pending and
+            # fires PVCStuckPending at 10m (infra#83 follow-up). Retry when free.
+            raise RuntimeError("at capacity — the browser GPU is fully in use; try again in a few minutes")
         gw = ensure_gateway(country)
         used_ips = [b["wg_ip"] for b in list_browsers() if b["gateway_idx"] == gw["idx"] and b["wg_ip"]]
         wg_ip = pool.alloc_client_ip(gw["idx"], used_ips)
         priv, pub = wgkeys.genkeypair()
         _apply("/api/v1/namespaces/%s/persistentvolumeclaims" % NS, _pvc_name(userkey), build_pvc(userkey))
         _apply("/api/v1/namespaces/%s/secrets" % NS, _br_name(userkey) + "-wg", build_br_secret(userkey, priv))
-        body = build_br_pod(userkey, country, gw["idx"], wg_ip, gw["pubkey"], gw["endpoint_ip"], pub, token)
+        body = build_br_pod(userkey, country, gw["idx"], wg_ip, gw["pubkey"], gw["endpoint_ip"], pub, token, owner=user)
         for _ in range(30):   # wait out a terminating same-name pod (switch-country / recreate race)
             st, _ = k8s("POST", "/api/v1/namespaces/%s/pods" % NS, body)
             if st != 409:
@@ -652,9 +685,44 @@ def delete_browser(userkey, drop_profile=False):
         k8s("DELETE", "/api/v1/namespaces/%s/persistentvolumeclaims/%s" % (NS, _pvc_name(userkey)))
 
 
+def _ts(iso):
+    """RFC3339 timestamp -> epoch seconds; 0 on failure."""
+    if not iso:
+        return 0.0
+    try:
+        return datetime.datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _reap_orphan_pvcs():
+    """Remove profile PVCs stuck Pending. A browser pod that can't schedule leaves
+    its WaitForFirstConsumer PVC unbound (Pending), which fires PVCStuckPending at
+    10m. After a 5-min grace (a schedulable browser binds in seconds) we delete the
+    stuck pod + the unbound PVC. BOUND PVCs hold the user's Chromium profile and
+    are NEVER touched — an unbound PVC has never been written, so this is
+    data-safe. Belt-and-suspenders behind the create-time capacity check."""
+    now = time.time()
+    for pvc in _list("persistentvolumeclaims", "app=proxy-browser"):
+        md = pvc.get("metadata", {})
+        if pvc.get("status", {}).get("phase") != "Pending":
+            continue
+        if now - _ts(md.get("creationTimestamp")) < 300:
+            continue
+        userkey = md.get("labels", {}).get("proxy/user", "")
+        if userkey:
+            k8s("DELETE", "/api/v1/namespaces/%s/pods/%s" % (NS, _br_name(userkey)))
+        k8s("DELETE", "/api/v1/namespaces/%s/persistentvolumeclaims/%s" % (NS, md.get("name")))
+        print("reaped stuck Pending profile PVC:", md.get("name"), flush=True)
+
+
 # ------------------------------------------------------------------ reaper
 def reaper():
     while True:
+        try:
+            _reap_orphan_pvcs()
+        except Exception as e:
+            print("orphan-pvc reap error:", e, flush=True)
         try:
             browsers = list_browsers()
             gateways = list_gateways()

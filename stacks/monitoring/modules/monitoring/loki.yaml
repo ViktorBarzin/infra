@@ -23,6 +23,13 @@ loki:
     allow_structured_metadata: true
     volume_enabled: true
     retention_period: 720h
+    # Proxy visit logs (spec infra#83) are kept 90d — longer than the 30d global —
+    # so the "Proxy visits" dashboard has a full quarter of detail. Per-stream
+    # retention overrides the global period for the matching stream only.
+    retention_stream:
+      - selector: '{namespace="proxy", container="visit-collector"}'
+        priority: 10
+        period: 2160h
   compactor:
     retention_enabled: true
     working_directory: /var/loki/compactor
