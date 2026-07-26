@@ -31,7 +31,8 @@ resource "authentik_policy_expression" "validate_invite_code" {
   expression = trimspace(<<-EOT
 from authentik.stages.invitation.models import Invitation
 from django.utils import timezone
-pd = request.context.get("prompt_data", {}) or {}
+# setdefault so our writes to prompt_data persist to the write stage.
+pd = request.context.setdefault("prompt_data", {})
 code = (pd.get("invite_code") or "").strip()
 if not code:
     return False
@@ -46,14 +47,15 @@ if inv is None:
 tg = (inv.fixed_data or {}).get("target_group")
 if not tg:
     return False
-plan = request.context.get("flow_plan")
-if plan is not None and hasattr(plan, "context"):
-    plan.context["invite_target_group"] = tg
-    plan.context["invite_pk"] = str(inv.pk)
-    plan.context["invite_single_use"] = bool(inv.single_use)
-    p2 = plan.context.setdefault("prompt_data", {})
-    if not p2.get("username"):
-        p2["username"] = p2.get("email") or ("guest-" + code.lower())
+# Source enrollments carry no username; set one directly on prompt_data (a flow
+# plan is NOT in this validation context — the original empty-username abort).
+if not pd.get("username"):
+    pd["username"] = pd.get("email") or ("guest-" + code.lower())
+# Stamp the invite's group + code onto the NEW USER via attributes.* (the write
+# stage persists attributes.*), so the login-stage assign policy reads them from
+# the saved user — prompt_data does not reliably survive to the login stage.
+pd["attributes.invite_group"] = tg
+pd["attributes.invite_code"] = code
 return True
 EOT
   )
@@ -73,29 +75,49 @@ resource "authentik_policy_expression" "assign_invite_group" {
   expression = trimspace(<<-EOT
 from authentik.core.models import Group
 from authentik.stages.invitation.models import Invitation
+# Add the new user to the invite's target group. Resolve the group from EITHER
+# source, so a single stash mechanism failing can't drop the assignment:
+#   1. attributes.invite_group — stamped by validate-invite-code via the write stage
+#   2. the invite code (attributes.invite_code, else prompt_data) re-looked-up
+# Then upgrade the guest- placeholder username to the real email, consume a
+# single-use invite, and drop the transient bookkeeping attributes.
 u = request.context.get("pending_user")
-plan = request.context.get("flow_plan")
-tg = None
-inv_pk = None
-single = False
-if plan is not None and hasattr(plan, "context"):
-    tg = plan.context.get("invite_target_group")
-    inv_pk = plan.context.get("invite_pk")
-    single = plan.context.get("invite_single_use")
-if u is not None and getattr(u, "pk", None) and tg:
-    try:
-        g = Group.objects.filter(name=tg).first()
-        if g is not None:
-            u.ak_groups.add(g)
-    except Exception:
-        pass
-if inv_pk and single:
-    try:
-        inv = Invitation.objects.filter(pk=inv_pk).first()
-        if inv is not None:
-            inv.delete()
-    except Exception:
-        pass
+if u is None or not getattr(u, "pk", None):
+    return True
+attrs = u.attributes or {}
+pd = request.context.get("prompt_data", {}) or {}
+code = attrs.get("invite_code") or (pd.get("invite_code") or "").strip()
+tg = attrs.get("invite_group")
+if not tg and code:
+    inv0 = Invitation.objects.filter(fixed_data__code=code).first()
+    if inv0 is not None:
+        tg = (inv0.fixed_data or {}).get("target_group")
+if tg:
+    g = Group.objects.filter(name=tg).first()
+    if g is not None:
+        u.ak_groups.add(g)
+# Google provides no username, so the write stage stored a guest- placeholder;
+# make the account identifiable by its email.
+try:
+    if u.username.startswith("guest-") and u.email:
+        u.username = u.email
+except Exception:
+    pass
+if code:
+    for inv in Invitation.objects.filter(fixed_data__code=code):
+        if inv.single_use:
+            try:
+                inv.delete()
+            except Exception:
+                pass
+        break
+for k in ("invite_group", "invite_code"):
+    attrs.pop(k, None)
+u.attributes = attrs
+try:
+    u.save()
+except Exception:
+    pass
 return True
 EOT
   )
