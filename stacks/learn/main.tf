@@ -104,29 +104,56 @@ resource "kubernetes_config_map" "caddyfile" {
       	auto_https off
       }
       :8080 {
-      	# Owner-only: Authentik injects the username as a full email
-      	# (vbarzin@...); only Viktor's identity is served (ADR-0002).
-      	# Two sites split by Host, matchers deliberately non-overlapping so
-      	# behavior can't depend on handle ordering: plans.viktorbarzin.me
-      	# serves the monorepo's plans/ tree (published HTML plan snapshots,
-      	# infra#72); every other host — learn.viktorbarzin.me and the
-      	# readiness probe's host-less requests — serves learn/ as before.
-      	# plans.viktorbarzin.me: Viktor (vbarzin) + emo (emil.barzin) — emo was
-      	# granted read access 2026-07-18 to share the power-outage post-mortem
-      	# (Viktor's call; emo is a Home Server Admin insider). learn.viktorbarzin.me
-      	# below stays Viktor-only. Usernames are the Authentik-injected
-      	# X-Authentik-Username (full email form), verified via the Authentik API.
-      	@plans_owner {
-      		host plans.viktorbarzin.me
+      	# pages.viktorbarzin.me: per-user private page spaces (pages/<user>/) + a
+      	# shared area (pages/shared/), served from the git-synced monorepo pages/
+      	# tree. Each Authentik identity maps to a STATIC directory below — the
+      	# untrusted X-Authentik-Username header is never interpolated into a path,
+      	# so a spoofed value can't drive traversal. /assets/* is the shared
+      	# stylesheet+mermaid. plans.viktorbarzin.me 301-redirects here (renamed
+      	# from plans/ 2026-07-26). learn.viktorbarzin.me stays Viktor-only.
+      	# In-cluster callers can still spoof the header (same trust class as
+      	# ttyd, per ADR) — accepted for this 3-user homelab (Viktor, 2026-07-26).
+      	@pages_assets {
+      		host pages.viktorbarzin.me
+      		path /assets/*
+      	}
+      	handle @pages_assets {
+      		root * /repo/src/current/pages
+      		file_server
+      	}
+      	@plans_redirect host plans.viktorbarzin.me
+      	handle @plans_redirect {
+      		redir https://pages.viktorbarzin.me{uri} permanent
+      	}
+      	@pages_shared {
+      		host pages.viktorbarzin.me
+      		path /shared/*
       		header_regexp X-Authentik-Username ^(vbarzin|emil\.barzin)(@.*)?$
       	}
-      	@learn_owner {
-      		not host plans.viktorbarzin.me
+      	handle @pages_shared {
+      		root * /repo/src/current/pages
+      		file_server
+      	}
+      	@pages_wizard {
+      		host pages.viktorbarzin.me
       		header_regexp X-Authentik-Username ^vbarzin(@.*)?$
       	}
-      	handle @plans_owner {
-      		root * /repo/src/current/plans
+      	handle @pages_wizard {
+      		root * /repo/src/current/pages/wizard
       		file_server
+      	}
+      	@pages_emo {
+      		host pages.viktorbarzin.me
+      		header_regexp X-Authentik-Username ^emil\.barzin(@.*)?$
+      	}
+      	handle @pages_emo {
+      		root * /repo/src/current/pages/emo
+      		file_server
+      	}
+      	@learn_owner {
+      		not host pages.viktorbarzin.me
+      		not host plans.viktorbarzin.me
+      		header_regexp X-Authentik-Username ^vbarzin(@.*)?$
       	}
       	handle @learn_owner {
       		root * /repo/src/current/learn
@@ -324,10 +351,32 @@ module "ingress" {
   }
 }
 
-# plans.viktorbarzin.me — published HTML plan snapshots (the monorepo's plans/
-# tree, rendered + pushed by the publish-plan skill; spec: infra#72). Served by
-# the SAME learn pod: the Caddyfile above picks the site by Host header, with
-# the identical owner-only gate. Only the ingress hostname is new.
+# pages.viktorbarzin.me — per-user private page spaces + a shared area (the
+# monorepo's pages/ tree, renamed from plans/ 2026-07-26; rendered + pushed by
+# publish-page). Served by the SAME learn pod; the Caddyfile above routes by
+# Host and per-user by X-Authentik-Username. The homepage tile lives here.
+module "ingress_pages" {
+  source          = "../../modules/kubernetes/ingress_factory"
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.learn.metadata[0].name
+  name            = "pages"
+  service_name    = "learn"
+  tls_secret_name = var.tls_secret_name
+  auth            = "required"
+  extra_annotations = {
+    "gethomepage.dev/enabled"      = "true"
+    "gethomepage.dev/name"         = "Pages"
+    "gethomepage.dev/description"  = "Published pages — plans/specs/designs (git-backed)"
+    "gethomepage.dev/icon"         = "mdi-file-document-multiple"
+    "gethomepage.dev/group"        = "Productivity"
+    "gethomepage.dev/pod-selector" = "app=learn"
+  }
+}
+
+# plans.viktorbarzin.me — kept only so Traefik still routes the OLD hostname to
+# the pod, where the Caddyfile 301-redirects it to pages.* (name stays "plans"
+# so this is an in-place annotation change, not a destroy/recreate). No homepage
+# tile — it's a redirect, not a destination. Retire once old links age out.
 module "ingress_plans" {
   source          = "../../modules/kubernetes/ingress_factory"
   dns_type        = "proxied"
@@ -337,11 +386,6 @@ module "ingress_plans" {
   tls_secret_name = var.tls_secret_name
   auth            = "required"
   extra_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "Plans"
-    "gethomepage.dev/description"  = "Published plan/spec HTML snapshots (git-backed)"
-    "gethomepage.dev/icon"         = "mdi-map-check"
-    "gethomepage.dev/group"        = "Productivity"
-    "gethomepage.dev/pod-selector" = "app=learn"
+    "gethomepage.dev/enabled" = "false"
   }
 }
