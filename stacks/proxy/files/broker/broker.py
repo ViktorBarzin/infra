@@ -21,6 +21,7 @@ decision logic lives in pool.py, key generation in wgkeys.py (both unit-tested).
 Design: docs/plans/2026-07-25-proxy-scale-design.md
 """
 import base64
+import datetime
 import hashlib
 import hmac
 import json
@@ -94,6 +95,11 @@ NEKO_PIPELINE = os.environ.get(
 # ~400 MiB free budget without a gpumem_total_mib bump; a 2nd GPU browser needs the
 # budget raised (stacks/nvidia gpumem_total_mib) or a smaller per-slot value.
 GPUMEM_MIB = os.environ.get("GPUMEM_MIB", "384")
+# The shared T4 fits ~1 proxy browser alongside the other GPU tenants. A new
+# browser beyond this cap is rejected up-front (clean "at capacity") so it never
+# creates a WaitForFirstConsumer PVC that can't schedule (-> PVCStuckPending).
+# Bump if the GPU budget frees up. The reaper is the backstop either way.
+GPU_BROWSERS_MAX = int(os.environ.get("GPU_BROWSERS_MAX", "1"))
 # coturn: neko (in-cluster, gluetun netns whose DNS can't resolve cluster names)
 # reaches coturn for its BACKEND relay allocation via an IP in gluetun's
 # FIREWALL_OUTBOUND_SUBNETS (the LB IP, added there). The user's real browser
@@ -638,7 +644,13 @@ def create_browser(user, country):
         if existing and existing["country"] == country and not existing["dead"]:
             return {"country": country, "url": _url(token), "token": token}
         if existing:                      # switching country / recovering a dead pod
-            _delete_browser_pod(userkey)  # keep the PVC
+            _delete_browser_pod(userkey)  # keep the PVC (reuses this user's slot)
+        elif NEKO_GPU and len([b for b in list_browsers() if not b.get("dead")]) >= GPU_BROWSERS_MAX:
+            # Brand-new browser but the GPU browser slot(s) are taken: reject
+            # cleanly instead of creating a PVC+pod that can't schedule. A
+            # WaitForFirstConsumer PVC whose pod never schedules sits Pending and
+            # fires PVCStuckPending at 10m (infra#83 follow-up). Retry when free.
+            raise RuntimeError("at capacity — the browser GPU is fully in use; try again in a few minutes")
         gw = ensure_gateway(country)
         used_ips = [b["wg_ip"] for b in list_browsers() if b["gateway_idx"] == gw["idx"] and b["wg_ip"]]
         wg_ip = pool.alloc_client_ip(gw["idx"], used_ips)
@@ -673,9 +685,44 @@ def delete_browser(userkey, drop_profile=False):
         k8s("DELETE", "/api/v1/namespaces/%s/persistentvolumeclaims/%s" % (NS, _pvc_name(userkey)))
 
 
+def _ts(iso):
+    """RFC3339 timestamp -> epoch seconds; 0 on failure."""
+    if not iso:
+        return 0.0
+    try:
+        return datetime.datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _reap_orphan_pvcs():
+    """Remove profile PVCs stuck Pending. A browser pod that can't schedule leaves
+    its WaitForFirstConsumer PVC unbound (Pending), which fires PVCStuckPending at
+    10m. After a 5-min grace (a schedulable browser binds in seconds) we delete the
+    stuck pod + the unbound PVC. BOUND PVCs hold the user's Chromium profile and
+    are NEVER touched — an unbound PVC has never been written, so this is
+    data-safe. Belt-and-suspenders behind the create-time capacity check."""
+    now = time.time()
+    for pvc in _list("persistentvolumeclaims", "app=proxy-browser"):
+        md = pvc.get("metadata", {})
+        if pvc.get("status", {}).get("phase") != "Pending":
+            continue
+        if now - _ts(md.get("creationTimestamp")) < 300:
+            continue
+        userkey = md.get("labels", {}).get("proxy/user", "")
+        if userkey:
+            k8s("DELETE", "/api/v1/namespaces/%s/pods/%s" % (NS, _br_name(userkey)))
+        k8s("DELETE", "/api/v1/namespaces/%s/persistentvolumeclaims/%s" % (NS, md.get("name")))
+        print("reaped stuck Pending profile PVC:", md.get("name"), flush=True)
+
+
 # ------------------------------------------------------------------ reaper
 def reaper():
     while True:
+        try:
+            _reap_orphan_pvcs()
+        except Exception as e:
+            print("orphan-pvc reap error:", e, flush=True)
         try:
             browsers = list_browsers()
             gateways = list_gateways()
