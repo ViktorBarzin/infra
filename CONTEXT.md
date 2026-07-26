@@ -148,6 +148,10 @@ _Avoid_: "camera VLAN", "CCTV LAN".
 The `auth = "..."` parameter on `ingress_factory` — a discrete *mode*, not a ranked tier — one of `required` (Authentik forward-auth gates every request), `app` (the backend owns its login), `public` (anonymous Authentik binding for audit only), or `none` (Anubis-fronted content, or native-client API). Default `required` (fail-closed).
 _Avoid_: "auth tier" / "auth mode" — refer to it by the canonical key, `auth` (e.g. `auth = "required"`). "tier" is reserved for State tier and Namespace tier.
 
+**allowed_groups / Forward-auth authorization table** (ADR-0023):
+The `allowed_groups = [...]` parameter on `ingress_factory` (default `["Home Server Admins"]`), meaningful when `auth = "required"`: the Authentik **groups** permitted to reach that host. It is stamped as an ingress annotation; the `authentik` stack reads the live Ingress inventory at apply time and renders every `(host → allowed groups)` pair into the **default-deny** `admin-services-restriction` expression policy. Unlisted host, or a user in none of a host's groups → denied. Supersedes the legacy catch-all whose only distinction was ~17 admin hosts vs "any authenticated user."
+_Avoid_: thinking of forward-auth apps as individual Authentik *Applications* (they share one `forward_domain` catch-all — per-app authz lives in the table, not native bindings); per-identity allow-lists or user attributes (**access is group membership, always**).
+
 **Authentik outpost**:
 A standalone Authentik deployment that terminates the proxy/auth flow for a specific binding model. The repo runs two distinct ones: the default outpost (used by `auth = "required"`) and the `public` outpost (anonymous binding, used by `auth = "public"`).
 _Avoid_: conflating outpost with Authentik core; "Authentik instance".
