@@ -25,10 +25,17 @@ import {
   id = "07a11b85-8f37-4844-aebb-ac9c112ec87c"
 }
 
-# Live ingress inventory (cluster-wide). Prior art: stacks/nextcloud/main.tf.
+# Live ingress inventory. NOTE: kubernetes_resources with NO namespace returns an
+# EMPTY list for namespaced kinds in this provider version (verified 2026-07-26 —
+# cluster-wide list yields 0). So enumerate namespaces and list per-namespace, then
+# flatten. Prior art for kubernetes_resources: stacks/nextcloud/main.tf.
+data "kubernetes_all_namespaces" "all" {}
+
 data "kubernetes_resources" "ingresses" {
+  for_each    = toset(data.kubernetes_all_namespaces.all.namespaces)
   api_version = "networking.k8s.io/v1"
   kind        = "Ingress"
+  namespace   = each.value
 }
 
 locals {
@@ -38,8 +45,10 @@ locals {
   # default to Home Server Admins below, staying admin-reachable + non-admin-denied).
   _forward_auth_mw = "traefik-authentik-forward-auth@kubernetescrd"
 
+  _all_ingresses = flatten([for ns, res in data.kubernetes_resources.ingresses : res.objects])
+
   _fa_ingresses = [
-    for o in data.kubernetes_resources.ingresses.objects : o
+    for o in local._all_ingresses : o
     if strcontains(
       try(o.metadata.annotations["traefik.ingress.kubernetes.io/router.middlewares"], ""),
       local._forward_auth_mw
