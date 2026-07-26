@@ -170,6 +170,21 @@ sync_managed_config() {
   log "deployed managed-settings.json -> /etc/claude-code (repo copy changed)"
 }
 
+# tmux-persist (web-terminal session save/restore) is authored in-repo and its
+# units exec /usr/local/bin/tmux-persist. Keep the deployed binary current from the
+# repo each reconcile — same rationale as sync_managed_config: it was previously only
+# ever installed by a manual setup-devvm.sh run, so a committed edit could sit
+# undeployed. bash -n gates a broken script; cmp avoids needless churn.
+sync_tmux_persist() {
+  local src="$WORKSTATION_DIR/../tmux-persist.sh" dst=/usr/local/bin/tmux-persist
+  [[ -r "$src" ]] || return 0
+  bash -n "$src" 2>/dev/null || { log "WARN: $src has a syntax error — tmux-persist sync skipped"; return 0; }
+  cmp -s "$src" "$dst" 2>/dev/null && return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] tmux-persist -> $dst"; return 0; fi
+  install -m 0755 "$src" "$dst"
+  log "deployed tmux-persist -> /usr/local/bin (repo copy changed)"
+}
+
 # ~/.codex/AGENTS.md is a STATIC mirror of the managed claudeMd (codex has no
 # machine-wide managed layer). Regenerate stale mirrors so codex sessions inherit
 # claudeMd edits the same way Claude sessions do. Never clobbers a user-customized
@@ -663,6 +678,8 @@ jq -e . "$desired_file" >/dev/null || { echo "[t3-provision] derive produced inv
 
 # 3b) machine-wide Claude managed config (repo -> /etc; per-user codex mirrors in the loop below)
 sync_managed_config
+# 3c) machine-wide tmux-persist binary (repo -> /usr/local/bin; units enabled in step 5b)
+sync_tmux_persist
 
 # 4) per-account: create-if-absent + ADDITIVE tier groups (never strip) + locked clone
 # NB: empty @tsv fields collapse under tab-IFS read (tab is IFS whitespace), so
