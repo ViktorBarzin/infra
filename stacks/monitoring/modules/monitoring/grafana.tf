@@ -153,6 +153,8 @@ locals {
     "job-hunter.json"         = "Finance"
     "fire-planner.json"       = "Finance"
     "cost-of-living.json"     = "Finance"
+    # Security (owner-only — see admin_only_folders; proxy users' browsing)
+    "proxy_visits.json"       = "Security (Personal)"
   }
 
   # Folders restricted to the Grafana admin user (anonymous Viewer + any future
@@ -161,6 +163,7 @@ locals {
   # folder. Server-admin always retains access regardless of folder ACL.
   admin_only_folders = [
     "Finance (Personal)",
+    "Security (Personal)",
   ]
 }
 
