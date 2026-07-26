@@ -385,15 +385,21 @@ def _neko_env(userkey, token):
     return env
 
 
-def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey, token):
+def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey, token, owner=""):
     neko_mounts = [
         {"name": "profile", "mountPath": "/home/neko/.config/chromium"},
         {"name": "shm", "mountPath": "/dev/shm"},
-        {"name": "chrome-policy", "mountPath": "/etc/chromium/policies/managed", "readOnly": True}]
+        {"name": "chrome-policy", "mountPath": "/etc/chromium/policies/managed", "readOnly": True},
+        # visit tracking (spec infra#83): source a one-line /etc/chromium.d file
+        # that appends --remote-debugging-port=9222 so the visit-collector
+        # sidecar can read page navigations over CDP on loopback.
+        {"name": "visit-collector", "mountPath": "/etc/chromium.d/50-remote-debug",
+         "subPath": "50-remote-debug", "readOnly": True}]
     volumes = [
         {"name": "profile", "persistentVolumeClaim": {"claimName": _pvc_name(userkey)}},
         {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "1Gi"}},
-        {"name": "chrome-policy", "configMap": {"name": "proxy-chrome-policy"}}]
+        {"name": "chrome-policy", "configMap": {"name": "proxy-chrome-policy"}},
+        {"name": "visit-collector", "configMap": {"name": "proxy-visit-collector"}}]
     init_containers = []
     # Software x264 default: ~1.2 cores at 1080p (bursts, no CPU limit). Spread
     # browsers across the node2-5 workers.
@@ -429,7 +435,7 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
                      "labels": {"app": "proxy-browser", "proxy/user": userkey,
                                 "proxy/gw-idx": str(gw_idx), "proxy/country": _label(country)},
                      "annotations": {"proxy/country-name": country, "proxy/wg-pub": pubkey,
-                                     "proxy/wg-ip": wg_ip, "proxy/token": token,
+                                     "proxy/wg-ip": wg_ip, "proxy/token": token, "proxy/owner": owner,
                                      "proxy/started": str(int(time.time()))}},
         "spec": {
             "restartPolicy": "Always",
@@ -474,6 +480,21 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
                                     "periodSeconds": 3, "failureThreshold": 90},
                  "volumeMounts": neko_mounts,
                  "resources": neko_resources},
+                # visit-collector (spec infra#83): reads Chromium's CDP on
+                # loopback (shared pod netns) and logs page visits (URL + title)
+                # to stdout -> Alloy -> Loki, attributed to this user by the pod
+                # name. Observe-only; never touches the egress/traffic path.
+                {"name": "visit-collector",
+                 "image": "docker.io/library/python:3.12-alpine",
+                 "imagePullPolicy": "IfNotPresent",
+                 "command": ["python3", "/app/visit_collector.py"],
+                 "env": [{"name": "PROXY_USER", "value": owner},
+                         {"name": "CDP_URL", "value": "http://127.0.0.1:9222"}],
+                 "volumeMounts": [{"name": "visit-collector",
+                                   "mountPath": "/app/visit_collector.py",
+                                   "subPath": "visit_collector.py", "readOnly": True}],
+                 "resources": {"requests": {"cpu": "10m", "memory": "32Mi"},
+                               "limits": {"memory": "96Mi"}}},
             ],
             "initContainers": init_containers,
             "volumes": volumes,
@@ -624,7 +645,7 @@ def create_browser(user, country):
         priv, pub = wgkeys.genkeypair()
         _apply("/api/v1/namespaces/%s/persistentvolumeclaims" % NS, _pvc_name(userkey), build_pvc(userkey))
         _apply("/api/v1/namespaces/%s/secrets" % NS, _br_name(userkey) + "-wg", build_br_secret(userkey, priv))
-        body = build_br_pod(userkey, country, gw["idx"], wg_ip, gw["pubkey"], gw["endpoint_ip"], pub, token)
+        body = build_br_pod(userkey, country, gw["idx"], wg_ip, gw["pubkey"], gw["endpoint_ip"], pub, token, owner=user)
         for _ in range(30):   # wait out a terminating same-name pod (switch-country / recreate race)
             st, _ = k8s("POST", "/api/v1/namespaces/%s/pods" % NS, body)
             if st != 409:

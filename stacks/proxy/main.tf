@@ -98,6 +98,21 @@ resource "kubernetes_config_map_v1" "chrome_policy" {
   }
 }
 
+# Visit-collector sidecar script + the /etc/chromium.d flag that exposes CDP on
+# loopback so it can log page visits (spec infra#83). Mounted into every browser
+# pod by build_br_pod in broker.py; visits land in Loki via the pod's stdout.
+resource "kubernetes_config_map_v1" "visit_collector" {
+  metadata {
+    name      = "proxy-visit-collector"
+    namespace = local.namespace
+    labels    = local.labels
+  }
+  data = {
+    "visit_collector.py" = file("${path.module}/files/collector/visit_collector.py")
+    "50-remote-debug"    = file("${path.module}/files/collector/50-remote-debug")
+  }
+}
+
 # --- Broker RBAC — namespaced CRUD on the objects it manages per session ------
 resource "kubernetes_service_account" "broker" {
   metadata {
