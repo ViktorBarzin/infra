@@ -140,6 +140,14 @@ resource "kubernetes_deployment" "pages_publish" {
           fs_group     = 10001
         }
 
+        # Private ghcr image → pull via the Kyverno-synced ghcr-credentials.
+        # This ALSO lets Keel read these creds to poll the private :latest digest
+        # and roll new builds — without it Keel logs an empty digest and never
+        # rolls (and the pod would depend on fragile node-level ghcr creds).
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+
         container {
           name  = "pages-publish"
           image = "${local.image}:${local.image_tag}"
