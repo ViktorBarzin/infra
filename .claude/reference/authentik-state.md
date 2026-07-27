@@ -33,11 +33,19 @@
 > future SSO retry once apiserver OIDC is fixed.
 >
 > **admin-services-restriction** policy (TF-managed in
-> `stacks/authentik/admin-services-restriction.tf`, adopted 2026-06-04): gates the
-> 15 admin-only hostnames to `Home Server Admins`, with a carve-out admitting the
-> `kubernetes-*` RBAC groups to `k8s.viktorbarzin.me` (dashboard login page).
+> `stacks/authentik/admin-services-restriction.tf`): since infra#84 / ADR-0023
+> (2026-07-26) this is a **generated default-deny host→groups table**, no longer a
+> hardcoded admin-host list. It reads every forward-auth ingress's
+> `authentik.viktorbarzin.me/allowed-groups` annotation (declared via
+> `ingress_factory allowed_groups`, default `["Home Server Admins"]`) and grants iff
+> the user is in one of that host's groups; unlisted host / no match → **denied**. A
+> **break-glass bypass** admits `authentik Admins` / `Home Server Admins` before the
+> table (owner can't lock out). Non-default rows: `proxy`→Proxy Users, `k8s`→
+> kubernetes-* groups, `t3`→T3 Users, `chrome`/`chrome-fleet`→Chrome Users,
+> `postiz`→Postiz Users. Design:
+> `docs/plans/2026-07-26-authentik-forward-auth-group-authorization-design.md`.
 
-## Groups (9)
+## Groups (16)
 | Group | Parent | Superuser | Purpose |
 |-------|--------|-----------|---------|
 | Allow Login Users | -- | No | Parent group for login-permitted users |
@@ -49,6 +57,13 @@
 | kubernetes-power-users | -- | No | K8s power-user RBAC |
 | kubernetes-namespace-owners | -- | No | K8s namespace-owner RBAC |
 | Task Submitters | -- | No | Task submission access |
+| Proxy Users | -- | No | `proxy.viktorbarzin.me` remote browser ONLY (parentless — confined; ADR-0023) |
+| T3 Users | -- | No | `t3.viktorbarzin.me` Workstation |
+| TripIt Users | -- | No | TripIt app (OIDC binding, infra#82) |
+| Postiz Users | -- | No | `postiz.viktorbarzin.me` |
+| Chrome Users | -- | No | `chrome`/`chrome-fleet` shared browser (ADR-0023; deliberately tighter than admin) |
+| Forgejo Users | -- | No | Forgejo (OIDC binding) |
+| Public Guests | -- | No | anonymous `public` outpost auto-bind (`guest`) |
 
 ## Users (8 real)
 | Username | Name | Type | Groups |
