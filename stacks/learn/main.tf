@@ -104,13 +104,19 @@ resource "kubernetes_config_map" "caddyfile" {
       	auto_https off
       }
       :8080 {
+      	# host/auth-agnostic health endpoint so the caddy readiness probe
+      	# stays green now that the learn.* handler was removed (repointed).
+      	handle /healthz {
+      		respond "ok" 200
+      	}
       	# pages.viktorbarzin.me: per-user private page spaces (pages/<user>/) + a
       	# shared area (pages/shared/), served from the git-synced monorepo pages/
       	# tree. Each Authentik identity maps to a STATIC directory below — the
       	# untrusted X-Authentik-Username header is never interpolated into a path,
       	# so a spoofed value can't drive traversal. /assets/* is the shared
       	# stylesheet+mermaid. plans.viktorbarzin.me 301-redirects here (renamed
-      	# from plans/ 2026-07-26). learn.viktorbarzin.me stays Viktor-only.
+      	# from plans/ 2026-07-26). learn.viktorbarzin.me is served by the separate 'learning' app stack
+      	# (PWA; repointed 2026-07-27).
       	# In-cluster callers can still spoof the header (same trust class as
       	# ttyd, per ADR) — accepted for this 3-user homelab (Viktor, 2026-07-26).
       	@pages_assets {
@@ -149,15 +155,6 @@ resource "kubernetes_config_map" "caddyfile" {
       	handle @pages_emo {
       		root * /repo/src/current/pages/emo
       		file_server
-      	}
-      	@learn_owner {
-      		not host pages.viktorbarzin.me
-      		not host plans.viktorbarzin.me
-      		header_regexp X-Authentik-Username ^vbarzin(@.*)?$
-      	}
-      	handle @learn_owner {
-      		root * /repo/src/current/learn
-      		file_server browse
       	}
       	handle {
       		respond "Forbidden" 403
@@ -258,15 +255,11 @@ resource "kubernetes_deployment" "learn" {
           }
           readiness_probe {
             http_get {
-              path = "/"
+              path = "/healthz"
               port = 8080
-              http_header {
-                name  = "X-Authentik-Username"
-                value = "vbarzin"
-              }
             }
-            # 404 until git-sync's first clone lands → the pod goes Ready
-            # only once real content is being served
+            # /healthz is host/auth-agnostic (Caddyfile handler), so readiness
+            # stays green after the learn.* handler was removed (2026-07-27)
             initial_delay_seconds = 5
             period_seconds        = 10
             failure_threshold     = 6
@@ -334,22 +327,6 @@ resource "kubernetes_service" "learn" {
   }
 }
 
-module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.learn.metadata[0].name
-  name            = "learn"
-  tls_secret_name = var.tls_secret_name
-  auth            = "required"
-  extra_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "Learn"
-    "gethomepage.dev/description"  = "Learning-workspace Viewer (lessons, git-backed)"
-    "gethomepage.dev/icon"         = "mdi-school"
-    "gethomepage.dev/group"        = "Productivity"
-    "gethomepage.dev/pod-selector" = "app=learn"
-  }
-}
 
 # pages.viktorbarzin.me — per-user private page spaces + a shared area (the
 # monorepo's pages/ tree, renamed from plans/ 2026-07-26; rendered + pushed by
