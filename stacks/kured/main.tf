@@ -93,7 +93,14 @@ resource "helm_release" "kured" {
       # false (default) so the regex marks alerts to IGNORE — every other
       # firing alert blocks. See "Upgrade Gates" group in monitoring stack.
       prometheusUrl        = "http://prometheus-server.monitoring.svc.cluster.local:80"
-      alertFilterRegexp    = "^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor)$"
+      # KernelOOMKiller added to the ignore-list 2026-07-27: it counts memcg
+      # (cgroup-confined) OOMs — an app hitting its OWN limit, not node-memory
+      # danger (NodeMemoryPressure / NodeLowFreeMemory still gate that). It was
+      # SELF-DEADLOCKING kured: a node stuck pending-reboot keeps the
+      # sentinel-gate on its kubectl hot path, whose child kubectls OOM the gate
+      # cgroup -> fires KernelOOMKiller -> blocks the very reboot that would stop
+      # the gate. Ignoring it lets the reboot proceed and the gate quiesce.
+      alertFilterRegexp    = "^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor|KernelOOMKiller)$"
       alertFiringOnly      = true
       alertFilterMatchOnly = false
     }
@@ -244,10 +251,15 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
               # cgroup OOM-kills child processes — PID 1 bash survives, so the
               # pod never restarts, it just racks up silent oom_events
               # (149 in 7d / accelerating on k8s-master, 2026-05-30..31).
-              # Exit 0 every MAX_ITER cycles (~6h at 300s) so kubelet restarts
-              # the pod fresh and memory can never accumulate.
+              # Exit 0 every MAX_ITER cycles so kubelet restarts the pod fresh
+              # and memory can never accumulate. Tightened 72->12 (~6h->~1h) on
+              # 2026-07-27: on a node stuck pending-reboot for days (the kured
+              # deadlock, also fixed via the KernelOOMKiller ignore above) the
+              # leak still crossed the 256Mi ceiling within 6h and OOM-killed
+              # ~139 child kubectls/6h. A ~1h reset keeps the cgroup well under
+              # the (now 512Mi) limit so it never OOMs.
               ITER=0
-              MAX_ITER=72
+              MAX_ITER=12
               while true; do
                 ITER=$((ITER + 1))
                 if [ "$ITER" -gt "$MAX_ITER" ]; then
@@ -322,12 +334,13 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
               memory = "32Mi"
             }
             # 64Mi was too tight for the kubectl-heavy hot path (each kubectl
-            # fork is a ~30-50Mi Go binary). Raised to 256Mi 2026-05-31 after
-            # the k8s-master gate pod OOM-killed child kubectls 149x/7d while
-            # master sat in pending-reboot. The self-restart guard (loop above)
-            # is the primary leak fix; this just gives comfortable headroom.
+            # fork is a ~90Mi RSS Go binary). Raised 64->256Mi 2026-05-31, then
+            # 256->512Mi 2026-07-27 after the gate STILL OOM-killed ~139 child
+            # kubectls/6h on a node stuck pending-reboot for days. 512Mi headroom
+            # + the tightened MAX_ITER=12 (~1h reset, loop above) together keep
+            # the cgroup from ever filling to the OOM ceiling.
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
           volume_mount {
