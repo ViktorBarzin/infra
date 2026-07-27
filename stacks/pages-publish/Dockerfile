@@ -20,6 +20,13 @@ RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin pages \
  && chown -R 10001:10001 /repo /home/pages/.ssh \
  && chmod 700 /home/pages/.ssh
 
+# Trust the /repo emptyDir clone regardless of mount ownership. The emptyDir
+# root is owned by root (fsGroup only sets the group), so git otherwise refuses
+# operations in it as "dubious ownership" when running as uid 10001. Git honours
+# safe.directory ONLY from system/global config (never -c or GIT_CONFIG_* env),
+# so it must be baked into /etc/gitconfig here — an env var would be ignored.
+RUN git config --system --add safe.directory /repo
+
 WORKDIR /srv
 COPY app /srv/app
 
