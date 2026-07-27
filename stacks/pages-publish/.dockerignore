@@ -1,0 +1,11 @@
+# Keep the image to the app package only. Everything else (terraform, tests,
+# CI, caches) is build-context noise the runtime never needs.
+tests/
+*.tf
+terragrunt.hcl
+build-pages-publish.yml
+README.md
+pyproject.toml
+.pytest_cache/
+**/__pycache__/
+*.pyc
