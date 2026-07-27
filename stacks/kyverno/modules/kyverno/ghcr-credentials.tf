@@ -68,6 +68,9 @@ locals {
     # interview-prep-app: PRIVATE ghcr.io/viktorbarzin/interview-prep-app
     # (static SvelteKit interview-prep PWA). Deployment references the cloned secret.
     "interview-prep-app",
+    # pages-publish: PRIVATE ghcr.io/viktorbarzin/pages-publish (markdown →
+    # pages.viktorbarzin.me publish service). Deployment references the cloned secret.
+    "pages-publish",
   ]
 }
 
