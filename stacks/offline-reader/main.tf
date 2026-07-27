@@ -253,7 +253,9 @@ module "ingress" {
 # (an iOS Shortcut can't replay the Authentik OIDC cookie). Same host as module.ingress;
 # mirrors the chrome-service snapshot carve-out.
 module "ingress_ingest" {
-  source            = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": /api/ingest is gated by a secret INGEST_TOKEN inside the app; an
+  # iOS Shortcut can't replay the Authentik OIDC cookie (mirrors chrome-snapshot).
   auth              = "none"
   dns_type          = "none" # DNS already created by module.ingress
   namespace         = kubernetes_namespace.offline_reader.metadata[0].name
