@@ -98,12 +98,6 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.pages_publish]
 }
 
-module "tls_secret" {
-  source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = kubernetes_namespace.pages_publish.metadata[0].name
-  tls_secret_name = var.tls_secret_name
-}
-
 # --- Deployment ---
 
 resource "kubernetes_deployment" "pages_publish" {
@@ -286,5 +280,9 @@ module "ingress" {
   dns_type        = "proxied"
   namespace       = local.namespace
   name            = "pages-publish"
+  # Route to the Service's 8080 (svc-builder put it on 8080, not the
+  # ingress_factory default 80) — otherwise Traefik can't resolve the backend
+  # port and POST /publish returns a stray 405 while GET falls through.
+  port            = 8080
   tls_secret_name = var.tls_secret_name
 }
