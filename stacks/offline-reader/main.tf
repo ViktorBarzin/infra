@@ -131,8 +131,16 @@ resource "kubernetes_deployment" "offline_reader" {
               field_ref { field_path = "metadata.namespace" }
             }
           }
-          # Notifications (finish-notification) wired in a follow-up via an ExternalSecret;
-          # the app treats SLACK_WEBHOOK/NTFY_* as optional and no-ops when unset.
+          # Share-ingest token (INGEST_TOKEN) from Vault via the ExternalSecret below,
+          # so the token-gated /api/ingest endpoint (iOS Shortcut) can authenticate.
+          env_from {
+            # optional: pod still starts if the ExternalSecret hasn't synced yet
+            # (INGEST_TOKEN then unset -> /api/ingest returns 503 until it syncs).
+            secret_ref {
+              name     = "offline-reader-secrets"
+              optional = true
+            }
+          }
 
           volume_mount {
             name       = "pages"
@@ -180,7 +188,7 @@ resource "kubernetes_deployment" "offline_reader" {
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
     ]
   }
-  depends_on = [kubernetes_role_binding.app]
+  depends_on = [kubernetes_role_binding.app, kubernetes_manifest.offline_reader_secrets]
 }
 
 resource "kubernetes_service" "offline_reader" {
@@ -205,6 +213,30 @@ resource "kubernetes_service" "offline_reader" {
   }
 }
 
+# Share-ingest token: Vault secret/offline-reader:ingest_token -> k8s Secret
+# offline-reader-secrets -> env INGEST_TOKEN on the app. Seed Vault before apply:
+#   vault kv put secret/offline-reader ingest_token=<random>
+resource "kubernetes_manifest" "offline_reader_secrets" {
+  field_manager { force_conflicts = true }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata   = { name = "offline-reader-secrets", namespace = local.namespace }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef  = { name = "vault-kv", kind = "ClusterSecretStore" }
+      target = {
+        name     = "offline-reader-secrets"
+        template = { metadata = { annotations = { "reloader.stakater.com/match" = "true" } } }
+      }
+      data = [
+        { secretKey = "INGEST_TOKEN", remoteRef = { key = "offline-reader", property = "ingest_token" } },
+      ]
+    }
+  }
+  depends_on = [kubernetes_namespace.offline_reader]
+}
+
 module "ingress" {
   source            = "../../modules/kubernetes/ingress_factory"
   auth              = "required" # owner-only Authentik forward-auth; app trusts X-Authentik-Username
@@ -215,6 +247,23 @@ module "ingress" {
   port              = 8000
   tls_secret_name   = var.tls_secret_name
   extra_annotations = { "gethomepage.dev/icon" = "mdi-book-arrow-down" }
+}
+
+# Auth-bypass carve-out for /api/ingest only: gated by INGEST_TOKEN INSIDE the app
+# (an iOS Shortcut can't replay the Authentik OIDC cookie). Same host as module.ingress;
+# mirrors the chrome-service snapshot carve-out.
+module "ingress_ingest" {
+  source            = "../../modules/kubernetes/ingress_factory"
+  auth              = "none"
+  dns_type          = "none" # DNS already created by module.ingress
+  namespace         = kubernetes_namespace.offline_reader.metadata[0].name
+  name              = "offline-reader-ingest"
+  host              = "offline-reader"
+  service_name      = kubernetes_service.offline_reader.metadata[0].name
+  port              = 8000
+  ingress_path      = ["/api/ingest"]
+  tls_secret_name   = var.tls_secret_name
+  extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 
 # --- NetworkPolicy: only traefik (post-forward-auth) + monitoring reach the pod,
