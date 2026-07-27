@@ -150,14 +150,25 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           name = "Node Health"
           rules = [
             {
+              # Re-scoped 2026-07-27 (Viktor): fire ONLY on a REAL OOM — a
+              # container/app OOM-kill OR a global node OOM — never on the
+              # kured-sentinel-gate's benign memcg churn. On a pending-reboot
+              # node the gate reaps its OWN (kubectl)/(bash) children ~14x/hr
+              # against the gate's own cgroup limit (verified 2026-07-27: node5
+              # at 83% free, ZERO containers OOMKilled cluster-wide, ~28 flap
+              # msgs/6h). Excluding those two victim comms drops the gate to 0
+              # (validated live) while still firing on any real process the
+              # OOM-killer takes: a real container OOM (which also fires
+              # ContainerOOMKilled) or a global node OOM (which only happens
+              # when the node is at its memory limit). See memory #8811 / #10378.
               alert = "KernelOOMKiller"
-              expr  = "sum by (node) (count_over_time({job=\"node-journal\"} |~ \"(?i)Out of memory.*Killed process\" [5m])) > 0"
+              expr  = "sum by (node) (count_over_time({job=\"node-journal\"} |~ \"(?i)Out of memory.*Killed process\" != \"(kubectl)\" != \"(bash)\" [5m])) > 0"
               for   = "0m"
               labels = {
                 severity = "critical"
               }
               annotations = {
-                summary = "OOM killer active on {{ $labels.node }}"
+                summary = "OOM killer killed a real container/app on {{ $labels.node }}"
               }
             },
             {
