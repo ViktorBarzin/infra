@@ -42,7 +42,7 @@ resource "kubernetes_persistent_volume_claim" "data" {
   spec {
     access_modes       = ["ReadWriteOnce"]
     storage_class_name = "proxmox-lvm-encrypted"
-    wait_until_bound   = false # WaitForFirstConsumer SC binds on pod schedule; blocking here deadlocks the apply
+    wait_until_bound   = false # WaitForFirstConsumer SC binds on pod schedule; blocking here deadlocks the apply (orphan PVC cleared, re-applied 2026-07-27)
     resources {
       requests = { storage = "1Gi" }
     }
