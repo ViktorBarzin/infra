@@ -308,9 +308,11 @@ isolated instance. The session-exposure trade-off above was explicitly accepted.
 Two independent grants make up "browser access" for a user:
 
 1. **noVNC (interactive view, `chrome.viktorbarzin.me`)** — gated by the Authentik
-   `admin-services-restriction` policy: the `CHROME_ALLOWED` set
-   (`stacks/authentik/admin-services-restriction.tf`) matches the user's Authentik
-   username OR email. Add the user there. No kubeconfig/RBAC needed.
+   `admin-services-restriction` policy via the **`Chrome Users` group** (ADR-0023;
+   the `chrome`/`chrome-fleet` ingresses set `allowed_groups = ["Chrome Users"]`).
+   Add the user to `Chrome Users` — kept deliberately tighter than admin, though
+   `Home Server Admins` also pass via the break-glass bypass. No kubeconfig/RBAC
+   needed. (Was a hardcoded `CHROME_ALLOWED` username/email set until 2026-07-26.)
 2. **CLI (`homelab browser`, CDP over port-forward)** — needs `pods/portforward`
    in `chrome-service` PLUS a non-interactive credential (a normal devvm user's
    kubeconfig is interactive-OIDC-only and can't authenticate a headless agent
@@ -324,9 +326,9 @@ Two independent grants make up "browser access" for a user:
    `oidc@homelab` named context. The SA's existence is the source of truth for who
    gets the CLI — the provisioner no-ops for users without a `<user>-browser` SA.
 
-**To grant another user:** add them to `CHROME_ALLOWED` (noVNC) and/or add a
+**To grant another user:** add them to the `Chrome Users` group (noVNC) and/or add a
 `<user>-browser` SA + bindings mirroring `emo-browser` in `rbac.tf` (CLI), then run
-the provisioner. To revoke: remove from `CHROME_ALLOWED` and delete the SA (rotate
+the provisioner. To revoke: remove from `Chrome Users` and delete the SA (rotate
 a token by deleting its `<user>-browser-token` Secret).
 
 Because the SA is the user's DEFAULT kubectl credential, other per-namespace
