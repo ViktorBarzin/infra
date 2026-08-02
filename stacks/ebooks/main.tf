@@ -191,6 +191,14 @@ module "nfs_calibre_ingest_host" {
   nfs_path   = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
 }
 
+module "nfs_mam_farming_host" {
+  source     = "../../modules/kubernetes/nfs_volume"
+  name       = "ebooks-mam-farming-host"
+  namespace  = "ebooks"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/servarr/mam-farming"
+}
+
 module "nfs_calibre_stacks_config_host" {
   source     = "../../modules/kubernetes/nfs_volume"
   name       = "ebooks-calibre-stacks-config-host"
@@ -825,6 +833,10 @@ resource "kubernetes_deployment" "book_search" {
             }
           }
           env {
+            name  = "MAM_ID_FILE"
+            value = "/mam-farming/mam_id"
+          }
+          env {
             name = "API_KEY"
             value_from {
               secret_key_ref {
@@ -931,6 +943,11 @@ resource "kubernetes_deployment" "book_search" {
             name       = "calibre-library"
             mount_path = "/calibre-library"
           }
+          volume_mount {
+            name       = "mam-farming"
+            mount_path = "/mam-farming"
+            read_only  = true
+          }
         }
         volume {
           name = "cwa-ingest"
@@ -954,6 +971,12 @@ resource "kubernetes_deployment" "book_search" {
           name = "stacks-config"
           persistent_volume_claim {
             claim_name = module.nfs_calibre_stacks_config_host.claim_name
+          }
+        }
+        volume {
+          name = "mam-farming"
+          persistent_volume_claim {
+            claim_name = module.nfs_mam_farming_host.claim_name
           }
         }
       }
