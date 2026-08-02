@@ -307,6 +307,12 @@ resource "kubernetes_deployment" "calibre-web-automated" {
             name  = "CALIBRE_PORT"
             value = "8083"
           }
+          env {
+            # The ingest directory is NFS-backed and written by book-search;
+            # inotify cannot observe writes made through another NFS client.
+            name  = "NETWORK_SHARE_MODE"
+            value = "true"
+          }
 
           port {
             container_port = 8083
