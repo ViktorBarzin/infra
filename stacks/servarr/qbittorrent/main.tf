@@ -52,6 +52,14 @@ module "nfs_audiobooks_host" {
   nfs_path   = "/srv/nfs/audiobookshelf/audiobooks"
 }
 
+module "nfs_calibre_ingest_host" {
+  source     = "../../../modules/kubernetes/nfs_volume"
+  name       = "servarr-qbittorrent-calibre-ingest-host"
+  namespace  = "servarr"
+  nfs_server = "192.168.1.127"
+  nfs_path   = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+}
+
 resource "kubernetes_deployment" "qbittorrent" {
   metadata {
     name      = "qbittorrent"
@@ -120,6 +128,10 @@ resource "kubernetes_deployment" "qbittorrent" {
             name       = "audiobooks"
             mount_path = "/audiobooks"
           }
+          volume_mount {
+            name       = "calibre-ingest"
+            mount_path = "/cwa-book-ingest"
+          }
           resources {
             requests = {
               memory = "512Mi"
@@ -146,6 +158,12 @@ resource "kubernetes_deployment" "qbittorrent" {
           name = "audiobooks"
           persistent_volume_claim {
             claim_name = module.nfs_audiobooks_host.claim_name
+          }
+        }
+        volume {
+          name = "calibre-ingest"
+          persistent_volume_claim {
+            claim_name = module.nfs_calibre_ingest_host.claim_name
           }
         }
       }
