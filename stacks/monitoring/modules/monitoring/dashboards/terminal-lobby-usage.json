@@ -1,0 +1,233 @@
+{
+  "uid": "terminal-lobby-usage",
+  "title": "Terminal Lobby Usage",
+  "description": "How terminal-lobby is actually used, per OS user. Fed by TLEVENT usage events in the devvm journal (terminal-lobby docs/adr/0006-usage-telemetry.md). Loki retention is 30 days, so ranges beyond that are empty by design.",
+  "tags": ["terminal-lobby", "usage", "logs"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-7d", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "user",
+        "label": "OS user",
+        "type": "custom",
+        "query": "wizard,emo",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Overview",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Events",
+      "description": "Total usage events in the selected range.",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json user=\"user.id\" | user =~ \"$user\" [$__range]))"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "type": "stat",
+      "title": "Sessions started",
+      "description": "session.attached — every session start, including plain ttyd URLs that never touch the lobby.",
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 1 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", user=\"user.id\" | name = \"session.attached\" | user =~ \"$user\" [$__range]))"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "type": "stat",
+      "title": "Lobby tabs opened",
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 1 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", user=\"user.id\" | name = \"app.loaded\" | user =~ \"$user\" [$__range]))"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "type": "stat",
+      "title": "Errors seen",
+      "description": "app.error — a toast the user actually saw. The strongest \"this needs work\" signal here.",
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 1 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", user=\"user.id\" | name = \"app.error\" | user =~ \"$user\" [$__range]))"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 20 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Prompts sent from the web",
+      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 1 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", user=\"user.id\" | name = \"claude.prompt_sent\" | user =~ \"$user\" [$__range]))"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "type": "row",
+      "title": "What gets used",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "barchart",
+      "title": "Features by use, per user",
+      "description": "The core question: which parts of the lobby earn their keep, and whether wizard and emo use it differently.",
+      "gridPos": { "h": 11, "w": 14, "x": 0, "y": 6 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "sum by (name, user) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", user=\"user.id\" | user =~ \"$user\" [$__range]))"
+        }
+      ],
+      "options": { "orientation": "horizontal", "stacking": "normal", "legend": { "showLegend": true, "placement": "bottom" } }
+    },
+    {
+      "type": "piechart",
+      "title": "Which tool sessions run",
+      "description": "session.attached by command key — claude / codex / shell / none (tmux default-command).",
+      "gridPos": { "h": 11, "w": 10, "x": 14, "y": 6 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "sum by (kind) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", kind=\"attrs.tl.kind\", user=\"user.id\" | name = \"session.attached\" | user =~ \"$user\" [$__range]))"
+        }
+      ],
+      "options": { "legend": { "showLegend": true, "placement": "right" }, "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "row",
+      "title": "Over time",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Activity per user",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (user) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json user=\"user.id\" | user =~ \"$user\" [$__interval]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Keyboard vs pointer (command dispatch)",
+      "description": "palette.action counts every command dispatch — palette pick, chord, or forwarded shortcut.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (key) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", key=\"attrs.tl.key\", user=\"user.id\" | name = \"palette.action\" | user =~ \"$user\" [$__interval]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "Detail",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Prefs and themes people change",
+      "description": "Which knobs actually get turned — a default worth revisiting is one that keeps getting changed.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 27 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "expr": "sum by (key, to) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", key=\"attrs.tl.key\", to=\"attrs.tl.to\", user=\"user.id\" | name =~ \"prefs.changed|theme.changed\" | user =~ \"$user\" [$__range]))"
+        }
+      ],
+      "options": { "showHeader": true }
+    },
+    {
+      "type": "logs",
+      "title": "Raw event stream",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 27 },
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"devvm-journal\"} |= \"TLEVENT\" | json user=\"user.id\" | user =~ \"$user\""
+        }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    }
+  ]
+}
