@@ -1,0 +1,244 @@
+---
+# playbooks/pfsense-tailscale.yml
+#
+# pfSense as a Tailscale (Headscale) subnet router for the Sofia estate.
+#
+# WHY: Headscale gave roaming clients a mesh but no path INTO the LAN — there
+# was no tailnet node advertising homelab routes, so "browse the LAN from my
+# phone" did not work. pfSense had the Tailscale package installed and fully
+# staged, but had been sitting `Logged out` since ~2026-07-18 with a spent
+# pre-auth key, and nothing alerted. This playbook makes that state
+# reproducible instead of hand-clicked, and corrects what was staged wrong:
+# a blanket 10.0.0.0/8 advertisement, --accept-dns/--accept-routes left on, and
+# an outbound-NAT rule masquerading to 100.64.0.3 (pfSense's tailnet address in
+# a PREVIOUS registration — that IP now belongs to a family laptop).
+#
+# Design : docs/plans/2026-08-03-pfsense-tailscale-subnet-router-design.md
+# Runbook: docs/runbooks/pfsense-tailscale-subnet-router.md
+#
+# The Headscale side (ACL, autoApprovers, split-DNS) is Terraform, NOT here:
+# stacks/headscale/acl.hujson (git-crypt) + secret/platform.headscale_config.
+# Adding a route means editing BOTH this playbook's PHP desired-state and
+# autoApprovers.routes in the ACL, or the route registers unapproved.
+#
+# RUN (from repo root; claim presence first:
+#      scripts/presence claim infra:pfsense --purpose "tailscale subnet router"):
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-tailscale.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/pfsense-tailscale.yml
+#   re-register (node deleted/expired in Headscale):
+#             ... -e force_register=true
+#
+# Idempotent: a second run with the node already registered reports no changes
+# and mints no key.
+
+- name: pfSense Tailscale subnet router
+  hosts: pfsense
+  gather_facts: false
+  vars:
+    # Headscale user that owns tag:infra (tagOwners: tag:infra -> group:admin,
+    # and group:admin is vbarzin@gmail.com). The pre-auth key must be minted by
+    # a tag owner or Headscale refuses the tag.
+    headscale_user_id: 1
+    headscale_tag: "tag:infra"
+    headscale_ns: headscale
+    # Every route advertised must be auto-approved in acl.hujson.
+    expected_routes:
+      - 192.168.1.0/24
+      - 10.0.10.0/24
+      - 10.0.20.0/24
+      - 192.168.0.0/24
+      - 192.168.8.0/24
+      - 192.168.9.0/24
+    force_register: false
+    php_script_remote: /tmp/pfsense-tailscale-config.php
+
+  tasks:
+    - name: Assert the Tailscale package is installed
+      ansible.builtin.command: pkg info -e pfSense-pkg-Tailscale
+      changed_when: false
+      # Read-only: must still run under --check, or the facts below are undefined.
+      check_mode: false
+      register: pkg_check
+      failed_when: pkg_check.rc != 0
+
+    - name: Ship the idempotent configurator
+      ansible.builtin.copy:
+        src: files/pfsense-tailscale-config.php
+        dest: "{{ php_script_remote }}"
+        mode: "0700"
+        owner: root
+      # The script itself is the idempotency boundary; copying it is not a change
+      # worth reporting. check_mode: false because --check needs the script
+      # present to report a diff at all, and dropping a 0700 file in /tmp mutates
+      # nothing that matters.
+      changed_when: false
+      check_mode: false
+
+    - name: Read current tailscale login state
+      ansible.builtin.command: /usr/local/bin/tailscale status --json
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      register: ts_status_raw
+
+    - name: Parse login state
+      # `tailscale status --json` exits 0 with valid JSON in BOTH states —
+      # BackendState is "Running" when registered and "NeedsLogin" when not —
+      # so this parses in either case. Guard on rc so a dead daemon gives a
+      # clear message instead of a template error.
+      ansible.builtin.set_fact:
+        ts_backend_state: >-
+          {{ (ts_status_raw.stdout | from_json).BackendState | default('Unknown')
+             if ts_status_raw.rc == 0 else 'DaemonError' }}
+
+    - name: Show current state
+      ansible.builtin.debug:
+        msg: "tailscale BackendState={{ ts_backend_state | default('unparsable') }}"
+
+    # ── Config: routes, flags, NAT, pf rules (no credential involved) ───────
+    - name: Apply desired pfSense configuration (check mode)
+      ansible.builtin.command: >-
+        /usr/local/bin/php -f {{ php_script_remote }} -- --check
+      changed_when: false
+      # --check makes the script itself read-only, so this must be exempted from
+      # Ansible's blanket skip of command tasks under --check.
+      check_mode: false
+      register: cfg_check
+      when: ansible_check_mode
+
+    - name: Report what check mode would change
+      ansible.builtin.debug:
+        var: cfg_check.stdout
+      when: ansible_check_mode
+
+    - name: Apply desired pfSense configuration
+      ansible.builtin.command: >-
+        /usr/local/bin/php -f {{ php_script_remote }} --
+      register: cfg_apply
+      changed_when: (cfg_apply.stdout | from_json).changed | bool
+      when: not ansible_check_mode
+
+    - name: Report configuration changes
+      ansible.builtin.debug:
+        var: (cfg_apply.stdout | from_json).changes
+      when: not ansible_check_mode
+
+    # ── Registration: only when actually logged out ─────────────────────────
+    # Pre-auth-key registration yields a node with NO expiry in Headscale
+    # (verified: the mx2 nodes show 0001-01-01), unlike OIDC login which inherits
+    # oidc.expiry=180d. So this runs once and stays registered.
+    - name: Registration block
+      when:
+        - not ansible_check_mode
+        - ts_backend_state | default('') != 'Running' or force_register | bool
+      block:
+        - name: Mint a single-use tagged pre-auth key
+          # Short-lived and single-use on purpose: the pfSense rc script logs the
+          # full `tailscale up` command line — auth key included — to syslog, and
+          # config.xml is copied to NFS + Synology by the daily backup. Nothing
+          # long-lived may live in either place.
+          ansible.builtin.command: >-
+            kubectl -n {{ headscale_ns }} exec deploy/headscale -c headscale --
+            headscale preauthkeys create -u {{ headscale_user_id }}
+            --tags {{ headscale_tag }} -e 1h -o json
+          delegate_to: localhost
+          register: preauth_raw
+          changed_when: true
+          no_log: true
+
+        - name: Extract the key
+          ansible.builtin.set_fact:
+            preauth_key: "{{ (preauth_raw.stdout | from_json).key }}"
+          no_log: true
+
+        - name: Store the key and restart tailscaled to register
+          # The PHP calls tailscale_resync_config_hook(), which rewrites
+          # /usr/local/etc/rc.conf.d/pfsense_tailscaled from config.xml and
+          # restarts the service; the rc poststart then runs `tailscale up`.
+          ansible.builtin.command: >-
+            /usr/local/bin/php -f {{ php_script_remote }} --
+            --authkey={{ preauth_key }}
+          register: key_set
+          changed_when: true
+          no_log: true
+
+        - name: Wait for the node to reach Running
+          ansible.builtin.shell: >-
+            /usr/local/bin/tailscale status --json | /usr/local/bin/php -r
+            'echo json_decode(file_get_contents("php://stdin"), true)["BackendState"] ?? "Unknown";'
+          register: ts_wait
+          until: ts_wait.stdout == 'Running'
+          retries: 20
+          delay: 6
+          changed_when: false
+
+        - name: Clear the stored pre-auth key
+          # Registered state lives in the tailscaled state dir, not in the key,
+          # so nothing is lost by removing it — and a spent key left in
+          # config.xml is a credential in every backup for no benefit.
+          ansible.builtin.command: >-
+            /usr/local/bin/php -f {{ php_script_remote }} -- --blank-key
+          register: key_blank
+          changed_when: (key_blank.stdout | from_json).changed | bool
+
+        - name: Wait for tailscaled to come back after the key was cleared
+          # Clearing the key changes rc.conf, so the resync hook restarts
+          # tailscaled. It re-authenticates from the state dir (the node key
+          # lives there, not in the auth key) but passes through NoState for a
+          # few seconds first — verifying immediately gives a false failure.
+          ansible.builtin.shell: >-
+            /usr/local/bin/tailscale status --json | /usr/local/bin/php -r
+            'echo json_decode(file_get_contents("php://stdin"), true)["BackendState"] ?? "Unknown";'
+          register: ts_wait_after_blank
+          until: ts_wait_after_blank.stdout == 'Running'
+          retries: 20
+          delay: 6
+          changed_when: false
+
+    # ── Verification ────────────────────────────────────────────────────────
+    - name: Verify tailscale is Running and holds a tailnet address
+      ansible.builtin.command: /usr/local/bin/tailscale ip -4
+      register: ts_ip
+      changed_when: false
+      failed_when: ts_ip.rc != 0 or ts_ip.stdout is not match('^100\\.')
+      when: not ansible_check_mode
+
+    - name: Verify the tailnet route is in the kernel routing table
+      ansible.builtin.shell: netstat -rn -f inet | grep -c '^100\.64'
+      register: ts_route
+      changed_when: false
+      failed_when: ts_route.stdout | int < 1
+      when: not ansible_check_mode
+
+    - name: Read approved routes from Headscale
+      ansible.builtin.command: >-
+        kubectl -n {{ headscale_ns }} exec deploy/headscale -c headscale --
+        headscale nodes list-routes -o json
+      delegate_to: localhost
+      register: routes_raw
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Assert every advertised route is approved
+      # A route that is advertised but unapproved carries no traffic and reports
+      # no error anywhere — this assert is the only thing that catches it.
+      ansible.builtin.assert:
+        that:
+          # Field is `approved_routes` — the human table header says "Approved",
+          # which is NOT the JSON key, and querying the wrong name yields an
+          # empty list that silently passes nothing.
+          - item in (routes_raw.stdout | from_json | json_query('[].approved_routes[]') | default([], true))
+        fail_msg: >-
+          Route {{ item }} is advertised but NOT approved in Headscale. Check
+          autoApprovers.routes in stacks/headscale/acl.hujson, then approve with:
+          headscale nodes approve-routes -i <node-id> -r <routes>
+      loop: "{{ expected_routes }}"
+      when: not ansible_check_mode
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: >-
+          pfSense tailnet IP {{ ts_ip.stdout | default('?') }};
+          routes advertised+approved: {{ expected_routes | join(', ') }};
+          exit node advertised.
+      when: not ansible_check_mode

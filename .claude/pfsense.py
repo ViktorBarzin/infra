@@ -308,7 +308,10 @@ def cmd_snort(_args):
 
 
 def cmd_raw(args):
-    print(ssh(args.command))
+    # NOT args.command: the subparsers' dest is "command", so a positional named
+    # "command" here overwrote it with the shell string and dispatch fell through
+    # to print_help() — `pfsense.py raw '<anything>'` never ran (fixed 2026-08-03).
+    print(ssh(args.shell_command))
 
 
 def main():
@@ -377,7 +380,7 @@ def main():
     sub.add_parser("snort", help="Snort status")
 
     p = sub.add_parser("raw", help="Run arbitrary command")
-    p.add_argument("command", help="Command to run")
+    p.add_argument("shell_command", metavar="command", help="Command to run")
 
     args = parser.parse_args()
     if not args.command:
