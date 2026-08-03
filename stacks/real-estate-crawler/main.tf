@@ -169,8 +169,18 @@ resource "kubernetes_namespace" "realestate-crawler" {
     name = "realestate-crawler"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
+      # UN-ENROLLED from Keel 2026-08-03. CI deploys this app by digest-stable
+      # :<sha> tag (.woodpecker/deploy.yml in the app repo), so Keel has no job
+      # here — and it is actively harmful: under the cluster-default
+      # `policy: patch` Keel RESOLVES non-semver tags and rewrites them to a
+      # concrete version. That is how celery silently moved from :latest to :22
+      # (a 2026-02-22 image) and stayed there for five months; the tag string
+      # `realestatecrawler:22` never appears anywhere in this repo's history.
+      # Removing the label stops Kyverno re-stamping keel annotations; the
+      # per-workload `keel.sh/policy = never` below stops the already-tracking
+      # Keel (annotation + label = the documented safe matrix for floating tags).
+      # "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -200,6 +210,12 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
     labels = {
       app  = "realestate-crawler-ui"
       tier = local.tiers.aux
+      # Keel opt-out: the LABEL puts this workload in the kyverno
+      # inject-keel-annotations exclude; the ANNOTATION stops Keel itself.
+      "keel.sh/policy" = "never"
+    }
+    annotations = {
+      "keel.sh/policy" = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
@@ -277,9 +293,13 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     labels = {
       app  = "realestate-crawler-api"
       tier = local.tiers.aux
+      # Keel opt-out: the LABEL puts this workload in the kyverno
+      # inject-keel-annotations exclude; the ANNOTATION stops Keel itself.
+      "keel.sh/policy" = "never"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
+      "keel.sh/policy"             = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
@@ -497,9 +517,13 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
     labels = {
       app  = "realestate-crawler-celery"
       tier = local.tiers.aux
+      # Keel opt-out: the LABEL puts this workload in the kyverno
+      # inject-keel-annotations exclude; the ANNOTATION stops Keel itself.
+      "keel.sh/policy" = "never"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
+      "keel.sh/policy"             = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
@@ -644,9 +668,13 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
     labels = {
       app  = "realestate-crawler-celery-beat"
       tier = local.tiers.aux
+      # Keel opt-out: the LABEL puts this workload in the kyverno
+      # inject-keel-annotations exclude; the ANNOTATION stops Keel itself.
+      "keel.sh/policy" = "never"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
+      "keel.sh/policy"             = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
