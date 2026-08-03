@@ -315,6 +315,37 @@ from urllib.parse import urlparse
 QB_URL = "http://qbittorrent.servarr.svc.cluster.local"
 PUSHGW = "http://prometheus-prometheus-pushgateway.monitoring:9091"
 
+# Completed private-tracker torrents must remain announceable. A low active
+# upload limit leaves them in queuedUP: qBittorrent's local seed clock still
+# advances, but the tracker sees no seed time and records hit-and-runs.
+required_queue_preferences = {
+    "queueing_enabled": True,
+    "max_active_downloads": 5,
+    "max_active_uploads": 500,
+    "max_active_torrents": 505,
+}
+
+try:
+    current_preferences = requests.get(
+        f"{QB_URL}/api/v2/app/preferences", timeout=10
+    ).json()
+    preference_drift = {
+        key: value
+        for key, value in required_queue_preferences.items()
+        if current_preferences.get(key) != value
+    }
+    if preference_drift:
+        response = requests.post(
+            f"{QB_URL}/api/v2/app/setPreferences",
+            data={"json": json.dumps(required_queue_preferences)},
+            timeout=10,
+        )
+        response.raise_for_status()
+        print(f"Reconciled qBittorrent queue preferences: {preference_drift}")
+except Exception as e:
+    print(f"ERROR reconciling qBittorrent queue preferences: {e}", file=sys.stderr)
+    sys.exit(1)
+
 try:
     torrents = requests.get(f"{QB_URL}/api/v2/torrents/info", timeout=10).json()
 except Exception as e:
