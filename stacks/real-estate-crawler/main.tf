@@ -244,7 +244,8 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets an immutable :<sha> tag
     ]
   }
 }
@@ -363,6 +364,23 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             name  = "WEBAUTHN_ORIGIN"
             value = "https://wrongmove.viktorbarzin.me"
           }
+          # Who may REGISTER a passkey. /api/passkey/register/begin was open
+          # self-serve — any email created an app user, and app users can call
+          # /api/poi/* which spends Google Maps routing credits. The app fails
+          # CLOSED on an empty/missing value (no registrations), so dropping
+          # this env var can never silently reopen signup to the internet.
+          # Not a secret: plain env keeps it auditable in git.
+          # Login is unaffected — this gates enrolment only.
+          env {
+            name = "PASSKEY_ALLOWED_EMAILS"
+            value = join(",", [
+              "vbarzin@gmail.com",
+              "viktorsmove@k8n.dev",
+              "andrei.raduta11@gmail.com", # collaborator added 2026-08-03
+              "kadir.tugan@gmail.com",     # pre-authorised, currently SSO
+              "ancaelena98@gmail.com",     # pre-authorised, currently SSO
+            ])
+          }
           port {
             name           = "http"
             container_port = 5001
@@ -393,7 +411,8 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets an immutable :<sha> tag
     ]
   }
 }

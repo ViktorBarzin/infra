@@ -26,7 +26,12 @@ gh_get() { curl -sf --max-time 30 -H "Authorization: Bearer ${GITHUB_PAT}" -H "A
 wp_get() { curl -sf --max-time 30 -H "Authorization: Bearer ${WOODPECKER_API_TOKEN}" "$1"; }
 
 # --- 1) GitHub Actions runs across owned repos with a recent push ---
-repos=$(gh_get "${GH_API}/user/repos?affiliation=owner&sort=pushed&per_page=60" \
+# organization_member added 2026-08-03: affiliation=owner alone lists only repos
+# Viktor owns PERSONALLY, so org-owned repos were invisible to this sweep — e.g.
+# immovika/realestate-crawler (wrongmove), whose deploy half was silently dead
+# from 2026-05-18 to 2026-08-03. Org repos have collaborators, so their failing
+# builds are exactly the ones worth surfacing.
+repos=$(gh_get "${GH_API}/user/repos?affiliation=owner,organization_member&sort=pushed&per_page=60" \
   | jq -r --arg cutoff "$PUSH_CUTOFF" '.[] | select(.pushed_at >= $cutoff) | .full_name')
 if [ $? -ne 0 ]; then
   echo "sweep: failed to list GitHub repos" >>"$ISSUES"; sweep_errors=1; repos=""
