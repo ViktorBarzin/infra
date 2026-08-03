@@ -91,6 +91,15 @@ resource "kubernetes_deployment" "headscale" {
 
     annotations = {
       "reloader.stakater.com/search" = "true"
+
+      # Codified 2026-08-03 (was live-only drift that every apply wanted to
+      # strip). headscale tracks the upstream multi-tag juanfont/headscale repo,
+      # so the policy MUST stay `patch` — `force` deploys whatever tag a Keel
+      # poll happens to pick regardless of semver order (that is what rolled
+      # paperless-ngx 2.20.15 -> 1.5.0, memory #9838).
+      "keel.sh/policy"       = "patch"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/pollSchedule" = "@every 1h"
     }
   }
   spec {

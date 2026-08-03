@@ -2,6 +2,36 @@
 
 Last updated: 2026-04-10
 
+> **Amendment (2026-08-03) — pfSense is now a real Tailscale subnet router.**
+> The body below claims Headscale clients already have "full access to the
+> homelab network" (see the Headscale onboarding section's connectivity test).
+> **That was not true.** No tailnet node advertised homelab routes: pfSense had
+> the Tailscale package installed and staged but sat `Logged out` from ~2026-07-18
+> with a spent pre-auth key, and nothing alerted. As of 2026-08-03 it is
+> registered (`100.64.0.9`, `tag:infra`, no expiry) and advertises six routes —
+> `192.168.1.0/24`, `10.0.10.0/24`, `10.0.20.0/24`, `192.168.0.0/24`,
+> `192.168.8.0/24`, `192.168.9.0/24` — plus an exit node, all auto-approved via
+> the ACL's `autoApprovers`.
+>
+> Three corrections that matter when reading the body below:
+> - **The Headscale ACL is no longer in Vault.** Source of truth is
+>   `stacks/headscale/acl.hujson` (**git-crypt** encrypted, main-checkout only),
+>   rendered by `stacks/headscale/main.tf`. `secret/platform.headscale_acl` is a
+>   stale break-glass copy — do not edit it.
+> - **Client `.lan` DNS is `10.0.20.201`, not `10.0.20.200`.** The `dns.split`
+>   entries, the `technitium` `extra_record`, and the ACL `technitium` host all
+>   pointed at `.200`, where nothing listens on :53 — so name-based LAN browsing
+>   could not have worked regardless of routes. Fixed 2026-08-03.
+> - **pfSense runs with `--accept-dns=false --accept-routes=false`** — a firewall
+>   must not take DNS or routes from the VPN control plane.
+>
+> Design + verification evidence + honest limitations:
+> [`docs/plans/2026-08-03-pfsense-tailscale-subnet-router-design.md`](../plans/2026-08-03-pfsense-tailscale-subnet-router-design.md).
+> Operations: [`docs/runbooks/pfsense-tailscale-subnet-router.md`](../runbooks/pfsense-tailscale-subnet-router.md).
+> Reproducer: `playbooks/pfsense-tailscale.yml`. Watchdog: CronJob
+> `tailscale-subnet-router-probe` (every 6 h) → `TailscaleSubnetRouterDown` /
+> `TailscaleLanUnreachableViaTailnet` / `TailscaleSubnetRouterProbeStale`.
+
 > **Amendment (2026-07-13) — not yet folded into the body below (a full rewrite
 > is design Phase 0).** Two additions since this was written:
 > - **mx2 is now VPN PoP-2, not "mail drain only."** The Oracle Always-Free box

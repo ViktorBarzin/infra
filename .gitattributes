@@ -13,3 +13,10 @@ stacks/**/secrets/** filter=git-crypt diff=git-crypt
 kubeconfig filter=git-crypt diff=git-crypt
 *.kubeconfig filter=git-crypt diff=git-crypt
 admin.conf filter=git-crypt diff=git-crypt
+
+# Headscale ACL policy — carries family email addresses in its group blocks and
+# the GitHub mirror is PUBLIC, so the source-of-truth file is encrypted at rest.
+# Moved out of Vault secret/platform.headscale_acl on 2026-08-03 so route and
+# rule changes land as reviewable diffs. Edit from the MAIN checkout only — a
+# worktree bypasses this filter and would commit plaintext.
+*.hujson filter=git-crypt diff=git-crypt

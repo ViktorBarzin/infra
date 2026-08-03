@@ -110,7 +110,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeMaintenanceInProgress
         target_matchers:
-          - alertname =~ "NodeDown|NodeNotReady|NodeConditionBad|CalicoNodeNotReady|RecentNodeReboot|TraefikDown|AuthentikDown|AuthentikRootRouter5xxHigh|ForwardAuthFallbackActive|MailServerDown|DaemonSetMissingPods|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|PodCrashLooping|ContainerOOMKilled|KernelOOMKiller|ScrapeTargetDown|HighMemoryUsage|HighSystemLoad|HighPowerUsage|KubeletRunningContainersDrop|GPUVRAMLow|MysqlStandaloneDown|PostgreSQLDown|RedisDown|CloudflaredDown|HeadscaleDown|HeadscaleReplicasMismatch|ClusterCannotTolerateNonGpuNodeLoss|PodStuckPending|PVCStuckPending|NodeExporterDown|NodeLowFreeMemory|KubeletImagePullErrors|PodsStuckContainerCreating|TechnitiumZoneCountMismatch|TechnitiumDNSDown|EmailRoundtripFailing"
+          - alertname =~ "NodeDown|NodeNotReady|NodeConditionBad|CalicoNodeNotReady|RecentNodeReboot|TraefikDown|AuthentikDown|AuthentikRootRouter5xxHigh|ForwardAuthFallbackActive|MailServerDown|DaemonSetMissingPods|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|PodCrashLooping|ContainerOOMKilled|KernelOOMKiller|ScrapeTargetDown|HighMemoryUsage|HighSystemLoad|HighPowerUsage|KubeletRunningContainersDrop|GPUVRAMLow|MysqlStandaloneDown|PostgreSQLDown|RedisDown|CloudflaredDown|HeadscaleDown|HeadscaleReplicasMismatch|ClusterCannotTolerateNonGpuNodeLoss|PodStuckPending|PVCStuckPending|NodeExporterDown|NodeLowFreeMemory|KubeletImagePullErrors|PodsStuckContainerCreating|TechnitiumZoneCountMismatch|TechnitiumDNSDown|EmailRoundtripFailing|TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet"
       # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
@@ -233,6 +233,26 @@ alertmanager:
           - alertname =~ "WANGatewayUnreachable|InternetEgressDown"
         target_matchers:
           - alertname =~ "ExternalDNSResolutionDown|EgressOnlyDivergence|CloudflaredTunnelConnLoss|EmailRoundtripFailing|EmailRoundtripStale|ExternalAccessDivergence"
+      # Tailscale subnet-router cascade. The router IS pfSense and its clients
+      # reach it over DERP/WAN, so a dead pfSense VM, a dead WAN, or a dead
+      # Headscale control plane all take the tailnet path down as a SYMPTOM.
+      # Suppress the tailnet alerts under any of those root causes.
+      - source_matchers:
+          - alertname =~ "PfSenseVMDown|WANGatewayUnreachable|InternetEgressDown|HeadscaleDown"
+        target_matchers:
+          - alertname =~ "TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet|TailscaleSubnetRouterProbeStale"
+      # Router unreachable subsumes per-route unreachability — one alert, not
+      # one plus one per advertised route.
+      - source_matchers:
+          - alertname = TailscaleSubnetRouterDown
+        target_matchers:
+          - alertname = TailscaleLanUnreachableViaTailnet
+      # A stale probe means the gauges are frozen: don't let the (now
+      # meaningless) reachability alerts fire off stale samples.
+      - source_matchers:
+          - alertname = TailscaleSubnetRouterProbeStale
+        target_matchers:
+          - alertname =~ "TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet"
     receivers:
       - name: slack-critical
         slack_configs:
@@ -1107,6 +1127,45 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Immich search probe has not reported in {{ $value | printf \"%.0f\" }}s — immich-search-probe CronJob may be broken"
+      - name: Tailscale subnet router
+        rules:
+          # The pfSense subnet router (tailnet 100.64.0.9, tag:infra) is what
+          # lets Tailscale clients reach the Sofia LAN. It sat `Logged out` from
+          # ~2026-07-18 to 2026-08-03 with nobody noticing, which is why these
+          # exist. Gauges come from the tailscale-subnet-router-probe CronJob
+          # (headscale ns, every 6h), which joins the tailnet as an ephemeral
+          # tag:probe node and pulls HTTP through the subnet routes.
+          # Runbook: docs/runbooks/pfsense-tailscale-subnet-router.md
+          - alert: TailscaleSubnetRouterDown
+            expr: tailscale_subnet_router_up{job="tailscale-subnet-router-probe"} == 0
+            # 6h cadence: a single failed run must alert, so `for` only needs to
+            # outlast evaluation jitter, not a second sample.
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: vpn
+            annotations:
+              summary: "Tailscale subnet router (pfSense 100.64.0.9) did not answer a tailnet ping — Tailscale clients cannot reach the Sofia LAN. Check `tailscale status` on pfSense; re-register with ansible-playbook playbooks/pfsense-tailscale.yml"
+          - alert: TailscaleLanUnreachableViaTailnet
+            # Route-level: the router answers but traffic does not traverse a
+            # subnet route (pf/NAT drift, route un-approved, remote WG leg down).
+            expr: tailscale_subnet_route_reachable{job="tailscale-subnet-router-probe"} == 0
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: vpn
+            annotations:
+              summary: "Tailscale clients cannot reach {{ $labels.route }} (probe target {{ $labels.target }}) through the subnet router — route may be unapproved in Headscale, or pfSense NAT/pf rules drifted"
+          - alert: TailscaleSubnetRouterProbeStale
+            # Backstop for the probe itself: covers a broken CronJob AND the
+            # tag:probe pre-auth key expiring. 13h ~= two missed 6h runs.
+            expr: time() - tailscale_subnet_router_probe_last_run_timestamp{job="tailscale-subnet-router-probe"} > 46800
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: vpn
+            annotations:
+              summary: "Tailscale subnet-router probe has not reported in {{ $value | printf \"%.0f\" }}s (>2 missed runs) — the probe CronJob or its tag:probe pre-auth key may be broken; LAN reachability is UNVERIFIED, not necessarily broken"
       - name: Power
         rules:
           - alert: OnBattery
