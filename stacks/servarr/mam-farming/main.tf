@@ -203,7 +203,7 @@ resource "kubernetes_cron_job_v1" "bp_spender" {
 # ----------------------------- Janitor -------------------------------
 # New: every 15 minutes, independent of grabber ratio guard. Deletes
 # stuck/unregistered/redundant torrents in category=mam-farming while
-# preserving torrents inside the 72h H&R window.
+# preserving torrents beyond the 72h H&R window with a tracker margin.
 
 resource "kubernetes_config_map" "janitor_script" {
   metadata {

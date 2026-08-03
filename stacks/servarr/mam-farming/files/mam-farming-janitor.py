@@ -2,8 +2,9 @@
 MAM farming janitor — H&R-aware cleanup.
 
 Runs every 15 minutes independently of the grabber's ratio guard: stuck
-torrents accumulate fastest precisely when the grabber is skipping. Never
-deletes a torrent that's inside MAM's 72-hour Hit-and-Run window.
+torrents accumulate fastest precisely when the grabber is skipping. Keeps a
+24-hour margin beyond MAM's 72-hour Hit-and-Run window because qBittorrent's
+local seed clock can run ahead of tracker-observed seed time.
 
 Set DRY_RUN=1 to log candidates without deleting (used for the first
 24 hours after rollout to sanity-check the rules against live state).
@@ -19,7 +20,10 @@ QB_URL = "http://qbittorrent.servarr.svc.cluster.local"
 PUSHGW = "http://prometheus-prometheus-pushgateway.monitoring:9091"
 
 DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
-HNR_SEED_SECONDS = int(os.environ.get("HNR_SEED_SECONDS", str(72 * 3600)))
+HNR_SEED_SECONDS = int(os.environ.get("HNR_SEED_SECONDS", str(96 * 3600)))
+RECOVERY_HOLD_SECONDS = int(
+    os.environ.get("RECOVERY_HOLD_SECONDS", str(7 * 86400))
+)
 NEVER_STARTED_AGE = int(os.environ.get("NEVER_STARTED_AGE", str(24 * 3600)))
 STALLED_AGE = int(os.environ.get("STALLED_AGE", str(3 * 86400)))
 SATISFIED_SEED_AGE = int(os.environ.get("SATISFIED_SEED_AGE", str(3 * 86400)))
@@ -46,9 +50,16 @@ def classify(t, now, tracker_msg):
     seed_time = int(t.get("seeding_time", 0) or 0)
     state = t.get("state", "")
     num_complete = int(t.get("num_complete", 0) or 0)
+    tags = {tag.strip().lower() for tag in (t.get("tags") or "").split(",")}
 
     if tracker_msg and any(k in tracker_msg.lower() for k in UNREG_KEYWORDS):
         return "unregistered"
+
+    # Recovery torrents are the account's authoritative H&R repair set. Keep
+    # incomplete ones indefinitely and completed ones for a full week so the
+    # tracker has ample time to record the required 72 hours.
+    if "recovery" in tags and seed_time < RECOVERY_HOLD_SECONDS:
+        return "recovery_hold"
 
     if progress < 1.0:
         if age > NEVER_STARTED_AGE and downloaded == 0:
@@ -116,6 +127,7 @@ def main():
 
     deleted = {r: 0 for r in REASONS}
     preserved_hnr = 0
+    preserved_recovery = 0
     skipped_active = 0
     delete_hashes = []
 
@@ -133,6 +145,8 @@ def main():
             skipped_active += 1
         elif verdict == "hnr_window":
             preserved_hnr += 1
+        elif verdict == "recovery_hold":
+            preserved_recovery += 1
         else:
             deleted[verdict] += 1
             delete_hashes.append((t["hash"], verdict, t.get("name", "")[:60]))
@@ -160,6 +174,7 @@ def main():
         )
     push(
         f"mam_janitor_preserved_hnr {preserved_hnr}\n"
+        f"mam_janitor_preserved_recovery {preserved_recovery}\n"
         f"mam_janitor_skipped_active {skipped_active}\n"
         f"mam_janitor_dry_run {1 if DRY_RUN else 0}\n"
         f"mam_janitor_last_run_timestamp {now}\n"
@@ -168,6 +183,7 @@ def main():
     total = sum(deleted.values())
     print(
         f"Done: deleted={total} preserved_hnr={preserved_hnr} "
+        f"preserved_recovery={preserved_recovery} "
         f"skipped_active={skipped_active} dry_run={DRY_RUN}"
     )
     print(f"  per reason: {deleted}")
