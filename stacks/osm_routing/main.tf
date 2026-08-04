@@ -378,10 +378,13 @@ locals {
 
   # Shared by the one-off Job and the monthly CronJob so the two can never drift.
   osrm_build_script = <<-EOT
-    set -euo pipefail
+    # sh, not bash: the osrm-backend image ships /bin/sh only. No pipefail for
+    # the same reason. wget, not curl: curl is not in the image (verified 2026-08-04).
+    set -eu
     cd /data
     echo "downloading Greater London extract"
-    curl -sSLo greater-london-latest.osm.pbf.tmp \
+    rm -f greater-london-latest.osm.pbf.tmp
+    wget -q -O greater-london-latest.osm.pbf.tmp \
       https://download.geofabrik.de/europe/united-kingdom/england/greater-london-latest.osm.pbf
     mv greater-london-latest.osm.pbf.tmp greater-london-latest.osm.pbf
     for profile in foot bicycle; do
@@ -418,7 +421,7 @@ resource "kubernetes_job" "osrm_build" {
         container {
           name    = "build"
           image   = local.osrm_image
-          command = ["/bin/bash", "-lc"]
+          command = ["/bin/sh", "-c"]
           args    = [local.osrm_build_script]
           volume_mount {
             name       = "osrm-data"
@@ -478,7 +481,7 @@ resource "kubernetes_cron_job_v1" "osrm_refresh" {
             container {
               name    = "build"
               image   = local.osrm_image
-              command = ["/bin/bash", "-lc"]
+              command = ["/bin/sh", "-c"]
               args    = [local.osrm_build_script]
               volume_mount {
                 name       = "osrm-data"
