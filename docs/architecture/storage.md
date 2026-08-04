@@ -32,6 +32,33 @@ All services storing sensitive data were migrated to `proxmox-lvm-encrypted` on 
 - **Ghost-loop prevention** — `csi-ghost-reconcile` CronJob (`stacks/proxmox-csi/ghost-reconcile.tf`, every 15 min) compares each worker VM's real scsi disks (Proxmox API, scoped CSI token) against k8s VolumeAttachments and safely detaches ghosts (`PUT .../config delete=scsiN`); detection mirrors check #47, with a 60 s re-confirm + per-run cap-5. Verified live (66 VAs, 0 ghosts). This closes the doom loop by construction — **beads `code-dfjn` can be retired.**
 - **Cap deliberately kept at 28** (NOT lowered to 24): the labeler value (`stacks/proxmox-csi/.../main.tf` `node_labels`) was raised 24→28 per the 2026-05-25 eviction-cascade post-mortem; lowering it would reverse that fix. With auto-reconcile keeping drift at 0, the 28 cap is safe.
 
+### Poisoned LUN slots — leaked QEMU throttle objects (2026-08-04)
+
+A **fourth** proxmox-CSI failure mode, distinct from ghost / wedged / LUN-cap and invisible to all three:
+
+Proxmox wraps every disk in a QEMU throttle filter, creating a `throttle-drive-scsiN` object per slot. A detach that removes the *device* but leaves the *block node* behind strands both — and QEMU then rejects **every future attach to that slot**:
+
+```
+qm set <vmid> --scsiN ...
+  → 400 scsiN: hotplug problem - qmp command 'object-add' failed -
+    attempt to add duplicate property 'throttle-drive-scsiN'
+```
+
+The orphans are invisible to `qm config`, to `info block`, to `qom-list /machine/peripheral`, and to the guest SCSI table — every layer the existing checks compare agrees. Worse, **proxmox-csi swallows that HTTP 400**: it logs `ControllerPublishVolume: volume published` and k8s fires `SuccessfulAttachVolume`, so the only visible symptom is a pod stuck in `ContainerCreating` on `device /dev/disk/by-id/wwn-0x... is not found`. Because the CSI always allocates the **lowest free LUN**, the poisoned slot is handed out repeatedly — whichever workload attaches next inherits the failure.
+
+Seen live on **k8s-node3 / VM 203 scsi2**, poisoned since the 2026-06-27 aiostreams (`pvc-d83539be`) half-attach and silently breaking every attach that drew that slot for weeks. It surfaced only when `stirling-pdf` — Sablier scale-to-zero, so it re-attaches its RWO PVC on every wake (~daily) — started landing on node3 (10/10 wakes onto node5 worked, 0/3 onto node3).
+
+**Ground truth is the PVE task log**, not the CSI logs: `pvesh get /nodes/pve/tasks --vmid <id> --limit 25 --output-format json` shows the real status of every `csi-token` `qmconfig` call.
+
+**Fix — data-safe, no reboot** (`object_del` alone fails `"in use"`; the block node must go first):
+
+```bash
+echo 'drive_del drive-scsiN'           | qm monitor <vmid>
+echo 'object_del throttle-drive-scsiN' | qm monitor <vmid>
+```
+
+A *clean* detach does not leak, so this is a one-off orphan rather than a per-detach bug. Detection is now automated: **check #47** compares `qom-list /objects` throttle objects against the VM config (`leaked=N` → FAIL), and **check #50** reports failed CSI `qmconfig` tasks straight from the PVE task log.
+
 ## Architecture Diagram
 
 ```mermaid

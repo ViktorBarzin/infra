@@ -27,7 +27,7 @@ KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/config}"
 [[ -f "$KUBECONFIG_PATH" ]] || KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=49
+TOTAL_CHECKS=50
 
 # Parallel execution settings. Each check function is self-contained — it
 # only reads cluster state and mutates the in-memory counters / JSON_RESULTS
@@ -3068,6 +3068,7 @@ check_immich_search() {
 #   real == tracked, real < 20            -> PASS
 #   drift (real > tracked), or real 20-24 -> WARN  (ghosts / approaching cap)
 #   real >= 25 (near the 28 LUN cap)      -> FAIL  (imminent query-pci wedge)
+#   leaked throttle-group object          -> FAIL  (that LUN slot is poisoned)
 check_csi_ghost_drift() {
     section 47 "Proxmox CSI — Ghost-Disk Drift"
 
@@ -3081,15 +3082,38 @@ check_csi_ghost_drift() {
     # until the VM reboots (2026-07-12 n8n/k8s-node5 incident, memory #9580).
     # The runtime grep uses `vm-+9999-+pvc` because runtime paths can render
     # device-mapper style with doubled dashes (vm--9999--pvc...).
+    #
+    # THIRD layer (added 2026-08-04): count LEAKED `throttle-drive-scsiN` QEMU
+    # objects — a throttle-group whose scsiN is NOT in the VM config. Proxmox
+    # wraps every disk in a throttle filter; a detach that removes the device
+    # but leaves the block node behind strands both the node AND its throttle
+    # object, and QEMU then rejects every future attach to that slot with
+    # `object-add failed - attempt to add duplicate property throttle-drive-scsiN`.
+    # proxmox-csi SWALLOWS that HTTP 400 (logs "volume published", k8s fires
+    # SuccessfulAttachVolume), so the pod just hangs in ContainerCreating on
+    # "device /dev/disk/by-id/wwn-... is not found" forever. The slot stays
+    # poisoned until someone runs `drive_del`+`object_del` — it is invisible to
+    # the config/runtime/VolumeAttachment comparison above, because all three
+    # agree (2026-08-04 stirling-pdf incident on k8s-node3/VM203 scsi2, which
+    # had been silently poisoned since the 2026-06-27 aiostreams half-attach).
+    # Scoped to VMs that already carry CSI disks, same as the runtime probe.
     local raw
     raw=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
         root@192.168.1.127 'qm list 2>/dev/null | awk "NR>1{print \$1, \$2, \$3}" | while read -r vmid name vstatus; do
             cnt=$(qm config "$vmid" 2>/dev/null | grep -cE "^scsi[0-9]+:.*vm-9999-pvc")
             rt=-1
+            lk=-1
             if [ "$vstatus" = "running" ] && [ "$cnt" -gt 0 ]; then
                 rt=$(echo "info block" | timeout 8 qm monitor "$vmid" 2>/dev/null | grep -cE "vm-+9999-+pvc")
+                slots=$(qm config "$vmid" 2>/dev/null | grep -oE "^scsi[0-9]+" | sort -u)
+                objs=$(echo "qom-list /objects" | timeout 8 qm monitor "$vmid" 2>/dev/null \
+                    | grep -oE "throttle-drive-scsi[0-9]+" | sed "s/throttle-drive-//" | sort -u)
+                lk=0
+                for o in $objs; do
+                    echo "$slots" | grep -qx "$o" || lk=$((lk+1))
+                done
             fi
-            echo "$vmid|$name|$cnt|$rt"
+            echo "$vmid|$name|$cnt|$rt|$lk"
         done' 2>/dev/null || true)
 
     if [[ -z "$raw" ]]; then
@@ -3121,9 +3145,9 @@ worst = "PASS"
 rows = []
 for line in os.environ["SSH_RAW"].splitlines():
     parts = line.strip().split("|")
-    if len(parts) != 4:
+    if len(parts) != 5:
         continue
-    vmid, name, cnt, rt = parts[0], parts[1], parts[2], parts[3]
+    vmid, name, cnt, rt, lk = parts[0], parts[1], parts[2], parts[3], parts[4]
     if not cnt.isdigit():
         continue
     real = int(cnt)
@@ -3131,6 +3155,11 @@ for line in os.environ["SSH_RAW"].splitlines():
         runtime = int(rt)
     except ValueError:
         runtime = -1
+    # -1 = leak scan didn't run (VM stopped / no CSI disks / monitor timeout).
+    try:
+        leaked = int(lk)
+    except ValueError:
+        leaked = -1
     # Only nodes that are k8s worker VMs (name matches a node with attachments
     # or looks like a k8s node) are interesting; skip non-k8s VMs with 0 disks.
     if real == 0 and name not in tracked:
@@ -3142,8 +3171,11 @@ for line in os.environ["SSH_RAW"].splitlines():
     # runtime was unreadable (VM stopped / qm monitor timeout) — skip the
     # comparison rather than false-failing.
     wedged = (real - runtime) if runtime >= 0 else 0
+    # A leaked throttle-group permanently poisons that LUN slot: the next
+    # attach to it fails host-side while proxmox-csi still reports success.
+    leak = leaked if leaked > 0 else 0
     status = "PASS"
-    if wedged > 0 or real >= 25:
+    if wedged > 0 or leak > 0 or real >= 25:
         status = "FAIL"
     elif drift > 0 or real >= 20:
         status = "WARN"
@@ -3153,7 +3185,10 @@ for line in os.environ["SSH_RAW"].splitlines():
         worst = "WARN"
     if status != "PASS":
         rt_str = str(runtime) if runtime >= 0 else "n/a"
-        rows.append(f"{name}: real={real} runtime={rt_str} tracked={trk} ghosts={drift} wedged={wedged}")
+        rows.append(
+            f"{name}: real={real} runtime={rt_str} tracked={trk} "
+            f"ghosts={drift} wedged={wedged} leaked={leak}"
+        )
 
 print(worst)
 print(" | ".join(rows) if rows else "all nodes reconciled")
@@ -3167,7 +3202,18 @@ PYEOF
     case "$status" in
         FAIL)
             [[ "$QUIET" == true ]] && section_always 47 "Proxmox CSI — Ghost-Disk Drift"
-            fail "CSI disk drift (wedged hotplug and/or near LUN cap): $detail"
+            fail "CSI disk drift (wedged hotplug, poisoned LUN slot and/or near LUN cap): $detail"
+            # leaked>0 is permanent until cleared by hand and is invisible to
+            # every other layer — spell out the two-step fix inline.
+            if [[ "$detail" == *"leaked="* && "$detail" != *"leaked=0"* ]]; then
+                info "  Poisoned LUN slot(s): a leaked QEMU throttle-group blocks every future"
+                info "  attach there (proxmox-csi reports success anyway). On the PVE host find"
+                info "  the orphan:  echo 'qom-list /objects' | qm monitor <vmid> | grep throttle-drive"
+                info "  vs  qm config <vmid> | grep '^scsi'  — then clear it (data-safe, no reboot):"
+                info "    echo 'drive_del drive-scsiN'            | qm monitor <vmid>"
+                info "    echo 'object_del throttle-drive-scsiN'  | qm monitor <vmid>"
+                info "  object_del alone fails 'in use' — the block node must go first."
+            fi
             json_add "csi_ghost_drift" "FAIL" "$detail"
             ;;
         WARN)
@@ -3176,7 +3222,7 @@ PYEOF
             json_add "csi_ghost_drift" "WARN" "$detail"
             ;;
         *)
-            pass "No CSI drift — config, QEMU runtime and k8s attachments all match"
+            pass "No CSI drift — config, QEMU runtime, throttle objects and k8s attachments all match"
             json_add "csi_ghost_drift" "PASS" "reconciled"
             ;;
     esac
@@ -3391,6 +3437,120 @@ SLACK_ALERTS_EOF
     fi
 }
 
+# --- 50. Proxmox CSI — failed attach tasks ---
+#
+# proxmox-csi does NOT surface Proxmox API failures. When `qm set --scsiN`
+# returns HTTP 400 (poisoned LUN slot, `no free lun`, a query-pci timeout,
+# a storage error), the controller still logs "ControllerPublishVolume:
+# volume published" and k8s still fires a SuccessfulAttachVolume event — so a
+# hard, permanent host-side failure presents to an operator only as a pod
+# hanging in ContainerCreating on "device /dev/disk/by-id/wwn-... not found".
+# That mismatch cost ~3 days on the 2026-08-04 stirling-pdf incident.
+#
+# The PVE task log is the ground truth the CSI throws away: every attach is a
+# `qmconfig` task run by the csi@pve!csi-token user, with its real status. This
+# check reads it directly and reports what the CSI hid.
+#   no failed csi qmconfig tasks in window  -> PASS
+#   failures present                        -> WARN (FAIL if any in last 1h,
+#                                              i.e. an attach is wedged NOW)
+check_csi_failed_tasks() {
+    section 50 "Proxmox CSI — Failed Attach Tasks"
+
+    local window_h=24
+    local raw
+    # `pvesh get /nodes/<n>/tasks` is node-scoped; --limit is generous because
+    # the CSI is chatty (every attach AND detach is a qmconfig task).
+    raw=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+        root@192.168.1.127 "pvesh get /nodes/pve/tasks --limit 400 --output-format json 2>/dev/null" 2>/dev/null || true)
+
+    if [[ -z "$raw" ]]; then
+        [[ "$QUIET" == true ]] && section_always 50 "Proxmox CSI — Failed Attach Tasks"
+        warn "Could not read PVE task log from 192.168.1.127 (SSH)"
+        json_add "csi_failed_tasks" "WARN" "SSH failed"
+        return 0
+    fi
+
+    local result
+    result=$(PVE_TASKS="$raw" WINDOW_H="$window_h" python3 << 'CSITASK_EOF' 2>/dev/null
+import json, os, time
+
+try:
+    tasks = json.loads(os.environ["PVE_TASKS"])
+except Exception:
+    print("WARN")
+    print("could not parse PVE task JSON")
+    raise SystemExit(0)
+
+now = time.time()
+window = float(os.environ.get("WINDOW_H", "24")) * 3600
+recent_cut = 3600  # a failure this fresh means an attach is wedged right now
+
+fails, urgent = [], 0
+for t in tasks:
+    # Only the CSI's own disk attach/detach calls.
+    if t.get("type") != "qmconfig":
+        continue
+    if "csi" not in str(t.get("tokenid", "")) and "csi" not in str(t.get("user", "")):
+        continue
+    status = str(t.get("status", ""))
+    if not status or status == "OK":
+        continue
+    age = now - float(t.get("starttime", 0) or 0)
+    if age > window:
+        continue
+    if age <= recent_cut:
+        urgent += 1
+    # Compress the Proxmox error to its distinguishing clause.
+    msg = status.replace("Parameter verification failed.", "").strip()
+    fails.append((t.get("id", "?"), msg[:120], int(age / 60)))
+
+if not fails:
+    print("PASS")
+    print("no failed proxmox-csi attach tasks in the last %gh" % (window / 3600))
+    raise SystemExit(0)
+
+# Collapse duplicates — a poisoned slot re-fails on every retry.
+seen = {}
+for vmid, msg, age_m in fails:
+    key = (vmid, msg)
+    if key not in seen:
+        seen[key] = [0, age_m]
+    seen[key][0] += 1
+    seen[key][1] = min(seen[key][1], age_m)
+
+rows = [
+    "VM %s x%d (newest %dm ago): %s" % (vmid, cnt, age_m, msg)
+    for (vmid, msg), (cnt, age_m) in sorted(seen.items(), key=lambda kv: kv[1][1])
+]
+print("FAIL" if urgent else "WARN")
+print(" | ".join(rows[:4]))
+CSITASK_EOF
+) || result=$'WARN\npython parse failed'
+
+    local status detail
+    status=$(echo "$result" | head -1)
+    detail=$(echo "$result" | sed -n '2p')
+
+    case "$status" in
+        FAIL)
+            [[ "$QUIET" == true ]] && section_always 50 "Proxmox CSI — Failed Attach Tasks"
+            fail "proxmox-csi attach FAILED host-side within the last hour (k8s was told it succeeded): $detail"
+            info "  Any pod waiting on that volume is stuck in ContainerCreating and will not recover."
+            info "  A 'duplicate property throttle-drive-scsiN' message means a poisoned LUN slot — see check 47."
+            json_add "csi_failed_tasks" "FAIL" "$detail"
+            ;;
+        WARN)
+            [[ "$QUIET" == true ]] && section_always 50 "Proxmox CSI — Failed Attach Tasks"
+            warn "proxmox-csi attach failures in the PVE task log (reported as success to k8s): $detail"
+            json_add "csi_failed_tasks" "WARN" "$detail"
+            ;;
+        *)
+            pass "$detail"
+            json_add "csi_failed_tasks" "PASS" "$detail"
+            ;;
+    esac
+}
+
 # --- Summary ---
 
 # Recompute the summary counters from the per-check JSON records.
@@ -3490,7 +3650,7 @@ main() {
         check_external_replicas check_external_divergence check_pve_thermals
         check_pve_load check_external_traefik_5xx check_ha_status_dashboard
         check_immich_search check_csi_ghost_drift check_goldmane_aggregator
-        check_slack_alerts
+        check_slack_alerts check_csi_failed_tasks
     )
 
     # Auto-fix mutates cluster state inside individual checks — keep that
