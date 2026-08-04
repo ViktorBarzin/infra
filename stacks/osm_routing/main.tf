@@ -421,8 +421,11 @@ resource "kubernetes_job" "osrm_build" {
               memory = "2Gi"
             }
             limits = {
-              cpu    = "3"
-              memory = "6Gi"
+              cpu = "3"
+              # 4Gi is the per-container ceiling from the tier-defaults LimitRange in
+              # this namespace; asking for more is rejected at pod creation and the Job
+              # then retries forever without ever starting (hit live 2026-08-04).
+              memory = "4Gi"
             }
           }
         }
@@ -480,8 +483,11 @@ resource "kubernetes_cron_job_v1" "osrm_refresh" {
                   memory = "2Gi"
                 }
                 limits = {
-                  cpu    = "3"
-                  memory = "6Gi"
+                  cpu = "3"
+                  # 4Gi is the per-container ceiling from the tier-defaults LimitRange in
+                  # this namespace; asking for more is rejected at pod creation and the Job
+                  # then retries forever without ever starting (hit live 2026-08-04).
+                  memory = "4Gi"
                 }
               }
             }
