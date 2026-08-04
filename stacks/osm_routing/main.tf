@@ -30,9 +30,18 @@ resource "kubernetes_resource_quota_v1" "osm_routing" {
     hard = {
       "requests.cpu"    = "4"
       "requests.memory" = "6Gi"
-      "limits.cpu"      = "16"
       "limits.memory"   = "16Gi"
       pods              = "20"
+      # NO "limits.cpu" — deliberately. A quota that includes limits.cpu makes
+      # every pod in the namespace REQUIRED to set a CPU limit, but the
+      # cluster-wide `strip-cpu-limits` ClusterPolicy removes limits.cpu from
+      # every container at admission (CFS throttling hurts bursty workloads).
+      # The two contradict, and the result is that NO pod can be created here at
+      # all: the API server rejects with "must specify limits.cpu", the
+      # job-controller retries forever, and no pod ever exists to show logs.
+      # Found 2026-08-04 while reviving OSRM. The generated tier-4-aux template
+      # (generate-resourcequota-by-tier) correctly omits it — this stack's
+      # hand-written quota had drifted from it.
     }
   }
 }
@@ -421,10 +430,8 @@ resource "kubernetes_job" "osrm_build" {
               memory = "2Gi"
             }
             limits = {
-              cpu = "3"
-              # 4Gi is the per-container ceiling from the tier-defaults LimitRange in
-              # this namespace; asking for more is rejected at pod creation and the Job
-              # then retries forever without ever starting (hit live 2026-08-04).
+              # No cpu limit: strip-cpu-limits removes it cluster-wide anyway.
+              # 4Gi is the per-container ceiling from the tier-defaults LimitRange.
               memory = "4Gi"
             }
           }
@@ -483,10 +490,8 @@ resource "kubernetes_cron_job_v1" "osrm_refresh" {
                   memory = "2Gi"
                 }
                 limits = {
-                  cpu = "3"
-                  # 4Gi is the per-container ceiling from the tier-defaults LimitRange in
-                  # this namespace; asking for more is rejected at pod creation and the Job
-                  # then retries forever without ever starting (hit live 2026-08-04).
+                  # No cpu limit: strip-cpu-limits removes it cluster-wide anyway.
+                  # 4Gi is the per-container ceiling from the tier-defaults LimitRange.
                   memory = "4Gi"
                 }
               }
