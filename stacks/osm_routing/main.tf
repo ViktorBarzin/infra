@@ -349,3 +349,151 @@ resource "kubernetes_service" "otp" {
 # CI retrigger v5 2026-05-16T23:10:38Z
 
 # CI retrigger v6 2026-05-16T23:18:58Z
+
+# =============================================================================
+# OSRM graph build + monthly refresh (added 2026-08-04)
+# =============================================================================
+# Both NFS PVCs were EMPTY (4.0K, untouched since 2026-04-12), so osrm-routed had
+# no graph to load — the serving pods could not have worked even at replicas>0.
+# These build the Greater London graphs the deployments' commands already expect
+# at /data/foot and /data/bicycle.
+#
+# Staging + swap: each profile builds into <profile>.new and is moved into place
+# only once complete, so a refresh never corrupts a graph being served. The build
+# is the memory-expensive phase and gets generous limits here; the serving pods
+# stay small (see their own resources blocks).
+#
+# Design: realestate-crawler/docs/plans/2026-08-04-routing-backends-design.md
+locals {
+  osrm_image = "ghcr.io/project-osrm/osrm-backend:v6.0.0"
+
+  # Shared by the one-off Job and the monthly CronJob so the two can never drift.
+  osrm_build_script = <<-EOT
+    set -euo pipefail
+    cd /data
+    echo "downloading Greater London extract"
+    curl -sSLo greater-london-latest.osm.pbf.tmp \
+      https://download.geofabrik.de/europe/united-kingdom/england/greater-london-latest.osm.pbf
+    mv greater-london-latest.osm.pbf.tmp greater-london-latest.osm.pbf
+    for profile in foot bicycle; do
+      echo "=== building $profile ==="
+      rm -rf "$profile.new"
+      mkdir -p "$profile.new"
+      cp greater-london-latest.osm.pbf "$profile.new/"
+      osrm-extract -p "/opt/$profile.lua" "$profile.new/greater-london-latest.osm.pbf"
+      osrm-partition "$profile.new/greater-london-latest.osrm"
+      osrm-customize "$profile.new/greater-london-latest.osrm"
+      rm -f "$profile.new/greater-london-latest.osm.pbf"
+      rm -rf "$profile.old"
+      if [ -d "$profile" ]; then mv "$profile" "$profile.old"; fi
+      mv "$profile.new" "$profile"
+      rm -rf "$profile.old"
+      echo "built $profile"
+    done
+    ls -la /data/foot /data/bicycle
+  EOT
+}
+
+resource "kubernetes_job" "osrm_build" {
+  metadata {
+    name      = "osrm-build"
+    namespace = kubernetes_namespace.osm-routing.metadata[0].name
+    labels    = { app = "osrm-build" }
+  }
+  spec {
+    backoff_limit = 2
+    template {
+      metadata { labels = { app = "osrm-build" } }
+      spec {
+        restart_policy = "Never"
+        container {
+          name    = "build"
+          image   = local.osrm_image
+          command = ["/bin/bash", "-lc"]
+          args    = [local.osrm_build_script]
+          volume_mount {
+            name       = "osrm-data"
+            mount_path = "/data"
+          }
+          resources {
+            requests = {
+              cpu    = "500m"
+              memory = "2Gi"
+            }
+            limits = {
+              cpu    = "3"
+              memory = "6Gi"
+            }
+          }
+        }
+        volume {
+          name = "osrm-data"
+          persistent_volume_claim {
+            claim_name = module.nfs_osrm_data_host.claim_name
+          }
+        }
+      }
+    }
+  }
+  wait_for_completion = false
+  timeouts {
+    create = "60m"
+  }
+}
+
+# Monthly rebuild so the graphs cannot rot the way they just did. OSM geometry
+# changes slowly and there are no timetables to chase (OTP is deliberately not
+# revived — transit comes from the free TfL API on demand), so monthly is ample.
+# NOTE: osrm-routed loads its graph at startup, so a refreshed graph is only
+# picked up when the serving pods restart.
+resource "kubernetes_cron_job_v1" "osrm_refresh" {
+  metadata {
+    name      = "osrm-refresh"
+    namespace = kubernetes_namespace.osm-routing.metadata[0].name
+    labels    = { app = "osrm-refresh" }
+  }
+  spec {
+    schedule                      = "0 4 1 * *" # 04:00 UTC on the 1st
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 2
+    job_template {
+      metadata { labels = { app = "osrm-refresh" } }
+      spec {
+        backoff_limit = 2
+        template {
+          metadata { labels = { app = "osrm-refresh" } }
+          spec {
+            restart_policy = "Never"
+            container {
+              name    = "build"
+              image   = local.osrm_image
+              command = ["/bin/bash", "-lc"]
+              args    = [local.osrm_build_script]
+              volume_mount {
+                name       = "osrm-data"
+                mount_path = "/data"
+              }
+              resources {
+                requests = {
+                  cpu    = "500m"
+                  memory = "2Gi"
+                }
+                limits = {
+                  cpu    = "3"
+                  memory = "6Gi"
+                }
+              }
+            }
+            volume {
+              name = "osrm-data"
+              persistent_volume_claim {
+                claim_name = module.nfs_osrm_data_host.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
