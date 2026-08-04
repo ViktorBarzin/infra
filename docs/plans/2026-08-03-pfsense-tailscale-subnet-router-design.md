@@ -8,6 +8,15 @@
 
 ---
 
+```stats
+6 | routes advertised
+100.64.0.9 | pfSense tailnet IP
+6 h | connectivity probe interval
+16 days | silently logged out before this
+4 | latent defects found and fixed
+0 | remote routers touched
+```
+
 ## 1. Goal
 
 Give Tailscale (Headscale) clients real access to the homelab LANs, and make that
@@ -206,6 +215,11 @@ the playbook asserts approval for every expected route.
 
 ### 6.1 Two false results worth recording
 
+> [!CAUTION]
+> Both of these produced confident green results while the path was dead. If you
+> are ever verifying this again, distrust any check that does not read real
+> payload back over the tunnel.
+
 Both nearly produced a wrong conclusion, and both are traps for the next person:
 
 1. **`tailscale nc` exits 0 without connecting.** It reported success against
@@ -226,6 +240,12 @@ broken tunnel. Use `127.0.0.1`.
 ---
 
 ## 7. Honest limitations
+
+> [!WARNING]
+> **The CCTV block (D8) is not in force.** It is written and committed, but
+> pfSense never renders it — so the cameras are gated by the Headscale ACL alone,
+> which does not withhold them from `group:admin`. Closing this needs a decision
+> (assign `tailscale0` as an interface); see the first bullet below.
 
 - **The D8 CCTV block does not currently render.** pfSense generates filter rules
   from *config* interface-group membership, and the `Tailscale` group has **no
