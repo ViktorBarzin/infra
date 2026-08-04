@@ -70,11 +70,23 @@ resource "kubernetes_deployment" "osrm-foot" {
     labels = {
       app  = "osrm-foot"
       tier = local.tiers.aux
+      # Keel opt-out (label = kyverno exclude, annotation = Keel itself). A
+      # floating :latest under the cluster-default patch policy is what silently
+      # froze wrongmove's celery on a five-month-old image; the image is pinned
+      # here and Terraform owns the tag.
+      "keel.sh/policy" = "never"
+    }
+    annotations = {
+      "keel.sh/policy" = "never"
     }
   }
   spec {
-    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
-    replicas = 0
+    # Re-enabled 2026-08-04, once the graphs actually existed — both NFS PVCs
+    # were empty, so these pods had nothing to load even before the OOM. Memory
+    # raised from 256Mi (the namespace LimitRange default, and the likely cause
+    # of the 2026-03-14 OOM) to 1Gi; observed peak during the graph build was
+    # ~1.3GB for extract, and serving MLD needs far less.
+    replicas = 1
     strategy {
       type = "Recreate"
     }
@@ -92,7 +104,7 @@ resource "kubernetes_deployment" "osrm-foot" {
       spec {
         container {
           name    = "osrm-foot"
-          image   = "ghcr.io/project-osrm/osrm-backend:latest"
+          image   = local.osrm_image
           command = ["osrm-routed", "--algorithm", "MLD", "/data/foot/greater-london-latest.osrm"]
           port {
             name           = "http"
@@ -105,11 +117,11 @@ resource "kubernetes_deployment" "osrm-foot" {
           }
           resources {
             requests = {
-              cpu    = "15m"
-              memory = "256Mi"
+              cpu    = "50m"
+              memory = "1Gi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "1Gi"
             }
           }
         }
@@ -164,11 +176,23 @@ resource "kubernetes_deployment" "osrm-bicycle" {
     labels = {
       app  = "osrm-bicycle"
       tier = local.tiers.aux
+      # Keel opt-out (label = kyverno exclude, annotation = Keel itself). A
+      # floating :latest under the cluster-default patch policy is what silently
+      # froze wrongmove's celery on a five-month-old image; the image is pinned
+      # here and Terraform owns the tag.
+      "keel.sh/policy" = "never"
+    }
+    annotations = {
+      "keel.sh/policy" = "never"
     }
   }
   spec {
-    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
-    replicas = 0
+    # Re-enabled 2026-08-04, once the graphs actually existed — both NFS PVCs
+    # were empty, so these pods had nothing to load even before the OOM. Memory
+    # raised from 256Mi (the namespace LimitRange default, and the likely cause
+    # of the 2026-03-14 OOM) to 1Gi; observed peak during the graph build was
+    # ~1.3GB for extract, and serving MLD needs far less.
+    replicas = 1
     strategy {
       type = "Recreate"
     }
@@ -186,7 +210,7 @@ resource "kubernetes_deployment" "osrm-bicycle" {
       spec {
         container {
           name    = "osrm-bicycle"
-          image   = "ghcr.io/project-osrm/osrm-backend:latest"
+          image   = local.osrm_image
           command = ["osrm-routed", "--algorithm", "MLD", "/data/bicycle/greater-london-latest.osrm"]
           port {
             name           = "http"
@@ -199,11 +223,11 @@ resource "kubernetes_deployment" "osrm-bicycle" {
           }
           resources {
             requests = {
-              cpu    = "15m"
-              memory = "256Mi"
+              cpu    = "50m"
+              memory = "1Gi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "1Gi"
             }
           }
         }
@@ -261,7 +285,11 @@ resource "kubernetes_deployment" "otp" {
     }
   }
   spec {
-    # Disabled: reduce cluster memory pressure (2026-03-14 OOM incident)
+    # Deliberately NOT revived (2026-08-04). Originally disabled for cluster
+    # memory pressure after the 2026-03-14 OOM; OTP was the memory hog and the
+    # only reason a GTFS pipeline was needed. Transit now comes from the free TfL
+    # Journey Planner API on demand instead — see
+    # realestate-crawler/docs/plans/2026-08-04-routing-backends-design.md
     replicas = 0
     strategy {
       type = "Recreate"
