@@ -406,54 +406,14 @@ locals {
   EOT
 }
 
-resource "kubernetes_job" "osrm_build" {
-  metadata {
-    name      = "osrm-build"
-    namespace = kubernetes_namespace.osm-routing.metadata[0].name
-    labels    = { app = "osrm-build" }
-  }
-  spec {
-    backoff_limit = 2
-    template {
-      metadata { labels = { app = "osrm-build" } }
-      spec {
-        restart_policy = "Never"
-        container {
-          name    = "build"
-          image   = local.osrm_image
-          command = ["/bin/sh", "-c"]
-          args    = [local.osrm_build_script]
-          volume_mount {
-            name       = "osrm-data"
-            mount_path = "/data"
-          }
-          resources {
-            requests = {
-              cpu    = "500m"
-              memory = "2Gi"
-            }
-            limits = {
-              # No cpu limit: strip-cpu-limits removes it cluster-wide anyway.
-              # 4Gi is the per-container ceiling from the tier-defaults LimitRange.
-              memory = "4Gi"
-            }
-          }
-        }
-        volume {
-          name = "osrm-data"
-          persistent_volume_claim {
-            claim_name = module.nfs_osrm_data_host.claim_name
-          }
-        }
-      }
-    }
-  }
-  wait_for_completion = false
-  timeouts {
-    create = "60m"
-  }
-}
-
+# The ONLY graph-build definition. A one-off Job resource lived here too, but it
+# duplicated this script and a Job's spec is immutable once created — a bad first
+# attempt could not be corrected by Terraform, it just sat there Failed.
+#
+# To build or rebuild on demand, instantiate this CronJob:
+#   kubectl -n osm-routing create job osrm-bootstrap --from=cronjob/osrm-refresh
+#   kubectl -n osm-routing logs -f -l job-name=osrm-bootstrap
+#
 # Monthly rebuild so the graphs cannot rot the way they just did. OSM geometry
 # changes slowly and there are no timetables to chase (OTP is deliberately not
 # revived — transit comes from the free TfL API on demand), so monthly is ample.
