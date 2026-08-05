@@ -423,18 +423,46 @@ Summary:
 
 ### Password Rotation Flow
 
-Vault's database engine rotates the Technitium MySQL password every 7 days. The flow:
+Vault's database engine rotates the Technitium **PostgreSQL** password every 7 days
+(static role `pg-technitium`). The flow:
 
 ```
 Vault DB engine rotates password
-  → ExternalSecret (refreshInterval=15m) pulls from static-creds/mysql-technitium
+  → ExternalSecret (refreshInterval=15m) pulls from static-creds/pg-technitium
   → K8s Secret technitium-db-creds updated
   → CronJob technitium-password-sync (every 6h):
     1. Logs into Technitium API
-    2. Disables MySQL query logging (migrated to PG)
+    2. Uninstalls MySQL + SQLite query-log plugins (migrated to PG)
     3. Checks PG plugin is loaded (warns if missing)
     4. Configures PG query logging (90-day retention)
+    5. Sets maxLogFileDays=7 on all three instances (see below)
 ```
+
+> **The ExternalSecret MUST track `pg-technitium`, not `mysql-technitium`.**
+> Until 2026-08-05 it read `static-creds/mysql-technitium` — a leftover from when
+> query logging went to MySQL — while step 4 injected that value into the
+> **PostgreSQL** connection string. A MySQL role's password can never authenticate
+> to Postgres, so every query-log flush threw `Npgsql 28P01` and the exception
+> traces accumulated in `/etc/dns/logs/` until the 5Gi primary config PVC was full.
+> Technitium's `LogManager` opens the day's log file *before* it binds `:53`, so
+> a full config PVC is a hard startup failure that no restart can clear: the DNS
+> primary crashlooped for 27.6h (2026-08-04 02:00 → 08-05 UTC). DNS kept serving
+> throughout via secondary + tertiary.
+>
+> Three guards now exist: the corrected Vault role, `maxLogFileDays=7` (was the
+> 365-day default), and a 10Gi autoresize ceiling (was 5Gi, already exhausted).
+
+### PostgreSQL Query-Log Database
+
+The `technitium` database is created idempotently by the `technitium-pg-db-init`
+Job (`CREATE DATABASE technitium OWNER technitium`). The **role** is created and
+rotated by Vault, but the **database** was never created until 2026-08-05 — so
+query logging was silently dead (no rows, and a broken Grafana
+`technitium-postgres` datasource) even when the password was right. The role has
+`rolcreatedb=false`, so the Job bootstraps with the CNPG root credential from
+Vault. The app's connection string carries no `Database=`, so Npgsql defaults to
+the username `technitium` — which is why the missing database and the wrong
+password produced the same-looking auth-path failure.
 
 ## Monitoring
 

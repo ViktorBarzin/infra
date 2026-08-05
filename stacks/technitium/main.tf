@@ -20,5 +20,6 @@ module "technitium" {
   homepage_token      = local.homepage_credentials["technitium"]["token"]
   technitium_username = data.vault_kv_secret_v2.secrets.data["technitium_username"]
   technitium_password = data.vault_kv_secret_v2.secrets.data["technitium_password"]
+  dbaas_root_password = data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]
   tier                = local.tiers.core
 }
