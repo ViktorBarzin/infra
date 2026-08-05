@@ -80,7 +80,7 @@ bash infra/scripts/cluster_healthcheck.sh --kubeconfig /path/to/config
 | 5 | Evicted/Failed Pods | `status.phase=Failed` |
 | 6 | DaemonSets | desired == ready |
 | 7 | Deployments | ready == desired replicas |
-| 8 | PVC Status | all Bound |
+| 8 | PVC Status | all Bound, **plus free space**: WARN ≥90% full (the pvc-autoresizer's own 10%-free trigger — still being there means the PVC is unmanaged or has hit its `storage_limit` ceiling), FAIL ≥97%. Usage from `kubelet_volume_stats_*` via Prometheus. **Coverage caveat:** kubelet only exports stats for volumes mounted by a RUNNING pod (~124 of 159 today), so this catches a volume *filling* but goes blind once its pod is already crashlooping — the unmonitored count is reported, never silently skipped. Added 2026-08-05: `Bound` alone reported "All Bound" for 27.6h while a 99.91%-full 5Gi PVC held the Technitium DNS primary in CrashLoopBackOff |
 | 9 | HPA Health | targets not `<unknown>`, utilization <100% |
 | 10 | CronJob Failures | job conditions `Failed=True` in last 24h |
 | 11 | CrowdSec Agents | all pods Running |
@@ -93,7 +93,7 @@ bash infra/scripts/cluster_healthcheck.sh --kubeconfig /path/to/config
 | 18 | Helm Release Health | all `deployed` (no `pending-*`) |
 | 19 | Kyverno Policy Engine | all pods Running |
 | 20 | NFS Connectivity | 192.168.1.127 showmount / port 2049 |
-| 21 | DNS Resolution | Technitium resolves internal + external |
+| 21 | DNS Resolution | Answers "is DNS **serving**?" — not "is the primary healthy?" (that's check 7). Execs from the first **Ready** pod behind the `dns-server=true` selector (primary, secondary or tertiary) and resolves internal + external against the **service ClusterIP `10.96.0.53`**. Rewritten 2026-08-05: it used to take `items[0]` of `-l app=technitium` (primary only) and query `127.0.0.1`, so any non-serving primary false-FAILed the check while secondary + tertiary served every client fine — twice (2026-06-24 eviction storm, 2026-08-04 crashloop). Note a CrashLoopBackOff pod still reports `status.phase=Running`, so selection must test the **Ready condition**, not the phase |
 | 22 | TLS Certificate Expiry | TLS `Secret` certs >30d valid |
 | 23 | GPU Health | nvidia namespace + device-plugin Running |
 | 24 | Cloudflare Tunnel | pods Running |

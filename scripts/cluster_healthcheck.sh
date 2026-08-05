@@ -484,11 +484,95 @@ check_pvcs() {
         fi
     done <<< "$pvcs"
 
-    if [[ "$had_issue" == false ]]; then
-        pass "All PVCs Bound"
-        json_add "pvcs" "PASS" "All Bound"
+    # --- Phase 2: FREE SPACE ------------------------------------------------
+    # Bound says a PVC has a volume; it says nothing about whether that volume
+    # has room left. A 99.91%-full 5Gi PVC that had already hit its
+    # resize.topolvm.io/storage_limit ceiling took the Technitium DNS primary
+    # down for 27.6h on 2026-08-04 and this check reported "All Bound" the whole
+    # time. Usage comes from kubelet's volume stats via Prometheus.
+    #
+    # COVERAGE CAVEAT: kubelet only exports stats for volumes mounted by a
+    # RUNNING pod (~124 of 159 PVCs today). So this catches a volume FILLING —
+    # the early warning that was missing here — but goes blind once the pod it
+    # belongs to is already crashlooping. Unmonitored PVCs are reported rather
+    # than silently skipped, so the gap is visible.
+    local space_result
+    space_result=$($KUBECTL exec -n monitoring deploy/prometheus-server -- \
+        wget -qO- 'http://localhost:9090/api/v1/query?query=100*(1-kubelet_volume_stats_available_bytes/kubelet_volume_stats_capacity_bytes)' 2>/dev/null || true)
+
+    local space_status="PASS" space_detail="" full_list=""
+    if [[ -z "$space_result" ]]; then
+        space_status="WARN"
+        space_detail="usage unknown (Prometheus unreachable)"
     else
-        json_add "pvcs" "FAIL" "$detail"
+        # WARN >=90% (the autoresizer's own 10%-free trigger point: at or past it
+        # a managed PVC should already have grown, so still being here means it is
+        # unmanaged or has hit its ceiling), FAIL >=97% (imminent ENOSPC).
+        full_list=$(echo "$space_result" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+rows = []
+for r in data.get("data", {}).get("result", []):
+    m = r.get("metric", {})
+    ns = m.get("namespace", "?")
+    pvc = m.get("persistentvolumeclaim", "?")
+    try:
+        pct = float(r["value"][1])
+    except (KeyError, IndexError, ValueError):
+        continue
+    if pct >= 90:
+        rows.append((pct, ns, pvc))
+rows.sort(reverse=True)
+for pct, ns, pvc in rows:
+    sev = "FAIL" if pct >= 97 else "WARN"
+    print(f"{sev}:{ns}/{pvc}:{pct:.1f}")
+' 2>/dev/null || true)
+
+        if [[ -n "$full_list" ]]; then
+            while IFS= read -r row; do
+                [[ -z "$row" ]] && continue
+                local sev target pct
+                sev=${row%%:*}
+                target=$(echo "$row" | cut -d: -f2)
+                pct=$(echo "$row" | cut -d: -f3)
+                [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 8 "PVC Status"
+                if [[ "$sev" == "FAIL" ]]; then
+                    fail "$target: ${pct}% full"
+                    space_status="FAIL"
+                else
+                    warn "$target: ${pct}% full"
+                    [[ "$space_status" == "PASS" ]] && space_status="WARN"
+                fi
+                space_detail+="$target=${pct}%; "
+                had_issue=true
+            done <<< "$full_list"
+        fi
+    fi
+
+    # Surface the monitoring gap so "no full PVCs" is never mistaken for
+    # "every PVC was checked".
+    local total_pvcs monitored_pvcs unmonitored
+    total_pvcs=$(echo "$pvcs" | grep -c . || true)
+    monitored_pvcs=$(echo "$space_result" | python3 -c '
+import json, sys
+try:
+    print(len(json.load(sys.stdin).get("data", {}).get("result", [])))
+except Exception:
+    print(0)
+' 2>/dev/null || echo 0)
+    unmonitored=$((total_pvcs - monitored_pvcs))
+    [[ "$unmonitored" -lt 0 ]] && unmonitored=0
+
+    if [[ "$had_issue" == false ]]; then
+        pass "All $total_pvcs PVCs Bound; none >=90% full ($monitored_pvcs with usage stats, $unmonitored unmonitored)"
+        json_add "pvcs" "PASS" "All Bound; ${monitored_pvcs}/${total_pvcs} usage-monitored, $unmonitored unmonitored"
+    elif [[ "$space_status" == "FAIL" || -n "$detail" ]]; then
+        json_add "pvcs" "FAIL" "${detail}${space_detail}(${unmonitored} PVCs unmonitored)"
+    else
+        json_add "pvcs" "WARN" "${space_detail}(${unmonitored} PVCs unmonitored)"
     fi
 }
 
@@ -1203,15 +1287,42 @@ check_dns() {
     local internal_ok=false external_ok=false detail=""
 
     # Test DNS from inside the cluster via kubectl exec (MetalLB IPs may not be
-    # reachable from outside the L2 network)
+    # reachable from outside the L2 network).
+    #
+    # This check answers "is DNS SERVING?", which is NOT the same question as "is
+    # the primary healthy?" (that is check 7's job). So: exec from any RUNNING
+    # pod behind the DNS service and resolve against the SERVICE ClusterIP
+    # 10.96.0.53, not 127.0.0.1 on an arbitrarily-picked pod.
+    #
+    # It used to take items[0] of `-l app=technitium` (the primary only) and query
+    # 127.0.0.1. Any non-Running primary — Evicted, Completed, or CrashLoopBackOff —
+    # made the exec fail and reported "both failed" while secondary + tertiary were
+    # happily serving every client in the cluster. False-FAILed on 2026-06-24
+    # (eviction storm) and again for 27.6h on 2026-08-04 (primary crashloop on a
+    # full config PVC). The label `dns-server=true` is the technitium-dns Service's
+    # own selector, so it covers primary, secondary and tertiary alike.
+    # Must select on the Ready CONDITION, not status.phase: a CrashLoopBackOff
+    # pod still reports phase=Running (only its container is down), so a
+    # phase-based filter happily hands back the dead primary and the exec fails
+    # with "container not found" — the exact false-FAIL this rewrite removes.
     local dns_pod
-    dns_pod=$($KUBECTL get pods -n technitium -l app=technitium -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    dns_pod=$($KUBECTL get pods -n technitium -l dns-server=true \
+        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' 2>/dev/null \
+        | awk '$2=="True"{print $1; exit}')
+
+    # Fall back to the old selector so a label rename degrades to the previous
+    # behaviour rather than a hard false-FAIL.
+    if [[ -z "$dns_pod" ]]; then
+        dns_pod=$($KUBECTL get pods -n technitium -l app=technitium \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' 2>/dev/null \
+            | awk '$2=="True"{print $1; exit}')
+    fi
 
     if [[ -n "$dns_pod" ]]; then
-        if $KUBECTL exec -n technitium "$dns_pod" -- nslookup viktorbarzin.me 127.0.0.1 &>/dev/null; then
+        if $KUBECTL exec -n technitium "$dns_pod" -- nslookup viktorbarzin.me 10.96.0.53 &>/dev/null; then
             internal_ok=true
         fi
-        if $KUBECTL exec -n technitium "$dns_pod" -- nslookup google.com 127.0.0.1 &>/dev/null; then
+        if $KUBECTL exec -n technitium "$dns_pod" -- nslookup google.com 10.96.0.53 &>/dev/null; then
             external_ok=true
         fi
     fi

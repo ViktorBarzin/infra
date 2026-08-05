@@ -8,6 +8,10 @@ variable "technitium_password" {
   type      = string
   sensitive = true
 }
+variable "dbaas_root_password" {
+  type      = string
+  sensitive = true
+}
 
 resource "kubernetes_namespace" "technitium" {
   metadata {
@@ -149,9 +153,14 @@ resource "kubernetes_persistent_volume_claim" "primary_config_encrypted" {
     name      = "technitium-primary-config-encrypted"
     namespace = kubernetes_namespace.technitium.metadata[0].name
     annotations = {
-      "resize.topolvm.io/threshold"     = "10%"
-      "resize.topolvm.io/increase"      = "100%"
-      "resize.topolvm.io/storage_limit" = "5Gi"
+      "resize.topolvm.io/threshold" = "10%"
+      "resize.topolvm.io/increase"  = "100%"
+      # Raised 5Gi -> 10Gi on 2026-08-05: the volume had already autoresized to
+      # its old 5Gi ceiling, so when /etc/dns/logs/ filled there was no headroom
+      # left and the primary crashlooped for 27.6h. Headroom is a backstop only —
+      # the real guards are the corrected pg-technitium ExternalSecret above and
+      # maxLogFileDays in the password-sync CronJob.
+      "resize.topolvm.io/storage_limit" = "10Gi"
     }
   }
   spec {
@@ -417,7 +426,69 @@ module "ingress" {
 #   service_name    = "technitium-web"
 # }
 
-# ExternalSecret for Technitium MySQL password (Vault auto-rotation)
+# Idempotent create of the `technitium` PostgreSQL database that the "Query Logs
+# (Postgres)" app + the Grafana `technitium-postgres` datasource both target.
+# The ROLE is created and rotated by Vault (static role `pg-technitium`), but the
+# DATABASE was never created — so query logging had been silently dead since at
+# least 2026-07-04, and the app's Npgsql connection (no `Database=` in the
+# connectionString, so it defaults to the username) had nothing to connect to.
+# The role has rolcreatedb=false, hence the root-credential bootstrap here.
+# Mirrors stacks/goldmane-edge-aggregator db_init.
+resource "kubernetes_job" "pg_db_init" {
+  metadata {
+    name      = "technitium-pg-db-init"
+    namespace = kubernetes_namespace.technitium.metadata[0].name
+  }
+  spec {
+    backoff_limit = 4
+    template {
+      metadata {}
+      spec {
+        container {
+          name  = "db-init"
+          image = "postgres:16-alpine"
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
+          command = [
+            "sh", "-c",
+            <<-EOT
+              set -e
+              # -d postgres: psql defaults the database name to the username, and
+              # the root user has no root-named database, so be explicit.
+              export PGPASSWORD='${var.dbaas_root_password}'
+              psql -h ${var.postgresql_host} -U root -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='technitium'" | grep -q 1 || \
+                psql -h ${var.postgresql_host} -U root -d postgres -c "CREATE DATABASE technitium OWNER technitium"
+              psql -h ${var.postgresql_host} -U root -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE technitium TO technitium"
+              echo "technitium database init complete"
+            EOT
+          ]
+        }
+        restart_policy = "OnFailure"
+      }
+    }
+  }
+  wait_for_completion = false
+  depends_on          = [kubernetes_namespace.technitium]
+}
+
+# ExternalSecret for the Technitium PostgreSQL query-log password (Vault
+# auto-rotation, 168h). MUST track the `pg-technitium` static role: the only
+# consumer is the technitium-password-sync CronJob below, which injects this
+# value into the "Query Logs (Postgres)" app's connectionString. It previously
+# read `static-creds/mysql-technitium` (a leftover from when query logging went
+# to MySQL) — the MySQL role's password can never authenticate to Postgres, so
+# every query-log flush threw Npgsql 28P01 and the exception traces filled
+# /etc/dns/logs/ until the 5Gi config PVC was full, which crashed the primary at
+# startup (LogManager runs before :53 binds). 27.6h DNS-primary outage on
+# 2026-08-04. The MySQL/SQLite query-log plugins are deliberately uninstalled,
+# so nothing needs the mysql-technitium credential here.
 resource "kubernetes_manifest" "external_secret" {
   field_manager {
     force_conflicts = true
@@ -441,7 +512,7 @@ resource "kubernetes_manifest" "external_secret" {
       data = [{
         secretKey = "db_password"
         remoteRef = {
-          key      = "static-creds/mysql-technitium"
+          key      = "static-creds/pg-technitium"
           property = "password"
         }
       }]
@@ -585,6 +656,23 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 PG_CONFIG="{\"enableLogging\":true,\"maxQueueSize\":1000000,\"maxLogDays\":90,\"maxLogRecords\":0,\"databaseName\":\"technitium\",\"connectionString\":\"Host=${var.postgresql_host}; Port=5432; Username=technitium; Password=$$DB_PASSWORD;\"}"
                 curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (Postgres)" --data-urlencode "config=$$PG_CONFIG"
                 echo "PG logging configured on primary"
+
+                # Cap on-disk server-log retention. Technitium's LogManager opens
+                # the day's log file BEFORE it binds :53, so a full config PVC is a
+                # hard startup failure that no restart can clear. The default 365
+                # days let ~6 weeks of Npgsql exception traces accumulate into 5Gi
+                # and take DNS primary down for 27.6h on 2026-08-04. 7 days is
+                # ample for debugging; Loki holds the rest.
+                for INST in http://technitium-web:5380 http://technitium-secondary-web:5380 http://technitium-tertiary-web:5380; do
+                  L_TOKEN=$$TOKEN
+                  if [ "$$INST" != "http://technitium-web:5380" ]; then
+                    L_TOKEN=$$(curl -sf "$$INST/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+                  fi
+                  if [ -z "$$L_TOKEN" ]; then echo "Login failed for $$INST, skipping log retention"; continue; fi
+                  curl -sf -X POST "$$INST/api/settings/set?token=$$L_TOKEN&maxLogFileDays=7" >/dev/null \
+                    && echo "maxLogFileDays=7 set on $$INST" \
+                    || echo "WARNING: could not set maxLogFileDays on $$INST"
+                done
 
                 # Uninstall MySQL/SQLite on secondary and tertiary instances too
                 for INST in http://technitium-secondary-web:5380 http://technitium-tertiary-web:5380; do
