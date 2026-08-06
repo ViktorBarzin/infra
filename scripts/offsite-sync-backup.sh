@@ -63,7 +63,16 @@ if [ "${DAY_OF_MONTH}" -le 7 ] || [ -n "${FORCE_FULL}" ]; then
     [ -n "${FORCE_FULL}" ] && log "Forced full sync (manifest size cap tripped)..." || log "Monthly full sync (1st Sunday)..."
     # No -z on LAN: gigabit hop to 192.168.1.13 doesn't benefit from compression
     # and burns CPU on the PVE host that's already busy with cluster IO.
-    rsync -rlt --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r \
+    #
+    # -H IS LOAD-BEARING (added 2026-08-06): daily-backup versions the weekly
+    # generations under pvc-data/<YYYY-WW>/ with `rsync --link-dest`, so the 4
+    # retained weeks are HARDLINKS and cost ~1x on sda. Without -H rsync breaks
+    # every link in transit and each week lands on the Synology as an
+    # INDEPENDENT FULL COPY (~4x). That silently filled /volume1 to 99% (103 GiB
+    # left, ~100 GiB/day) — the offsite leg was ~1 day from stopping. -H makes
+    # rsync rebuild the link farm remotely, collapsing the 4 weeks back to ~1x.
+    # Costs an in-memory inode map on the PVE host (267 GiB RAM — affordable).
+    rsync -rltH --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r \
         --exclude='.changed-files' \
         --exclude='.changed-files.lock' \
         --exclude='.last-offsite-sync' \
@@ -78,7 +87,11 @@ elif [ -s "${MANIFEST}" ]; then
     log "Incremental sync (${MANIFEST_LINES} files from manifest)..."
     # anca-elements: now in Immich (canonical); /mnt/backup copy deleted
     # 2026-05-26. Exclude retained as a safety belt in case it re-appears.
-    rsync -rlt --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r --files-from="${MANIFEST}" \
+    #
+    # -H here only links files WITHIN this manifest batch (rsync can't see the
+    # generations it isn't transferring), so it limits new breakage rather than
+    # repairing old — the full pass above is what actually collapses the farm.
+    rsync -rltH --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r --files-from="${MANIFEST}" \
         --exclude='anca-elements/' \
         "${BACKUP_ROOT}/" "${PVE_BACKUP_DEST}/" 2>&1 || STATUS=1
 else
