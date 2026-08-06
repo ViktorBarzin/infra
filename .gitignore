@@ -123,3 +123,7 @@ terraform.tfstate.*.backup
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Playwright MCP session artifacts (page-*.yml accessibility snapshots,
+# console-*.log browser logs) — written into the CWD on every browser call.
+.playwright-mcp/
