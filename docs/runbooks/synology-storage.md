@@ -65,25 +65,64 @@ NOT sqlite**; `report.html` does not embed clean folder totals.
 - Deleting files/snapshots returns instantly but `df` lags minutes
   while the btrfs cleaner reclaims extents (~30 GB/min on the DS218).
 - Data deleted from the live share **stays on disk until the share
-  snapshots that still reference it also rotate out.** There are 4
-  daily `Backup` share snapshots (`GMT-*-21.00.02`), so **expect up to
-  ~4 days of lag** before a delete fully frees space.
+  snapshots that still reference it also rotate out.** The `Backup`
+  share retains 3 days (`GMT-*-21.00.02`, +1 for the same-tick daily),
+  so **expect up to ~3-4 days of lag** before a delete fully frees space.
+- **Ordering matters: delete SNAPSHOTS FIRST, then purge data.** Deleting
+  snapshot-pinned data frees nothing, and if a later sync rewrites that
+  data it allocates NEW extents while the snapshots still hold the old —
+  so purging before clearing snapshots makes usage go *up*.
 - Snapshot CLI (sudo, full path): `/usr/syno/sbin/synosharesnapshot
-  {list|delete} Backup <snap>...`. Retention:
-  `/usr/syno/etc/sharesnap/sharesnap.conf`.
+  {list|delete} Backup <snap>...`.
+- **Retention lives in `/usr/syno/etc/synoretention/Share#/<share>/policy`**,
+  read/written via `/usr/syno/bin/synoretentionconf --get|--set-policy`.
+  The `snap_auto_remove_*` keys in `/usr/syno/etc/sharesnap/sharesnap.conf`
+  look like the knob but are **INERT** — a 2026-05-24 "7d → 3d" change set
+  there silently did nothing for ~10 weeks and caused a repeat 99%-full
+  incident on 2026-08-06. Always verify with `synoretentionconf --get`.
+- Credential: **Vaultwarden**, not HashiCorp Vault —
+  `homelab vault get e993c4e1-6e22-4fe8-a52d-2a5214d9d0c0 --field password`
+  (item `nas.viktorbarzin.me`, `username=Administrator`; a second item of the
+  same name is Anca's). Pass it on ssh **stdin**:
+  `printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 'sudo -S -p "" <cmd>'` —
+  `ssh host "echo '$PW' | sudo -S ..."` fails and leaks into remote argv.
+- Sizing: use `df` / `btrfs qgroup show`. A `du` over `/volume1` does **not**
+  finish on this DS218 (killed at 900 s and 2400 s, 2026-08-06).
 
 ## Capacity alert
 
-The Synology mount surfaces to Prometheus as the PVE host NFS mount
-`/mnt/synology-backup` (`job="proxmox-host"`, `fstype=nfs4`), caught by
-the **global `NodeFilesystemFull`** rule in
-`stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`.
+> **⚠️ The alert described here NEVER WORKED. Corrected 2026-08-06.**
+> This section used to claim the Synology surfaced to Prometheus as a PVE host
+> NFS mount `/mnt/synology-backup` (`job="proxmox-host"`, `fstype=nfs4`), caught by
+> the global `NodeFilesystemFull` rule. **That mount does not exist** — the
+> directory is there but nothing is mounted on it (the offsite script mounts
+> on demand), and the PVE `node_exporter` exports **no nfs4 filesystem at all**.
+> `NodeFilesystemFull` could never match, so the offsite destination was
+> effectively unmonitored. It reached 99% / 103 GiB free on 2026-08-06 —
+> roughly one day from stopping Copy 3 — and surfaced only by accident, because
+> an unrelated `navidrome-music` PVC happens to live on the same `/volume1` and
+> is scraped via `kubelet_volume_stats`.
 
-- **2026-06-05:** threshold changed **90% → 95%** (`* 100 < 5`) at
-  user request — a backup target legitimately runs hot, so 90% was
-  noisy. NOTE: this rule is **global**, so the looser 95% now applies to
-  all node/system disks too. `BackupDiskFull` (the sda `/mnt/backup`
-  disk, separate alert) stays at 85%.
+**Real signal (2026-08-06):** `offsite-sync-backup` SSHes to the Synology every
+run anyway, so it now reads `df -kP /volume1` and pushes
+`offsite_dest_available_bytes` + `offsite_dest_size_bytes` to Pushgateway job
+`offsite-backup-sync`, alongside the existing freshness metric. Best-effort — a
+df failure warns but never fails the backup.
+
+Alerts (in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`,
+3-2-1 group):
+
+| Alert | Fires | Notice at ~100 GiB/day |
+|---|---|---|
+| `OffsiteDestinationFillingUp` (warning) | <10% free, 30m | ~5 days |
+| `OffsiteDestinationAlmostFull` (critical) | <4% free, 15m | ~2 days |
+| `OffsiteDestinationCapacityUnknown` (warning) | metric absent 48h | dead-man |
+
+Thresholds are deliberately loose — a backup target legitimately runs hot (same
+reasoning that moved `NodeFilesystemFull` 90% → 95% on 2026-06-05). They were set
+before a post-fix steady state existed; **revisit after a few weeks** — if the
+volume now settles well below 90% used, tighten, and if the warning nags, loosen.
+`BackupDiskFull` (the sda `/mnt/backup` disk) is a separate alert, still 85%.
 
 ## Current assessment — 2026-06-05
 

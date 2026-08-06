@@ -192,9 +192,38 @@ else
     log "=== Offsite sync complete (with errors) ==="
 fi
 
-cat <<EOF | curl -s --connect-timeout 5 --max-time 10 --data-binary @- "${PUSHGATEWAY}/metrics/job/${PUSHGATEWAY_JOB}" 2>/dev/null || true
-backup_last_success_timestamp $(date +%s)
-offsite_sync_last_status ${STATUS}
-EOF
+# --- Destination capacity (added 2026-08-06) ---
+#
+# NOTHING watched the Synology's own free space. The runbook claimed
+# NodeFilesystemFull covered it via a PVE NFS mount at /mnt/synology-backup —
+# that mount does NOT exist (the dir is there, unmounted; node_exporter on the
+# PVE host exports no nfs4 filesystem at all), so the alert could never fire.
+# The volume reached 99% / 103 GiB free on 2026-08-06, ~1 day from stopping the
+# offsite leg, and the ONLY reason it surfaced was an unrelated navidrome PVC
+# that happens to share /volume1 and gets scraped via kubelet_volume_stats.
+#
+# We already SSH to the Synology every run, so ask it directly and publish the
+# numbers next to the freshness metric. Best-effort: a failure here must never
+# fail the backup, hence the ||true and the emit-only-if-numeric guard.
+SYNO_AVAIL=""
+SYNO_SIZE=""
+if SYNO_DF=$(ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+        "${SYNOLOGY_SSH:-Administrator@192.168.1.13}" \
+        "df -kP /volume1 | tail -1" 2>/dev/null); then
+    # df -kP → "<fs> <1K-blocks> <used> <available> <use%> <mount>"
+    SYNO_SIZE=$(echo "${SYNO_DF}"  | awk '{print $2 * 1024}')
+    SYNO_AVAIL=$(echo "${SYNO_DF}" | awk '{print $4 * 1024}')
+fi
+
+{
+    echo "backup_last_success_timestamp $(date +%s)"
+    echo "offsite_sync_last_status ${STATUS}"
+    case "${SYNO_AVAIL}" in
+        ''|*[!0-9]*) warn "could not read Synology /volume1 capacity — skipping gauges" ;;
+        *) echo "offsite_dest_available_bytes ${SYNO_AVAIL}"
+           echo "offsite_dest_size_bytes ${SYNO_SIZE}" ;;
+    esac
+} | curl -s --connect-timeout 5 --max-time 10 --data-binary @- \
+      "${PUSHGATEWAY}/metrics/job/${PUSHGATEWAY_JOB}" 2>/dev/null || true
 
 exit "${STATUS}"
