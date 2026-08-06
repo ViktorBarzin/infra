@@ -66,8 +66,8 @@ NOT sqlite**; `report.html` does not embed clean folder totals.
   while the btrfs cleaner reclaims extents (~30 GB/min on the DS218).
 - Data deleted from the live share **stays on disk until the share
   snapshots that still reference it also rotate out.** The `Backup`
-  share retains 3 days (`GMT-*-21.00.02`, +1 for the same-tick daily),
-  so **expect up to ~3-4 days of lag** before a delete fully frees space.
+  share retains 7 days (`GMT-*-21.00.02`, +1 for the same-tick daily),
+  so **expect up to ~7-8 days of lag** before a delete fully frees space.
 - **Ordering matters: delete SNAPSHOTS FIRST, then purge data.** Deleting
   snapshot-pinned data frees nothing, and if a later sync rewrites that
   data it allocates NEW extents while the snapshots still hold the old —

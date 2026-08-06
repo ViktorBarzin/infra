@@ -58,9 +58,11 @@ Last updated: 2026-06-01
 >   **⚠️ CORRECTION (2026-08-06): the retention half of this never took effect.** It was set via
 >   `snap_auto_remove_keep_days` in `sharesnap.conf`, which is inert — the authoritative policy
 >   (`synoretention/Share#/Backup/policy`) stayed at `retainDay=7`. The identical near-full
->   incident recurred on 2026-08-06 and retention was genuinely set to 3 that day via
->   `synoretentionconf --set-policy`. The snapshot deletion half of this entry was real; the
->   credential pointer is also stale (see the snapshot-management section below).
+>   incident recurred on 2026-08-06. That day retention was set to 3 for real via
+>   `synoretentionconf --set-policy`, then **deliberately restored to 7 by Viktor** — the space
+>   problem was the un-collapsed hardlinks (`-H`, commit `f88742ba`) and the absent capacity
+>   alerting, not the retention depth. **Live value is 7.** The snapshot deletion half of this
+>   entry was real; the credential pointer is also stale (see the snapshot-management section).
 > - **Manifest mechanism extended**: `nfs-mirror` now appends its transferred file list to `/mnt/backup/.changed-files` so daily Step 1 incremental picks it up (was previously only fed by `daily-backup`).
 
 ## Overview
@@ -521,7 +523,7 @@ Synology DSM keeps daily btrfs snapshots of every shared folder (the `Backup` sh
 >
 > ```bash
 > synoretentionconf --get "Share#" Backup                  # read
-> synoretentionconf --set-policy "Share#" Backup retain_by_day 3   # write
+> synoretentionconf --set-policy "Share#" Backup retain_by_day 7   # write
 > ```
 >
 > **INERT** — `snap_auto_remove_keep_days` / `snap_auto_remove_enable` in
@@ -538,11 +540,26 @@ Synology DSM keeps daily btrfs snapshots of every shared folder (the `Backup` sh
 > `sharesnap.conf`, and never trust the docs alone.
 
 **Current settings** (`Backup` share, verified 2026-08-06 via `synoretentionconf --get`):
-daily snapshot, `Policy type: 64 (Retain by day)`, **`RetainDay=3`**. Contrast: `homes` and
+daily snapshot, `Policy type: 64 (Retain by day)`, **`RetainDay=7`**. Contrast: `homes` and
 `Emo shared` are `retainDay=28`, `music` is 7.
 
+> **7 days is a deliberate choice, not the old bug.** During the 2026-08-06 incident retention
+> was briefly set to 3, then **restored to 7 by Viktor the same day** — 7 days of rollback depth
+> on the offsite copy is worth the space. The earlier 7 was an *accident* (the 3 never applied);
+> this 7 is a decision. Don't "fix" it back to 3.
+>
+> What makes 7 affordable now, where it wasn't before:
+> 1. **`-H` on the offsite rsync** (commit `f88742ba`) — the weekly `pvc-data` generations were
+>    landing as independent full copies (124G real vs 300G apparent). That ~176 GiB of pure
+>    duplication was the bulk of what 7 days of snapshots had to pin.
+> 2. **Real capacity alerts** (below) — the volume is no longer unmonitored, so a refill is
+>    caught days out instead of surfacing at 99%.
+>
+> If it fills again *with* those in place, the honest next lever is capacity (the DS218 is a
+> 2-bay at 5.3 TB and the Immich mirror grows), not shaving retention.
+
 **Snapshot count runs at retention+1** — the daily snapshot is created at the same 00:00 tick
-that `synoretainer` prunes, so `RetainDay=3` steady-state shows 4. Don't read that as drift.
+that `synoretainer` prunes, so `RetainDay=7` steady-state shows 8. Don't read that as drift.
 
 Snapshots are CoW — deleting a file from the live filesystem does NOT free its blocks while any retained snapshot references them. Reclaim only happens after ALL referencing snapshots roll off.
 
@@ -571,7 +588,7 @@ printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
 printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
   'sudo -S -p "" /usr/syno/bin/synoretentionconf --get "Share#" Backup'
 printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
-  'sudo -S -p "" /usr/syno/bin/synoretentionconf --set-policy "Share#" Backup retain_by_day 3'
+  'sudo -S -p "" /usr/syno/bin/synoretentionconf --set-policy "Share#" Backup retain_by_day 7'
 ```
 
 For a multi-line remote script, feed the password as line 1 and the script after it —
