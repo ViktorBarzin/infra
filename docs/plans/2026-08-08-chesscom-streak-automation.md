@@ -1,6 +1,6 @@
 # Chess.com streak automation — design
 
-**Status:** approved (design agreed; build not started)
+**Status:** done (built and verified live 2026-08-08 — streak advanced 478 → 479)
 **Date:** 2026-08-08
 **Owner:** Viktor Barzin (`wizard`)
 **Origin:** `/grilling` session, 2026-08-08
@@ -268,11 +268,40 @@ so reading the code is feasible — but that path is out of scope for v0.1.0.
 
 ---
 
+## 7a. What the live run established (2026-08-08)
+
+Built as `~/code/chesscom-streak` (v0.1.0) and run against the real account
+before deploying. Results:
+
+```stats
+478 → 479 | streak counter after the run
+3 | moves played
+59 | unit tests
+0 | ratings touched
+```
+
+- The Daily Puzzle does tick the activity streak — open question 2 below is
+  now answered. The run solved "Give, Then Receive" and the profile badge went
+  from 478 to 479.
+- Click-to-move does not work; dragging does. Chess.com treats the move
+  method as an account-level setting. Click-to-select-then-click was accepted by
+  the page and played nothing — the board stayed in its start position and the
+  streak did not move. Switching to a dragged pointer path landed all
+  three moves, and the site auto-played the opponent's replies as expected.
+  This was the design's predicted main risk (open question 3), and it resolved
+  in favour of the automation rather than the fallback.
+- Verification does not rely on on-screen wording. Success is established by
+  comparing the board position against the position computed from the solution
+  PGN. That check is what caught the failed click-based attempt.
+- The check-first gate works. A second run immediately afterwards found the
+  puzzle already solved and exited without acting.
+
+---
+
 ## 8. Open — carried into the build
 
 > [!NOTE]
-> These four are unresolved at design time. Each is either mitigated rather than
-> answered, or needs live observation to settle.
+> Questions 2 and 3 were answered by the live run (§7a). The two below remain.
 
 1. **Day-boundary timezone.** Undocumented. Mitigated by the run-window choice in
    §4.2 rather than resolved. Worth narrowing empirically once the job has a few
