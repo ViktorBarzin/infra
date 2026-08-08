@@ -25,7 +25,7 @@ locals {
   }
 }
 
-resource "kubernetes_namespace" "chesscom_streak" {
+resource "kubernetes_namespace_v1" "chesscom_streak" {
   metadata {
     name = local.name
     labels = {
@@ -57,12 +57,12 @@ resource "kubernetes_namespace" "chesscom_streak" {
 resource "kubernetes_cron_job_v1" "solve" {
   metadata {
     name      = local.name
-    namespace = kubernetes_namespace.chesscom_streak.metadata[0].name
+    namespace = kubernetes_namespace_v1.chesscom_streak.metadata[0].name
     labels    = local.labels
   }
   spec {
     schedule                      = "0 12-16 * * *"
-    time_zone                     = "Europe/Sofia"
+    timezone                      = "Europe/Sofia"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3
