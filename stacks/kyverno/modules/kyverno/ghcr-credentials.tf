@@ -74,6 +74,10 @@ locals {
     # pages-publish: PRIVATE ghcr.io/viktorbarzin/pages-publish (markdown →
     # pages.viktorbarzin.me publish service). Deployment references the cloned secret.
     "pages-publish",
+    # chesscom-streak: PRIVATE ghcr.io/viktorbarzin/chesscom-streak (daily
+    # Chess.com streak CronJob). Kept private deliberately — a public package
+    # under this name would advertise the automation to the site it runs against.
+    "chesscom-streak",
   ]
 }
 
