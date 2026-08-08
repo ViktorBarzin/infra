@@ -92,6 +92,16 @@ steps:
           # (2026-06-27)
           [ "$stack" = "vault" ] && continue
 
+          # `_template` is the new-stack scaffold, not a deployed stack: it ships
+          # a terragrunt.hcl (so it passes the guard above) but only a
+          # main.tf.example, so there is nothing to plan. It also sorts FIRST
+          # under `stacks/*/` in the C locale ('_' < 'a'), so planning it took
+          # down the whole nightly run before a single real stack was checked —
+          # the 2026-08-08 logs end at "[_template] planning..." with no
+          # per-stack results and nothing pushed to the Pushgateway. Skip every
+          # underscore-prefixed scaffold directory. (2026-08-08)
+          case "$stack" in _*) continue ;; esac
+
           echo -n "[$stack] planning... "
           OUTPUT=$(cd "$stack_dir" && terragrunt plan -detailed-exitcode -input=false 2>&1)
           EXIT=$?
