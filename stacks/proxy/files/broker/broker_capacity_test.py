@@ -4,6 +4,49 @@
 reaper deletes are thin k8s-API I/O, validated live.
 """
 import broker
+import pool
+
+
+def _routes(*userkeys):
+    return [{"userkey": uk, "name": "proxy-br-" + uk} for uk in userkeys]
+
+
+def test_orphan_routing_ignores_routes_whose_pod_is_alive():
+    orphans, streak = pool.plan_orphan_routing_reaping(
+        _routes("alice"), {"proxy-br-alice"}, {}, required_streak=3)
+    assert orphans == []
+    # a live pod must not accumulate a streak, or it would eventually be reaped
+    assert streak == {}
+
+
+def test_orphan_routing_needs_consecutive_misses():
+    """One missed tick is a browser being recreated (switch-country), not a leak."""
+    streak = {}
+    for tick in range(1, 3):
+        orphans, streak = pool.plan_orphan_routing_reaping(
+            _routes("bob"), set(), streak, required_streak=3)
+        assert orphans == [], "reaped after only %d tick(s)" % tick
+    orphans, streak = pool.plan_orphan_routing_reaping(
+        _routes("bob"), set(), streak, required_streak=3)
+    assert orphans == ["bob"]
+
+
+def test_orphan_routing_streak_resets_when_pod_returns():
+    _, streak = pool.plan_orphan_routing_reaping(
+        _routes("carol"), set(), {}, required_streak=3)
+    assert streak == {"carol": 1}
+    # pod came back mid-recreate — the count must not carry over
+    orphans, streak = pool.plan_orphan_routing_reaping(
+        _routes("carol"), {"proxy-br-carol"}, streak, required_streak=3)
+    assert orphans == [] and streak == {}
+
+
+def test_orphan_routing_forgets_deleted_routes():
+    """Once the Service is gone its streak must not linger and re-fire later."""
+    _, streak = pool.plan_orphan_routing_reaping(
+        _routes("dave"), set(), {}, required_streak=3)
+    orphans, streak = pool.plan_orphan_routing_reaping([], set(), streak, required_streak=3)
+    assert orphans == [] and streak == {}
 
 
 def test_ts_parses_rfc3339():
