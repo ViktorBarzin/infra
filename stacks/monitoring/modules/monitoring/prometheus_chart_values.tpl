@@ -1665,12 +1665,27 @@ serverFiles:
           # condition. The control-plane is excluded by name (node!~"k8s-master.*")
           # because this cluster's kube-state-metrics exposes neither kube_node_role
           # nor node taints/labels — revisit if an HA control-plane is added.
+          #
+          # BOTH halves filter to non-terminal pods (Running|Pending). kube-state-metrics
+          # keeps emitting kube_pod_container_resource_requests for Succeeded/Failed pods
+          # until the pod OBJECT is garbage-collected, but the scheduler releases those
+          # reservations the moment the pod terminates. Without this filter the alert
+          # counted completed CronJob pods as if they still held memory: on 2026-08-08
+          # k8s-node3 read 28.29 GiB against 18.33 GiB of genuinely-running requests —
+          # ~10 GiB of phantom reservations from finished descheduler / csi-ghost-reconcile
+          # / beads-dispatcher jobs. Because CronJob pods accumulate and are then reaped
+          # in waves, that phantom total oscillated and the alert flapped every ~15-30min
+          # for days. It also drove real remediation of an unreal problem — prometheus's
+          # request was shaved 4Gi->3Gi on 2026-07-26 chasing this same false signal.
           - alert: ClusterCannotTolerateNonGpuNodeLoss
             expr: |
               max(
                 (
                   sum by (node) (
                     kube_pod_container_resource_requests{resource="memory",unit="byte",node!~"k8s-master.*"}
+                    * on(namespace,pod) group_left() max by (namespace,pod) (
+                        kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                      )
                   )
                   * on(node) (kube_node_status_condition{condition="Ready",status="true"} == 1)
                 )
@@ -1684,6 +1699,9 @@ serverFiles:
                     kube_node_status_allocatable{resource="memory",unit="byte",node!~"k8s-master.*"}
                     - on(node) group_left() sum by (node) (
                         kube_pod_container_resource_requests{resource="memory",unit="byte",node!~"k8s-master.*"}
+                        * on(namespace,pod) group_left() max by (namespace,pod) (
+                            kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                          )
                       ),
                     0
                   )

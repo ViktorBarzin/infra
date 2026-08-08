@@ -29,12 +29,23 @@ NAMESPACES="${NAMESPACES:-monitoring crowdsec nextcloud}"
 DRY_RUN="${DRY_RUN:-false}"
 
 now="$(date +%s)"
-cleared=0; needs_human=0; skipped_young=0
+cleared=0; needs_human=0; skipped_young=0; query_failed=0
 
 for ns in $NAMESPACES; do
   # TSV per helm release secret: release <TAB> version <TAB> status <TAB> created <TAB> secretName
-  rows="$(kubectl -n "$ns" get secret -l owner=helm \
-    -o jsonpath='{range .items[*]}{.metadata.labels.name}{"\t"}{.metadata.labels.version}{"\t"}{.metadata.labels.status}{"\t"}{.metadata.creationTimestamp}{"\t"}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+  #
+  # A FAILED query must never look like "no stuck releases". Until 2026-08-08
+  # this swallowed kubectl's exit status with `2>/dev/null || true` and then
+  # `continue`d on empty output, so when kubectl was OOM-killed by the (then
+  # too small) container memory limit the job still exited 0 — silently a
+  # no-op with a green checkmark. Keep the two cases apart: an empty result
+  # from a SUCCESSFUL query is legitimate (that namespace has no helm
+  # releases); a non-zero exit is a real error and must surface.
+  if ! rows="$(kubectl -n "$ns" get secret -l owner=helm \
+    -o jsonpath='{range .items[*]}{.metadata.labels.name}{"\t"}{.metadata.labels.version}{"\t"}{.metadata.labels.status}{"\t"}{.metadata.creationTimestamp}{"\t"}{.metadata.name}{"\n"}{end}')"; then
+    echo "ERROR $ns — listing helm release secrets failed (RBAC, apiserver, or OOM-killed kubectl); NOT treating as 'nothing stuck'"
+    query_failed=$(( query_failed + 1 )); continue
+  fi
   [ -z "$rows" ] && continue
 
   # releases in this ns that have >=1 deployed revision (the safe-to-clear guard)
@@ -64,5 +75,10 @@ for ns in $NAMESPACES; do
   done < <(printf '%s\n' "$rows")
 done
 
-echo "helm-unstick summary: cleared=$cleared needs_human=$needs_human skipped_young=$skipped_young dry_run=$DRY_RUN namespaces=[$NAMESPACES] threshold=${THRESHOLD_SECONDS}s"
+echo "helm-unstick summary: cleared=$cleared needs_human=$needs_human skipped_young=$skipped_young query_failed=$query_failed dry_run=$DRY_RUN namespaces=[$NAMESPACES] threshold=${THRESHOLD_SECONDS}s"
+# Exit non-zero only when a namespace could not be INSPECTED — that is the
+# state where "no output" would otherwise be mistaken for "nothing wedged".
+# A namespace left for a human (needs_human) is a real, reported finding, not
+# a failure of this job, so it stays exit 0 and is surfaced in the summary.
+[ "$query_failed" -gt 0 ] && exit 1
 exit 0
