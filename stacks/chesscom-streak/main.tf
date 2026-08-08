@@ -126,6 +126,10 @@ resource "kubernetes_cron_job_v1" "solve" {
               security_context {
                 allow_privilege_escalation = false
                 run_as_non_root            = true
+                # Numeric UID is required: with only `USER runner` in the image,
+                # the kubelet cannot verify the user is non-root and refuses to
+                # start the container.
+                run_as_user = 10001
                 capabilities {
                   drop = ["ALL"]
                 }
