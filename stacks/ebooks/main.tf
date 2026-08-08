@@ -645,13 +645,22 @@ resource "kubernetes_deployment" "audiobookshelf" {
             name       = "metadata"
             mount_path = "/metadata"
           }
+          # DO NOT LOWER back to 256Mi on a right-sizing pass. Idle usage
+          # (~75Mi) badly understates the requirement: a library scan that
+          # IMPORTS new books is the real peak, and at 256Mi it OOMKills
+          # (exit 137, observed 2026-08-08 importing 9 audiobooks). Scans
+          # that find nothing new stay near idle, so krr/VPA-style
+          # recommendations sampled between imports will keep suggesting a
+          # cut — the headroom is deliberate and only exercised on import.
+          # Requests stay at the idle figure so this remains Burstable, per
+          # the tier 4-aux convention; only the ceiling is raised.
           resources {
             requests = {
               cpu    = "15m"
               memory = "64Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
         }
