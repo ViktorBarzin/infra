@@ -1665,12 +1665,27 @@ serverFiles:
           # condition. The control-plane is excluded by name (node!~"k8s-master.*")
           # because this cluster's kube-state-metrics exposes neither kube_node_role
           # nor node taints/labels — revisit if an HA control-plane is added.
+          #
+          # BOTH halves filter to non-terminal pods (Running|Pending). kube-state-metrics
+          # keeps emitting kube_pod_container_resource_requests for Succeeded/Failed pods
+          # until the pod OBJECT is garbage-collected, but the scheduler releases those
+          # reservations the moment the pod terminates. Without this filter the alert
+          # counted completed CronJob pods as if they still held memory: on 2026-08-08
+          # k8s-node3 read 28.29 GiB against 18.33 GiB of genuinely-running requests —
+          # ~10 GiB of phantom reservations from finished descheduler / csi-ghost-reconcile
+          # / beads-dispatcher jobs. Because CronJob pods accumulate and are then reaped
+          # in waves, that phantom total oscillated and the alert flapped every ~15-30min
+          # for days. It also drove real remediation of an unreal problem — prometheus's
+          # request was shaved 4Gi->3Gi on 2026-07-26 chasing this same false signal.
           - alert: ClusterCannotTolerateNonGpuNodeLoss
             expr: |
               max(
                 (
                   sum by (node) (
                     kube_pod_container_resource_requests{resource="memory",unit="byte",node!~"k8s-master.*"}
+                    * on(namespace,pod) group_left() max by (namespace,pod) (
+                        kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                      )
                   )
                   * on(node) (kube_node_status_condition{condition="Ready",status="true"} == 1)
                 )
@@ -1684,6 +1699,9 @@ serverFiles:
                     kube_node_status_allocatable{resource="memory",unit="byte",node!~"k8s-master.*"}
                     - on(node) group_left() sum by (node) (
                         kube_pod_container_resource_requests{resource="memory",unit="byte",node!~"k8s-master.*"}
+                        * on(namespace,pod) group_left() max by (namespace,pod) (
+                            kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                          )
                       ),
                     0
                   )
@@ -2070,6 +2088,44 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Offsite backup sync last run reported errors (status={{ $value }})"
+          # Destination capacity. Until 2026-08-06 NOTHING watched the Synology's
+          # free space: the runbook claimed NodeFilesystemFull covered it via a PVE
+          # NFS mount at /mnt/synology-backup, but that mount does not exist (the
+          # PVE node_exporter exports no nfs4 filesystem), so the rule could never
+          # match. /volume1 reached 99% (103 GiB free, ~1 day from stopping the
+          # offsite leg) and only surfaced because an unrelated navidrome PVC shares
+          # the volume. offsite-sync-backup now publishes the gauges directly.
+          # Warn early — a full destination silently breaks Copy 3 of 3-2-1.
+          - alert: OffsiteDestinationFillingUp
+            expr: |
+              (offsite_dest_available_bytes{job="offsite-backup-sync"}
+               / offsite_dest_size_bytes{job="offsite-backup-sync"}) * 100 < 10
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Offsite backup destination (Synology /volume1) is {{ $value | printf \"%.1f\" }}% free"
+              description: "Copy 3 of 3-2-1 stops when this fills. Reclaim order MATTERS: delete share SNAPSHOTS first (snapshot-pinned data frees nothing, and rewriting it allocates new extents while snapshots hold the old). Runbook: docs/runbooks/synology-storage.md; retention lives in synoretentionconf, NOT sharesnap.conf."
+          - alert: OffsiteDestinationAlmostFull
+            expr: |
+              (offsite_dest_available_bytes{job="offsite-backup-sync"}
+               / offsite_dest_size_bytes{job="offsite-backup-sync"}) * 100 < 4
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Offsite backup destination (Synology /volume1) is only {{ $value | printf \"%.1f\" }}% free — offsite backups are about to stop"
+              description: "Act now. Delete the oldest Backup-share snapshots (see docs/runbooks/synology-storage.md), then let the btrfs cleaner reclaim (async, minutes)."
+          # Dead-man: the gauges only exist if the sync can reach the Synology and
+          # read df. Their absence is itself a signal the destination is unreachable.
+          - alert: OffsiteDestinationCapacityUnknown
+            expr: absent(offsite_dest_available_bytes{job="offsite-backup-sync"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "No offsite destination capacity metric for 48h — cannot tell if the Synology is filling"
+              description: "offsite-sync-backup could not read df on the Synology (SSH/mount problem), or the script predates the 2026-08-06 capacity push. Check: ssh root@192.168.1.127 journalctl -u offsite-sync-backup."
           - alert: NfsMirrorStale
             expr: (time() - nfs_mirror_last_run_timestamp{job="nfs-mirror"}) > 1382400
             for: 30m

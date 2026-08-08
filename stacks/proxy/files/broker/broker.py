@@ -716,13 +716,48 @@ def _reap_orphan_pvcs():
         print("reaped stuck Pending profile PVC:", md.get("name"), flush=True)
 
 
+def _reap_orphan_browser_routing(state):
+    """Delete Service+Ingress+wg-secret left behind by a browser pod that vanished.
+
+    plan_reaping() only reaps browsers it can still SEE as pods, so a pod removed
+    outside delete_browser (eviction, node drain, GC of a Failed pod) strands its
+    routing objects: the hostname 503s and the auto-discovered external monitor
+    goes red until someone notices (one pair sat that way for 13 days). The
+    profile PVC is deliberately untouched — it holds the user's Chromium profile
+    and is reused when they next open a browser.
+    """
+    live = {md.get("name") for md in
+            (p.get("metadata", {}) for p in _list("pods", "app=proxy-browser"))
+            if md.get("name")}
+    routes = []
+    for svc in _list("services", "app=proxy-browser"):
+        md = svc.get("metadata", {})
+        userkey = md.get("labels", {}).get("proxy/user")
+        if userkey and md.get("name"):
+            routes.append({"userkey": userkey, "name": md["name"]})
+    orphans, new_state = pool.plan_orphan_routing_reaping(routes, live, state)
+    for userkey in orphans:
+        name = _br_name(userkey)
+        k8s("DELETE", "/apis/networking.k8s.io/v1/namespaces/%s/ingresses/%s" % (NS, name))
+        k8s("DELETE", "/api/v1/namespaces/%s/services/%s" % (NS, name))
+        k8s("DELETE", "/api/v1/namespaces/%s/secrets/%s-wg" % (NS, name))
+        new_state.pop(userkey, None)
+        print("reaped orphaned browser routing (pod gone):", name, flush=True)
+    return new_state
+
+
 # ------------------------------------------------------------------ reaper
 def reaper():
+    orphan_routing_state = {}
     while True:
         try:
             _reap_orphan_pvcs()
         except Exception as e:
             print("orphan-pvc reap error:", e, flush=True)
+        try:
+            orphan_routing_state = _reap_orphan_browser_routing(orphan_routing_state)
+        except Exception as e:
+            print("orphan-routing reap error:", e, flush=True)
         try:
             browsers = list_browsers()
             gateways = list_gateways()
