@@ -55,6 +55,14 @@ Last updated: 2026-06-01
 > - **`anca-elements-mirror.{sh,service,timer}` retired**, subsumed into the new **`nfs-mirror`** weekly job covering all critical NFS subtrees (anca-elements + ~80 services) → sda.
 > - **Synology `/Backup/Viki/nfs/<svc>/` orphan cleanup** — 84 dirs renamed in-place (btrfs metadata-only) to `/Backup/Viki/pve-backup/<svc>/` so daily-incremental Step 1 sees them as pre-existing and only ships deltas. No re-transfer.
 > - **Synology snapshot retention 7d → 3d**, all 8 backlog snapshots deleted via `sudo synosharesnapshot delete Backup ...`. Reclaimed ~800G btrfs (98% → 83% used). DSM API was blocked by 2FA; `sudo` over the existing `Administrator` SSH key worked with the Vault-stored password.
+>   **⚠️ CORRECTION (2026-08-06): the retention half of this never took effect.** It was set via
+>   `snap_auto_remove_keep_days` in `sharesnap.conf`, which is inert — the authoritative policy
+>   (`synoretention/Share#/Backup/policy`) stayed at `retainDay=7`. The identical near-full
+>   incident recurred on 2026-08-06. That day retention was set to 3 for real via
+>   `synoretentionconf --set-policy`, then **deliberately restored to 7 by Viktor** — the space
+>   problem was the un-collapsed hardlinks (`-H`, commit `f88742ba`) and the absent capacity
+>   alerting, not the retention depth. **Live value is 7.** The snapshot deletion half of this
+>   entry was real; the credential pointer is also stale (see the snapshot-management section).
 > - **Manifest mechanism extended**: `nfs-mirror` now appends its transferred file list to `/mnt/backup/.changed-files` so daily Step 1 incremental picks it up (was previously only fed by `daily-backup`).
 
 ## Overview
@@ -506,33 +514,98 @@ Pushes `nfs_mirror_last_run_timestamp` + `nfs_mirror_last_status` + `nfs_mirror_
 
 ### Synology snapshot management
 
-Synology DSM keeps daily btrfs snapshots of every shared folder (the `Backup` share most importantly). Retention is configured per-share in DSM's Snapshot Replication app, and persists in `synosharesnapshot shareconf`.
+Synology DSM keeps daily btrfs snapshots of every shared folder (the `Backup` share most importantly). Retention is configured per-share in DSM's Snapshot Replication app.
 
-**Current settings** (`Backup` share, 2026-05-24): daily at 02:00, **`snap_auto_remove_keep_days=3`** (tightened from 7 to reduce the window where deleted data continues to consume space).
+> ### ⚠️ Two config files. Only one of them does anything.
+>
+> **AUTHORITATIVE** — `/usr/syno/etc/synoretention/Share#/<share>/policy`, managed by
+> `/usr/syno/bin/synoretentionconf`. This is what `synoretainer` actually enforces:
+>
+> ```bash
+> synoretentionconf --get "Share#" Backup                  # read
+> synoretentionconf --set-policy "Share#" Backup retain_by_day 7   # write
+> ```
+>
+> **INERT** — `snap_auto_remove_keep_days` / `snap_auto_remove_enable` in
+> `/usr/syno/etc/sharesnap/sharesnap.conf`. These read like the retention knob and are
+> *not*. Setting them changes nothing.
+>
+> **This cost us a repeat incident.** On 2026-05-24 retention was "tightened 7d → 3d" by
+> setting `snap_auto_remove_keep_days=3` — and documented here as done. The real policy
+> stayed at `retainDay=7`, so the volume kept 7 days of snapshots and hit 99% again on
+> 2026-08-06 (103 GiB free, ~1 day from stopping the offsite leg). Both the 2026-05-24 note
+> above and this section asserted 3 days for ~10 weeks while the system did 7.
+>
+> Whenever you touch retention, verify with `synoretentionconf --get` — never trust
+> `sharesnap.conf`, and never trust the docs alone.
+
+**Current settings** (`Backup` share, verified 2026-08-06 via `synoretentionconf --get`):
+daily snapshot, `Policy type: 64 (Retain by day)`, **`RetainDay=7`**. Contrast: `homes` and
+`Emo shared` are `retainDay=28`, `music` is 7.
+
+> **7 days is a deliberate choice, not the old bug.** During the 2026-08-06 incident retention
+> was briefly set to 3, then **restored to 7 by Viktor the same day** — 7 days of rollback depth
+> on the offsite copy is worth the space. The earlier 7 was an *accident* (the 3 never applied);
+> this 7 is a decision. Don't "fix" it back to 3.
+>
+> What makes 7 affordable now, where it wasn't before:
+> 1. **`-H` on the offsite rsync** (commit `f88742ba`) — the weekly `pvc-data` generations were
+>    landing as independent full copies (124G real vs 300G apparent). That ~176 GiB of pure
+>    duplication was the bulk of what 7 days of snapshots had to pin.
+> 2. **Real capacity alerts** (below) — the volume is no longer unmonitored, so a refill is
+>    caught days out instead of surfacing at 99%.
+>
+> If it fills again *with* those in place, the honest next lever is capacity (the DS218 is a
+> 2-bay at 5.3 TB and the Immich mirror grows), not shaving retention.
+
+**Snapshot count runs at retention+1** — the daily snapshot is created at the same 00:00 tick
+that `synoretainer` prunes, so `RetainDay=7` steady-state shows 8. Don't read that as drift.
 
 Snapshots are CoW — deleting a file from the live filesystem does NOT free its blocks while any retained snapshot references them. Reclaim only happens after ALL referencing snapshots roll off.
 
 **DSM Web API is gated by 2FA (FIDO/OTP)** — programmatic snapshot management has to go via SSH + sudo instead:
 
+**The password is in VAULTWARDEN, not HashiCorp Vault** (corrected 2026-08-06 — the old
+`vault kv get -field=synology_admin_password secret/viktor` documented here returns EMPTY and
+no such key exists under `secret/`; that dead pointer cost a handoff mid-incident). Note there
+are TWO Vaultwarden items named `nas.viktorbarzin.me` — disambiguate on `username=Administrator`
+(the other is Anca's).
+
 ```bash
-# Password is in Vault: secret/viktor → synology_admin_password
-PASS=$(VAULT_ADDR=https://vault.viktorbarzin.me vault kv get -field=synology_admin_password secret/viktor)
+PW=$(homelab vault get e993c4e1-6e22-4fe8-a52d-2a5214d9d0c0 --field password)
 
-# List snapshots on the Backup share
-ssh Administrator@192.168.1.13 "echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot list Backup"
+# Pass the secret on ssh STDIN, never inside the remote command string:
+# `ssh host "echo '$PW' | sudo -S ..."` FAILS ("no password was provided") and would
+# also leak the password into the remote process args.
+printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
+  'sudo -S -p "" /usr/syno/sbin/synosharesnapshot list Backup'
 
-# Bulk delete ALL snapshots (reclaims everything once btrfs cleaner runs)
-ssh Administrator@192.168.1.13 "
-  SNAPS=\$(echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot list Backup 2>/dev/null \
-    | grep -oE 'GMT-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
-  echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot delete Backup \$SNAPS
-"
+# Delete specific snapshots (space-separated; keep the newest few)
+printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
+  'sudo -S -p "" /usr/syno/sbin/synosharesnapshot delete Backup GMT-2026.08.01-21.00.02 ...'
 
-# Tighten retention
-ssh Administrator@192.168.1.13 "echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot shareconf set Backup snap_auto_remove_keep_days=3"
+# Read / change retention (AUTHORITATIVE — not sharesnap.conf)
+printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
+  'sudo -S -p "" /usr/syno/bin/synoretentionconf --get "Share#" Backup'
+printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
+  'sudo -S -p "" /usr/syno/bin/synoretentionconf --set-policy "Share#" Backup retain_by_day 7'
 ```
 
-The btrfs cleaner thread reclaims async — `df` may lag the snapshot-delete by minutes (typical reclaim rate observed 2026-05-24: ~300 MB/s sustained, with bursts of 800 GB in 2 minutes).
+For a multi-line remote script, feed the password as line 1 and the script after it —
+`sudo` consumes the first line, `bash -s` reads the rest:
+
+```bash
+{ printf '%s\n' "$PW"; printf '%s' "$SCRIPT"; } | ssh Administrator@192.168.1.13 'sudo -S -p "" bash -s'
+```
+
+**Reclaim is ASYNCHRONOUS.** `synosharesnapshot delete` prints `Success!` instantly, but the
+btrfs cleaner frees extents in the background — `df` lags by minutes (2026-08-06: deleting 5
+snapshots took the volume 99% → 90% in ~3 min and settled at 83%/957 GiB free over the next
+hour; 2026-05-24 saw ~300 MB/s sustained with 800 GB bursts). Don't treat a flat `df` as failure.
+
+**Sizing tip**: use `df` or `btrfs qgroup show` — a `du` over `/volume1` does NOT finish on the
+DS218 (runs killed at 900 s and 2400 s on 2026-08-06). Measure hardlink-aware sizes from the
+PVE side instead (`du -sh` vs `du -slh` on `/mnt/backup/pvc-data`).
 
 > Memory: id=2673-2676 (Synology snapshot retention gotcha — deletion vs reclaim timing).
 

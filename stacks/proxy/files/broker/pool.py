@@ -114,3 +114,38 @@ def plan_reaping(gateways, browsers, now, gw_idle_seconds):
         if not has_live and idle_for >= gw_idle_seconds:
             dead_gws.append(gw["idx"])
     return (dead_gws, dead_browsers)
+
+
+def plan_orphan_routing_reaping(routes, live_pod_names, missing_streak, required_streak=3):
+    """Return (userkeys_to_reap, new_missing_streak) for Services/Ingresses whose
+    browser pod no longer exists.
+
+    A browser is a bare Pod, and `plan_reaping` above only ever sees browsers that
+    still HAVE a pod — so anything that removes the pod outside `delete_browser`
+    (eviction, node drain, GC of a Failed pod) leaves its Service + Ingress behind
+    with nothing backing them. The hostname then serves 503 forever and the
+    auto-discovered external monitor sits red; one such pair survived 13 days
+    (2026-08-08, user edinpriqtelvirtual-gmail-com-432ab095).
+
+    Absence is counted across consecutive reaper ticks rather than judged from the
+    Service's age: a switch-country recreate deletes and re-creates the pod under
+    the SAME name while the long-lived Service stays put, so an age-based gate
+    would happily reap a browser that is mid-recreate. Requiring the pod to be
+    missing for `required_streak` ticks (~3 min at the 60s loop) outlasts any
+    recreate while still clearing a genuine leak quickly. Streaks for routes that
+    have gone away are dropped, so a reused userkey starts from zero.
+
+    `routes`: [{"userkey", "name"}] built from Services labelled app=proxy-browser;
+    `live_pod_names`: set of existing browser pod names.
+    """
+    orphans = []
+    new_streak = {}
+    for route in routes:
+        userkey, name = route["userkey"], route["name"]
+        if name in live_pod_names:
+            continue
+        seen = missing_streak.get(userkey, 0) + 1
+        new_streak[userkey] = seen
+        if seen >= required_streak:
+            orphans.append(userkey)
+    return (orphans, new_streak)
