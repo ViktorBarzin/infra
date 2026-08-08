@@ -97,6 +97,15 @@ resource "oci_core_security_list" "backup_mx" {
       max = 443
     }
   }
+  # nginx stub_status for the Immich edge cache (9100 is node-exporter's).
+  ingress_security_rules {
+    protocol = "6"
+    source   = "${var.public_ip}/32"
+    tcp_options {
+      min = 9145
+      max = 9145
+    }
+  }
   # node-exporter, scraped by the homelab Prometheus (egress SNATs to the WAN IP).
   ingress_security_rules {
     protocol = "6"
@@ -221,11 +230,11 @@ resource "oci_core_instance" "mx2" {
       # for the xray REALITY/Shadowsocks + dnstt provisioning in the setup
       # script below. Same UUID/SS password as the portal identity so one client
       # config works across the home and OCI PoPs.
-      oci_xray_uuid       = data.vault_kv_secret_v2.viktor.data["oci_xray_uuid"]
+      oci_xray_uuid        = data.vault_kv_secret_v2.viktor.data["oci_xray_uuid"]
       oci_xray_ss_password = data.vault_kv_secret_v2.viktor.data["oci_xray_ss_password"]
-      oci_reality_privkey = data.vault_kv_secret_v2.viktor.data["oci_reality_privkey"]
-      oci_reality_shortid = data.vault_kv_secret_v2.viktor.data["oci_reality_shortid"]
-      dnstt_privkey       = data.vault_kv_secret_v2.viktor.data["dnstt_server_privkey"]
+      oci_reality_privkey  = data.vault_kv_secret_v2.viktor.data["oci_reality_privkey"]
+      oci_reality_shortid  = data.vault_kv_secret_v2.viktor.data["oci_reality_shortid"]
+      dnstt_privkey        = data.vault_kv_secret_v2.viktor.data["dnstt_server_privkey"]
     }))
   }
 
@@ -263,4 +272,41 @@ output "mx2_public_ip" {
 
 output "mx2_availability_domain" {
   value = local.availability_domain
+}
+
+# ---------------------------------------------------------------------------
+# Immich share-link edge cache (immich-cdn.viktorbarzin.me)
+#
+# Design: docs/plans/2026-08-08-immich-share-edge-cache-design.md
+#
+# Sharing an album saturates the ~30 Mbps home uplink because the origin ships
+# every photo once per viewer. nginx on this box holds a pull-through cache so
+# the uplink sends each asset once and viewers are served from Frankfurt.
+#
+# This landed on mx2 rather than a dedicated Ampere A1 because Always-Free A1
+# capacity was unavailable in all three Frankfurt ADs (six placement attempts,
+# 2 OCPU and 1 OCPU, 2026-08-08). mx2's internet bandwidth caps at 50 Mbps vs
+# the A1's ~2 Gbps, but the cache multiplier is the dominant win and applies
+# either way. The vhost config is host-independent, so it lifts to an A1 later
+# by changing only the DNS target. The stack for that is on branch
+# wizard/immich-edge, validated and ready.
+#
+# Immich itself is NOT reconfigured: it ignores the Host header for share
+# links, and this vhost rewrites Host/SNI back to immich.viktorbarzin.me on the
+# way out, so Traefik matches its existing router.
+# ---------------------------------------------------------------------------
+
+# proxied = false is load-bearing. The zone carries a proxied "*" wildcard
+# CNAME, so without an explicit grey-cloud record this name resolves to
+# Cloudflare and every photo would route through their CDN — the arrangement
+# the design rules out on service-specific-terms grounds, plus a second cache
+# layer competing with the auth-scoped one here.
+resource "cloudflare_record" "immich_cdn" {
+  zone_id = var.cloudflare_zone_id
+  name    = "immich-cdn"
+  type    = "A"
+  content = oci_core_public_ip.mx2.ip_address
+  proxied = false
+  ttl     = 1
+  comment = "Immich share-link edge cache on mx2. Must stay grey-cloud."
 }
