@@ -318,11 +318,21 @@ PUSHGW = "http://prometheus-prometheus-pushgateway.monitoring:9091"
 # Completed private-tracker torrents must remain announceable. A low active
 # upload limit leaves them in queuedUP: qBittorrent's local seed clock still
 # advances, but the tracker sees no seed time and records hit-and-runs.
+# Stalled torrents must not hold active download slots. Seen 2026-08-08: five
+# 0%-complete, 0-seeder mam-farming torrents occupied all 5 download slots
+# indefinitely, so every healthy queued download sat at queuedDL forever and
+# only a manual force-start moved them. With this on, a torrent transferring
+# below slow_torrent_dl_rate_threshold (2 KiB/s) for longer than
+# slow_torrent_inactive_timer (60 s) stops counting toward the active limits,
+# so unfinishable torrents release their slot instead of squatting on it.
+# This also helps the seeding concern above rather than working against it:
+# slow seeders stop consuming upload slots, so more stay announceable.
 required_queue_preferences = {
     "queueing_enabled": True,
     "max_active_downloads": 5,
     "max_active_uploads": 500,
     "max_active_torrents": 505,
+    "dont_count_slow_torrents": True,
 }
 
 try:
