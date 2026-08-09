@@ -186,11 +186,37 @@ write_files:
       proxy_cache_path /var/cache/nginx/authz levels=1:2 keys_zone=authz:8m
                        max_size=64m inactive=10m use_temp_path=off;
 
-      # The share key arrives either as an x-immich-share-key header (what the web
-      # client uses for asset requests) or as ?key= (initial page load). Normalise.
+      # Immich accepts TWO interchangeable share tokens, and a real share link uses
+      # both in turn: the URL Immich hands out is /s/<slug>, whose page embeds the
+      # <key> that subsequent asset requests then carry. Either can arrive as a
+      # header or as a query parameter, so normalise all four forms.
       map $http_x_immich_share_key $share_key {
           ""      $arg_key;
           default $http_x_immich_share_key;
+      }
+      map $http_x_immich_share_slug $share_slug {
+          ""      $arg_slug;
+          default $http_x_immich_share_slug;
+      }
+
+      # Which token to validate upstream. Key wins when both are present.
+      map $share_key $authz_qs {
+          ""      "slug=$share_slug";
+          default "key=$share_key";
+      }
+
+      # Cache scoping token. Exactly one of the two is normally set, so this is
+      # unambiguous; if a share is reachable by both, it simply caches under each.
+      map "$share_key:$share_slug" $share_token {
+          default "$share_key:$share_slug";
+      }
+
+      # Defensive: a password-protected share sets a cookie once unlocked. None exist
+      # today (0 of 64 links), but if one is ever created we must not let an unlocked
+      # response populate or satisfy a shared cache entry.
+      map $http_cookie $has_cookie {
+          ""      0;
+          default 1;
       }
 
       server {
@@ -232,13 +258,13 @@ write_files:
           # request avoids a round trip to home.
           location = /_authz {
               internal;
-              proxy_pass $origin/api/shared-links/me?key=$share_key;
+              proxy_pass $origin/api/shared-links/me?$authz_qs;
               proxy_ssl_server_name on;
               proxy_pass_request_body off;
               proxy_set_header Content-Length "";
 
               proxy_cache       authz;
-              proxy_cache_key   "$share_key";
+              proxy_cache_key   "$share_token";
               proxy_cache_valid 200     60s;
               proxy_cache_valid 401 403 10s;
               proxy_ignore_headers Cache-Control Expires Set-Cookie;
@@ -257,7 +283,30 @@ write_files:
                                     http_500 http_502 http_503 http_504;
           }
 
-          # --- the share page ------------------------------------------------------
+          # --- the share page, slug form -------------------------------------------
+          # THIS is the URL Immich actually hands out ("/s/<slug>"); /share/<key>
+          # below is the equivalent long form. Missing this location was what sent
+          # real share links to the catch-all redirect instead of serving them.
+          # The slug is in the path, so $request_uri is self-scoping.
+          location ^~ /s/ {
+              proxy_pass $origin$request_uri;
+              proxy_cache       immich;
+              proxy_cache_key   "$request_uri";
+              proxy_cache_valid 200 5m;
+              # 404 = unknown/expired slug. Cache briefly so a deleted link cannot be
+              # resurrected from cache, but long enough to absorb scanner noise.
+              proxy_cache_valid 404 10s;
+              proxy_cache_lock  on;
+              proxy_ignore_headers Cache-Control Expires;
+              # See $has_cookie: never let a password-unlocked page enter or be served
+              # from the shared entry.
+              proxy_cache_bypass $has_cookie;
+              proxy_no_cache     $has_cookie;
+              proxy_cache_use_stale error timeout updating
+                                    http_500 http_502 http_503 http_504;
+          }
+
+          # --- the share page, long form -------------------------------------------
           # The key is already in the path, so $request_uri is self-scoping.
           location ^~ /share/ {
               proxy_pass $origin$request_uri;
@@ -277,12 +326,12 @@ write_files:
               proxy_pass  $origin$request_uri;
               proxy_cache immich;
 
-              # LOAD-BEARING. The share key is part of the cache key, so an entry can
-              # only ever be returned to a caller presenting the same key that
-              # fetched it, and origin authorised that fetch. Reducing this to
-              # $request_uri alone would serve one viewer's authorised photos to
-              # anyone who knows the URL.
-              proxy_cache_key "$share_key$request_uri";
+              # LOAD-BEARING. The share token (key or slug) is part of the cache key,
+              # so an entry can only ever be returned to a caller presenting the same
+              # token that fetched it, and origin authorised that fetch. Reducing
+              # this to $request_uri alone would serve one viewer's authorised photos
+              # to anyone who knows the URL.
+              proxy_cache_key "$share_token$request_uri";
 
               # LOAD-BEARING, and only safe because of the cache key above. Immich
               # returns Cache-Control: private on every asset, including on the share
