@@ -139,7 +139,7 @@ audiobook-search) now also land on ghcr.
   chrome-service-novnc, android-emulator.
 - **PRIVATE ghcr:** f1-stream, job-hunter, instagram-poster, payslip-ingest,
   wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli,
-  infra-ci, k8s-portal, excalidraw-library. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
+  infra-ci, k8s-portal, excalidraw-library, chesscom-streak. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
   (`stacks/kyverno/modules/kyverno/ghcr-credentials.tf`; NOT cluster-wide; cred
   = Vault `secret/viktor/ghcr_pull_token`, a dedicated classic PAT scoped to
   `read:packages` (UI-minted 2026-06-15; no longer the admin `github_pat`
