@@ -605,12 +605,14 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
   }
   spec {
     replicas = 1
+    # Recreate, because surging needs a second 1Gi pod and the namespace
+    # tier-quota (3Gi requests.memory) has no room for one — the roll would sit
+    # on "exceeded quota: tier-quota" and the worker would silently stay on its
+    # old image. This is the documented house answer for a quota-tight rollout.
+    # A background Celery worker tolerates the brief gap: Redis holds the queue,
+    # and one worker at a time also avoids two workers overlapping on a task.
     strategy {
-      type = "RollingUpdate"
-      rolling_update {
-        max_unavailable = 0
-        max_surge       = 1
-      }
+      type = "Recreate"
     }
     selector {
       match_labels = {
