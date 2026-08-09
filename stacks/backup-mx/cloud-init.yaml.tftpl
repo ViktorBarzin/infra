@@ -258,7 +258,15 @@ write_files:
           # request avoids a round trip to home.
           location = /_authz {
               internal;
-              proxy_pass $origin/api/shared-links/me?$authz_qs;
+              # $authz_q, not $authz_qs: an auth_request subrequest does NOT inherit
+              # the parent's query string, so $arg_key/$arg_slug read as empty in
+              # here and every query-token request would 401. The gated locations
+              # below resolve the token in the parent at rewrite phase (which runs
+              # before this access-phase subrequest) and subrequests share the
+              # parent's variable slots, so the resolved value carries in.
+              # Real browsers use the query form; only headers survive natively,
+              # which is why a header-only test suite missed this.
+              proxy_pass $origin/api/shared-links/me?$authz_q;
               proxy_ssl_server_name on;
               proxy_pass_request_body off;
               proxy_set_header Content-Length "";
@@ -320,8 +328,15 @@ write_files:
           }
 
           # --- static app files at the root ----------------------------------------
-          # The share app pulls these outside /_app/. No user data, so cache by URI.
-          location ~ ^/(manifest\.json|service-worker\.js|custom\.css|favicon[^/]*|apple-touch-icon[^/]*)$ {
+          # The share app pulls these outside /_app/: manifest, service worker,
+          # icons, and skeleton placeholders like /light_skeleton.png. Redirecting
+          # them to origin makes the browser treat it as a cross-origin image load
+          # and CORS blocks it, so they must be served here.
+          #
+          # Matched by extension at the ROOT level only ([^/]+ before the dot), so
+          # this can never swallow an app route such as /photos or /auth/login.
+          # These files carry no user data, so the URI alone is a safe cache key.
+          location ~ ^/[^/]+\.(png|jpe?g|gif|svg|ico|css|js|json|webmanifest|woff2?|txt|map)$ {
               proxy_pass $origin$request_uri;
               proxy_cache       immich;
               proxy_cache_key   "$request_uri";
@@ -351,6 +366,11 @@ write_files:
           # --- asset bytes: the reason this box exists -----------------------------
           # Longest matching prefix wins, so this takes precedence over /api/ above.
           location ^~ /api/assets/ {
+              # Resolve the share token HERE, in the parent request, where the query
+              # string still exists. See /_authz above for why this is required.
+              set $authz_q  $authz_qs;
+              set $cache_tok $share_token;
+
               auth_request /_authz;
 
               proxy_pass  $origin$request_uri;
@@ -361,7 +381,7 @@ write_files:
               # token that fetched it, and origin authorised that fetch. Reducing
               # this to $request_uri alone would serve one viewer's authorised photos
               # to anyone who knows the URL.
-              proxy_cache_key "$share_token$request_uri";
+              proxy_cache_key "$cache_tok$request_uri";
 
               # LOAD-BEARING, and only safe because of the cache key above. Immich
               # returns Cache-Control: private on every asset, including on the share
