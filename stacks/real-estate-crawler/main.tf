@@ -306,11 +306,18 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     # Two replicas so losing one pod (rollout, eviction, node drain) is not a
     # full outage. Safe here because the only mount is the RWX NFS PVC.
     replicas = 2
+    # Roll in place rather than surging. The namespace tier-quota caps
+    # requests.memory at 3Gi and the namespace already requests 2688Mi, so a
+    # third 512Mi api pod cannot be admitted — with max_surge=1 the rollout
+    # wedges on "exceeded quota: tier-quota" and the Deployment never updates.
+    # Replacing one pod at a time needs no headroom, and with two replicas plus
+    # the readiness probe below one pod keeps serving throughout, so this is
+    # still a zero-downtime roll.
     strategy {
       type = "RollingUpdate"
       rolling_update {
-        max_unavailable = 0
-        max_surge       = 1
+        max_unavailable = 1
+        max_surge       = 0
       }
     }
     selector {
