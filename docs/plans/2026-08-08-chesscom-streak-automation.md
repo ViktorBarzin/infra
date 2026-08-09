@@ -1,7 +1,8 @@
 # Chess.com streak automation — design
 
-**Status:** approved (design agreed; build not started)
-**Date:** 2026-08-08
+**Status:** done (built and verified live 2026-08-08 — streak advanced 478 → 479)
+**Date:** 2026-08-08 · revised 2026-08-09 (promotion handling and the success
+signal — §7b)
 **Owner:** Viktor Barzin (`wizard`)
 **Origin:** `/grilling` session, 2026-08-08
 
@@ -110,7 +111,7 @@ The target is the profile flame, confirmed on-page today as
 | 6 | Cadence | Daily | Grace window reserved as failure margin |
 | 7 | Schedule | Randomised within a window, with retries | Recovery room; avoids a to-the-second daily fingerprint |
 | 8 | Stand-down | Check-first, act only if needed | Silently does nothing on days Viktor plays himself; also minimises footprint |
-| 9 | Verification | Re-read the counter | Confirms the streak actually moved, not just that the script ran |
+| 9 | Verification | Re-read today's box in the day strip | Confirms Chess.com credited the day, not just that the script ran (revised 2026-08-09: on that day the badge counter alone did not move on a solve the strip credited) |
 | 10 | Alerting | Slack `#alerts`, failures only | Reuses Alertmanager; no daily noise during a break |
 | 11 | Session death | Alert naming both remedies | Tap the puzzle by phone today; re-login via noVNC when convenient |
 | 12 | Runtime | K8s CronJob via Terraform | Matches every other scheduled job; home-IP egress |
@@ -132,9 +133,9 @@ flowchart TD
     F --> G{"Today already ticked?"}
     G -->|yes| Z
     G -->|no| H["GET api.chess.com/pub/puzzle<br/>-> solution PGN"]
-    H --> I["Drive the board<br/>human-paced moves"]
-    I --> J["Re-read profile-badge<br/>+ today's checkbox"]
-    J --> K{"Counter moved?"}
+    H --> I["Drive the board<br/>human-paced moves<br/>pick the piece when a move promotes"]
+    I --> J["Re-read today's checkbox<br/>(counter as fallback)"]
+    J --> K{"Today ticked?"}
     K -->|yes| L["exit 0 — silent success"]
     K -->|no| E
 ```
@@ -183,9 +184,12 @@ preserves the streak.
 
 ### 4.4 Verification
 
-Success is defined as the counter moving, not as the script completing. After
-solving, the job re-reads the profile badge (`profile-badge` → "N Day Streak")
-and today's sidebar checkbox. Anything else is a failure and alerts.
+Success is defined as Chess.com agreeing the day counted, not as the script
+completing. After solving, the job re-reads today's box in the sidebar day strip
+on `/home`; a ticked box is the proof. The badge counter ("N Day Streak") is
+read alongside it, but only decides the outcome when the strip cannot be read:
+on 2026-08-09 the counter sat at 479 either side of a solve the strip showed as
+ticked. Anything else is a failure and alerts.
 
 ---
 
@@ -268,15 +272,87 @@ so reading the code is feasible — but that path is out of scope for v0.1.0.
 
 ---
 
+## 7a. What the live run established (2026-08-08)
+
+Built as `~/code/chesscom-streak` (v0.1.0) and run against the real account
+before deploying. Results:
+
+```stats
+478 → 479 | streak counter after the run
+3 | moves played
+59 | unit tests
+0 | ratings touched
+```
+
+- The Daily Puzzle does tick the activity streak — open question 2 below is
+  now answered. The run solved "Give, Then Receive" and the profile badge went
+  from 478 to 479.
+- Click-to-move does not work; dragging does. Chess.com treats the move
+  method as an account-level setting. Click-to-select-then-click was accepted by
+  the page and played nothing — the board stayed in its start position and the
+  streak did not move. Switching to a dragged pointer path landed all
+  three moves, and the site auto-played the opponent's replies as expected.
+  This was the design's predicted main risk (open question 3), and it resolved
+  in favour of the automation rather than the fallback.
+- Verification does not rely on on-screen wording. Success is established by
+  comparing the board position against the position computed from the solution
+  PGN. That check is what caught the failed click-based attempt.
+- The check-first gate works. A second run immediately afterwards found the
+  puzzle already solved and exited without acting.
+
+---
+
+## 7b. What the second day established (2026-08-09)
+
+The first puzzle whose solution ends in a promotion, "All Roads Closed"
+(`4. a8=Q`), failed every run that day. Logs cover attempts from 09:00 to 13:38
+UTC, spanning the whole 12:00–16:00 window; the three runs still in the job
+history each burned all three attempts. Two things came out of it.
+
+```stats
+9 | failed attempts still in the job history
+4 | moves in the solution line
+115 | unit tests after the fix
+0 | ratings touched
+```
+
+- **A promotion needs the picker click.** The move code carried the origin and
+  destination squares from the UCI string and dropped the trailing piece letter,
+  so it dragged the pawn to `a8` and stopped. Chess.com opens a promotion window
+  at that point and does not play the move until a piece is chosen, so the board
+  stayed as it was, with no error anywhere. Moves now click the piece, matched on
+  its class (`.promotion-piece.wq`). The window overlays the promotion file and
+  its DOM order (bishop, knight, queen, rook) is not the order the pieces are
+  drawn in, so a coordinate is not a stable handle here.
+- **The badge counter did not reflect the solve.** It read 479 both before and
+  after a solve the day strip showed as ticked. §4.4 now takes the strip as the
+  primary signal and keeps the counter as a fallback. The strip is served on
+  `/home` and not on the public profile page — the design said so in §4.3, but
+  the implementation had been reading the profile page and getting an empty strip
+  back, which is why the gate had been running on the already-solved check alone.
+  Why the counter stood still is not established; see §8.
+
+The position check refused to call the run a success, so the failure showed up in
+the logs instead of passing as a solve. Both branches were re-verified live — the
+promotion line played through and the final position matched, and a following run
+stood down on the solved puzzle.
+
+---
+
 ## 8. Open — carried into the build
 
 > [!NOTE]
-> These four are unresolved at design time. Each is either mitigated rather than
-> answered, or needs live observation to settle.
+> Questions 2 and 3 were answered by the live run (§7a). The two below remain.
 
 1. **Day-boundary timezone.** Undocumented. Mitigated by the run-window choice in
    §4.2 rather than resolved. Worth narrowing empirically once the job has a few
    days of sidebar observations.
+1a. **What the badge counter counts.** On 2026-08-09 it read 479 both before and
+   after a solve that the day strip credited, having read 479 at the end of
+   2026-08-08. Whether it lags the strip, updates at the day boundary, or counts
+   days differently is unknown; §4.4 sidesteps this by treating the strip as the
+   primary signal. Now that the strip is recorded on every run, a few days of
+   paired readings should settle it.
 2. **Whether the Daily Puzzle specifically ticks the activity streak.** The
    official list reads "Solve a Puzzle — Complete a Rated Puzzle **or** the Daily
    Puzzle", which is explicit. It has not been observed first-hand yet.
