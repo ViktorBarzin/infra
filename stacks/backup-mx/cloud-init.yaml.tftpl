@@ -319,8 +319,38 @@ write_files:
                                     http_500 http_502 http_503 http_504;
           }
 
-          # --- assets --------------------------------------------------------------
+          # --- static app files at the root ----------------------------------------
+          # The share app pulls these outside /_app/. No user data, so cache by URI.
+          location ~ ^/(manifest\.json|service-worker\.js|custom\.css|favicon[^/]*|apple-touch-icon[^/]*)$ {
+              proxy_pass $origin$request_uri;
+              proxy_cache       immich;
+              proxy_cache_key   "$request_uri";
+              proxy_cache_valid 200 1h;
+              proxy_ignore_headers Cache-Control Expires;
+              proxy_cache_use_stale error timeout updating
+                                    http_500 http_502 http_503 http_504;
+          }
+
+          # --- API, everything that is not asset bytes -----------------------------
+          # These are Immich's own bootstrap/metadata calls. /api/server/config,
+          # /api/server/media-types and /api/shared-links/me are PUBLIC — they return
+          # 200 at origin with no token at all. Gating them broke the share page
+          # before it could load a single photo.
+          #
+          # Nothing here is cached, so there is no stored response a revoked link
+          # could still be served from, which is the only thing auth_request exists
+          # to prevent. Origin authorises each of these itself, exactly as it does
+          # for a viewer going direct. Session cookies cannot reach this hostname
+          # (cookies are host-scoped), so no authenticated session can ride through.
           location ^~ /api/ {
+              proxy_pass $origin$request_uri;
+              proxy_ssl_server_name on;
+              proxy_cache off;
+          }
+
+          # --- asset bytes: the reason this box exists -----------------------------
+          # Longest matching prefix wins, so this takes precedence over /api/ above.
+          location ^~ /api/assets/ {
               auth_request /_authz;
 
               proxy_pass  $origin$request_uri;
