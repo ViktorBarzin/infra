@@ -401,17 +401,30 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
               "ancaelena98@gmail.com",     # pre-authorised, currently SSO
             ])
           }
+          # api/config.py gates its production guards on APP_ENV, but this
+          # deployment only ever set ENV, so every guard was inert: the API ran
+          # on the default JWT secret and served /docs publicly. Setting APP_ENV
+          # arms them, which in turn REQUIRES both JWT_SECRET and OIDC_CLIENT_ID
+          # below — config.py raises at import time if either is missing. Keep
+          # all three together.
+          env {
+            name  = "APP_ENV"
+            value = "production"
+          }
+          # Audience for verifying Authentik-issued tokens (api/auth.py passes it
+          # to jwt.decode). Empty until now, so every SSO login failed audience
+          # validation while passkey login kept working. The Authentik app and
+          # provider already existed and the frontend already pointed at them —
+          # only the backend was missing this. Not a secret: the provider is a
+          # public/PKCE client and the same id ships in the frontend bundle.
+          env {
+            name  = "OIDC_CLIENT_ID"
+            value = "5AJKRgcdgVm1OyApBzFkadDFfStW9a555zwv2MOe"
+          }
           # Signing key for passkey-issued JWTs. Without it api/config.py falls
           # back to the literal "change-me-in-production" that ships in the repo,
           # so anyone could mint a token the API accepts (verified against prod
           # 2026-08-09 — /api/status returned 200 for a locally forged token).
-          #
-          # config.py has a guard that refuses to boot on the default secret, but
-          # it keys off APP_ENV and this deployment sets ENV, so it never fired.
-          # APP_ENV is deliberately NOT set to "production" here: the same file
-          # also hard-fails production boot when OIDC_CLIENT_ID is empty, and no
-          # Authentik application exists for wrongmove yet. Wiring SSO (and with
-          # it APP_ENV=production, which also hides /docs) is separate work.
           env {
             name = "JWT_SECRET"
             value_from {
