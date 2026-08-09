@@ -302,6 +302,7 @@ before deploying. Results:
 
 ---
 
+<<<<<<< HEAD
 ## 7b. What the second day established (2026-08-09)
 
 The first puzzle whose solution ends in a promotion, "All Roads Closed"
@@ -339,6 +340,8 @@ stood down on the solved puzzle.
 
 ---
 
+=======
+>>>>>>> forgejo/master
 ## 8. Open — carried into the build
 
 > [!NOTE]

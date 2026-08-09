@@ -303,12 +303,21 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     }
   }
   spec {
-    replicas = 1
+    # Two replicas so losing one pod (rollout, eviction, node drain) is not a
+    # full outage. Safe here because the only mount is the RWX NFS PVC.
+    replicas = 2
+    # Roll in place rather than surging. The namespace tier-quota caps
+    # requests.memory at 3Gi and the namespace already requests 2688Mi, so a
+    # third 512Mi api pod cannot be admitted — with max_surge=1 the rollout
+    # wedges on "exceeded quota: tier-quota" and the Deployment never updates.
+    # Replacing one pod at a time needs no headroom, and with two replicas plus
+    # the readiness probe below one pod keeps serving throughout, so this is
+    # still a zero-downtime roll.
     strategy {
       type = "RollingUpdate"
       rolling_update {
-        max_unavailable = 0
-        max_surge       = 1
+        max_unavailable = 1
+        max_surge       = 0
       }
     }
     selector {
@@ -401,18 +410,86 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
               "ancaelena98@gmail.com",     # pre-authorised, currently SSO
             ])
           }
+          # api/config.py gates its production guards on APP_ENV, but this
+          # deployment only ever set ENV, so every guard was inert: the API ran
+          # on the default JWT secret and served /docs publicly. Setting APP_ENV
+          # arms them, which in turn REQUIRES both JWT_SECRET and OIDC_CLIENT_ID
+          # below — config.py raises at import time if either is missing. Keep
+          # all three together.
+          env {
+            name  = "APP_ENV"
+            value = "production"
+          }
+          # Audience for verifying Authentik-issued tokens (api/auth.py passes it
+          # to jwt.decode). Empty until now, so every SSO login failed audience
+          # validation while passkey login kept working. The Authentik app and
+          # provider already existed and the frontend already pointed at them —
+          # only the backend was missing this. Not a secret: the provider is a
+          # public/PKCE client and the same id ships in the frontend bundle.
+          env {
+            name  = "OIDC_CLIENT_ID"
+            value = "5AJKRgcdgVm1OyApBzFkadDFfStW9a555zwv2MOe"
+          }
+          # Signing key for passkey-issued JWTs. Without it api/config.py falls
+          # back to the literal "change-me-in-production" that ships in the repo,
+          # so anyone could mint a token the API accepts (verified against prod
+          # 2026-08-09 — /api/status returned 200 for a locally forged token).
+          env {
+            name = "JWT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "real-estate-crawler-secrets"
+                key  = "jwt_secret"
+              }
+            }
+          }
           port {
             name           = "http"
             container_port = 5001
             protocol       = "TCP"
           }
+          # The deployment had NO probes, so with maxUnavailable=0 the rollout
+          # still cut traffic: with nothing to gate on, kubelet marks a new pod
+          # Ready the moment the container starts, and the Service sends traffic
+          # before uvicorn has bound the port — the container runs alembic
+          # migrations first, so that window is seconds, not milliseconds. Every
+          # deploy therefore produced a burst of 502/504 and flipped the UI's
+          # health indicator to "Disconnected".
+          #
+          # Both probes target /api/version: unauthenticated by design and it
+          # touches no database, so a DB blip cannot pull every pod out of the
+          # Service at once. Deliberately NO livenessProbe — these handlers do
+          # blocking DB work on the event loop, so a slow query looks identical
+          # to a hung process and liveness would restart a pod that is merely
+          # busy.
+          startup_probe {
+            http_get {
+              path = "/api/version"
+              port = 5001
+            }
+            period_seconds    = 5
+            failure_threshold = 30 # ~150s budget to cover alembic migrations
+          }
+          readiness_probe {
+            http_get {
+              path = "/api/version"
+              port = 5001
+            }
+            period_seconds    = 10
+            timeout_seconds   = 5
+            failure_threshold = 3
+          }
+          # 256Mi OOMKilled the pod on a default-filter /api/listing_geojson
+          # request (rentlisting is ~108k rows; the endpoint caps at 5k features
+          # but still builds them all in memory). Idle RSS measured 173Mi on
+          # 2026-08-09, leaving ~83Mi for any request. Bumped to 512Mi.
           resources {
             requests = {
               cpu    = "15m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
           volume_mount {
@@ -528,12 +605,14 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
   }
   spec {
     replicas = 1
+    # Recreate, because surging needs a second 1Gi pod and the namespace
+    # tier-quota (3Gi requests.memory) has no room for one — the roll would sit
+    # on "exceeded quota: tier-quota" and the worker would silently stay on its
+    # old image. This is the documented house answer for a quota-tight rollout.
+    # A background Celery worker tolerates the brief gap: Redis holds the queue,
+    # and one worker at a time also avoids two workers overlapping on a task.
     strategy {
-      type = "RollingUpdate"
-      rolling_update {
-        max_unavailable = 0
-        max_surge       = 1
-      }
+      type = "Recreate"
     }
     selector {
       match_labels = {
