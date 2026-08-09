@@ -401,18 +401,42 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
               "ancaelena98@gmail.com",     # pre-authorised, currently SSO
             ])
           }
+          # Signing key for passkey-issued JWTs. Without it api/config.py falls
+          # back to the literal "change-me-in-production" that ships in the repo,
+          # so anyone could mint a token the API accepts (verified against prod
+          # 2026-08-09 — /api/status returned 200 for a locally forged token).
+          #
+          # config.py has a guard that refuses to boot on the default secret, but
+          # it keys off APP_ENV and this deployment sets ENV, so it never fired.
+          # APP_ENV is deliberately NOT set to "production" here: the same file
+          # also hard-fails production boot when OIDC_CLIENT_ID is empty, and no
+          # Authentik application exists for wrongmove yet. Wiring SSO (and with
+          # it APP_ENV=production, which also hides /docs) is separate work.
+          env {
+            name = "JWT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "real-estate-crawler-secrets"
+                key  = "jwt_secret"
+              }
+            }
+          }
           port {
             name           = "http"
             container_port = 5001
             protocol       = "TCP"
           }
+          # 256Mi OOMKilled the pod on a default-filter /api/listing_geojson
+          # request (rentlisting is ~108k rows; the endpoint caps at 5k features
+          # but still builds them all in memory). Idle RSS measured 173Mi on
+          # 2026-08-09, leaving ~83Mi for any request. Bumped to 512Mi.
           resources {
             requests = {
               cpu    = "15m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
           volume_mount {
