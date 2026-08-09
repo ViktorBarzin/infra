@@ -99,6 +99,29 @@ graph TB
 | MetalLB | v0.15.3 Helm chart | K8s | LoadBalancer IPs (10.0.20.200-10.0.20.220), all services on 10.0.20.200 |
 | Registry Cache | Container | 10.0.20.10 | Pull-through for docker.io:5000, ghcr.io:5010 |
 
+## WAN Bandwidth (measured 2026-08-09)
+
+| Direction | Measured |
+|---|---|
+| Download | **201 Mbps** |
+| Upload | **118.55 Mbps** |
+| Ping | 48 ms |
+
+Measured with `speedtest-cli` from the devvm. Recorded here because its absence
+caused real wasted work: an Immich edge cache was designed in August 2026 around
+an uplink figure of ~30 Mbps that had been *inferred from peak observed egress*
+rather than measured. Peak demand is not a ceiling — a service that never needed
+more than 30 Mbps produces the same graph as a 30 Mbps link.
+
+Two consequences worth carrying:
+
+- **An off-site cache or edge only adds serving capacity if its own link beats
+  118 Mbps.** The `mx2` E2.1.Micro caps at 50 Mbps, so it subtracts. An Ampere
+  A1 (~2 Gbps) would clear the bar.
+- **Re-measure before relying on this**, and treat any "the uplink is saturated"
+  claim as unproven until a speed test says so. Full write-up:
+  `docs/research/immich-front-cache.md` (2026-08-09 amendment).
+
 ## CCTV Segment (dCCTV) — as-built 2026-07-03 (ADR-0017 rev 4)
 
 Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C at the garage entrance). Decision + rejected alternatives + diagrams: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
