@@ -507,3 +507,52 @@ varnishcache/varnish-cache docs (`beresp.do_stream`, grace, storage backends).
 [[3313]] no custom chunking proxy, [[8942]] thumbnails served from SSD-NFS not
 Redis, [[7902]] API auth model, [[6902]]/[[6705]]/[[6706]] right-sizing +
 OOM-tight list, [[7539]] job-concurrency caps, [[7088]] ImmichFrame stale-shell.
+
+---
+
+## Amendment — 2026-08-09: recommendation re-tested and upheld
+
+The question was reopened on 2026-08-08 after a 567-photo album share looked
+slow, and an edge cache was designed, built on `mx2`, verified, and then removed
+the following day. This section records what the build measured, so the next
+person asking reaches the answer without repeating it.
+
+**The recommendation above held.** Nothing about a fronting cache improved
+photo serving, and one figure in the new design turned out to be wrong in the
+same direction this doc warned about: the constraint was assumed rather than
+measured.
+
+Measurements taken during the exercise (all live, 2026-08-08/09):
+
+| Assumed during the build | Measured |
+|---|---|
+| Home uplink ~30 Mbps, inferred from peak observed egress | **118.55 Mbps up / 201 Mbps down** (speedtest) |
+| HDD-backed library plausibly the constraint | **1071 Mbps** across 12 concurrent distinct originals |
+| Full originals at p50 86 s | **p50 2.4 s** overall; per-viewer, every real external viewer was **sub-second** |
+
+The 86-second figure was a single client — an internal one moving large video
+files — inside a quantile taken over an ungrouped population. Grouping the same
+Traefik durations by client IP separates the two modes immediately.
+
+Two things this doc predicted, both confirmed in practice:
+
+- **The `private` header is the crux.** Ignoring it is mandatory for any shared
+  cache and instantly makes the cache key the only barrier between one viewer's
+  photos and another's. The built version keyed on the share token and passed a
+  leak suite, but the margin for error is exactly as thin as described in §4.
+- **A cache is a second security surface, not a config tweak.** Three defects
+  surfaced during the build, each only visible to a real browser: share URLs use
+  the `/s/<slug>` form rather than `/share/<key>`; several `/api/` endpoints are
+  public and break if gated; and an `auth_request` subrequest does not inherit
+  the parent query string, which is where browsers put the token.
+
+Additional constraint discovered, relevant if an off-box cache is ever
+reconsidered: **an edge only adds capacity if it is faster than the origin
+link.** The `mx2` E2.1.Micro caps at 50 Mbps, under half the measured 118 Mbps
+uplink, so routing viewers through it was a downgrade. Free Ampere A1 capacity
+(~2 Gbps, which would clear the bar) was unavailable across all three Frankfurt
+availability domains over six placement attempts.
+
+**Standing check before revisiting:** measure the link and group latency by
+client first. Both take minutes and either would have closed the question before
+any design work.
