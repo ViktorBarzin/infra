@@ -308,7 +308,7 @@ resource "kubernetes_config_map" "ratio_monitor_script" {
   }
   data = {
     "monitor.py" = <<-PYEOF
-import requests, json, sys
+import requests, json, sys, time
 from collections import defaultdict
 from urllib.parse import urlparse
 
@@ -361,6 +361,42 @@ try:
 except Exception as e:
     print(f"ERROR: {e}", file=sys.stderr)
     sys.exit(1)
+
+# Reap unfinishable downloads. mam-farming kept queuing torrents with no
+# seeders; before dont_count_slow_torrents they held every active download slot
+# and starved real downloads, and they still accumulate in the queue and leave
+# empty save directories behind. Only genuinely dead ones are removed: zero
+# progress AND no seeders AND older than the age limit. A PARTIAL download is
+# deliberately left alone even when stalled — it holds real data and may resume
+# if a seeder returns. Requiring num_complete <= 0 also spares a torrent that
+# simply has not announced yet, and the age limit gives a slow swarm days to
+# appear before anything is deleted.
+STALLED_MAX_AGE = 259200  # 3 days
+now = time.time()
+dead = [
+    t for t in torrents
+    if (t.get("progress") or 0) == 0
+    and t.get("state") in ("stalledDL", "queuedDL", "downloading", "metaDL")
+    and (t.get("num_complete") or 0) <= 0
+    and now - (t.get("added_on") or now) > STALLED_MAX_AGE
+]
+reaped = 0
+if dead:
+    try:
+        resp = requests.post(
+            f"{QB_URL}/api/v2/torrents/delete",
+            data={"hashes": "|".join(t["hash"] for t in dead), "deleteFiles": "true"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        reaped = len(dead)
+        for t in dead:
+            age_days = (now - (t.get("added_on") or now)) / 86400
+            print(f"Reaped dead torrent (0 pct, no seeders, {age_days:.1f}d old): {t.get('name')}")
+        gone = set(t["hash"] for t in dead)
+        torrents = [t for t in torrents if t["hash"] not in gone]
+    except Exception as e:
+        print(f"ERROR reaping dead torrents: {e}", file=sys.stderr)
 
 try:
     transfer = requests.get(f"{QB_URL}/api/v2/transfer/info", timeout=10).json()
@@ -467,6 +503,9 @@ qbt_dl_speed_bytes {dl_speed}
 # HELP qbt_ul_speed_bytes Current upload speed
 # TYPE qbt_ul_speed_bytes gauge
 qbt_ul_speed_bytes {ul_speed}
+# HELP qbt_dead_torrents_reaped Dead torrents removed this run (0 pct, no seeders, past the age limit)
+# TYPE qbt_dead_torrents_reaped gauge
+qbt_dead_torrents_reaped {reaped}
 """
 resp = requests.post(
     f"{PUSHGW}/metrics/job/qbt-ratio-monitor/tracker/global",
