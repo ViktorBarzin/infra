@@ -303,7 +303,9 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     }
   }
   spec {
-    replicas = 1
+    # Two replicas so losing one pod (rollout, eviction, node drain) is not a
+    # full outage. Safe here because the only mount is the RWX NFS PVC.
+    replicas = 2
     strategy {
       type = "RollingUpdate"
       rolling_update {
@@ -438,6 +440,37 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             name           = "http"
             container_port = 5001
             protocol       = "TCP"
+          }
+          # The deployment had NO probes, so with maxUnavailable=0 the rollout
+          # still cut traffic: with nothing to gate on, kubelet marks a new pod
+          # Ready the moment the container starts, and the Service sends traffic
+          # before uvicorn has bound the port — the container runs alembic
+          # migrations first, so that window is seconds, not milliseconds. Every
+          # deploy therefore produced a burst of 502/504 and flipped the UI's
+          # health indicator to "Disconnected".
+          #
+          # Both probes target /api/version: unauthenticated by design and it
+          # touches no database, so a DB blip cannot pull every pod out of the
+          # Service at once. Deliberately NO livenessProbe — these handlers do
+          # blocking DB work on the event loop, so a slow query looks identical
+          # to a hung process and liveness would restart a pod that is merely
+          # busy.
+          startup_probe {
+            http_get {
+              path = "/api/version"
+              port = 5001
+            }
+            period_seconds    = 5
+            failure_threshold = 30 # ~150s budget to cover alembic migrations
+          }
+          readiness_probe {
+            http_get {
+              path = "/api/version"
+              port = 5001
+            }
+            period_seconds    = 10
+            timeout_seconds   = 5
+            failure_threshold = 3
           }
           # 256Mi OOMKilled the pod on a default-filter /api/listing_geojson
           # request (rentlisting is ~108k rows; the endpoint caps at 5k features
