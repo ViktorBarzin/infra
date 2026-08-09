@@ -401,18 +401,55 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
               "ancaelena98@gmail.com",     # pre-authorised, currently SSO
             ])
           }
+          # api/config.py gates its production guards on APP_ENV, but this
+          # deployment only ever set ENV, so every guard was inert: the API ran
+          # on the default JWT secret and served /docs publicly. Setting APP_ENV
+          # arms them, which in turn REQUIRES both JWT_SECRET and OIDC_CLIENT_ID
+          # below — config.py raises at import time if either is missing. Keep
+          # all three together.
+          env {
+            name  = "APP_ENV"
+            value = "production"
+          }
+          # Audience for verifying Authentik-issued tokens (api/auth.py passes it
+          # to jwt.decode). Empty until now, so every SSO login failed audience
+          # validation while passkey login kept working. The Authentik app and
+          # provider already existed and the frontend already pointed at them —
+          # only the backend was missing this. Not a secret: the provider is a
+          # public/PKCE client and the same id ships in the frontend bundle.
+          env {
+            name  = "OIDC_CLIENT_ID"
+            value = "5AJKRgcdgVm1OyApBzFkadDFfStW9a555zwv2MOe"
+          }
+          # Signing key for passkey-issued JWTs. Without it api/config.py falls
+          # back to the literal "change-me-in-production" that ships in the repo,
+          # so anyone could mint a token the API accepts (verified against prod
+          # 2026-08-09 — /api/status returned 200 for a locally forged token).
+          env {
+            name = "JWT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "real-estate-crawler-secrets"
+                key  = "jwt_secret"
+              }
+            }
+          }
           port {
             name           = "http"
             container_port = 5001
             protocol       = "TCP"
           }
+          # 256Mi OOMKilled the pod on a default-filter /api/listing_geojson
+          # request (rentlisting is ~108k rows; the endpoint caps at 5k features
+          # but still builds them all in memory). Idle RSS measured 173Mi on
+          # 2026-08-09, leaving ~83Mi for any request. Bumped to 512Mi.
           resources {
             requests = {
               cpu    = "15m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
           volume_mount {
