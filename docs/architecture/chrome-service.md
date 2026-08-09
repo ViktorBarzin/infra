@@ -16,7 +16,13 @@ serves two distinct populations:
    #18 / ADR-0007) — the flight-fare scrape connects per quote, opens a
    fresh incognito context, scrapes Google Flights, and closes the
    context; rate-limited to one attempt per 30s with a 6h fare cache, so
-   browser load is negligible. The
+   browser load is negligible. **`chesscom-streak`** (since 2026-08-08)
+   is the third caller and the only one that deliberately attaches to the
+   MASTER PERSISTENT PROFILE (`browser.contexts[0]`) rather than opening a
+   fresh context: it needs the chess.com session Viktor logged in by hand
+   via noVNC, and attaching to the master profile lets session-cookie
+   rotation persist instead of being discarded with a pool pod. It holds
+   the browser for ~20s once a day. The
    `stacks/f1-stream/files/backend/playback_verifier.py` +
    `chrome_browser.py` tree is a vestigial design — the deployed
    f1-stream image (built from `github.com/ViktorBarzin/f1-stream`)
@@ -138,6 +144,12 @@ milestone than the 1.48 Chromium), but the `connect_over_cdp` callers (tripit
 fare scrape, `homelab browser`, snapshot-harvester) attach over raw CDP, which is
 version-tolerant — verified working against this Chrome. If a future Chrome
 milestone breaks a caller, pin Chrome in the Dockerfile or bump the clients.
+
+Callers do not have to sit on 1.48: `chesscom-streak` pins `playwright==1.58.0`
+and was verified live against this Chrome/149 browser on 2026-08-08. Because a
+`connect_over_cdp` caller never launches a browser itself, it also needs no
+browser download — that caller runs on a plain `python:3.12-slim` with
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` rather than the Playwright base image.
 
 ## Storage
 
