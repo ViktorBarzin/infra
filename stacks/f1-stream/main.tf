@@ -141,13 +141,25 @@ resource "kubernetes_deployment" "f1-stream" {
           # now CDP-only (verifier drives the remote chrome-service), so actual
           # usage is ~116Mi and the VPA upperBound (incl. live races) is ~185Mi.
           # 256Mi = upperBound x ~1.3 (bursty); requests=limits per convention.
+          #
+          # Raised 2026-08-10 (384Mi -> 512Mi). The pod is TWO processes, and the
+          # 2026-06 sizing only accounted for uvicorn. Playwright's bundled Node
+          # driver is a second long-lived process that reached ~316MB while
+          # uvicorn sat at ~61MB, i.e. ~377MB against a 384Mi ceiling -- about
+          # 7MB of headroom, so any growth OOMKilled the pod (9 restarts on
+          # 2026-08-10, exit 137, hourly). The driver leak itself is fixed in
+          # f1-stream (independent page/context close + driver recycled every
+          # PLAYBACK_VERIFY_RECYCLE_AFTER verifies), which should hold steady
+          # state near ~200Mi; this ceiling is deliberately above the historical
+          # ~377MB peak so a regression still shows up as an OOM rather than
+          # being absorbed silently.
           resources {
             limits = {
-              memory = "384Mi"
+              memory = "512Mi"
             }
             requests = {
               cpu    = "50m"
-              memory = "256Mi"
+              memory = "320Mi"
             }
           }
           port {
