@@ -228,7 +228,12 @@ apiserver-OIDC fix.
 - **authentik Admins** - Full Authentik admin UI access
 - **Headscale Users** - Can access Headscale control plane
 - **Home Server Admins** - Admin access to homelab services
-- **Wrongmove Users** - Access to Wrongmove real estate app
+- **Wrongmove Users** - Access to Wrongmove real estate app. Adding someone here
+  is two steps: the group, plus reserving their row in the app database — see
+  `docs/runbooks/wrongmove-user-onboarding.md`. Wrongmove signup is open to
+  anyone, and it matches accounts by email whichever issuer vouched for them, so
+  an SSO member with no row yet can have their address registered by someone
+  else first.
 - **kubernetes-admins** - K8s cluster-admin role
 - **kubernetes-power-users** - K8s read-mostly access
 - **kubernetes-namespace-owners** - K8s namespace-scoped admin
