@@ -158,9 +158,11 @@ module "ingress_emo" {
   # via Technitium; the public internal-IP record covers any resolver).
   # LAN-only design: docs/plans/2026-07-04-immich-frame-lan-only-design.md.
   # auth = "none": kiosk WebView, no user auth by design; gated by the home-lans-only ipAllowList instead.
-  auth              = "none"
-  dns_type          = "internal"
-  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
+  auth     = "none"
+  dns_type = "internal"
+  # Ordering rationale in frame.tf / the middleware definition: error-pages-403
+  # only intercepts what is downstream of it, so it must precede the allowlist.
+  extra_middlewares = ["traefik-error-pages-403@kubernetescrd", "traefik-home-lans-only@kubernetescrd"]
   # Not externally reachable — explicit opt-out so external-monitor-sync
   # drops the old [External] monitor instead of default-opting it back in.
   external_monitor = false

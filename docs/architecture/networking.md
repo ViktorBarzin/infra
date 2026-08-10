@@ -270,7 +270,7 @@ records since the 2026-07-09 wildcard consolidation (ADR-0021):
   (51820/udp, 3478, 7443) that the IPv6 HAProxy bridge (443/80+mail) never
   carries, so AAAA records only misdirected v6-preferring clients.
 - **Internal-IP domains** (grey cloud, A → `10.0.20.203` Traefik LB, `ingress_factory` `dns_type = "internal"`):
-  - highlights-immich, highlights-immich-emo — publicly *resolvable* but only *routable* from home LANs / WG sites / VPN (spokes policy-route `10.0.0.0/8` down the tunnel, so kiosk devices with baked-in URLs need no per-site DNS overrides). The record is reachability, not a gate — enforcement is the `home-lans-only` Traefik ipAllowList (Sofia/London/Valchedrym LANs + 10/8) on the ingress. See `docs/plans/2026-07-04-immich-frame-lan-only-design.md`.
+  - highlights-immich, highlights-immich-emo — publicly *resolvable* but only *routable* from home LANs / WG sites / VPN (spokes policy-route `10.0.0.0/8` down the tunnel, so kiosk devices with baked-in URLs need no per-site DNS overrides). The record is reachability, not a gate — enforcement is the `home-lans-only` Traefik ipAllowList (Sofia/London/Valchedrym LANs + 10/8) on the ingress. Both also carry `traefik-error-pages-403@kubernetescrd` **ahead of** the allowlist, so a denied source IP gets the themed error page instead of Traefik's bare `Forbidden` text (2026-08-10). See `docs/plans/2026-07-04-immich-frame-lan-only-design.md`.
   - family, hermes-agent, mladost3, torrserver — household-only apps whose
     explicit internal record **shadows the `*` wildcard** (without it they
     would resolve through the proxy and go public). Same `home-lans-only`
