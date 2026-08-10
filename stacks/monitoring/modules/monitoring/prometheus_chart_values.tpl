@@ -110,7 +110,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeMaintenanceInProgress
         target_matchers:
-          - alertname =~ "NodeDown|NodeNotReady|NodeConditionBad|CalicoNodeNotReady|RecentNodeReboot|TraefikDown|AuthentikDown|AuthentikRootRouter5xxHigh|ForwardAuthFallbackActive|MailServerDown|DaemonSetMissingPods|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|PodCrashLooping|ContainerOOMKilled|KernelOOMKiller|ScrapeTargetDown|HighMemoryUsage|HighSystemLoad|HighPowerUsage|KubeletRunningContainersDrop|GPUVRAMLow|MysqlStandaloneDown|PostgreSQLDown|RedisDown|CloudflaredDown|HeadscaleDown|HeadscaleReplicasMismatch|ClusterCannotTolerateNonGpuNodeLoss|PodStuckPending|PVCStuckPending|NodeExporterDown|NodeLowFreeMemory|KubeletImagePullErrors|PodsStuckContainerCreating|TechnitiumZoneCountMismatch|TechnitiumDNSDown|EmailRoundtripFailing|TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet"
+          - alertname =~ "NodeDown|NodeNotReady|NodeConditionBad|CalicoNodeNotReady|RecentNodeReboot|TraefikDown|AuthentikDown|AuthentikRootRouter5xxHigh|ForwardAuthFallbackActive|MailServerDown|DaemonSetMissingPods|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|PodCrashLooping|ContainerOOMKilled|KernelOOMKiller|ScrapeTargetDown|HighMemoryUsage|HighSystemLoad|HighPowerUsage|ServerHighPowerUsage|KubeletRunningContainersDrop|GPUVRAMLow|MysqlStandaloneDown|PostgreSQLDown|RedisDown|CloudflaredDown|HeadscaleDown|HeadscaleReplicasMismatch|ClusterCannotTolerateNonGpuNodeLoss|PodStuckPending|PVCStuckPending|NodeExporterDown|NodeLowFreeMemory|KubeletImagePullErrors|PodsStuckContainerCreating|TechnitiumZoneCountMismatch|TechnitiumDNSDown|EmailRoundtripFailing|TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet"
       # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
@@ -1252,9 +1252,28 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Watchdog issued a GracefulShutdown but the server is STILL ON — shutdown ineffective"
-          - alert: HighPowerUsage
+          # Renamed from HighPowerUsage 2026-08-10: the name was shared with the
+          # T4 GPU rule in the "Nvidia Tesla T4 GPU" group. Two unrelated alerts
+          # under one alertname means Alertmanager (which groups by alertname)
+          # can batch them together, the inhibit-rule target lists cannot address
+          # one without the other, and a Slack line reading "[INFO]
+          # HighPowerUsage" does not say whether the server or the GPU is hot --
+          # only the summary text distinguished them. Both were live; the 6
+          # fire/resolve pairs in the 7 days to 2026-08-10 were all this one
+          # ("Server power: 322W"). Not in kured's alertFilterRegexp, so the
+          # rename does not change reboot gating.
+          #
+          # keep_firing_for: the R730's "System Board Pwr Consumption" sits right
+          # on this threshold -- it reported 308-322W against a 300W line, and
+          # memory records the server's steady draw as ~294W -- so it crossed and
+          # cleared repeatedly. THRESHOLD LEFT ALONE deliberately: at 300W this
+          # fires on the server simply being powered on, so the number wants
+          # revisiting against what "high" should mean for this machine, which is
+          # a judgement call rather than something to guess here.
+          - alert: ServerHighPowerUsage
             expr: r730_idrac_amperageProbeReading{amperageProbeLocationName="System Board Pwr Consumption"} > 300
             for: 60m
+            keep_firing_for: 2h
             labels:
               severity: info
               subsystem: r730

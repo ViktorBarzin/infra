@@ -218,9 +218,31 @@ repeatedly. Fix: `keep_firing_for`, which holds the alert firing after the
 expression stops matching (Prometheus ≥ 2.42; validate rule changes with
 `promtool check rules` inside the prometheus pod, which pins the running
 version). Applied to `ATSOverload`, `ClusterCannotTolerateNonGpuNodeLoss` (6h),
-`HighSystemLoad`, `HighPowerUsage`, `ImmichSmartSearchSlow`, `GPUVRAMLow`,
-`PodCrashLooping`, `PodStuckPending`, `IngressTTFBHigh`, `HighService4xxRate`,
-`AnubisChallengeStoreErrors`.
+`HighSystemLoad`, `HighPowerUsage` (GPU), `ServerHighPowerUsage` (R730),
+`ImmichSmartSearchSlow`, `GPUVRAMLow`, `PodCrashLooping`, `PodStuckPending`,
+`IngressTTFBHigh`, `HighService4xxRate`, `AnubisChallengeStoreErrors`.
+
+One caveat worth knowing: kured halts node reboots while any firing alert is
+outside its `alertFilterRegexp` allowlist (`^(Watchdog|RebootRequired|
+KuredNodeWasNotDrained|InfoInhibitor|KernelOOMKiller)$`). Holding an alert
+firing for longer therefore also holds the reboot gate closed for longer. For
+`ClusterCannotTolerateNonGpuNodeLoss` that is the behaviour you want — if the
+cluster cannot afford to lose a node, it should not drain one — but if OS
+patching starts lagging, check what is being held open before widening a
+threshold.
+
+### One alertname, one meaning
+
+`HighPowerUsage` was defined **twice** — once for the T4 GPU (group `Nvidia
+Tesla T4 GPU`) and once for R730 server power (group `Power`) — and both were
+live. Alertmanager groups by `alertname`, so the two could batch into one
+notification, inhibit-rule target lists could not address one without the
+other, and a Slack line reading `[INFO] HighPowerUsage` did not say whether the
+server or the GPU was hot; only the summary text distinguished them. The R730
+rule is now `ServerHighPowerUsage` (2026-08-10), and the
+`NodeMaintenanceInProgress` inhibit list carries both names. It was the only
+duplicate in the 298-rule set — worth re-checking when adding rules, since
+nothing enforces uniqueness.
 
 Neither change silences anything or moves a threshold: the same conditions still
 notify, once per episode instead of once per oscillation. Measured baseline
