@@ -2,7 +2,8 @@
 
 **Status:** done (built and verified live 2026-08-08 — streak advanced 478 → 479)
 **Date:** 2026-08-08 · revised 2026-08-09 (promotion handling and the success
-signal — §7b)
+signal — §7b) · revised 2026-08-10 (day boundary settled, counter reading
+corrected, end-to-end confirmed — §4.2, §7c)
 **Owner:** Viktor Barzin (`wizard`)
 **Origin:** `/grilling` session, 2026-08-08
 
@@ -111,7 +112,7 @@ The target is the profile flame, confirmed on-page today as
 | 6 | Cadence | Daily | Grace window reserved as failure margin |
 | 7 | Schedule | Randomised within a window, with retries | Recovery room; avoids a to-the-second daily fingerprint |
 | 8 | Stand-down | Check-first, act only if needed | Silently does nothing on days Viktor plays himself; also minimises footprint |
-| 9 | Verification | Re-read today's box in the day strip | Confirms Chess.com credited the day, not just that the script ran (revised 2026-08-09: on that day the badge counter alone did not move on a solve the strip credited) |
+| 9 | Verification | Re-read today's box in the day strip | Confirms Chess.com credited the day, not just that the script ran; answers it directly, where the counter alone cannot distinguish "already credited today" from a failure |
 | 10 | Alerting | Slack `#alerts`, failures only | Reuses Alertmanager; no daily noise during a break |
 | 11 | Session death | Alert naming both remedies | Tap the puzzle by phone today; re-login via noVNC when convenient |
 | 12 | Runtime | K8s CronJob via Terraform | Matches every other scheduled job; home-IP egress |
@@ -160,18 +161,26 @@ in `infra/stacks/chrome-service/main.tf`.
 
 ### 4.2 Run window
 
-The streak's day-boundary timezone is not documented anywhere (§8). A window of
-**12:00–16:00 Europe/Sofia** sits comfortably mid-day under all three plausible
-hypotheses:
+The window is **12:00–16:00 Europe/Sofia**. It was chosen to sit comfortably
+mid-day under all three boundary hypotheses open at design time (Pacific, UTC, or
+account-local), since Chess.com documents no boundary.
 
-| Boundary hypothesis | Rolls over at (Sofia) | Margin from a 14:00 run |
-|---|---|---|
-| Pacific (Daily Puzzle publish time) | 10:00 | ~20 h |
-| UTC | 03:00 | ~13 h |
-| Account-local (Europe/Sofia) | 00:00 | ~10 h |
+**Settled 2026-08-10 — the boundary is midnight account-local**, i.e. the
+account's Timezone setting (`Europe/Sofia`, +03:00 — read from
+`chess.com/settings/profile`), so 00:00 Sofia / 21:00 UTC. Evidence: two solves
+22 h apart, at 22:30 UTC on 08-08 (01:30 Sofia on the 9th) and 20:52 UTC on 08-09
+(23:52 Sofia on the 9th), fall in the *same* Sofia day; the counter moved on the
+first and not the second, which is Chess.com's documented "not more than once per
+day" applied to a local-midnight day. A solve on 08-10 in a genuinely uncredited
+day then moved it 479 → 480. This resolves §8 question 1.
 
-The job can also narrow this empirically over time by recording when the sidebar
-day-strip resets.
+The chosen window turns out to have ~10 h of the local day left after a 14:00 run
+— the largest recovery margin of the three hypotheses, so no change is needed.
+
+A separate boundary worth not confusing with it: the **Daily Puzzle itself**
+publishes at **07:00 UTC** (10:00 Sofia), measured directly on 2026-08-10 when
+the API flipped to `daily/2026-08-10` at 07:00:22 UTC. The run window sits after
+it, so a run always gets the current day's puzzle.
 
 ### 4.3 Check-first gate
 
@@ -186,10 +195,10 @@ preserves the streak.
 
 Success is defined as Chess.com agreeing the day counted, not as the script
 completing. After solving, the job re-reads today's box in the sidebar day strip
-on `/home`; a ticked box is the proof. The badge counter ("N Day Streak") is
-read alongside it, but only decides the outcome when the strip cannot be read:
-on 2026-08-09 the counter sat at 479 either side of a solve the strip showed as
-ticked. Anything else is a failure and alerts.
+on `/home`; a ticked box is the proof. The badge counter ("N Day Streak") is read
+alongside it and decides the outcome only when the strip cannot be read — a solve
+on a day already credited leaves the counter unchanged (§4.2), so on its own it
+cannot tell that apart from a failure. Anything else is a failure and alerts.
 
 ---
 
@@ -324,13 +333,20 @@ history each burned all three attempts. Two things came out of it.
   its class (`.promotion-piece.wq`). The window overlays the promotion file and
   its DOM order (bishop, knight, queen, rook) is not the order the pieces are
   drawn in, so a coordinate is not a stable handle here.
-- **The badge counter did not reflect the solve.** It read 479 both before and
-  after a solve the day strip showed as ticked. §4.4 now takes the strip as the
-  primary signal and keeps the counter as a fallback. The strip is served on
-  `/home` and not on the public profile page — the design said so in §4.3, but
-  the implementation had been reading the profile page and getting an empty strip
-  back, which is why the gate had been running on the already-solved check alone.
-  Why the counter stood still is not established; see §8.
+- **The day strip was never actually being read.** It is served on `/home` and
+  not on the public profile page — the design said so in §4.3, but the
+  implementation had been reading the profile page and getting an empty strip
+  back, which is why the check-first gate had been running on the already-solved
+  test alone. §4.4 now takes the strip as the primary signal and keeps the counter
+  as a fallback.
+
+The same run read 479 either side of the solve, which was written up at the time
+as the counter being unreliable. That reading was wrong, and §4.2/§4.4 have been
+corrected: the solve landed 8 minutes before local midnight in a day an earlier
+run had already credited, so an unchanged counter was the documented behaviour.
+The lesson is narrower than "the counter lags" — a counter that only moves once
+per day cannot, by itself, distinguish "already credited" from "failed", which is
+why the strip is the better signal to act and judge on.
 
 The position check refused to call the run a success, so the failure showed up in
 the logs instead of passing as a solve. Both branches were re-verified live — the
@@ -339,30 +355,65 @@ stood down on the solved puzzle.
 
 ---
 
-## 8. Open — carried into the build
+## 7c. End-to-end confirmation (2026-08-10)
+
+A manually triggered run against the deployed image, on the first genuinely
+uncredited day since the fix.
+
+```stats
+479 → 480 | streak counter after the run
+40s | run duration
+2 | moves played
+0 | ratings touched
+```
+
+- **The counter moves.** Puzzle "Pin Breaker", `1... Qa5+ 2. Nbc3 Qxg5`; the run
+  reported `outcome: streak_advanced`, and today's box went
+  `streak-badge-sidebar-pending` → `-checked`. Read back independently afterwards:
+  "480 Day Streak". Strip and counter agree.
+- **Playing black works.** This was the first live run on the black side, so the
+  flipped-board coordinate mapping is now exercised against the real board rather
+  than only in unit tests.
+- **A third strip state exists.** Today's not-yet-done box is
+  `streak-badge-sidebar-pending`, not simply the checked class being absent.
+  Testing for the presence of `-checked` handles it, which is what the code does.
+
+One code-level gap found while testing, not yet fixed: the already-solved check
+compares the board against whatever puzzle the API currently serves, not against
+*today's* puzzle. Between the streak boundary (00:00 Sofia) and the puzzle
+rollover (10:00 Sofia) a run therefore sees yesterday's solved board and stands
+down without earning the day. The 12:00–16:00 window sits after both, so scheduled
+runs never hit it; a manual run at 09:02 Sofia did. `puzzle_url` carries
+`daily/YYYY-MM-DD`, so the gate can compare it against the account-local date.
+
+---
+
+## 8. Open questions — all now closed
 
 > [!NOTE]
-> Questions 2 and 3 were answered by the live run (§7a). The two below remain.
+> All four design-time questions are resolved: 2 and 3 by the first live run
+> (§7a), 1 and 4 on 2026-08-10 (§4.2, §7c). They are kept here with their answers
+> rather than deleted, since the reasoning is what the later sections build on.
+> One code-level gap remains, recorded at the end of §7c.
 
-1. **Day-boundary timezone.** Undocumented. Mitigated by the run-window choice in
-   §4.2 rather than resolved. Worth narrowing empirically once the job has a few
-   days of sidebar observations.
-1a. **What the badge counter counts.** On 2026-08-09 it read 479 both before and
-   after a solve that the day strip credited, having read 479 at the end of
-   2026-08-08. Whether it lags the strip, updates at the day boundary, or counts
-   days differently is unknown; §4.4 sidesteps this by treating the strip as the
-   primary signal. Now that the strip is recorded on every run, a few days of
-   paired readings should settle it.
-2. **Whether the Daily Puzzle specifically ticks the activity streak.** The
-   official list reads "Solve a Puzzle — Complete a Rated Puzzle **or** the Daily
-   Puzzle", which is explicit. It has not been observed first-hand yet.
-3. **Board interaction reliability.** Driving Chess.com's puzzle board through
-   Playwright is the main implementation risk and is unproven. This is the most
-   likely reason for the design to fall back to decision 14.
-4. **End-to-end proof needs a day boundary.** A first run can establish the
-   mechanics — session, solution fetch, board interaction, counter scrape — but
-   proving the streak *increments* requires the following day's run. Results
-   should be reported as "mechanics verified, increment pending" until then.
+1. ~~**Day-boundary timezone.**~~ **Resolved 2026-08-10:** midnight
+   account-local (`Europe/Sofia`, +03:00). See §4.2 for the evidence. The
+   consequence for §4.4 is that the counter moves at most once per local day, so
+   an unchanged counter after a solve can be correct.
+2. ~~**Whether the Daily Puzzle specifically ticks the activity streak.**~~
+   **Resolved.** The official list reads "Solve a Puzzle — Complete a Rated Puzzle
+   **or** the Daily Puzzle", re-checked against the help centre on 2026-08-10, and
+   now observed first-hand: a Daily Puzzle solve moved the counter 479 → 480 (§7c).
+3. ~~**Board interaction reliability.**~~ **Resolved.** Dragging works; three
+   separate mechanics are now proven live — ordinary moves (§7a), the promotion
+   picker (§7b), and the flipped board when playing black (§7c). Decision 14's
+   fallback was never needed.
+4. ~~**End-to-end proof needs a day boundary.**~~ **Resolved 2026-08-10 (§7c).**
+   The caveat was right and worth having kept: the 08-08 run's 478 → 479 proved
+   the mechanics, and the increment was only genuinely proven once a run acted on
+   an uncredited day. The 08-09 run illustrated the trap it warned about — a solve
+   inside an already-credited day looks like a failure if you read only the
+   counter.
 
 ---
 
