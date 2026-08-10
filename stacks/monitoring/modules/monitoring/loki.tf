@@ -161,14 +161,30 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # OOM-killer takes: a real container OOM (which also fires
               # ContainerOOMKilled) or a global node OOM (which only happens
               # when the node is at its memory limit). See memory #8811 / #10378.
+              # Names the killed process. The old rule aggregated by node only,
+              # so the alert said "killed a real container/app on k8s-node3"
+              # and you had to go read the journal to learn what died. The
+              # journal line is
+              #   Memory cgroup out of memory: Killed process 3185742 (kubectl) \
+              #   total-vm:... anon-rss:...
+              # so `proc` comes straight out of the parenthesised comm field.
+              #
+              # The 5m window is widened to 2h because this alert fires per
+              # OOM EVENT: with `for: 0m` it went firing -> resolved as soon as
+              # the 5m lookback emptied, then fired again on the next kill.
+              # Measured 2026-08-10: 21 fire/resolve pairs in 7 days = 42 Slack
+              # posts, every firing duration <= 5m, driven by ONE leaking pod
+              # (f1-stream, OOMKilled roughly hourly). A 2h window spans that
+              # cadence so a repeating OOM loop reads as one continuous alert
+              # and resolves 2h after the last kill.
               alert = "KernelOOMKiller"
-              expr  = "sum by (node) (count_over_time({job=\"node-journal\"} |~ \"(?i)Out of memory.*Killed process\" != \"(kubectl)\" != \"(bash)\" [5m])) > 0"
+              expr  = "sum by (node, proc) (count_over_time({job=\"node-journal\"} |~ \"(?i)Out of memory.*Killed process\" != \"(kubectl)\" != \"(bash)\" | regexp \"Killed process [0-9]+ \\\\((?P<proc>[^)]+)\\\\)\" [2h])) > 0"
               for   = "0m"
               labels = {
                 severity = "critical"
               }
               annotations = {
-                summary = "OOM killer killed a real container/app on {{ $labels.node }}"
+                summary = "OOM killer killed {{ $labels.proc }} on {{ $labels.node }}"
               }
             },
             {
@@ -329,8 +345,14 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             {
               # The enforcer's health-check failed a build and auto-rolled-back the
               # binary. The gate worked — but a bad nightly shipped, so you should know.
+              # Window widened 15m -> 12h: this is an event-count alert with
+              # `for: 0m`, so each rollback fired then resolved 15m later when
+              # the lookback emptied, and the next nightly retry fired it again.
+              # Measured 2026-08-10: 7 fire/resolve pairs in 7 days = 14 Slack
+              # posts, every firing duration 15-20m. A 12h window keeps one
+              # alert per nightly cycle instead of one per rollback event.
               alert  = "T3AutoUpdateRolledBack"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"rolling back|rolled back\" [15m])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"rolling back|rolled back\" [12h])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
@@ -415,12 +437,30 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # Per-user Claude refresh/backup/restore exhausted its automatic
               # recovery path. This is actionable: that user needs interactive SSO,
               # or the scoped Vault token/bootstrap needs repair.
+              # Groups by the USER, which is the whole point of the alert.
+              # It used to `sum by (unit)`, but this stream carries no `unit`
+              # label (its labels are host, identifier, job, service_name,
+              # detected_level), so the group key was always empty: every user
+              # collapsed into one series and the summary rendered as
+              # "...recovery failed on" with nothing after it. Verified against
+              # live Loki 2026-08-10. The user is in the line body instead —
+              #   user=ancamilea FAIL no recoverable Claude OAuth credential...
+              # — so it is extracted with regexp. (logfmt would choke on the
+              # bare FAIL/WARN token that follows.)
+              #
+              # Window widened 15m -> 7h. The per-user timer runs every ~6h, and
+              # with a 15m lookback the alert resolved 15m after each run and
+              # re-fired at the next one: 24 fire/resolve pairs in 7 days = 48
+              # Slack posts, every single firing duration exactly 15m, for one
+              # standing condition (a user who has never completed interactive
+              # SSO). 7h spans the timer interval, so a persistent failure stays
+              # one continuous alert and clears once a run succeeds.
               alert  = "WorkstationClaudeAuthInvalid"
-              expr   = "sum by (unit) (count_over_time({job=\"devvm-journal\", identifier=\"claude-auth-sync\"} |~ \"FAIL\" [15m])) > 0"
+              expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"claude-auth-sync\"} |~ \"FAIL\" | regexp \"user=(?P<user>[a-zA-Z0-9_.-]+)\" [7h])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
-                summary     = "Per-user Claude authentication recovery failed on {{ $labels.unit }}"
+                summary     = "Claude authentication recovery failed for user={{ $labels.user }}"
                 description = "The Workstation renewal agent could not validate Claude auth, renew its scoped Vault token, or recover from the Vault backup. Follow the per-user SSO recovery runbook."
                 runbook     = "docs/runbooks/claude-auth-renew-workstation.md"
               }

@@ -196,6 +196,72 @@ graph LR
 
 When a node goes down, all pod-level alerts for pods scheduled on that node are suppressed, reducing noise and focusing attention on the root cause.
 
+### Repeat notifications from flapping alerts
+
+Alert-on-change routing (`repeat_interval: 8760h` for warning/info) dedupes an
+alert that *stays* firing. It does not help an alert that resolves and fires
+again, because each cycle is a new alert instance and `send_resolved` turns each
+one into two Slack posts. Two rule shapes flap this way:
+
+**Event-count rules (Loki).** `count_over_time({...} |~ "..." [5m]) > 0` with
+`for: 0m` fires on an event and resolves the moment the lookback window empties,
+then fires again on the next event. The firing duration equals the window, which
+is the diagnostic signature — measured 2026-08-10, `WorkstationClaudeAuthInvalid`
+fired for exactly 15m on all 24 of its occurrences (its window was `[15m]`).
+Fix: make the window longer than the interval between the events it detects, so a
+recurring condition is one continuous alert. `KernelOOMKiller` went `[5m]` →
+`[2h]` (spanned an hourly OOM loop), `WorkstationClaudeAuthInvalid` `[15m]` →
+`[7h]` (spans the ~6h per-user sync timer), `T3AutoUpdateRolledBack` → `[12h]`.
+
+**Threshold rules (Prometheus).** A value sitting near its threshold crosses it
+repeatedly. Fix: `keep_firing_for`, which holds the alert firing after the
+expression stops matching (Prometheus ≥ 2.42; validate rule changes with
+`promtool check rules` inside the prometheus pod, which pins the running
+version). Applied to `ATSOverload`, `ClusterCannotTolerateNonGpuNodeLoss` (6h),
+`HighSystemLoad`, `HighPowerUsage`, `ImmichSmartSearchSlow`, `GPUVRAMLow`,
+`PodCrashLooping`, `PodStuckPending`, `IngressTTFBHigh`, `HighService4xxRate`,
+`AnubisChallengeStoreErrors`.
+
+Neither change silences anything or moves a threshold: the same conditions still
+notify, once per episode instead of once per oscillation. Measured baseline
+before the change: 447 `#alerts` messages in 7 days (349 alert events), with
+every alert showing equal firing and resolved counts.
+
+**Alerts must name the thing that broke.** Two were aggregating by a label that
+did not exist, so they could not say what to look at:
+
+- `WorkstationClaudeAuthInvalid` used `sum by (unit)`, but the
+  `{job="devvm-journal", identifier="claude-auth-sync"}` stream carries no `unit`
+  label (only host, identifier, job, service_name, detected_level). Every user
+  collapsed into one series and the summary rendered as `...failed on` with
+  nothing after it. The user is in the line body (`user=<name> FAIL ...`) and is
+  now extracted with `| regexp`.
+- `KernelOOMKiller` reported only the node. The killed process name is in the
+  journal line's parenthesised comm field and is now extracted into `proc`.
+
+When adding a rule that groups by a label, confirm the label exists on the live
+stream first — an empty group key silently degrades to "one series, no detail".
+
+### Metric units: the ATS reads deciwatts
+
+`automatic_transfer_switch_load_power_watts` is in **0.1 W units despite its
+name**. `tuya_bridge` publishes raw Tuya datapoints unscaled
+(`metrics_definition.py` calls `metrics[code].set(float(val))`), and this device
+reports deciwatts; `load_current_amps` is likewise deciamps.
+
+Anchor for the conversion (2026-08-10): the raw 1-day average is 2218. Read as
+watts that would be 2218 W from this one ATS, against a whole-house
+`fuse_main_active_power` averaging 0.651 kW — 3.4× the entire house, so the raw
+value cannot be watts. Real load is therefore ~222 W average, p95 ~331 W,
+max ~350 W.
+
+`dashboards/ups.json` already divides by 10. `ATSOverload` did not, so it
+compared a deciwatt value against `3000` (tripping at 300 W of real load) and
+its summary reported "3351W" for a 335 W load. The rule now divides by 10 in
+both the expression and the message, keeping the same 300 W trip point. The
+device's rated continuous capacity is not recorded in this repo — revisit the
+300 W threshold once it is known.
+
 ### GPU Monitoring
 
 NVIDIA GPU metrics are collected via dcgm-exporter with configurable resource limits (`dcgmExporter.resources`). Metrics include GPU utilization, memory usage, temperature, and power consumption.

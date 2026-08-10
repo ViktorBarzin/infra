@@ -915,8 +915,12 @@ serverFiles:
       - name: GPU VRAM
         rules:
           - alert: GPUVRAMLow
+            # keep_firing_for: free VRAM crosses 1024 MiB as tenants load and
+            # unload models, producing 4 fire/resolve pairs of exactly 5m each in
+            # 7 days (measured 2026-08-10) for one oversubscription episode.
             expr: (15360 * 1024 * 1024 - sum(gpu_pod_memory_used_bytes)) / 1024 / 1024 < 1024 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 10m
+            keep_firing_for: 1h
             labels:
               severity: warning
             annotations:
@@ -992,9 +996,14 @@ serverFiles:
               severity: info
             annotations:
               summary: "HDD write rate: {{ $value | printf \"%.1f\" }} MB/s (threshold: 10 MB/s)"
+          # keep_firing_for: host load oscillates across the 50% line, so this
+          # fired and cleared 10 times in 7 days (20 Slack posts) for what is
+          # really one busy period. Held open so a busy stretch reads as one
+          # episode. Measured 2026-08-10.
           - alert: HighSystemLoad
             expr: scalar(node_load1{instance="pve-node-r730"}) * 100 / count(count(node_cpu_seconds_total{instance="pve-node-r730"}) by (cpu)) > 50
             for: 30m
+            keep_firing_for: 2h
             labels:
               severity: info
             annotations:
@@ -1058,8 +1067,12 @@ serverFiles:
             # T4 TDP ~70W. 7-day power p50=33 / p99=72.75 / max=75W, so the old >50
             # fired on any real load. >73 = at/over the power limit — the only
             # "dangerously close to a limit" band with headroom (retuned 2026-07-06).
+            # keep_firing_for: GPU draw crosses the TDP line in bursts, giving 6
+            # fire/resolve pairs in 7 days for one sustained-load period
+            # (measured 2026-08-10).
             expr: nvidia_tesla_t4_DCGM_FI_DEV_POWER_USAGE > 73
             for: 30m
+            keep_firing_for: 2h
             labels:
               severity: info
               subsystem: gpu
@@ -1106,9 +1119,13 @@ serverFiles:
           # probe pays a ~1.8s cold storage read vs ~4ms warm. clip-index-prewarm
           # (immich ns, */5) pins it; immich-search-probe (*/5) measures it and
           # pushes these gauges to the Pushgateway.
+          # keep_firing_for: probe latency straddles the 1s line while the
+          # clip_index is partially evicted — 6 fire/resolve pairs in 7 days for
+          # one cache-cold episode (measured 2026-08-10).
           - alert: ImmichSmartSearchSlow
             expr: immich_smart_search_db_seconds{job="immich-search-probe"} > 1
             for: 15m
+            keep_firing_for: 2h
             labels:
               severity: warning
             annotations:
@@ -1292,13 +1309,33 @@ serverFiles:
               severity: critical
             annotations:
               summary: "ATS power fault detected (value: {{ $value }})"
+          # UNITS: automatic_transfer_switch_load_power_watts carries DECIWATTS
+          # despite its name. tuya_bridge passes the raw Tuya datapoint straight
+          # through (metrics_definition.py does `metrics[code].set(float(val))`
+          # with no scaling), and this device reports 0.1 W units.
+          # Confirmed 2026-08-10: the raw 1d average is 2218. Read as watts that
+          # is 2218 W from this one ATS, against a whole-house
+          # fuse_main_active_power averaging 0.651 kW (min 0.238 / max 4.061) --
+          # 3.4x the entire house, so the raw reading cannot be watts. The
+          # dashboards/ups.json "Current Consumption" panel already divides by 10
+          # for the same reason; this rule was the one consumer that did not, so
+          # it reported "ATS load: 3351W" for a real 335 W load.
+          # Dividing here keeps the trip point at the same 300 W of real load it
+          # has always had -- the threshold is deliberately unchanged, only the
+          # arithmetic and the message are corrected. The device's rated
+          # continuous capacity is not recorded anywhere in this repo; revisit
+          # the 300 W number once it is known.
+          # keep_firing_for: real load sits between p50 (262 W) and p90 (320 W),
+          # so 10m excursions crossed and cleared 32 times in 7 days = 64 Slack
+          # posts (fire + resolve). One post per episode now.
           - alert: ATSOverload
-            expr: automatic_transfer_switch_load_power_watts > 3000
+            expr: (automatic_transfer_switch_load_power_watts / 10) > 300
             for: 10m
+            keep_firing_for: 2h
             labels:
               severity: warning
             annotations:
-              summary: "ATS load: {{ $value | printf \"%.0f\" }}W (threshold: 3000W)"
+              summary: "ATS load: {{ $value | printf \"%.0f\" }}W (threshold: 300W)"
           - alert: ATSInputVoltageAbnormal
             expr: automatic_transfer_switch_voltage_l1_volts < 200 or automatic_transfer_switch_voltage_l1_volts > 260
             for: 5m
@@ -1591,9 +1628,14 @@ serverFiles:
               summary: "Only {{ $value | printf \"%.0f\" }} node(s) have NFS activity — Proxmox NFS (192.168.1.127) may be down (need ≥2)"
       - name: K8s Health
         rules:
+          # keep_firing_for: a pod that crashloops, recovers, and crashloops again
+          # posted a fresh fire+resolve pair each time (9 pairs in 7 days,
+          # measured 2026-08-10). 30m is long enough to fold a restart cycle into
+          # one alert while still resolving promptly once the pod truly settles.
           - alert: PodCrashLooping
             expr: kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} > 0 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
+            keep_firing_for: 30m
             labels:
               severity: warning
             annotations:
@@ -1710,6 +1752,14 @@ serverFiles:
                 unless on(node) (kube_node_spec_unschedulable == 1)
               )
             for: 15m
+            # keep_firing_for: headroom sits close to the line, so ordinary pod
+            # churn (a CronJob pod arriving or finishing) tips the comparison back
+            # and forth. Measured 2026-08-10: 16 fire/resolve pairs in 7 days = 32
+            # Slack posts, median firing 15m but max 34.8h — one standing capacity
+            # condition reported as 16 separate events. 6h folds the churn into
+            # one alert per genuine episode without hiding a persistent shortfall,
+            # which stays firing continuously.
+            keep_firing_for: 6h
             labels:
               severity: warning
             annotations:
@@ -2580,9 +2630,12 @@ serverFiles:
           # node → delete the pod (reschedules elsewhere) → uncordon; the VM
           # needs a reboot to clear the wedge (cluster-health check 47 now
           # detects it directly).
+          # keep_firing_for: folds a pod that flips Pending -> Running -> Pending
+          # into one alert (3 fire/resolve pairs in 7 days, measured 2026-08-10).
           - alert: PodStuckPending
             expr: kube_pod_status_phase{phase="Pending"} == 1 unless on(namespace, pod) kube_pod_status_conditions{condition="PodScheduled", status="false"} == 1
             for: 20m
+            keep_firing_for: 30m
             labels:
               severity: warning
             annotations:
@@ -2853,6 +2906,10 @@ serverFiles:
               and sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*|.*catchall-error-pages.*"}[5m])) by (service) > 0.1
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 15m
+            # keep_firing_for: scanner/probe bursts push a low-traffic service's
+            # 4xx ratio over 30% and back — 3 fire/resolve pairs in 7 days
+            # (measured 2026-08-10).
+            keep_firing_for: 1h
             labels:
               severity: warning
             annotations:
@@ -2932,6 +2989,10 @@ serverFiles:
               and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 10m
+            # keep_firing_for: a low-traffic service's average TTFB swings across
+            # the 1s line between scrapes — 3 fire/resolve pairs of exactly 5m
+            # each in 7 days (measured 2026-08-10).
+            keep_firing_for: 1h
             labels:
               severity: warning
             annotations:
@@ -2977,6 +3038,11 @@ serverFiles:
               sum(rate(traefik_service_requests_total{service=~".*anubis.*",code=~"5.."}[5m])) by (service) > 0
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
+            # keep_firing_for: `> 0` on a 5m rate means a single 5xx fires the
+            # alert and it clears as soon as that sample ages out — 7 fire/resolve
+            # pairs in 7 days, median firing 2m, shortest 60s (measured
+            # 2026-08-10). Held open so an error burst is one critical alert.
+            keep_firing_for: 1h
             labels:
               severity: critical
             annotations:
