@@ -153,9 +153,13 @@ module "ingress" {
   # from any resolver yet routes only via the home LANs / WG tunnel.
   # LAN-only design: docs/plans/2026-07-04-immich-frame-lan-only-design.md.
   # auth = "none": kiosk WebView, no user auth by design; gated by the home-lans-only ipAllowList instead.
-  auth              = "none"
-  dns_type          = "internal"
-  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
+  auth     = "none"
+  dns_type = "internal"
+  # error-pages-403 MUST precede the allowlist: it can only intercept responses
+  # from what sits downstream of it, and home-lans-only short-circuits without
+  # calling next. Turns the bare "Forbidden" a wrong-network visitor gets into
+  # the themed error page.
+  extra_middlewares = ["traefik-error-pages-403@kubernetescrd", "traefik-home-lans-only@kubernetescrd"]
   # Not externally reachable — explicit opt-out so external-monitor-sync
   # drops the old [External] monitor instead of default-opting it back in.
   external_monitor = false
