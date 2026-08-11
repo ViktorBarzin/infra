@@ -18,6 +18,18 @@ is driven by the grant stack rolling off and new refreshers coming on.
 A performance rating band is layered on top, because the same rating drives both the
 cash bonus and the size of each year's equity refresher.
 
+```stats
+£348.5k | 2026 gross comp (Excellent)
+£247.2k | steady state from 2031
+2027 | first year of the step down
+2 | new panels
+```
+
+> [!NOTE]
+> This is a model, not a forecast. Base salary and the META price are held flat by
+> design, so the shape reflects the share count vesting rather than any view on pay
+> reviews or the stock.
+
 ## Decisions
 
 Settled during the grilling interview on 2026-08-11.
@@ -140,21 +152,19 @@ Grafana cannot join across datasources, so price and FX cross the boundary as
 template-variable text substitution rather than as a SQL join.
 
 ```mermaid
-flowchart LR
-    subgraph src["Sources"]
-        PS[("payslips-pg<br/>payslip_ingest.payslip")]
-        RG[("payslips-pg<br/>rsu_grant · NEW")]
-        WQ[("wealth-pg<br/>quote_latest")]
-    end
+flowchart TD
+    WQ[("wealth-pg<br/>quote_latest")]
+    PS[("payslips-pg<br/>payslip_ingest.payslip")]
+    RG[("payslips-pg<br/>rsu_grant · NEW")]
 
-    WQ -.->|"read once,<br/>seeds defaults"| TV
+    WQ -.->|"read once, seeds defaults"| TV
     TV["Template variables<br/>$meta_price · $gbpusd<br/>$rating · $company_mult"]
 
     PS -->|"actuals to MAX(pay_date)"| Q
     RG -->|"grants → generate_series<br/>→ quarterly tranches"| Q
     TV -->|"substituted as literals"| Q
 
-    Q{{"Panel SQL<br/>(payslips-pg)"}}
+    Q{{"Panel SQL — payslips-pg"}}
     Q --> P1["Panel A — composition<br/>stacked base/bonus/RSU<br/>actual vs projected"]
     Q --> P2["Panel B — bands<br/>total comp per rating"]
 ```
