@@ -401,6 +401,30 @@ resource "kubernetes_deployment" "chrome_service" {
             name  = "NEKO_WEBRTC_UDPMUX"
             value = tostring(local.neko_udpmux)
           }
+          # Pin the NAT-1-to-1 mapping to our own pod IP, which makes it a no-op.
+          #
+          # Left unset, neko HTTP-GETs checkip.amazonaws.com at startup and
+          # advertises the result — our WAN address — as its ICE *host* candidate.
+          # Nothing forwards UDP 59000 in from the WAN, so the client offers/sees
+          # an unreachable candidate and ICE never leaves `checking`: the UI logs
+          # in and the video never arrives (observed 2026-08-11,
+          # `nat1to1=176.12.22.76` in the webrtc startup line).
+          #
+          # The working proxy browsers have `nat1to1=` EMPTY, but only by accident:
+          # gluetun's kill-switch blocks their public-IP lookup. Pinning the pod IP
+          # gets the same result deterministically and with no startup HTTP call —
+          # the host candidate stays the (off-cluster-unroutable, harmless) pod IP,
+          # and media connects over the coturn relay candidate, which is the path
+          # that actually carries it. Verified from this pod: TURN Allocate against
+          # 10.0.20.200 returns a relay address.
+          env {
+            name = "NEKO_WEBRTC_NAT1TO1"
+            value_from {
+              field_ref {
+                field_path = "status.podIP"
+              }
+            }
+          }
           # H.264, explicitly, with an explicit pipeline.
           #
           # The codec variable ALONE is not enough: with no pipeline set, neko
