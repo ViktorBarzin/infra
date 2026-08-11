@@ -17,20 +17,18 @@
 locals {
   # name (relative to the zone) => IPv4 address.
   #
-  # turn: coturn's MetalLB address. Public DNS resolves turn.viktorbarzin.me to
-  # the WAN IP, but Technitium had no record at all, so a LAN client received
-  # NXDOMAIN for the STUN/TURN hostname and a WebRTC display (the neko views in
-  # stacks/chrome-service and stacks/proxy) got ZERO ICE candidates — neko's only
-  # other candidate is a pod IP that is not routable off-cluster, so the stream
-  # never established. Verified 2026-08-11:
+  # turn: coturn's DEDICATED MetalLB address (stacks/coturn local.lb_ip — keep in
+  # step with it and with the pfSense `coturn_lb` alias). Public DNS resolves
+  # turn.viktorbarzin.me to the WAN IP, but Technitium had no record at all, so a
+  # client on LAN DNS received NXDOMAIN for the STUN/TURN hostname and a WebRTC
+  # display (the neko views in stacks/chrome-service and stacks/proxy) got no
+  # usable ICE candidates. Verified 2026-08-11:
   #   dig @10.0.20.201 turn.viktorbarzin.me  ->  NXDOMAIN (flags: qr aa)
   #   dig @1.1.1.1     turn.viktorbarzin.me  ->  176.12.22.76
-  # This fixes NAME RESOLUTION only. coturn runs listening-ip=0.0.0.0 with
-  # external-ip=<WAN> and no private mapping, so it still advertises relay
-  # candidates on the WAN address and LAN media hairpins through it. A LAN-local
-  # relay candidate would need a dual external-ip mapping or a second listener.
+  # Note this record only helps clients that USE Technitium; London resolves via
+  # its own dnsmasq and gets the public answer, reaching coturn over the WAN.
   static_a_records = {
-    turn = "10.0.20.200"
+    turn = "10.0.20.205"
   }
 }
 

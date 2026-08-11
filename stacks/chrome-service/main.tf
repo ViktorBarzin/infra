@@ -280,7 +280,7 @@ resource "kubernetes_deployment" "chrome_service" {
           # either way, so LAN viewers hairpin — see the design doc's D7.
           env {
             name  = "COTURN_BACKEND_URL"
-            value = "turn:10.0.20.200:3478"
+            value = "turn:10.0.20.205:3478"
           }
           env {
             name  = "COTURN_FRONTEND_URL"

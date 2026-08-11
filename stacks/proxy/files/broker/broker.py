@@ -105,7 +105,7 @@ GPU_BROWSERS_MAX = int(os.environ.get("GPU_BROWSERS_MAX", "1"))
 # FIREWALL_OUTBOUND_SUBNETS (the LB IP, added there). The user's real browser
 # reaches coturn's FRONTEND (STUN + TURN) via the public domain (WAN NAT). coturn
 # advertises relay candidates on its external-ip=WAN either way.
-COTURN_BACKEND_URL = os.environ.get("COTURN_BACKEND_URL", "turn:10.0.20.200:3478")
+COTURN_BACKEND_URL = os.environ.get("COTURN_BACKEND_URL", "turn:10.0.20.205:3478")
 COTURN_FRONTEND_URL = os.environ.get("COTURN_FRONTEND_URL", "turn:turn.viktorbarzin.me:3478")
 COTURN_STUN_URL = os.environ.get("COTURN_STUN_URL", "stun:turn.viktorbarzin.me:3478")
 COTURN_REALM = os.environ.get("COTURN_REALM", "viktorbarzin.me")
@@ -464,7 +464,7 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
                      {"name": "FIREWALL_INPUT_PORTS", "value": "%d,%d" % (NEKO_PORT, NEKO_UDPMUX)},
                      # Cluster CIDRs + the coturn LB IP so neko reaches coturn DIRECT
                      # (not through the NordVPN tunnel) for its relay allocation.
-                     {"name": "FIREWALL_OUTBOUND_SUBNETS", "value": "10.10.0.0/16,10.96.0.0/12,10.0.20.200/32"},
+                     {"name": "FIREWALL_OUTBOUND_SUBNETS", "value": "10.10.0.0/16,10.96.0.0/12,10.0.20.205/32"},
                      {"name": "WIREGUARD_PRIVATE_KEY",
                       "valueFrom": {"secretKeyRef": {"name": _br_name(userkey) + "-wg",
                                                      "key": "WIREGUARD_PRIVATE_KEY"}}},
