@@ -20,7 +20,7 @@ serves two distinct populations:
    is the third caller and the only one that deliberately attaches to the
    MASTER PERSISTENT PROFILE (`browser.contexts[0]`) rather than opening a
    fresh context: it needs the chess.com session Viktor logged in by hand
-   via noVNC, and attaching to the master profile lets session-cookie
+   via the live view, and attaching to the master profile lets session-cookie
    rotation persist instead of being discarded with a pool pod. It holds
    the browser for ~20s once a day. The
    `stacks/f1-stream/files/backend/playback_verifier.py` +
@@ -47,8 +47,8 @@ In-process Chromium inside `f1-stream`:
 
 `chrome-service` solves this by:
 
-1. Running **headed** under `Xvfb :99` (chromium with `DISPLAY=:99`,
-   not `--headless`).
+1. Running **headed** under a real X server (neko's Xorg; `Xvfb :99` before
+   2026-08-11) rather than `--headless`.
 2. Living in a long-lived pod so JIT browser launch latency disappears.
 3. Allowing a per-context init script
    (`stacks/chrome-service/files/stealth.js` ~ 40 lines, vendored from
@@ -74,7 +74,7 @@ In-process Chromium inside `f1-stream`:
             │  await context.add_init_script(STEALTH_JS)
             │  page.goto("https://upstream.com/embed/...")
             │
-            └─── ←── pages render under Xvfb, headed Chromium ──── ─────────┘
+            └─── ←── pages render headed under neko's Xorg ─────────────────┘
 ```
 
 ### Wire protocol — WS (legacy, removed 2026-06-04)
@@ -92,10 +92,10 @@ so cookies actually live across pod restarts.
 ```text
 ┌─────────── chrome-service pod ──────────────────────────────────────────┐
 │                                                                          │
-│  chrome-service container (chromium --user-data-dir=/profile/chromium-data
-│                            --remote-debugging-port=9222)                 │
+│  neko container (google-chrome --user-data-dir=/profile/chromium-data     
+│                  --remote-debugging-port=9223 → cdp-bridge :9222)        │
 │  ▲                                                                       │
-│  │ user logs in via noVNC ← chrome.viktorbarzin.me (Authentik)           │
+│  │ user logs in via the neko view ← chrome.viktorbarzin.me (Authentik)   │
 │  │                                                                       │
 │  Cookies + localStorage land in /profile/chromium-data/Default/          │
 │                                                                          │
@@ -120,14 +120,20 @@ External caller (dev box):
 
 ## Browser binary — real Google Chrome (for proprietary codecs)
 
-The chrome-service container runs **real Google Chrome**, not the bundled
-Chromium, via the infra-owned image `ghcr.io/viktorbarzin/chrome-service-browser`
-(`files/chrome/Dockerfile` = `mcr.microsoft.com/playwright:v1.48.0-noble` +
-`google-chrome-stable`, built by `.github/workflows/build-chrome-service-browser.yml`).
-The launch resolves `CHROMIUM=/opt/google/chrome/chrome`.
+Both the master and the pool workers run **real Google Chrome**, not the bundled
+Chromium — via different images since 2026-08-11:
+
+- **Master:** the stock upstream `ghcr.io/m1k1o/neko/google-chrome` image (see
+  "Display — neko WebRTC" below). Chrome at `/usr/bin/google-chrome`.
+- **Pool workers:** the infra-owned `ghcr.io/viktorbarzin/chrome-service-browser`
+  (`files/chrome/Dockerfile` = `mcr.microsoft.com/playwright:v1.48.0-noble` +
+  `google-chrome-stable`, built by
+  `.github/workflows/build-chrome-service-browser.yml`). Its launcher resolves
+  `CHROMIUM=/opt/google/chrome/chrome`. That image and its workflow stay — the
+  neko swap was master-only.
 
 **Why:** the Playwright-bundled Chromium has proprietary codecs **compiled out**,
-so H.264/AAC video (Instagram Reels, X, most `.mp4`) fails in the noVNC view with
+so H.264/AAC video (Instagram Reels, X, most `.mp4`) fails in the live view with
 `MEDIA_ERR_SRC_NOT_SUPPORTED` (the bytes download `200 video/mp4` but there's no
 decoder — NOT a GPU issue). Royalty-free codecs (VP9/VP8/AV1 → YouTube) always
 worked. Swapping `libffmpeg.so` does NOT help (codecs are compiled out, not just
@@ -144,6 +150,11 @@ milestone than the 1.48 Chromium), but the `connect_over_cdp` callers (tripit
 fare scrape, `homelab browser`, snapshot-harvester) attach over raw CDP, which is
 version-tolerant — verified working against this Chrome. If a future Chrome
 milestone breaks a caller, pin Chrome in the Dockerfile or bump the clients.
+
+Since 2026-08-11 the master's Chrome milestone comes from the digest-pinned neko
+image (`local.neko_image`) rather than from a Dockerfile we control, so a neko
+bump also moves Chrome. That is one more reason the pin is a deliberate,
+reviewed bump and Keel stays off this deployment.
 
 Callers do not have to sit on 1.48: `chesscom-streak` pins `playwright==1.58.0`
 and was verified live against this Chrome/149 browser on 2026-08-08. Because a
@@ -185,75 +196,86 @@ browser download — that caller runs on a plain `python:3.12-slim` with
     `chrome-service.viktorbarzin.me/client = "true"` (plus an explicit
     fallback for `f1-stream` by `kubernetes.io/metadata.name`, plus
     `chrome-service`'s own namespace for the harvester CronJob).
-  - **TCP/6080** (noVNC HTTP+WS): only the `traefik` namespace.
+  - **TCP/8080** (neko UI + WS signaling): only the `traefik` namespace.
   - **TCP/8088** (snapshot-server): only the `traefik` namespace
     (bearer-token check happens in `snapshot_server.py`).
 - **CDP port 9222** is internal-only (no ingress, no Cloudflare DNS).
-- **noVNC sidecar** (`forgejo.viktorbarzin.me/viktor/chrome-service-novnc`)
-  exposes a live HTML5 view of the headed Chromium session via
-  `x11vnc` (connected to Xvfb on `localhost:6099`) bridged to
-  `websockify` on port 6080. Service `chrome` maps :80 → :6080 and is
-  exposed via `ingress_factory` at `chrome.viktorbarzin.me`,
-  Authentik-gated. The bare host serves `vnc.html` (image symlinks
-  `index.html → vnc.html`); add `?autoconnect=true&resize=scale&path=websockify`
-  to skip the Connect button. The view is **black when no browser window is
-  open** (idle) — that is normal, not a failed connection. Chrome is launched
-  with `--window-size=1280,720 --window-position=0,0` to fill the Xvfb screen
-  (no window manager runs, so without it Chrome opens at its profile-persisted
-  size and the rest of the framebuffer shows as a black cut-off).
+- **WebRTC media needs no ingress rule.** It relays through coturn over the
+  allocation neko opens outbound, which is stateful return traffic.
 
-### noVNC fd-sweep gotcha (stuck "Connecting")
+## Display — neko WebRTC (since 2026-08-11)
 
-If the noVNC client hangs on **"Connecting" forever then times out**, the cause
-is almost always x11vnc's fd-table sweep: containerd grants pods
-`RLIMIT_NOFILE = 2^31`, and x11vnc `fcntl`-sweeps the **entire** fd table on
-every client connection, so the RFB handshake never completes (websockify
-accepts the WS and logs `connecting to: localhost:5900`, but x11vnc never sends
-the `RFB 003.008` banner). Diagnose: `grep "open files" /proc/$(pgrep -n
-x11vnc)/limits` (huge = bad) and time the handshake from a sibling container
-(`python3 -c "import socket;s=socket.socket();s.connect(('127.0.0.1',5900));print(s.recv(12))"` —
-healthy <0.3s, broken hangs). **Fix: cap `ulimit -n 65536` before x11vnc starts**
-— done both in `files/novnc/entrypoint.sh` (root) and via the container `command`
-wrapper in `main.tf` (so it applies deterministically even though the image is
-`:latest`/`IfNotPresent` and won't re-pull a rebuilt entrypoint). Same bug + fix
-as the android-emulator stack.
+The live view at `chrome.viktorbarzin.me` is [neko](https://neko.m1k1o.net) v3:
+hardware-free software **x264 H.264 at 1920x1080@30** plus **Opus audio**, with a
+window manager and live resolution changes from the UI. It replaced the previous
+noVNC (`x11vnc` + `websockify`) view — design and rationale in
+`docs/plans/2026-08-11-chrome-service-neko-display-design.md`.
 
-### noVNC black after a browser-container restart (x11vnc supervision)
+**neko owns the browser.** The pod runs the stock upstream
+`ghcr.io/m1k1o/neko/google-chrome` image (digest-pinned in `local.neko_image`),
+which brings its own Xorg, openbox, PulseAudio and capture pipeline and launches
+real Google Chrome as its single app. The `google-chrome` variant — not
+`chromium` — because the proprietary H.264/AAC codecs are the reason this stack
+moved off bundled Chromium in the first place (see "Browser binary" above).
 
-A **distinct** failure from the fd-sweep gotcha above: the noVNC client *connects*
-but the view is **black**, and the novnc container logs spew
-`connecting to: localhost:5900` → `Failed to connect ... [Errno 111] Connection
-refused` (x11vnc is **down**, not slow). Cause: `x11vnc` and `websockify` both run
-in the **novnc** container, but x11vnc attaches to the **chrome-service** (browser)
-container's Xvfb over `localhost:6099` (shared pod network). When the browser
-container restarts — Chrome exits cleanly (exit 0, "Completed") or crashes — its
-Xvfb vanishes and x11vnc loses its X connection and exits.
+**Chrome's flags are ours, not upstream's.** neko launches the browser from a
+plain supervisord program file, so a ConfigMap mounted (subPath) over
+`/etc/neko/supervisord/google-chrome.conf` keeps chrome-service's own launch
+line inside an unmodified image — no fork, no custom build. Source of truth:
+`files/neko/google-chrome.conf`, which documents every flag delta. Notably it
+keeps `--user-data-dir=/profile/chromium-data`, so the warmed profile did not
+move and needed no migration (both neko's `neko` user and the previous container
+run as uid 1000, and the PVC is owned `1000:1000`).
 
-`entrypoint.sh` **supervises** x11vnc: it launches x11vnc and websockify as
-background children and `wait -n`s on them, exiting non-zero if **either** dies, so
-the kubelet restarts the novnc container, which re-waits for Xvfb on `:6099` and
-relaunches x11vnc — the bridge **self-heals** across browser-container restarts.
-(Before 2026-06-27, x11vnc was an unsupervised background child of an `exec`ed
-websockify; a dead x11vnc was never relaunched, leaving `:5900` dead — a
-`<defunct>` zombie — and the view black until a manual pod restart. Same
-supervision pattern as the android-emulator stack's entrypoint.)
+**CDP is republished by a sidecar.** Chrome binds CDP to loopback on `:9223`
+(stock builds ignore `--remote-debugging-address`), and the neko image ships no
+python3, so `cdp_bridge.py` moved from inside the browser container to its own
+`cdp-bridge` sidecar in the same netns. Callers keep hitting `:9222` unchanged.
 
-**Diagnose:** `kubectl exec -c novnc -- ps aux | grep x11vnc` (a `<defunct>`/Z
-entry = the bug); or the RFB-banner probe from a sibling container (`python3 -c
-"import socket;s=socket.socket();s.settimeout(2);s.connect(('127.0.0.1',5900));print(s.recv(12))"`
-— healthy returns `b'RFB 003.008\n'`, broken = `ConnectionRefused`). **Immediate
-recovery** (no image change): restart just the novnc container with `kubectl exec
--n chrome-service deploy/chrome-service -c novnc -- kill 1` — re-runs its entrypoint
-and relaunches x11vnc **without** touching the browser session/in-flight CDP jobs.
+**Media path.** WebRTC relays through coturn. A `turn-cred` initContainer mints
+an ephemeral coturn TURN-REST credential at every pod start (`files/turn_cred.py`,
+unit-tested in `files/turn_cred_test.py`) and writes the ICE-server JSON to a
+shared `emptyDir`; the neko container exports those files before exec'ing
+supervisord, because neko reads ICE servers from env and env can't be computed at
+pod start. Nothing long-lived needs rotating by hand.
 
-> **Deploying a rebuilt novnc entrypoint:** Keel is **off** for this deployment
-> (`keel.sh/policy=never`, because the browser container's playwright image is
-> version-pinned to f1-stream) and the image is `:latest`/`IfNotPresent`, so a
-> rebuilt `:latest` will **not** redeploy on its own. After the
-> `build-chrome-service-novnc.yml` GHA build pushes `:latest` + `:<sha>`,
-> **SHA-pin** the novnc `image` in `main.tf` to the new `:<sha>` to force the pull
-> and rollout (the novnc image is TF-managed — not in the deployment's
-> `lifecycle.ignore_changes`).
+**Two gates.** Authentik forward-auth on the ingress (`Chrome Users`, ADR-0023)
+plus neko's own admin password from Vault
+(`secret/chrome-service.neko_admin_password`). A bookmark with `?pwd=<value>`
+keeps it one click. The user-role password is a fresh random value generated per
+pod start, which makes the view-only role unusable by design — the admin
+password is the only way in. Two gates rather than one because this browser holds
+every cookie logged in by hand.
+
+**Fallback.** `capture.screencast` is enabled (JPEG over HTTP, 10 fps, quality
+60) for a client that cannot establish WebRTC at all. Upstream is explicit that
+it is high-latency and not a primary stream; it fills the role noVNC used to.
+
+**Probes.** One liveness probe on the neko container covers two failure modes:
+`/health` (neko server) and CDP `/json/version` (the wedged-Chrome class a TCP
+probe misses, since a wedged Chrome keeps its port open). Restarting that
+container takes supervisord down with it, so Chrome comes back. The bridge
+sidecar's readiness gates the `chrome-service` Service so no CDP caller is routed
+before Chrome is reachable.
+
+### Retired with noVNC
+
+The two x11vnc gotchas that used to live here are gone along with the sidecar,
+its `chrome-service-novnc` image and the `build-chrome-service-novnc.yml`
+workflow. Kept as a short record in case an old pod spec resurfaces:
+
+- **fd-sweep (stuck "Connecting")** — containerd grants pods
+  `RLIMIT_NOFILE = 2^31` and x11vnc `fcntl`-swept the entire fd table on every
+  client connect, so the RFB handshake never completed. Fixed by capping
+  `ulimit -n 65536` before x11vnc started.
+- **Black view after a browser restart** — x11vnc attached to the browser
+  container's Xvfb over `localhost:6099`; when that container restarted, x11vnc
+  exited and was never relaunched. Fixed by supervising x11vnc and websockify so
+  either one dying restarted the sidecar.
+
+Neither applies to neko, which owns its own X server inside the same container as
+the capture pipeline.
+
 - **snapshot-server sidecar** (`mcr.microsoft.com/playwright/python:v1.48.0-noble`)
   serves `GET /api/snapshot` from `/profile/snapshots/storage-state.json`,
   bearer-gated by `PW_TOKEN`. Service `chrome-snapshot` maps :8088 → :8088
@@ -309,7 +331,7 @@ Key facts:
 
 There is ONE chrome-service browser with ONE persistent profile, warmed with
 **Viktor's** logged-in sessions. CDP has no per-context auth, so anyone who can
-drive the browser — over the noVNC view OR the CDP/`homelab browser` path — can
+drive the browser — over the neko view OR the CDP/`homelab browser` path — can
 reach the persistent profile (`browser.contexts[0]`) and therefore Viktor's
 sessions. Access is gated accordingly, per user.
 
@@ -319,7 +341,7 @@ isolated instance. The session-exposure trade-off above was explicitly accepted.
 
 Two independent grants make up "browser access" for a user:
 
-1. **noVNC (interactive view, `chrome.viktorbarzin.me`)** — gated by the Authentik
+1. **neko (interactive view, `chrome.viktorbarzin.me`)** — gated by the Authentik
    `admin-services-restriction` policy via the **`Chrome Users` group** (ADR-0023;
    the `chrome`/`chrome-fleet` ingresses set `allowed_groups = ["Chrome Users"]`).
    Add the user to `Chrome Users` — kept deliberately tighter than admin, though
@@ -338,7 +360,7 @@ Two independent grants make up "browser access" for a user:
    `oidc@homelab` named context. The SA's existence is the source of truth for who
    gets the CLI — the provisioner no-ops for users without a `<user>-browser` SA.
 
-**To grant another user:** add them to the `Chrome Users` group (noVNC) and/or add a
+**To grant another user:** add them to the `Chrome Users` group (the view) and/or add a
 `<user>-browser` SA + bindings mirroring `emo-browser` in `rbac.tf` (CLI), then run
 the provisioner. To revoke: remove from `Chrome Users` and delete the SA (rotate
 a token by deleting its `<user>-browser-token` Secret).
@@ -373,7 +395,7 @@ plan: `docs/plans/2026-07-13-chrome-service-pool-{design,plan}.md`
 ```
 
 **Roles.** The master (`chrome-service` Deployment) stays 1 replica: interactive
-noVNC login, the persistent profile PVC, the hourly `storage_state()` snapshot,
+hand login in the view, the persistent profile PVC, the hourly `storage_state()` snapshot,
 tripit's fare scrape, and any `--shared-context` write-back work. The **pool** is
 separate stateless workers.
 

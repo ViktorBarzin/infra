@@ -15,9 +15,31 @@ locals {
   # connect smoke test. Image ships chromium under /ms-playwright/.
   image = "mcr.microsoft.com/playwright:v1.48.0-noble"
   # Python image for the snapshot-harvester CronJob and the snapshot-server
-  # sidecar (the latter just runs a 60-line stdlib HTTP server).
+  # sidecar (the latter just runs a 60-line stdlib HTTP server). Also carries
+  # the cdp-bridge sidecar + turn-cred initContainer — reusing it there costs no
+  # extra pull, since it is already resident for snapshot-server in this pod.
   python_image = "mcr.microsoft.com/playwright/python:v1.48.0-noble"
   snapshot_dir = "/profile/snapshots"
+
+  # neko v3 (WebRTC H.264 + Opus) streams the master browser — the same display
+  # stack the proxy per-user browsers use, replacing noVNC/x11vnc (design
+  # docs/plans/2026-08-11-chrome-service-neko-display-design.md).
+  #
+  # The `google-chrome` variant, NOT `chromium`: real Google Chrome carries the
+  # proprietary H.264/AAC codecs that Chromium builds compile out — the original
+  # reason this stack moved off the bundled Playwright Chromium. Upstream image,
+  # DIGEST-pinned per the house rule (`:latest` is served stale by the
+  # pull-through cache). Bump deliberately on a neko upgrade.
+  neko_image = "ghcr.io/m1k1o/neko/google-chrome:3.1.4@sha256:5511a426db00c474ff15e21fcdaa3887d737f9d379080a2cd5d05bea81872fce"
+  # Virtual-desktop resolution. Matches the framebuffer the old Xvfb ran, and an
+  # admin can change it live from the neko UI (screen-size menu → xrandr).
+  # Software x264 at this size costs ~1.2 cores while a viewer is attached, ~0
+  # idle; no GPU slice, so the pod keeps floating across node2-5.
+  neko_screen = "1920x1080@30"
+  # Fixed WebRTC media mux port. Media reaches viewers through the coturn relay
+  # (the pod-IP host candidate isn't routable off-cluster), so this port needs no
+  # ingress rule — relay traffic rides the allocation neko itself opens.
+  neko_udpmux = 59000
 }
 
 # --- Namespace ---
@@ -69,6 +91,39 @@ resource "kubernetes_manifest" "external_secret" {
         extract = {
           key = "chrome-service"
         }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.chrome_service]
+}
+
+# coturn's use-auth-secret, synced from Vault secret/coturn. The turn-cred
+# initContainer mints a per-pod-start ephemeral TURN-REST credential from it so
+# neko can relay its WebRTC media through coturn (same relay the proxy browsers
+# use). Reloader restarts the pod when this changes, which re-mints the cred.
+resource "kubernetes_manifest" "es_turn" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "chrome-service-turn"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "chrome-service-turn"
+      }
+      data = [{
+        secretKey = "turn_secret"
+        remoteRef = { key = "coturn", property = "turn_secret" }
       }]
     }
   }
@@ -128,10 +183,11 @@ resource "kubernetes_deployment" "chrome_service" {
     namespace = kubernetes_namespace.chrome_service.metadata[0].name
     labels = merge(local.labels, {
       tier = local.tiers.aux
-      # Deliberate pin: chrome-service's playwright image MUST match
-      # the playwright Python version in f1-stream (see local.image
-      # comment above). Opt out of Keel auto-update via this label —
-      # the inject-keel-annotations ClusterPolicy excludes workloads
+      # Deliberate pin: the neko image is digest-pinned (local.neko_image) and
+      # the sidecars track local.python_image, so a neko upgrade is a reviewed
+      # bump rather than an automatic roll — a display regression here takes the
+      # hand-login surface with it. Opt out of Keel via this label; the
+      # inject-keel-annotations ClusterPolicy excludes workloads
       # selector-matching keel.sh/policy=never.
       "keel.sh/policy" = "never"
     })
@@ -152,9 +208,10 @@ resource "kubernetes_deployment" "chrome_service" {
         labels = local.labels
       }
       spec {
-        # The noVNC sidecar pulls from registry.viktorbarzin.me which needs
-        # auth. Kyverno's `sync-registry-credentials` ClusterPolicy syncs
-        # the secret into every namespace.
+        # Kyverno's `sync-registry-credentials` ClusterPolicy syncs this into
+        # every namespace. All three images here are public (ghcr.io/m1k1o,
+        # mcr.microsoft.com), so nothing in this pod needs it today — kept
+        # because the pool workers in the same namespace pull a private image.
         image_pull_secrets {
           name = "registry-credentials"
         }
@@ -185,131 +242,215 @@ resource "kubernetes_deployment" "chrome_service" {
           }
         }
 
+        # Mint the ephemeral coturn TURN-REST credential neko relays its WebRTC
+        # media through, and write the two ICE-server JSON documents to the
+        # shared `ice` volume. neko takes ICE servers from env and env can't be
+        # computed at pod start, so the neko container exports these files before
+        # exec'ing supervisord. Re-minting every start means no long-lived
+        # credential to rotate by hand. Logic + tests: files/turn_cred{,_test}.py.
+        init_container {
+          name              = "turn-cred"
+          image             = local.python_image
+          image_pull_policy = "IfNotPresent"
+          command           = ["python3", "/scripts/turn_cred.py"]
+
+          env {
+            name = "TURN_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "chrome-service-turn"
+                key  = "turn_secret"
+              }
+            }
+          }
+          # BACKEND: coturn's LB IP, reached direct in-cluster. FRONTEND + STUN:
+          # coturn's public name, handed to the viewer's browser. coturn
+          # advertises relay candidates on its external-ip (the WAN address)
+          # either way, so LAN viewers hairpin — see the design doc's D7.
+          env {
+            name  = "COTURN_BACKEND_URL"
+            value = "turn:10.0.20.200:3478"
+          }
+          env {
+            name  = "COTURN_FRONTEND_URL"
+            value = "turn:turn.viktorbarzin.me:3478"
+          }
+          env {
+            name  = "COTURN_STUN_URL"
+            value = "stun:turn.viktorbarzin.me:3478"
+          }
+
+          volume_mount {
+            name       = "ice"
+            mount_path = "/ice"
+          }
+          volume_mount {
+            name       = "scripts"
+            mount_path = "/scripts"
+            read_only  = true
+          }
+
+          resources {
+            requests = { cpu = "10m", memory = "32Mi" }
+            limits   = { memory = "96Mi" }
+          }
+        }
+
+        # neko v3 — the browser AND the display. neko owns Xorg, openbox,
+        # PulseAudio and the H.264/Opus capture pipeline, and launches real
+        # Google Chrome as its single app. This replaced the previous
+        # [Chrome+Xvfb] + [x11vnc/websockify noVNC] pair on 2026-08-11 (design
+        # docs/plans/2026-08-11-chrome-service-neko-display-design.md), which
+        # also retires the two x11vnc gotchas documented in
+        # docs/architecture/chrome-service.md (fd-table sweep, supervision).
+        #
+        # Chrome's flags are OURS, not upstream's: the neko-conf volume mounts
+        # files/neko/google-chrome.conf over the image's supervisord program
+        # file, keeping --user-data-dir=/profile/chromium-data and the anti-bot
+        # flag set. See that file for the per-flag rationale.
         container {
-          name = "chrome-service"
-          # Real Google Chrome (Playwright base + google-chrome-stable) for
-          # proprietary H.264/AAC codecs — see files/chrome/Dockerfile. The
-          # snapshot sidecars still use local.python_image (playwright minor
-          # pin) and connect_over_cdp; verified compatible with this Chrome.
-          image             = "ghcr.io/viktorbarzin/chrome-service-browser:latest"
+          name              = "neko"
+          image             = local.neko_image
           image_pull_policy = "IfNotPresent"
 
-          # Direct chromium launch (NOT `playwright launch-server`). Reason:
-          # launch-server creates ephemeral browser contexts per `connect()`
-          # call, so cookies/localStorage never persist to the PVC — the
-          # `/profile` mount only ever held npm cache + fontconfig.
-          # Replaced 2026-06-04 with a CDP+persistent-profile model so the
-          # warm browser (where Viktor logs in via noVNC) keeps cookies, and
-          # the hourly snapshot-harvester CronJob can dump them via the
-          # CDP endpoint. Callers migrate `chromium.connect()` →
-          # `chromium.connect_over_cdp()` (see f1-stream's playback_verifier).
-          #
-          # --remote-debugging-port=9222          : TCP CDP (vs default pipe).
-          # --remote-debugging-address=0.0.0.0   : bind on all pod IFs;
-          #                                        NetworkPolicy is the gate.
-          # --remote-allow-origins=*             : Chrome 111+ requires for
-          #                                        non-loopback CDP origins.
-          # --user-data-dir=/profile/chromium-data: persistent profile on
-          #                                        the encrypted PVC.
-          command = ["bash", "-c"]
-          args = [
-            <<-EOT
+          # Runs as root like the proxy browsers do (verified working there):
+          # neko's supervisord needs root to bring up Xorg/PulseAudio, then drops
+          # to its own `neko` user (uid 1000) for Xorg, openbox and Chrome — the
+          # same uid that owns the profile PVC, so no chown is involved. This
+          # overrides the pod-level run_as_user = 1000, which would otherwise
+          # leave supervisord unable to start the desktop.
+          security_context {
+            run_as_user = 0
+          }
+
+          # Two things the stock entrypoint can't do for us:
+          #   1. ICE servers are only knowable at pod start (the turn-cred
+          #      initContainer mints an ephemeral coturn credential), and neko
+          #      reads them from env — so export them from the shared /ice files.
+          #   2. The multiuser provider needs a user-role password as well as an
+          #      admin one. A fresh random value per pod start makes the
+          #      view-only role unusable by design: the Vault-held admin password
+          #      is the only way in, and no second secret has to be managed.
+          command = ["sh", "-c", <<-EOT
             set -e
-            # Real Google Chrome (proprietary H.264/AAC codecs) baked into the
-            # chrome-service-browser image at a fixed path — so H.264 video
-            # (Reels) plays in the noVNC view. The bundled Chromium under
-            # /ms-playwright lacks those codecs (MEDIA_ERR_SRC_NOT_SUPPORTED).
-            CHROMIUM=/opt/google/chrome/chrome
-            if [ ! -x "$CHROMIUM" ]; then
-              echo "ERROR: google-chrome not found at $CHROMIUM (wrong image?)" >&2
-              exit 1
-            fi
-            echo "[chrome-service] using browser: $($CHROMIUM --version 2>/dev/null || echo "$CHROMIUM")"
-
-            # -listen tcp enables localhost:6099 so the noVNC sidecar can
-            # attach over the pod's shared network ns (Ubuntu 24.04
-            # defaults Xvfb to -nolisten tcp). -ac disables X access
-            # control; safe because Xvfb only listens on the pod's lo.
-            Xvfb :99 -screen 0 1920x1080x24 -listen tcp -ac &
-            sleep 1
-
-            mkdir -p /profile/chromium-data ${local.snapshot_dir}
-
-            # Why a bridge?
-            # Stock Chrome binaries silently ignore --remote-debugging-address
-            # (the flag is gated by a build-time switch most distributions don't
-            # set), so CDP always binds 127.0.0.1:<port> regardless of what we
-            # pass. The K8s liveness/readiness probe + cluster callers reach
-            # the pod via its pod-IP, never localhost.
-            # Fix: chromium listens on 127.0.0.1:9223 (hidden internal port),
-            # cdp_bridge.py listens on 0.0.0.0:9222 (the public CDP port) and
-            # transparently forwards. K8s Service, probes, NetworkPolicy all
-            # stay on 9222 — no caller-side changes needed.
-            # (Microsoft playwright image ships python3 but not socat, so the
-            # bridge is a tiny stdlib script — see files/cdp_bridge.py.)
-            python3 /scripts/cdp_bridge.py &
-            BRIDGE_PID=$!
-            trap "kill $BRIDGE_PID 2>/dev/null" EXIT
-
-            exec "$CHROMIUM" \
-              --remote-debugging-port=9223 \
-              --remote-allow-origins=* \
-              --user-data-dir=/profile/chromium-data \
-              --no-sandbox \
-              --no-first-run \
-              --no-default-browser-check \
-              --disable-blink-features=AutomationControlled \
-              --disable-features=IsolateOrigins,site-per-process \
-              --autoplay-policy=no-user-gesture-required \
-              --disable-dev-shm-usage \
-              --password-store=basic \
-              --use-mock-keychain \
-              --window-position=0,0 \
-              --window-size=1920,1080 \
-              about:blank
+            export NEKO_WEBRTC_ICESERVERS_BACKEND="$(cat /ice/backend.json)"
+            export NEKO_WEBRTC_ICESERVERS_FRONTEND="$(cat /ice/frontend.json)"
+            export NEKO_MEMBER_MULTIUSER_USER_PASSWORD="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+            exec /usr/bin/supervisord -c /etc/neko/supervisord.conf
             EOT
           ]
 
           env {
-            name  = "DISPLAY"
-            value = ":99"
+            name  = "NEKO_DESKTOP_SCREEN"
+            value = local.neko_screen
+          }
+          # Authentik forward-auth on the ingress is the outer gate; this
+          # password is the inner one, so a single misconfigured gate doesn't
+          # expose a browser holding every logged-in cookie. Bookmark with
+          # ?pwd=<value> to keep it one click.
+          env {
+            name = "NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "chrome-service-secrets"
+                key  = "neko_admin_password"
+              }
+            }
           }
           env {
-            name  = "HOME"
-            value = "/profile"
+            name  = "NEKO_MEMBER_PROVIDER"
+            value = "multiuser"
+          }
+          # Single-owner browser: whoever connects gets control without having to
+          # request it, and a dropped WebSocket resumes the same session.
+          env {
+            name  = "NEKO_SESSION_IMPLICIT_HOSTING"
+            value = "true"
+          }
+          env {
+            name  = "NEKO_SESSION_MERCIFUL_RECONNECT"
+            value = "true"
+          }
+          env {
+            name  = "NEKO_SERVER_BIND"
+            value = "0.0.0.0:8080"
+          }
+          # Trust Traefik's forwarded headers (neko is always behind the ingress).
+          env {
+            name  = "NEKO_SERVER_PROXY"
+            value = "true"
+          }
+          # Full ICE, not ice-lite: neko has to gather the coturn relay candidate
+          # itself, since its host candidate is an unroutable pod IP.
+          env {
+            name  = "NEKO_WEBRTC_ICELITE"
+            value = "false"
+          }
+          env {
+            name  = "NEKO_WEBRTC_UDPMUX"
+            value = tostring(local.neko_udpmux)
+          }
+          # Fallback for a client that cannot establish WebRTC at all: JPEG over
+          # HTTP. Upstream is explicit that it is high-latency and not a primary
+          # stream — it fills exactly the role noVNC used to.
+          env {
+            name  = "NEKO_CAPTURE_SCREENCAST_ENABLED"
+            value = "true"
+          }
+          env {
+            name  = "NEKO_CAPTURE_SCREENCAST_RATE"
+            value = "10/1"
+          }
+          env {
+            name  = "NEKO_CAPTURE_SCREENCAST_QUALITY"
+            value = "60"
           }
 
           port {
-            name           = "cdp"
-            container_port = 9222
+            name           = "http"
+            container_port = 8080
             protocol       = "TCP"
           }
+          # Media mux. Viewers reach it through the coturn relay, so this needs
+          # no Service port and no NetworkPolicy ingress rule — the relay traffic
+          # rides the allocation neko opens outbound.
+          port {
+            name           = "media"
+            container_port = local.neko_udpmux
+            protocol       = "UDP"
+          }
 
-          # Chrome's CDP endpoint serves /json/version once it's bound;
-          # TCP-open is enough for readiness.
-          # Real CDP health check, NOT tcp_socket: a wedged Chrome on about:blank
-          # keeps :9222 OPEN so a TCP probe passes and the wedge runs undetected
-          # (the 6.5h-wedge class). GET /json/version only answers when the
-          # DevTools HTTP server is live. python3 is present (cdp_bridge.py runs
-          # in this container).
+          # One probe, two failure modes. `/health` catches a dead neko server;
+          # the CDP `/json/version` check catches the wedged-Chrome class that a
+          # TCP probe misses (a wedged Chrome keeps its port open). Restarting
+          # this container takes supervisord down with it, so Chrome comes back.
           liveness_probe {
             exec {
-              command = ["python3", "-c",
-              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9222/json/version',timeout=5).status==200 else 1)"]
+              command = ["sh", "-c",
+                "curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null && curl -fsS --max-time 5 http://127.0.0.1:9223/json/version >/dev/null"
+              ]
             }
-            initial_delay_seconds = 30
+            initial_delay_seconds = 60
             period_seconds        = 30
             failure_threshold     = 3
           }
           readiness_probe {
-            tcp_socket { port = 9222 }
+            http_get {
+              path = "/health"
+              port = 8080
+            }
             initial_delay_seconds = 10
             period_seconds        = 10
           }
+          # Xorg + openbox + PulseAudio + Chrome is a longer boot than the bare
+          # Chrome launch this replaced; 3 minutes of grace before liveness arms.
           startup_probe {
-            tcp_socket { port = 9222 }
+            http_get {
+              path = "/health"
+              port = 8080
+            }
             period_seconds    = 5
-            failure_threshold = 24 # up to 2 minutes
+            failure_threshold = 36
           }
 
           volume_mount {
@@ -320,21 +461,27 @@ resource "kubernetes_deployment" "chrome_service" {
             name       = "dshm"
             mount_path = "/dev/shm"
           }
-          # /scripts/cdp_bridge.py provides the 0.0.0.0:9222 → 127.0.0.1:9223
-          # TCP forwarder (see entrypoint comment above for why).
           volume_mount {
-            name       = "scripts"
-            mount_path = "/scripts"
+            name       = "ice"
+            mount_path = "/ice"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "neko-conf"
+            mount_path = "/etc/neko/supervisord/google-chrome.conf"
+            sub_path   = "google-chrome.conf"
             read_only  = true
           }
 
-          # Raised from 1500Mi/2624Mi: the chrome container OOMKilled (exit 137)
-          # at the 2624Mi ceiling at 1280x720 (2026-07-12); 1920x1080 renders
-          # more, so give it headroom.
+          # CPU request covers the software x264 encoder while a viewer is
+          # attached (~1.2 cores at 1080p, ~0 idle) — the old 200m request would
+          # be squeezed under node contention and drop frames. No CPU limit, per
+          # house policy. Memory keeps the previous 4Gi ceiling; the 1Gi
+          # /dev/shm tmpfs counts against it.
           resources {
             requests = {
-              cpu    = "200m"
-              memory = "2Gi"
+              cpu    = "1"
+              memory = "3Gi"
             }
             limits = {
               memory = "4Gi"
@@ -342,46 +489,47 @@ resource "kubernetes_deployment" "chrome_service" {
           }
         }
 
-        # noVNC sidecar — exposes a live HTML5 view of the headed Chromium
-        # session via x11vnc + websockify, gated by the Authentik-protected
-        # ingress at chrome.viktorbarzin.me. CDP port 9222 (the new
-        # Playwright endpoint) stays internal-only.
+        # cdp-bridge sidecar — republishes Chrome's loopback CDP on the pod IP.
+        # Stock Chrome ignores --remote-debugging-address and rejects non-local
+        # Host headers, so files/cdp_bridge.py rewrites Host and forwards
+        # 0.0.0.0:9222 → 127.0.0.1:9223. This used to run inside the browser
+        # container; the neko image ships no python3, and the pod's shared netns
+        # makes a sidecar equivalent. Callers keep hitting :9222 unchanged.
         container {
-          name = "novnc"
-          # Phase 3 cutover 2026-05-07 — Forgejo registry consolidation.
-          # SHA-pinned (not :latest): Keel is OFF for this deployment
-          # (keel.sh/policy=never, below) and :latest/IfNotPresent won't re-pull a
-          # rebuilt image, so a new noVNC entrypoint only deploys when this digest
-          # is bumped here. Bump after build-chrome-service-novnc.yml pushes a new
-          # SHA tag — then WAIT for that apply pipeline to finish before pushing
-          # anything else: Woodpecker cancel-previous SIGKILLs an in-flight apply
-          # mid-run (memory id=1957), which is exactly how the 2026-06-27 apply got
-          # killed. 2026-06-27: bumped to land the x11vnc-supervision self-heal fix
-          # (noVNC went black after a browser-container restart; see
-          # docs/architecture/chrome-service.md "x11vnc supervision").
-          image             = "ghcr.io/viktorbarzin/chrome-service-novnc:19d0f0933a8ec75be6cfa077db88e0f8c3760f40"
+          name              = "cdp-bridge"
+          image             = local.python_image
           image_pull_policy = "IfNotPresent"
-          # Cap RLIMIT_NOFILE before the entrypoint runs. Containerd grants pods
-          # nofile=2^31; x11vnc sweeps the whole fd table on each client connect,
-          # so every VNC connection hangs on "Connecting" until it times out
-          # (fd-sweep bug, same as android-emulator). entrypoint.sh also sets this;
-          # the wrapper keeps the cap deterministic even off a cached image.
-          command = ["bash", "-c", "ulimit -n 65536; exec /entrypoint.sh"]
+          command           = ["python3", "/scripts/cdp_bridge.py"]
+
           port {
-            name           = "http"
-            container_port = 6080
+            name           = "cdp"
+            container_port = 9222
             protocol       = "TCP"
           }
-          # x11vnc connects to the chrome-service container's Xvfb over
-          # localhost TCP (shared pod network). Same uid 1000 as chrome
-          # container so we can read MIT-MAGIC-COOKIE if Xvfb adds one.
-          # 256Mi (was 96Mi): the 96Mi cap OOMKilled (exit 137) the sidecar under
-          # ACTIVE VNC use — x11vnc + websockify framebuffer/encode buffers spike
-          # well past idle (~37Mi) when a client streams the 1280x720 screen, so the
-          # noVNC view froze/hung on connect. Bumped 2026-06-28.
+          # Readiness gates the chrome-service Service: no CDP caller is routed
+          # here until the bridge can actually reach Chrome. Chrome's own health
+          # is the neko container's liveness probe, not this one — restarting the
+          # bridge would not clear a wedged browser.
+          readiness_probe {
+            tcp_socket { port = 9222 }
+            initial_delay_seconds = 5
+            period_seconds        = 10
+          }
+          liveness_probe {
+            tcp_socket { port = 9222 }
+            initial_delay_seconds = 15
+            period_seconds        = 30
+          }
+
+          volume_mount {
+            name       = "scripts"
+            mount_path = "/scripts"
+            read_only  = true
+          }
+
           resources {
             requests = { cpu = "10m", memory = "64Mi" }
-            limits   = { memory = "256Mi" }
+            limits   = { memory = "128Mi" }
           }
         }
 
@@ -463,8 +611,10 @@ resource "kubernetes_deployment" "chrome_service" {
         volume {
           name = "dshm"
           empty_dir {
-            medium     = "Memory"
-            size_limit = "512Mi"
+            medium = "Memory"
+            # A `medium: Memory` emptyDir counts against the container memory
+            # limit, so this 1Gi sits inside the neko container's 4Gi ceiling.
+            size_limit = "1Gi"
           }
         }
         volume {
@@ -472,6 +622,19 @@ resource "kubernetes_deployment" "chrome_service" {
           config_map {
             name         = kubernetes_config_map_v1.snapshot_scripts.metadata[0].name
             default_mode = "0555"
+          }
+        }
+        # ICE-server JSON written by the turn-cred initContainer, read by neko.
+        volume {
+          name = "ice"
+          empty_dir {}
+        }
+        # Our Chrome launch flags, mounted over neko's stock supervisord program
+        # file for the browser (files/neko/google-chrome.conf).
+        volume {
+          name = "neko-conf"
+          config_map {
+            name = kubernetes_config_map_v1.neko_conf.metadata[0].name
           }
         }
       }
@@ -484,16 +647,13 @@ resource "kubernetes_deployment" "chrome_service" {
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
-      # container[0]=chrome-service (MS Playwright, pinned via local.image) and
-      # container[1]=novnc (ghcr:latest, ADR-0002 #29) are BOTH TF-managed now.
-      # container[0].image was previously KEEL_IGNORE'd here; that let a stray
-      # clobber to the novnc image stick (chromium-not-found crashloop 2026-06-16)
-      # because TF could not revert the ignored field. Removed so TF re-asserts the
-      # pinned image. Keel is inert (keel.sh/policy=never) and no deploy step touches these.
-      # NOTE: the LIVE pod's container order had drifted to [novnc, chrome-service,
-      # snapshot] vs this file's [chrome-service, novnc, snapshot]; a TF apply reorders
-      # them to match here (harmless), so `containers[0]` differs between live and TF
-      # until the next apply lands — don't be alarmed reading it back mid-reconcile.
+      # Every container image here is TF-managed and digest- or minor-pinned
+      # (neko, and local.python_image for cdp-bridge + snapshot-server); none is
+      # KEEL_IGNORE'd, so a stray clobber gets reverted on the next apply. Keel
+      # is inert for this deployment anyway (keel.sh/policy=never) and no deploy
+      # step touches it. The one exception is the busybox fix-perms initContainer
+      # below, which Kyverno may restamp — init_container[0] is that one; keep it
+      # first in the file so this index keeps pointing at it.
       spec[0].template[0].spec[0].init_container[0].image,
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
@@ -519,6 +679,25 @@ resource "kubernetes_config_map_v1" "snapshot_scripts" {
     # Pool worker Chrome launcher (mounted into broker-created worker pods, which
     # also reuse cdp_bridge.py above). See files/broker/worker_pod.json.
     "worker_entrypoint.sh" = file("${path.module}/files/worker_entrypoint.sh")
+    # Mints the ephemeral coturn credential + writes neko's ICE-server JSON at
+    # pod start (turn-cred initContainer). Unit-tested: files/turn_cred_test.py.
+    "turn_cred.py" = file("${path.module}/files/turn_cred.py")
+  }
+}
+
+# --- ConfigMap: neko's Chrome launch flags ---
+# Mounted (subPath) over /etc/neko/supervisord/google-chrome.conf in the stock
+# upstream image, which is how the master keeps chrome-service's own flag set —
+# the persistent profile path, CDP, and the anti-bot flags — without a custom
+# image or a fork. Per-flag rationale lives in the file itself.
+resource "kubernetes_config_map_v1" "neko_conf" {
+  metadata {
+    name      = "neko-conf"
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+    labels    = local.labels
+  }
+  data = {
+    "google-chrome.conf" = file("${path.module}/files/neko/google-chrome.conf")
   }
 }
 
@@ -544,8 +723,9 @@ resource "kubernetes_service" "chrome_service" {
   }
 }
 
-# noVNC view (Authentik-gated, exposed via ingress).
-resource "kubernetes_service" "chrome_novnc" {
+# neko view — the UI + WebSocket signaling (Authentik-gated, via the ingress).
+# WebRTC media does NOT pass through here; it relays via coturn.
+resource "kubernetes_service" "chrome_view" {
   metadata {
     name      = "chrome"
     namespace = kubernetes_namespace.chrome_service.metadata[0].name
@@ -557,10 +737,18 @@ resource "kubernetes_service" "chrome_novnc" {
     port {
       name        = "http"
       port        = 80
-      target_port = 6080
+      target_port = 8080
       protocol    = "TCP"
     }
   }
+}
+
+# Renamed from chrome_novnc when neko replaced noVNC (2026-08-11). Without this
+# Terraform would destroy+recreate the Service, changing its ClusterIP for no
+# reason; the Service name on the wire is unchanged.
+moved {
+  from = kubernetes_service.chrome_novnc
+  to   = kubernetes_service.chrome_view
 }
 
 # Snapshot-server endpoint (bearer-gated, exposed via ingress sub-path
@@ -593,12 +781,12 @@ module "ingress" {
   auth            = "required"
   # ADR-0023: live shared-browser sessions — Chrome Users only (admins via bypass).
   allowed_groups = ["Chrome Users"]
-  # noVNC defaults to /vnc.html — auto-redirect / there.
+  # neko serves its UI at / and the signaling WebSocket at /ws on the same host.
   ingress_path = ["/"]
   extra_annotations = {
     "gethomepage.dev/enabled"     = "true"
     "gethomepage.dev/name"        = "Chrome Service"
-    "gethomepage.dev/description" = "Live noVNC view of headed Chromium"
+    "gethomepage.dev/description" = "Live neko WebRTC view of headed Chrome"
     "gethomepage.dev/icon"        = "chromium.png"
     "gethomepage.dev/group"       = "Infrastructure"
   }
@@ -630,9 +818,11 @@ module "ingress_snapshot" {
 
 # --- NetworkPolicy: scoped ingress.
 # - TCP/9222 (Chromium CDP): only from labelled client namespaces.
-# - TCP/6080 (noVNC HTTP+WS): only from the traefik namespace (public path
-#   is chrome.viktorbarzin.me → Traefik → sidecar; Authentik forward-auth
-#   gates external access at the Traefik layer).
+# - TCP/8080 (neko UI + WS signaling): only from the traefik namespace (public
+#   path is chrome.viktorbarzin.me → Traefik → neko; Authentik forward-auth
+#   gates external access at the Traefik layer, and neko's own admin password
+#   is the inner gate). WebRTC media needs no rule — it relays through coturn
+#   over the allocation neko opens outbound, which is stateful return traffic.
 # - TCP/8088 (snapshot-server): only from the traefik namespace
 #   (chrome.viktorbarzin.me/api/snapshot → Traefik → sidecar; bearer token
 #   is the gate inside snapshot-server.py).
@@ -688,7 +878,7 @@ resource "kubernetes_network_policy_v1" "ws_ingress" {
         }
       }
       ports {
-        port     = "6080"
+        port     = "8080"
         protocol = "TCP"
       }
       ports {

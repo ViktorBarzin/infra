@@ -155,6 +155,13 @@ resource "kubernetes_deployment" "broker" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Kyverno's inject-keel-annotations + tier ClusterPolicies stamp these;
+      # without the ignores any apply of this stack strips them from the live
+      # object and they only come back when the Deployment is recreated.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].labels["tier"],
     ]
   }
 }
