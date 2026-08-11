@@ -390,6 +390,17 @@ resource "kubernetes_deployment" "chrome_service" {
             name  = "NEKO_WEBRTC_UDPMUX"
             value = tostring(local.neko_udpmux)
           }
+          # H.264 explicitly. Without this neko logs "no video pipelines
+          # specified, using default" and builds a VP8 pipeline (vp8enc,
+          # ~2 Mbps) — verified live on the first rollout. H.264 is what this
+          # display was sized and chosen for: the ~25 fps @1080p / ~1.2 cores
+          # measurement is software x264, and viewers get hardware H.264 DECODE
+          # far more often than VP8. The proxy sets this only inside its GPU
+          # branch, which is why it wasn't obvious by comparison.
+          env {
+            name  = "NEKO_CAPTURE_VIDEO_CODEC"
+            value = "h264"
+          }
           # Fallback for a client that cannot establish WebRTC at all: JPEG over
           # HTTP. Upstream is explicit that it is high-latency and not a primary
           # stream — it fills exactly the role noVNC used to.
