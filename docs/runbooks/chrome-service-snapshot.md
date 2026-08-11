@@ -47,7 +47,7 @@ Claude sessions per user, isolated by `--isolated`), wired into their Claude in
 ### Log into a new site (warm the profile)
 
 1. Open `https://chrome.viktorbarzin.me/` (Authentik will gate).
-2. The noVNC view of the in-cluster headed chromium loads. Click on the
+2. The neko view of the in-cluster headed Chrome loads. Click on the
    browser window, navigate, log in.
 3. Cookies land in `/profile/chromium-data/Default/Cookies` on the PVC.
 4. Within ≤60 min, the snapshot-harvester CronJob picks them up and
@@ -167,7 +167,7 @@ sudo systemctl restart playwright-mcp@<user>.service
 ### Snapshot file is suspiciously small or empty cookies array
 
 The persistent chromium context isn't holding any cookies. Probably
-means the user hasn't logged into anything via noVNC, or chromium was
+means the user hasn't logged into anything via the neko view, or Chrome was
 relaunched without preserving `/profile/chromium-data`.
 
 **Diagnose**:
@@ -177,7 +177,7 @@ kubectl -n chrome-service exec deploy/chrome-service -c chrome-service -- \
 ```
 
 A populated `Cookies` SQLite file should be several hundred KB once
-real logins exist. If it's missing or empty, log in via noVNC.
+real logins exist. If it's missing or empty, log in via the neko view.
 
 ## Token rotation
 

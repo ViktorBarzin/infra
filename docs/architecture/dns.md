@@ -52,6 +52,7 @@ graph TB
             SplitHorizon[split-horizon-sync<br/>every 6h]
             DNSOpt[dns-optimization<br/>every 6h]
             PassSync[password-sync<br/>every 6h]
+            StaticRec[static-records<br/>hourly]
             DNSSync[phpipam-dns-sync<br/>every 15min]
         end
     end
@@ -100,7 +101,7 @@ graph TB
 
 | Stack | Path | DNS Resources |
 |-------|------|---------------|
-| Technitium | `stacks/technitium/` | 3 deployments, services, PVCs, 4 CronJobs, CoreDNS ConfigMap |
+| Technitium | `stacks/technitium/` | 3 deployments, services, PVCs, 5 CronJobs, CoreDNS ConfigMap |
 | NodeLocal DNSCache | `stacks/nodelocal-dns/` | DaemonSet (5 pods), ConfigMap, kube-dns-upstream Service, headless metrics Service |
 | Cloudflared | `stacks/cloudflared/` | Cloudflare DNS records (A, AAAA, CNAME, MX, TXT), tunnel config |
 | phpIPAM | `stacks/phpipam/` | dns-sync CronJob, pfsense-import CronJob |
@@ -418,6 +419,7 @@ Summary:
 | `technitium-password-sync` | `0 */6 * * *` | technitium | Vault-rotated MySQL password → Technitium config, configure PG logging |
 | `technitium-split-horizon-sync` | `15 */6 * * *` | technitium | Split Horizon + DNS Rebinding Protection on all 3 instances |
 | `technitium-dns-optimization` | `30 */6 * * *` | technitium | Min cache TTL 60s, emrsn.org stub zone |
+| `technitium-static-records` | `35 * * * *` | technitium | Internal-only A records for names served by a LoadBalancer rather than an Ingress (currently `turn`) |
 | `phpipam-dns-sync` | `*/15 * * * *` | phpipam | Bidirectional phpIPAM ↔ Technitium DNS sync |
 | `phpipam-pfsense-import` | `0 * * * *` | phpipam | Import Kea DHCP leases + ARP from pfSense |
 

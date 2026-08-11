@@ -116,11 +116,13 @@ resource "kubernetes_deployment" "worker_warm" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # As in broker.tf: Kyverno stamps these, so leave them to Kyverno rather
-      # than stripping them on every apply. keel.sh/policy is NOT ignored here —
-      # this file deliberately sets it to "never" and TF should re-assert that.
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      # NO Keel-annotation ignores here, deliberately: this Deployment sets the
+      # label keel.sh/policy = "never" (above), which Kyverno's
+      # inject-keel-annotations ClusterPolicy explicitly excludes — so nothing
+      # re-injects keel.sh/trigger or pollSchedule, and the stale ones the live
+      # object still carries are correctly stripped on apply. Only the tier
+      # label, stamped by the separate resource-governance policy, needs the
+      # ignore.
       metadata[0].labels["tier"],
     ]
   }

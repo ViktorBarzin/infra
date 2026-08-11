@@ -136,7 +136,7 @@ apple-health-data, audiblez-web, plotting-book, insta2spotify,
 audiobook-search) now also land on ghcr.
 - **PUBLIC ghcr packages:** beadboard, nextcloud-todos, claude-agent-service,
   claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway,
-  chrome-service-novnc, android-emulator.
+  android-emulator.
 - **PRIVATE ghcr:** f1-stream, job-hunter, instagram-poster, payslip-ingest,
   wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli,
   infra-ci, k8s-portal, excalidraw-library, chesscom-streak. Pulled via the Kyverno-synced `ghcr-credentials` allowlist
@@ -151,7 +151,7 @@ audiobook-search) now also land on ghcr.
 **Infra-owned images (issues #29/#30)** build on GHA workflows IN the infra
 repo's own `.github/workflows/` (added to the GitHub lineage via PR; the
 github↔forgejo divergence was deliberately NOT reconciled):
-`build-chrome-service-novnc.yml` + `build-android-emulator.yml` → public ghcr;
+`build-android-emulator.yml` → public ghcr;
 `build-cli.yml` → DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli`;
 `build-infra-ci.yml` → `ghcr.io/viktorbarzin/infra-ci`; `build-k8s-portal.yml` →
 PRIVATE `ghcr.io/viktorbarzin/k8s-portal` (Keel-deployed; the LAST in-cluster
