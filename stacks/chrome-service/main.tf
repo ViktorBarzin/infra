@@ -36,10 +36,18 @@ locals {
   # Software x264 at this size costs ~1.2 cores while a viewer is attached, ~0
   # idle; no GPU slice, so the pod keeps floating across node2-5.
   neko_screen = "1920x1080@30"
-  # Fixed WebRTC media mux port. Media reaches viewers through the coturn relay
-  # (the pod-IP host candidate isn't routable off-cluster), so this port needs no
-  # ingress rule — relay traffic rides the allocation neko itself opens.
+  # Fixed WebRTC media mux port, published DIRECTLY on its own MetalLB address
+  # (see kubernetes_service.chrome_media). Viewers send media straight here, which
+  # is what actually carries the stream — the coturn relay stays configured as a
+  # fallback but cannot reach an external client today, because the ISP router in
+  # front of pfSense forwards only UDP 3478 and not coturn's 49152-49252 relay
+  # range (measured 2026-08-11).
   neko_udpmux = 59000
+  # Dedicated MetalLB address for the media port. Must NOT be the shared .200:
+  # ETP=Local (needed so the real client address survives) cannot coexist with the
+  # shared IP's ETP=Cluster. Reachable from the LAN, the London WireGuard tunnel
+  # and Headscale, all of which route 10.0.0.0/8.
+  media_lb_ip = "10.0.20.206"
 }
 
 # --- Namespace ---
@@ -401,29 +409,29 @@ resource "kubernetes_deployment" "chrome_service" {
             name  = "NEKO_WEBRTC_UDPMUX"
             value = tostring(local.neko_udpmux)
           }
-          # Pin the NAT-1-to-1 mapping to our own pod IP, which makes it a no-op.
+          # Advertise the media LoadBalancer address as the ICE host candidate, so
+          # viewers connect to the media port DIRECTLY and carry no dependency on
+          # a relay. Anything that routes 10.0.0.0/8 — the LAN, the London
+          # WireGuard tunnel, Headscale — reaches it.
           #
-          # Left unset, neko HTTP-GETs checkip.amazonaws.com at startup and
-          # advertises the result — our WAN address — as its ICE *host* candidate.
-          # Nothing forwards UDP 59000 in from the WAN, so the client offers/sees
-          # an unreachable candidate and ICE never leaves `checking`: the UI logs
-          # in and the video never arrives (observed 2026-08-11,
-          # `nat1to1=176.12.22.76` in the webrtc startup line).
+          # Why not the relay: coturn's relayed addresses are advertised on the WAN
+          # address, and the ISP router in front of pfSense forwards only UDP 3478,
+          # not the 49152-49252 relay range. Measured 2026-08-11 — pfSense's rdr
+          # counter for that range does not move when an external host sends to a
+          # relayed address, so the packet is dropped upstream of the firewall. No
+          # relay-based candidate pair can complete from outside in either
+          # direction until that forward exists, which is a change on the ISP
+          # device rather than anything in this repo. Direct media needs none of
+          # it. coturn stays in the ICE list as a fallback for the day it is fixed.
           #
-          # The working proxy browsers have `nat1to1=` EMPTY, but only by accident:
-          # gluetun's kill-switch blocks their public-IP lookup. Pinning the pod IP
-          # gets the same result deterministically and with no startup HTTP call —
-          # the host candidate stays the (off-cluster-unroutable, harmless) pod IP,
-          # and media connects over the coturn relay candidate, which is the path
-          # that actually carries it. Verified from this pod: TURN Allocate against
-          # 10.0.20.200 returns a relay address.
+          # Left UNSET this variable is actively harmful: neko then HTTP-GETs
+          # checkip.amazonaws.com and advertises our WAN address as the host
+          # candidate (nothing forwards 59000 either), and pion suppresses srflx
+          # gathering once a 1:1 mapping exists — so the client is offered nothing
+          # reachable and ICE sits at `checking` with the UI logged in and no video.
           env {
-            name = "NEKO_WEBRTC_NAT1TO1"
-            value_from {
-              field_ref {
-                field_path = "status.podIP"
-              }
-            }
+            name  = "NEKO_WEBRTC_NAT1TO1"
+            value = local.media_lb_ip
           }
           # H.264, explicitly, with an explicit pipeline.
           #
@@ -834,6 +842,40 @@ moved {
   to   = kubernetes_service.chrome_view
 }
 
+# WebRTC media, published directly on its own MetalLB address.
+#
+# This is what carries the stream. The UI and signaling ride the Traefik ingress
+# (TCP), but WebRTC media is UDP and cannot: neko advertises this address as its
+# ICE host candidate (NEKO_WEBRTC_NAT1TO1), and any viewer that routes
+# 10.0.0.0/8 — LAN, the London tunnel, Headscale — sends media straight here.
+#
+# ETP=Local so the viewer's real address survives; that also means only the node
+# running this pod answers for the IP, which MetalLB handles by announcing from
+# wherever the endpoint is. A dedicated IP is required either way, since ETP=Local
+# cannot share an IP with the ETP=Cluster services on .200.
+resource "kubernetes_service" "chrome_media" {
+  metadata {
+    name      = "chrome-media"
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+    labels    = local.labels
+    annotations = {
+      "metallb.io/loadBalancerIPs" = local.media_lb_ip
+    }
+  }
+
+  spec {
+    type                    = "LoadBalancer"
+    external_traffic_policy = "Local"
+    selector                = local.labels
+    port {
+      name        = "media"
+      port        = local.neko_udpmux
+      target_port = local.neko_udpmux
+      protocol    = "UDP"
+    }
+  }
+}
+
 # Snapshot-server endpoint (bearer-gated, exposed via ingress sub-path
 # chrome.viktorbarzin.me/api/snapshot — auth=none at the ingress layer
 # because the bearer check happens inside snapshot_server.py).
@@ -904,8 +946,9 @@ module "ingress_snapshot" {
 # - TCP/8080 (neko UI + WS signaling): only from the traefik namespace (public
 #   path is chrome.viktorbarzin.me → Traefik → neko; Authentik forward-auth
 #   gates external access at the Traefik layer, and neko's own admin password
-#   is the inner gate). WebRTC media needs no rule — it relays through coturn
-#   over the allocation neko opens outbound, which is stateful return traffic.
+#   is the inner gate).
+# - UDP/59000 (WebRTC media): from the LANs, remote-site tunnels and the tailnet
+#   — the networks that can route to the media LoadBalancer IP.
 # - TCP/8088 (snapshot-server): only from the traefik namespace
 #   (chrome.viktorbarzin.me/api/snapshot → Traefik → sidecar; bearer token
 #   is the gate inside snapshot-server.py).
@@ -967,6 +1010,26 @@ resource "kubernetes_network_policy_v1" "ws_ingress" {
       ports {
         port     = "8088"
         protocol = "TCP"
+      }
+    }
+    # WebRTC media, straight from the viewer to the media LoadBalancer address.
+    # ETP=Local preserves the real source, so this admits the networks that can
+    # actually route to that IP: the homelab LANs, the remote-site tunnels
+    # (London arrives as 192.168.8.x) and the Headscale tailnet. Deliberately not
+    # 0.0.0.0/0 — an off-LAN viewer cannot reach this IP anyway.
+    ingress {
+      from {
+        ip_block { cidr = "10.0.0.0/8" }
+      }
+      from {
+        ip_block { cidr = "192.168.0.0/16" }
+      }
+      from {
+        ip_block { cidr = "100.64.0.0/10" }
+      }
+      ports {
+        port     = tostring(local.neko_udpmux)
+        protocol = "UDP"
       }
     }
   }
