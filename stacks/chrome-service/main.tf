@@ -224,11 +224,22 @@ resource "kubernetes_deployment" "chrome_service" {
           }
         }
 
-        # Fix profile dir ownership (PVC may have root-owned files from prior run).
+        # Fix profile dir ownership (PVC may have root-owned files from prior run)
+        # and clear Chrome's stale profile singleton lock.
+        #
+        # The lock is a symlink Chrome writes as <hostname>-<pid>. A pod name
+        # changes on every rollout, so the lock left behind by the previous pod
+        # names a host Chrome cannot verify, and it refuses to start with "The
+        # profile appears to be in use by another Google Chrome process on
+        # another computer" — Chrome then never launches at all (observed
+        # 2026-08-11: SingletonLock -> chrome-service-5786cb9b7f-b5p5w-1).
+        # Removing them here is safe: these three files are per-instance lock
+        # artifacts, never user data, and the Recreate strategy guarantees the
+        # previous pod is gone before this one starts.
         init_container {
           name    = "fix-perms"
           image   = "busybox:1.37"
-          command = ["sh", "-c", "chown -R 1000:1000 /profile"]
+          command = ["sh", "-c", "chown -R 1000:1000 /profile && rm -f /profile/chromium-data/Singleton*"]
           security_context {
             run_as_user = 0
           }
@@ -390,16 +401,38 @@ resource "kubernetes_deployment" "chrome_service" {
             name  = "NEKO_WEBRTC_UDPMUX"
             value = tostring(local.neko_udpmux)
           }
-          # H.264 explicitly. Without this neko logs "no video pipelines
-          # specified, using default" and builds a VP8 pipeline (vp8enc,
-          # ~2 Mbps) — verified live on the first rollout. H.264 is what this
-          # display was sized and chosen for: the ~25 fps @1080p / ~1.2 cores
-          # measurement is software x264, and viewers get hardware H.264 DECODE
-          # far more often than VP8. The proxy sets this only inside its GPU
-          # branch, which is why it wasn't obvious by comparison.
+          # H.264, explicitly, with an explicit pipeline.
+          #
+          # The codec variable ALONE is not enough: with no pipeline set, neko
+          # logs "no video pipelines specified, using default" and builds a VP8
+          # pipeline (vp8enc, ~2 Mbps) regardless of the codec — verified live on
+          # the first two rollouts. H.264 is what this display was sized and
+          # chosen for: the ~25 fps @1080p / ~1.2 cores figure is a software x264
+          # measurement, and a viewer's browser gets hardware H.264 decode far
+          # more often than VP8.
+          #
+          # Software x264, mirroring the proxy's pipeline shape but with x264enc
+          # in place of its GPU nvh264enc (verified present in this image as
+          # libgstx264.so, with h264parse from libgstvideoparsersbad.so).
+          # zerolatency + veryfast keep interactive latency and CPU down; 4 Mbps
+          # suits 1080p30 (the proxy runs 8 Mbps at 1440p on hardware). The
+          # element names matter — neko looks up `encoder` and `framerate` to
+          # adjust bitrate and fps at runtime.
           env {
             name  = "NEKO_CAPTURE_VIDEO_CODEC"
             value = "h264"
+          }
+          env {
+            name = "NEKO_CAPTURE_VIDEO_PIPELINE"
+            value = join(" ", [
+              "ximagesrc display-name={display} show-pointer=true use-damage=false",
+              "! capsfilter caps=video/x-raw,framerate=30/1 name=framerate",
+              "! videoconvert ! queue ! video/x-raw,format=I420",
+              "! x264enc name=encoder threads=4 bitrate=4000 key-int-max=30",
+              "byte-stream=true tune=zerolatency speed-preset=veryfast",
+              "! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream",
+              "! appsink name=appsink",
+            ])
           }
           # Fallback for a client that cannot establish WebRTC at all: JPEG over
           # HTTP. Upstream is explicit that it is high-latency and not a primary
