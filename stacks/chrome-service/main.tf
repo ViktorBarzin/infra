@@ -516,6 +516,18 @@ resource "kubernetes_deployment" "chrome_service" {
             sub_path   = "google-chrome.conf"
             read_only  = true
           }
+          # Chrome managed policy. The stock image ships one tuned for a public
+          # kiosk browser, and its DeveloperToolsAvailability=2 makes Chrome
+          # refuse every per-page DevTools session (-32001) while still answering
+          # browser-level CDP — which hangs connect_over_cdp for all five callers.
+          # Ours is upstream's file with three values changed; see
+          # files/neko/README.md for the diff and the evidence.
+          volume_mount {
+            name       = "neko-conf"
+            mount_path = "/etc/opt/chrome/policies/managed/policies.json"
+            sub_path   = "policies.json"
+            read_only  = true
+          }
 
           # CPU request covers the software x264 encoder while a viewer is
           # attached (~1.2 cores at 1080p, ~0 idle) — the old 200m request would
@@ -729,11 +741,13 @@ resource "kubernetes_config_map_v1" "snapshot_scripts" {
   }
 }
 
-# --- ConfigMap: neko's Chrome launch flags ---
-# Mounted (subPath) over /etc/neko/supervisord/google-chrome.conf in the stock
-# upstream image, which is how the master keeps chrome-service's own flag set —
-# the persistent profile path, CDP, and the anti-bot flags — without a custom
-# image or a fork. Per-flag rationale lives in the file itself.
+# --- ConfigMap: neko's Chrome launch flags + managed policy ---
+# Both keys are mounted (subPath) over files the stock upstream image ships, which
+# is how the master keeps chrome-service's own browser behaviour without a custom
+# image or a fork: the supervisord program file carries our launch flags and the
+# persistent profile path, and policies.json re-enables the DevTools and incognito
+# that upstream's kiosk policy disables. Rationale + evidence:
+# files/neko/README.md.
 resource "kubernetes_config_map_v1" "neko_conf" {
   metadata {
     name      = "neko-conf"
@@ -742,6 +756,7 @@ resource "kubernetes_config_map_v1" "neko_conf" {
   }
   data = {
     "google-chrome.conf" = file("${path.module}/files/neko/google-chrome.conf")
+    "policies.json"      = file("${path.module}/files/neko/policies.json")
   }
 }
 
