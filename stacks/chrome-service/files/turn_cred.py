@@ -83,7 +83,7 @@ def main():
         name=os.environ.get("TURN_NAME", "chrome-service"),
         ttl=int(os.environ.get("TURN_TTL", str(30 * 24 * 3600))),
         now=time.time(),
-        backend_url=os.environ.get("COTURN_BACKEND_URL", "turn:10.0.20.200:3478"),
+        backend_url=os.environ.get("COTURN_BACKEND_URL", "turn:10.0.20.205:3478"),
         frontend_url=os.environ.get("COTURN_FRONTEND_URL", "turn:turn.viktorbarzin.me:3478"),
         stun_url=os.environ.get("COTURN_STUN_URL", "stun:turn.viktorbarzin.me:3478"),
     )

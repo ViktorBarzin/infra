@@ -43,12 +43,12 @@ class MintTurnCredTest(unittest.TestCase):
 
 
 class IceServersTest(unittest.TestCase):
-    URLS = ("turn:10.0.20.200:3478", "turn:turn.example:3478", "stun:turn.example:3478")
+    URLS = ("turn:10.0.20.205:3478", "turn:turn.example:3478", "stun:turn.example:3478")
 
     def test_with_credential_backend_carries_turn_only(self):
         backend, _ = turn_cred.ice_servers(*self.URLS, username="u", password="p")
         self.assertEqual(
-            backend, [{"urls": ["turn:10.0.20.200:3478"], "username": "u", "credential": "p"}]
+            backend, [{"urls": ["turn:10.0.20.205:3478"], "username": "u", "credential": "p"}]
         )
 
     def test_with_credential_frontend_prefers_turn_then_stun(self):
@@ -81,7 +81,7 @@ class WriteIceFilesTest(unittest.TestCase):
                 name="chrome-service",
                 ttl=600,
                 now=1000,
-                backend_url="turn:10.0.20.200:3478",
+                backend_url="turn:10.0.20.205:3478",
                 frontend_url="turn:turn.example:3478",
                 stun_url="stun:turn.example:3478",
             )
