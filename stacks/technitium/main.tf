@@ -13,13 +13,13 @@ locals {
 }
 
 module "technitium" {
-  source              = "./modules/technitium"
-  tls_secret_name     = var.tls_secret_name
-  mysql_host          = var.mysql_host
-  postgresql_host     = var.postgresql_host
-  homepage_token      = local.homepage_credentials["technitium"]["token"]
-  technitium_username = data.vault_kv_secret_v2.secrets.data["technitium_username"]
-  technitium_password = data.vault_kv_secret_v2.secrets.data["technitium_password"]
-  dbaas_root_password = data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]
-  tier                = local.tiers.core
+  source                         = "./modules/technitium"
+  tls_secret_name                = var.tls_secret_name
+  mysql_host                     = var.mysql_host
+  postgresql_host                = var.postgresql_host
+  homepage_token                 = local.homepage_credentials["technitium"]["token"]
+  technitium_username            = data.vault_kv_secret_v2.secrets.data["technitium_username"]
+  technitium_password            = data.vault_kv_secret_v2.secrets.data["technitium_password"]
+  dbaas_postgresql_root_password = data.vault_kv_secret_v2.secrets.data["dbaas_postgresql_root_password"]
+  tier                           = local.tiers.core
 }

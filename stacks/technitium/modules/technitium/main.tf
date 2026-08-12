@@ -8,7 +8,12 @@ variable "technitium_password" {
   type      = string
   sensitive = true
 }
-variable "dbaas_root_password" {
+# CNPG root credential. NOTE the key name: in `secret/platform`,
+# `dbaas_root_password` is the MySQL root password and only
+# `dbaas_postgresql_root_password` authenticates to Postgres (as user `root`,
+# not `postgres`). Other stacks read a `dbaas_root_password` that IS the PG one
+# because they read their own Vault path — don't copy the name across paths.
+variable "dbaas_postgresql_root_password" {
   type      = string
   sensitive = true
 }
@@ -462,7 +467,7 @@ resource "kubernetes_job" "pg_db_init" {
               set -e
               # -d postgres: psql defaults the database name to the username, and
               # the root user has no root-named database, so be explicit.
-              export PGPASSWORD='${var.dbaas_root_password}'
+              export PGPASSWORD='${var.dbaas_postgresql_root_password}'
               psql -h ${var.postgresql_host} -U root -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='technitium'" | grep -q 1 || \
                 psql -h ${var.postgresql_host} -U root -d postgres -c "CREATE DATABASE technitium OWNER technitium"
               psql -h ${var.postgresql_host} -U root -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE technitium TO technitium"
@@ -657,21 +662,27 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (Postgres)" --data-urlencode "config=$$PG_CONFIG"
                 echo "PG logging configured on primary"
 
-                # Cap on-disk server-log retention. Technitium's LogManager opens
-                # the day's log file BEFORE it binds :53, so a full config PVC is a
-                # hard startup failure that no restart can clear. The default 365
-                # days let ~6 weeks of Npgsql exception traces accumulate into 5Gi
-                # and take DNS primary down for 27.6h on 2026-08-04. 7 days is
-                # ample for debugging; Loki holds the rest.
+                # Bound the on-disk log. Technitium's LogManager opens the day's
+                # log file BEFORE it binds :53, so a full config PVC is a hard
+                # startup failure that no restart can clear — that is how the DNS
+                # primary stayed down for 27.6h on 2026-08-04. Two knobs:
+                #   maxLogFileDays=7 — was the 365-day default, so NOTHING was ever
+                #     pruned: 112 daily files / 4.3 GB had accumulated.
+                #   logQueries=false — the primary was writing EVERY query to the
+                #     daily file (~223 MB/day) on top of the PG query log. That
+                #     duplication was the actual volume driver; PG (dns_logs, 90-day
+                #     retention) is the query-log system of record. Secondary and
+                #     tertiary already had it off. Server events (startup, zone
+                #     loads, errors) are governed by enableLogging and are retained.
                 for INST in http://technitium-web:5380 http://technitium-secondary-web:5380 http://technitium-tertiary-web:5380; do
                   L_TOKEN=$$TOKEN
                   if [ "$$INST" != "http://technitium-web:5380" ]; then
                     L_TOKEN=$$(curl -sf "$$INST/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
                   fi
                   if [ -z "$$L_TOKEN" ]; then echo "Login failed for $$INST, skipping log retention"; continue; fi
-                  curl -sf -X POST "$$INST/api/settings/set?token=$$L_TOKEN&maxLogFileDays=7" >/dev/null \
-                    && echo "maxLogFileDays=7 set on $$INST" \
-                    || echo "WARNING: could not set maxLogFileDays on $$INST"
+                  curl -sf -X POST "$$INST/api/settings/set?token=$$L_TOKEN&maxLogFileDays=7&logQueries=false" >/dev/null \
+                    && echo "maxLogFileDays=7 logQueries=false set on $$INST" \
+                    || echo "WARNING: could not set log retention on $$INST"
                 done
 
                 # Uninstall MySQL/SQLite on secondary and tertiary instances too
