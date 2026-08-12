@@ -15,9 +15,12 @@ locals {
 variable "immich_version" {
   type = string
   # Record only — live image is Keel-managed (ignore_changes on the deployments).
-  # Keel auto-applies PATCH releases (v3.0.x) hourly; this var just records the
-  # current floor. Minor/major bumps: change this + `kubectl set image` live.
-  default = "v3.0.2"
+  # Keel auto-applies PATCH **and MINOR** releases hourly since 2026-08-12
+  # (keel.sh/policy = "minor" on immich-api / immich-worker /
+  # immich-machine-learning); this var just records the current floor. Only a
+  # MAJOR bump (v3.x -> v4.x) now needs a hand-landing: change this +
+  # `kubectl set image` live.
+  default = "v3.1.0"
 }
 variable "proxmox_host" { type = string }
 variable "redis_host" { type = string }
@@ -210,13 +213,16 @@ resource "kubernetes_deployment" "immich_server" {
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
+      # Must track the same immich version as immich-api (see the note there);
+      # "minor" set explicitly + kept OUT of ignore_changes so it survives
+      # applies/recreates instead of falling back to Kyverno's "patch" default.
+      "keel.sh/policy" = "minor"
     }
   }
 
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
@@ -441,7 +447,15 @@ resource "kubernetes_deployment" "immich_api" {
       "reloader.stakater.com/search" = "true"
       # Keel keeps this tier on the same immich version as immich-worker
       # (identical-digest requirement across replicas, plan §3.8).
-      "keel.sh/policy"       = "patch"
+      #
+      # "minor" (was "patch", 2026-08-12): patch never crosses a minor, so the
+      # stack sat on v3.0.3 while v3.1.0 was out for two weeks. Set EXPLICITLY
+      # here and deliberately NOT in ignore_changes below, so it survives
+      # applies/recreates — Kyverno's inject-keel-annotations uses an
+      # add-if-absent anchor on policy, so an explicit value wins (same recipe
+      # as vaultwarden, commit 5d785b5a). trigger/pollSchedule stay
+      # Kyverno-injected and stay ignored.
+      "keel.sh/policy"       = "minor"
       "keel.sh/trigger"      = "poll"
       "keel.sh/pollSchedule" = "@every 1h"
     }
@@ -450,7 +464,6 @@ resource "kubernetes_deployment" "immich_api" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
@@ -885,12 +898,24 @@ resource "kubernetes_deployment" "immich-machine-learning" {
     labels = {
       tier = local.tiers.gpu
     }
+    annotations = {
+      # Must track the same immich version as immich-api (see the note there);
+      # "minor" set explicitly + kept OUT of ignore_changes so it survives
+      # applies/recreates instead of falling back to Kyverno's "patch" default.
+      #
+      # CAVEAT (2026-08-12): Keel's hourly tag-list poll for THIS repo currently
+      # fails every run with a ghcr 429 (the repo carries thousands of
+      # per-commit / per-accelerator / PR tags and the walk trips the registry
+      # rate limit mid-pagination), so a new release can land on immich-api and
+      # be missed here. Check `kubectl -n immich get deploy -o wide` after any
+      # immich bump and `kubectl set image` this one if it lagged.
+      "keel.sh/policy" = "minor"
+    }
   }
 
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
