@@ -226,9 +226,20 @@ resource "kubernetes_manifest" "t3_native_ingressroute" {
         },
         # 3. The WebSocket. Its ticket rides the query string, not a header
         #    (authorization/remote.ts:184-190), so rule 1 cannot catch it.
+        #    The ticket is ALSO the discriminator here, and a better one than
+        #    either signal above: the browser's t3 WebSocket is a bare
+        #    `GET /ws` authenticated by the session cookie, while a native
+        #    client always carries `?wsTicket=<signed, ~5min ticket>` — so
+        #    presence of the ticket separates the two on its own, and it is a
+        #    real credential rather than a spoofable header.
+        #    Neither signal from rules 1-2 works for this request: the app's
+        #    WS upgrade sends NO User-Agent (logged as "-" 2026-08-13) while
+        #    still carrying the poisoned Authentik cookie, so requiring either
+        #    of them sent every upgrade to Authentik, which 302s it and kills
+        #    the connection.
         {
           kind        = "Rule"
-          match       = "Host(`t3.viktorbarzin.me`) && Path(`/ws`) && QueryRegexp(`wsTicket`, `.+`) && (!HeaderRegexp(`Cookie`, `authentik_proxy_`) || HeaderRegexp(`User-Agent`, `(?i)^T3Code/`))"
+          match       = "Host(`t3.viktorbarzin.me`) && Path(`/ws`) && QueryRegexp(`wsTicket`, `.+`)"
           priority    = 1000
           middlewares = local.t3_native_middlewares
           services = [{
