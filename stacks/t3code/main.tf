@@ -162,12 +162,30 @@ resource "kubernetes_endpoints" "t3_native" {
   }
 }
 
-# Browser traffic is separated from native-client traffic by the Authentik
-# session cookie (`authentik_proxy_<hash>`, scoped to viktorbarzin.me), which a
-# browser always carries here and a native app never has. The t3 web UI
-# authenticates same-origin with cookies and sends NO Authorization header
-# (apps/web/.../httpLayer.ts: bearer only when `window.desktopBridge` exists),
-# so none of these rules can capture another user's browser session.
+# Browser traffic is separated from native-client traffic two ways, and it
+# needs both. The t3 web UI authenticates same-origin with cookies and sends NO
+# Authorization header (apps/web/.../httpLayer.ts: bearer only when
+# `window.desktopBridge` exists), so none of these rules can capture another
+# user's browser session.
+#
+# The first discriminator is the Authentik session cookie (`authentik_proxy_
+# <hash>`, scoped to viktorbarzin.me), which a browser always carries here.
+# On its own it is NOT enough, because it is self-poisoning: Authentik answers
+# an unauthenticated request with a 302 that CARRIES `Set-Cookie:
+# authentik_proxy_…`, and the app's CFNetwork cookie jar keeps it. So the app's
+# first failed attempt plants the very cookie that then disqualifies it from
+# the carve-out forever — cookie-less tools (curl, the blackbox probe) pass
+# while the real app is stuck on the Authentik path (observed 2026-08-13:
+# `T3Code/26 CFNetwork/… Darwin/…` served 302 by the Ingress router).
+#
+# So the app is also identified POSITIVELY by its User-Agent, and either
+# signal admits it. A browser never sends `T3Code/`, so browsers stay on the
+# Authentik path — including old-WebKit ones, which is why this is a positive
+# match on the app rather than a negative match on browser-only headers like
+# `Sec-Fetch-*` (emo's iPadOS 15.8 Safari does not send those, and would be
+# misrouted as a native client). Spoofing the UA grants no new reach: it lands
+# on the same t3 bearer gate that rule 1 already exposes to anyone willing to
+# set an Authorization header.
 #
 # Priority sits above the catch-all `Host(...)` Ingress that module.ingress
 # renders, so these three win; everything else still goes through Authentik to
@@ -198,7 +216,7 @@ resource "kubernetes_manifest" "t3_native_ingressroute" {
         #    the descriptor fetch and the pairing-code -> bearer exchange.
         {
           kind        = "Rule"
-          match       = "Host(`t3.viktorbarzin.me`) && (Path(`/.well-known/t3/environment`) || Path(`/oauth/token`)) && !HeaderRegexp(`Cookie`, `authentik_proxy_`)"
+          match       = "Host(`t3.viktorbarzin.me`) && (Path(`/.well-known/t3/environment`) || Path(`/oauth/token`)) && (!HeaderRegexp(`Cookie`, `authentik_proxy_`) || HeaderRegexp(`User-Agent`, `(?i)^T3Code/`))"
           priority    = 1000
           middlewares = local.t3_native_middlewares
           services = [{
@@ -210,7 +228,7 @@ resource "kubernetes_manifest" "t3_native_ingressroute" {
         #    (authorization/remote.ts:184-190), so rule 1 cannot catch it.
         {
           kind        = "Rule"
-          match       = "Host(`t3.viktorbarzin.me`) && Path(`/ws`) && QueryRegexp(`wsTicket`, `.+`) && !HeaderRegexp(`Cookie`, `authentik_proxy_`)"
+          match       = "Host(`t3.viktorbarzin.me`) && Path(`/ws`) && QueryRegexp(`wsTicket`, `.+`) && (!HeaderRegexp(`Cookie`, `authentik_proxy_`) || HeaderRegexp(`User-Agent`, `(?i)^T3Code/`))"
           priority    = 1000
           middlewares = local.t3_native_middlewares
           services = [{
