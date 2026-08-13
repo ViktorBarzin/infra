@@ -65,6 +65,13 @@ locals {
     # t3 dispatch probe surface (auth="none" path carve-out on /probe): WS echo
     # + healthz for the t3-probe drop-attribution client (stacks/t3code).
     "t3-probe-ws" = "https://t3.viktorbarzin.me/probe/healthz"
+    # t3 native-client descriptor (Authentik-less IngressRoute carve-out,
+    # stacks/t3code kubernetes_manifest.t3_native_ingressroute): the T3 mobile
+    # app fetches this BEFORE it has any credential, so an Authentik 302 here
+    # is exactly the failure that made the app unpairable — it parses the login
+    # HTML as the JSON descriptor and reports an invalid response. The probe
+    # sends no cookie, which is what the carve-out rule keys on.
+    "t3-native-descriptor" = "https://t3.viktorbarzin.me/.well-known/t3/environment"
     # tasks PWA icons + manifest (auth="none" path carve-out, stacks/tasks
     # module.ingress_icons): macOS/iOS/Android icon fetchers carry no session
     # cookies, so an Authentik 302 here breaks Add-to-Dock icons.
