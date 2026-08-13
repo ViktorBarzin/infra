@@ -102,7 +102,17 @@ health_check() {
   local t3bin="$1" seed="${2:-}" dir logf pid live=0 pair=0 migerr=0 cred ep hdr code seeded=fresh
   dir="$(mktemp -d -p "$TMPROOT")"; mkdir -p "$dir/userdata"; logf="$dir/serve.log"
   if [ -n "$seed" ] && [ -f "$seed" ]; then cp "$seed" "$dir/userdata/state.sqlite"; seeded=populated; fi
-  "$t3bin" serve --host 127.0.0.1 --port "$SMOKE_PORT" --base-dir "$dir" >"$logf" 2>&1 &
+  # --host 0.0.0.0 MUST match how t3-serve@.service binds in production, and is
+  # not merely cosmetic: resolveSessionCookieName() (apps/server/src/auth/utils.ts)
+  # returns the plain `t3_session` ONLY for a remote-reachable host, and
+  # `t3_session_<port>_<instanceHash>` for a loopback one. Smoke-testing on
+  # 127.0.0.1 therefore produced an instance-scoped cookie that the pair grep
+  # below could never match — a FALSE NEGATIVE that silently pinned the fleet at
+  # 0.0.29 for 17 days while every daily run "correctly" rolled 0.0.34 back
+  # (found 2026-08-13, when the mobile app could not hold a session against the
+  # stale server). Binding like production also keeps this gate honest about the
+  # cookie NAME, which is exactly what t3-dispatch hardcodes.
+  "$t3bin" serve --host 0.0.0.0 --port "$SMOKE_PORT" --base-dir "$dir" >"$logf" 2>&1 &
   pid=$!
   for _ in $(seq 1 15); do
     [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$SMOKE_PORT/" 2>/dev/null)" = "200" ] && { live=1; break; }
