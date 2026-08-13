@@ -1701,6 +1701,36 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }}: {{ $value | printf \"%.0f\" }} failure(s)"
+          # JobFailed only sees a Job that FAILS. A Job that hangs forever never
+          # fails, so it was invisible -- and with concurrency_policy Forbid a
+          # hung Job blocks every later run of its CronJob indefinitely.
+          #
+          # This is not hypothetical: on 2026-08-10 02:00, webterminal-probe and
+          # phpipam-pfsense-import both hung in `apk add` on a black-holed TLS
+          # connection to the Alpine CDN and each ran for 3d19h. The probe's
+          # staleness alert eventually said something (about the probe, not the
+          # cause); the phpipam import had no staleness alert at all, so four
+          # days of stale Kea/ARP data passed with nothing firing. 61 of this
+          # cluster's CronJobs are Forbid with no activeDeadlineSeconds, so any
+          # of them can wedge the same way. One rule covers all of them.
+          #
+          # 3h threshold: across 127 retained completed Jobs the longest real
+          # run was 24 min (chesscom-streak), so 3h is ~7x the worst legitimate
+          # duration and still catches a wedge the same day. Two exclusions:
+          # k8s-upgrade has its own K8sUpgradeStalled (4h) and would double-page,
+          # and osm-routing/osrm-refresh is a monthly OSM extract build that can
+          # legitimately run long. Add an exclusion if another genuinely-long
+          # Job trips this rather than raising the threshold for everything.
+          - alert: JobRunningTooLong
+            expr: |
+              kube_job_status_active{namespace!~"k8s-upgrade|osm-routing"} > 0
+              and on(namespace, job_name)
+              (time() - kube_job_status_start_time{namespace!~"k8s-upgrade|osm-routing"}) > 10800
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }} has been running over 3h — likely hung; with concurrencyPolicy Forbid it is blocking every later run of its CronJob"
           # `KubeletImagePullErrors` measures node-level pull-error rate,
           # which is too coarse to catch one pod stuck in ImagePullBackOff.
           # Council-complaints sat in ImagePullBackOff for 10h on 2026-05-12
@@ -3025,6 +3055,12 @@ serverFiles:
               and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
+            # keep_firing_for, matching IngressTTFBHigh: a low-traffic service's
+            # average latency crosses 3s and clears within minutes. Measured
+            # 2026-08-13, the three firings in the preceding 3 days lasted 4, 4
+            # and 7 minutes (plotting-book twice, matrix once) — brief spikes
+            # reported as three separate criticals.
+            keep_firing_for: 1h
             labels:
               severity: critical
             annotations:

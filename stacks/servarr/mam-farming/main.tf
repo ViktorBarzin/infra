@@ -137,7 +137,21 @@ resource "kubernetes_cron_job_v1" "bp_spender" {
     namespace = var.namespace
   }
   spec {
-    schedule                      = "0 */6 * * *"
+    # Offset from the top of the hour so this never runs at the same minute as
+    # mam-freeleech-grabber (*/30, i.e. :00 and :30). Both mount the SAME PVC
+    # (servarr-mam-farming-data) and both read *and rewrite* /data/mam_id, and
+    # MAM rotates that session cookie on every request -- which is why
+    # save_cookie() exists. Two jobs presenting the same pre-rotation cookie
+    # concurrently means one of them sends a value MAM has already retired.
+    # At "0 */6" they collided at 00:00/06:00/12:00/18:00, four times a day.
+    #
+    # Scope note: this removes a real concurrent-use race on a rotating
+    # credential. It is NOT established that the race caused the 2026-08-13
+    # expiry -- the session may simply have aged out -- so treat this as
+    # hygiene, not a proven fix. If mam_farming_cookie_expired keeps returning
+    # after the cookie is refreshed, the next thing to check is whether the two
+    # jobs should share one cookie at all rather than hold separate sessions.
+    schedule                      = "15 */6 * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3
