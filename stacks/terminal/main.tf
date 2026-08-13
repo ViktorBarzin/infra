@@ -628,7 +628,18 @@ resource "kubernetes_cron_job_v1" "webterminal_probe" {
     job_template {
       metadata {}
       spec {
-        backoff_limit              = 1
+        backoff_limit = 1
+        # A hung run must not block every later run. With concurrency_policy
+        # Forbid and no deadline, one wedged Job stops the schedule dead: on
+        # 2026-08-10 02:00 this pod's `apk add curl python3` opened a TLS
+        # connection to the Alpine CDN that never returned (ESTABLISHED but
+        # black-holed, no FIN/RST, and apk applies no timeout), so the Job sat
+        # Running for 3d19h and the probe reported nothing for nearly four days
+        # -- WebterminalProbeStale fired the whole time while the webterminal
+        # itself was perfectly healthy (a fresh run returns token=302 ws=302
+        # ttyd=200 in 7s). 300s is ~40x a normal run and well over the sum of
+        # the script's own curl/socket timeouts, so it only ever trips on a hang.
+        active_deadline_seconds    = 300
         ttl_seconds_after_finished = 600
         template {
           metadata {

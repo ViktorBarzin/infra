@@ -414,6 +414,17 @@ resource "kubernetes_cron_job_v1" "phpipam_pfsense_import" {
       metadata {}
       spec {
         backoff_limit = 1
+        # Same wedge as webterminal-probe, at the same moment: on 2026-08-10
+        # 02:00 this Job's `apk add openssh-client mysql-client python3` hung on
+        # a black-holed TLS connection to the Alpine CDN (151.101.194.132:443 --
+        # ESTABLISHED but dead, no FIN/RST, and apk applies no timeout). With
+        # Forbid and no deadline it ran for 3d19h and blocked every hourly
+        # import, so Kea lease + ARP data went stale for nearly four days.
+        # Nothing alerted: unlike the webterminal probe this CronJob has no
+        # staleness alert, so the wedged Job was the only signal. A normal run
+        # finishes in ~9s and imported 40 new entries once unblocked, so 600s
+        # only ever trips on a hang.
+        active_deadline_seconds = 600
         template {
           metadata {}
           spec {
