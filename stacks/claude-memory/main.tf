@@ -243,7 +243,15 @@ resource "kubernetes_deployment" "claude-memory" {
               path = "/health"
               port = 8000
             }
-            failure_threshold = 30
+            # 5-minute budget (150 x 2s). The app fetches the ~1.3GB
+            # BAAI/bge-large-en-v1.5 SentenceTransformer at startup — there is no
+            # model cache volume, so every fresh pod downloads it before it binds
+            # :8000. At the previous 60s budget (30 x 2s) the kubelet killed the
+            # container mid-download every time, so any pod rescheduled onto a
+            # node without the layer cached could never start (observed
+            # 2026-08-14: 9 restarts, exit 137, "connection refused" on :8000
+            # while the download was still in flight).
+            failure_threshold = 150
             period_seconds    = 2
           }
           liveness_probe {
