@@ -11,16 +11,18 @@ name: Build repowise
 # obligation; keeping it private means we are only ever running it, not
 # conveying it. Pulled via the Kyverno-synced ghcr-credentials allowlist.
 #
-# Two patches are applied to the upstream Dockerfile, each guarded by an
-# assertion so an upstream change fails the build loudly instead of silently
-# altering behaviour:
-#   1. NEXT_PUBLIC_REPOWISE_API_URL is baked into the browser bundle at build
-#      time and upstream hardcodes http://localhost:7337, which cannot work
-#      behind an ingress. Emptying it makes the browser issue same-origin
-#      /api/... requests that Traefik routes to the API service.
-#   2. The runtime user is created with `useradd -r`, taking whatever system
-#      uid happens to be free. The Deployment needs a stable numeric uid for
-#      fsGroup on the workspace volume, so it is pinned to 10001.
+# We build with OUR OWN Dockerfile (stacks/repowise/docker/Dockerfile) against
+# an upstream source checkout, rather than upstream's docker/Dockerfile. Theirs
+# is broken as of v0.42.0: its frontend stage copies only packages/web before
+# `npm install`, so the workspace siblings packages/web depends on
+# (@repowise-dev/api-client, /types, /ui) are looked up in the public registry
+# and 404. Ours follows upstream's own release workflow instead, installing
+# through the root workspace. See that Dockerfile's header for the reasoning
+# and for the two intentional differences (empty NEXT_PUBLIC_REPOWISE_API_URL,
+# pinned uid 10001).
+#
+# A source-layout assertion runs before the build so an upstream reshuffle
+# fails loudly here instead of producing a subtly wrong image.
 #
 # Interpolated values are passed through env: rather than inlined into run:,
 # so nothing from the workflow event reaches a shell unquoted.
@@ -52,7 +54,6 @@ permissions:
 
 env:
   IMAGE: ghcr.io/viktorbarzin/repowise
-  UID_GID: '10001'
 
 jobs:
   build:
@@ -102,48 +103,52 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Checkout our Dockerfile
+        if: steps.exists.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          path: infra
+          persist-credentials: false
+
       - name: Checkout upstream at the release tag
         if: steps.exists.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           repository: repowise-dev/repowise
           ref: v${{ steps.ver.outputs.version }}
+          path: upstream
           persist-credentials: false
 
-      - name: Patch the Dockerfile for in-cluster serving
+      - name: Assert the upstream source layout is what we build against
         if: steps.exists.outputs.skip != 'true'
+        working-directory: upstream
         run: |
           set -euo pipefail
-          f=docker/Dockerfile
-
-          # 1. Same-origin API base URL for the browser bundle.
-          needle='ENV NEXT_PUBLIC_REPOWISE_API_URL=http://localhost:7337'
-          grep -qF "$needle" "$f" || {
-            echo "::error::Upstream no longer sets NEXT_PUBLIC_REPOWISE_API_URL as expected."
-            echo "::error::The browser bundle's API base URL must be re-checked before shipping."
-            exit 1
-          }
-          sed -i "s|^${needle}\$|ENV NEXT_PUBLIC_REPOWISE_API_URL=|" "$f"
-
-          # 2. Deterministic uid/gid so the Deployment can set fsGroup.
-          needle2='groupadd -r repowise && useradd -r -g repowise'
-          grep -qF "$needle2" "$f" || {
-            echo "::error::Upstream changed how the runtime user is created."
-            echo "::error::The workspace volume's fsGroup depends on a pinned uid."
-            exit 1
-          }
-          sed -i "s|${needle2}|groupadd -g ${UID_GID} repowise \&\& useradd -u ${UID_GID} -g ${UID_GID}|" "$f"
-
-          echo "--- patched lines ---"
-          grep -nE 'NEXT_PUBLIC_REPOWISE_API_URL|groupadd' "$f"
-
-      - name: Verify the patches took effect
-        if: steps.exists.outputs.skip != 'true'
-        run: |
-          set -euo pipefail
-          grep -qE '^ENV NEXT_PUBLIC_REPOWISE_API_URL=$' docker/Dockerfile
-          grep -qF "useradd -u ${UID_GID} -g ${UID_GID}" docker/Dockerfile
-          echo "both patches verified"
+          fail=0
+          for p in package.json package-lock.json pyproject.toml \
+                   packages/web/package.json packages/api-client/package.json \
+                   packages/types/package.json packages/ui/package.json \
+                   packages/core packages/cli packages/server; do
+            if [ ! -e "$p" ]; then
+              echo "::error::missing expected upstream path: $p"
+              fail=1
+            fi
+          done
+          # The dashboard build resolves siblings through the root workspace;
+          # if web stops being a declared workspace, npm ci silently changes
+          # meaning.
+          python3 - <<'PY' || fail=1
+          import json, sys
+          ws = json.load(open("package.json")).get("workspaces", [])
+          missing = [w for w in ("packages/web", "packages/api-client",
+                                "packages/types", "packages/ui") if w not in ws]
+          if missing:
+              print("::error::root package.json no longer declares: %s" % ", ".join(missing))
+              sys.exit(1)
+          print("workspaces OK: %s" % ws)
+          PY
+          [ "$fail" -eq 0 ] || exit 1
+          echo "upstream layout verified"
 
       - uses: docker/setup-buildx-action@v3
         if: steps.exists.outputs.skip != 'true'
@@ -152,8 +157,8 @@ jobs:
         if: steps.exists.outputs.skip != 'true'
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: docker/Dockerfile
+          context: upstream
+          file: infra/stacks/repowise/docker/Dockerfile
           platforms: linux/amd64
           # provenance:false keeps this a single manifest rather than an OCI
           # index, dodging the orphaned-index-children class of registry bug.
