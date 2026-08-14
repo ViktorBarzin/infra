@@ -339,10 +339,24 @@ def reconcile() -> str:
             log.error("%s: %s", name, exc)
             failed.append(name)
 
-    if moved or fresh:
-        trigger_reindex()
+    # Unconditional, not just when something moved. The endpoint fans out to
+    # every repo that is stale *or unindexed*, and skips the rest, so calling it
+    # each pass is cheap and it repairs the one state a moved-HEAD check would
+    # miss: a bootstrap interrupted after the workspace config was written but
+    # before every repo was indexed. `workspace_exists()` is true by then, so no
+    # later pass would call bootstrap() again, and those repos would otherwise
+    # stay unindexed indefinitely.
+    trigger_reindex()
+
+    unindexed = [
+        name
+        for name in sorted(remote.keys() & local)
+        if not (WORKSPACE / name / ".repowise" / "wiki.db").exists()
+    ]
 
     status = f"{len(remote)} repos, {moved} updated, {len(fresh)} added"
+    if unindexed:
+        status += f", {len(unindexed)} awaiting first index"
     if failed:
         raise ReconcileError(f"{status}; failed: {', '.join(failed)}")
     return status
