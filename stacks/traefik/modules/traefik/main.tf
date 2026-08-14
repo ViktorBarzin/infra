@@ -562,6 +562,7 @@ resource "kubernetes_deployment" "bot_block_proxy" {
       metadata[0].annotations["keel.sh/pollSchedule"],
       metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].labels["tier"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }
@@ -733,6 +734,7 @@ resource "kubernetes_deployment" "x402_gateway" {
       metadata[0].annotations["keel.sh/pollSchedule"],
       metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].labels["tier"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }
@@ -1015,6 +1017,7 @@ resource "kubernetes_deployment" "auth_proxy" {
       metadata[0].annotations["keel.sh/pollSchedule"],
       metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].labels["tier"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }

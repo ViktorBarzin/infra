@@ -377,6 +377,7 @@ resource "kubernetes_deployment" "t3_afk" {
       # they don't perpetually drift the plan.
       metadata[0].annotations["keel.sh/pollSchedule"],
       metadata[0].annotations["keel.sh/trigger"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }
