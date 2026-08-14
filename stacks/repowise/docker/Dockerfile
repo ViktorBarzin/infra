@@ -88,7 +88,15 @@ COPY pyproject.toml README.md LICENSE MANIFEST.in ./
 COPY packages/core/ packages/core/
 COPY packages/cli/ packages/cli/
 COPY packages/server/ packages/server/
-RUN pip install --no-cache-dir ".[all]"
+# graph-extra, not "all". repowise declares exactly three extras — postgres,
+# graph-extra, dev — so upstream's Dockerfile line `pip install ".[all]"`
+# matches nothing and silently installs no extras at all. The visible symptom
+# is that graspologic is absent, community detection cannot run, and every
+# repo reports zero communities, which leaves the dashboard's Architecture
+# module map blank. postgres is deliberately not installed: workspace mode
+# hard-codes per-repo SQLite, so it would never be used.
+RUN pip install --no-cache-dir ".[graph-extra]" \
+    && python3 -c "import graspologic"
 
 COPY --from=frontend-builder /out /app/web
 
