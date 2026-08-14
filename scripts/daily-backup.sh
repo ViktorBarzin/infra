@@ -220,9 +220,18 @@ else
         #   Retain). Nextcloud moved to nextcloud-data-encrypted on 2026-04-13;
         #   this old unencrypted PV lingers (Retain) and was still being backed
         #   up weekly, filling the offsite Synology. Stop copying it (2026-06-01).
+        #   repowise/repowise-workspace — the Corpus: git clones of every
+        #   Forgejo repo plus their derived SQLite indexes. Entirely
+        #   regenerable (the reconciler re-clones and reindexes from scratch),
+        #   and every byte of it already lives in Forgejo, which is backed up.
+        #   LVM snapshots are kept for 7-day rollback; only the offsite legs
+        #   are skipped. Same rationale as ollama / prometheus-backup.
         case "${ns_pvc}" in
             nextcloud/nextcloud-data-proxmox)
                 log "  skip ${ns_pvc} (orphaned pre-encryption PVC)"
+                continue ;;
+            repowise/repowise-workspace)
+                log "  skip ${ns_pvc} (regenerable index, live-only)"
                 continue ;;
         esac
 

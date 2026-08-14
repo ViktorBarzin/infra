@@ -1,0 +1,159 @@
+# Repowise — as-built
+
+Codebase intelligence over the Forgejo **Corpus**, serving AI agents over MCP
+and humans through a dashboard. Design rationale and the decision record live in
+`docs/plans/2026-08-14-repowise-corpus-index-design.md`; this file is the
+operational picture.
+
+- **Stack:** `infra/stacks/repowise/`
+- **Image:** `ghcr.io/viktorbarzin/repowise` (private), built by
+  `.github/workflows/build-repowise.yml` from our own
+  `stacks/repowise/docker/Dockerfile`
+- **Dashboard:** <https://repowise.viktorbarzin.me> (Authentik)
+- **MCP:** `https://repowise-mcp.viktorbarzin.me/mcp` (home LANs / WG only)
+- **Secrets:** Vault `secret/repowise`
+- **Monitors:** Kuma `Repowise` (HTTP) and `Repowise Corpus Sync` (push, id 1205)
+
+## Shape
+
+One pod, one image, four containers, one ReadWriteOnce
+`proxmox-lvm-encrypted` volume at `/workspace`:
+
+| Container | Port | Role |
+|---|---|---|
+| `api` | 7337 | REST API; the only process that runs reindex jobs |
+| `web` | 3000 | Next.js dashboard; SSR calls the API over loopback |
+| `mcp` | 7338 | `streamable-http` MCP transport — **no auth of its own** |
+| `sync` | — | the reconciler: bootstraps and maintains the Corpus |
+
+Everything that writes SQLite shares the pod because repowise hard-codes
+per-repo SQLite in workspace mode and both `api` and `mcp` write. See the design
+doc for why that rules out Postgres and NFS.
+
+On-volume layout:
+
+```
+/workspace/.repowise-workspace.yaml     workspace config (which repos, primary)
+/workspace/.repowise-workspace/         cross-repo analysis
+/workspace/.repowise-data/              primary DB (registry only), mounted at /data
+/workspace/<repo>/                      a clone
+/workspace/<repo>/.repowise/wiki.db     that repo's index
+```
+
+## Using it from an agent
+
+Each Workstation opts in with its own token — `~/.claude.json` is per-user
+mutable state and is never shared, so this is not done centrally:
+
+```bash
+# token: one of the entries in Vault secret/repowise -> bearer_tokens
+claude mcp add --transport http repowise \
+  https://repowise-mcp.viktorbarzin.me/mcp \
+  --header "Authorization: Bearer <your-token>"
+```
+
+In-cluster jobs (claude-agent-service) can use the ClusterIP directly and skip
+the ingress: `http://repowise-mcp.repowise.svc.cluster.local:7338/mcp`. Note
+that path is **ungated** — see the design doc's residual risks.
+
+**What the answers describe:** Forgejo master, as last indexed, up to about an
+hour behind. Architecture, dependency graph, git hotspots, ownership, code
+health, blast radius and cross-repo contracts are all sound. Current file
+content is not — use Read/Grep for that, and never quote a repowise excerpt as
+current code. repowise's own `stale_warning` cannot report the Forgejo lag,
+because it compares the index against the local clone and we reindex right after
+fetching.
+
+## Routine operations
+
+**Add a repo to the Corpus** — nothing to do. Create it under Forgejo `viktor/*`
+with at least one commit; the next hourly pass clones, registers and indexes it.
+The Corpus is the rule "not archived, not empty", not a list.
+
+**Remove one** — archive or delete it in Forgejo. The next pass runs
+`repowise workspace remove` and deletes the clone.
+
+**Force an immediate pass** — restart the pod; the reconciler runs on start.
+
+```bash
+kubectl -n repowise rollout restart deploy/repowise
+kubectl -n repowise logs deploy/repowise -c sync -f
+```
+
+**Rebuild the index from scratch** — it is entirely regenerable:
+
+```bash
+kubectl -n repowise scale deploy/repowise --replicas=0
+# then clear the volume (mount it from a debug pod, or delete the PVC and
+# let Terraform recreate it), and scale back up
+kubectl -n repowise scale deploy/repowise --replicas=1
+```
+
+The first pass re-clones all 42 repos and reindexes. It is resumable
+(`--resume`) and the heartbeat stays silent until it finishes, so expect the
+sync monitor to be pending, not green, during a rebuild.
+
+**Rotate an MCP token** — edit `bearer_tokens` in Vault `secret/repowise`, then
+apply the stack. Traefik reads the list from the Middleware CR, so a single
+holder can be dropped without touching the others.
+
+**Bump the repowise version** — edit `local.image` in `stacks/repowise/main.tf`.
+The daily workflow will already have built the tag; if not, run
+`build-repowise.yml` with a `version` input.
+
+## Credentials
+
+Vault `secret/repowise`:
+
+| Key | Purpose |
+|---|---|
+| `api_key` | repowise's own bearer, gating `/api`; also used by the reconciler over loopback |
+| `forgejo_token` | Forgejo PAT, `read:repository` only |
+| `bearer_tokens` | JSON array of per-holder tokens for `/mcp`, enforced at Traefik |
+| `kuma_push_url` | heartbeat target (internal ClusterIP) |
+
+The Forgejo token is deliberately `read:repository` and nothing more. That is
+enough to clone and to call `/api/v1/repos/search`, which is why the reconciler
+uses search rather than `/api/v1/users/{owner}/repos` — the latter demands
+`read:user`.
+
+## Troubleshooting
+
+**Dashboard loads but shows no data.** The browser needs repowise's API key,
+which lives in localStorage. Open `/settings` in the dashboard and paste
+`api_key` from Vault. Symptom is a working shell with failing XHR.
+
+**Dashboard 404s on `/health` or a data path.** `/api`, `/health` and `/metrics`
+must all route to the API service; `/health` and `/metrics` sit at the app root,
+not under `/api`. If one is missing from `ingress_path`, it falls through to the
+Next.js service.
+
+**Sync monitor red.** Read `kubectl -n repowise logs deploy/repowise -c sync`.
+Likely causes, in order: the Forgejo token expired or lost scope; a repo's
+default branch was renamed; the API is not up so `POST /api/workspace/sync`
+fails. One unhealthy repo does not stall the pass — it is logged and the pass
+reports `failed: <names>`.
+
+**Corpus pruned unexpectedly.** The reconciler refuses to prune when Forgejo
+returns zero usable repos, so a transient API failure cannot empty the volume.
+If clones did disappear, the repos were genuinely archived, emptied or deleted
+upstream.
+
+**`git` complains about dubious ownership.** The reconciler sets
+`safe.directory=*` at startup. A volume restored from a snapshot with different
+ownership would otherwise look like a mass repo failure.
+
+**After an upstream bump, `no such column`.** `init_db` back-fills additive
+schema drift automatically; a non-additive change needs an index rebuild (above).
+
+## Deliberate deviations from house convention
+
+- **No backup CronJob**, though the convention requires one for every
+  proxmox-lvm app. The Corpus is regenerable from Forgejo and is skipped in
+  `scripts/daily-backup.sh`; LVM snapshots are kept for rollback.
+- **Not Sablier-enrolled**, despite being a low-traffic HTTP app: the background
+  polling and reindexing are the product, and parking would stop them.
+- **`/metrics` is not scraped** — it reports the primary repo's DB only, so a
+  fleet-wide reading would mislead.
+- **Own Dockerfile rather than upstream's**, which is broken for the workspace
+  build. Guarded by a layout assertion in CI.
