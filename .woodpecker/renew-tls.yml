@@ -77,9 +77,15 @@ steps:
         fi
         CIG=$(curl -s -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/secret/data/ci/global")
         FJ_USER=$(echo "$CIG" | jq -r .data.data.forgejo_user)
-        FJ_TOKEN=$(echo "$CIG" | jq -r .data.data.forgejo_push_token)
+        # forgejo_repo_token, NOT forgejo_push_token. Despite the name,
+        # forgejo_push_token is the CONTAINER-PACKAGE token: it authenticates as
+        # nobody against /api/v1/user and has no permissions on viktor/infra, so
+        # the push returned "remote: Forbidden ... error: 403" on the first run
+        # of this step (pipeline #1961). forgejo_repo_token authenticates as
+        # viktor with admin/push/pull on the repo.
+        FJ_TOKEN=$(echo "$CIG" | jq -r .data.data.forgejo_repo_token)
         if [ -z "$FJ_TOKEN" ] || [ "$FJ_TOKEN" = "null" ]; then
-          echo "ERROR: secret/ci/global has no forgejo_push_token"
+          echo "ERROR: secret/ci/global has no forgejo_repo_token"
           exit 1
         fi
         # Keep the token out of the remote URL so it cannot land in a log line.
