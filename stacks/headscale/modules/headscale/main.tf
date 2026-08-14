@@ -125,8 +125,8 @@ resource "kubernetes_deployment" "headscale" {
       }
       spec {
         container {
-          image = "headscale/headscale:0.28.0"
-          # image   = "headscale/headscale:0.28.0-debug" # -debug is for debug images
+          image = "headscale/headscale:0.29.3"
+          # image   = "headscale/headscale:0.29.3-debug" # -debug is for debug images
           name    = "headscale"
           command = ["headscale", "serve"]
 
