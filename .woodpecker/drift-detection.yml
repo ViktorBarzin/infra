@@ -103,8 +103,19 @@ steps:
           case "$stack" in _*) continue ;; esac
 
           echo -n "[$stack] planning... "
-          OUTPUT=$(cd "$stack_dir" && terragrunt plan -detailed-exitcode -input=false 2>&1)
-          EXIT=$?
+          # `|| EXIT=$?` is load-bearing. Woodpecker runs step commands under
+          # `set -e`, and a bare `OUTPUT=$(...)` assignment carries the exit
+          # status of the command substitution — so any non-zero terragrunt
+          # exit killed the whole step right here. `-detailed-exitcode` returns
+          # non-zero for BOTH outcomes we care about (1 = error, 2 = drift),
+          # which meant `EXIT=$?` and the case block below were unreachable for
+          # anything but a perfectly clean stack: the loop died at the first
+          # non-clean stack, pushed no metrics, and reported nothing. Making the
+          # assignment part of an `||` list is what exempts it from `set -e`.
+          # Skipping the offending stack (vault 2026-06-27, _template
+          # 2026-08-08) only ever moved the abort to the next one in sort order.
+          EXIT=0
+          OUTPUT=$(cd "$stack_dir" && terragrunt plan -detailed-exitcode -input=false 2>&1) || EXIT=$?
 
           case $EXIT in
             0)
@@ -117,11 +128,21 @@ steps:
               ;;
             1)
               echo "ERROR"
+              # $OUTPUT was previously captured and never printed, so a failing
+              # stack left nothing to debug from. Tail it: enough to identify
+              # the error without dumping a full plan into the log.
+              echo "--- [$stack] plan error (last 30 lines) ---"
+              echo "$OUTPUT" | tail -30
+              echo "--- end [$stack] ---"
               ERRORS="$ERRORS $stack"
               METRICS="${METRICS}drift_stack_state{stack=\"$stack\"} 2\n"
               ;;
             2)
               echo "DRIFT DETECTED"
+              # Log which resources moved. Until the `set -e` fix above, exit 2
+              # aborted the run too, so a drifted stack was never actually
+              # reported — this is the first run shape where this branch runs.
+              echo "$OUTPUT" | grep -E '^  # |^Plan: ' | head -20
               DRIFTED="$DRIFTED $stack"
               # Fetch first-seen timestamp from Pushgateway (preserve across runs).
               FIRST_SEEN=$(curl -s "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics" \
