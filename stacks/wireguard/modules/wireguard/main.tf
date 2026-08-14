@@ -106,9 +106,8 @@ resource "kubernetes_deployment" "wireguard" {
           }
         }
         container {
-          image             = "sclevine/wg:latest"
-          name              = "wireguard"
-          image_pull_policy = "IfNotPresent"
+          image = "sclevine/wg:latest"
+          name  = "wireguard"
           lifecycle {
             post_start {
               # Switch the container's `iptables` symlink to iptables-nft
@@ -170,10 +169,9 @@ resource "kubernetes_deployment" "wireguard" {
         }
 
         container {
-          name              = "prometheus-exporter"
-          image             = "mindflavor/prometheus-wireguard-exporter"
-          image_pull_policy = "IfNotPresent"
-          command           = ["prometheus_wireguard_exporter", "-a", "true", "-v", "true", "-n", "/etc/wireguard/wg0.conf"]
+          name    = "prometheus-exporter"
+          image   = "mindflavor/prometheus-wireguard-exporter"
+          command = ["prometheus_wireguard_exporter", "-a", "true", "-v", "true", "-n", "/etc/wireguard/wg0.conf"]
           volume_mount {
             name       = "wg0-conf"
             mount_path = "/etc/wireguard/wg0.conf"
@@ -208,9 +206,8 @@ resource "kubernetes_deployment" "wireguard" {
         # in peers.txt, so the STATIC peers baked into wg0.conf are never
         # removed. peers.txt absent (no registrations yet) → no-op.
         container {
-          name              = "wg-peer-sync"
-          image             = "sclevine/wg:latest"
-          image_pull_policy = "IfNotPresent"
+          name  = "wg-peer-sync"
+          image = "sclevine/wg:latest"
           command = ["/bin/sh", "-c", <<-EOT
             set -u
             STATE=/run/wg-managed/managed.list

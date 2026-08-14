@@ -293,9 +293,8 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
       }
       spec {
         container {
-          name              = "dashboard"
-          image             = "viktorbarzin/trading-bot-dashboard:latest"
-          image_pull_policy = "Always"
+          name  = "dashboard"
+          image = "viktorbarzin/trading-bot-dashboard:latest"
           port {
             container_port = 80
             protocol       = "TCP"
@@ -311,10 +310,9 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
           }
         }
         container {
-          name              = "api-gateway"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.api_gateway.main"]
+          name    = "api-gateway"
+          image   = "viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.api_gateway.main"]
           port {
             container_port = 8000
             protocol       = "TCP"
@@ -398,10 +396,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
       }
       spec {
         container {
-          name              = "signal-generator"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.signal_generator.main"]
+          name    = "signal-generator"
+          image   = "viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.signal_generator.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -434,10 +431,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           }
         }
         container {
-          name              = "learning-engine"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.learning_engine.main"]
+          name    = "learning-engine"
+          image   = "viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.learning_engine.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -470,10 +466,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           }
         }
         container {
-          name              = "market-data"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.market_data.main"]
+          name    = "market-data"
+          image   = "viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.market_data.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -506,10 +501,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           }
         }
         container {
-          name              = "meet-kevin-watcher"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.meet_kevin_watcher.main"]
+          name    = "meet-kevin-watcher"
+          image   = "viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.meet_kevin_watcher.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -542,10 +536,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           }
         }
         container {
-          name              = "kevin-signal-bridge"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.kevin_signal_bridge.main"]
+          name    = "kevin-signal-bridge"
+          image   = "viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.kevin_signal_bridge.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -583,10 +576,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           }
         }
         container {
-          name              = "trade-executor"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.trade_executor.main"]
+          name    = "trade-executor"
+          image   = "viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.trade_executor.main"]
           dynamic "env" {
             for_each = local.common_env
             content {

@@ -88,9 +88,8 @@ resource "kubernetes_deployment" "xray" {
       }
       spec {
         container {
-          image             = "teddysun/xray"
-          name              = "xray"
-          image_pull_policy = "IfNotPresent"
+          image = "teddysun/xray"
+          name  = "xray"
           port {
             container_port = 7443 // reality
             protocol       = "TCP"

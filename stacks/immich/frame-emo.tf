@@ -81,8 +81,7 @@ resource "kubernetes_deployment" "immich-frame-emo" {
           # Always-pull: nodes had a STALE cached immich_v3 (pre-v1.0.34,
           # before Immich-v3 album loading was fixed) and IfNotPresent kept
           # reusing it, breaking ExcludedAlbums. Force a fresh pull.
-          image_pull_policy = "Always"
-          name              = "immich-frame-emo"
+          name = "immich-frame-emo"
           resources {
             requests = {
               cpu    = "10m"

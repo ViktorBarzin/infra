@@ -99,9 +99,8 @@ resource "kubernetes_deployment" "stremio" {
         image_pull_secrets { name = "ghcr-credentials" } # Kyverno-synced (allowlist in stacks/kyverno)
 
         container {
-          name              = "stremio"
-          image             = local.image
-          image_pull_policy = "Always"
+          name  = "stremio"
+          image = local.image
 
           port {
             container_port = 8080

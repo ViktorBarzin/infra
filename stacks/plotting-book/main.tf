@@ -140,9 +140,8 @@ resource "kubernetes_deployment" "plotting-book" {
           # set-images it; see ignore_changes above). :latest is pushed by the
           # same GHA build, so a from-scratch apply starts on current code.
           # PRIVATE package — pulled via the ghcr-credentials secret below.
-          image             = "ghcr.io/passionprojectsanca/book-plotter:latest"
-          name              = "plotting-book"
-          image_pull_policy = "Always"
+          image = "ghcr.io/passionprojectsanca/book-plotter:latest"
+          name  = "plotting-book"
           env {
             name = "SESSION_SECRET"
             value_from {
