@@ -104,6 +104,12 @@ resource "kubernetes_secret" "ghcr_credentials" {
       }
     })
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno stamps generate.kyverno.io/clone-source onto
+    # its own clone SOURCE (null value), so Terraform planned to strip it every
+    # run and this stack never went clean. Added 2026-08-14.
+    ignore_changes = [metadata[0].labels]
+  }
 }
 
 resource "kubectl_manifest" "sync_ghcr_credentials" {

@@ -429,7 +429,26 @@ resource "kubernetes_deployment" "anubis" {
 
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    #
+    # metadata annotations/labels are ignored for the same reason, added
+    # 2026-08-14: two Kyverno mutate policies stamp this Deployment's metadata
+    # and Terraform then planned to strip what they added, so every anubis-using
+    # stack reported drift forever (7 of the 118 in the 2026-08-14 detection
+    # run). The policies are `inject-keel-annotations` (rule add-keel-annotations
+    # -> keel.sh/policy, keel.sh/pollSchedule, keel.sh/trigger) and
+    # `sync-tier-label-from-namespace` (rule sync-tier-<tier> -> the `tier`
+    # label). Both live in stacks/kyverno/modules/kyverno/.
+    #
+    # Ignoring the whole map is the same trade-off the shared tls_secret module
+    # already takes for its Kyverno-stamped labels: module-defined
+    # labels/annotations are set at create time and not reconciled afterwards.
+    # local.labels still seeds them on create, and spec.selector.match_labels is
+    # a separate attribute, so pod selection is unaffected.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations,
+      metadata[0].labels,
+    ]
   }
 
   depends_on = [kubernetes_manifest.ed25519_secret]

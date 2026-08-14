@@ -35,15 +35,70 @@ steps:
   - name: commit-certs
     image: alpine
     commands:
-      - "apk update && apk add openssh-client git git-crypt"
-      - "mkdir -p ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
-      - "chmod 400 secrets/deploy_key"
+      - "apk update && apk add git git-crypt curl jq"
       # Only add specific paths — never git add .
       - "git add secrets/ state/ || true"
-      - "git remote set-url origin git@github.com:ViktorBarzin/infra.git"
-      - "git commit -m 'Woodpecker CI Update TLS Certificates Commit' || echo 'No changes'"
-      - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git pull --rebase origin master"
-      - "GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master"
+      - |
+        if git diff --cached --quiet; then
+          echo "No certificate change to commit"
+          exit 0
+        fi
+      # ── Push to the FORGEJO CANONICAL repo, NOT the GitHub mirror ──
+      #
+      # This step used to `git remote set-url origin
+      # git@github.com:ViktorBarzin/infra.git` and push there. That silently
+      # threw the renewal away every time: Forgejo is canonical and
+      # push-mirrors TO GitHub, so the next mirror push overwrote GitHub's
+      # master and orphaned the cert commit. Run #1878 (2026-08-09) reported
+      # success and did push e20d6cb4 -- comparing that commit to GitHub master
+      # afterwards reads "diverged, ahead_by: 81, behind_by: 1", and Forgejo has
+      # never held the object at all. So the repo kept the July certificate
+      # while the cluster ran the August one, Terraform wanted to DOWNGRADE the
+      # cert in 89 namespaces, and module.tls_secret showed drift on 56 stacks.
+      # The same thing happened in July (a4360bdf, "renew-tls missed the ~Jul-4
+      # renewal") and was patched by hand.
+      #
+      # The credential comes from Vault rather than a Woodpecker secret: repo 1
+      # has no Forgejo secret wired, and the `ci` policy already grants read on
+      # secret/data/* (stacks/vault/main.tf). forgejo.viktorbarzin.me resolves
+      # in-cluster to the Traefik ClusterIP via CoreDNS, verified reachable from
+      # the woodpecker namespace (git refs endpoint -> HTTP 200).
+      #
+      # Failures are LOUD. A renewal that is not recorded in git is a failed
+      # renewal, even though the cert itself reached the cluster.
+      - |
+        SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200
+        VAULT_TOKEN=$(curl -s -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
+          -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
+        if [ -z "$VAULT_TOKEN" ] || [ "$VAULT_TOKEN" = "null" ]; then
+          echo "ERROR: Vault kubernetes login failed — cannot record the renewed cert"
+          exit 1
+        fi
+        CIG=$(curl -s -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/secret/data/ci/global")
+        FJ_USER=$(echo "$CIG" | jq -r .data.data.forgejo_user)
+        FJ_TOKEN=$(echo "$CIG" | jq -r .data.data.forgejo_push_token)
+        if [ -z "$FJ_TOKEN" ] || [ "$FJ_TOKEN" = "null" ]; then
+          echo "ERROR: secret/ci/global has no forgejo_push_token"
+          exit 1
+        fi
+        # Keep the token out of the remote URL so it cannot land in a log line.
+        umask 077
+        printf 'https://%s:%s@forgejo.viktorbarzin.me\n' "$FJ_USER" "$FJ_TOKEN" > /tmp/.gitcreds
+        git config credential.helper 'store --file=/tmp/.gitcreds'
+        git remote set-url origin https://forgejo.viktorbarzin.me/viktor/infra.git
+        git -c user.email=ci@viktorbarzin.me -c user.name='Woodpecker CI' \
+          commit -m 'Woodpecker CI Update TLS Certificates Commit'
+        git fetch origin master
+        if ! git rebase origin/master; then
+          git rebase --abort || true
+          rm -f /tmp/.gitcreds
+          echo "ERROR: rebase onto forgejo/master failed — renewed cert NOT recorded"
+          exit 1
+        fi
+        git push origin HEAD:master
+        rm -f /tmp/.gitcreds
+        echo "Recorded the renewed certificate on the Forgejo canonical master"
 
   - name: verify-cert
     image: alpine
@@ -57,14 +112,42 @@ steps:
     commands:
       - "apk update && apk add curl"
       - "curl -LO https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl && chmod +x kubectl && mv kubectl /usr/local/bin/"
+      # `|| true` used to swallow every per-namespace failure, and stderr went to
+      # /dev/null, so a partial rollout looked identical to a clean one. On
+      # 2026-08-14 that hid a 89/61 split: 89 namespaces held the August cert
+      # while 61 were still on July's, with nothing reported. Count the failures
+      # and fail the step, so a partial rollout is visible.
+      #
+      # Note the ORDER matters. kyverno/tls-secret is the clone source for the
+      # sync-tls-secret ClusterPolicy, which runs `synchronize: true` and so
+      # actively reverts every downstream copy to match it. Update the source
+      # FIRST; the per-namespace loop is then belt-and-braces rather than a race
+      # against Kyverno. The source is also Terraform-owned
+      # (stacks/kyverno/modules/kyverno/tls-secret-sync.tf), so it only stays
+      # current because the cert is committed to the canonical repo above.
       - |
         SECRET_YAML=$(kubectl create secret tls tls-secret \
           --cert=secrets/fullchain.pem --key=secrets/privkey.pem \
           --namespace=placeholder --dry-run=client -o yaml)
+
+        echo "$SECRET_YAML" | sed "s/namespace: placeholder/namespace: kyverno/" | kubectl apply -f -
+        echo "--- updated the kyverno clone source; Kyverno will re-sync its clones ---"
+
+        FAILED=""
+        TOTAL=0
         for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -v '^kube-'); do
-          echo "$SECRET_YAML" | sed "s/namespace: placeholder/namespace: $ns/" | kubectl apply -f - 2>/dev/null || true
+          TOTAL=$((TOTAL + 1))
+          if ! echo "$SECRET_YAML" | sed "s/namespace: placeholder/namespace: $ns/" | kubectl apply -f - >/dev/null; then
+            echo "FAILED to update tls-secret in namespace: $ns"
+            FAILED="$FAILED $ns"
+          fi
         done
-      - "echo 'TLS secret updated in all namespaces'"
+        if [ -n "$FAILED" ]; then
+          echo "=== TLS secret update FAILED in these namespaces:$FAILED ==="
+          echo "(checked $TOTAL namespaces)"
+          exit 1
+        fi
+        echo "TLS secret updated in all $TOTAL namespaces"
 
   - name: slack
     image: curlimages/curl
