@@ -164,8 +164,8 @@ steps:
         done
 
         # Summary counters, derived from the results file. Woodpecker expands
-        # ${...} in this YAML before the shell ever sees it, so the previous
-        # "$${METRICS}accumulator" pattern silently expanded to nothing and only
+        # dollar-brace references in this YAML before the shell ever sees it, so
+        # the previous braced METRICS accumulator expanded to nothing and only
         # the LAST assignment survived — the 2026-08-14 push carried just
         # drift_detection_last_run_timestamp and no per-stack series at all, and
         # the summary read "Errors: none" after 150 errors. Files avoid both
@@ -187,8 +187,8 @@ steps:
           http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/drift-detection \
           || echo "(pushgateway unavailable, metrics lost for this run)"
 
-        # Braced ${VAR} is deliberately avoided in the rest of this block for
-        # the Woodpecker-interpolation reason above; ${DRIFTED:-none} was the
+        # Braced variable references are deliberately avoided in this block for
+        # the Woodpecker-interpolation reason above; the old default-value form
         # one form that survived, but keeping one style is less error-prone.
         DRIFTED_TEXT=" none"
         ERRORS_TEXT=" none"
