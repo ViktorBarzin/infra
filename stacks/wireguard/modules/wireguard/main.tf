@@ -289,6 +289,15 @@ resource "kubernetes_deployment" "wireguard" {
       }
     }
   }
+  lifecycle {
+    # dns_config is declared explicitly above (ndots=2), so it already matches
+    # what Kyverno injects — no KYVERNO_LIFECYCLE_V1 line needed here.
+    ignore_changes = [
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
+  }
 }
 
 # Renders the vpn-portal WireGuard peer list (secret/vpn-portal field wg_peers,

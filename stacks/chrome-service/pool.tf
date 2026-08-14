@@ -124,6 +124,9 @@ resource "kubernetes_deployment" "worker_warm" {
       # label, stamped by the separate resource-governance policy, needs the
       # ignore.
       metadata[0].labels["tier"],
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
     ]
   }
 }
