@@ -171,6 +171,11 @@ resource "kubernetes_manifest" "bearer_middleware" {
 # share a node with the volume, so co-locating them is a constraint of the
 # storage model rather than a packaging preference.
 resource "kubernetes_deployment" "repowise" {
+  # Every container reads secret keys from repowise-secrets, which ESO creates.
+  # Without this the first apply can roll pods before the secret exists and
+  # then wait out its rollout timeout on a CreateContainerConfigError.
+  depends_on = [kubernetes_manifest.external_secret]
+
   metadata {
     name      = local.app
     namespace = kubernetes_namespace.repowise.metadata[0].name
