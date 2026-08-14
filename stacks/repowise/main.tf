@@ -309,21 +309,32 @@ resource "kubernetes_deployment" "repowise" {
             failure_threshold = 60
             period_seconds    = 5
           }
+          # Deliberately tolerant. Indexing runs in the same asyncio loop as the
+          # HTTP server, and a CPU-bound graph phase (betweenness centrality over
+          # a large repo) blocks it for minutes at a time — /health cannot answer
+          # while that runs. A tighter probe killed the container mid-index on
+          # 2026-08-14 and then did it again on the restart, which is why the
+          # first index stalled at 36 of 42 repos. Liveness here is only meant to
+          # catch a genuinely dead process, so it tolerates ~5 minutes of
+          # unresponsiveness; readiness tolerates ~90s so a normal indexing phase
+          # does not flap the Service endpoint.
           liveness_probe {
             http_get {
               path = "/health"
               port = local.api_port
             }
-            period_seconds  = 30
-            timeout_seconds = 5
+            period_seconds    = 30
+            timeout_seconds   = 15
+            failure_threshold = 10
           }
           readiness_probe {
             http_get {
               path = "/health"
               port = local.api_port
             }
-            period_seconds  = 10
-            timeout_seconds = 5
+            period_seconds    = 15
+            timeout_seconds   = 10
+            failure_threshold = 6
           }
 
           resources {
