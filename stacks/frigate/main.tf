@@ -290,6 +290,12 @@ resource "kubernetes_service" "frigate-rtsp" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     # Was NodePort. ETP=Local: the Frigate pod is pinned to the GPU node, so
     # MetalLB advertises .204 only from that node -> no SNAT, real client IP

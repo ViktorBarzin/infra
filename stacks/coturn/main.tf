@@ -253,6 +253,12 @@ resource "kubernetes_service" "coturn" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type = "LoadBalancer"
     # Preserves the client source address, which STUN/TURN fundamentally needs.
