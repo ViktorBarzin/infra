@@ -119,6 +119,21 @@ uses search rather than `/api/v1/users/{owner}/repos` — the latter demands
 
 ## Troubleshooting
 
+**Dashboard times out or is very slow.** Almost certainly indexing. repowise
+serves HTTP and indexes on the same asyncio loop, and the dashboard is
+server-rendered against `/api`, so while a big reindex runs the page render waits
+on it. Measured 2026-08-14: during the initial index of 42 repos the page took
+**22.5s**; with indexing finished the same page renders in **0.6s** and
+`/api/repos` answers in ~0.4s. Check `kubectl -n repowise logs deploy/repowise -c
+api --tail=5` for `job_phase_start` lines before looking anywhere else.
+
+There is also an upstream race that shows up in the same window:
+`GET /api/repos` can return 500 with `RuntimeError: dictionary changed size
+during iteration` (`server/routers/repos.py`, `list_repos` iterating
+`workspace_sessions` while an indexing job registers a repo DB into it).
+Measured 1 in 10 calls during active indexing, 0 in 10 once idle. It clears when
+indexing stops; a one-line upstream fix would be to iterate a copy.
+
 **Dashboard loads but shows no data.** The browser needs repowise's API key,
 which lives in localStorage. Open `/settings` in the dashboard and paste
 `api_key` from Vault. Symptom is a working shell with failing XHR.
