@@ -487,6 +487,14 @@ resource "kubernetes_job" "pg_db_init" {
   }
   wait_for_completion = false
   depends_on          = [kubernetes_namespace.technitium]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno mutates the pod dns_config (ndots) on
+    # admission. A Job's pod template is immutable, so Terraform can't update
+    # that in place — it would REPLACE the Job and re-run it on every apply.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+    ]
+  }
 }
 
 # ExternalSecret for the Technitium PostgreSQL query-log password (Vault

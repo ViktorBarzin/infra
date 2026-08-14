@@ -195,6 +195,14 @@ resource "kubernetes_job" "db_init" {
   timeouts {
     create = "2m"
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno mutates the pod dns_config (ndots) on
+    # admission. A Job's pod template is immutable, so Terraform can't update
+    # that in place — it would REPLACE the Job and re-run it on every apply.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+    ]
+  }
 }
 
 # Migrations job - runs alembic migrations
@@ -237,6 +245,14 @@ resource "kubernetes_job" "migrations" {
     create = "5m"
   }
   depends_on = [kubernetes_job.db_init]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno mutates the pod dns_config (ndots) on
+    # admission. A Job's pod template is immutable, so Terraform can't update
+    # that in place — it would REPLACE the Job and re-run it on every apply.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+    ]
+  }
 }
 
 # Frontend deployment - dashboard + api-gateway
