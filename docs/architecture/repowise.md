@@ -154,9 +154,23 @@ with the names this server is actually reachable by. If you add a hostname or
 rename the Service, add it there — the `MCP_SERVICE_NAME`, `MCP_NAMESPACE` and
 `MCP_INGRESS_HOST` env vars on the `mcp` container feed it.
 
-**`decision_extractor.llm_structuring_failed` warnings.** Expected. No LLM
-provider is configured, so the decision extractor cannot structure prose and
-falls back. Harmless in deterministic mode.
+**`decision_extractor.llm_structuring_failed` or `[ollama] Connection error`
+warnings.** Expected. No LLM provider is configured, so the generation pipeline
+tries a provider, fails, and falls back to the deterministic template — which is
+the output we want. Every repo's `.repowise/state.json` records
+`docs_mode: deterministic`, confirming the mode is right; the attempt is just
+upstream's fallback ordering. Nothing leaves the homelab and nothing is billed.
+
+**Indexing blocks the event loop — keep the probes slack.** repowise indexes in
+the same asyncio loop that serves HTTP, so a CPU-bound graph phase (betweenness
+centrality over a large repo) stops `/health` answering for minutes. On
+2026-08-14 a 5s/3-failure liveness probe killed the API mid-index and repeated it
+on the restart, stalling the first index at 36 of 42 repos. Events showed
+"Container api failed liveness probe, will be restarted" — **not** an OOM kill,
+which is the easy misdiagnosis given the exit code is 137. Liveness now tolerates
+~5 minutes and readiness ~90s. If you tighten them, expect this back. For the
+same reason the Kuma `Repowise API` monitor needs several retries before it
+alerts.
 
 **A killed `tg apply` can orphan a resource.** If an apply is interrupted after
 it creates something but before it writes state, later applies fail with
