@@ -55,6 +55,12 @@ TRIGGER_TIMEOUT = int(os.environ.get("REINDEX_TRIGGER_TIMEOUT", "120"))
 # an hour is far too long to sit on a transient error.
 RETRY_DELAY = int(os.environ.get("SYNC_RETRY_SECONDS", "300"))
 KUMA_PUSH_URL = os.environ.get("KUMA_PUSH_URL", "")
+# Which repo the dashboard and single-repo MCP queries default to. `repowise
+# init --all` picks one on its own and picks the first alphabetically, which
+# here is Website — 338 files of png/md/html/svg and no source code, so it
+# indexes to nothing and every graph view opens empty. Setting it explicitly
+# each pass means a volume rebuild cannot quietly reintroduce that.
+DEFAULT_REPO = os.environ.get("REPOWISE_DEFAULT_REPO", "infra")
 
 # Passed to `repowise init` so the parser never sees content that cannot
 # usefully be parsed. infra's secrets are git-crypt ciphertext in the clone —
@@ -271,6 +277,37 @@ def bootstrap() -> None:
     log.info("bootstrap complete")
 
 
+def set_default_repo(alias: str) -> None:
+    """Point the workspace at *alias* as its default repo, if it is not already.
+
+    Idempotent and best-effort: a failure here leaves a usable Corpus with a
+    poor landing page, which is not worth failing a pass over.
+    """
+    config = WORKSPACE / WORKSPACE_CONFIG
+    try:
+        current = ""
+        for line in config.read_text().splitlines():
+            if line.startswith("default_repo:"):
+                current = line.split(":", 1)[1].strip()
+                break
+        if current == alias:
+            return
+        # Match against declared aliases, not directory names: aliases are
+        # lower-cased, so a dir check would reject e.g. Website/website.
+        aliases = [
+            line.split(":", 1)[1].strip()
+            for line in config.read_text().splitlines()
+            if line.strip().startswith("alias:")
+        ]
+        if alias not in aliases:
+            log.warning("default repo %r is not in the Corpus; leaving %r", alias, current)
+            return
+        log.info("setting default repo: %s -> %s", current or "(unset)", alias)
+        run(["repowise", "workspace", "set-default", alias], cwd=WORKSPACE, timeout=300)
+    except (ReconcileError, OSError) as exc:
+        log.warning("could not set default repo to %r: %s", alias, exc)
+
+
 def register(name: str) -> None:
     """Index a newly-arrived repo and add it to the workspace config.
 
@@ -370,7 +407,10 @@ def reconcile() -> str:
 
     if not workspace_exists():
         bootstrap()
+        set_default_repo(DEFAULT_REPO)
         return f"bootstrapped {len(remote)} repos"
+
+    set_default_repo(DEFAULT_REPO)
 
     for name in fresh:
         register(name)

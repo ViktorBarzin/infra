@@ -220,6 +220,10 @@ resource "kubernetes_deployment" "repowise" {
           name = "ghcr-credentials"
         }
 
+        # Our image can change without the upstream version changing — a fix to
+        # our own Dockerfile rebuilds the same :<version> tag. IfNotPresent
+        # would keep serving the cached layer forever, so pull every start.
+        # Keel still handles genuine upstream version rolls.
         security_context {
           run_as_user  = local.run_as
           run_as_group = local.run_as
@@ -247,9 +251,10 @@ resource "kubernetes_deployment" "repowise" {
         # api — the REST surface, and the only thing that runs reindex jobs
         # ---------------------------------------------------------------
         container {
-          name        = "api"
-          image       = local.image
-          working_dir = local.workspace
+          name              = "api"
+          image             = local.image
+          image_pull_policy = "Always"
+          working_dir       = local.workspace
           command = [
             "uvicorn", "repowise.server.app:create_app",
             "--factory", "--host", "0.0.0.0", "--port", tostring(local.api_port),
@@ -356,10 +361,11 @@ resource "kubernetes_deployment" "repowise" {
         # the browser talks to it same-origin through Traefik.
         # ---------------------------------------------------------------
         container {
-          name        = "web"
-          image       = local.image
-          working_dir = "/app/web"
-          command     = ["node", "server.js"]
+          name              = "web"
+          image             = local.image
+          image_pull_policy = "Always"
+          working_dir       = "/app/web"
+          command           = ["node", "server.js"]
 
           port {
             name           = "web"
@@ -420,9 +426,10 @@ resource "kubernetes_deployment" "repowise" {
         # mcp — what agents actually consume. streamable-http on /mcp.
         # ---------------------------------------------------------------
         container {
-          name        = "mcp"
-          image       = local.image
-          working_dir = local.workspace
+          name              = "mcp"
+          image             = local.image
+          image_pull_policy = "Always"
+          working_dir       = local.workspace
           # Not `repowise mcp` directly: the SDK derives a localhost-only Host
           # allowlist from repowise's FastMCP construction, which 421s every
           # request under a real hostname (including the ClusterIP that
@@ -520,14 +527,22 @@ resource "kubernetes_deployment" "repowise" {
         # with Forgejo and asks the API to reindex whatever moved.
         # ---------------------------------------------------------------
         container {
-          name        = "sync"
-          image       = local.image
-          working_dir = local.workspace
-          command     = ["python3", "/opt/repowise/reconcile.py"]
+          name              = "sync"
+          image             = local.image
+          image_pull_policy = "Always"
+          working_dir       = local.workspace
+          command           = ["python3", "/opt/repowise/reconcile.py"]
 
           env {
             name  = "REPOWISE_WORKSPACE"
             value = local.workspace
+          }
+          env {
+            # `repowise init --all` picks the first repo alphabetically as the
+            # workspace default, which is Website — no source code in it, so
+            # every graph view opens empty. The reconciler sets this instead.
+            name  = "REPOWISE_DEFAULT_REPO"
+            value = "infra"
           }
           env {
             name  = "REPOWISE_API"
