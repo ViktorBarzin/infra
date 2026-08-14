@@ -126,13 +126,14 @@ resource "kubernetes_persistent_volume_claim" "workspace" {
   }
 }
 
-resource "kubernetes_config_map" "reconcile" {
+resource "kubernetes_config_map" "scripts" {
   metadata {
-    name      = "repowise-reconcile"
+    name      = "repowise-scripts"
     namespace = kubernetes_namespace.repowise.metadata[0].name
   }
   data = {
     "reconcile.py" = file("${path.module}/files/reconcile.py")
+    "mcp_serve.py" = file("${path.module}/files/mcp_serve.py")
   }
 }
 
@@ -161,37 +162,6 @@ resource "kubernetes_manifest" "bearer_middleware" {
           tokens                 = jsondecode(data.vault_kv_secret_v2.secrets.data["bearer_tokens"])
           removeHeadersOnSuccess = true
           authenticationErrorMsg = "Access Denied"
-        }
-      }
-    }
-  }
-  depends_on = [kubernetes_namespace.repowise]
-}
-
-# Host-header rewrite for /mcp, required by the MCP SDK's DNS-rebinding
-# protection. repowise builds its FastMCP instance with the default host
-# (127.0.0.1), which makes the SDK auto-enable that protection with
-# allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]; it then sets
-# settings.host = 0.0.0.0 at run time, but the allowlist keeps the localhost
-# restriction. A request arriving as repowise-mcp.viktorbarzin.me therefore gets
-# HTTP 421 "Invalid Host header".
-#
-# Rewriting Host satisfies the allowlist without patching third-party code. The
-# port matters: the allowlist matches `localhost:` + anything, so a bare
-# "localhost" would still be rejected. Chained AFTER the bearer check, so this
-# never runs for an unauthenticated request.
-resource "kubernetes_manifest" "mcp_host_rewrite" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "mcp-host-rewrite"
-      namespace = kubernetes_namespace.repowise.metadata[0].name
-    }
-    spec = {
-      headers = {
-        customRequestHeaders = {
-          Host = "localhost:${local.mcp_port}"
         }
       }
     }
@@ -266,9 +236,9 @@ resource "kubernetes_deployment" "repowise" {
           }
         }
         volume {
-          name = "reconcile"
+          name = "scripts"
           config_map {
-            name         = kubernetes_config_map.reconcile.metadata[0].name
+            name         = kubernetes_config_map.scripts.metadata[0].name
             default_mode = "0555"
           }
         }
@@ -442,13 +412,12 @@ resource "kubernetes_deployment" "repowise" {
           name        = "mcp"
           image       = local.image
           working_dir = local.workspace
-          command = [
-            "repowise", "mcp",
-            "--transport", "streamable-http",
-            "--host", "0.0.0.0",
-            "--port", tostring(local.mcp_port),
-            "--all",
-          ]
+          # Not `repowise mcp` directly: the SDK derives a localhost-only Host
+          # allowlist from repowise's FastMCP construction, which 421s every
+          # request under a real hostname (including the ClusterIP that
+          # in-cluster agents use). The launcher sets an allowlist matching
+          # where this is actually reachable from, keeping the protection on.
+          command = ["python3", "/opt/repowise/mcp_serve.py"]
 
           port {
             name           = "mcp"
@@ -462,6 +431,29 @@ resource "kubernetes_deployment" "repowise" {
           env {
             name  = "REPOWISE_EMBEDDER"
             value = "mock"
+          }
+          env {
+            name  = "REPOWISE_WORKSPACE"
+            value = local.workspace
+          }
+          env {
+            name  = "REPOWISE_MCP_PORT"
+            value = tostring(local.mcp_port)
+          }
+          # The Host allowlist the launcher builds. Kept here so the coupling
+          # between the Service/ingress names and that allowlist is visible in
+          # one place.
+          env {
+            name  = "MCP_SERVICE_NAME"
+            value = "repowise-mcp"
+          }
+          env {
+            name  = "MCP_NAMESPACE"
+            value = local.app
+          }
+          env {
+            name  = "MCP_INGRESS_HOST"
+            value = "repowise-mcp.viktorbarzin.me"
           }
           env {
             # Silences the unauthenticated-transport warning and signs SSE
@@ -479,6 +471,11 @@ resource "kubernetes_deployment" "repowise" {
           volume_mount {
             name       = "workspace"
             mount_path = local.workspace
+          }
+          volume_mount {
+            name       = "scripts"
+            mount_path = "/opt/repowise"
+            read_only  = true
           }
 
           liveness_probe {
@@ -515,7 +512,7 @@ resource "kubernetes_deployment" "repowise" {
           name        = "sync"
           image       = local.image
           working_dir = local.workspace
-          command     = ["python3", "/opt/reconcile/reconcile.py"]
+          command     = ["python3", "/opt/repowise/reconcile.py"]
 
           env {
             name  = "REPOWISE_WORKSPACE"
@@ -586,8 +583,8 @@ resource "kubernetes_deployment" "repowise" {
             mount_path = local.workspace
           }
           volume_mount {
-            name       = "reconcile"
-            mount_path = "/opt/reconcile"
+            name       = "scripts"
+            mount_path = "/opt/repowise"
             read_only  = true
           }
 
@@ -782,11 +779,6 @@ module "ingress_mcp" {
     "traefik-error-pages-403@kubernetescrd",
     "traefik-home-lans-only@kubernetescrd",
     "repowise-bearer-auth@kubernetescrd",
-    # Last: only rewrite Host for requests that passed both gates.
-    "repowise-mcp-host-rewrite@kubernetescrd",
   ]
-  depends_on = [
-    kubernetes_manifest.bearer_middleware,
-    kubernetes_manifest.mcp_host_rewrite,
-  ]
+  depends_on = [kubernetes_manifest.bearer_middleware]
 }
