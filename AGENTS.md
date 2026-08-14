@@ -138,10 +138,10 @@ The Redis stack (`stacks/redis/`) exposes three distinct entry points. Pick the 
 
 Kyverno's admission webhook mutates every pod with a `dns_config { option { name = "ndots"; value = "2" } }` block (fixes NxDomain search-domain floods — see `k8s-ndots-search-domain-nxdomain-flood` skill). Terraform does not manage that field, so without suppression every pod-owning resource shows perpetual `spec[0].template[0].spec[0].dns_config` drift.
 
-**Rule**: every `kubernetes_deployment`, `kubernetes_stateful_set`, `kubernetes_daemon_set`, and `kubernetes_cron_job_v1` MUST include the following `lifecycle` block, tagged with the `# KYVERNO_LIFECYCLE_V1` marker so every site is greppable:
+**Rule**: every `kubernetes_deployment`, `kubernetes_stateful_set`, `kubernetes_daemon_set`, `kubernetes_cron_job_v1`, **and `kubernetes_job`** MUST include the following `lifecycle` block, tagged with the `# KYVERNO_LIFECYCLE_V1` marker so every site is greppable:
 
 ```hcl
-# kubernetes_deployment / kubernetes_stateful_set / kubernetes_daemon_set
+# kubernetes_deployment / kubernetes_stateful_set / kubernetes_daemon_set / kubernetes_job
 lifecycle {
   ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
 }
@@ -151,6 +151,16 @@ lifecycle {
   ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
 }
 ```
+
+**`kubernetes_job` matters more than the others, not less.** A Job's pod
+template is immutable, so Terraform cannot update the injected `ndots` option in
+place the way it does on a Deployment — it plans a **replace**, which deletes and
+re-runs the Job. For the one-shot `db_init` / `migrations` / `pg_db_init` Jobs
+this repo uses, that means database initialisation and Alembic migrations
+re-execute on **every apply** that touches the stack, and the stack never stops
+showing drift. Five Jobs were missing the line until **2026-08-14** (tts,
+technitium, claude-memory, trading-bot ×2); `kubernetes_job` had been absent from
+this rule's resource list, which is how they were overlooked.
 
 **Why not a shared module?** Terraform's `ignore_changes` meta-argument only accepts static attribute paths. It rejects module outputs, locals, variables, and any expression. A DRY module is therefore impossible — the canonical pattern IS the snippet + marker. When `kubernetes_manifest` resources get Kyverno `generate.kyverno.io/*` annotations mutated, a sibling convention `# KYVERNO_MANIFEST_V1` will be introduced (Phase B).
 
