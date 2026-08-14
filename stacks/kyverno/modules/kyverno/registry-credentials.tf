@@ -32,6 +32,12 @@ resource "kubernetes_secret" "registry_credentials" {
       }
     })
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno stamps generate.kyverno.io/clone-source onto
+    # its own clone SOURCE (null value), so Terraform planned to strip it every
+    # run and this stack never went clean. Added 2026-08-14.
+    ignore_changes = [metadata[0].labels]
+  }
 }
 
 # Grant Kyverno controllers permission to manage Secrets (needed for generate clone rules)
