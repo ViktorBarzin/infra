@@ -3776,6 +3776,34 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} stacks drifting — likely a systemic cause (new admission webhook, provider upgrade). Check the most recent drift-detection run in Woodpecker."
+          - alert: DriftStackErrored
+            # A stack whose `terragrunt plan` EXITS 1 is invisible to every other
+            # rule in this group: it cannot be planned, so it is never counted in
+            # drift_stack_count and never gets a drift_stack_age_hours, meaning
+            # DriftStacksMany and DriftUnaddressed both look straight past it.
+            # Only drift_error_count moves, and until 2026-08-14 nothing watched
+            # that.
+            #
+            # This is not theoretical. stacks/learning carried
+            # `wait_until_bound` inside the PVC's spec{} block instead of at the
+            # resource top level, so every plan died with "Unsupported argument".
+            # The stack could be neither planned nor applied for ~18 days: its
+            # Service and Ingress existed while the Deployment and PVC did not,
+            # so learn.viktorbarzin.me had an ingress pointing at a Service with
+            # `endpoints: <none>`. The drift run had been reporting
+            # drift_error_count=1 the whole time.
+            #
+            # A stack that cannot be planned is strictly worse than a drifted one
+            # — its real drift is unknowable — so this pages on any error rather
+            # than a threshold. `for: 2h` rides out a transient plan failure
+            # (a contended state lock, a brief Vault/PG blip) without waiting a
+            # whole extra cron cycle.
+            expr: drift_error_count > 0
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} stack(s) FAILED to plan in the drift run — those stacks cannot be planned or applied and their real drift is unknown. The failing stack names and their last 30 plan lines are in the drift-detection step log."
       # Webterminal availability. Metrics pushed by the webterminal-probe
       # CronJob in stacks/terminal/main.tf every 5 minutes. The probe targets
       # terminal.viktorbarzin.me via Cloudflare so any failure in the chain
