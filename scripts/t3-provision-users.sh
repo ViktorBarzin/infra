@@ -466,10 +466,37 @@ install_playwright() {
     log "WARN: claude not found for $user -> playwright MCP not wired (retries next run)"
   fi
 
-  # (3) enable the system template instances. `enable --now` is idempotent and
+  # (3) retire the hand-made `systemd --user` units the template unit replaced.
+  #     Enabling the system instance is NOT enough on a box that predates it:
+  #     the old user unit keeps running with its own HARDCODED --port, the new
+  #     one cannot bind, and it crash-loops on EADDRINUSE forever. Found
+  #     2026-08-14 with all three users broken and 184k-187k restarts each,
+  #     wizard's and ancamilea's ports cross-wired (each holding the other's).
+  #     The unit file is renamed rather than deleted so the retirement is
+  #     visible and reversible.
+  retire_legacy_playwright_units "$user"
+
+  # (4) enable the system template instances. `enable --now` is idempotent and
   #     does NOT restart a running unit, so a live user is undisturbed.
   run systemctl enable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
   run systemctl enable --now "playwright-snapshot-refresh@$user.timer" >/dev/null 2>&1 || true
+}
+
+# Stop + disable + rename the pre-template per-user playwright units, if present.
+# Idempotent: a user who never had them, or was already migrated, is a no-op.
+retire_legacy_playwright_units() {
+  local user="$1" home uid unit f
+  home="$(getent passwd "$user" | cut -d: -f6)" || return 0
+  uid="$(id -u "$user" 2>/dev/null)" || return 0
+  for unit in playwright-mcp.service playwright-snapshot-refresh.timer playwright-snapshot-refresh.service; do
+    f="$home/.config/systemd/user/$unit"
+    [[ -f "$f" ]] || continue
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] retire legacy $unit -> $user"; continue; fi
+    runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" \
+      systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+    mv "$f" "$f.superseded-by-system-unit"
+    log "retired legacy user unit $unit for $user (superseded by the system template)"
+  done
 }
 
 # Per-user homelab-memory setup — migrate off the claude-memory MCP/plugin to the
