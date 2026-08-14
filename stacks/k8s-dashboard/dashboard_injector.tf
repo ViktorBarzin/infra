@@ -179,6 +179,7 @@ resource "kubernetes_deployment" "dashboard_injector" {
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].labels["tier"],                      # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
 }
