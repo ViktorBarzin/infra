@@ -53,6 +53,24 @@ resource "kubernetes_cron_job_v1" "grabber" {
     namespace = var.namespace
   }
   spec {
+    # SUSPENDED 2026-08-14: the MAM ACCOUNT is disabled, not the cookie. A
+    # browser login from the cluster's egress IP (176.12.22.76, the same IP
+    # these jobs use) returned "Login failed! Error: Your account is disabled,
+    # please contact staff on irc to get your account back". The credentials
+    # are correct — a wrong password gives a different error — so the HTTP 403s
+    # from jsonLoad.php since 2026-08-12 18:30 are a CONSEQUENCE of the
+    # disablement, not an expired mam_id. Refreshing the cookie cannot fix it.
+    #
+    # Until staff reinstate the account there is nothing for this job to do, and
+    # running it just re-fires MAMCookieExpired/MAMFarmingStuck every 30 min.
+    # TO RE-ENABLE: set suspend = false here and on bp_spender, and follow the
+    # cookie-refresh order in the runbook — mint a fresh mam_id, `vault kv patch
+    # secret/servarr mam_id=<new>` (patch, not put), then DELETE
+    # /srv/nfs/servarr/mam-farming/mam_id on 192.168.1.127, because load_cookie()
+    # reads that PVC file first and a stale file silently wins over Vault.
+    # mam-farming-janitor is deliberately left running — it only prunes local
+    # torrents and never talks to MAM.
+    suspend                       = true
     schedule                      = "*/30 * * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
@@ -151,6 +169,10 @@ resource "kubernetes_cron_job_v1" "bp_spender" {
     # hygiene, not a proven fix. If mam_farming_cookie_expired keeps returning
     # after the cookie is refreshed, the next thing to check is whether the two
     # jobs should share one cookie at all rather than hold separate sessions.
+    # SUSPENDED 2026-08-14 for the same reason as the grabber above: the MAM
+    # account is disabled, so this job can only fail. See the grabber's comment
+    # for the evidence and the full re-enable procedure.
+    suspend                       = true
     schedule                      = "15 */6 * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
