@@ -149,6 +149,7 @@ resource "kubernetes_deployment" "learning" {
       metadata[0].annotations["keel.sh/pollSchedule"],
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — CI set-image wins
       metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
   depends_on = [kubernetes_persistent_volume_claim.data]
