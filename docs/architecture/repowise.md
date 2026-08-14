@@ -23,7 +23,7 @@ One pod, one image, four containers, one ReadWriteOnce
 |---|---|---|
 | `api` | 7337 | REST API; the only process that runs reindex jobs |
 | `web` | 3000 | Next.js dashboard; SSR calls the API over loopback |
-| `mcp` | 7338 | `streamable-http` MCP transport — **no auth of its own** |
+| `mcp` | 7338 | `streamable-http` MCP transport — **no auth of its own**; started via `files/mcp_serve.py` |
 | `sync` | — | the reconciler: bootstraps and maintains the Corpus |
 
 Everything that writes SQLite shares the pod because repowise hard-codes
@@ -145,6 +145,25 @@ ownership would otherwise look like a mass repo failure.
 
 **After an upstream bump, `no such column`.** `init_db` back-fills additive
 schema drift automatically; a non-additive change needs an index rebuild (above).
+
+**`421 Invalid Host header` from `/mcp`.** The MCP SDK's DNS-rebinding
+protection. repowise constructs FastMCP with the SDK's `127.0.0.1` default, so
+the SDK derives a localhost-only `Host` allowlist and keeps it even after
+repowise sets the host to `0.0.0.0`. `files/mcp_serve.py` replaces that allowlist
+with the names this server is actually reachable by. If you add a hostname or
+rename the Service, add it there — the `MCP_SERVICE_NAME`, `MCP_NAMESPACE` and
+`MCP_INGRESS_HOST` env vars on the `mcp` container feed it.
+
+**`decision_extractor.llm_structuring_failed` warnings.** Expected. No LLM
+provider is configured, so the decision extractor cannot structure prose and
+falls back. Harmless in deterministic mode.
+
+**A killed `tg apply` can orphan a resource.** If an apply is interrupted after
+it creates something but before it writes state, later applies fail with
+`already exists`. That happened to the Deployment during the initial rollout.
+Fix: confirm with `tg state list`, then either import it or delete the live
+object and re-apply. The PVC is a separate resource, so the Corpus survives
+either way.
 
 ## Deliberate deviations from house convention
 
