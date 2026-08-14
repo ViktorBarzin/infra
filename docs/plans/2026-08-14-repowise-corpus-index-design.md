@@ -3,13 +3,21 @@
 **Status:** executing · **Date:** 2026-08-14 · **Owner:** Viktor
 **Stack:** `infra/stacks/repowise/` · **Image:** `.github/workflows/build-repowise.yml`
 
+```stats
+42 | repos indexed
+383 MiB | corpus size
+14 | MCP tools live
+~1 h | max index lag
+£0 | running cost
+```
+
 ## What this is for
 
 [repowise](https://github.com/repowise-dev/repowise) indexes a git repository
 once and then answers questions about it: dependency graph, git hotspots and
 ownership, code-health scores from 49 deterministic detectors, dead code, change
-risk, and cross-repo API contracts. It exposes that through ten MCP tools, a
-REST API, and a web dashboard.
+risk, and cross-repo API contracts. It exposes that through a set of MCP tools (14 on our
+deployment), a REST API, and a web dashboard.
 
 We run it so that **AI agents get architectural context cheaply**. That is the
 primary consumer, and where the dashboard and the MCP surface pull in different
@@ -89,10 +97,9 @@ hard-coded — `create_engine(f"sqlite+aiosqlite:///{db_url_posix}")` in
 `server/app.py`. Postgres is therefore not available for a multi-repo
 deployment, however much the shared CNPG cluster would suit it.
 
-Both the API and the MCP server write to those files. Multiple writers over NFS
-lock semantics is the well-known route to a corrupted SQLite database, so the
-Corpus lives on a **block** volume and everything that writes to it shares the
-pod. Co-location is a consequence of the storage model rather than a packaging
+Both the API and the MCP server write to those files. Multiple SQLite writers
+over NFS lock semantics risk a corrupted database, so the Corpus lives on a
+block volume and everything that writes to it shares the pod. Co-location is a consequence of the storage model rather than a packaging
 preference — and it is why the git reconciler is a sidecar rather than a
 CronJob: a ReadWriteOnce volume cannot be mounted by a second pod.
 
@@ -118,12 +125,13 @@ that HEAD. The reconciler does, hourly:
 The clone is a read-only mirror, so step 3 uses `reset --hard` rather than a
 merge: local state on these clones could only ever make a later fetch conflict.
 
-**The index is therefore up to about an hour behind master, and repowise's own
-`stale_warning` will not tell you that.** That signal compares the index to the
-local clone, and because we reindex immediately after fetching, the two stay in
-lockstep whatever Forgejo has moved on to. This is a property of the topology,
-not a bug we can fix upstream, and it is why the lag is documented for agents
-rather than left to be discovered.
+> [!IMPORTANT]
+> The index is up to about an hour behind master, and repowise's own
+> `stale_warning` will not tell you that. That signal compares the index to the
+> local clone, and because we reindex immediately after fetching, the two stay
+> in lockstep whatever Forgejo has moved on to. This is a property of the
+> topology rather than something fixable upstream, which is why the lag is
+> documented for agents instead of left to be discovered.
 
 ### What agents should and should not trust
 
@@ -140,10 +148,10 @@ file content remains the job of Read and Grep. The guardrail is written into
 
 ## Exposure and authentication
 
-Two hostnames, and that is **required rather than stylistic**: combining the
-home-LAN allowlist with a Cloudflare-proxied host would be self-defeating, since
-cloudflared pod source IPs sit inside `10.0.0.0/8` and would satisfy the
-allowlist (ADR-0021).
+Two hostnames, which the exposure model requires rather than merely prefers:
+combining the home-LAN allowlist with a Cloudflare-proxied host would not
+restrict anything, since cloudflared pod source IPs sit inside `10.0.0.0/8` and
+would satisfy the allowlist (ADR-0021).
 
 | Path | Host | Gate |
 |---|---|---|
@@ -164,13 +172,37 @@ would fall through to the Next.js service and 404.
 
 ### The MCP transport has no authentication
 
-Worth stating plainly, because the code is easy to misread:
-`repowise mcp --transport streamable-http` calls `mcp.run()` with no auth wiring
-whatsoever. `REPOWISE_API_KEY` only silences a startup warning there — it does
-not gate the tools. The Traefik `api-token-middleware` is consequently the
-**only** credential gate on `/mcp`, sitting behind the LAN allowlist. It is
-configured with per-holder tokens (wizard, emo, anca, claude-agent-service) so
-one holder can be revoked without disturbing the others.
+> [!WARNING]
+> `repowise mcp --transport streamable-http` calls `mcp.run()` with no auth
+> wiring whatsoever. `REPOWISE_API_KEY` only silences a startup warning there —
+> it does not gate the tools. The Traefik `api-token-middleware` is consequently
+> the **only** credential gate on `/mcp`, sitting behind the LAN allowlist.
+
+It is configured with per-holder tokens (wizard, emo, anca,
+claude-agent-service) so one holder can be revoked without disturbing the
+others. Verified live: a request with no token gets `403`; a request with a
+valid token completes an MCP handshake and lists 14 tools.
+
+A second consequence of the SDK surfaced during rollout. repowise builds its
+FastMCP instance as `FastMCP("repowise", ...)` with no host argument, so the SDK
+applies its `127.0.0.1` default, reads that as "localhost-only", and auto-enables
+DNS-rebinding protection with `allowed_hosts = ["127.0.0.1:*", "localhost:*",
+"[::1]:*"]`. repowise then sets `settings.host = 0.0.0.0` at run time, but the
+allowlist derived earlier is not revisited. Every request arriving under a real
+hostname was answered `421 Invalid Host header` — including the in-cluster
+ClusterIP address that agent jobs are meant to use.
+
+repowise exposes no setting for this, and the SDK populates its settings from
+explicit constructor arguments, so a `FASTMCP_*` environment variable cannot
+override it either. The `mcp` container therefore starts through a small
+launcher (`files/mcp_serve.py`) that sets an allowlist naming where this server
+is genuinely reachable — the cluster-internal Service names, the ingress
+hostname, and localhost — and then makes the same `run_mcp()` call the CLI makes.
+The protection stays enabled, so any other `Host` is still refused.
+
+An earlier iteration rewrote `Host` at Traefik instead. That fixed only traffic
+arriving through Traefik and left the ClusterIP path failing, so it was replaced
+by the allowlist rather than kept alongside it.
 
 **Accepted residual risk:** in-cluster access to `/mcp` via the ClusterIP is
 ungated — any pod can query it. The ingress path is gated; the cluster path is
@@ -191,8 +223,9 @@ per ADR-0002. The dashboard is a Next.js app that exists only in the upstream
 git tree, which is why this builds from a source checkout rather than a
 `pip install`.
 
-We build with **our own Dockerfile**. Upstream's `docker/Dockerfile` is broken as
-of v0.42.0: its frontend stage copies only `packages/web` before `npm install`,
+We build with our own Dockerfile. Upstream's `docker/Dockerfile` does not yet
+cover the npm-workspace layout their tree moved to: as of v0.42.0 its frontend
+stage copies only `packages/web` before `npm install`,
 so the workspace siblings that package depends on (`@repowise-dev/api-client`,
 `/types`, `/ui`) are looked up in the public registry and 404. They are local
 workspace packages and are not published. Our Dockerfile follows the recipe from
@@ -244,9 +277,9 @@ one:
   Forgejo token, or a Forgejo API change all surface as a real alert in
   `#alerts` instead of an index that is quietly hours stale.
 
-`/metrics` is deliberately **not** scraped. It reports page-freshness and job
-counts for the primary repo's DB only, so a fleet-wide reading of it would be
-false reassurance.
+`/metrics` is deliberately not scraped. It reports page-freshness and job counts
+for the primary repo's DB only, so a dashboard built on it would describe one
+repo while appearing to describe all 42.
 
 ## Backup
 
@@ -266,9 +299,10 @@ made for `ollama` and `prometheus-backup` — regenerable, live-only. Snapshots
 are kept because they cost almost nothing and give a rollback point if an
 upgrade corrupts an index.
 
-This is a **deliberate exception** to the house convention that every
-proxmox-lvm app adds a backup CronJob. Recovery is: delete the volume contents,
-let the reconciler re-clone and reindex.
+> [!NOTE]
+> This is a deliberate exception to the house convention that every proxmox-lvm
+> app adds a backup CronJob. Recovery is: delete the volume contents, let the
+> reconciler re-clone and reindex.
 
 ## Costs and resources
 
@@ -291,8 +325,8 @@ parking the pod would stop them.
 
 - **First-run duration is unmeasured.** The initial index of 42 repositories
   runs inside the sync container and is resumable via `--resume`; the heartbeat
-  stays silent until it completes, which is the honest signal. We will know the
-  real number after the first bootstrap.
+  stays silent until it completes, which correctly reports that the Corpus is not
+  serving yet. We will know the real number after the first bootstrap.
 - **Resource sizing is an estimate**, per above.
 - **In-cluster `/mcp` is ungated** (above). Open until a NetworkPolicy exists or
   we decide the cluster boundary is enough.
