@@ -49,6 +49,8 @@ FORGEJO_TOKEN = os.environ.get("FORGEJO_TOKEN", "")
 API = os.environ.get("REPOWISE_API", "http://localhost:7337")
 API_KEY = os.environ.get("REPOWISE_API_KEY", "")
 INTERVAL = int(os.environ.get("SYNC_INTERVAL_SECONDS", "3600"))
+# How long to wait on the reindex trigger before assuming the server has it.
+TRIGGER_TIMEOUT = int(os.environ.get("REINDEX_TRIGGER_TIMEOUT", "120"))
 KUMA_PUSH_URL = os.environ.get("KUMA_PUSH_URL", "")
 
 # Passed to `repowise init` so the parser never sees content that cannot
@@ -110,6 +112,9 @@ def api_request(
         raise ReconcileError(f"{method} {url} -> HTTP {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
         raise ReconcileError(f"{method} {url} -> {exc.reason}") from exc
+    except TimeoutError as exc:
+        # socket.timeout on a slow endpoint; the caller decides if it matters.
+        raise ReconcileError(f"{method} {url} -> timed out after {timeout}s") from exc
     if not body:
         return None
     try:
@@ -284,14 +289,34 @@ def register(name: str) -> None:
 
 
 def trigger_reindex() -> None:
-    """Ask the API to reindex every stale repo.
+    """Ask the API to reindex every stale or unindexed repo.
 
     repowise never fetches, so without this the index would only catch up on
-    the server's own 15-minute poll. One workspace-wide call covers every
-    repo that moved, and reuses the same job machinery as a per-repo sync.
+    the server's own 15-minute poll. One workspace-wide call covers every repo
+    that moved, and reuses the same job machinery as a per-repo sync.
+
+    The call is bounded and a timeout is not an error. Observed on the first
+    catch-up run: with dozens of repos to index the endpoint holds the
+    connection open far longer than any per-pass budget, and waiting on it
+    would stop the loop from finishing a pass, heartbeating, or ever fetching
+    again. This function's responsibility ends at having asked; the server
+    keeps indexing on its own, and the next pass asks again for whatever is
+    still outstanding.
     """
     log.info("triggering reindex of stale repos")
-    api_request("POST", "/api/workspace/sync", token=API_KEY, scheme="Bearer")
+    try:
+        api_request(
+            "POST",
+            "/api/workspace/sync",
+            token=API_KEY,
+            scheme="Bearer",
+            timeout=TRIGGER_TIMEOUT,
+        )
+    except ReconcileError as exc:
+        if "timed out" in str(exc).lower() or "timeout" in str(exc).lower():
+            log.info("reindex accepted; server still working (%s)", exc)
+            return
+        raise
 
 
 def heartbeat(ok: bool, message: str) -> None:
