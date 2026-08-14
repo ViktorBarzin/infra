@@ -49,10 +49,9 @@ resource "kubernetes_deployment" "worker_warm" {
           seccomp_profile { type = "RuntimeDefault" }
         }
         container {
-          name              = "chrome"
-          image             = "ghcr.io/viktorbarzin/chrome-service-browser:latest"
-          image_pull_policy = "IfNotPresent"
-          command           = ["bash", "/scripts/worker_entrypoint.sh"]
+          name    = "chrome"
+          image   = "ghcr.io/viktorbarzin/chrome-service-browser:latest"
+          command = ["bash", "/scripts/worker_entrypoint.sh"]
           env {
             name  = "DISPLAY"
             value = ":99"
