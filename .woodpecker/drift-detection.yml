@@ -148,7 +148,12 @@ steps:
               # Log which resources moved. Until the `set -e` fix above, exit 2
               # aborted the run too, so a drifted stack was never actually
               # reported — this is the first run shape where this branch runs.
-              echo "$OUTPUT" | grep -E '^  # |^Plan: ' | head -20
+              # Terragrunt prefixes every terraform line with a timestamp and
+              # "STDOUT terraform: ", so anchoring on the bare terraform format
+              # matched nothing and this printed an empty diff on the first run
+              # that reached it. Match the resource/summary lines wherever they
+              # sit on the line instead.
+              echo "$OUTPUT" | grep -E 'terraform: +(# .* will be| *# .* must be|Plan: )' | head -20
               # Fetch first-seen timestamp from Pushgateway (preserve across runs).
               FIRST_SEEN=$(curl -s "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics" \
                 | awk -v s="$stack" '$1 == "drift_stack_first_seen{stack=\""s"\"}" {print $2; exit}')
