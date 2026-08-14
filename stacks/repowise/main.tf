@@ -77,11 +77,12 @@ resource "kubernetes_manifest" "external_secret" {
   depends_on = [kubernetes_namespace.repowise]
 }
 
-module "tls_secret" {
-  source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = kubernetes_namespace.repowise.metadata[0].name
-  tls_secret_name = var.tls_secret_name
-}
+# No setup_tls_secret module here on purpose. Kyverno's sync-tls-secret policy
+# clones `tls-secret` from the kyverno namespace into every namespace with
+# synchronize=true, so the ingresses below find it without this stack shipping
+# its own git-crypt'd copy of the cert. Matches the recent-stack pattern
+# (pages-publish, goldmane-edge-aggregator, chesscom-streak); the ~116 stacks
+# that still call the module predate the clone policy.
 
 # The Corpus: 42 git clones plus their derived per-repo SQLite indexes.
 #
