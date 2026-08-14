@@ -1,0 +1,173 @@
+name: Build repowise
+
+# ADR-0002 / no-local-builds: repowise is a third-party AGPL-3.0 tool that
+# publishes to PyPI but ships no container image, so we build one off-infra on
+# GHA and push it to ghcr. The web UI is a Next.js app that only exists in the
+# upstream git tree (not on PyPI), which is why this builds from a source
+# checkout rather than a plain `pip install`.
+#
+# The package is deliberately PRIVATE. Publishing a derived image of an
+# AGPL-3.0 work would be distribution and would carry a source-offer
+# obligation; keeping it private means we are only ever running it, not
+# conveying it. Pulled via the Kyverno-synced ghcr-credentials allowlist.
+#
+# Two patches are applied to the upstream Dockerfile, each guarded by an
+# assertion so an upstream change fails the build loudly instead of silently
+# altering behaviour:
+#   1. NEXT_PUBLIC_REPOWISE_API_URL is baked into the browser bundle at build
+#      time and upstream hardcodes http://localhost:7337, which cannot work
+#      behind an ingress. Emptying it makes the browser issue same-origin
+#      /api/... requests that Traefik routes to the API service.
+#   2. The runtime user is created with `useradd -r`, taking whatever system
+#      uid happens to be free. The Deployment needs a stable numeric uid for
+#      fsGroup on the workspace volume, so it is pinned to 10001.
+#
+# Interpolated values are passed through env: rather than inlined into run:,
+# so nothing from the workflow event reaches a shell unquoted.
+
+on:
+  schedule:
+    # Daily. Upstream ships roughly every other day; this picks up new
+    # versions so Keel (policy=patch) has tags to roll forward onto.
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'repowise version to build (default: latest on PyPI)'
+        required: false
+        type: string
+      force:
+        description: 'Rebuild even if the tag already exists'
+        required: false
+        type: boolean
+        default: false
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/build-repowise.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/viktorbarzin/repowise
+  UID_GID: '10001'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve target version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            version="$INPUT_VERSION"
+            echo "Using dispatch-supplied version: $version"
+          else
+            version="$(curl -fsS https://pypi.org/pypi/repowise/json | jq -r .info.version)"
+            echo "Latest on PyPI: $version"
+          fi
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::refusing to build implausible version '$version'"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip if already built
+        id: exists
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -uo pipefail
+          if [ "${FORCE:-false}" = "true" ]; then
+            echo "forced rebuild"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "${IMAGE}:${VERSION} already exists — nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout upstream at the release tag
+        if: steps.exists.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: repowise-dev/repowise
+          ref: v${{ steps.ver.outputs.version }}
+          persist-credentials: false
+
+      - name: Patch the Dockerfile for in-cluster serving
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          f=docker/Dockerfile
+
+          # 1. Same-origin API base URL for the browser bundle.
+          needle='ENV NEXT_PUBLIC_REPOWISE_API_URL=http://localhost:7337'
+          grep -qF "$needle" "$f" || {
+            echo "::error::Upstream no longer sets NEXT_PUBLIC_REPOWISE_API_URL as expected."
+            echo "::error::The browser bundle's API base URL must be re-checked before shipping."
+            exit 1
+          }
+          sed -i "s|^${needle}\$|ENV NEXT_PUBLIC_REPOWISE_API_URL=|" "$f"
+
+          # 2. Deterministic uid/gid so the Deployment can set fsGroup.
+          needle2='groupadd -r repowise && useradd -r -g repowise'
+          grep -qF "$needle2" "$f" || {
+            echo "::error::Upstream changed how the runtime user is created."
+            echo "::error::The workspace volume's fsGroup depends on a pinned uid."
+            exit 1
+          }
+          sed -i "s|${needle2}|groupadd -g ${UID_GID} repowise \&\& useradd -u ${UID_GID} -g ${UID_GID}|" "$f"
+
+          echo "--- patched lines ---"
+          grep -nE 'NEXT_PUBLIC_REPOWISE_API_URL|groupadd' "$f"
+
+      - name: Verify the patches took effect
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          grep -qE '^ENV NEXT_PUBLIC_REPOWISE_API_URL=$' docker/Dockerfile
+          grep -qF "useradd -u ${UID_GID} -g ${UID_GID}" docker/Dockerfile
+          echo "both patches verified"
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.exists.outputs.skip != 'true'
+
+      - name: Build and push
+        if: steps.exists.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          # provenance:false keeps this a single manifest rather than an OCI
+          # index, dodging the orphaned-index-children class of registry bug.
+          provenance: false
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}
+            ${{ env.IMAGE }}:latest
+
+      - name: Prune old versions
+        if: steps.exists.outputs.skip != 'true'
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: repowise
+          package-type: container
+          min-versions-to-keep: 10
+          delete-only-untagged-versions: false
