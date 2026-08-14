@@ -895,6 +895,42 @@
               }
             }
           ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Server-side endpoint latency",
+          "description": "What the handlers themselves cost, per service and endpoint group. This is the baseline the client-side numbers are read against: a client p95 far above the matching line here is network or device time, not the devvm. Carries no user \u2014 it is a per-service distribution rather than one person's activity.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 56
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "{{svc}} {{ep}}",
+              "expr": "max by (svc, ep) (max_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", svc=\"[\\\"service.name\\\"]\", ep=\"attrs[\\\"tl.ep\\\"]\", v=\"attrs[\\\"tl.p95\\\"]\" | name = \"api.rollup\" | unwrap v | __error__ = \"\" [$__interval]))"
+            }
+          ]
         }
       ]
     },
