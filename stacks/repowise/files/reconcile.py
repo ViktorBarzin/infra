@@ -51,6 +51,9 @@ API_KEY = os.environ.get("REPOWISE_API_KEY", "")
 INTERVAL = int(os.environ.get("SYNC_INTERVAL_SECONDS", "3600"))
 # How long to wait on the reindex trigger before assuming the server has it.
 TRIGGER_TIMEOUT = int(os.environ.get("REINDEX_TRIGGER_TIMEOUT", "120"))
+# A failed pass retries on this shorter delay rather than the full interval —
+# an hour is far too long to sit on a transient error.
+RETRY_DELAY = int(os.environ.get("SYNC_RETRY_SECONDS", "300"))
 KUMA_PUSH_URL = os.environ.get("KUMA_PUSH_URL", "")
 
 # Passed to `repowise init` so the parser never sees content that cannot
@@ -332,6 +335,25 @@ def heartbeat(ok: bool, message: str) -> None:
         log.warning("heartbeat push failed: %s", exc)
 
 
+def wait_for_api(timeout: int = 300) -> bool:
+    """Block until the API answers /health, or give up after *timeout*.
+
+    The containers in this pod start together, and the sync loop reaches its
+    first reindex trigger within seconds — well before uvicorn is listening.
+    Without this the first pass dies on a connection refusal and then waits out
+    a whole interval before trying again. /health needs no bearer.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            api_request("GET", "/health", token="", timeout=10)
+            return True
+        except ReconcileError:
+            time.sleep(3)
+    log.warning("API did not become ready within %ds; continuing anyway", timeout)
+    return False
+
+
 def reconcile() -> str:
     """One full pass. Returns a short status message for the heartbeat."""
     WORKSPACE.mkdir(parents=True, exist_ok=True)
@@ -402,8 +424,11 @@ def main() -> int:
     # tree it considers foreign, which would look like a mass repo failure.
     run(["git", "config", "--global", "--add", "safe.directory", "*"], check=False)
 
+    wait_for_api()
+
     while True:
         started = time.monotonic()
+        ok = True
         try:
             status = reconcile()
             log.info("pass complete: %s", status)
@@ -411,12 +436,15 @@ def main() -> int:
         except (ReconcileError, subprocess.TimeoutExpired) as exc:
             log.error("pass failed: %s", exc)
             heartbeat(False, str(exc)[:200])
+            ok = False
         except Exception:  # noqa: BLE001 - the loop must outlive any surprise
             log.exception("pass failed unexpectedly")
             heartbeat(False, "unexpected error, see logs")
+            ok = False
 
         elapsed = time.monotonic() - started
-        sleep_for = max(60.0, INTERVAL - elapsed)
+        budget = INTERVAL if ok else min(RETRY_DELAY, INTERVAL)
+        sleep_for = max(60.0, budget - elapsed)
         log.info("next pass in %ds", int(sleep_for))
         time.sleep(sleep_for)
 
