@@ -168,6 +168,37 @@ resource "kubernetes_manifest" "bearer_middleware" {
   depends_on = [kubernetes_namespace.repowise]
 }
 
+# Host-header rewrite for /mcp, required by the MCP SDK's DNS-rebinding
+# protection. repowise builds its FastMCP instance with the default host
+# (127.0.0.1), which makes the SDK auto-enable that protection with
+# allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]; it then sets
+# settings.host = 0.0.0.0 at run time, but the allowlist keeps the localhost
+# restriction. A request arriving as repowise-mcp.viktorbarzin.me therefore gets
+# HTTP 421 "Invalid Host header".
+#
+# Rewriting Host satisfies the allowlist without patching third-party code. The
+# port matters: the allowlist matches `localhost:` + anything, so a bare
+# "localhost" would still be rejected. Chained AFTER the bearer check, so this
+# never runs for an unauthenticated request.
+resource "kubernetes_manifest" "mcp_host_rewrite" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "mcp-host-rewrite"
+      namespace = kubernetes_namespace.repowise.metadata[0].name
+    }
+    spec = {
+      headers = {
+        customRequestHeaders = {
+          Host = "localhost:${local.mcp_port}"
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_namespace.repowise]
+}
+
 # One pod, four containers, one image. Everything that writes SQLite has to
 # share a node with the volume, so co-locating them is a constraint of the
 # storage model rather than a packaging preference.
@@ -751,6 +782,11 @@ module "ingress_mcp" {
     "traefik-error-pages-403@kubernetescrd",
     "traefik-home-lans-only@kubernetescrd",
     "repowise-bearer-auth@kubernetescrd",
+    # Last: only rewrite Host for requests that passed both gates.
+    "repowise-mcp-host-rewrite@kubernetescrd",
   ]
-  depends_on = [kubernetes_manifest.bearer_middleware]
+  depends_on = [
+    kubernetes_manifest.bearer_middleware,
+    kubernetes_manifest.mcp_host_rewrite,
+  ]
 }
