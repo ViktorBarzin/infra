@@ -80,6 +80,9 @@ resource "kubernetes_deployment" "kms-web-page" {
       spec[0].template[0].spec[0].dns_config,
       # CI (Woodpecker) manages the live image tag via `kubectl set image`
       spec[0].template[0].spec[0].container[0].image,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
     ]
   }
 }
@@ -236,7 +239,12 @@ resource "kubernetes_deployment" "kms_diag" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
   }
 }
 

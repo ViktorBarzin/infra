@@ -398,6 +398,9 @@ resource "kubernetes_deployment" "cinemeta_proxy" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
     ]
   }
 }
