@@ -122,7 +122,11 @@ steps:
           # Skipping the offending stack (vault 2026-06-27, _template
           # 2026-08-08) only ever moved the abort to the next one in sort order.
           EXIT=0
-          OUTPUT=$(cd "$stack_dir" && ../../scripts/tg plan -detailed-exitcode -input=false 2>&1) || EXIT=$?
+          # -no-color matters for more than readability: without it terraform
+          # writes ANSI escapes between "terraform:" and the resource marker,
+          # so the diff grep below silently matched nothing on 118 drifted
+          # stacks even once the pattern itself was right.
+          OUTPUT=$(cd "$stack_dir" && ../../scripts/tg plan -detailed-exitcode -input=false -no-color 2>&1) || EXIT=$?
           echo "$stack $EXIT" >> "$RESULTS"
 
           case $EXIT in
