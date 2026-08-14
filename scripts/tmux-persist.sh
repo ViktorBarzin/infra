@@ -1,46 +1,99 @@
 #!/usr/bin/env bash
-# Persist WEB-TERMINAL (ttyd/tmux) sessions across devvm reboots.
+# Persist WEB-TERMINAL (ttyd/tmux) sessions across devvm reboots and crashes.
 #
 # Scope: the tmux-based web terminal only. The t3 chat surface persists its
 # own threads (~/.t3 state.sqlite, backed up daily by t3-backup-state) — this
 # script is about the tmux sessions, which are otherwise memory-only. Users
 # come from /etc/ttyd-user-map (the terminal surface's roster-derived map).
 #
-#   save    — snapshot every roster user's live tmux sessions to
-#             /var/lib/tmux-persist/<user>.tsv (name, cwd, claude session
-#             uuid). The uuid comes from the claude process's argv — the
-#             `--session-id` a fresh start-claude.sh launch pins, or the
-#             `--resume` a restore carries — so it is correct per-process
-#             regardless of how the session was launched (see uuid_of_claude
-#             for the nameless-session fallbacks). Runs every 5 min via
-#             tmux-persist-save.timer. A snapshot that captures no live sessions
-#             (no server, OR a stale socket left behind by an OOM-killed server)
-#             keeps the user's last manifest, so it can't be wiped before restore.
-#   restore — recreate manifest sessions that don't currently exist, resuming
-#             each saved conversation (claude --resume <uuid>). Per-session
-#             idempotent: existing names are left alone, so it is safe both at
-#             boot (tmux-persist-restore.service) and after a partial loss.
-#   history — list a user's session HISTORY (name, cwd, uuid, last-seen,
-#             ALIVE/dead). Every save MERGES the live set into
-#             /var/lib/tmux-persist/<user>.history.tsv and NEVER drops a dead
-#             session, so past sessions stay pickable after they die (the
-#             manifest only holds the live set, so it alone loses them).
-#   restore-one <user> <name|uuid> — recreate ONE session from the history,
-#             resuming its conversation. Backs a "pick which to restore" flow.
+# SNAPSHOTS (2026-08-14) — the store is a short SERIES, not a single file.
+# Every save compares the live set against the newest snapshot and writes
+# snapshots/<user>/<YYYYMMDDTHHMMSS>.tsv only when it CHANGED, keeping the
+# newest SNAPSHOT_KEEP. <user>.tsv is a symlink to the newest snapshot, so the
+# boot path and the manifest can never disagree.
+#
+# This exists because the previous single manifest was rewritten in place on
+# every 5-minute tick: a PARTIAL loss (tmux server alive, the processes inside
+# individual sessions killed) whose save landed mid-kill dropped the already-
+# dead sessions, and one Restore click could only bring back whatever happened
+# to still be listed. Older snapshots keep the pre-loss set reachable.
+#
+#   save        — snapshot the live set when it differs from the newest one.
+#                 The uuid comes from the claude process's argv — the
+#                 `--session-id` a fresh start-claude.sh launch pins, or the
+#                 `--resume` a restore carries — so it is correct per-process
+#                 regardless of how the session was launched (see uuid_of_claude
+#                 for the nameless-session fallbacks). Runs every 5 min via
+#                 tmux-persist-save.timer. A capture with no live sessions
+#                 (no server, OR a stale socket left behind by an OOM-killed
+#                 server) writes nothing, so it can't wipe history before
+#                 restore needs it.
+#   restore     — recreate sessions from the NEWEST snapshot that aren't
+#                 currently live, resuming each saved conversation. Per-session
+#                 idempotent; skips names tombstoned after that snapshot.
+#   snapshots   — list a user's snapshots (ts, session count) for the picker.
+#   snapshot    — resolve ONE snapshot against what's live now: per row, what
+#                 restoring it would do and whether it should start ticked.
+#   restore-selection <user> <ts> <name>... — restore chosen rows of one
+#                 snapshot. Backs the lobby picker.
+#   restore-one <user> <name|uuid> — recreate ONE session found in any
+#                 snapshot, newest first.
+#   history     — list a user's session history, derived by merging snapshots.
+#   forget      — tombstone a deliberate kill so a restore doesn't undo it.
 #
 # v1 limitation: one window/pane per session is captured (the workstation
 # usage pattern — one named claude conversation per tmux session).
 set -euo pipefail
 
-STATE_DIR=/var/lib/tmux-persist
-MAP=/etc/ttyd-user-map
+# Paths and knobs are overridable so the test harness can drive the real script
+# against a throwaway state dir. Production never sets these.
+STATE_DIR="${TMUX_PERSIST_STATE_DIR:-/var/lib/tmux-persist}"
+MAP="${TMUX_PERSIST_MAP:-/etc/ttyd-user-map}"
+SNAPSHOT_KEEP="${TMUX_PERSIST_SNAPSHOT_KEEP:-200}"
+CLAUDE_BIN="${TMUX_PERSIST_CLAUDE_BIN:-claude}"
+TEST_SOCKET="${TMUX_PERSIST_TEST_SOCKET:-}"
 MODE="${1:-}"
 
 log() { echo "[tmux-persist] $*"; }
 
-users() { [[ -r "$MAP" ]] && cut -d= -f2 "$MAP" | sort -u; }
+# <authentik_user>=<os_user>[:<cwd>], plus comment lines. Comments used to fall
+# through as bogus "users" (harmless while every consumer re-checked `id -u`,
+# but they now reach path-building code), so they are filtered here instead.
+users() {
+  [[ -r "$MAP" ]] || return 0
+  sed -e 's/#.*//' "$MAP" | cut -d= -f2- | sed -e 's/:.*//' -e 's/[[:space:]]//g' \
+    | grep -xE '[a-z_][a-z0-9_-]{0,31}' | sort -u
+}
 
-tmux_as() { local u="$1"; shift; runuser -u "$u" -- tmux "$@"; }
+# Production runuser's into the target user (the manifests are root-owned 0600).
+# Under test we are not root, so tmux runs directly on a private -L socket.
+tmux_as() {
+  local u="$1"; shift
+  if [[ -n "$TEST_SOCKET" ]]; then tmux -L "$TEST_SOCKET" "$@"
+  else runuser -u "$u" -- tmux "$@"; fi
+}
+
+now_epoch() { echo "${TMUX_PERSIST_NOW:-$(date +%s)}"; }
+epoch_to_ts() { date -u -d "@$1" +%Y%m%dT%H%M%S; }
+# YYYYMMDDTHHMMSS -> epoch
+ts_to_epoch() { date -u -d "${1:0:8} ${1:9:2}:${1:11:2}:${1:13:2}" +%s; }
+
+user_socket() {
+  local uid="$1"
+  if [[ -n "$TEST_SOCKET" ]]; then echo "/tmp/tmux-$uid/$TEST_SOCKET"
+  else echo "/tmp/tmux-$uid/default"; fi
+}
+
+snapshots_dir() { echo "$STATE_DIR/snapshots/$1"; }
+pointer_path()  { echo "$STATE_DIR/$1.tsv"; }
+tombstones_path() { echo "$STATE_DIR/$1.forgotten.tsv"; }
+
+# Snapshot filenames are timestamps, so a lexical sort is a chronological one.
+snapshot_files() { ls -1 "$(snapshots_dir "$1")"/*.tsv 2>/dev/null | sort || true; }
+newest_snapshot() { snapshot_files "$1" | tail -1; }
+snapshot_path() { echo "$(snapshots_dir "$1")/$2.tsv"; }
+
+home_of() { getent passwd "$1" | cut -d: -f6; }
 
 # First descendant of $1 whose comm is `claude` (BFS, bounded by process tree).
 claude_pid_under() {
@@ -76,7 +129,7 @@ uuid_of_claude() {
           | grep -oE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || true)"
   [[ -n "$uuid" ]] && { echo "$uuid"; return 0; }
   slug="${3//\//-}"; slug="${slug//./-}"
-  dir="$(getent passwd "$2" | cut -d: -f6)/.claude/projects/$slug"
+  dir="$(home_of "$2")/.claude/projects/$slug"
   [[ -d "$dir" ]] || return 0
   start=$(( $(date +%s) - $(ps -o etimes= -p "$1" 2>/dev/null | tr -d ' ' || echo 0) - 5 ))
   # 2. name-aware: newest transcript (touched since start) whose own name == $sess.
@@ -94,133 +147,373 @@ uuid_of_claude() {
   return 0
 }
 
+# --- save ---------------------------------------------------------------------
+
+capture_live() {   # $1 user -> TSV rows on stdout
+  local u="$1" sess pane_pid pane_cwd cpid uuid
+  while IFS=$'\t' read -r sess pane_pid pane_cwd; do
+    [[ -n "$sess" ]] || continue
+    uuid=""
+    if cpid="$(claude_pid_under "$pane_pid")"; then uuid="$(uuid_of_claude "$cpid" "$u" "$pane_cwd" "$sess")"; fi
+    printf '%s\t%s\t%s\n' "$sess" "$pane_cwd" "${uuid:--}"
+  done < <(tmux_as "$u" list-panes -a -F $'#{session_name}\t#{pane_pid}\t#{pane_current_path}' 2>/dev/null \
+           | sort -u -t$'\t' -k1,1)
+}
+
+prune_snapshots() {
+  local u="$1" total excess
+  total="$(snapshot_files "$u" | wc -l)"
+  (( total > SNAPSHOT_KEEP )) || return 0
+  excess=$(( total - SNAPSHOT_KEEP ))
+  # Oldest first; the newest is never in this slice, so the pointer stays valid.
+  snapshot_files "$u" | head -n "$excess" | while read -r f; do rm -f "$f"; done
+  log "pruned $excess old snapshot(s) for $u (keeping $SNAPSHOT_KEEP)"
+}
+
+# Cutover from the pre-snapshot layout: the old <user>.tsv was a regular file
+# holding the last live set. Seed it as the first snapshot so restore keeps
+# working in the window before the first post-deploy save, instead of finding
+# an empty series.
+migrate_manifest() {
+  local u="$1" p dir ts
+  p="$(pointer_path "$u")"
+  [[ -f "$p" && ! -L "$p" && -s "$p" ]] || return 0
+  [[ -z "$(snapshot_files "$u")" ]] || return 0
+  dir="$(snapshots_dir "$u")"; install -d -m 0700 "$dir"
+  ts="$(epoch_to_ts "$(stat -c %Y "$p")")"
+  # The old format left the uuid field empty for "no conversation"; snapshots
+  # write "-" so consecutive tabs can't collapse on read.
+  awk -F'\t' -v OFS='\t' 'NF{print $1, $2, ($3!=""?$3:"-")}' "$p" > "$dir/$ts.tsv"
+  chmod 0600 "$dir/$ts.tsv"
+  ln -sfn "snapshots/$u/$ts.tsv" "$p"
+  log "migrated $u's manifest into snapshot $ts"
+}
+
 save() {
   install -d -m 0755 "$STATE_DIR"
-  local u uid sess pane_pid pane_cwd cpid uuid tmp n
+  local u uid tmp n ts dir newest
   for u in $(users); do
+    migrate_manifest "$u"
     uid="$(id -u "$u" 2>/dev/null)" || continue
-    [[ -S "/tmp/tmux-$uid/default" ]] || continue   # no socket at all -> keep last manifest
+    [[ -S "$(user_socket "$uid")" ]] || continue   # no socket at all -> keep history
     tmp="$(mktemp)"
-    while IFS=$'\t' read -r sess pane_pid pane_cwd; do
-      [[ -n "$sess" ]] || continue
-      uuid=""
-      if cpid="$(claude_pid_under "$pane_pid")"; then uuid="$(uuid_of_claude "$cpid" "$u" "$pane_cwd" "$sess")"; fi
-      printf '%s\t%s\t%s\n' "$sess" "$pane_cwd" "$uuid" >> "$tmp"
-    done < <(tmux_as "$u" list-panes -a -F $'#{session_name}\t#{pane_pid}\t#{pane_current_path}' 2>/dev/null \
-             | sort -u -t$'\t' -k1,1)
-    # Only overwrite the manifest when we captured >=1 live session. A socket
-    # file can outlive its server (an OOM-killed tmux server leaves
-    # /tmp/tmux-<uid>/default behind); list-panes then yields nothing, and
-    # installing that empty result would clobber a good manifest right before
-    # restore needs it. Empty capture -> keep the last good manifest.
+    capture_live "$u" > "$tmp"
+    # A socket file can outlive its server (an OOM-killed tmux server leaves one
+    # behind); list-panes then yields nothing. Writing that empty result would
+    # add a bogus "everything died" snapshot and move the pointer onto it.
     n=$(wc -l < "$tmp")
-    if (( n > 0 )); then
-      install -m 0600 "$tmp" "$STATE_DIR/$u.tsv"
-      merge_history "$u" "$tmp"
-      log "saved $n session(s) for $u"
-    else
-      log "no live sessions for $u (stale socket or dead server) — keeping last manifest"
+    if (( n == 0 )); then
+      log "no live sessions for $u (stale socket or dead server) — keeping last snapshot"
+      rm -f "$tmp"; continue
     fi
+    dir="$(snapshots_dir "$u")"; install -d -m 0700 "$dir"
+    newest="$(newest_snapshot "$u")"
+    if [[ -n "$newest" ]] && cmp -s "$tmp" "$newest"; then
+      rm -f "$tmp"; continue      # unchanged — 90% of ticks; keeps the list readable
+    fi
+    ts="$(epoch_to_ts "$(now_epoch)")"
+    install -m 0600 "$tmp" "$dir/$ts.tsv"
     rm -f "$tmp"
+    ln -sfn "snapshots/$u/$ts.tsv" "$(pointer_path "$u")"
+    prune_snapshots "$u"
+    log "saved $n session(s) for $u (snapshot $ts)"
   done
 }
 
+# --- tombstones ---------------------------------------------------------------
+# Snapshots are immutable, so a deliberate kill can no longer be expressed by
+# dropping a row from the manifest (what tmux-persist-forget used to do). A
+# tombstone records it instead: restore skips the name, and the picker offers
+# the row unchecked so an accidental kill is still one click from coming back.
+
+forget() {
+  local u="$1" sess="$2" f
+  users | grep -qxF "$u" || { echo "[tmux-persist] forget: '$u' is not a known terminal user" >&2; return 2; }
+  [[ "$sess" =~ ^[a-zA-Z0-9_-]{1,32}$ ]] || { echo "[tmux-persist] forget: invalid session name" >&2; return 2; }
+  f="$(tombstones_path "$u")"
+  printf '%s\t%s\n' "$sess" "$(now_epoch)" >> "$f"
+  chmod 0600 "$f"
+  log "forgot $u:$sess"
+}
+
+# Most recent kill time for a session name, or empty.
+killed_at() {
+  local u="$1" sess="$2" f
+  f="$(tombstones_path "$u")"
+  [[ -s "$f" ]] || return 0
+  awk -F'\t' -v s="$sess" '$1""==s"" {t=$2+0} END {if (t) print t}' "$f"
+}
+
+# --- resolving a snapshot against what is live now ----------------------------
+
+# `<base>-<HHMM>` for a conflicting name, kept inside tmux-api's sessionNameRe
+# (^[a-zA-Z0-9_-]{1,32}$) by trimming the base rather than the suffix.
+suffixed_name() {
+  local base="$1" ts="$2" suffix="-${2:9:4}" max
+  max=$(( 32 - ${#suffix} ))
+  (( ${#base} > max )) && base="${base:0:max}"
+  printf '%s%s' "$base" "$suffix"
+}
+
+# Per live session: name, pane_pid, pane_current_command. Cached per invocation.
+declare -A LIVE_CMD LIVE_PID
+load_live() {
+  local u="$1" sess pid cmd
+  LIVE_CMD=(); LIVE_PID=()
+  while IFS=$'\t' read -r sess pid cmd; do
+    [[ -n "$sess" ]] || continue
+    LIVE_CMD["$sess"]="$cmd"; LIVE_PID["$sess"]="$pid"
+  done < <(tmux_as "$u" list-panes -a -F $'#{session_name}\t#{pane_pid}\t#{pane_current_command}' 2>/dev/null \
+           | sort -u -t$'\t' -k1,1)
+}
+
+is_shell() { case "$1" in bash|zsh|sh|fish|dash|ksh) return 0 ;; *) return 1 ;; esac; }
+
+# Resolve one row -> state, action, target, default, note (tab-separated).
+# Rules mirror the design's decision tree:
+#   not live                     -> new        (off if tombstoned after this snapshot)
+#   live, same conversation      -> skip
+#   live, different conversation -> suffixed
+#   live, no claude, shell pane  -> in_place
+resolve_row() {
+  local u="$1" ts="$2" sess="$3" cwd="$4" uuid="$5"
+  local state action target def note live_uuid cpid k snap_epoch
+  note="-"; def="on"; target="$sess"
+  [[ "$uuid" == "-" ]] && uuid=""
+
+  if [[ -z "${LIVE_PID[$sess]+x}" ]]; then
+    state="missing"; action="new"
+    k="$(killed_at "$u" "$sess")"
+    if [[ -n "$k" ]]; then
+      snap_epoch="$(ts_to_epoch "$ts")"
+      # Only a kill AFTER this snapshot expresses "I closed this"; an older kill
+      # was already undone by the session being captured again.
+      if (( k > snap_epoch )); then def="off"; note="killed@$k"; fi
+    fi
+  else
+    live_uuid=""
+    if cpid="$(claude_pid_under "${LIVE_PID[$sess]}")"; then
+      live_uuid="$(uuid_of_claude "$cpid" "$u" "$cwd" "$sess")"
+    fi
+    if [[ -n "$live_uuid" && "$live_uuid" == "$uuid" ]]; then
+      state="live_same"; action="skip"; def="off"
+    elif [[ -n "$live_uuid" ]]; then
+      state="live_other_conv"; action="suffixed"; target="$(suffixed_name "$sess" "$ts")"
+    elif [[ -z "$uuid" ]]; then
+      # Nothing to resume and the name is taken — there is no work to do.
+      state="live_same"; action="skip"; def="off"
+    elif is_shell "${LIVE_CMD[$sess]}"; then
+      state="live_no_claude"; action="in_place"
+    else
+      state="live_other_conv"; action="suffixed"; target="$(suffixed_name "$sess" "$ts")"
+    fi
+  fi
+  # Every field stays non-empty ("-" when absent): tab is IFS-whitespace, so
+  # bash `read` COLLAPSES consecutive tabs and an empty field would shift every
+  # column after it.
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$sess" "${cwd:--}" "${uuid:--}" "$state" "$action" "$target" "$def" "$note"
+}
+
+snapshot_view() {
+  local u="$1" ts="$2" f sess cwd uuid
+  users | grep -qxF "$u" || { echo "[tmux-persist] snapshot: '$u' is not a known terminal user" >&2; return 2; }
+  migrate_manifest "$u"
+  f="$(snapshot_path "$u" "$ts")"
+  [[ -s "$f" ]] || { echo "[tmux-persist] no snapshot '$ts' for $u" >&2; return 1; }
+  load_live "$u"
+  while IFS=$'\t' read -r sess cwd uuid; do
+    [[ -n "$sess" ]] || continue
+    resolve_row "$u" "$ts" "$sess" "$cwd" "$uuid"
+  done < "$f"
+}
+
+# ts <TAB> session-count <TAB> is-newest, newest first.
+snapshots_list() {
+  local u="$1" f ts n newest
+  users | grep -qxF "$u" || { echo "[tmux-persist] snapshots: '$u' is not a known terminal user" >&2; return 2; }
+  migrate_manifest "$u"
+  newest="$(newest_snapshot "$u")"
+  while read -r f; do
+    [[ -n "$f" ]] || continue
+    ts="$(basename "$f" .tsv)"; n="$(grep -c . "$f" || true)"
+    printf '%s\t%s\t%s\n' "$ts" "$n" "$([[ "$f" == "$newest" ]] && echo newest || echo -)"
+  done < <(snapshot_files "$u" | sort -r)
+}
+
+# --- restore ------------------------------------------------------------------
+
+restore_cmd() {   # $1 sess, $2 uuid ("" -> plain shell)
+  if [[ -n "$2" ]]; then
+    printf '%s --dangerously-skip-permissions --resume %s --name "%s"; echo; echo "  claude exited — shell preserved"; exec bash -l' \
+      "$CLAUDE_BIN" "$2" "$1"
+  else
+    printf 'exec bash -l'
+  fi
+}
+
+spawn_session() {   # $1 user, $2 target name, $3 cwd, $4 uuid
+  local u="$1" target="$2" cwd="$3" uuid="$4"
+  [[ -d "$cwd" ]] || cwd="$(home_of "$u")"
+  tmux_as "$u" new-session -d -s "$target" -c "$cwd" "$(restore_cmd "$target" "$uuid")"
+}
+
+# Type the resume into a live session whose claude died but whose shell survived.
+resume_in_place() {   # $1 user, $2 sess, $3 uuid
+  tmux_as "$1" send-keys -t "=$2" \
+    "$CLAUDE_BIN --dangerously-skip-permissions --resume $3 --name \"$2\"" C-m
+}
+
+apply_row() {   # a resolved row on stdin args: user + the 8 fields
+  local u="$1" sess="$2" cwd="$3" uuid="$4" action="$6" target="$7"
+  [[ "$uuid" == "-" ]] && uuid=""
+  case "$action" in
+    new|suffixed)
+      spawn_session "$u" "$target" "$cwd" "$uuid" \
+        && log "restored $u:$target${uuid:+ (resume ${uuid:0:8})}" \
+        || { log "WARN: failed to restore $u:$target"; return 1; } ;;
+    in_place)
+      resume_in_place "$u" "$sess" "$uuid" \
+        && log "resumed $u:$sess in place (${uuid:0:8})" \
+        || { log "WARN: failed to resume $u:$sess in place"; return 1; } ;;
+    skip) log "$u:$sess already live" ;;
+  esac
+}
+
+# Blanket restore from the NEWEST snapshot — the boot service and the plain
+# button. Rows the picker would leave unticked are skipped here too.
 restore() {
-  local only="${1:-}" u f sess cwd uuid cmd
-  # Optional single-user restore: `tmux-persist restore <user>` limits the
-  # action to one terminal user (the web-UI restore button calls this via the
-  # tmux-restore-user wrapper). No arg => restore every user (the boot service).
+  local only="${1:-}" u f ts row
   if [[ -n "$only" ]] && ! users | grep -qxF "$only"; then
     echo "[tmux-persist] restore: '$only' is not a known terminal user" >&2
     return 2
   fi
   for u in $(users); do
     [[ -z "$only" || "$u" == "$only" ]] || continue
-    f="$STATE_DIR/$u.tsv"
-    [[ -s "$f" ]] || continue
-    while IFS=$'\t' read -r sess cwd uuid; do
-      [[ -n "$sess" ]] || continue
-      tmux_as "$u" has-session -t "=$sess" 2>/dev/null && continue   # already live
-      [[ -d "$cwd" ]] || cwd="$(getent passwd "$u" | cut -d: -f6)"
-      if [[ -n "$uuid" ]]; then
-        cmd="claude --dangerously-skip-permissions --resume $uuid --name \"$sess\"; echo; echo '  claude exited — shell preserved'; exec bash -l"
-      else
-        cmd="exec bash -l"
-      fi
-      tmux_as "$u" new-session -d -s "$sess" -c "$cwd" "$cmd" \
-        && log "restored $u:$sess${uuid:+ (resume ${uuid:0:8})}" \
-        || log "WARN: failed to restore $u:$sess"
-    done < "$f"
+    migrate_manifest "$u"
+    f="$(newest_snapshot "$u")"
+    [[ -n "$f" && -s "$f" ]] || continue
+    ts="$(basename "$f" .tsv)"
+    while IFS=$'\t' read -r -a row; do
+      [[ -n "${row[0]:-}" ]] || continue
+      [[ "${row[6]}" == "on" ]] || continue      # live, or a deliberate kill
+      apply_row "$u" "${row[@]}" || true
+    done < <(snapshot_view "$u" "$ts")
   done
 }
 
-# --- session history ----------------------------------------------------------
-# The manifest (<user>.tsv) only holds the CURRENTLY-live set (for boot
-# auto-restore), so a save after a partial loss drops dead sessions from it. The
-# history (<user>.history.tsv: name, cwd, uuid, first_seen, last_seen) is MERGED
-# on every save and never loses a dead session, so past sessions stay pickable
-# (`history` to list, `restore-one` to bring one back). Keyed by uuid (fallback
-# name); retained 30 days / newest 60.
-merge_history() {
-  local u="$1" live="$2" hist tmp now
-  hist="$STATE_DIR/$u.history.tsv"; now="$(date +%s)"; touch "$hist"
-  tmp="$(mktemp)"
-  # Use FILENAME (not FNR==NR) to tell the two files apart — FNR==NR mis-detects
-  # when the history file is empty (first run), which would blank the timestamps.
-  awk -F'\t' -v OFS='\t' -v now="$now" -v H="$hist" '
-    FILENAME==H { k=($3!=""?$3:$1); nm[k]=$1; cd[k]=$2; uu[k]=$3; fs[k]=$4; ls[k]=$5; keys[k]=1; next }
-    { k=($3!=""?$3:$1); nm[k]=$1; cd[k]=$2; uu[k]=$3; if (!(k in fs) || fs[k]=="") fs[k]=now; ls[k]=now; keys[k]=1 }
-    END { for (k in keys) print nm[k], cd[k], (uu[k]!=""?uu[k]:"-"), fs[k], ls[k] }
-  ' "$hist" "$live" \
-    | sort -t$'\t' -k5,5nr \
-    | awk -F'\t' -v cut="$(( now - 30*86400 ))" 'NR<=60 && $5+0>=cut' > "$tmp"
-  install -m 0600 "$tmp" "$hist"; rm -f "$tmp"
+# Restore CHOSEN rows of ONE snapshot — what the lobby picker posts.
+restore_selection() {
+  local u="$1" ts="$2"; shift 2
+  local wanted=("$@") view name found row
+  users | grep -qxF "$u" || { echo "[tmux-persist] restore-selection: '$u' is not a known terminal user" >&2; return 2; }
+  (( ${#wanted[@]} )) || { echo "[tmux-persist] restore-selection: no sessions given" >&2; return 2; }
+  view="$(snapshot_view "$u" "$ts")" || return 1
+  # Refuse the whole request if any name is not in that snapshot, rather than
+  # half-restoring and leaving the caller to work out which half.
+  for name in "${wanted[@]}"; do
+    if ! printf '%s\n' "$view" | awk -F'\t' -v n="$name" '$1""==n""{f=1} END{exit !f}'; then
+      echo "[tmux-persist] restore-selection: '$name' is not in snapshot $ts" >&2
+      return 1
+    fi
+  done
+  for name in "${wanted[@]}"; do
+    found="$(printf '%s\n' "$view" | awk -F'\t' -v n="$name" '$1""==n""{print; exit}')"
+    IFS=$'\t' read -r -a row <<<"$found"
+    apply_row "$u" "${row[@]}" || true
+  done
+}
+
+# --- history ------------------------------------------------------------------
+# Derived by merging the snapshot series: every snapshot a session appears in
+# contributes its timestamp, so first/last-seen fall out of the file names.
+# Keyed by uuid (fallback name), newest first.
+
+history_rows() {   # $1 user -> name, cwd, uuid, first_seen, last_seen
+  local u="$1" f ts epoch
+  while read -r f; do
+    [[ -n "$f" ]] || continue
+    ts="$(basename "$f" .tsv)"; epoch="$(ts_to_epoch "$ts")"
+    awk -F'\t' -v OFS='\t' -v e="$epoch" 'NF{print $1, $2, ($3!=""?$3:"-"), e}' "$f"
+  done < <(snapshot_files "$u") \
+  | awk -F'\t' -v OFS='\t' '
+      { k=($3!="-"?$3:$1)
+        nm[k]=$1; cd[k]=$2; uu[k]=$3
+        if (!(k in fs) || $4+0 < fs[k]) fs[k]=$4+0
+        if (!(k in ls) || $4+0 > ls[k]) ls[k]=$4+0 }
+      END { for (k in nm) print nm[k], cd[k], uu[k], fs[k], ls[k] }' \
+  | sort -t$'\t' -k5,5nr
 }
 
 history_list() {
-  local only="${1:-}" u hist now nm cd uu fs ls state ago
-  now="$(date +%s)"
+  local only="${1:-}" u now nm cd uu fs ls state ago
+  now="$(now_epoch)"
   for u in $(users); do
     [[ -z "$only" || "$u" == "$only" ]] || continue
-    hist="$STATE_DIR/$u.history.tsv"
-    if [[ ! -s "$hist" ]]; then echo "[$u] no session history yet"; continue; fi
+    migrate_manifest "$u"
+    if [[ -z "$(snapshot_files "$u")" ]]; then echo "[$u] no session history yet"; continue; fi
     echo "== $u — session history (newest first) =="
     printf '  %-22s %-32s %-10s %-8s %s\n' NAME CWD RESUME LAST STATE
     while IFS=$'\t' read -r nm cd uu fs ls; do
       [[ -n "$nm" ]] || continue
       state=dead
-      if runuser -u "$u" -- tmux has-session -t "=$nm" 2>/dev/null; then state=ALIVE; fi
+      if tmux_as "$u" has-session -t "=$nm" 2>/dev/null; then state=ALIVE; fi
       ago=$(( (now - ls) / 60 ))
       printf '  %-22s %-32s %-10s %5dm   %s\n' "$nm" "${cd:0:32}" "${uu:0:8}" "$ago" "$state"
-    done < <(sort -t$'\t' -k5,5nr "$hist")
+    done < <(history_rows "$u")
   done
 }
 
+# Recreate ONE session found in any snapshot, newest first. The selector matches
+# a session name or a uuid (full or prefix).
+#
+# `$1""==s""` is load-bearing: awk compares two numeric-looking strings as
+# NUMBERS, so a bare `$1==s` matched session "007" when asked for "7", and "1e2"
+# when asked for "100". Passing the name via -v stops injection but not this.
 restore_one() {
-  local u="$1" sel="$2" hist line sess cwd uuid cmd
+  local u="$1" sel="$2" f line sess cwd uuid ts
   users | grep -qxF "$u" || { echo "[tmux-persist] restore-one: '$u' is not a known terminal user" >&2; return 2; }
-  hist="$STATE_DIR/$u.history.tsv"
-  [[ -s "$hist" ]] || { echo "[tmux-persist] no history for $u" >&2; return 1; }
-  line="$(awk -F'\t' -v s="$sel" '$1==s || $3==s || ($3!="" && index($3,s)==1) {print; exit}' "$hist")"
-  [[ -n "$line" ]] || { echo "[tmux-persist] no history entry matching '$sel' for $u" >&2; return 1; }
-  IFS=$'\t' read -r sess cwd uuid _ _ <<<"$line"
-  [[ "$uuid" == "-" ]] && uuid=""   # "-" is the history's "no conversation" placeholder
+  migrate_manifest "$u"
+  while read -r f; do
+    [[ -n "$f" ]] || continue
+    line="$(awk -F'\t' -v s="$sel" '
+      $1""==s"" || $3""==s"" || ($3!="-" && $3!="" && index($3, s)==1) {print; exit}' "$f")"
+    [[ -n "$line" ]] && { ts="$(basename "$f" .tsv)"; break; }
+  done < <(snapshot_files "$u" | sort -r)
+  [[ -n "$line" ]] || { echo "[tmux-persist] no session matching '$sel' for $u" >&2; return 1; }
+  IFS=$'\t' read -r sess cwd uuid <<<"$line"
+  [[ "$uuid" == "-" ]] && uuid=""
   if tmux_as "$u" has-session -t "=$sess" 2>/dev/null; then log "$u:$sess already live"; return 0; fi
-  [[ -d "$cwd" ]] || cwd="$(getent passwd "$u" | cut -d: -f6)"
-  if [[ -n "$uuid" ]]; then
-    cmd="claude --dangerously-skip-permissions --resume $uuid --name \"$sess\"; echo; echo '  claude exited — shell preserved'; exec bash -l"
-  else
-    cmd="exec bash -l"
-  fi
-  tmux_as "$u" new-session -d -s "$sess" -c "$cwd" "$cmd" \
-    && log "restored $u:$sess${uuid:+ (resume ${uuid:0:8})}" \
+  spawn_session "$u" "$sess" "$cwd" "$uuid" \
+    && log "restored $u:$sess${uuid:+ (resume ${uuid:0:8})} (from $ts)" \
     || { log "WARN: failed to restore $u:$sess"; return 1; }
 }
 
+usage() {
+  cat >&2 <<'EOF'
+usage: tmux-persist save
+       tmux-persist restore [user]
+       tmux-persist snapshots <user>
+       tmux-persist snapshot <user> <ts>
+       tmux-persist restore-selection <user> <ts> <name>...
+       tmux-persist restore-one <user> <name|uuid>
+       tmux-persist history [user]
+       tmux-persist forget <user> <session>
+EOF
+  exit 1
+}
+
 case "$MODE" in
-  save) save ;;
-  restore) restore "${2:-}" ;;
-  history) history_list "${2:-}" ;;
+  save)     save ;;
+  restore)  restore "${2:-}" ;;
+  snapshots) snapshots_list "${2:?usage: snapshots <user>}" ;;
+  snapshot) snapshot_view "${2:?usage: snapshot <user> <ts>}" "${3:?usage: snapshot <user> <ts>}" ;;
+  restore-selection)
+            u="${2:?usage: restore-selection <user> <ts> <name>...}"
+            ts="${3:?usage: restore-selection <user> <ts> <name>...}"
+            shift 3; restore_selection "$u" "$ts" "$@" ;;
   restore-one) restore_one "${2:?usage: restore-one <user> <name|uuid>}" "${3:?usage: restore-one <user> <name|uuid>}" ;;
-  *) echo "usage: tmux-persist save | restore [user] | history [user] | restore-one <user> <name|uuid>" >&2; exit 1 ;;
+  history)  history_list "${2:-}" ;;
+  forget)   forget "${2:?usage: forget <user> <session>}" "${3:?usage: forget <user> <session>}" ;;
+  *)        usage ;;
 esac
