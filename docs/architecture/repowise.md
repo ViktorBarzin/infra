@@ -119,6 +119,19 @@ uses search rather than `/api/v1/users/{owner}/repos` — the latter demands
 
 ## Troubleshooting
 
+**Architecture (or any graph view) is empty.** Check which repo the dashboard is
+on. `repowise init --all` picks the workspace default itself and picks the first
+alphabetically, which here is `Website` — 338 files of png/md/html/svg with no
+source code, so it indexes to nothing and its graph endpoint returns
+`404 Repository not found`. The reconciler now pins the default to `infra`
+(`REPOWISE_DEFAULT_REPO`) on every pass. Verify with
+`grep ^default_repo /workspace/.repowise-workspace.yaml`.
+
+Two repos hold data but no communities (`claude-memory`, `tasks`) simply because
+they are too small to form any. `travel-agent` is a known anomaly: its
+`state.json` claims 26 pages but its `wiki.db` is empty — it is a decommissioned
+repo and has not been chased down.
+
 **Dashboard times out or is very slow.** Almost certainly indexing. repowise
 serves HTTP and indexes on the same asyncio loop, and the dashboard is
 server-rendered against `/api`, so while a big reindex runs the page render waits
@@ -126,6 +139,11 @@ on it. Measured 2026-08-14: during the initial index of 42 repos the page took
 **22.5s**; with indexing finished the same page renders in **0.6s** and
 `/api/repos` answers in ~0.4s. Check `kubectl -n repowise logs deploy/repowise -c
 api --tail=5` for `job_phase_start` lines before looking anywhere else.
+
+Beware measuring this by hand: an abandoned request keeps computing server-side.
+Several timed-out probes in a row saturated the single core and made a 0.4s
+endpoint look like a 92s one. Let the API settle (CPU under ~200m) before
+trusting a latency number.
 
 There is also an upstream race that shows up in the same window:
 `GET /api/repos` can return 500 with `RuntimeError: dictionary changed size

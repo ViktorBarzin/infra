@@ -90,11 +90,18 @@ COPY packages/cli/ packages/cli/
 COPY packages/server/ packages/server/
 # graph-extra, not "all". repowise declares exactly three extras — postgres,
 # graph-extra, dev — so upstream's Dockerfile line `pip install ".[all]"`
-# matches nothing and silently installs no extras at all. The visible symptom
-# is that graspologic is absent, community detection cannot run, and every
-# repo reports zero communities, which leaves the dashboard's Architecture
-# module map blank. postgres is deliberately not installed: workspace mode
-# hard-codes per-repo SQLite, so it would never be used.
+# matches nothing and silently installs no extras at all, leaving graspologic
+# absent.
+#
+# What that actually costs is algorithm quality, not function: per
+# core/analysis/communities.py, community detection "uses Leiden (graspologic)
+# when available, falls back to Louvain (networkx)". So communities were being
+# computed either way; installing the extra promotes Louvain to Leiden. It is
+# NOT what made the dashboard's Architecture view look empty — that was the
+# workspace defaulting to a repo with no source code in it.
+#
+# postgres is deliberately not installed: workspace mode hard-codes per-repo
+# SQLite, so it would never be used.
 RUN pip install --no-cache-dir ".[graph-extra]" \
     && python3 -c "import graspologic"
 
