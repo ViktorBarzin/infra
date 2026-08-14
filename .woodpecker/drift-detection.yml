@@ -74,12 +74,11 @@ steps:
       # Emits two timestamps per drifted stack so the Pushgateway/Prometheus
       # side can compute drift-age-hours via `time() - drift_stack_first_seen`.
       - |
-        DRIFTED=""
-        CLEAN=0
-        ERRORS=""
         NOW=$(date +%s)
-        # Metrics accumulator — written once per stack, then pushed as a batch.
-        METRICS=""
+        # Per-stack results and metrics accumulate in files rather than shell
+        # variables — see the summary block below for why.
+        RESULTS=$(mktemp)
+        METRICS_FILE=$(mktemp)
 
         for stack_dir in stacks/*/; do
           stack=$(basename "$stack_dir")
@@ -103,28 +102,36 @@ steps:
           case "$stack" in _*) continue ;; esac
 
           echo -n "[$stack] planning... "
+          # Plan through scripts/tg, NOT terragrunt directly. Tier-1 stacks keep
+          # their state in the PG backend and read the connection string from
+          # PG_CONN_STR, which only scripts/tg knows how to build (it fetches
+          # database/static-creds/pg-terraform-state from Vault). Calling
+          # terragrunt bare left conn_str empty, so terraform fell back to
+          # localhost and every Tier-1 stack died in `Initializing the backend`
+          # with `dial tcp [::1]:5432: connect: connection refused` — 150-odd
+          # stacks, invisible because the run aborted at the first one. tg also
+          # handles Tier-0 SOPS state decrypt, and takes no advisory lock for a
+          # non-mutating verb, so a nightly plan cannot block an apply.
+          #
           # `|| EXIT=$?` is load-bearing. Woodpecker runs step commands under
           # `set -e`, and a bare `OUTPUT=$(...)` assignment carries the exit
-          # status of the command substitution — so any non-zero terragrunt
-          # exit killed the whole step right here. `-detailed-exitcode` returns
-          # non-zero for BOTH outcomes we care about (1 = error, 2 = drift),
-          # which meant `EXIT=$?` and the case block below were unreachable for
-          # anything but a perfectly clean stack: the loop died at the first
-          # non-clean stack, pushed no metrics, and reported nothing. Making the
-          # assignment part of an `||` list is what exempts it from `set -e`.
+          # status of the command substitution — so any non-zero exit killed the
+          # whole step right here. `-detailed-exitcode` returns non-zero for BOTH
+          # outcomes we care about (1 = error, 2 = drift), which left `EXIT=$?`
+          # and the case block below unreachable for anything but a clean stack.
           # Skipping the offending stack (vault 2026-06-27, _template
           # 2026-08-08) only ever moved the abort to the next one in sort order.
           EXIT=0
-          OUTPUT=$(cd "$stack_dir" && terragrunt plan -detailed-exitcode -input=false 2>&1) || EXIT=$?
+          OUTPUT=$(cd "$stack_dir" && ../../scripts/tg plan -detailed-exitcode -input=false 2>&1) || EXIT=$?
+          echo "$stack $EXIT" >> "$RESULTS"
 
           case $EXIT in
             0)
               echo "OK (no changes)"
-              CLEAN=$((CLEAN + 1))
               # drift_stack_state=0 means clean; age-hours irrelevant so we
               # still push 0 so per-stack gauges don't go stale.
-              METRICS="${METRICS}drift_stack_state{stack=\"$stack\"} 0\n"
-              METRICS="${METRICS}drift_stack_age_hours{stack=\"$stack\"} 0\n"
+              printf 'drift_stack_state{stack="%s"} 0\n' "$stack" >> "$METRICS_FILE"
+              printf 'drift_stack_age_hours{stack="%s"} 0\n' "$stack" >> "$METRICS_FILE"
               ;;
             1)
               echo "ERROR"
@@ -134,8 +141,7 @@ steps:
               echo "--- [$stack] plan error (last 30 lines) ---"
               echo "$OUTPUT" | tail -30
               echo "--- end [$stack] ---"
-              ERRORS="$ERRORS $stack"
-              METRICS="${METRICS}drift_stack_state{stack=\"$stack\"} 2\n"
+              printf 'drift_stack_state{stack="%s"} 2\n' "$stack" >> "$METRICS_FILE"
               ;;
             2)
               echo "DRIFT DETECTED"
@@ -143,51 +149,68 @@ steps:
               # aborted the run too, so a drifted stack was never actually
               # reported — this is the first run shape where this branch runs.
               echo "$OUTPUT" | grep -E '^  # |^Plan: ' | head -20
-              DRIFTED="$DRIFTED $stack"
               # Fetch first-seen timestamp from Pushgateway (preserve across runs).
               FIRST_SEEN=$(curl -s "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics" \
                 | awk -v s="$stack" '$1 == "drift_stack_first_seen{stack=\""s"\"}" {print $2; exit}')
               if [ -z "$FIRST_SEEN" ] || [ "$FIRST_SEEN" = "0" ]; then
-                FIRST_SEEN="$NOW"
+                FIRST_SEEN=$NOW
               fi
               AGE_HOURS=$(( (NOW - FIRST_SEEN) / 3600 ))
-              METRICS="${METRICS}drift_stack_state{stack=\"$stack\"} 1\n"
-              METRICS="${METRICS}drift_stack_first_seen{stack=\"$stack\"} $FIRST_SEEN\n"
-              METRICS="${METRICS}drift_stack_age_hours{stack=\"$stack\"} $AGE_HOURS\n"
+              printf 'drift_stack_state{stack="%s"} 1\n' "$stack" >> "$METRICS_FILE"
+              printf 'drift_stack_first_seen{stack="%s"} %s\n' "$stack" "$FIRST_SEEN" >> "$METRICS_FILE"
+              printf 'drift_stack_age_hours{stack="%s"} %s\n' "$stack" "$AGE_HOURS" >> "$METRICS_FILE"
               ;;
           esac
         done
 
-        # Summary counters — single gauge per run.
-        DRIFT_COUNT=$(echo "$DRIFTED" | wc -w)
-        ERROR_COUNT=$(echo "$ERRORS" | wc -w)
-        METRICS="${METRICS}drift_stack_count $DRIFT_COUNT\n"
-        METRICS="${METRICS}drift_error_count $ERROR_COUNT\n"
-        METRICS="${METRICS}drift_clean_count $CLEAN\n"
-        METRICS="${METRICS}drift_detection_last_run_timestamp $NOW\n"
+        # Summary counters, derived from the results file. Woodpecker expands
+        # ${...} in this YAML before the shell ever sees it, so the previous
+        # "$${METRICS}accumulator" pattern silently expanded to nothing and only
+        # the LAST assignment survived — the 2026-08-14 push carried just
+        # drift_detection_last_run_timestamp and no per-stack series at all, and
+        # the summary read "Errors: none" after 150 errors. Files avoid both
+        # that and any subshell-scoping question; keep $VAR unbraced below.
+        CLEAN=$(awk '$2 == 0' "$RESULTS" | wc -l)
+        DRIFT_COUNT=$(awk '$2 == 2' "$RESULTS" | wc -l)
+        ERROR_COUNT=$(awk '$2 == 1' "$RESULTS" | wc -l)
+        DRIFTED=$(awk '$2 == 2 { printf " %s", $1 }' "$RESULTS")
+        ERRORS=$(awk '$2 == 1 { printf " %s", $1 }' "$RESULTS")
+
+        printf 'drift_stack_count %s\n' "$DRIFT_COUNT" >> "$METRICS_FILE"
+        printf 'drift_error_count %s\n' "$ERROR_COUNT" >> "$METRICS_FILE"
+        printf 'drift_clean_count %s\n' "$CLEAN" >> "$METRICS_FILE"
+        printf 'drift_detection_last_run_timestamp %s\n' "$NOW" >> "$METRICS_FILE"
 
         # ── Push to Pushgateway ──
         # One batched push keeps the run atomic: either all metrics land or none.
-        printf "%b" "$METRICS" | curl -s --data-binary @- \
+        curl -s --data-binary @"$METRICS_FILE" \
           http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/drift-detection \
           || echo "(pushgateway unavailable, metrics lost for this run)"
+
+        # Braced ${VAR} is deliberately avoided in the rest of this block for
+        # the Woodpecker-interpolation reason above; ${DRIFTED:-none} was the
+        # one form that survived, but keeping one style is less error-prone.
+        DRIFTED_TEXT=" none"
+        ERRORS_TEXT=" none"
+        [ -n "$DRIFTED" ] && DRIFTED_TEXT="$DRIFTED"
+        [ -n "$ERRORS" ] && ERRORS_TEXT="$ERRORS"
 
         echo ""
         echo "=== Drift Detection Summary ==="
         echo "Clean: $CLEAN stacks"
-        echo "Drift: ${DRIFTED:-none}"
-        echo "Errors: ${ERRORS:-none}"
+        echo "Drift:$DRIFTED_TEXT"
+        echo "Errors:$ERRORS_TEXT"
 
         # ── Slack only when something is WRONG (drift or errors) ──
         # All-clean runs are silent (Viktor 2026-07-02: CI notifies on
         # failed/actionable runs only; clean is the daily normal).
         if [ -n "$DRIFTED" ]; then
           curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"channel\":\"general\",\"text\":\":warning: Drift detected in:${DRIFTED}\nClean: ${CLEAN} stacks. Errors:${ERRORS:-none}\"}" \
+            --data "{\"channel\":\"general\",\"text\":\":warning: Drift detected in:$DRIFTED_TEXT\nClean: $CLEAN stacks. Errors:$ERRORS_TEXT\"}" \
             "$SLACK_WEBHOOK" || true
         elif [ -n "$ERRORS" ]; then
           curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"channel\":\"general\",\"text\":\":red_circle: Drift detection had errors: ${ERRORS} (clean: ${CLEAN})\"}" \
+            --data "{\"channel\":\"general\",\"text\":\":red_circle: Drift detection had errors:$ERRORS_TEXT (clean: $CLEAN)\"}" \
             "$SLACK_WEBHOOK" || true
         fi
 
