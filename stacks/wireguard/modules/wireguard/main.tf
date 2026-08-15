@@ -296,6 +296,13 @@ resource "kubernetes_deployment" "wireguard" {
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[1].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[2].image, # KEEL_IGNORE_IMAGE
+    ]
+  }
 }
 
 # Renders the vpn-portal WireGuard peer list (secret/vpn-portal field wg_peers,

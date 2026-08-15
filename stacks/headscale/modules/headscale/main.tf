@@ -268,7 +268,10 @@ resource "kubernetes_deployment" "headscale" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [spec[0].template[0].spec[0].dns_config,
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[1].image, # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 resource "kubernetes_service" "headscale" {

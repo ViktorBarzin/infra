@@ -408,6 +408,7 @@ resource "kubernetes_deployment_v1" "es" {
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].labels["tier"],                      # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE
     ]
   }
 }

@@ -326,6 +326,7 @@ resource "kubernetes_deployment" "learn" {
       metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
       metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].container[1].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 

@@ -221,6 +221,45 @@ Per-workload opt-out: add the label `keel.sh/policy: never` on the Deployment me
 
 **Audit**: `rg "KYVERNO_LIFECYCLE_V2" stacks/` — count should equal the number of enrolled workloads. `rg "KEEL_LIFECYCLE_V1" stacks/` should match it (every enrolled workload also carries the V1 lines). `rg "METALLB_LIFECYCLE_V1" stacks/` should equal the number of TF-managed LoadBalancer Services (`kubectl get svc -A --field-selector spec.type=LoadBalancer` minus the Helm-owned traefik one).
 
+### The invariant: nothing auto-upgraded is tracked by Terraform
+
+**If Keel may bump a workload's image, Terraform must not track that image.**
+(Viktor, 2026-08-15.) The two owners are mutually exclusive, and exactly one of
+these must hold for every pod-owning resource:
+
+- **Keel owns the version** — the workload carries `keel.sh/policy` set to
+  anything other than `never`, and **every** container index that Keel can reach
+  has a `KEEL_IGNORE_IMAGE` entry. Terraform still declares the image, but only
+  as the value used when the resource is first created.
+- **Terraform owns the version** — the workload is opted out with
+  `keel.sh/policy: never`, and Terraform tracks the image normally. Use this
+  where a pin is load-bearing (mysql-standalone, redis-v2, forgejo,
+  node-local-dns, chrome-service and the rest of the ~29 currently on `never`).
+
+Anything in between means the two fight on every apply. That is not only drift
+noise: on 2026-08-15 four workloads were found where Terraform was reverting a
+Keel upgrade to an **older** release each time it ran (hermes-agent and
+claude-agent-service curl 8.11.1→8.11.0, learn git-sync v4.7.1→v4.7.0,
+postiz/temporal auto-setup 1.28.4→1.28.1).
+
+Two traps when adding the ignore:
+
+- **The container index is not always 0.** Read it off the live pod
+  (`kubectl -n <ns> get <kind>/<name> -o json`), not off the HCL's first
+  container. hermes-agent and claude-agent-service drift on `container[1]`, the
+  curl `vault-token-refresher` sidecar; android-emulator's drifting image lives
+  in the `gate` Deployment, not the main one.
+- **`keel.sh/policy` can be a label as well as an annotation.** node-local-dns
+  carries it as a *label* valued `never`; ignoring only the annotation left
+  Terraform stripping the opt-out.
+
+**Audit the invariant** with `scripts/audit-keel-image-ownership.py`, which
+walks every pod-owning resource, resolves its live workload, and reports any
+Keel-enrolled workload whose image Terraform still tracks. It should print zero
+gaps; it did across all 160 TF-managed enrolled workloads on 2026-08-15. Note it
+skips commented-out `resource` blocks and is heredoc-aware — a naive brace match
+mis-parses the stacks that embed shell scripts.
+
 **Design context**: `docs/plans/2026-05-16-auto-upgrade-apps-{design,plan}.md`.
 
 ## Tier System
