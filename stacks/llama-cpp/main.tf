@@ -148,11 +148,22 @@ module "nfs_models" {
   storage    = "30Gi"
 }
 
-# One-shot download Job. Pulls Q4_K_M GGUF + mmproj for every model in
-# locals.models into /models/<id>/, creates stable model.gguf /
-# mmproj.gguf symlinks, then warms the page cache. Idempotent —
-# huggingface_hub's snapshot_download skips files that already exist
-# with matching size; symlinks are recreated each run.
+# Download Job. Pulls Q4_K_M GGUF + mmproj for every model in locals.models
+# into /models/<id>/, creates stable model.gguf / mmproj.gguf symlinks, then
+# warms the page cache. Idempotent — huggingface_hub's snapshot_download skips
+# files that already exist with matching size; symlinks are recreated each run.
+#
+# NO ttl_seconds_after_finished, deliberately (2026-08-15). It used to be 86400,
+# which deleted the finished Job after a day — so Terraform found it missing and
+# planned to create it again, every day, forever. The Job body was never the
+# problem; the TTL was, because a self-deleting resource can't be reconciled.
+#
+# Letting the finished Job persist costs one completed object in the namespace
+# and keeps locals.models honest: it feeds llama-swap's server config too
+# (-m /models/<id>/model.gguf), so adding a model there changes this Job's spec,
+# Terraform replaces it, and the new model is actually fetched. Deleting the Job
+# instead would have left that half-wired — the server would reference a model
+# nothing had downloaded.
 resource "kubernetes_job_v1" "download_models" {
   metadata {
     name      = "download-models"
@@ -160,8 +171,7 @@ resource "kubernetes_job_v1" "download_models" {
     labels    = local.labels
   }
   spec {
-    backoff_limit              = 2
-    ttl_seconds_after_finished = 86400
+    backoff_limit = 2
     template {
       metadata { labels = local.labels }
       spec {
