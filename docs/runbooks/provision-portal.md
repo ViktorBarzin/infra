@@ -80,6 +80,24 @@ which requires a factory reset with no accounts on the device — the opposite o
 the signed-in official path this runbook follows. One tap per release is the
 floor. This runbook remains the way a **wiped or new** device is brought up.
 
+### The USB host: `mbp-london.viktorbarzin.lan`
+
+The Mac is pinned to `192.168.8.168` by a static lease on the London Flint, and
+that name resolves to it from anywhere that uses Technitium (record declared in
+`stacks/technitium/.../static_records.tf`).
+
+The reservation lists **two** MACs — the hardware Wi-Fi address
+`84:2f:57:39:9a:d9` and the macOS *private* Wi-Fi address currently in use. That
+is deliberate: private Wi-Fi addresses rotate, and the previous reservation had
+already gone stale that way, leaving the Mac on a DHCP-pool address under an old
+entry pointing somewhere else. Covering both means the pin holds whichever the
+Mac presents.
+
+If the private address rotates again the pin will still be lost. The durable fix
+is to turn **Private Wi-Fi Address off** for this SSID on the Mac (System
+Settings → Wi-Fi → the network → Private Wi-Fi Address), after which it always
+presents the hardware MAC.
+
 ## Human prerequisites (do these first, on the Portal)
 
 The script starts from an **ADB-ready device**. It cannot do these:
@@ -107,7 +125,7 @@ Idempotent — safe to re-run. Useful env overrides:
 
 | var | default | purpose |
 |---|---|---|
-| `MAC` | `viktorbarzin@192.168.8.168` | USB host on the Portal's LAN |
+| `MAC` | `viktorbarzin@mbp-london.viktorbarzin.lan` | USB host on the Portal's LAN (pinned to `192.168.8.168` by a Flint reservation; see below) |
 | `RADB` | `/Users/viktorbarzin/Library/Android/sdk/platform-tools/adb` | adb path on the Mac |
 | `FRAME_REPO` | `$HOME/code/portal-immich-frame` | frame source for the build |
 | `FRAME_URL` | *(build default = London)* | override to point the frame elsewhere |

@@ -30,6 +30,21 @@ locals {
   static_a_records = {
     turn = "10.0.20.205"
   }
+
+  # Same, for the internal-only viktorbarzin.lan zone — the household devices
+  # that live behind a remote site's own DHCP rather than Kea, so neither the
+  # ingress sync nor the phpIPAM/Technitium sync ever creates them. The London
+  # names that predate this (ha-london, rpi-london, openwrt-london) were added
+  # by hand in Technitium; declare new ones here so they survive a rebuild.
+  #
+  # mbp-london: Viktor's MacBook, which is the USB adb host for the London
+  # Portal (infra/scripts/provision-portal.sh, docs/runbooks/provision-portal.md).
+  # Pinned to .168 by a static lease on the London Flint covering BOTH its
+  # hardware MAC and its current macOS private Wi-Fi address — the previous
+  # reservation had gone stale because that private address rotated.
+  static_lan_a_records = {
+    "mbp-london" = "192.168.8.168"
+  }
 }
 
 resource "kubernetes_cron_job_v1" "technitium_static_records" {
@@ -67,14 +82,16 @@ resource "kubernetes_cron_job_v1" "technitium_static_records" {
                 name  = "TECH_PASS"
                 value = var.technitium_password
               }
-              # "<name> <ip>" per line — the shell reads it without needing jq.
+              # "<zone> <name> <ip>" per line — the shell reads it without needing jq.
               env {
-                name  = "RECORDS"
-                value = join("\n", [for name, ip in local.static_a_records : "${name} ${ip}"])
+                name = "RECORDS"
+                value = join("\n", concat(
+                  [for name, ip in local.static_a_records : "viktorbarzin.me ${name} ${ip}"],
+                  [for name, ip in local.static_lan_a_records : "viktorbarzin.lan ${name} ${ip}"],
+                ))
               }
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
-                ZONE="viktorbarzin.me"
                 TECH_API="http://technitium-web:5380"
 
                 TOKEN=$$(curl -sf "$$TECH_API/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
@@ -85,7 +102,7 @@ resource "kubernetes_cron_job_v1" "technitium_static_records" {
                 # would report success while failing to write a record.
                 printf '%s\n' "$$RECORDS" > /tmp/records
                 RC=0
-                while read -r NAME IP; do
+                while read -r ZONE NAME IP; do
                   [ -z "$$NAME" ] && continue
                   FQDN="$$NAME.$$ZONE"
                   REC=$$(curl -sf "$$TECH_API/api/zones/records/get?token=$$TOKEN&zone=$$ZONE&domain=$$FQDN" || true)
