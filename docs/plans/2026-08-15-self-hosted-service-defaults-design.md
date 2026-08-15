@@ -16,6 +16,13 @@ deployed and reachable.
 The goal is narrow: **make agents default to our own services for the handful of
 operations they perform often.** Human browsing habits are out of scope.
 
+```stats
+138 | web-facing services
+2,464 | calls/30d to memory (has a verb)
+72 | HTTP requests/30d to privatebin (no verb)
+2 | new verbs proposed
+```
+
 ## What the data says
 
 The first instinct is that this is an awareness problem — agents don't know what
@@ -41,10 +48,15 @@ trigger; sessions now reach for it by default. PrivateBin has neither and draws
 roughly two requests a day. We have not attributed those requests, but that
 volume is consistent with its uptime probe accounting for most of them.
 
-The hypothesis this design acts on: **awareness is necessary but not sufficient;
-the binding constraint is a non-interactive one-command path.** An agent cannot
-post to PrivateBin with `curl` — it is client-side encrypted — so even an agent
-that knows the service exists has nothing to invoke.
+> [!IMPORTANT]
+> The hypothesis this design acts on: awareness is necessary but not sufficient;
+> the binding constraint is a non-interactive one-command path. An agent cannot
+> post to PrivateBin with `curl` — it is client-side encrypted — so even an agent
+> that knows the service exists has nothing to invoke.
+
+> [!WARNING]
+> `send` and `hackmd` are at `replicas = 0` with no Sablier wake path. A verb
+> pointed at either would 503 rather than wake the service.
 
 There is a second-order effect worth naming, because it shapes what is buildable.
 Services that went unused were later parked to reclaim resources (Sablier,
@@ -176,6 +188,10 @@ accounts are `admin` (Viktor), `emo`, and `anca`.
 
 ### The leak guard
 
+> [!CAUTION]
+> Paste and share links are unguessable but reachable from the internet. The
+> gitleaks gate and the TTLs below are what bound that exposure.
+
 Both verbs mint internet-reachable URLs, and the content agents are most likely
 to paste — logs, configs, `kubectl` output — is exactly where a credential tends
 to turn up. The `visualize` skill already states this boundary: links are unguessable
@@ -222,6 +238,9 @@ sequenceDiagram
 One line in `~/code/docs/agents/homelab-rules.md`, stating the preference and
 pointing at `homelab services`. No worked examples, no thresholds, no mandate —
 agent judgement decides when it applies.
+
+> [!NOTE]
+> Found while writing this: NATS is referenced in the rules but is not deployed.
 
 The same edit removes **NATS** from the existing "wire into capabilities already
 running in the cluster (shared Postgres/Redis/NATS/Vault/…)" line. There is no
