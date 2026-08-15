@@ -162,7 +162,9 @@ esac
 # replace it and never restarts it, so without this the update turns the display
 # off until someone walks up to the Portal. The frame relaunches from a
 # MY_PACKAGE_REPLACED receiver, which is a background activity start and needs
-# this app-op on Android 10 (portal-immich-frame v0.1.10+).
+# this app-op on Android 10 (portal-immich-frame v0.1.10+). REQUIRED on the Sofia
+# Portal Mini (Android 10); belt-and-braces on the London Portal Plus, which is
+# Android 9 and predates the background-activity-start restriction.
 "$ADB" shell appops set "$FPKG" SYSTEM_ALERT_WINDOW allow
 "$ADB" shell settings put system screen_off_timeout 2147483647   # never sleep (LCD, always mains)
 "$ADB" shell settings put secure screensaver_enabled 0           # no dream/screensaver
