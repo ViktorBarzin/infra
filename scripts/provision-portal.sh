@@ -162,8 +162,8 @@ REMOTE
 cat <<'DONE'
 
 >> DONE (device side). Now, physically at the Portal:
-   * Confirm the Immich slideshow is showing — adb screencap is BLACK for the
-     WebView surface, so you must look at the screen, not a screenshot.
+   * Confirm the Immich slideshow is showing. adb screencap DOES capture it now
+     (verified 2026-08-15); a black image is the older WebView-surface behaviour.
    * Confirm the VirtualSoftKeys Back/Home pills appear (your exit button).
    * Open Spotify and Home Assistant and log in (personal accounts).
 DONE
