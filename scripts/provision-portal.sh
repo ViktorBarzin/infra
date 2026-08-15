@@ -23,7 +23,11 @@
 set -euo pipefail
 
 # ---- config (all overridable via env) --------------------------------------
-MAC="${MAC:-viktorbarzin@192.168.8.168}"                                    # USB host on the Portal's LAN
+# USB host on the Portal's LAN. By NAME, not by address: the Mac's macOS private
+# Wi-Fi address rotates, which is what left the previous DHCP reservation stale.
+# It is now pinned to 192.168.8.168 by a Flint reservation covering both that
+# address and the hardware MAC, and mbp-london.viktorbarzin.lan resolves to it.
+MAC="${MAC:-viktorbarzin@mbp-london.viktorbarzin.lan}"
 RADB="${RADB:-/Users/viktorbarzin/Library/Android/sdk/platform-tools/adb}"  # adb path ON the Mac
 FRAME_REPO="${FRAME_REPO:-$HOME/code/portal-immich-frame}"
 FRAME_URL="${FRAME_URL:-}"              # empty => build-apk.sh default (London)
