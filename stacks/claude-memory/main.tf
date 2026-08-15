@@ -277,9 +277,30 @@ resource "kubernetes_deployment" "claude-memory" {
             # old 128Mi limit OOM-killed the import). Burstable on purpose —
             # baseline API is ~150Mi; only embed-serving pods grow to the model
             # ceiling. Tier-3/4 burstable precedent.
+            #
+            # CPU request 10m -> 1000m (2026-08-15). Every recall runs a
+            # bge-large forward pass on the CPU, and that pass was measured at
+            # 1259-2890m while the pod asked for 10m. Since CFS shares are
+            # proportional to the request, on a busy node it got ~1/100th of a
+            # core for the one thing it does, which is where the tail came from:
+            # of 58 recalls, only 41% finished under 1s, the mean was 2.19s and
+            # two took over 10s. Latency tracked context length exactly (5 chars
+            # 0.245s, 44 chars 0.373s, 1047 chars 1.874s) — the per-turn recall
+            # hook sends the whole user prompt, so the slow case is the normal
+            # case. 1000m is the low end of a measured burst, not a ceiling:
+            # there are no CPU limits cluster-wide, so it still bursts to ~2.9
+            # cores when the node is free, and an unused CPU request costs
+            # nothing but scheduling headroom (k8s-node5 sits at 49% of CPU
+            # requests; memory, at 87%, is that node's real constraint).
+            #
+            # NOT changed here, but noted: the memory request (512Mi) is below
+            # actual residency (751Mi idle, ~1.8Gi with the model warm), so the
+            # scheduler under-counts this pod. Raising it eats into the N-1
+            # memory headroom that ClusterCannotTolerateNonGpuNodeLoss watches,
+            # so it wants doing deliberately rather than as a side effect.
             requests = {
               memory = "512Mi"
-              cpu    = "10m"
+              cpu    = "1000m"
             }
             limits = {
               memory = "2560Mi"
