@@ -363,6 +363,7 @@ resource "kubernetes_deployment" "otp" {
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/policy"],
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
     ]
   }
 }
