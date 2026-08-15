@@ -255,6 +255,7 @@ resource "kubernetes_deployment" "pages_publish" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
 
@@ -284,10 +285,10 @@ resource "kubernetes_service" "pages_publish" {
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": bearer-token API, Authentik would break programmatic clients
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = local.namespace
-  name            = "pages-publish"
+  auth      = "none"
+  dns_type  = "proxied"
+  namespace = local.namespace
+  name      = "pages-publish"
   # Route to the Service's 8080 (svc-builder put it on 8080, not the
   # ingress_factory default 80) — otherwise Traefik can't resolve the backend
   # port and POST /publish returns a stray 405 while GET falls through.

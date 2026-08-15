@@ -776,9 +776,8 @@ resource "kubernetes_deployment" "book_search" {
       }
       spec {
         container {
-          image             = "viktorbarzin/book-search:latest"
-          image_pull_policy = "Always"
-          name              = "book-search"
+          image = "viktorbarzin/book-search:latest"
+          name  = "book-search"
 
           port {
             container_port = 8000

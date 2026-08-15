@@ -215,16 +215,16 @@ module "ingress" {
   sablier = {
     group = "postiz"
   }
-  dns_type        = "none" # DNS already created by ingress_uploads_public
-  namespace       = kubernetes_namespace.postiz.metadata[0].name
-  name            = "postiz"
-  host            = var.host
-  service_name    = "postiz"
-  port            = 80
-  auth            = "required" # Authentik forward-auth on the UI / API path
+  dns_type     = "none" # DNS already created by ingress_uploads_public
+  namespace    = kubernetes_namespace.postiz.metadata[0].name
+  name         = "postiz"
+  host         = var.host
+  service_name = "postiz"
+  port         = 80
+  auth         = "required" # Authentik forward-auth on the UI / API path
   # ADR-0023: Postiz Users (non-admin social-media sharers) reach postiz; admins via bypass.
-  allowed_groups = ["Postiz Users", "Home Server Admins"]
-  ingress_path   = ["/"]
+  allowed_groups  = ["Postiz Users", "Home Server Admins"]
+  ingress_path    = ["/"]
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
@@ -404,6 +404,10 @@ resource "kubernetes_deployment_v1" "es" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales the postiz group (ADR-0022)
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].labels["tier"],                      # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
 }
@@ -535,8 +539,13 @@ resource "kubernetes_deployment_v1" "temporal" {
   depends_on = [kubernetes_deployment_v1.es, kubernetes_service.es]
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales the postiz group (ADR-0022)
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].replicas,                               # SABLIER_MANAGED_REPLICAS — sablier scales the postiz group (ADR-0022)
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].labels["tier"],                      # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
 }
