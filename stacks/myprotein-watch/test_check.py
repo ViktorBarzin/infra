@@ -384,6 +384,32 @@ def test_missing_or_empty_configmap_reads_as_empty_state():
     assert check.state_from_configmap({"data": {"state.json": "not json"}}) == {}
 
 
+def test_a_failed_state_write_after_posting_does_not_fail_the_run():
+    """The alert is already delivered by then. Exiting non-zero would make the
+    Job controller retry and post the SAME alert again (backoffLimit=2 → up to
+    three copies). A missed state write costs at most one duplicate on the next
+    scheduled run six hours later, which is the cheaper failure."""
+    calls = {"posted": 0}
+
+    def boom(*_a, **_kw):
+        raise OSError("configmap PATCH refused")
+
+    rc = check.persist_after_alert(
+        save=boom, target="x", state={}, backend="configmap",
+        on_error=lambda msg: calls.__setitem__("err", msg))
+    assert rc == 0
+    assert "err" in calls          # the failure is reported, not swallowed silently
+
+
+def test_a_successful_state_write_reports_success():
+    seen = {}
+    rc = check.persist_after_alert(
+        save=lambda t, s, b: seen.setdefault("ok", (t, b)),
+        target="cm", state={"a": 1}, backend="configmap", on_error=lambda m: None)
+    assert rc == 0
+    assert seen["ok"] == ("cm", "configmap")
+
+
 def test_slack_message_names_flavour_size_price_and_saving():
     cheap = variant(
         "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",

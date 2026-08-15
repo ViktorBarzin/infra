@@ -487,6 +487,27 @@ def save_state(target: str, state: dict[str, Any], backend: str) -> None:
     os.replace(tmp, target)
 
 
+def persist_after_alert(save, target, state, backend, on_error) -> int:
+    """Save state once the alert is already out, and never fail the run over it.
+
+    Ordering matters here. post_slack() runs first because a delivered alert is
+    the point of the job; state is only bookkeeping. But that means a raised
+    exception at this stage would exit non-zero AFTER a successful post, and the
+    Job controller would retry and post the SAME alert again — backoffLimit=2,
+    so up to three copies of one deal.
+
+    A lost state write instead costs at most a single duplicate on the next
+    scheduled run, six hours later. The error is printed so a failed write is
+    still visible in the logs rather than silently swallowed.
+    """
+    try:
+        save(target, state, backend)
+    except Exception as exc:                      # noqa: BLE001 - deliberately broad
+        on_error(f"state write failed after alerting ({exc}) — alert WAS sent; "
+                 f"the next run may repeat it")
+    return 0
+
+
 def main() -> int:
     url = os.environ.get(
         "MYPROTEIN_URL",
@@ -544,9 +565,9 @@ def main() -> int:
         return 0
 
     post_slack(webhook, payload)
-    save_state(state_target, new_state, backend)
     print(f"posted {len(alerts)} alert(s) to Slack")
-    return 0
+    return persist_after_alert(save_state, state_target, new_state, backend,
+                               lambda m: print(m, file=sys.stderr))
 
 
 if __name__ == "__main__":
