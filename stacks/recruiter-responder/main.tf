@@ -369,6 +369,7 @@ module "ingress" {
   ingress_path     = ["/cb"]
   tls_secret_name  = var.tls_secret_name
   extra_annotations = {
+    "gethomepage.dev/description" = "Automated recruiter email triage"
     "gethomepage.dev/icon" = "mdi-email-fast"
   }
 }

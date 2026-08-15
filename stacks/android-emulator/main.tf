@@ -316,8 +316,9 @@ module "ingress-public-gate" {
   service_name    = kubernetes_service.gate.metadata[0].name
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
-    "gethomepage.dev/icon" = "android.png"
-    "gethomepage.dev/name" = "Android Emulator"
+    "gethomepage.dev/description" = "Shared Android testing instance (adb + noVNC)"
+    "gethomepage.dev/icon"        = "android.png"
+    "gethomepage.dev/name"        = "Android Emulator"
   }
 }
 

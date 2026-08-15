@@ -313,10 +313,10 @@ resource "kubernetes_service" "crowdsec-web" {
   }
 }
 module "ingress" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.crowdsec.metadata[0].name
-  name            = "crowdsec-web"
+  source    = "../../../../modules/kubernetes/ingress_factory"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.crowdsec.metadata[0].name
+  name      = "crowdsec-web"
   # Pin service_name explicitly (== name, so routing is unchanged) so
   # ingress_factory's real-ip auto-attach — startswith(var.service_name,
   # "anubis-") at ingress_factory/main.tf — doesn't hit the module's null
@@ -327,7 +327,8 @@ module "ingress" {
   auth            = "required"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
-    "gethomepage.dev/icon" = "crowdsec.png"
+    "gethomepage.dev/description" = "CrowdSec decisions and alerts UI"
+    "gethomepage.dev/icon"        = "crowdsec.png"
   }
 }
 

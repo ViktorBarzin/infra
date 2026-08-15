@@ -185,6 +185,9 @@ module "ingress" {
   #     "nginx.ingress.kubernetes.io/proxy-body-size" : "1G" // allow uploading .torrent files
   #   }
 
+  extra_annotations = {
+    "gethomepage.dev/description" = "Music collection manager"
+  }
 }
 
 module "ingress-deemix" {
@@ -194,4 +197,7 @@ module "ingress-deemix" {
   name            = "deemix"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  extra_annotations = {
+    "gethomepage.dev/description" = "Deezer download client for Lidarr"
+  }
 }

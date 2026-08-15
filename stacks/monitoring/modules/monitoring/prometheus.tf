@@ -97,6 +97,7 @@ module "prometheus-query-ingress" {
   port                    = 80
   ingress_path            = ["/api/v1/query"]
   extra_annotations = {
+    "gethomepage.dev/description" = "Prometheus query API"
     "gethomepage.dev/icon" = "prometheus.png"
   }
 }

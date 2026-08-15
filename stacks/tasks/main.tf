@@ -292,6 +292,7 @@ module "ingress" {
   port            = 8000
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
+    "gethomepage.dev/description" = "Reminders-style task PWA over Nextcloud CalDAV"
     "gethomepage.dev/icon" = "mdi-format-list-checks"
   }
 }

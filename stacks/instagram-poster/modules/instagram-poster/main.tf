@@ -464,8 +464,9 @@ module "ingress_protected" {
   port            = 80
   service_name    = "instagram-poster"
   extra_annotations = {
-    "gethomepage.dev/icon" = "instagram.png"
-    "gethomepage.dev/name" = "Instagram Poster"
+    "gethomepage.dev/description" = "Scheduled Instagram posting"
+    "gethomepage.dev/icon"        = "instagram.png"
+    "gethomepage.dev/name"        = "Instagram Poster"
   }
 }
 

@@ -155,4 +155,7 @@ module "ingress" {
   name            = "dashy"
   tls_secret_name = var.tls_secret_name
   auth            = "required" # hidden as we use homepage now
+  extra_annotations = {
+    "gethomepage.dev/description" = "Alternative service dashboard"
+  }
 }
