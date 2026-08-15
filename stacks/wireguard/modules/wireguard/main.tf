@@ -168,35 +168,6 @@ resource "kubernetes_deployment" "wireguard" {
           }
         }
 
-        container {
-          name    = "prometheus-exporter"
-          image   = "mindflavor/prometheus-wireguard-exporter"
-          command = ["prometheus_wireguard_exporter", "-a", "true", "-v", "true", "-n", "/etc/wireguard/wg0.conf"]
-          volume_mount {
-            name       = "wg0-conf"
-            mount_path = "/etc/wireguard/wg0.conf"
-            sub_path   = "wg0.conf"
-          }
-          security_context {
-            capabilities {
-              add = ["NET_ADMIN"]
-            }
-          }
-          port {
-            container_port = 9586
-            protocol       = "TCP"
-          }
-          resources {
-            requests = {
-              cpu    = "10m"
-              memory = "32Mi"
-            }
-            limits = {
-              memory = "32Mi"
-            }
-          }
-        }
-
         # Reconciles portal-registered roaming peers onto the live wg0. The
         # vpn-portal (secret/vpn-portal wg_peers) registers only client PUBLIC
         # keys (client-side keygen); the ExternalSecret renders them to
@@ -248,6 +219,35 @@ resource "kubernetes_deployment" "wireguard" {
             requests = {
               cpu    = "5m"
               memory = "16Mi"
+            }
+            limits = {
+              memory = "32Mi"
+            }
+          }
+        }
+
+        container {
+          name    = "prometheus-exporter"
+          image   = "mindflavor/prometheus-wireguard-exporter"
+          command = ["prometheus_wireguard_exporter", "-a", "true", "-v", "true", "-n", "/etc/wireguard/wg0.conf"]
+          volume_mount {
+            name       = "wg0-conf"
+            mount_path = "/etc/wireguard/wg0.conf"
+            sub_path   = "wg0.conf"
+          }
+          security_context {
+            capabilities {
+              add = ["NET_ADMIN"]
+            }
+          }
+          port {
+            container_port = 9586
+            protocol       = "TCP"
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
             }
             limits = {
               memory = "32Mi"
