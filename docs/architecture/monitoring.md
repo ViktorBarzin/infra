@@ -222,6 +222,24 @@ version). Applied to `ATSOverload`, `ClusterCannotTolerateNonGpuNodeLoss` (6h),
 `ImmichSmartSearchSlow`, `GPUVRAMLow`, `PodCrashLooping`, `PodStuckPending`,
 `IngressTTFBHigh`, `HighService4xxRate`, `AnubisChallengeStoreErrors`.
 
+`IngressTTFBHigh`/`IngressTTFBCritical` were rebuilt on **2026-08-15** and are
+worth reading as a cautionary example. They averaged `duration_seconds_sum /
+_count` over a 5-minute window, guarded only by `rate(...) > 0.05` — three
+requests a minute. At that volume a 5m window holds ~15 requests, so whichever
+one happened to be slow *became* the average: one Home Assistant stream, one
+matrix `/sync`, one crawler call. That produced **81 firings in 7 days across 8
+services**, and every service probed at 13-143 ms while its alert was firing.
+They now take a **p95 over 30m** from
+`traefik_service_request_duration_seconds_bucket` (kept in the scrape for this
+purpose, ~1.3k series). `keep_firing_for` dropped 1h → 15m at the same time,
+since it existed to damp the mean's fire/resolve churn.
+
+Two things generalise from it. A **mean is not a latency signal on a
+low-traffic service** — any new latency alert here wants a quantile, and a
+minimum-volume guard is not a substitute. And per the kured caveat below, an
+alert that flaps also holds the node-reboot gate closed, so latency-alert noise
+is not only Slack noise.
+
 One caveat worth knowing: kured halts node reboots while any firing alert is
 outside its `alertFilterRegexp` allowlist (`^(Watchdog|RebootRequired|
 KuredNodeWasNotDrained|InfoInhibitor|KernelOOMKiller)$`). Holding an alert
