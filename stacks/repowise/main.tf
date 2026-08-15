@@ -236,9 +236,18 @@ resource "kubernetes_deployment" "repowise" {
         # conformance) BEFORE the API starts. The API loads those artefacts into
         # app.state once, during startup, and offers no way to reload them — so
         # building them here is what makes the System Map, Contracts and
-        # Co-Changes views show anything at all. The reconciler rebuilds them on
-        # disk hourly; the served copy refreshes on the next restart.
-        # Takes about a minute over 42 repos and re-indexes nothing.
+        # Co-Changes views show anything at all.
+        #
+        # It is a COLD-VOLUME GATE, not a refresh: it skips whenever usable
+        # artefacts already exist on the volume, and only builds when there are
+        # none. Keeping the artefacts current is the reconciler's hourly job.
+        #
+        # This is deliberately conservative because the API cannot serve while
+        # this container runs. Rebuilding on every boot took the service down
+        # for over eight minutes on 2026-08-15 — the build grew well past the
+        # one minute first measured, once the per-repo wikis filled out — and it
+        # bought nothing, since the artefacts persist on the PVC and the API
+        # loads whatever is there at startup regardless of who wrote it.
         init_container {
           name        = "cross-repo"
           image       = local.image
@@ -252,6 +261,14 @@ resource "kubernetes_deployment" "repowise" {
           env {
             name  = "REPOWISE_EMBEDDER"
             value = "mock"
+          }
+          env {
+            # A week: far above the reconciler's hourly cadence, so in practice
+            # this only builds when the volume is genuinely cold. If artefacts
+            # are ever this stale the reconciler has been broken for days, and
+            # blocking startup to rebuild them is then the right call.
+            name  = "CROSS_REPO_MAX_AGE_HOURS"
+            value = "168"
           }
 
           volume_mount {
