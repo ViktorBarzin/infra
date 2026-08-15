@@ -237,6 +237,25 @@ resource "kubernetes_deployment" "claude-memory" {
             name  = "MEMORY_EMBEDDINGS_ENABLED"
             value = "1"
           }
+          env {
+            # Cap torch/OpenMP threads (2026-08-15). The container sees all 8 of
+            # its node's cores, so torch defaulted to 8 compute + 8 interop
+            # threads — for a batch-of-1 bge-large forward pass that is heavy
+            # oversubscription, and the sync overhead dominates. Measured: one
+            # long recall burned 12.7 CPU-SECONDS for 2.7s of wall time (~4.7
+            # cores in parallel) to embed a single ~260-token query, work that
+            # should cost a fraction of a core-second. It also meant one memory
+            # lookup could take ~60% of the node's CPU for two seconds, and the
+            # per-turn recall hook fires on every prompt in every session.
+            name  = "OMP_NUM_THREADS"
+            value = "4"
+          }
+          env {
+            # Same reason as OMP_NUM_THREADS — MKL keeps its own pool, and
+            # leaving it unset lets it re-expand to the node's core count.
+            name  = "MKL_NUM_THREADS"
+            value = "4"
+          }
 
           startup_probe {
             http_get {
