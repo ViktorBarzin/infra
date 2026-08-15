@@ -51,6 +51,11 @@ func resolveSessionName(dir, name string) (string, error) {
 	type hit struct{ user, id string }
 	var hits []hit
 	seen := map[string]bool{}
+	// The directory is world-readable but the manifests inside are root-only,
+	// so an unprivileged run reads nothing. Counting that is what separates
+	// "the name does not exist" from "I could not look" -- reporting the first
+	// when the second is true sends someone hunting a name that is right there.
+	unreadable := 0
 
 	for _, e := range entries {
 		fname := e.Name()
@@ -63,6 +68,9 @@ func resolveSessionName(dir, name string) (string, error) {
 
 		body, err := os.ReadFile(filepath.Join(dir, fname))
 		if err != nil {
+			if os.IsPermission(err) {
+				unreadable++
+			}
 			continue
 		}
 		for _, line := range strings.Split(string(body), "\n") {
@@ -81,6 +89,10 @@ func resolveSessionName(dir, name string) (string, error) {
 
 	switch len(hits) {
 	case 0:
+		if unreadable > 0 {
+			return "", fmt.Errorf("cannot read %d session manifest(s) in %s — they are "+
+				"root-owned, so re-run with sudo; %q may well exist", unreadable, dir, name)
+		}
 		return "", fmt.Errorf("no session named %q (names come from tmux-persist; "+
 			"try the session id instead, or check the Sessions table in Grafana)", name)
 	case 1:
