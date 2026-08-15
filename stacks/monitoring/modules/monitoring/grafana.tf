@@ -148,6 +148,14 @@ locals {
     "qbittorrent.json"        = "Applications"
     "realestate-crawler.json" = "Applications"
     "openclaw.json"           = "Applications"
+    # Developer tooling. These MUST be listed: the fallback below is "General",
+    # which is Grafana's reserved built-in folder — the sidecar cannot create
+    # it, so provisioning fails with "A folder with that name already exists"
+    # and ABORTS THE WHOLE WALK. A dashboard left on the fallback is therefore
+    # not merely misfiled, it is never imported at all. terminal-lobby-usage
+    # sat there unseen from 2026-08-03 until 2026-08-15.
+    "terminal-lobby-usage.json" = "Applications"
+    "claude-usage.json"         = "Applications"
     "uk-payslip.json"         = "Finance (Personal)"
     "wealth.json"             = "Finance (Personal)"
     "job-hunter.json"         = "Finance"
