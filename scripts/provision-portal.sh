@@ -141,6 +141,11 @@ case ":$E:" in
 esac
 "$ADB" shell settings put secure accessibility_enabled 1
 "$ADB" shell appops set "$VSKPKG" SYSTEM_ALERT_WINDOW allow
+# Let the frame offer its own updates (portal-immich-frame ADR-0006). Without
+# this the startup check still runs and downloads, but the install prompt never
+# appears — so a device provisioned without it silently stops taking updates.
+# It does NOT permit silent installs; Android still asks whoever is at the device.
+"$ADB" shell appops set "$FPKG" REQUEST_INSTALL_PACKAGES allow
 "$ADB" shell settings put system screen_off_timeout 2147483647   # never sleep (LCD, always mains)
 "$ADB" shell settings put secure screensaver_enabled 0           # no dream/screensaver
 "$ADB" shell am start -n "$FPKG/$FACT"
