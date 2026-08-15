@@ -206,3 +206,38 @@ func TestCacheReadShare(t *testing.T) {
 		t.Errorf("cacheReadShare on empty = %v, want 0 rather than NaN", got)
 	}
 }
+
+// A --since window should not cost a full read of the corpus. A transcript's
+// mtime is its last append, so a file older than the cutoff cannot contain a
+// record inside the window and must be skipped unopened -- without this, a
+// one-day query costs the same as a ninety-day one (measured: 35s over 1.2 GB),
+// which reads as a hang.
+func TestScanSkipsFilesOlderThanCutoff(t *testing.T) {
+	home := t.TempDir()
+	writeTranscript(t, home, "p", "stale", []map[string]interface{}{
+		userTurn("2026-01-01T10:00:00Z"),
+		assistant("2026-01-01T10:00:01Z", "claude-opus-5", 500, 500, 0, "Bash"),
+	})
+	writeTranscript(t, home, "p", "fresh", []map[string]interface{}{
+		userTurn("2026-08-15T10:00:00Z"),
+		assistant("2026-08-15T10:00:01Z", "claude-opus-5", 7, 7, 0, "Read"),
+	})
+
+	old := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	stale := filepath.Join(home, ".claude", "projects", "p", "stale.jsonl")
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	cutoff := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	got, err := scanTranscripts([]userRoot{{User: "emo", Home: home}}, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Files != 1 {
+		t.Errorf("opened %d files, want 1 — the stale one should be skipped by mtime", got.Files)
+	}
+	if got.Users["emo"].InputTokens != 7 {
+		t.Errorf("wrong totals after skipping: %+v", got.Users["emo"])
+	}
+}

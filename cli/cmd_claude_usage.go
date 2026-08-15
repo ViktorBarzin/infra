@@ -151,6 +151,16 @@ func scanTranscripts(roots []userRoot, since time.Time) (*usageReport, error) {
 				if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
 					continue
 				}
+				// A transcript's mtime is its last append, so a file untouched
+				// since before the cutoff cannot hold a record inside the
+				// window. Skipping it unopened is what keeps a one-day query
+				// from costing a full read of the corpus -- 1.2 GB and ~35s
+				// here, long enough to read as a hang.
+				if !since.IsZero() {
+					if info, err := f.Info(); err == nil && info.ModTime().Before(since) {
+						continue
+					}
+				}
 				rep.Files++
 				scanOneFile(rep, root.User, project.Name(),
 					filepath.Join(projectDir, f.Name()), since)
