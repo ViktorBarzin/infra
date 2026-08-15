@@ -188,7 +188,15 @@ resource "kubernetes_deployment" "matrix" {
             name  = "TUWUNEL_WELL_KNOWN__SERVER"
             value = "matrix.viktorbarzin.me:443"
           }
-          # Real client IP for rate-limiting: behind Cloudflare's CF-Connecting-IP.
+          # Real client IP for rate-limiting, read from CF-Connecting-IP. That
+          # header is only trustworthy because the real-ip middleware on both
+          # ingresses below rewrites it to the true client before tuwunel sees
+          # it — the origin is reachable without transiting Cloudflare (pfSense
+          # NATs WAN :443 straight to Traefik, no Cloudflare-source
+          # restriction), so an unfiltered header would let a client choose the
+          # IP tuwunel rate-limits and logs, including the IP reported by the
+          # MatrixNewUserRegistered alert. Do not remove that middleware while
+          # this stays cf_connecting_ip.
           env {
             name  = "TUWUNEL_IP_SOURCE"
             value = "cf_connecting_ip"
@@ -268,6 +276,10 @@ module "ingress" {
   namespace       = kubernetes_namespace.matrix.metadata[0].name
   name            = "matrix"
   tls_secret_name = var.tls_secret_name
+  # real-ip rewrites Cf-Connecting-Ip (and X-Real-Ip) to the true client,
+  # deciding trust by the unspoofable TCP peer. Required because tuwunel runs
+  # with ip_source=cf_connecting_ip — see the env block above.
+  extra_middlewares = ["traefik-real-ip@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Matrix"
@@ -326,5 +338,7 @@ module "ingress_register" {
   tls_secret_name  = var.tls_secret_name
   homepage_enabled = false # path carve-out, not its own dashboard tile
 
-  extra_middlewares = ["matrix-register-ratelimit@kubernetescrd"]
+  # real-ip FIRST so the rate-limit and tuwunel both act on a client address the
+  # caller cannot choose (the register path is the one an abuser reaches for).
+  extra_middlewares = ["traefik-real-ip@kubernetescrd", "matrix-register-ratelimit@kubernetescrd"]
 }
