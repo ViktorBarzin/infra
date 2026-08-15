@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,6 +140,29 @@ func metricsAlerts(args []string) error {
 	return nil
 }
 
+// truncationNote warns when --limit, not --since, decided how far back the
+// results reach.
+//
+// Loki returns the most RECENT n lines for a log query, so a limit that is
+// reached silently narrows the window: `--since 96h --limit 100` against a
+// chatty stream can come back covering two minutes, and reads exactly like
+// "nothing happened earlier". That is a confidently wrong answer, which is
+// worse than an error — it sends the reader to the wrong conclusion.
+//
+// Returns "" when the limit was not reached, so the warning stays meaningful.
+func truncationNote(limit, n int, minNs, maxNs int64, since time.Duration) string {
+	if n == 0 || limit <= 0 || n < limit || minNs == 0 || maxNs == 0 {
+		return ""
+	}
+	covered := time.Duration(maxNs-minNs) * time.Nanosecond
+	return fmt.Sprintf(
+		"note: --limit %d was reached, so these lines cover only %s of the %s requested "+
+			"(oldest %s). Older lines were NOT returned. Raise --limit, narrow the stream "+
+			"selector, or add line filters (!= \"/health\") to reach further back.",
+		limit, covered.Round(time.Second), since,
+		time.Unix(0, minNs).Format("15:04:05"))
+}
+
 func logsQuery(args []string) error {
 	q := queryArg(args, map[string]bool{"--since": true, "--limit": true})
 	if q == "" {
@@ -155,6 +179,10 @@ func logsQuery(args []string) error {
 	limit := flagValue(args, "--limit")
 	if limit == "" {
 		limit = "100"
+	}
+	lim, err := strconv.Atoi(limit)
+	if err != nil {
+		return fmt.Errorf("bad --limit %q: %w", limit, err)
 	}
 	end := time.Now()
 	v := url.Values{}
@@ -182,16 +210,29 @@ func logsQuery(args []string) error {
 		return nil
 	}
 	n := 0
+	var minNs, maxNs int64
 	for _, s := range r.Data.Result {
 		for _, val := range s.Values {
 			if len(val) == 2 {
 				fmt.Println(val[1])
 				n++
+				if ts, err := strconv.ParseInt(val[0], 10, 64); err == nil {
+					if minNs == 0 || ts < minNs {
+						minNs = ts
+					}
+					if ts > maxNs {
+						maxNs = ts
+					}
+				}
 			}
 		}
 	}
 	if n == 0 {
 		fmt.Println("(no log lines)")
+	}
+	// To stderr, so it cannot corrupt a piped or redirected result set.
+	if note := truncationNote(lim, n, minNs, maxNs, dur); note != "" {
+		fmt.Fprintln(os.Stderr, note)
 	}
 	return nil
 }

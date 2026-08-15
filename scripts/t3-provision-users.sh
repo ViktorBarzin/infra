@@ -698,9 +698,20 @@ fi
 #     checks; the version is stamped via -ldflags from cli/VERSION anyway.
 build_homelab_cli() {
   local src="$WORKSTATION_DIR/../../cli" dst=/usr/local/bin/homelab
-  local want have="" tmp
-  want="$(cat "$src/VERSION" 2>/dev/null || true)"
-  [[ -n "$want" ]] || { log "WARN: $src/VERSION unreadable -> skip homelab CLI rebuild"; return 0; }
+  local semver srchash want have="" tmp
+  semver="$(cat "$src/VERSION" 2>/dev/null || true)"
+  [[ -n "$semver" ]] || { log "WARN: $src/VERSION unreadable -> skip homelab CLI rebuild"; return 0; }
+  # The rebuild trigger is a HASH OF THE SOURCE, not the hand-written VERSION.
+  # Gating on VERSION alone meant a code change with an unbumped file silently
+  # never reached anyone's PATH -- master looked correct, tests passed, and the
+  # box kept running the old binary. That bit us three times on 2026-08-15
+  # alone, the last found only when a test agent ran a flag the machine did not
+  # have. A content hash cannot be forgotten, so VERSION goes back to being
+  # what it should be: a human-facing label, free to lag without breaking
+  # deployment.
+  srchash="$(cat "$src"/*.go "$src"/go.mod "$src"/go.sum 2>/dev/null | sha256sum | cut -c1-12)"
+  [[ -n "$srchash" ]] || { log "WARN: cannot hash $src -> skip homelab CLI rebuild"; return 0; }
+  want="${semver}+${srchash}"
   [[ -x "$dst" ]] && have="$("$dst" --version 2>/dev/null | awk '{print $2}')" || true
   [[ "$have" == "$want" ]] && return 0
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] rebuild homelab CLI (${have:-absent} -> $want)"; return 0; fi
