@@ -83,7 +83,10 @@ Three things that keeps depending on, all set by `provision-portal.sh`:
   Android stops the app to replace it and never restarts it, so without this an
   update turns the display off until someone walks up to the Portal. Since
   v0.1.10 the frame relaunches itself from a `MY_PACKAGE_REPLACED` receiver,
-  which is a background activity start and needs this app-op on Android 10.
+  which is a background activity start and needs this app-op on Android 10 —
+  required on the Sofia Portal Mini, belt-and-braces on the London Portal Plus
+  (Android 9, verified 2026-08-16; the fleet is mixed despite what the app docs
+  used to say).
 - **The signing key**, Vault `secret/portal-immich-frame` (`debug_keystore_b64`).
   A build signed with anything else is refused as an update.
 
