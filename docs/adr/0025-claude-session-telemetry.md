@@ -202,6 +202,41 @@ recovered, since Loki refuses anything older than a week.
 6. `homelab claude-usage` over the full corpus, with the report shape settled
    against what phase 1 shows is actually worth reporting.
 
+## Two things only a live session revealed
+
+Both were found by running a real Claude session as `emo` after the
+configuration was in place, and neither is visible from the config alone.
+
+**Attribution is by Anthropic account, not OS user.** The events carry
+`user_email` and a hashed `user_id` identifying the *account*, which is the
+same for everyone on this box — a session run as `emo` arrived labelled
+`viktorbarzin@meta.com`. That defeats the comparison this telemetry exists for.
+Only the shell knows the OS user, and measured on the box, the managed
+settings' `env` block **overrides** the shell environment, so a per-user value
+is ignored while the shared file also sets the variable. `OTEL_RESOURCE_ATTRIBUTES`
+therefore lives in a per-user `/etc/profile.d/26-claude-otel-attrs.sh` instead,
+mirroring how the per-user setup-token is already loaded — including the
+`/etc/zsh/zshenv` hook, because Debian's zsh `zprofile` does not source
+`/etc/profile`. Sessions started outside a login shell (systemd units, cron)
+will not pick it up and report without `os.user`.
+
+**Prometheus accepts cumulative temporality only.** Claude Code exports delta
+by default. The endpoint answered `200` and Prometheus discarded every metric
+with `invalid temporality and type combination`, logged on its side and
+invisible to the sender — the shape of failure where everything looks healthy
+and no data appears. `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative`
+resolves it.
+
+> [!NOTE]
+> Loki's OTLP ingest promotes only `service_name` and `deployment_environment`
+> to index labels; everything else — `session_id`, `prompt`, `response`,
+> `message_uuid` — becomes structured metadata, which is not indexed and
+> creates no streams. The query API merges structured metadata into the
+> `stream` object when displaying results, which makes it look as though every
+> attribute were a label. It is not: the whole channel is **one** stream.
+> Worth knowing before concluding that this design threatens the
+> 5000-stream cap, as a first reading of a query result suggests.
+
 ## Open questions
 
 - Export interval is unset, so the defaults apply. Whether they are frequent
