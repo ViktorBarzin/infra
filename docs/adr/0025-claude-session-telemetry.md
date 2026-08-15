@@ -272,6 +272,34 @@ Two limits, both real rather than oversights:
   side by side and the picker matches either; filtering on name alone would
   have hidden those sessions rather than described them.
 
+## Reading one conversation
+
+Loki cannot show what happened in a session, by design: a `tool_result` event
+records `tool_input_size_bytes` and `tool_result_size_bytes` — the sizes, never
+the content — and tool traffic is the bulk of a session. The transcript on disk
+is the only complete record.
+
+The two compose rather than compete. Loki is a searchable index — filter by
+prompt text, user, session name or time — and its `session_id` **is** the
+transcript's filename, so a session found there opens directly:
+
+```
+homelab claude-usage --session <id|name>          # the conversation
+homelab claude-usage --session <id|name> --tools  # + tool payloads, bounded
+homelab claude-usage --session <id|name> --meta   # + injected context
+```
+
+A name is resolved through tmux-persist's manifests, since Claude's transcripts
+know nothing about names. Names are unique per user rather than globally, so an
+ambiguous one is an error naming both candidates — silently choosing would show
+a different person's conversation.
+
+Two defaults worth knowing, both set after rendering a real session rather than
+reasoning about the format: skill bodies and hook context arrive as *user-role*
+records and would otherwise read as the user's own words, so they are dropped
+unless `--meta` (they carry `isMeta`); and tool payloads are unbounded, so they
+are summarised to the tool name unless `--tools`.
+
 ## Two things only a live session revealed
 
 Both were found by running a real Claude session as `emo` after the
