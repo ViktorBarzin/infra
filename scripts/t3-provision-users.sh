@@ -33,6 +33,12 @@ ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
 # Allowlist: install_skills no-ops for anyone not listed. Extend here to roll out to more users.
 SKILL_USERS="${SKILL_USERS:-emo}"
 
+# Shared agent rules (docs/agents/shared/*.md) copied into EVERY user's
+# ~/.claude/rules/. Lives in wizard's PRIVATE monorepo, not in this repo: the
+# homelab rules carry internal topology (IPs, hostnames) and this repo's GitHub
+# mirror is public. Same reason ADMIN_KUBECONFIG points outside the repo.
+SHARED_RULES_DIR="${SHARED_RULES_DIR:-/home/wizard/code/docs/agents/shared}"
+
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
 
@@ -556,6 +562,58 @@ install_memory() {
 # produces; Claude Code reads ~/.claude/skills/). Scoped to SKILL_USERS. if-absent keys on the
 # user's OWN copy, so it heals a stale/cross-user ~/.claude/skills symlink but never clobbers a real
 # skill dir. Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
+# Shared agent rules -> every user's ~/.claude/rules/, re-copied when the source
+# changes. Before this, only the org claudeMd reached everyone: homelab.md was a
+# symlink in wizard's home (emo never had it) and execution.md/planning.md were
+# loose per-user files under no version control, so emo's had drifted months
+# behind. Adding a user now inherits the whole set with no hand-copy to go stale.
+#
+# 99-personal.md is created once and NEVER overwritten — it is the per-user slot
+# that keeps "mine" separable from "everyone's".
+# Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
+install_shared_rules() {
+  local user="$1" home rules src dst base personal
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  [[ -d "$SHARED_RULES_DIR" ]] || { log "WARN: $SHARED_RULES_DIR missing -> skip shared rules for $user"; return 0; }
+  rules="$home/.claude/rules"
+  run install -d -o "$user" -g "$user" -m 0755 "$rules" || return 0
+
+  for src in "$SHARED_RULES_DIR"/*.md; do
+    [[ -r "$src" ]] || continue
+    base="$(basename "$src")"
+    [[ "$base" == "README.md" ]] && continue   # explains the layout; not a rule
+    dst="$rules/$base"
+    cmp -s "$src" "$dst" 2>/dev/null && continue
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] shared rule $base -> $user"; continue; fi
+    install -o "$user" -g "$user" -m 0644 "$src" "$dst" \
+      && log "shared rule $base -> $user (source changed)"
+  done
+
+  # Retire the pre-2026-08-15 layout once its replacement is in place, or the
+  # same rules load twice — and for emo the stale copy would load alongside the
+  # current one.
+  [[ -e "$rules/10-homelab.md" && -L "$rules/homelab.md" ]] && run rm -f "$rules/homelab.md"
+  [[ -e "$rules/20-execution.md" && -f "$rules/execution.md" ]] && run rm -f "$rules/execution.md"
+  [[ -e "$rules/30-planning.md"  && -f "$rules/planning.md"  ]] && run rm -f "$rules/planning.md"
+
+  personal="$rules/99-personal.md"
+  if [[ ! -e "$personal" && "$DRY_RUN" != 1 ]]; then
+    install -o "$user" -g "$user" -m 0644 /dev/stdin "$personal" <<'PERSONAL'
+# Personal rules — yours alone
+
+The provisioner never writes this file, so anything here survives every
+reconcile. Everything else in this directory is shared and WILL be overwritten
+from `docs/agents/shared/` — edit it there if the change should reach everyone.
+
+Use this for preferences that are genuinely yours: how you like output framed,
+tools you prefer, shortcuts that would not make sense for someone else.
+PERSONAL
+    log "created personal rules slot for $user"
+  fi
+  return 0
+}
+
 install_skills() {
   local user="$1" home
   home="$(getent passwd "$user" | cut -d: -f6)"
@@ -782,6 +840,13 @@ done < <(jq -r '.playwright_ports | to_entries[] | [.key, .value] | @tsv' "$desi
 while IFS=$'\t' read -r os_user; do
   id "$os_user" >/dev/null 2>&1 || continue
   install_memory "$os_user"
+done < <(jq -r '.accounts[].os_user' "$desired_file")
+
+# 5d-bis) shared agent rules -> every user's ~/.claude/rules/ (all users, no allowlist:
+#     these are the rules, not an opt-in extra). Personal slot created once, never rewritten.
+while IFS=$'\t' read -r os_user; do
+  id "$os_user" >/dev/null 2>&1 || continue
+  install_shared_rules "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
 
 # 5e) per-user agent skills (SKILL_USERS allowlist only): vendored snapshot -> ~/.agents/skills
