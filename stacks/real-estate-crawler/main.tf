@@ -289,6 +289,9 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets an immutable :<sha> tag
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
     ]
   }
 }
@@ -370,9 +373,8 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           name = "dockerhub-pull-secret"
         }
         container {
-          name              = "realestate-crawler-api"
-          image             = "viktorbarzin/realestatecrawler:latest"
-          image_pull_policy = "Always"
+          name  = "realestate-crawler-api"
+          image = "viktorbarzin/realestatecrawler:latest"
           env {
             name  = "ENV"
             value = "prod"
@@ -550,6 +552,9 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets an immutable :<sha> tag
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
     ]
   }
 }
@@ -673,10 +678,9 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           name = "dockerhub-pull-secret"
         }
         container {
-          name              = "celery-worker"
-          image             = "viktorbarzin/realestatecrawler:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info", "--pool=threads"]
+          name    = "celery-worker"
+          image   = "viktorbarzin/realestatecrawler:latest"
+          command = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info", "--pool=threads"]
           # 512Mi OOMed during full London RENT 1-2 bed scrape (~76k existing IDs
           # + 10k fetched into memory at concurrency=8 threads). Bumped to 1Gi.
           resources {
@@ -755,6 +759,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
     ]
   }
 }
@@ -884,6 +889,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
     ]
   }
 }
