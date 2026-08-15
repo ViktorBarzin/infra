@@ -882,8 +882,9 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   auth            = "required"
   extra_annotations = {
-    "gethomepage.dev/icon" = "phpmyadmin.png"
-    "gethomepage.dev/name" = "phpMyAdmin"
+    "gethomepage.dev/description" = "MySQL admin UI (phpMyAdmin)"
+    "gethomepage.dev/icon"        = "phpmyadmin.png"
+    "gethomepage.dev/name"        = "phpMyAdmin"
   }
 }
 
@@ -1767,6 +1768,9 @@ module "ingress-pgadmin" {
   name            = "pgadmin"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  extra_annotations = {
+    "gethomepage.dev/description" = "PostgreSQL admin UI"
+  }
 }
 
 

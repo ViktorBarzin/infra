@@ -824,6 +824,9 @@ module "ingress_api" {
   # monitor. Without this opt-out both proxied ingresses annotate the same host
   # and external-monitor-sync creates a duplicate monitor for it.
   external_monitor = false
+  extra_annotations = {
+    "gethomepage.dev/description" = "Codebase documentation engine (HTTP API)"
+  }
 }
 
 # What agents consume. Internal-only, because this answers questions about
@@ -854,4 +857,7 @@ module "ingress_mcp" {
     "repowise-bearer-auth@kubernetescrd",
   ]
   depends_on = [kubernetes_manifest.bearer_middleware]
+  extra_annotations = {
+    "gethomepage.dev/description" = "Codebase documentation engine (MCP endpoint)"
+  }
 }

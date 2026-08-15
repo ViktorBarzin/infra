@@ -439,4 +439,7 @@ module "cinemeta_ingress" {
   name            = "cinemeta"
   service_name    = kubernetes_service.cinemeta_proxy.metadata[0].name
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/description" = "Cinemeta metadata proxy for Stremio clients"
+  }
 }

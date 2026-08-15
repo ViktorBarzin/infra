@@ -415,6 +415,7 @@ module "ingress" {
   port            = 3773
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
+    "gethomepage.dev/description" = "In-cluster T3 Code instance for the AFK pipeline"
     "gethomepage.dev/icon" = "mdi-sleep"
   }
 }

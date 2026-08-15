@@ -247,4 +247,7 @@ module "ingress" {
   name            = "lesson-harvester"
   port            = 8080
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/description" = "Turns watched talks into workflow recommendations"
+  }
 }

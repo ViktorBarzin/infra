@@ -197,6 +197,7 @@ module "ingress" {
   allow_local_access_only = true
   ssl_redirect            = false
   extra_annotations = {
+    "gethomepage.dev/description" = "GPU metrics exporter"
     "gethomepage.dev/icon" = "nvidia.png"
   }
 }

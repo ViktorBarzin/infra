@@ -177,6 +177,7 @@ module "ingress" {
   port             = 80
   tls_secret_name  = var.tls_secret_name
   extra_annotations = {
+    "gethomepage.dev/description" = "Self-service VPN config portal"
     "gethomepage.dev/icon"  = "wireguard.png"
     "gethomepage.dev/name"  = "VPN Portal"
     "gethomepage.dev/group" = "Identity & Security"

@@ -158,6 +158,7 @@ module "snmp-exporter-ingress" {
   ssl_redirect            = false
   port                    = 9116
   extra_annotations = {
+    "gethomepage.dev/description" = "SNMP metrics exporter"
     "gethomepage.dev/icon" = "mdi-lan"
   }
 }

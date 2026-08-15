@@ -2215,6 +2215,7 @@ module "openlobster_ingress" {
   port            = 80
   auth            = "required"
   extra_annotations = {
-    "gethomepage.dev/icon" = "openclaw.png"
+    "gethomepage.dev/icon"        = "openclaw.png"
+    "gethomepage.dev/description" = "Multi-user Telegram AI assistant (trial)"
   }
 }

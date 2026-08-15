@@ -170,7 +170,8 @@ module "ingress_emo" {
   tls_secret_name  = var.tls_secret_name
   service_name     = "immich-frame-emo"
   extra_annotations = {
-    "gethomepage.dev/icon" = "immich.png"
-    "gethomepage.dev/name" = "Immich Highlights (Emo)"
+    "gethomepage.dev/description" = "Immich photo frame feed for Emo's kiosk"
+    "gethomepage.dev/icon"        = "immich.png"
+    "gethomepage.dev/name"        = "Immich Highlights (Emo)"
   }
 }

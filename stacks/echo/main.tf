@@ -121,6 +121,7 @@ module "ingress" {
   name            = "echo"
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
-    "gethomepage.dev/icon" = "mdi-broadcast"
+    "gethomepage.dev/description" = "Header-reflecting endpoint for ingress smoke tests"
+    "gethomepage.dev/icon"        = "mdi-broadcast"
   }
 }

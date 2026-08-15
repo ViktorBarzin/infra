@@ -293,4 +293,7 @@ module "ingress" {
   # port and POST /publish returns a stray 405 while GET falls through.
   port            = 8080
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/description" = "Publishing API behind pages.viktorbarzin.me"
+  }
 }

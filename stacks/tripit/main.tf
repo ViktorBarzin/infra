@@ -996,6 +996,7 @@ module "ingress" {
     "traefik-tripit-rate-limit@kubernetescrd",
   ]
   extra_annotations = {
+    "gethomepage.dev/description" = "Self-hosted travel itinerary planner"
     "gethomepage.dev/icon" = "mdi-airplane-takeoff"
     "gethomepage.dev/name" = "TripIt"
   }
