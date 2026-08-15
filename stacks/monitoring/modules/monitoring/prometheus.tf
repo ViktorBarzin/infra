@@ -101,3 +101,53 @@ module "prometheus-query-ingress" {
     "gethomepage.dev/icon" = "prometheus.png"
   }
 }
+
+# OTLP metric ingest for Claude Code's native telemetry
+# (docs/adr/0025-claude-session-telemetry.md). Claude sessions on the devvm
+# export claude_code.* metrics over OTLP/HTTP to
+# /api/v1/otlp/v1/metrics, enabled by the otlp-write-receiver feature flag in
+# prometheus_chart_values.tpl.
+#
+# A SEPARATE ingress rather than another path on prometheus-query: that one is
+# documented as read-only and named for it, and this one accepts writes.
+#
+# The host is .me, not .lan, for a TLS reason rather than a routing one. The
+# wildcard certificate covers *.viktorbarzin.me only, so a .lan host fails
+# hostname verification — which the existing LAN clients work around with
+# insecure_skip_verify. Claude's exporter is inside the Claude process, and the
+# only way to relax verification there is NODE_TLS_REJECT_UNAUTHORIZED, which
+# would also stop verifying its calls to the Anthropic API. A hostname the
+# certificate already covers avoids the problem instead of suppressing it.
+module "prometheus-otlp-ingress" {
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # auth = "none": an OTLP exporter is not a browser and holds no SSO cookie;
+  # Authentik would 302 every push. The LAN allowlist is the gate, exactly as
+  # for prometheus-query above.
+  auth                    = "none"
+  namespace               = kubernetes_namespace.monitoring.metadata[0].name
+  name                    = "prometheus-otlp"
+  service_name            = "prometheus-server"
+  root_domain             = "viktorbarzin.me"
+  tls_secret_name         = var.tls_secret_name
+  allow_local_access_only = true
+  ssl_redirect            = false
+  port                    = 80
+  ingress_path            = ["/api/v1/otlp"]
+  # A .me host defaults to dns_type = "none", which since the wildcard
+  # consolidation (ADR-0021) is NOT private — every recordless name resolves
+  # through the tunnel and reaches Traefik. "internal" publishes the internal
+  # Traefik LB address instead, so the name resolves anywhere but only routes
+  # from the LAN/VPN. The IP allowlist above is the actual gate; this keeps a
+  # write endpoint off the public path entirely.
+  dns_type = "internal"
+  # Internal-only, so no Uptime Kuma external monitor — one would probe from
+  # outside and be permanently red.
+  external_monitor = false
+  # Telemetry arrives in bursts at each export interval, from every active
+  # session at once. The default rate limit is sized for browsers.
+  skip_default_rate_limit = true
+  extra_annotations = {
+    "gethomepage.dev/description" = "Prometheus OTLP metric ingest for Claude Code telemetry (LAN only)"
+    "gethomepage.dev/icon"        = "prometheus.png"
+  }
+}
