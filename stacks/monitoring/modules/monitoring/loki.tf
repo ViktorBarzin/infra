@@ -685,13 +685,26 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           name = "Matrix"
           rules = [
             {
-              alert  = "MatrixNewUserRegistered"
-              expr   = "sum(count_over_time({namespace=\"matrix\",container=\"matrix\"} |= \"registered on this server\" [10m])) > 0"
+              alert = "MatrixNewUserRegistered"
+              # Carries WHO in the alert itself (2026-08-15) rather than telling
+              # the reader to go grep the pod. The full tuwunel line is
+              # `New user "@x:host" registered on this server from IP <ip> with
+              # device name <dev>`, so mxid/client_ip/device are extracted into
+              # labels and land in the Slack text — the client name separates a
+              # real client (Element, SchildiChat) from a scripted signup at a
+              # glance. Backtick-quoted regex so the literal `"` around the mxid
+              # needs no second layer of escaping. Verified against every
+              # matching line in Loki's 30-day retention (2026-08-15): all parse,
+              # and at ~2 signups/month the per-signup label cardinality is
+              # negligible. Non-matching lines would aggregate into one
+              # empty-label series, which reads as an unnamed signup rather than
+              # silently vanishing.
+              expr   = "sum by (mxid, client_ip, device) (count_over_time({namespace=\"matrix\",container=\"matrix\"} |= \"registered on this server\" | regexp `New user \"(?P<mxid>[^\"]+)\" registered on this server from IP (?P<client_ip>\\S+) with device name (?P<device>.*)` [10m])) > 0"
               for    = "0m"
               labels = { severity = "info", lane = "security" }
               annotations = {
-                summary     = "New user registered on Matrix (tuwunel) — open registration is ON"
-                description = "A new account was created on matrix.viktorbarzin.me. See who with: kubectl -n matrix logs deploy/matrix | grep 'New user'. If unexpected/abuse, revert to token-gated registration in stacks/matrix."
+                summary     = "New Matrix signup: {{ $labels.mxid }} from {{ $labels.client_ip }}"
+                description = "Client/device name: \"{{ $labels.device }}\". Registration on matrix.viktorbarzin.me is open/tokenless. If this one is unwanted: `!admin users deactivate {{ $labels.mxid }}` in the admin room; to close the door, revert to token-gated registration in stacks/matrix."
               }
             },
           ]
