@@ -217,6 +217,28 @@ the output we want. Every repo's `.repowise/state.json` records
 `docs_mode: deterministic`, confirming the mode is right; the attempt is just
 upstream's fallback ordering. Nothing leaves the homelab and nothing is billed.
 
+**The API container OOM-killed.** Sized for it as of 2026-08-15, but know the
+shape before trimming. The kernel log is the place to look, not the pod events:
+
+```bash
+homelab logs query '{node="<node>"} |~ "oom-kill|Killed process"' --since 24h
+```
+
+On the 2026-08-15 kill that showed uvicorn itself at 2.67 GiB anon-rss with the
+nine python worker subprocesses at 8-54 MiB each — the parent is the memory, so
+lowering `REPOWISE_PARSE_WORKERS` does not address it. Working set runs
+2.2-2.4 GiB steady, because in workspace mode the API holds a SQLAlchemy engine,
+an FTS index and a vector store **per repo** for all 42, for the life of the
+process. That is a high baseline, not a leak: it sat in a flat 2.4-3.0 GiB band
+across 20 hours. Request is 2560Mi (the previous 768Mi misinformed the scheduler
+badly) and the limit 5Gi. If it ever climbs past 5Gi rather than plateauing,
+that would be a genuine leak and a different problem.
+
+**Detection caveat:** `container_oom_events_total` stayed at **0** for that kill,
+so the cadvisor-based `ContainerOOMKilled` alert never fired. The Loki-based
+`KernelOOMKiller` alert is what caught it. Do not treat a quiet
+`container_oom_events_total` as evidence there was no OOM here.
+
 **Indexing blocks the event loop — keep the probes slack.** repowise indexes in
 the same asyncio loop that serves HTTP, so a CPU-bound graph phase (betweenness
 centrality over a large repo) stops `/health` answering for minutes. On

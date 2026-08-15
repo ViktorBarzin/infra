@@ -393,15 +393,26 @@ resource "kubernetes_deployment" "repowise" {
           }
 
           resources {
-            # Burstable on purpose: idle serving is a few hundred Mi, while an
-            # incremental reindex spikes with tree-sitter parse workers.
-            # Right-size with krr once a week of real data exists.
+            # Sized from measurement, not guesswork, after an OOM kill on
+            # 2026-08-15: the kernel log showed uvicorn alone at 2.67 GiB
+            # anon-rss (the nine worker subprocesses were 8-54 MiB each, so the
+            # parent is the memory, not the fan-out). Working set sits at
+            # 2.2-2.4 GiB and peaked at 3,039 MiB against the old 3 GiB ceiling.
+            #
+            # The baseline is inherent: in workspace mode the API holds a
+            # SQLAlchemy engine, an FTS index and a vector store per repo, for
+            # all 42 of them, for the life of the process. Indexing spikes on
+            # top of that. The old 768Mi request was the real hazard — it told
+            # the scheduler this pod needed a quarter of what it actually holds.
+            #
+            # Burstable (request < limit) per the tier-4-aux convention.
+            # Re-measure with krr before trimming.
             requests = {
-              memory = "768Mi"
+              memory = "2560Mi"
               cpu    = "50m"
             }
             limits = {
-              memory = "3Gi"
+              memory = "5Gi"
             }
           }
         }
@@ -461,8 +472,9 @@ resource "kubernetes_deployment" "repowise" {
           }
 
           resources {
+            # Measured at ~85 MiB serving the dashboard.
             requests = {
-              memory = "256Mi"
+              memory = "128Mi"
               cpu    = "10m"
             }
             limits = {
@@ -662,11 +674,11 @@ resource "kubernetes_deployment" "repowise" {
           }
 
           resources {
-            # The first pass runs the whole initial index in here, and
-            # `workspace add` indexes each new repo, so this needs real
-            # headroom despite being idle most of the time.
+            # Measured at ~35 MiB in steady state, so the request came down;
+            # the limit stays high because a from-scratch bootstrap runs the
+            # whole initial index in this container.
             requests = {
-              memory = "512Mi"
+              memory = "192Mi"
               cpu    = "50m"
             }
             limits = {
