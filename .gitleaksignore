@@ -15,3 +15,11 @@ stacks/nextcloud-todos/main.tf:curl-auth-user:400
 # PUBLIC release checksum (Xray-core v26.3.27 .dgst), not a secret — the actual
 # xray/dnstt secrets are templated from Vault (${oci_*}/${dnstt_privkey}).
 stacks/backup-mx/cloud-init.yaml.tftpl:jfrog-identity-token:613
+
+# False positive: the `generic-api-key` rule matches the base58 decryption key
+# of the PrivateBin golden test vector. It is a real key, but only for a
+# throwaway paste on our own instance whose entire content is the literal text
+# "REFERENCE PASTE from the real UI" (created 2026-08-15, 1-week expiry). It is
+# committed on purpose: the vector proves our paste format still matches what
+# PrivateBin's own frontend produces, which a round-trip test cannot show.
+cli/paste_golden_test.go:generic-api-key:20
