@@ -90,6 +90,31 @@ ZSHENV_EOF
 fi
 log "claude setup-token interactive loader (/etc/profile.d/25 + /etc/zsh/zshenv hook)"
 
+# 2c) Claude telemetry resource attributes (infra ADR-0025) — PER-USER, so a
+#     session can be attributed to the OS user who ran it. This CANNOT live in
+#     managed-settings.json: that file's `env` block overrides the shell, and
+#     it is one shared string, so every user would report the same value.
+#     It matters because the identity Claude reports natively is the ANTHROPIC
+#     ACCOUNT (user_email), which is the same for everyone on this box — a
+#     session run as emo arrives labelled viktorbarzin@meta.com.
+cat > /etc/profile.d/26-claude-otel-attrs.sh <<'PROFILE_EOF'
+# Stamp Claude Code's OpenTelemetry export with the OS user running it.
+# Sourced by bash login (/etc/profile) and by zsh via /etc/zsh/zshenv (Debian's
+# zsh zprofile does NOT source /etc/profile). Claude Code reads this only when
+# managed-settings.json does not set it — see infra ADR-0025.
+export OTEL_RESOURCE_ATTRIBUTES="host.name=devvm,deployment.environment=homelab,os.user=$(id -un)"
+PROFILE_EOF
+chmod 0644 /etc/profile.d/26-claude-otel-attrs.sh
+if ! grep -q '26-claude-otel-attrs.sh' /etc/zsh/zshenv 2>/dev/null; then
+  cat >> /etc/zsh/zshenv <<'ZSHENV_EOF'
+
+# Claude telemetry resource attributes for zsh (login, ttyd/tmux panes, scripts):
+# Debian's /etc/zsh/zprofile does NOT source /etc/profile, so profile.d is missed.
+[ -r /etc/profile.d/26-claude-otel-attrs.sh ] && . /etc/profile.d/26-claude-otel-attrs.sh
+ZSHENV_EOF
+fi
+log "claude OTel resource attributes (/etc/profile.d/26 + /etc/zsh/zshenv hook)"
+
 # 2b) t3 (the per-user coding surface) — GATED NIGHTLY TRACKER (2026-06-16; was pinned).
 #     t3 is pre-1.0 and ships breaking auth-schema + bootstrap-API changes (2026-06-09
 #     outage: a blind nightly auto-update broke pairing for ALL users). The daily

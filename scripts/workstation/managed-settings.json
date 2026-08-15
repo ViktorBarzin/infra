@@ -8,8 +8,8 @@
     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
     "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "https://loki-otlp.viktorbarzin.me/otlp/v1/logs",
     "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://prometheus-otlp.viktorbarzin.me/api/v1/otlp/v1/metrics",
+    "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
     "OTEL_LOG_USER_PROMPTS": "1",
-    "OTEL_RESOURCE_ATTRIBUTES": "host.name=devvm,deployment.environment=homelab",
     "OTEL_METRIC_EXPORT_INTERVAL": "60000",
     "OTEL_LOGS_EXPORT_INTERVAL": "30000"
   },
