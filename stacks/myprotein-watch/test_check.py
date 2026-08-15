@@ -167,6 +167,12 @@ def test_collagen_cookies_and_cream_is_not_a_return():
 
 # --- de-duplication across runs ---------------------------------------------
 
+def kinds(alerts, kind):
+    """Alerts of one kind. Several triggers can fire on the same run, so a
+    test about one of them must not assert on the total."""
+    return [a for a in alerts if a.kind == kind]
+
+
 def test_same_deal_is_not_re_alerted_on_the_next_run():
     cheap = variant(
         "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
@@ -174,9 +180,9 @@ def test_same_deal_is_not_re_alerted_on_the_next_run():
     )
     variants = check.parse_variants(page(cheap))
     alerts, state = check.decide(variants, {}, WATCH, 0.65)
-    assert len(alerts) == 1
+    assert len(kinds(alerts, "deal")) == 1
     again, _ = check.decide(variants, state, WATCH, 0.65)
-    assert again == []
+    assert kinds(again, "deal") == []
 
 
 def test_a_further_price_drop_re_alerts():
@@ -189,7 +195,7 @@ def test_a_further_price_drop_re_alerts():
         "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
         "Strawberry Cream", "2.7kg - 90servings", "48.00", "97.49", 18000003)))
     alerts, _ = check.decide(v2, state, WATCH, 0.65)
-    assert len(alerts) == 1
+    assert len(kinds(alerts, "deal")) == 1
 
 
 def test_price_going_back_up_clears_state_so_the_next_sale_alerts():
@@ -202,7 +208,123 @@ def test_price_going_back_up_clears_state_so_the_next_sale_alerts():
     _, state = check.decide(full, state, WATCH, 0.65)
 
     alerts, _ = check.decide(sale, state, WATCH, 0.65)
-    assert len(alerts) == 1
+    assert len(kinds(alerts, "deal")) == 1
+
+
+# --- cheapest-ever ("new low") ----------------------------------------------
+# Self-calibrating: it ignores MyProtein's RRP entirely and compares a variant
+# only against its own history, so RRP drift and pack-size changes cannot fool it.
+
+def at(price, sku=18000003, servings="2.7kg - 90servings"):
+    return check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
+        "Strawberry Cream", servings, price, "97.49", sku)))
+
+
+def test_first_sighting_seeds_the_low_without_alerting():
+    alerts, state = check.decide(at("90.00"), {}, WATCH, 0.65)
+    assert kinds(alerts, "low") == []
+    assert state["low:18000003"] == pytest.approx(90.00 / 90)
+
+
+def test_a_new_low_alerts():
+    _, state = check.decide(at("90.00"), {}, WATCH, 0.65)
+    alerts, state = check.decide(at("80.00"), state, WATCH, 0.65)
+    assert len(kinds(alerts, "low")) == 1
+    assert state["low:18000003"] == pytest.approx(80.00 / 90)
+
+
+def test_a_price_above_the_recorded_low_does_not_alert():
+    _, state = check.decide(at("80.00"), {}, WATCH, 0.65)
+    alerts, _ = check.decide(at("90.00"), state, WATCH, 0.65)
+    assert kinds(alerts, "low") == []
+
+
+def test_a_trivially_lower_price_is_not_worth_an_alert():
+    """A 0.1% dip is noise, not news — record it, stay quiet."""
+    _, state = check.decide(at("90.00"), {}, WATCH, 0.65)
+    alerts, state = check.decide(at("89.95"), state, WATCH, 0.65)
+    assert kinds(alerts, "low") == []
+    assert state["low:18000003"] == pytest.approx(89.95 / 90)
+
+
+def test_lows_are_tracked_per_sku_not_per_flavour():
+    _, state = check.decide(at("90.00", sku=1), {}, WATCH, 0.65)
+    alerts, _ = check.decide(at("95.00", sku=2), state, WATCH, 0.65)
+    assert kinds(alerts, "low") == []          # sku 2 is new — seeded, not alerted
+    assert "low:1" in state
+
+
+def test_collagen_lows_are_not_tracked():
+    """Same reason it is excluded from the price trigger: half its protein is
+    collagen, so 'cheapest ever' would invite a purchase that is poor value."""
+    v = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 2340g - 90servings - Cookies and Cream (+Collagen)",
+        "Cookies and Cream (+Collagen)", "2340g - 90servings", "61.99", "83.49", 18000001)))
+    _, state = check.decide(v, {}, WATCH, 0.65)
+    assert not any(k.startswith("low:") for k in state)
+
+
+# --- deep discount ----------------------------------------------------------
+# Unlike the two triggers above, this one covers ALL lines including +Collagen:
+# it answers "is a big sale running", not "is this good value".
+
+def discounted(pct_price, rrp="100.00", sku=18000003, flavour="Strawberry Cream"):
+    return check.parse_variants(page(variant(
+        f"Impact Whey Protein Powder - 2.7kg - 90servings - {flavour}",
+        flavour, "2.7kg - 90servings", pct_price, rrp, sku)))
+
+
+def test_deep_discount_fires_at_the_threshold():
+    alerts, _ = check.decide(discounted("60.00"), {}, WATCH, 0.65)   # 40% off
+    assert len(kinds(alerts, "discount")) == 1
+
+
+def test_deep_discount_does_not_fire_just_below_the_threshold():
+    alerts, _ = check.decide(discounted("61.00"), {}, WATCH, 0.65)   # 39% off
+    assert kinds(alerts, "discount") == []
+
+
+def test_deep_discount_covers_the_collagen_line():
+    v = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 2340g - 90servings - Cookies and Cream (+Collagen)",
+        "Cookies and Cream (+Collagen)", "2340g - 90servings", "50.00", "100.00", 18000001)))
+    alerts, _ = check.decide(v, {}, WATCH, 0.65)
+    assert len(kinds(alerts, "discount")) == 1
+
+
+def test_collagen_discount_message_carries_the_caveat():
+    v = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 2340g - 90servings - Cookies and Cream (+Collagen)",
+        "Cookies and Cream (+Collagen)", "2340g - 90servings", "50.00", "100.00", 18000001)))
+    alerts, _ = check.decide(v, {}, WATCH, 0.65)
+    assert "half" in check.format_slack(alerts)["text"].lower()
+
+
+def test_deep_discount_is_not_re_alerted_at_the_same_price():
+    v = discounted("60.00")
+    alerts, state = check.decide(v, {}, WATCH, 0.65)
+    assert len(kinds(alerts, "discount")) == 1
+    again, _ = check.decide(v, state, WATCH, 0.65)
+    assert kinds(again, "discount") == []
+
+
+def test_deep_discount_re_alerts_when_it_gets_deeper():
+    _, state = check.decide(discounted("60.00"), {}, WATCH, 0.65)
+    alerts, _ = check.decide(discounted("45.00"), state, WATCH, 0.65)
+    assert len(kinds(alerts, "discount")) == 1
+
+
+def test_discount_ending_clears_state_so_the_next_sale_alerts():
+    _, state = check.decide(discounted("60.00"), {}, WATCH, 0.65)
+    _, state = check.decide(discounted("95.00"), state, WATCH, 0.65)   # 5% off
+    alerts, _ = check.decide(discounted("60.00"), state, WATCH, 0.65)
+    assert len(kinds(alerts, "discount")) == 1
+
+
+def test_unwatched_flavour_never_deep_discount_alerts():
+    alerts, _ = check.decide(discounted("40.00", flavour="Vanilla"), {}, WATCH, 0.65)
+    assert kinds(alerts, "discount") == []
 
 
 # --- message ----------------------------------------------------------------

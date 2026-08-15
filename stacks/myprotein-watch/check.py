@@ -20,6 +20,8 @@ Config (all via env):
   STATE_BACKEND           "configmap" (in-cluster) or "file" (local runs)
   STATE_TARGET            ConfigMap name, or file path when STATE_BACKEND=file
   THRESHOLD_PER_SERVING   £/serving at or below which a deal is worth telling
+  DEEP_DISCOUNT_PCT       displayed discount that counts as a big sale
+  NEW_LOW_MARGIN          how much better than the record a new low must be
   WATCH_FLAVOURS          comma-separated flavour substrings
   DRY_RUN                 "true" prints instead of posting
 """
@@ -45,6 +47,15 @@ LINE_SUFFIX_RE = re.compile(r"\s*\(([^)]+)\)\s*$")
 # absent: half of its 20 g "protein" is collagen peptides, so its £/serving is
 # not comparable and must not trip the same trigger.
 DEAL_LINES = ("Original", "Milkshake")
+
+# A "big sale" on MyProtein's own reckoning. Note their RRP is their number and
+# it drifts upward over time, which is why this supplements the £/serving
+# trigger rather than replacing it.
+DEEP_DISCOUNT_PCT = 40
+
+# How much better than the previous record a price must be before a new low is
+# worth saying out loud. Guards against announcing a rounding-level dip.
+NEW_LOW_MARGIN = 0.01
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -171,15 +182,38 @@ def _watched(variant: Variant, watch: list[str]) -> bool:
     return any(term.strip().lower() in flavour for term in watch if term.strip())
 
 
-def find_deals(variants: list[Variant], watch: list[str], threshold: float) -> list[Variant]:
-    """In-stock watched flavours, on a comparable line, at or under threshold."""
+def comparable_watched(variants: list[Variant], watch: list[str]) -> list[Variant]:
+    """In-stock watched flavours on a line whose £/serving means the same thing.
+
+    The +Collagen line is excluded: half of its 20 g "protein" is collagen
+    peptides, so its £/serving is not comparable to Original or Milkshake and
+    must not be ranked against them.
+    """
     return [
         v for v in variants
         if v.in_stock
         and v.line in DEAL_LINES
         and _watched(v, watch)
         and v.price_per_serving is not None
-        and v.price_per_serving <= threshold
+    ]
+
+
+def find_deals(variants: list[Variant], watch: list[str], threshold: float) -> list[Variant]:
+    """Comparable watched variants at or under the £/serving threshold."""
+    return [v for v in comparable_watched(variants, watch)
+            if v.price_per_serving <= threshold]
+
+
+def find_deep_discounts(variants: list[Variant], watch: list[str], min_pct: int) -> list[Variant]:
+    """Watched flavours where MyProtein's own displayed discount is unusually deep.
+
+    This one deliberately covers EVERY line, +Collagen included: the question it
+    answers is "is a big sale running", not "is this good value per gram of
+    whey". The Collagen caveat is carried in the message instead.
+    """
+    return [
+        v for v in variants
+        if v.in_stock and _watched(v, watch) and v.discount_pct >= min_pct
     ]
 
 
@@ -192,12 +226,21 @@ def find_returns(variants: list[Variant]) -> list[Variant]:
     ]
 
 
-def decide(variants, state, watch, threshold):
+def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
+           low_margin=NEW_LOW_MARGIN):
     """Work out what is worth saying, given what we already said.
 
-    Returns (alerts, new_state). A deal re-alerts only if it gets cheaper; once
-    the price climbs back over the threshold its state is dropped, so the next
-    sale is announced again.
+    Returns (alerts, new_state). Four triggers, each de-duplicated on its own
+    key so one can fire without silencing the others:
+
+      deal     — at or under the £/serving Viktor actually pays
+      low      — cheapest we have ever recorded for that variant
+      discount — MyProtein's own displayed discount is unusually deep
+      return   — plain Cookies and Cream is back in the Original line
+
+    A deal or a discount re-announces only if it gets better; when it lapses its
+    state is dropped so the next sale is announced afresh. A low is permanent —
+    it only ever ratchets down.
     """
     new_state = dict(state)
     alerts: list[Alert] = []
@@ -213,6 +256,30 @@ def decide(variants, state, watch, threshold):
         else:
             new_state.pop(key, None)
 
+    # Cheapest-ever, on the comparable lines only. A first sighting seeds the
+    # record silently — we have no history to call it a low against.
+    for v in comparable_watched(variants, watch):
+        key = f"low:{v.sku}"
+        pps = v.price_per_serving
+        previous = new_state.get(key)
+        if previous is None:
+            new_state[key] = pps
+        elif pps < float(previous):
+            if pps <= float(previous) * (1 - low_margin):
+                alerts.append(Alert("low", v))
+            new_state[key] = pps
+
+    deep = {v.sku: v for v in find_deep_discounts(variants, watch, deep_pct)}
+    for v in variants:
+        key = f"disc:{v.sku}"
+        if v.sku in deep:
+            previous = new_state.get(key)
+            if previous is None or v.price < float(previous):
+                alerts.append(Alert("discount", v))
+                new_state[key] = v.price
+        else:
+            new_state.pop(key, None)
+
     for v in find_returns(variants):
         key = f"return:{v.sku}"
         if key not in new_state:
@@ -222,24 +289,54 @@ def decide(variants, state, watch, threshold):
     return alerts, new_state
 
 
+COLLAGEN_CAVEAT = (
+    " _(+Collagen line — half its 20 g protein is collagen peptides, "
+    "so this is not comparable per gram of whey)_"
+)
+
+# Ordered by how much they should draw the eye.
+HEADERS = {
+    "return": "Cookies and Cream is back",
+    "deal": "Impact Whey is at your buying price",
+    "low": "Cheapest we have seen it",
+    "discount": "Big discount running",
+}
+
+
+def _detail(v: Variant) -> str:
+    return (f"{v.servings} servings, {v.amount.split(' - ')[0]} — *£{v.price:.2f}* "
+            f"(was £{v.rrp:.2f}, {v.discount_pct}% off) = "
+            f"*£{v.price_per_serving:.2f}/serving*")
+
+
 def format_slack(alerts: list[Alert]) -> dict[str, Any]:
     lines: list[str] = []
-    for a in alerts:
-        v = a.variant
-        if a.kind == "return":
-            lines.append(
-                f":tada: *Cookies and Cream is back* — {v.amount} at £{v.price:.2f} "
-                f"(£{v.price_per_serving:.2f}/serving). It had been delisted from the "
-                f"Original line."
-            )
-        else:
-            lines.append(
-                f":moneybag: *{v.base_flavour}* ({v.line}) — {v.servings} servings, "
-                f"{v.amount.split(' - ')[0]} — *£{v.price:.2f}* "
-                f"(was £{v.rrp:.2f}, {v.discount_pct}% off) = "
-                f"*£{v.price_per_serving:.2f}/serving*"
-            )
-    header = "Impact Whey is at your buying price" if lines else ""
+    for kind in ("return", "deal", "low", "discount"):
+        for a in [x for x in alerts if x.kind == kind]:
+            v = a.variant
+            if kind == "return":
+                lines.append(
+                    f":tada: *Cookies and Cream is back* — {v.amount} at £{v.price:.2f} "
+                    f"(£{v.price_per_serving:.2f}/serving). It had been delisted from "
+                    f"the Original line."
+                )
+            elif kind == "deal":
+                lines.append(f":moneybag: *{v.base_flavour}* ({v.line}) — {_detail(v)}")
+            elif kind == "low":
+                lines.append(
+                    f":chart_with_downwards_trend: *{v.base_flavour}* ({v.line}) "
+                    f"— cheapest recorded — {_detail(v)}"
+                )
+            else:
+                caveat = COLLAGEN_CAVEAT if v.line == "Collagen" else ""
+                lines.append(
+                    f":fire: *{v.base_flavour}* ({v.line}) — *{v.discount_pct}% off* "
+                    f"— {_detail(v)}{caveat}"
+                )
+
+    present = [k for k in ("return", "deal", "low", "discount")
+               if any(a.kind == k for a in alerts)]
+    header = HEADERS[present[0]] if present else ""
     return {
         "text": f"*{header}*\n" + "\n".join(lines),
         "unfurl_links": False,
@@ -349,6 +446,8 @@ def main() -> int:
         "STATE_TARGET", "myprotein-watch-state" if backend == "configmap" else "/tmp/state.json"
     )
     threshold = float(os.environ.get("THRESHOLD_PER_SERVING", "0.65"))
+    deep_pct = int(os.environ.get("DEEP_DISCOUNT_PCT", str(DEEP_DISCOUNT_PCT)))
+    low_margin = float(os.environ.get("NEW_LOW_MARGIN", str(NEW_LOW_MARGIN)))
     watch = os.environ.get(
         "WATCH_FLAVOURS", "Cookies and Cream,Cookie Crumble,Banana,Strawberry Cream"
     ).split(",")
@@ -377,10 +476,11 @@ def main() -> int:
               f"= £{v.price_per_serving:.3f}/serving ({v.discount_pct}% off)")
 
     state = load_state(state_target, backend)
-    alerts, new_state = decide(variants, state, watch, threshold)
+    alerts, new_state = decide(variants, state, watch, threshold, deep_pct, low_margin)
 
     if not alerts:
-        print(f"nothing at or under £{threshold:.2f}/serving — no alert")
+        print(f"nothing at or under £{threshold:.2f}/serving, no new low, "
+              f"nothing at {deep_pct}%+ off — no alert")
         save_state(state_target, new_state, backend)
         return 0
 

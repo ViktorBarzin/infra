@@ -10,6 +10,11 @@
 # and £0.628 per serving — 35-43% off RRP. A literal "50% off" rule would have
 # blocked all three, so the trigger is £/serving, not headline discount.
 #
+# Four triggers (2026-08-15): the £/serving one above; "cheapest we have ever
+# recorded" per SKU, which ignores RRP entirely and so cannot be fooled by RRP
+# drift or pack-size changes; MyProtein's own displayed discount at 40%+; and
+# plain Cookies and Cream returning to the Original line.
+#
 # Shape: stock python:3.12-alpine running pure-stdlib check.py from a ConfigMap.
 # No pip/apk at runtime (the status-page-pusher disk anti-pattern, memory #559),
 # no image to build, no login — MyProtein ships every variant's price as embedded
@@ -206,6 +211,20 @@ resource "kubernetes_cron_job_v1" "check" {
               env {
                 name  = "THRESHOLD_PER_SERVING"
                 value = "0.65"
+              }
+              # A big sale on MyProtein's own reckoning. Supplements the
+              # £/serving trigger rather than replacing it: RRP is their number
+              # and it drifts upward, and the Original line currently reads 0%
+              # off while still being the dearest per serving.
+              env {
+                name  = "DEEP_DISCOUNT_PCT"
+                value = "40"
+              }
+              # Cheapest-ever needs a price to be meaningfully better than the
+              # record before it is worth saying — 1% keeps rounding noise quiet.
+              env {
+                name  = "NEW_LOW_MARGIN"
+                value = "0.01"
               }
               # Cookies and Cream is the favourite; the rest are flavours he
               # said he wants to try (2026-08-15).
