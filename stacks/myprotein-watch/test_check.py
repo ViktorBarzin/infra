@@ -96,6 +96,43 @@ def test_malformed_variant_is_skipped_not_fatal():
     assert [v.sku for v in check.parse_variants(broken)] == [17712192]
 
 
+# --- protein per serving ------------------------------------------------------
+# Not every line puts the same protein in a serving, so £/serving is not a
+# like-for-like price. All four figures below are the product page's own claims.
+
+def test_original_line_is_23g_per_serving():
+    v = check.parse_variants(page(VANILLA_90))[0]
+    assert v.whey_g_per_serving == pytest.approx(23.0)
+
+
+def test_milkshake_line_is_20g_per_serving():
+    v = check.parse_variants(page(CRUMBLE_SHAKE_90))[0]
+    assert v.whey_g_per_serving == pytest.approx(20.0)
+
+
+def test_collagen_line_counts_only_the_whey_half():
+    """Label says 20g; 10g of it is collagen peptides, which do not count
+    toward muscle protein synthesis."""
+    v = check.parse_variants(page(CC_COLLAGEN_90))[0]
+    assert v.whey_g_per_serving == pytest.approx(10.0)
+
+
+def test_crunchy_pieces_flavours_are_20g_even_on_the_original_line():
+    """The biscuit pieces displace protein — these print 20g on-pack, not 23g,
+    and one of them (Cookie Crumble Crunch) is on the watchlist."""
+    v = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 900G - 30servings - Cookie Crumble Crunch with Crunchy Biscuit Pieces",
+        "Cookie Crumble Crunch with Crunchy Biscuit Pieces", "900G - 30servings",
+        "34.99", "34.99", 18000009)))[0]
+    assert v.line == "Original"
+    assert v.whey_g_per_serving == pytest.approx(20.0)
+
+
+def test_price_per_kg_protein_normalises_across_lines():
+    orig = check.parse_variants(page(VANILLA_90))[0]        # £97.49 / 90 / 23g
+    assert orig.price_per_kg_protein == pytest.approx(97.49 / (90 * 23) * 1000)
+
+
 # --- deal detection ----------------------------------------------------------
 
 WATCH = ["Cookies and Cream", "Cookie Crumble", "Banana", "Strawberry Cream"]
@@ -106,12 +143,12 @@ def test_deal_fires_when_watched_flavour_is_under_threshold():
         "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
         "Strawberry Cream", "2.7kg - 90servings", "55.00", "97.49", 18000003,
     )
-    deals = check.find_deals(check.parse_variants(page(cheap)), WATCH, 0.65)
+    deals = check.find_deals(check.parse_variants(page(cheap)), WATCH, 28.0)
     assert [d.sku for d in deals] == [18000003]
 
 
 def test_no_deal_when_price_is_above_threshold():
-    assert check.find_deals(check.parse_variants(page(STRAWBERRY_90)), WATCH, 0.65) == []
+    assert check.find_deals(check.parse_variants(page(STRAWBERRY_90)), WATCH, 28.0) == []
 
 
 def test_unwatched_flavour_never_triggers_even_when_cheap():
@@ -119,7 +156,7 @@ def test_unwatched_flavour_never_triggers_even_when_cheap():
         "Impact Whey Protein Powder - 2.7kg - 90servings - Vanilla",
         "Vanilla", "2.7kg - 90servings", "10.00", "97.49", 17712192,
     )
-    assert check.find_deals(check.parse_variants(page(cheap)), WATCH, 0.65) == []
+    assert check.find_deals(check.parse_variants(page(cheap)), WATCH, 28.0) == []
 
 
 def test_collagen_line_is_excluded_from_deals():
@@ -129,7 +166,7 @@ def test_collagen_line_is_excluded_from_deals():
         "Impact Whey Protein Powder - 2340g - 90servings - Cookies and Cream (+Collagen)",
         "Cookies and Cream (+Collagen)", "2340g - 90servings", "20.00", "83.49", 18000001,
     )
-    assert check.find_deals(check.parse_variants(page(cheap)), WATCH, 0.65) == []
+    assert check.find_deals(check.parse_variants(page(cheap)), WATCH, 28.0) == []
 
 
 def test_out_of_stock_never_triggers():
@@ -138,7 +175,7 @@ def test_out_of_stock_never_triggers():
         "Strawberry Cream", "2.7kg - 90servings", "40.00", "97.49", 18000003,
         in_stock=False,
     )
-    assert check.find_deals(check.parse_variants(page(oos)), WATCH, 0.65) == []
+    assert check.find_deals(check.parse_variants(page(oos)), WATCH, 28.0) == []
 
 
 def test_banana_watch_term_matches_chocolate_banana():
@@ -146,7 +183,7 @@ def test_banana_watch_term_matches_chocolate_banana():
         "Impact Whey Protein Powder - 2.61kg - 90servings - Chocolate Banana",
         "Chocolate Banana", "2.61kg - 90servings", "55.00", "97.49", 18000004,
     )
-    deals = check.find_deals(check.parse_variants(page(cheap)), WATCH, 0.65)
+    deals = check.find_deals(check.parse_variants(page(cheap)), WATCH, 28.0)
     assert [d.base_flavour for d in deals] == ["Chocolate Banana"]
 
 
@@ -179,9 +216,9 @@ def test_same_deal_is_not_re_alerted_on_the_next_run():
         "Strawberry Cream", "2.7kg - 90servings", "55.00", "97.49", 18000003,
     )
     variants = check.parse_variants(page(cheap))
-    alerts, state = check.decide(variants, {}, WATCH, 0.65)
+    alerts, state = check.decide(variants, {}, WATCH, 28.0)
     assert len(kinds(alerts, "deal")) == 1
-    again, _ = check.decide(variants, state, WATCH, 0.65)
+    again, _ = check.decide(variants, state, WATCH, 28.0)
     assert kinds(again, "deal") == []
 
 
@@ -189,12 +226,12 @@ def test_a_further_price_drop_re_alerts():
     v1 = check.parse_variants(page(variant(
         "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
         "Strawberry Cream", "2.7kg - 90servings", "55.00", "97.49", 18000003)))
-    _, state = check.decide(v1, {}, WATCH, 0.65)
+    _, state = check.decide(v1, {}, WATCH, 28.0)
 
     v2 = check.parse_variants(page(variant(
         "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
         "Strawberry Cream", "2.7kg - 90servings", "48.00", "97.49", 18000003)))
-    alerts, _ = check.decide(v2, state, WATCH, 0.65)
+    alerts, _ = check.decide(v2, state, WATCH, 28.0)
     assert len(kinds(alerts, "deal")) == 1
 
 
@@ -202,12 +239,12 @@ def test_price_going_back_up_clears_state_so_the_next_sale_alerts():
     sale = check.parse_variants(page(variant(
         "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
         "Strawberry Cream", "2.7kg - 90servings", "55.00", "97.49", 18000003)))
-    _, state = check.decide(sale, {}, WATCH, 0.65)
+    _, state = check.decide(sale, {}, WATCH, 28.0)
 
     full = check.parse_variants(page(STRAWBERRY_90))
-    _, state = check.decide(full, state, WATCH, 0.65)
+    _, state = check.decide(full, state, WATCH, 28.0)
 
-    alerts, _ = check.decide(sale, state, WATCH, 0.65)
+    alerts, _ = check.decide(sale, state, WATCH, 28.0)
     assert len(kinds(alerts, "deal")) == 1
 
 
@@ -222,35 +259,35 @@ def at(price, sku=18000003, servings="2.7kg - 90servings"):
 
 
 def test_first_sighting_seeds_the_low_without_alerting():
-    alerts, state = check.decide(at("90.00"), {}, WATCH, 0.65)
+    alerts, state = check.decide(at("90.00"), {}, WATCH, 28.0)
     assert kinds(alerts, "low") == []
-    assert state["low:18000003"] == pytest.approx(90.00 / 90)
+    assert state["low:18000003"] == pytest.approx(90.00 / (90 * 23) * 1000)
 
 
 def test_a_new_low_alerts():
-    _, state = check.decide(at("90.00"), {}, WATCH, 0.65)
-    alerts, state = check.decide(at("80.00"), state, WATCH, 0.65)
+    _, state = check.decide(at("90.00"), {}, WATCH, 28.0)
+    alerts, state = check.decide(at("80.00"), state, WATCH, 28.0)
     assert len(kinds(alerts, "low")) == 1
-    assert state["low:18000003"] == pytest.approx(80.00 / 90)
+    assert state["low:18000003"] == pytest.approx(80.00 / (90 * 23) * 1000)
 
 
 def test_a_price_above_the_recorded_low_does_not_alert():
-    _, state = check.decide(at("80.00"), {}, WATCH, 0.65)
-    alerts, _ = check.decide(at("90.00"), state, WATCH, 0.65)
+    _, state = check.decide(at("80.00"), {}, WATCH, 28.0)
+    alerts, _ = check.decide(at("90.00"), state, WATCH, 28.0)
     assert kinds(alerts, "low") == []
 
 
 def test_a_trivially_lower_price_is_not_worth_an_alert():
     """A 0.1% dip is noise, not news — record it, stay quiet."""
-    _, state = check.decide(at("90.00"), {}, WATCH, 0.65)
-    alerts, state = check.decide(at("89.95"), state, WATCH, 0.65)
+    _, state = check.decide(at("90.00"), {}, WATCH, 28.0)
+    alerts, state = check.decide(at("89.95"), state, WATCH, 28.0)
     assert kinds(alerts, "low") == []
-    assert state["low:18000003"] == pytest.approx(89.95 / 90)
+    assert state["low:18000003"] == pytest.approx(89.95 / (90 * 23) * 1000)
 
 
 def test_lows_are_tracked_per_sku_not_per_flavour():
-    _, state = check.decide(at("90.00", sku=1), {}, WATCH, 0.65)
-    alerts, _ = check.decide(at("95.00", sku=2), state, WATCH, 0.65)
+    _, state = check.decide(at("90.00", sku=1), {}, WATCH, 28.0)
+    alerts, _ = check.decide(at("95.00", sku=2), state, WATCH, 28.0)
     assert kinds(alerts, "low") == []          # sku 2 is new — seeded, not alerted
     assert "low:1" in state
 
@@ -261,7 +298,7 @@ def test_collagen_lows_are_not_tracked():
     v = check.parse_variants(page(variant(
         "Impact Whey Protein Powder - 2340g - 90servings - Cookies and Cream (+Collagen)",
         "Cookies and Cream (+Collagen)", "2340g - 90servings", "61.99", "83.49", 18000001)))
-    _, state = check.decide(v, {}, WATCH, 0.65)
+    _, state = check.decide(v, {}, WATCH, 28.0)
     assert not any(k.startswith("low:") for k in state)
 
 
@@ -276,12 +313,12 @@ def discounted(pct_price, rrp="100.00", sku=18000003, flavour="Strawberry Cream"
 
 
 def test_deep_discount_fires_at_the_threshold():
-    alerts, _ = check.decide(discounted("60.00"), {}, WATCH, 0.65)   # 40% off
+    alerts, _ = check.decide(discounted("60.00"), {}, WATCH, 28.0)   # 40% off
     assert len(kinds(alerts, "discount")) == 1
 
 
 def test_deep_discount_does_not_fire_just_below_the_threshold():
-    alerts, _ = check.decide(discounted("61.00"), {}, WATCH, 0.65)   # 39% off
+    alerts, _ = check.decide(discounted("61.00"), {}, WATCH, 28.0)   # 39% off
     assert kinds(alerts, "discount") == []
 
 
@@ -289,7 +326,7 @@ def test_deep_discount_covers_the_collagen_line():
     v = check.parse_variants(page(variant(
         "Impact Whey Protein Powder - 2340g - 90servings - Cookies and Cream (+Collagen)",
         "Cookies and Cream (+Collagen)", "2340g - 90servings", "50.00", "100.00", 18000001)))
-    alerts, _ = check.decide(v, {}, WATCH, 0.65)
+    alerts, _ = check.decide(v, {}, WATCH, 28.0)
     assert len(kinds(alerts, "discount")) == 1
 
 
@@ -297,33 +334,33 @@ def test_collagen_discount_message_carries_the_caveat():
     v = check.parse_variants(page(variant(
         "Impact Whey Protein Powder - 2340g - 90servings - Cookies and Cream (+Collagen)",
         "Cookies and Cream (+Collagen)", "2340g - 90servings", "50.00", "100.00", 18000001)))
-    alerts, _ = check.decide(v, {}, WATCH, 0.65)
+    alerts, _ = check.decide(v, {}, WATCH, 28.0)
     assert "half" in check.format_slack(alerts)["text"].lower()
 
 
 def test_deep_discount_is_not_re_alerted_at_the_same_price():
     v = discounted("60.00")
-    alerts, state = check.decide(v, {}, WATCH, 0.65)
+    alerts, state = check.decide(v, {}, WATCH, 28.0)
     assert len(kinds(alerts, "discount")) == 1
-    again, _ = check.decide(v, state, WATCH, 0.65)
+    again, _ = check.decide(v, state, WATCH, 28.0)
     assert kinds(again, "discount") == []
 
 
 def test_deep_discount_re_alerts_when_it_gets_deeper():
-    _, state = check.decide(discounted("60.00"), {}, WATCH, 0.65)
-    alerts, _ = check.decide(discounted("45.00"), state, WATCH, 0.65)
+    _, state = check.decide(discounted("60.00"), {}, WATCH, 28.0)
+    alerts, _ = check.decide(discounted("45.00"), state, WATCH, 28.0)
     assert len(kinds(alerts, "discount")) == 1
 
 
 def test_discount_ending_clears_state_so_the_next_sale_alerts():
-    _, state = check.decide(discounted("60.00"), {}, WATCH, 0.65)
-    _, state = check.decide(discounted("95.00"), state, WATCH, 0.65)   # 5% off
-    alerts, _ = check.decide(discounted("60.00"), state, WATCH, 0.65)
+    _, state = check.decide(discounted("60.00"), {}, WATCH, 28.0)
+    _, state = check.decide(discounted("95.00"), state, WATCH, 28.0)   # 5% off
+    alerts, _ = check.decide(discounted("60.00"), state, WATCH, 28.0)
     assert len(kinds(alerts, "discount")) == 1
 
 
 def test_unwatched_flavour_never_deep_discount_alerts():
-    alerts, _ = check.decide(discounted("40.00", flavour="Vanilla"), {}, WATCH, 0.65)
+    alerts, _ = check.decide(discounted("40.00", flavour="Vanilla"), {}, WATCH, 28.0)
     assert kinds(alerts, "discount") == []
 
 
@@ -352,7 +389,7 @@ def test_slack_message_names_flavour_size_price_and_saving():
         "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
         "Strawberry Cream", "2.7kg - 90servings", "55.00", "97.49", 18000003,
     )
-    alerts, _ = check.decide(check.parse_variants(page(cheap)), {}, WATCH, 0.65)
+    alerts, _ = check.decide(check.parse_variants(page(cheap)), {}, WATCH, 28.0)
     text = check.format_slack(alerts)["text"]
     assert "Strawberry Cream" in text
     assert "90 servings" in text

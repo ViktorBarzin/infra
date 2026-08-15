@@ -6,10 +6,14 @@ Why this shape: the product page ships every variant as embedded JSON
 (title, flavour, amount, sku, inStock, price, rrp), so a plain HTTP GET is
 enough — no browser, no login, no anti-bot surface. Prices are public.
 
-Thresholds come from what Viktor has actually paid for Impact Whey, not from
-the headline discount percentage: his three Cookies and Cream orders landed at
-£0.650, £0.569 and £0.628 per serving (35-43% off RRP). A "50% off" rule would
-have blocked all three, so the trigger is £/serving.
+Thresholds come from what Viktor has actually paid, not from the headline
+discount percentage: his three Cookies and Cream orders landed at £0.650,
+£0.569 and £0.628 per serving (35-43% off RRP), i.e. £28.26, £24.74 and £27.30
+per kg of protein. A "50% off" rule would have blocked all three.
+
+The threshold is per KG OF PROTEIN, not per serving, because a serving is not a
+fixed amount of protein: Original 23 g, Milkshake 20 g, +Collagen 10 g of whey.
+Comparing £/serving across those lines silently overpays on the smaller ones.
 
 Read-only: this fetches a public page and posts a message. It never signs in,
 adds to a basket, or places an order.
@@ -19,7 +23,8 @@ Config (all via env):
   MYPROTEIN_URL           product page to poll
   STATE_BACKEND           "configmap" (in-cluster) or "file" (local runs)
   STATE_TARGET            ConfigMap name, or file path when STATE_BACKEND=file
-  THRESHOLD_PER_SERVING   £/serving at or below which a deal is worth telling
+  THRESHOLD_PER_KG_PROTEIN  £/kg of protein at or below which a deal is worth
+                          telling (£28 = the dearest Viktor has actually paid)
   DEEP_DISCOUNT_PCT       displayed discount that counts as a big sale
   NEW_LOW_MARGIN          how much better than the record a new low must be
   WATCH_FLAVOURS          comma-separated flavour substrings
@@ -47,6 +52,21 @@ LINE_SUFFIX_RE = re.compile(r"\s*\(([^)]+)\)\s*$")
 # absent: half of its 20 g "protein" is collagen peptides, so its £/serving is
 # not comparable and must not trip the same trigger.
 DEAL_LINES = ("Original", "Milkshake")
+
+# Grams of COMPLETE protein per serving, from the product page's own claims
+# (checked 2026-08-15). These differ by line, so £/serving is NOT a like-for-like
+# price and every threshold here is expressed per kg of protein instead.
+#   Original            "delivering 23g of protein per serving"
+#   Milkshake           "Every serving delivers 20g of protein" (whey concentrate
+#                       + milk protein isolate — both complete)
+#   Original + crunch   the biscuit pieces displace protein; these print 20g
+#   +Collagen           20g on the label, but 10g of it is collagen peptides,
+#                       which are tryptophan-free and do not support MPS
+PROTEIN_G_DEFAULT = 23.0
+PROTEIN_G_MILKSHAKE = 20.0
+PROTEIN_G_CRUNCH = 20.0
+PROTEIN_G_COLLAGEN_WHEY = 10.0
+CRUNCH_RE = re.compile(r"crunch|biscuit pieces", re.I)
 
 # A "big sale" on MyProtein's own reckoning. Note their RRP is their number and
 # it drifts upward over time, which is why this supplements the £/serving
@@ -93,6 +113,29 @@ class Variant:
     @property
     def price_per_serving(self) -> float | None:
         return self.price / self.servings if self.servings else None
+
+    @property
+    def whey_g_per_serving(self) -> float:
+        """Grams of COMPLETE protein in one serving.
+
+        Kept separate from the label figure because the +Collagen line's 20 g
+        includes 10 g of collagen peptides, which are tryptophan-free and do
+        not support muscle protein synthesis.
+        """
+        if self.line == "Collagen":
+            return PROTEIN_G_COLLAGEN_WHEY
+        if self.line == "Milkshake":
+            return PROTEIN_G_MILKSHAKE
+        if CRUNCH_RE.search(self.base_flavour):
+            return PROTEIN_G_CRUNCH
+        return PROTEIN_G_DEFAULT
+
+    @property
+    def price_per_kg_protein(self) -> float | None:
+        """The only basis on which two variants can be honestly compared."""
+        if not self.servings:
+            return None
+        return self.price / (self.servings * self.whey_g_per_serving) * 1000
 
     @property
     def discount_pct(self) -> int:
@@ -194,14 +237,21 @@ def comparable_watched(variants: list[Variant], watch: list[str]) -> list[Varian
         if v.in_stock
         and v.line in DEAL_LINES
         and _watched(v, watch)
-        and v.price_per_serving is not None
+        and v.price_per_kg_protein is not None
     ]
 
 
 def find_deals(variants: list[Variant], watch: list[str], threshold: float) -> list[Variant]:
-    """Comparable watched variants at or under the £/serving threshold."""
+    """Comparable watched variants at or under the £/kg-of-protein threshold.
+
+    Deliberately NOT £/serving: the Original line puts 23 g in a serving and
+    the Milkshake line 20 g, so the same £/serving is ~15% worse value on the
+    Milkshake line. Viktor's threshold came from Original-line purchases, so
+    applying it per-serving to a 20 g line would alert him on a worse deal
+    than he actually buys.
+    """
     return [v for v in comparable_watched(variants, watch)
-            if v.price_per_serving <= threshold]
+            if v.price_per_kg_protein <= threshold]
 
 
 def find_deep_discounts(variants: list[Variant], watch: list[str], min_pct: int) -> list[Variant]:
@@ -260,7 +310,7 @@ def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
     # record silently — we have no history to call it a low against.
     for v in comparable_watched(variants, watch):
         key = f"low:{v.sku}"
-        pps = v.price_per_serving
+        pps = v.price_per_kg_protein
         previous = new_state.get(key)
         if previous is None:
             new_state[key] = pps
@@ -306,7 +356,8 @@ HEADERS = {
 def _detail(v: Variant) -> str:
     return (f"{v.servings} servings, {v.amount.split(' - ')[0]} — *£{v.price:.2f}* "
             f"(was £{v.rrp:.2f}, {v.discount_pct}% off) = "
-            f"*£{v.price_per_serving:.2f}/serving*")
+            f"*£{v.price_per_kg_protein:.2f}/kg protein* "
+            f"(£{v.price_per_serving:.2f}/serving at {v.whey_g_per_serving:.0f}g)")
 
 
 def format_slack(alerts: list[Alert]) -> dict[str, Any]:
@@ -445,7 +496,7 @@ def main() -> int:
     state_target = os.environ.get(
         "STATE_TARGET", "myprotein-watch-state" if backend == "configmap" else "/tmp/state.json"
     )
-    threshold = float(os.environ.get("THRESHOLD_PER_SERVING", "0.65"))
+    threshold = float(os.environ.get("THRESHOLD_PER_KG_PROTEIN", "28"))
     deep_pct = int(os.environ.get("DEEP_DISCOUNT_PCT", str(DEEP_DISCOUNT_PCT)))
     low_margin = float(os.environ.get("NEW_LOW_MARGIN", str(NEW_LOW_MARGIN)))
     watch = os.environ.get(
@@ -471,15 +522,17 @@ def main() -> int:
 
     watched = [v for v in variants if _watched(v, watch) and v.in_stock]
     print(f"parsed {len(variants)} variants; {len(watched)} in-stock watched:")
-    for v in sorted(watched, key=lambda v: v.price_per_serving or 0):
+    for v in sorted(watched, key=lambda v: v.price_per_kg_protein or 0):
         print(f"  {v.base_flavour} ({v.line}) {v.amount}: £{v.price:.2f} "
-              f"= £{v.price_per_serving:.3f}/serving ({v.discount_pct}% off)")
+              f"= £{v.price_per_kg_protein:.2f}/kg protein "
+              f"(£{v.price_per_serving:.3f}/serving at {v.whey_g_per_serving:.0f}g, "
+              f"{v.discount_pct}% off)")
 
     state = load_state(state_target, backend)
     alerts, new_state = decide(variants, state, watch, threshold, deep_pct, low_margin)
 
     if not alerts:
-        print(f"nothing at or under £{threshold:.2f}/serving, no new low, "
+        print(f"nothing at or under £{threshold:.2f}/kg protein, no new low, "
               f"nothing at {deep_pct}%+ off — no alert")
         save_state(state_target, new_state, backend)
         return 0
