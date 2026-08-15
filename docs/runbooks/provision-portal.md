@@ -297,6 +297,8 @@ Still by eye:
 
 ## Related
 
-- Frame build / signing-key restore details: `portal-immich-frame/docs/runbooks/reprovision-after-factory-reset.md`
+- Frame build, update mechanism and device settings: `portal-immich-frame/README.md`
+  and `portal-immich-frame/docs/adr/0006-in-app-ota-updates.md` (that repo is
+  public now; its runbook moved here, which is why the old path is gone)
 - Spec + rationale (grilling output): `https://plans.viktorbarzin.me/2026-07-26-portal-reprovision-spec.html`
 - Server-side frame config: `infra/stacks/immich/frame.tf`
