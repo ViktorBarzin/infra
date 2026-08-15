@@ -79,17 +79,17 @@ Three things that keeps depending on, all set by `provision-portal.sh`:
   already `0`); only app-initiated installs hit it. Verified on the London
   Portal+ 2026-08-15: with it on, every self-update failed; with it off, 0.1.8
   updated itself to 0.1.9.
+- **The relaunch app-op**: `adb shell appops set me.viktorbarzin.portalframe SYSTEM_ALERT_WINDOW allow`.
+  Android stops the app to replace it and never restarts it, so without this an
+  update turns the display off until someone walks up to the Portal. Since
+  v0.1.10 the frame relaunches itself from a `MY_PACKAGE_REPLACED` receiver,
+  which is a background activity start and needs this app-op on Android 10.
 - **The signing key**, Vault `secret/portal-immich-frame` (`debug_keystore_b64`).
   A build signed with anything else is refused as an update.
 
-**Known gap — the frame does not come back by itself after an update.** Android
-stops the app to replace it, and nothing restarts it, so the Portal lands on its
-home screen and stays there until someone opens the frame again (observed
-2026-08-15). Until that is fixed, treat an update as needing a follow-up launch:
-
-```sh
-adb shell am start -n me.viktorbarzin.portalframe/.FrameActivity
-```
+Since v0.1.10 the check also repeats every 6h while the frame runs, rather than
+only at startup — a frame left open for weeks was otherwise only ever triggered
+by a reboot. Declining an update backs that version off for 24h.
 
 Silent, no-touch updating is not available: it needs device-owner provisioning,
 which requires a factory reset with no accounts on the device — the opposite of
@@ -102,15 +102,17 @@ The Mac is pinned to `192.168.8.168` by a static lease on the London Flint, and
 `mbp-london.viktorbarzin.lan` is declared for it in
 `stacks/technitium/.../static_records.tf`.
 
-> **The name does not resolve LAN-wide yet, and that is not this record's fault.**
-> pfSense holds its own AXFR copy of `viktorbarzin.lan` (`auth-zone`, master
-> `10.0.20.201`, served `for-downstream`) and that copy has been frozen since
-> 2026-08-04: its cached SOA serial is `684609` while the primary now serves
-> `64125`, so Unbound considers itself current and never re-transfers. Any `.lan`
-> record created since then is invisible to every client resolving via pfSense.
-> Queries straight to `10.0.20.201` are correct. Until the serial is raised past
-> the cached one (or pfSense's copy is discarded and re-pulled), scripts here use
-> the address.
+> This name was invisible LAN-wide when it was first added, and the cause is worth
+> knowing: pfSense does not forward `.lan` — it holds its own AXFR copy
+> (`auth-zone`, master `10.0.20.201`, served `for-downstream`). That copy had been
+> frozen since 2026-08-04 because the primary's SOA serial had regressed below the
+> cached one (`64125` vs `684609`), which reads as "nothing new", so Unbound never
+> re-transferred and every `.lan` record created after that date was missing.
+> Fixed 2026-08-15 by switching the zone to Technitium's **date-based serial
+> scheme** (`useSerialDateScheme`), which jumped the serial to `2026081500` and
+> cannot regress the same way. If new `.lan` names ever stop appearing again,
+> compare `dig +short @10.0.20.201 viktorbarzin.lan SOA` with what pfSense
+> returns — a lower serial upstream is the signature.
 
 The reservation lists **two** MACs — the hardware Wi-Fi address
 `84:2f:57:39:9a:d9` and the macOS *private* Wi-Fi address currently in use. That

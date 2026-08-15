@@ -134,9 +134,8 @@ resource "kubernetes_deployment" "f1-stream" {
       }
       spec {
         container {
-          image             = "ghcr.io/viktorbarzin/f1-stream:${var.image_tag}"
-          image_pull_policy = "Always"
-          name              = "f1-stream"
+          image = "ghcr.io/viktorbarzin/f1-stream:${var.image_tag}"
+          name  = "f1-stream"
           # Right-sized 2026-06-05: was 1Gi (bundled-Chromium era). The image is
           # now CDP-only (verifier drives the remote chrome-service), so actual
           # usage is ~116Mi and the VPA upperBound (incl. live races) is ~185Mi.

@@ -314,7 +314,12 @@ resource "kubernetes_deployment" "breakglass" {
   }
 
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].labels["tier"],                      # stamped by Kyverno sync-tier-label-from-namespace
+    ]                                                  # KYVERNO_LIFECYCLE_V1
   }
 
   depends_on = [
