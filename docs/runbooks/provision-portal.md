@@ -58,6 +58,28 @@ flowchart TD
     style H5 fill:#7c2d12,color:#fff
 ```
 
+## The frame updates itself now (since 2026-08-15)
+
+Getting a new frame build onto a Portal no longer needs this runbook. Since
+`portal-immich-frame` v0.1.8 the app checks a published manifest **on startup**,
+downloads a newer build, verifies its SHA-256 and offers it to the package
+installer; Android then asks whoever is at the device to confirm. See that repo's
+`docs/adr/0006-in-app-ota-updates.md`.
+
+Two things that keeps depending on:
+
+- **The install app-op**, granted by `provision-portal.sh` and settable at any
+  time with no Portal UI:
+  `adb shell appops set me.viktorbarzin.portalframe REQUEST_INSTALL_PACKAGES allow`.
+  A device missing it downloads updates and then silently never prompts.
+- **The signing key**, Vault `secret/portal-immich-frame` (`debug_keystore_b64`).
+  A build signed with anything else is refused as an update.
+
+Silent, no-touch updating is not available: it needs device-owner provisioning,
+which requires a factory reset with no accounts on the device — the opposite of
+the signed-in official path this runbook follows. One tap per release is the
+floor. This runbook remains the way a **wiped or new** device is brought up.
+
 ## Human prerequisites (do these first, on the Portal)
 
 The script starts from an **ADB-ready device**. It cannot do these:
