@@ -368,6 +368,15 @@ server:
     # loki.tf). In-cluster senders only — the service isn't exposed for write
     # externally (ingress is read-path; Authentik gates it).
     - "web.enable-remote-write-receiver"
+    # OTLP metric ingest, for Claude Code's native OpenTelemetry export
+    # (docs/adr/0025-claude-session-telemetry.md). Claude sessions on the devvm
+    # push claude_code.* counters and histograms to
+    # /api/v1/otlp/v1/metrics, reached over the LAN-only
+    # prometheus-otlp.viktorbarzin.me ingress. Experimental in v2.48.1 and
+    # therefore behind --enable-feature rather than its own flag; it becomes
+    # --web.enable-otlp-receiver in Prometheus 3.x, so this line moves at the
+    # next major upgrade.
+    - "enable-feature=otlp-write-receiver"
   persistentVolume:
     # enabled: false
     existingClaim: prometheus-data-proxmox
