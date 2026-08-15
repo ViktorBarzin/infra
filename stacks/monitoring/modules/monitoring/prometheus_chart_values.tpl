@@ -3991,6 +3991,34 @@ serverFiles:
             annotations:
               summary: "Status/failover page https://status.viktorbarzin.me unreachable for >10m"
               description: "The external status/failover page on mx2 (nginx + gatus, ADR-0020) has failed its in-cluster HTTPS probe for >10m. During a homelab outage the Cloudflare Worker serves this page's /error.html to visitors of all proxied hosts — while it is down, outage error pages degrade to the Worker's inline fallback HTML. Check gatus/nginx on mx2: `ssh -i ~/.ssh/backup-mx ubuntu@92.5.132.215` or the OCI console. NOTE: if BackupMxDown (TCP:25, same VM) fires simultaneously, the whole VM — or our own egress (see WANGatewayUnreachable/InternetEgressDown) — is the problem, not nginx. Runbook: docs/runbooks/backup-mx.md."
+      - name: Loki
+        rules:
+          - alert: LokiStreamLimitNear
+            # Streams are the unit Loki's global cap counts, and hitting it
+            # REJECTS NEW STREAMS FOR EVERY SERVICE in the homelab, not just
+            # the noisy one — a whole service can go silently unlogged. On
+            # 2026-08-15 this sat pinned at exactly 5000/5000 for an unknown
+            # length of time with nobody able to see it: Loki was not scraped,
+            # so no loki_* series existed at all.
+            expr: loki_ingester_memory_streams / 5000 > 0.8
+            for: 15m
+            labels:
+              severity: warning
+              subsystem: loki
+            annotations:
+              summary: "Loki is using {{ $value | humanizePercentage }} of its 5000-stream global cap"
+              description: "loki_ingester_memory_streams has been above 80% of max_global_streams_per_user for 15m. At 100% Loki rejects NEW streams for every tenant of the homelab with reason=stream_limit, so a newly-deployed or newly-chatty service simply stops being logged. Streams are held for chunk_idle_period (stacks/monitoring/modules/monitoring/loki.yaml) after their last line, so the usual cause is short-lived pods — CronJob runs — accumulating faster than they expire; check `topk(10, count by (namespace) (count_over_time({namespace=~\".+\"}[5m])))` for who is actually writing versus merely resident. Raising the cap is the last resort, not the first: it trades memory for a symptom."
+          - alert: LokiDiscardingSamples
+            # The consequence alert. Distinct from the gauge above: this fires
+            # only once log lines are actually being thrown away.
+            expr: sum(rate(loki_discarded_samples_total[10m])) > 0
+            for: 10m
+            labels:
+              severity: critical
+              subsystem: loki
+            annotations:
+              summary: "Loki is discarding log samples ({{ $value | printf \"%.2f\" }}/s)"
+              description: "loki_discarded_samples_total is increasing, so log lines are being dropped and will never be queryable. Check the `reason` label: stream_limit means the global stream cap (see LokiStreamLimitNear); rate_limit means ingestion throughput; per_stream_rate_limit means one very chatty stream. Runbook: docs/architecture/monitoring.md."
       - name: Egress / pfSense
         rules:
           - alert: WANGatewayUnreachable
