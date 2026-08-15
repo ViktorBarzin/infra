@@ -162,8 +162,22 @@ Idempotent — safe to re-run. Useful env overrides:
 
 ## Verify
 
-The script prints the installed packages + the resumed activity. The rest is
-**by eye** — `adb screencap` is black for the frame's hardware WebView surface:
+The script prints the installed packages + the resumed activity. Most of the rest
+can now be checked remotely:
+
+```sh
+ssh viktorbarzin@mbp-london.viktorbarzin.lan \
+  '/Users/viktorbarzin/Library/Android/sdk/platform-tools/adb exec-out screencap -p' > /tmp/portal.png
+```
+
+`adb screencap` **does** capture the frame — verified 2026-08-15, a full-colour
+photo with the clock overlay. It used to return black for the hardware WebView
+surface, so a black image is the known older behaviour rather than proof of a
+broken frame. Since `portal-immich-frame` v0.1.8 the reading is sharper: the
+failure panel is a native view and always captures, so photos / panel / black are
+three different answers rather than one ambiguous one.
+
+Still by eye:
 
 - Immich highlights slideshow is showing.
 - VirtualSoftKeys Back/Home pills appear (test Back exits an app to the launcher).
