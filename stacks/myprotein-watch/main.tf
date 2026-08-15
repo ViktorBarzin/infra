@@ -8,7 +8,9 @@
 #
 # Threshold rationale: his three Cookies and Cream orders were £0.650, £0.569
 # and £0.628 per serving — 35-43% off RRP. A literal "50% off" rule would have
-# blocked all three, so the trigger is £/serving, not headline discount.
+# blocked all three, so the trigger is price, not headline discount. It is
+# normalised per kg of PROTEIN because a serving is not a fixed amount of it
+# (Original 23g, Milkshake 20g, +Collagen 10g of whey).
 #
 # Four triggers (2026-08-15): the £/serving one above; "cheapest we have ever
 # recorded" per SKU, which ignores RRP entirely and so cannot be fooled by RRP
@@ -206,11 +208,15 @@ resource "kubernetes_cron_job_v1" "check" {
                 name  = "STATE_TARGET"
                 value = kubernetes_config_map_v1.state.metadata[0].name
               }
-              # Viktor's buying price, from his own order history (£0.569-£0.650
-              # per serving across three Cookies and Cream orders).
+              # Viktor's buying price, from his own order history: £28.26,
+              # £24.74 and £27.30 per kg of protein across three Cookies and
+              # Cream orders. Expressed per KG OF PROTEIN, not per serving —
+              # a serving is 23g on Original, 20g on Milkshake and only 10g of
+              # whey on +Collagen, so a flat £/serving threshold quietly
+              # overpays on the smaller lines.
               env {
-                name  = "THRESHOLD_PER_SERVING"
-                value = "0.65"
+                name  = "THRESHOLD_PER_KG_PROTEIN"
+                value = "28"
               }
               # A big sale on MyProtein's own reckoning. Supplements the
               # £/serving trigger rather than replacing it: RRP is their number
