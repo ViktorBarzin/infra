@@ -150,6 +150,14 @@ esac
 # appears — so a device provisioned without it silently stops taking updates.
 # It does NOT permit silent installs; Android still asks whoever is at the device.
 "$ADB" shell appops set "$FPKG" REQUEST_INSTALL_PACKAGES allow
+# ...and let the install actually complete. The Portal ships NO Play/GMS, so
+# nothing on the device can answer a package-verification request: the check
+# times out and the installer aborts with INSTALL_FAILED_VERIFICATION_FAILURE,
+# AFTER the download, the checksum and the user tapping Install (observed on the
+# London Portal+ 2026-08-15). Sideloads were unaffected and hid this, because
+# verifier_verify_adb_installs is already 0 — only app-initiated session installs
+# go through the verifier.
+"$ADB" shell settings put global package_verifier_enable 0
 "$ADB" shell settings put system screen_off_timeout 2147483647   # never sleep (LCD, always mains)
 "$ADB" shell settings put secure screensaver_enabled 0           # no dream/screensaver
 "$ADB" shell am start -n "$FPKG/$FACT"
