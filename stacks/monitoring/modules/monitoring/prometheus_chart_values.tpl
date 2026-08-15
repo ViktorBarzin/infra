@@ -3030,41 +3030,48 @@ serverFiles:
         # host (e.g. `travel-blog-anubis-travel-8080@kubernetes`).
         rules:
           - alert: IngressTTFBHigh
+            # p95 over 30m, NOT a mean over 5m (changed 2026-08-15).
+            #
+            # The mean was the whole problem. Most services here serve a few
+            # requests a minute, so a 5m window held ~15 requests and whichever
+            # one happened to be slow set the average: one Home Assistant
+            # stream, one matrix /sync, one crawler call. That produced 81
+            # firings in 7 days across 8 services, and every service probed at
+            # 13-143ms while "firing". matrix is the clearest case — 2ms
+            # baseline all day, single spikes to 4.5s, 0.09 req/s.
+            #
+            # A p95 says "a real share of requests are slow", which is the thing
+            # worth waking up for, and one outlier can no longer move it.
             expr: |
-              (
-                sum(rate(traefik_service_request_duration_seconds_sum{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service)
-                / sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service)
+              histogram_quantile(0.95,
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service, le)
               ) > 1
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service) > 0.05
-              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 10m
-            # keep_firing_for: a low-traffic service's average TTFB swings across
-            # the 1s line between scrapes — 3 fire/resolve pairs of exactly 5m
-            # each in 7 days (measured 2026-08-10).
-            keep_firing_for: 1h
+            # Was 1h, to damp the mean's fire/resolve churn. The p95 doesn't
+            # churn, so this only needs to cover ordinary scrape jitter.
+            keep_firing_for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Slow ingress on {{ $labels.service }}: avg latency {{ $value | printf \"%.2f\" }}s (threshold: 1s for 10m)"
+              summary: "Slow ingress on {{ $labels.service }}: p95 latency {{ $value | printf \"%.2f\" }}s (threshold: 1s for 10m)"
           - alert: IngressTTFBCritical
+            # p95 over 30m, matching IngressTTFBHigh above — see the reasoning
+            # there. This one mattered more: criticals re-ping every 6h, so a
+            # single 4.5s matrix request kept re-announcing itself all day.
             expr: |
-              (
-                sum(rate(traefik_service_request_duration_seconds_sum{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service)
-                / sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service)
+              histogram_quantile(0.95,
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service, le)
               ) > 3
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[5m])) by (service) > 0.05
-              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 5m
-            # keep_firing_for, matching IngressTTFBHigh: a low-traffic service's
-            # average latency crosses 3s and clears within minutes. Measured
-            # 2026-08-13, the three firings in the preceding 3 days lasted 4, 4
-            # and 7 minutes (plotting-book twice, matrix once) — brief spikes
-            # reported as three separate criticals.
-            keep_firing_for: 1h
+            keep_firing_for: 15m
             labels:
               severity: critical
             annotations:
-              summary: "Critically slow ingress on {{ $labels.service }}: avg latency {{ $value | printf \"%.2f\" }}s (threshold: 3s for 5m)"
+              summary: "Critically slow ingress on {{ $labels.service }}: p95 latency {{ $value | printf \"%.2f\" }}s (threshold: 3s for 5m)"
           - alert: IngressErrorRate5xxHigh
             # Rolling upgrades / pod migrations cause brief 5xx spikes that
             # clear within 1-2 min. Only persistent 5xx indicates a real
@@ -4524,15 +4531,24 @@ extraScrapeConfigs: |
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: instance
     metric_relabel_configs:
-      # Drop the high-cardinality duration HISTOGRAM (router/service/entrypoint
+      # Drop the high-cardinality duration HISTOGRAM (router/entrypoint
       # *_bucket, ~5k series/pod — the real cardinality driver, commit 06490b06)
       # plus the bulky bytes/tls/sum/count router series, but KEEP
       # traefik_router_requests_total: the only per-router counter carrying both
       # `router` and `code` labels, needed to see 4xx/5xx (incl. 429/503) on the
       # authentik routers. ~448 series/pod. (The earlier blanket `traefik_router_.*`
       # dropped it, so per-router error rates were un-queryable + un-alertable.)
+      #
+      # traefik_SERVICE_request_duration_seconds_bucket is deliberately KEPT
+      # (2026-08-15): IngressTTFBHigh/Critical need it for a p95. They used to
+      # average over 5m, and since most services here take only a few requests a
+      # minute, one slow request decided the mean — 81 firings in the preceding
+      # 7 days, none of them a service that was actually slow. Measured cost of
+      # keeping just this histogram: 440 series/pod x 3 pods = ~1.3k series,
+      # ~1.4% of the ~97k head series. The router/entrypoint buckets stay
+      # dropped — those are the ~5k/pod ones and nothing alerts on them.
       - source_labels: [__name__]
-        regex: 'traefik_(router|service|entrypoint)_request_duration_seconds_bucket|traefik_router_request(s_bytes_total|s_tls_total|_duration_seconds_(sum|count))|traefik_router_responses_bytes_total'
+        regex: 'traefik_(router|entrypoint)_request_duration_seconds_bucket|traefik_router_request(s_bytes_total|s_tls_total|_duration_seconds_(sum|count))|traefik_router_responses_bytes_total'
         action: drop
   - job_name: 'realestate-crawler-api'
     kubernetes_sd_configs:
