@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -55,6 +56,9 @@ TRIGGER_TIMEOUT = int(os.environ.get("REINDEX_TRIGGER_TIMEOUT", "120"))
 # an hour is far too long to sit on a transient error.
 RETRY_DELAY = int(os.environ.get("SYNC_RETRY_SECONDS", "300"))
 CROSS_REPO_TIMEOUT = int(os.environ.get("CROSS_REPO_TIMEOUT", "1800"))
+# How many page-less repos to repair per pass. A full resync is expensive, and
+# repairing every one at once would saturate the API for the rest of the hour.
+MAX_REPAIRS = int(os.environ.get("MAX_PAGE_REPAIRS", "5"))
 KUMA_PUSH_URL = os.environ.get("KUMA_PUSH_URL", "")
 # Which repo the dashboard and single-repo MCP queries default to. `repowise
 # init --all` picks one on its own and picks the first alphabetically, which
@@ -360,6 +364,73 @@ def trigger_reindex() -> None:
         raise
 
 
+def repos_missing_pages(names: list[str]) -> list[tuple[str, str]]:
+    """Repos that indexed symbols but rendered no wiki pages: ``(name, repo_id)``.
+
+    Indexing a repo and rendering its deterministic wiki are separate phases, and
+    only the full pipeline does both. A repo indexed by the API's incremental
+    sync — which is what happens when a bootstrap is interrupted part-way — ends
+    up with a populated graph and an empty Documentation tab, and nothing
+    afterwards notices. Observed on 10 of 42 repos after this stack's first
+    rollout, including one with 1,851 symbols and no pages at all.
+
+    Deliberately narrow: symbols present AND pages exactly zero. A repo that is
+    simply small, or has genuinely few documentable files, is left alone.
+    """
+    out: list[tuple[str, str]] = []
+    for name in names:
+        db = WORKSPACE / name / ".repowise" / "wiki.db"
+        if not db.is_file():
+            continue
+        try:
+            conn = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+            try:
+                row = conn.execute("SELECT id FROM repositories LIMIT 1").fetchone()
+                symbols = conn.execute("SELECT COUNT(*) FROM wiki_symbols").fetchone()[0]
+                pages = conn.execute("SELECT COUNT(*) FROM wiki_pages").fetchone()[0]
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            continue
+        if row and symbols and not pages:
+            out.append((name, row[0]))
+    return out
+
+
+def repair_missing_pages(names: list[str]) -> int:
+    """Full-resync repos whose wiki never rendered. Returns how many were asked.
+
+    A full resync is what re-runs the whole pipeline, including deterministic
+    page rendering; an incremental sync will not backfill them. Capped per pass,
+    and each request is fire-and-forget — the server queues the work.
+    """
+    missing = repos_missing_pages(names)
+    if not missing:
+        return 0
+    batch = missing[:MAX_REPAIRS]
+    log.info(
+        "%d repo(s) indexed with no wiki pages; repairing %d this pass: %s",
+        len(missing), len(batch), ", ".join(n for n, _ in batch),
+    )
+    asked = 0
+    for name, repo_id in batch:
+        try:
+            api_request(
+                "POST",
+                f"/api/repos/{repo_id}/full-resync",
+                token=API_KEY,
+                scheme="Bearer",
+                timeout=TRIGGER_TIMEOUT,
+            )
+            asked += 1
+        except ReconcileError as exc:
+            if "timed out" in str(exc).lower():
+                asked += 1  # queued; the server carries on
+            else:
+                log.warning("could not repair %s: %s", name, exc)
+    return asked
+
+
 def build_cross_repo_layer() -> str:
     """Rebuild the workspace-level layer: co-changes, contracts, system graph.
 
@@ -475,11 +546,15 @@ def reconcile() -> str:
         if not (WORKSPACE / name / ".repowise" / "wiki.db").exists()
     ]
 
+    repaired = repair_missing_pages(sorted(remote.keys() & local))
+
     cross = build_cross_repo_layer()
 
     status = f"{len(remote)} repos, {moved} updated, {len(fresh)} added"
     if unindexed:
         status += f", {len(unindexed)} awaiting first index"
+    if repaired:
+        status += f", {repaired} wiki repair(s) queued"
     status += f"; {cross}"
     if failed:
         raise ReconcileError(f"{status}; failed: {', '.join(failed)}")
