@@ -249,6 +249,29 @@ Metrics live in Prometheus rather than Loki, and are queried normally:
 `claude_code_session_count_total`, `claude_code_active_time_seconds_total` —
 each labelled `os_user`, and tokens additionally by `type` and `model`.
 
+## Session names
+
+Claude records a session as a uuid. It knows the human name — `start-claude.sh`
+passes `--name`, and the binary carries `session_name`/`tmux_session` strings
+internally — but does not export it, so without help every session reads as an
+anonymous id.
+
+`tmux.session` is therefore stamped alongside `os.user` in the same per-user
+`/etc/profile.d/26-claude-otel-attrs.sh`, read from the tmux session the shell
+started in. It costs nothing in Loki: custom resource attributes fall outside
+the default promotion list, so they become structured metadata rather than
+index labels, and the channel remains one stream.
+
+Two limits, both real rather than oversights:
+
+- The attribute is read **once at shell start**, because that is when Claude
+  consumes it. A later `tmux rename-session` does not reach a session already
+  running.
+- Sessions started outside tmux — headless runs, cron agents, plain t3 — have
+  no name at all. The Sessions table therefore shows *Name* and *Session id*
+  side by side and the picker matches either; filtering on name alone would
+  have hidden those sessions rather than described them.
+
 ## Two things only a live session revealed
 
 Both were found by running a real Claude session as `emo` after the
