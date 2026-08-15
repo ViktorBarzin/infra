@@ -358,6 +358,7 @@ resource "kubernetes_daemon_set_v1" "node_local_dns" {
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].labels["keel.sh/policy"],            # deliberate never-auto-update opt-out for core DNS
     ]
   }
 }
