@@ -25,7 +25,7 @@
 Violations cause state drift, which causes future applies to break or silently revert changes.
 
 ## Instructions
-- **"remember X"**: store to the remote claude-memory store via the **`homelab memory` CLI**: `homelab memory store "content" --category facts --tags "tag1,tag2"` (also `recall "query"` / `update <id>` / `list` / `delete <id>`). For shared knowledge, also update the relevant CLAUDE.md / `AGENTS.md`. (Supersedes the old `memory-tool` CLI **and** the claude-memory MCP — both retired 2026-06-21; the homelab CLI hits the same remote HTTP API. Recall also runs automatically each turn via a UserPromptSubmit hook.)
+- **"remember X"**: use the `homelab memory` CLI. The rule and the usage discipline live in `~/.claude/rules/10-homelab.md` + `20-execution.md` §M — not restated here, so the two cannot drift apart. Infra-specific addition: for knowledge that belongs to the repo rather than to a session, also update the relevant CLAUDE.md / `AGENTS.md`.
 - **Apply**: Authenticate via `vault login -method=oidc`, then use `scripts/tg` (preferred — handles state decrypt/encrypt) or `terragrunt` directly. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies, and `-lock-timeout` (default `5m`, override via `TG_LOCK_TIMEOUT`) on every state-locking verb (`plan`/`apply`/`destroy`/`refresh`) so a contended state lock **waits** instead of failing instantly with `Error acquiring the state lock`.
 - **New services need CI/CD** and **monitoring** (Prometheus/Uptime Kuma). CI = a GHA workflow on the repo's GitHub mirror (build + tests off-infra, ADR-0002); Woodpecker gets a deploy-only pipeline — never an in-cluster build.
 - **New service**: Use `setup-project` skill for full workflow
