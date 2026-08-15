@@ -159,19 +159,26 @@ resource "kubernetes_deployment" "matrix" {
             name  = "TUWUNEL_TRUSTED_SERVERS"
             value = jsonencode(["matrix.org"])
           }
-          # Registration OPEN (tokenless) — user-chosen 2026-06-08. tuwunel demands
-          # this explicit flag for tokenless open registration. Bot mitigations:
-          # the Traefik rate-limit on /register (register_ratelimit + ingress_register
-          # below) + CrowdSec + a Loki->#security alert on every signup (monitoring
-          # stack). To revert to token-gated: drop the YES_I_AM_VERY... flag and
-          # re-add the TUWUNEL_REGISTRATION_TOKEN env (secret/matrix still holds it).
+          # Registration CLOSED (2026-08-15, Viktor). Tokenless open registration
+          # ran from 2026-06-08 and drew two stranger signups. One was using the
+          # homeserver as a personal account to talk to a user on another server,
+          # which meant a stranger's room — and the remote media this server
+          # caches for it — were being stored on Viktor's disk, under his domain
+          # and his home IP. Neither account could ever read Viktor's own rooms
+          # (those are invite-only and E2E encrypted); the exposure was custody
+          # and attribution, not confidentiality. Closing the door stops the
+          # inflow; the two existing accounts are untouched by this change.
+          #
+          # Add a user: `!admin users create-user <name>` in the admin room.
+          # To reopen self-service, set this true and EITHER add
+          # TUWUNEL_REGISTRATION_TOKEN for a token-gated door (secret/matrix still
+          # holds one, unused since 2026-06-08 — rotate it before relying on it),
+          # OR re-add the TUWUNEL_YES_I_AM_VERY_VERY_SURE_I_WANT_AN_OPEN_
+          # REGISTRATION_SERVER_PRONE_TO_ABUSE flag that tuwunel demands for a
+          # fully tokenless one.
           env {
             name  = "TUWUNEL_ALLOW_REGISTRATION"
-            value = "true"
-          }
-          env {
-            name  = "TUWUNEL_YES_I_AM_VERY_VERY_SURE_I_WANT_AN_OPEN_REGISTRATION_SERVER_PRONE_TO_ABUSE"
-            value = "true"
+            value = "false"
           }
           # 50 MiB — kept under Cloudflare's 100 MB proxied-request ceiling.
           env {
@@ -290,7 +297,9 @@ module "ingress" {
   }
 }
 
-# Open registration is bot-exposed, so rate-limit the register endpoint. Keyed on
+# Registration is closed as of 2026-08-15, so this rate-limit is now defence in
+# depth rather than the front line: it still caps how hard the endpoint can be
+# hammered, and it is already in place if registration is ever reopened. Keyed on
 # the request HOST (a GLOBAL /register cap), NOT the source IP — this host is
 # reachable BOTH via Cloudflare-IPv4 (CF-Connecting-IP header) AND IPv6-direct (HE
 # tunnel → pfSense HAProxy → Traefik, no CF header), so a per-source-IP key would

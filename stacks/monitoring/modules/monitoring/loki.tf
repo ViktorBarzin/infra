@@ -677,10 +677,13 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
-          # Matrix (tuwunel) — open registration is ON, so notify on every new
-          # signup. tuwunel logs `... New user "@x:..." registered on this server`
-          # only on SUCCESS (the disabled-path logs "Rejecting ... registration is
-          # disabled"), so this matcher never false-fires on rejected attempts.
+          # Matrix (tuwunel) — notify on every new signup. Registration was open
+          # when this rule was written and is CLOSED as of 2026-08-15, which makes
+          # the rule more valuable rather than less: it is now the canary that
+          # tells us if the door reopened. tuwunel logs `... New user "@x:..."
+          # registered on this server` only on SUCCESS (the disabled path logs
+          # "Rejecting ... registration is disabled"), so this matcher never
+          # false-fires on the rejected attempts a closed server now produces.
           # lane=security routes it to the existing #security Slack receiver.
           name = "Matrix"
           rules = [
@@ -700,11 +703,16 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # empty-label series, which reads as an unnamed signup rather than
               # silently vanishing.
               expr   = "sum by (mxid, client_ip, device) (count_over_time({namespace=\"matrix\",container=\"matrix\"} |= \"registered on this server\" | regexp `New user \"(?P<mxid>[^\"]+)\" registered on this server from IP (?P<client_ip>\\S+) with device name (?P<device>.*)` [10m])) > 0"
-              for    = "0m"
-              labels = { severity = "info", lane = "security" }
+              for = "0m"
+              # Raised info -> warning on 2026-08-15 when registration was closed.
+              # While signups were open this fired on every routine stranger and
+              # info was right; on a closed server a signup should only happen
+              # when Viktor deliberately runs `!admin users create-user`, so
+              # anything else means allow_registration has regressed.
+              labels = { severity = "warning", lane = "security" }
               annotations = {
                 summary     = "New Matrix signup: {{ $labels.mxid }} from {{ $labels.client_ip }}"
-                description = "Client/device name: \"{{ $labels.device }}\". Registration on matrix.viktorbarzin.me is open/tokenless. If this one is unwanted: `!admin users deactivate {{ $labels.mxid }}` in the admin room; to close the door, revert to token-gated registration in stacks/matrix."
+                description = "Client/device name: \"{{ $labels.device }}\". Registration on matrix.viktorbarzin.me has been CLOSED since 2026-08-15, so this is expected only if you just created the account yourself with `!admin users create-user`. If you did not, check that TUWUNEL_ALLOW_REGISTRATION is still false in stacks/matrix (a regression there reopens the server to strangers), then `!admin users deactivate {{ $labels.mxid }}` in the admin room."
               }
             },
           ]
