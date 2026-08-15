@@ -93,7 +93,7 @@ graph TB
 | CoreDNS | K8s `kube-system` | Cluster default | K8s service discovery + forwarding to Technitium |
 | NodeLocal DNSCache | K8s `kube-system` (DaemonSet) | `k8s-dns-node-cache:1.23.1` | Per-node DNS cache, transparent interception on 10.96.0.10 + 169.254.20.10. Insulates pods from CoreDNS/Technitium/pfSense disruption. |
 | Cloudflare DNS | SaaS | N/A | Public zone management — 185/200 records (free-plan hard cap; see "Zone record budget") |
-| pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium; DoT upstream to Cloudflare |
+| pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium and serves it `for-downstream` (see "Zone serial" below); DoT upstream to Cloudflare |
 | Kea DHCP-DDNS | 10.0.20.1 | pfSense 2.7.x | Automatic DNS registration on DHCP lease |
 | phpIPAM | K8s namespace `phpipam` | v1.7.0 | IPAM ↔ DNS bidirectional sync |
 
@@ -108,6 +108,31 @@ graph TB
 | pfSense | `stacks/pfsense/` | VM config only (Unbound config is managed out-of-band via pfSense web UI / direct config.xml edits; see `docs/runbooks/pfsense-unbound.md`) |
 
 ## DNS Resolution Paths
+
+### Zone serial — `viktorbarzin.lan` uses the date scheme, and must keep doing so
+
+pfSense does **not** forward `.lan` to Technitium. Unbound holds its own AXFR
+copy (`auth-zone`, master `10.0.20.201`, `for-downstream: yes`) and answers LAN
+clients from it, refreshing on the zone's SOA refresh (900s). It receives no
+NOTIFY: the zone's NS record is the Technitium **pod name**, so nothing points at
+pfSense.
+
+That makes the serial load-bearing. A refresh only transfers when the master's
+serial is **higher** than the cached one — a lower serial reads as "nothing new".
+On 2026-08-15 the primary's plain counter had regressed below the copy pfSense
+held (`64125` vs `684609`), so Unbound had not re-transferred since 2026-08-04
+and **every `.lan` record created after that date was invisible to every LAN
+client**, while queries straight to `10.0.20.201` were correct.
+
+Fixed by switching the zone to Technitium's **date-based serial scheme**
+(`useSerialDateScheme`), taking the serial to `2026081500`. Keep it there: a plain
+counter can regress if the zone is ever recreated, and the failure is silent.
+
+**Symptom to recognise:** an old `.lan` name resolves everywhere, a newly added
+one resolves only at `10.0.20.201` and NXDOMAINs elsewhere with a fresh negative
+TTL each time — which looks like negative caching and is not. Compare
+`dig +short @10.0.20.201 viktorbarzin.lan SOA` with the serial pfSense returns;
+a lower number upstream is the signature.
 
 ### K8s Pod → Internal Domain (.viktorbarzin.lan)
 
