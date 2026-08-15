@@ -198,6 +198,10 @@ resource "kubernetes_deployment" "android-emulator" {
       # the wake gate + idle sleeper own replicas (scale-to-zero on demand);
       # an apply must not resurrect or kill the emulator.
       spec[0].replicas,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].labels["tier"],                      # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
 }

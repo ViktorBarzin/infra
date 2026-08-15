@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "vaultwarden" {
     name = "vaultwarden"
     labels = {
       "istio-injection" : "disabled"
-      tier = var.tier
+      tier               = var.tier
       "keel.sh/enrolled" = "true"
     }
   }
@@ -93,9 +93,8 @@ resource "kubernetes_deployment" "vaultwarden" {
       }
       spec {
         container {
-          image             = "vaultwarden/server:latest"
-          image_pull_policy = "Always"
-          name              = "vaultwarden"
+          image = "vaultwarden/server:latest"
+          name  = "vaultwarden"
 
           resources {
             requests = {
@@ -188,12 +187,12 @@ resource "kubernetes_deployment" "vaultwarden" {
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       # keel.sh/policy is TF-managed now (set to "minor" above) — deliberately NOT ignored.
       metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],         # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/match-tag"],             # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["kubernetes.io/change-cause"],    # Keel rewrites this on every rollout
+      metadata[0].annotations["keel.sh/match-tag"],                       # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["kubernetes.io/change-cause"],              # Keel rewrites this on every rollout
     ]
   }
 }
