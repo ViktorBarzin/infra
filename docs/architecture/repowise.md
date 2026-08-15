@@ -234,6 +234,25 @@ across 20 hours. Request is 2560Mi (the previous 768Mi misinformed the scheduler
 badly) and the limit 5Gi. If it ever climbs past 5Gi rather than plateauing,
 that would be a genuine leak and a different problem.
 
+**Before changing any memory number here, read the namespace ceilings:**
+
+```bash
+kubectl -n repowise get limitrange,resourcequota -o yaml
+```
+
+Two of them bind, and breaching either stops the pod being **created** (the
+ReplicaSet reports `FailedCreate`, replicas go to zero, the service is down) —
+it does not degrade gracefully. Both were hit while fixing this OOM:
+
+- `tier-defaults` LimitRange — max **4Gi per container**. A 5Gi limit is refused.
+- `tier-quota` ResourceQuota — **3Gi `requests.memory` for the whole namespace**.
+  All four containers must fit: 2048 + 256 + 192 + 128 = 2624Mi.
+
+That is why the API requests 2Gi despite holding ~2.9 GiB — honest sizing does
+not fit the quota, so the limit is what protects against the OOM. Raising either
+ceiling is a tier change (`stacks/kyverno` resource-governance), not an edit in
+this stack.
+
 **Detection caveat:** `container_oom_events_total` stayed at **0** for that kill,
 so the cadvisor-based `ContainerOOMKilled` alert never fired. The Loki-based
 `KernelOOMKiller` alert is what caught it. Do not treat a quiet
