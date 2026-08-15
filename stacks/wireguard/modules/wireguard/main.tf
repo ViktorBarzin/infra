@@ -294,13 +294,9 @@ resource "kubernetes_deployment" "wireguard" {
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-    ]
-  }
-  lifecycle {
-    ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      spec[0].template[0].spec[0].container[1].image, # KEEL_IGNORE_IMAGE
-      spec[0].template[0].spec[0].container[2].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[1].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[2].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 }
