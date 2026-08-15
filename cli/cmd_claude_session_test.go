@@ -167,3 +167,26 @@ func TestFindTranscriptAcrossProjects(t *testing.T) {
 		t.Error("a missing session must be reported, not silently empty")
 	}
 }
+
+// The manifest DIRECTORY is world-readable but the .tsv files inside are
+// root-only, so an unprivileged run reads zero rows and would otherwise report
+// "no session named X" -- the name does not exist, when in truth it could not
+// look. Same silent-omission class as unreadable home directories.
+func TestResolveNameDistinguishesUnreadableFromAbsent(t *testing.T) {
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "wizard.history.tsv")
+	if err := os.WriteFile(secret, []byte("Hunter\t/home/w\tc5301e63-7623-4a5b-9e11-2b7d9a6f1a22\t1\t2\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — mode 0000 is still readable, so this cannot be exercised")
+	}
+
+	_, err := resolveSessionName(dir, "Hunter")
+	if err == nil {
+		t.Fatal("expected an error when the manifests cannot be read")
+	}
+	if !strings.Contains(err.Error(), "sudo") {
+		t.Errorf("the error should say the manifests were unreadable and suggest sudo, got: %v", err)
+	}
+}
