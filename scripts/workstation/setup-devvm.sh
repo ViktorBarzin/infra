@@ -102,7 +102,21 @@ cat > /etc/profile.d/26-claude-otel-attrs.sh <<'PROFILE_EOF'
 # Sourced by bash login (/etc/profile) and by zsh via /etc/zsh/zshenv (Debian's
 # zsh zprofile does NOT source /etc/profile). Claude Code reads this only when
 # managed-settings.json does not set it — see infra ADR-0025.
-export OTEL_RESOURCE_ATTRIBUTES="host.name=devvm,deployment.environment=homelab,os.user=$(id -un)"
+# tmux.session is the HUMAN name of the session this shell runs in (the lobby
+# names them Hunter, Yale, HA_status, ...). Claude Code knows the name -- 
+# start-claude.sh passes --name -- but does NOT export it as a telemetry
+# attribute, so it is added here or it is not available at all.
+#
+# Read once, at shell start: OTEL_RESOURCE_ATTRIBUTES is consumed by Claude at
+# launch, so a later `tmux rename-session` will not reach an already-running
+# session. Absent outside tmux (headless, cron, plain t3), where there is no
+# session to name.
+_tl_sess=""
+if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+  _tl_sess="$(tmux display-message -p '#S' 2>/dev/null | tr -d ',=' )"
+fi
+export OTEL_RESOURCE_ATTRIBUTES="host.name=devvm,deployment.environment=homelab,os.user=$(id -un)${_tl_sess:+,tmux.session=$_tl_sess}"
+unset _tl_sess
 PROFILE_EOF
 chmod 0644 /etc/profile.d/26-claude-otel-attrs.sh
 if ! grep -q '26-claude-otel-attrs.sh' /etc/zsh/zshenv 2>/dev/null; then

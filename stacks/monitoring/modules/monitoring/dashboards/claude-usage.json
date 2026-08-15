@@ -43,7 +43,7 @@
           "text": ".+",
           "value": ".+"
         },
-        "description": "Session id regex. '.+' is every session; click a row in Sessions to focus one."
+        "description": "Matches the tmux session NAME (Hunter, Yale) or the session id, as a regex. '.+' is everything; click a row in Sessions to focus one."
       }
     ]
   },
@@ -96,28 +96,95 @@
     {
       "type": "stat",
       "title": "Sessions",
-      "description": "Sessions started.",
+      "description": "Every session that sent a prompt in this range, by tmux name where it has one. Sessions started outside tmux (headless, cron, t3) show no name -- that is real, not missing data. Click a row to filter the prompts.",
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 10,
         "x": 6,
         "y": 1
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(increase(claude_code_session_count_total{os_user=~\"$user\"}[$__range]))",
+          "expr": "sum by (tmux_session, session_id, os_user) (count_over_time({service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | tmux_session =~ \"$session\" or session_id =~ \"$session\" [$__range]))",
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
           "instant": true
         }
-      ]
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "tmux_session": "Name",
+              "session_id": "Session id",
+              "os_user": "User",
+              "Value": "Prompts"
+            },
+            "indexByName": {
+              "tmux_session": 0,
+              "os_user": 1,
+              "Value": 2,
+              "session_id": 3
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Prompts",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "links": [
+            {
+              "title": "Show only this session's prompts",
+              "url": "d/claude-usage/claude-usage?var-session=${__data.fields.Name}&var-user=${user:queryparam}&from=${__from}&to=${__to}"
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Session id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show only this session's prompts (by id)",
+                    "url": "d/claude-usage/claude-usage?var-session=${__data.fields['Session id']}&var-user=${user:queryparam}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "type": "stat",
@@ -411,21 +478,21 @@
     {
       "type": "logs",
       "title": "Prompts",
-      "description": "Prompt text is recorded verbatim (ADR-0025). Anything pasted into a prompt is recorded with it, and this store has no per-user access control.",
+      "description": "The user's own words, newest first. Prompt text is recorded verbatim (ADR-0025). Filter by tmux session name or id with the Session variable, or click a row in Sessions.",
       "datasource": {
         "type": "loki",
         "uid": "P8E80F9AEF21F6940"
       },
       "gridPos": {
         "h": 10,
-        "w": 24,
-        "x": 0,
+        "w": 14,
+        "x": 10,
         "y": 31
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "{service_name=\"claude-code\"} | event_name = \"user_prompt\"",
+          "expr": "{service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | tmux_session =~ \"$session\" or session_id =~ \"$session\" | line_format \"{{.prompt}}\"",
           "datasource": {
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
@@ -449,14 +516,14 @@
     {
       "type": "table",
       "title": "Sessions",
-      "description": "Every session that sent a prompt in this range. Click a row to filter the prompts panel to it; set Session back to '.+' for all.",
+      "description": "Every session that sent a prompt in this range, by tmux name where it has one. Sessions started outside tmux (headless, cron, t3) show no name -- that is real, not missing data. Click a row to filter the prompts.",
       "datasource": {
         "type": "loki",
         "uid": "P8E80F9AEF21F6940"
       },
       "gridPos": {
         "h": 12,
-        "w": 8,
+        "w": 10,
         "x": 0,
         "y": 42
       },
@@ -469,7 +536,7 @@
           },
           "queryType": "instant",
           "instant": true,
-          "expr": "sum by (session_id, os_user) (count_over_time({service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | session_id =~ \"$session\" [$__range]))"
+          "expr": "sum by (tmux_session, session_id, os_user) (count_over_time({service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | tmux_session =~ \"$session\" or session_id =~ \"$session\" [$__range]))"
         }
       ],
       "transformations": [
@@ -480,9 +547,16 @@
               "Time": true
             },
             "renameByName": {
-              "session_id": "Session",
+              "tmux_session": "Name",
+              "session_id": "Session id",
               "os_user": "User",
               "Value": "Prompts"
+            },
+            "indexByName": {
+              "tmux_session": 0,
+              "os_user": 1,
+              "Value": 2,
+              "session_id": 3
             }
           }
         },
@@ -508,11 +582,33 @@
           "links": [
             {
               "title": "Show only this session's prompts",
-              "url": "d/claude-usage/claude-usage?var-session=${__data.fields.Session}&var-user=${user:queryparam}&from=${__from}&to=${__to}"
+              "url": "d/claude-usage/claude-usage?var-session=${__data.fields.Name}&var-user=${user:queryparam}&from=${__from}&to=${__to}"
             }
           ]
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Session id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show only this session's prompts (by id)",
+                    "url": "d/claude-usage/claude-usage?var-session=${__data.fields['Session id']}&var-user=${user:queryparam}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
@@ -524,15 +620,15 @@
     {
       "type": "logs",
       "title": "Prompts",
-      "description": "The user's own words, newest first. Prompt text is recorded verbatim (ADR-0025) \u2014 anything pasted into a prompt is here too. Narrow with the Session variable, or click a session in the table.",
+      "description": "The user's own words, newest first. Prompt text is recorded verbatim (ADR-0025). Filter by tmux session name or id with the Session variable, or click a row in Sessions.",
       "datasource": {
         "type": "loki",
         "uid": "P8E80F9AEF21F6940"
       },
       "gridPos": {
         "h": 12,
-        "w": 16,
-        "x": 8,
+        "w": 14,
+        "x": 10,
         "y": 42
       },
       "targets": [
@@ -542,7 +638,7 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "expr": "{service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | session_id =~ \"$session\" | line_format \"{{.prompt}}\""
+          "expr": "{service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | tmux_session =~ \"$session\" or session_id =~ \"$session\" | line_format \"{{.prompt}}\""
         }
       ],
       "options": {
