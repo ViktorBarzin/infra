@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 logging.basicConfig(
@@ -39,6 +40,10 @@ log = logging.getLogger("cross-repo")
 
 WORKSPACE = Path(os.environ.get("REPOWISE_WORKSPACE", "/workspace"))
 DATA_DIR = WORKSPACE / ".repowise-workspace"
+# When run as the startup gate, skip the rebuild if the artefacts are already
+# younger than this. Set MAX_AGE_HOURS=0 to always rebuild (what the hourly
+# reconciler pass does).
+MAX_AGE_HOURS = float(os.environ.get("CROSS_REPO_MAX_AGE_HOURS", "0"))
 
 
 def _summary() -> dict[str, int]:
@@ -62,6 +67,26 @@ def _summary() -> dict[str, int]:
     return out
 
 
+def _fresh_enough() -> bool:
+    """True when the artefacts are recent enough to serve as they are.
+
+    Used by the startup gate. The API blocks on this container, so rebuilding
+    every boot means minutes of downtime on an ordinary restart — and for
+    nothing, because the hourly reconciler pass has usually just rebuilt them.
+    A cold volume has no artefacts and always builds.
+    """
+    if MAX_AGE_HOURS <= 0:
+        return False
+    graph = DATA_DIR / "system_graph.json"
+    if not graph.is_file():
+        return False
+    age_h = (time.time() - graph.stat().st_mtime) / 3600
+    if age_h > MAX_AGE_HOURS:
+        return False
+    log.info("cross-repo artefacts are %.1fh old (limit %.1fh); serving as-is", age_h, MAX_AGE_HOURS)
+    return True
+
+
 async def main() -> int:
     from repowise.core.workspace.config import WorkspaceConfig
     from repowise.core.workspace.update import run_cross_repo_hooks
@@ -69,6 +94,9 @@ async def main() -> int:
     if not (WORKSPACE / ".repowise-workspace.yaml").is_file():
         log.error("no workspace at %s", WORKSPACE)
         return 1
+
+    if _fresh_enough():
+        return 0
 
     config = WorkspaceConfig.load(WORKSPACE)
     aliases = [r.alias for r in config.repos]
