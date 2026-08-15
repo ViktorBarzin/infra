@@ -99,6 +99,70 @@ which requires a factory reset with no accounts on the device — the opposite o
 the signed-in official path this runbook follows. One tap per release is the
 floor. This runbook remains the way a **wiped or new** device is brought up.
 
+### Reaching a Portal over adb — USB vs network
+
+Two different things, and only one of them survives a reboot.
+
+**USB adb** is the durable path. It is how a Portal is provisioned, and it comes
+back **by itself** after a device reboot — measured on the London Portal+ on
+2026-08-16, back ~60s after `adb reboot`, no intervention. (An older note claimed
+a Portal returns from a reboot enumerating as `0000:0000` with no adb function.
+That was the Sofia **Mini** before Meta's official-ADB rollout; it does not
+describe the Plus today, and has not been re-tested on the Mini.)
+
+**Network adb** (`adb tcpip 5555`) is convenient and temporary. It sets only the
+runtime `service.adb.tcp.port`; the persistent `persist.adb.tcp.port` cannot be
+written — `setprop` is refused for the shell user and neither Portal is rooted.
+**Every device reboot drops network adb**, and the only way back is a command
+issued over USB:
+
+```sh
+ssh viktorbarzin@mbp-london.viktorbarzin.lan \
+  '/Users/viktorbarzin/Library/Android/sdk/platform-tools/adb tcpip 5555'
+adb connect 192.168.9.198:5555
+```
+
+A watchdog to re-issue that automatically was considered and **deliberately not
+built** (Viktor, 2026-08-16): after a reboot someone is opening the frame app on
+the device anyway, and the one-liner above is available remotely whenever network
+access is actually wanted.
+
+Treat network adb as **unauthenticated shell access** while it is up — any key
+already trusted gets in, and the London Portal sits on the **guest** network
+(`192.168.9.x`). Turn it off with `adb usb`, or just reboot the device.
+
+### Which host holds which Portal's cable
+
+| Portal | Cabled to | Network adb without a human? |
+|---|---|---|
+| London Portal+ `192.168.9.198` | Viktor's Mac (`mbp-london.viktorbarzin.lan`) | yes, while the Mac is home, awake and cabled |
+| Sofia Portal Mini `192.168.1.104` | **nothing** — verified 2026-08-16 | no; needs Emo's laptop plugged in |
+| Sofia office Portal `192.168.1.149` | **nothing** | no |
+
+The Sofia entry is the surprising one. `rpi-sofia` carries a complete, working
+re-enable mechanism — `/usr/local/bin/portal-adb-tcpip.sh`,
+`portal-adb-tcpip.service`, `52-portal-adb-tcpip.rules`, `adb` installed — but
+`lsusb` shows only network adapters and `adb devices` sees nothing. The
+automation was built and the cable was never left in. Plugging the Mini into the
+Pi would make Sofia self-restoring, since the Pi is always on; that is the single
+highest-value change here if remote Sofia access ever matters again.
+
+### What survives a Portal reboot
+
+Verified on the London Portal+, 2026-08-16:
+
+| | Survives? |
+|---|---|
+| USB adb | yes (~60s) |
+| `appops` grants (`REQUEST_INSTALL_PACKAGES`, `SYSTEM_ALERT_WINDOW`) | yes |
+| `settings put global package_verifier_enable 0` | yes |
+| Installed app + its persisted frame URL | yes |
+| `service.adb.tcp.port` / network adb | **no** |
+| The frame app running | **no** — the Portal sits on its own launcher |
+
+So a reboot costs exactly two things: someone opens Immich Frame, and network adb
+needs re-issuing if wanted. Nothing needs reinstalling or re-granting.
+
 ### The USB host: `mbp-london.viktorbarzin.lan`
 
 The Mac is pinned to `192.168.8.168` by a static lease on the London Flint, and
