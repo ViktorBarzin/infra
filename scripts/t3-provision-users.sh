@@ -521,10 +521,10 @@ install_memory() {
 
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] memory: hooks + settings wire + claude_memory MCP removal -> $user"; return 0; fi
 
-  # (1) (re)install the 4 hook scripts, owned by the user (refreshed each reconcile so fixes land)
+  # (1) (re)install the hook scripts, owned by the user (refreshed each reconcile so fixes land)
   install -d -o "$user" -g "$user" -m 0755 "$hooks_dst"
   local h
-  for h in homelab-memory-recall.py auto-learn.py pre-compact-backup.sh post-compact-recovery.sh; do
+  for h in homelab-memory-recall.py auto-learn.py pre-compact-backup.sh post-compact-recovery.sh zsh-guard.py; do
     install -o "$user" -g "$user" -m 0755 "$src/$h" "$hooks_dst/$h"
   done
 
