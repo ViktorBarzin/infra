@@ -405,14 +405,26 @@ resource "kubernetes_deployment" "repowise" {
             # top of that. The old 768Mi request was the real hazard — it told
             # the scheduler this pod needed a quarter of what it actually holds.
             #
-            # Burstable (request < limit) per the tier-4-aux convention.
-            # Re-measure with krr before trimming.
+            # TWO namespace-level ceilings bound these numbers, and exceeding
+            # either stops the pod being CREATED at all (FailedCreate, no
+            # replicas) rather than degrading it — both learned the hard way
+            # while fixing this OOM:
+            #   * tier-defaults LimitRange: max 4Gi per container.
+            #   * tier-quota ResourceQuota: 3Gi requests.memory for the WHOLE
+            #     namespace, so all four containers plus this one must fit under
+            #     it. Current sum: 2048 + 256 + 192 + 128 = 2624Mi.
+            # Raising either is a tier change, not an edit here.
+            #
+            # So the request is 2Gi rather than the ~2.9 GiB the process really
+            # holds — honest sizing does not fit the quota. The limit is what
+            # actually prevents the OOM; the request is as close to truth as the
+            # quota allows. Re-measure with krr before trimming.
             requests = {
-              memory = "2560Mi"
+              memory = "2Gi"
               cpu    = "50m"
             }
             limits = {
-              memory = "5Gi"
+              memory = "4Gi"
             }
           }
         }
