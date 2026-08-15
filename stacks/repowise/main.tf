@@ -143,8 +143,9 @@ resource "kubernetes_config_map" "scripts" {
     namespace = kubernetes_namespace.repowise.metadata[0].name
   }
   data = {
-    "reconcile.py" = file("${path.module}/files/reconcile.py")
-    "mcp_serve.py" = file("${path.module}/files/mcp_serve.py")
+    "reconcile.py"  = file("${path.module}/files/reconcile.py")
+    "mcp_serve.py"  = file("${path.module}/files/mcp_serve.py")
+    "cross_repo.py" = file("${path.module}/files/cross_repo.py")
   }
 }
 
@@ -229,6 +230,49 @@ resource "kubernetes_deployment" "repowise" {
         # Keel also needs this to poll the tag list.
         image_pull_secrets {
           name = "ghcr-credentials"
+        }
+
+        # Build the workspace-level layer (co-changes, contracts, system graph,
+        # conformance) BEFORE the API starts. The API loads those artefacts into
+        # app.state once, during startup, and offers no way to reload them — so
+        # building them here is what makes the System Map, Contracts and
+        # Co-Changes views show anything at all. The reconciler rebuilds them on
+        # disk hourly; the served copy refreshes on the next restart.
+        # Takes about a minute over 42 repos and re-indexes nothing.
+        init_container {
+          name        = "cross-repo"
+          image       = local.image
+          working_dir = local.workspace
+          command     = ["python3", "/opt/repowise/cross_repo.py"]
+
+          env {
+            name  = "REPOWISE_WORKSPACE"
+            value = local.workspace
+          }
+          env {
+            name  = "REPOWISE_EMBEDDER"
+            value = "mock"
+          }
+
+          volume_mount {
+            name       = "workspace"
+            mount_path = local.workspace
+          }
+          volume_mount {
+            name       = "scripts"
+            mount_path = "/opt/repowise"
+            read_only  = true
+          }
+
+          resources {
+            requests = {
+              memory = "512Mi"
+              cpu    = "50m"
+            }
+            limits = {
+              memory = "2Gi"
+            }
+          }
         }
 
         security_context {

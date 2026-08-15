@@ -54,6 +54,7 @@ TRIGGER_TIMEOUT = int(os.environ.get("REINDEX_TRIGGER_TIMEOUT", "120"))
 # A failed pass retries on this shorter delay rather than the full interval —
 # an hour is far too long to sit on a transient error.
 RETRY_DELAY = int(os.environ.get("SYNC_RETRY_SECONDS", "300"))
+CROSS_REPO_TIMEOUT = int(os.environ.get("CROSS_REPO_TIMEOUT", "1800"))
 KUMA_PUSH_URL = os.environ.get("KUMA_PUSH_URL", "")
 # Which repo the dashboard and single-repo MCP queries default to. `repowise
 # init --all` picks one on its own and picks the first alphabetically, which
@@ -359,6 +360,39 @@ def trigger_reindex() -> None:
         raise
 
 
+def build_cross_repo_layer() -> str:
+    """Rebuild the workspace-level layer: co-changes, contracts, system graph.
+
+    Separate from the per-repo reindex the API runs, and not reachable from it —
+    those hooks only live on the CLI's workspace-update path. Without this the
+    System Map, Contracts and Co-Changes views stay empty however well each
+    individual repo is indexed.
+
+    Note the refresh semantics: the API reads these artefacts into memory once at
+    startup and cannot reload them, so rebuilding here keeps the files current
+    for the next restart (and for the initContainer that runs the same script).
+    Failure is not fatal — a stale cross-repo layer beside a healthy per-repo
+    index is worth reporting, not worth failing a pass over.
+    """
+    try:
+        proc = run(
+            ["python3", "/opt/repowise/cross_repo.py"],
+            cwd=WORKSPACE,
+            timeout=CROSS_REPO_TIMEOUT,
+            check=False,
+        )
+        if proc.returncode != 0:
+            log.warning("cross-repo build exited %s", proc.returncode)
+            return "cross-repo failed"
+        for line in reversed((proc.stdout or "").splitlines()):
+            if "cross-repo layer built" in line:
+                return line.split("cross-repo layer built:", 1)[1].strip()
+        return "cross-repo rebuilt"
+    except (ReconcileError, subprocess.TimeoutExpired) as exc:
+        log.warning("cross-repo build did not finish: %s", exc)
+        return "cross-repo timed out"
+
+
 def heartbeat(ok: bool, message: str) -> None:
     """Tell Uptime Kuma the pass finished. Silence is what raises the alarm."""
     if not KUMA_PUSH_URL:
@@ -441,9 +475,12 @@ def reconcile() -> str:
         if not (WORKSPACE / name / ".repowise" / "wiki.db").exists()
     ]
 
+    cross = build_cross_repo_layer()
+
     status = f"{len(remote)} repos, {moved} updated, {len(fresh)} added"
     if unindexed:
         status += f", {len(unindexed)} awaiting first index"
+    status += f"; {cross}"
     if failed:
         raise ReconcileError(f"{status}; failed: {', '.join(failed)}")
     return status
