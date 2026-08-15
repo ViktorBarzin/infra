@@ -114,6 +114,44 @@ resource "random_string" "secret" {
   override_special = "/@£$"
 }
 
+# Page archives (PDF / screenshot / readable JSON / single-file HTML).
+# Linkwarden keeps only the *path* to each artifact in Postgres and writes the
+# bytes to STORAGE_FOLDER, so without a volume every archive lived on the
+# container's ephemeral overlay and was lost on each pod restart while the app
+# kept re-generating them.
+# Encrypted class: saved bookmarks + their full page contents are personal
+# browsing history (sensitive data -> proxmox-lvm-encrypted per the storage
+# decision rule in .claude/CLAUDE.md).
+# NO backup CronJob deliberately: archives are DERIVED data, regenerable from
+# the URLs in Postgres (which the nightly per-db pg_dump already covers). Same
+# rationale as the regenerable stores excluded from nfs-mirror.
+resource "kubernetes_persistent_volume_claim" "archives" {
+  wait_until_bound = false
+  metadata {
+    name      = "linkwarden-archives-encrypted"
+    namespace = kubernetes_namespace.linkwarden.metadata[0].name
+    annotations = {
+      "resize.topolvm.io/threshold"     = "10%"
+      "resize.topolvm.io/increase"      = "100%"
+      "resize.topolvm.io/storage_limit" = "10Gi"
+    }
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "proxmox-lvm-encrypted"
+    resources {
+      requests = {
+        storage = "2Gi"
+      }
+    }
+  }
+  lifecycle {
+    # The autoresizer expands requests.storage up to storage_limit and PVCs
+    # can't shrink; without this every apply tries to revert the size.
+    ignore_changes = [spec[0].resources[0].requests]
+  }
+}
+
 resource "kubernetes_deployment" "linkwarden" {
   metadata {
     name      = "linkwarden"
@@ -128,6 +166,11 @@ resource "kubernetes_deployment" "linkwarden" {
   }
   spec {
     replicas = 1
+    strategy {
+      # RWO archive volume — a rolling update would deadlock on the new pod
+      # waiting for a volume the old pod still holds.
+      type = "Recreate"
+    }
     selector {
       match_labels = {
         app = "linkwarden"
@@ -165,6 +208,14 @@ resource "kubernetes_deployment" "linkwarden" {
             name  = "NEXT_PUBLIC_AUTHENTIK_ENABLED"
             value = "true"
           }
+          # Absolute path so archives land on the PVC below rather than the
+          # app's working directory. Linkwarden resolves this with path.join(),
+          # which preserves an absolute value; its default is the RELATIVE
+          # "data", i.e. /data/data inside the image's source tree.
+          env {
+            name  = "STORAGE_FOLDER"
+            value = "/storage"
+          }
           env {
             name  = "NEXTAUTH_SECRET"
             value = random_string.secret.result
@@ -195,6 +246,10 @@ resource "kubernetes_deployment" "linkwarden" {
               }
             }
           }
+          volume_mount {
+            name       = "archives"
+            mount_path = "/storage"
+          }
           resources {
             requests = {
               cpu    = "50m"
@@ -203,6 +258,12 @@ resource "kubernetes_deployment" "linkwarden" {
             limits = {
               memory = "1280Mi"
             }
+          }
+        }
+        volume {
+          name = "archives"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.archives.metadata[0].name
           }
         }
       }
