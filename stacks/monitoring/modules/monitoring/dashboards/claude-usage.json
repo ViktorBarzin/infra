@@ -33,6 +33,17 @@
             "$__all"
           ]
         }
+      },
+      {
+        "name": "session",
+        "label": "Session",
+        "type": "textbox",
+        "query": ".+",
+        "current": {
+          "text": ".+",
+          "value": ".+"
+        },
+        "description": "Session id regex. '.+' is every session; click a row in Sessions to focus one."
       }
     ]
   },
@@ -421,6 +432,128 @@
           }
         }
       ]
+    },
+    {
+      "type": "row",
+      "title": "What people actually asked",
+      "collapsed": false,
+      "description": "The raw user input. Everything by default; pick a session in the table to read just that conversation.",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Sessions",
+      "description": "Every session that sent a prompt in this range. Click a row to filter the prompts panel to it; set Session back to '.+' for all.",
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 8,
+        "x": 0,
+        "y": 42
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "queryType": "instant",
+          "instant": true,
+          "expr": "sum by (session_id, os_user) (count_over_time({service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | session_id =~ \"$session\" [$__range]))"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "session_id": "Session",
+              "os_user": "User",
+              "Value": "Prompts"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Prompts",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "filterable": true
+          },
+          "links": [
+            {
+              "title": "Show only this session's prompts",
+              "url": "d/claude-usage/claude-usage?var-session=${__data.fields.Session}&var-user=${user:queryparam}&from=${__from}&to=${__to}"
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Prompts",
+      "description": "The user's own words, newest first. Prompt text is recorded verbatim (ADR-0025) \u2014 anything pasted into a prompt is here too. Narrow with the Session variable, or click a session in the table.",
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 16,
+        "x": 8,
+        "y": 42
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "expr": "{service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | session_id =~ \"$session\" | line_format \"{{.prompt}}\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
     }
   ]
 }
