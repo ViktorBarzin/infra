@@ -66,14 +66,30 @@ downloads a newer build, verifies its SHA-256 and offers it to the package
 installer; Android then asks whoever is at the device to confirm. See that repo's
 `docs/adr/0006-in-app-ota-updates.md`.
 
-Two things that keeps depending on:
+Three things that keeps depending on, all set by `provision-portal.sh`:
 
-- **The install app-op**, granted by `provision-portal.sh` and settable at any
-  time with no Portal UI:
+- **The install app-op**, settable at any time with no Portal UI:
   `adb shell appops set me.viktorbarzin.portalframe REQUEST_INSTALL_PACKAGES allow`.
   A device missing it downloads updates and then silently never prompts.
+- **Package verification off**: `adb shell settings put global package_verifier_enable 0`.
+  The Portal ships no Play/GMS, so nothing on the device can answer a
+  verification request — the installer aborts with
+  `INSTALL_FAILED_VERIFICATION_FAILURE` after the download, the checksum and the
+  user tapping Install. Sideloads hide this (`verifier_verify_adb_installs` is
+  already `0`); only app-initiated installs hit it. Verified on the London
+  Portal+ 2026-08-15: with it on, every self-update failed; with it off, 0.1.8
+  updated itself to 0.1.9.
 - **The signing key**, Vault `secret/portal-immich-frame` (`debug_keystore_b64`).
   A build signed with anything else is refused as an update.
+
+**Known gap — the frame does not come back by itself after an update.** Android
+stops the app to replace it, and nothing restarts it, so the Portal lands on its
+home screen and stays there until someone opens the frame again (observed
+2026-08-15). Until that is fixed, treat an update as needing a follow-up launch:
+
+```sh
+adb shell am start -n me.viktorbarzin.portalframe/.FrameActivity
+```
 
 Silent, no-touch updating is not available: it needs device-owner provisioning,
 which requires a factory reset with no accounts on the device — the opposite of
