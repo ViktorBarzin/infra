@@ -31,6 +31,8 @@ func routingTable() [][2]string {
 		{"remember something across sessions", "homelab memory store \"...\""},
 		{"read a secret", "homelab vault get / vault kv get <path>"},
 		{"query logs or metrics", "homelab logs query / metrics query"},
+		{"see how Claude is used here", "homelab claude-usage [--since 30d]"},
+		{"read one Claude conversation", "homelab claude-usage --session <id|name>"},
 		{"drive a browser through an anti-bot wall", "homelab browser run <script.js>"},
 		{"see what else we host", "homelab services [--search X]"},
 	}
