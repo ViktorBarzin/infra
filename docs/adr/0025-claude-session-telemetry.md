@@ -202,6 +202,53 @@ recovered, since Loki refuses anything older than a week.
 6. `homelab claude-usage` over the full corpus, with the report shape settled
    against what phase 1 shows is actually worth reporting.
 
+## Exploring it
+
+Every query below was run against live Loki before being written down.
+
+> [!IMPORTANT]
+> **`|=` does not search prompts.** It is a line filter, and the log line body
+> is only the event name (`claude_code.user_prompt`). The prompt, response,
+> session id and every other field are *structured metadata*, so they need a
+> label filter: `| prompt =~ ".*thing.*"`, not `|= "thing"`. The `|=` form
+> returns nothing and looks like an absence of data rather than the wrong
+> operator.
+
+```logql
+# everything, newest first
+{service_name="claude-code"}
+
+# just the prompts
+{service_name="claude-code"} | event_name = "user_prompt"
+
+# one person
+{service_name="claude-code"} | os_user = "emo"
+
+# search prompt TEXT (label filter, not |=)
+{service_name="claude-code"} | event_name = "user_prompt" | prompt =~ ".*deploy.*"
+
+# replay one session end to end
+{service_name="claude-code"} | session_id = "<uuid>"
+
+# what Claude answered
+{service_name="claude-code"} | event_name = "assistant_response"
+
+# errors talking to the API
+{service_name="claude-code"} | event_name = "api_error"
+
+# event mix over time
+sum by (event_name) (count_over_time({service_name="claude-code"}[$__interval]))
+
+# prompts per person
+sum by (os_user) (count_over_time(
+  {service_name="claude-code"} | event_name = "user_prompt" [$__interval]))
+```
+
+Metrics live in Prometheus rather than Loki, and are queried normally:
+`claude_code_token_usage_tokens_total`, `claude_code_cost_usage_USD_total`,
+`claude_code_session_count_total`, `claude_code_active_time_seconds_total` —
+each labelled `os_user`, and tokens additionally by `type` and `model`.
+
 ## Two things only a live session revealed
 
 Both were found by running a real Claude session as `emo` after the
