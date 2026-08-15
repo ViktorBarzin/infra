@@ -119,6 +119,29 @@ uses search rather than `/api/v1/users/{owner}/repos` — the latter demands
 
 ## Troubleshooting
 
+**System Map / Contracts / Co-Changes are empty.** The workspace-level layer is
+built by a different job from per-repo indexing, and the API cannot build it at
+all. `run_cross_repo_hooks` — co-changes across repos, HTTP/gRPC/socket/topic
+contracts, the system graph, breaking-change detection, conformance — is only
+reached from the CLI's workspace-update path. We run it via
+`files/cross_repo.py`, in an initContainer before the API starts and again on
+every reconciler pass. Measured over 42 repos: 1,055 contracts, 79 matched
+links, a 60-node/68-edge system graph, in about a minute; no repo is re-indexed.
+
+**Refresh semantics worth knowing:** the API reads those artefacts into
+`app.state` once at startup and offers no reload. So rebuilding them updates the
+files, but the *served* System Map only changes when the API restarts. That is
+why the build runs in an initContainer. Making it live would need an upstream
+reload endpoint or restarting the API container when the artefacts change.
+
+**A repo's Documentation tab is empty.** Indexing and wiki rendering are separate
+phases; the API's incremental sync does the first and not the second, so a repo
+it picked up (typically one an interrupted bootstrap never reached) ends up with
+a full graph and no pages. Only a **full resync** re-renders them — an
+incremental sync will not backfill. The reconciler now detects this (symbols
+present, pages zero) and queues up to five repairs a pass. Seen on 10 of 42 repos
+after the first rollout; trading went from 0 to 323 pages.
+
 **Architecture (or any graph view) is empty.** Check which repo the dashboard is
 on. `repowise init --all` picks the workspace default itself and picks the first
 alphabetically, which here is `Website` — 338 files of png/md/html/svg with no
