@@ -590,10 +590,13 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9099"
           }
-          env {
-            name  = "TRADING_PAPER_TRADING"
-            value = "true"
-          }
+          # TRADING_PAPER_TRADING is deliberately NOT redeclared here: the
+          # dynamic block above already emits it from local.common_env (same
+          # value, "true"), so a static copy made Terraform render 26 env
+          # entries against the 25 that are live. An env list is positional,
+          # so that one extra entry shifted the five below it by one and read
+          # as four renames plus an "added" TRADING_SLACK_CHANNEL — drift no
+          # apply could settle, because the duplicate was in the config.
           # Kevin v2 risk caps (per services/trade_executor/config.py)
           env {
             name  = "TRADING_KEVIN_DAILY_TRADE_CAP"
