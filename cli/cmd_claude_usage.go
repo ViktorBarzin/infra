@@ -385,16 +385,18 @@ func discoverUsers(filter string) (roots []userRoot, unreadable []string) {
 func claudeUsageCommands() []Command {
 	return []Command{
 		{Path: []string{"claude-usage"}, Tier: TierRead,
-			Summary: "how Claude is used on this box, over the full transcript history: claude-usage [--since 30d] [--user wizard|emo|all] [--json]",
+			Summary: "how Claude is used on this box, over the full transcript history: claude-usage [--since 30d] [--user wizard|emo|all] [--json] | --session <id|name> [--tools] [--meta]",
 			Run:     claudeUsageRun},
 	}
 }
 
 func claudeUsageRun(args []string) error {
 	var (
-		since  time.Time
-		user   = "all"
-		asJSON bool
+		since   time.Time
+		user    = "all"
+		asJSON  bool
+		session string
+		topts   transcriptOpts
 	)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -406,6 +408,18 @@ func claudeUsageRun(args []string) error {
 			user = args[i]
 		case "--json":
 			asJSON = true
+		case "--meta":
+			// Harness-injected user records (skill bodies, hook context).
+			topts.Meta = true
+		case "--tools":
+			// Tool payloads are the bulk of a session, so they are opt-in.
+			topts.Tools = true
+		case "--session":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--session needs a session id or a tmux session name")
+			}
+			i++
+			session = args[i]
 		case "--since":
 			if i+1 >= len(args) {
 				return fmt.Errorf("--since needs a value like 30d, 12h or 2026-01-01")
@@ -419,6 +433,13 @@ func claudeUsageRun(args []string) error {
 		default:
 			return fmt.Errorf("unknown argument %q", args[i])
 		}
+	}
+
+	// --session reads ONE conversation in full, which the aggregate report
+	// cannot show: Loki records only the SIZE of each tool payload, so the
+	// transcript is the sole complete record of what actually happened.
+	if session != "" {
+		return claudeSessionRun(session, topts)
 	}
 
 	roots, unreadable := discoverUsers(user)
