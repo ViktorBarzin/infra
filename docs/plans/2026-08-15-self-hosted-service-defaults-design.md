@@ -1,6 +1,6 @@
 # Self-hosted service defaults — making agents reach for what we already run
 
-**Status:** built and deployed (2026-08-15)
+**Status:** built, deployed, and tested against fresh agents (2026-08-15)
 **Date:** 2026-08-15
 **Owner:** Viktor
 **Scope:** `infra/cli` (two new verbs + a catalog verb), ~22 stack annotations, one
@@ -65,15 +65,38 @@ for Sablier (both are WebSocket-core) and hand-parked at `replicas = 0` with no
 wake mechanism, so they are currently unreachable. Low use led to parking, and
 for these two the parking removed the option entirely.
 
-### What we don't know yet
+### The rule strength question, answered the same day
 
-The rule this design ships is a plain principle without worked examples (see
-"Decisions"). Whether that is enough to change agent behaviour is genuinely
-open — the evidence above associates adoption with the presence of a verb, but
-every verb in that table also arrived alongside a rule naming its trigger, so the
-two are not separated. The verbs will exist and be sound regardless; the rule
-strength is the uncertain part, and `homelab usage top` will show within about
-30 days whether `paste` and `share` get called.
+This section originally recorded rule strength as the open question, to be
+settled by ~30 days of `homelab usage top`. Five blind subagents settled it in
+an afternoon instead.
+
+Four of five routed correctly with no prompting: `homelab share` for a file
+handover, Shlink for a URL to shorten (found through the catalog alone — there
+is no verb for it), pages.viktorbarzin.me for something to read on a phone, and
+a plain `tail` for a trivial read rather than over-firing. The fifth was given
+the case this design was built around — get a 180-line deploy log to someone off
+the machine — and published to an external artifact host, never running
+`homelab services` and never considering `homelab paste`.
+
+Its reasoning was sound throughout; it even ruled out the pages site correctly,
+since execution logs are excluded there. It simply had no reason to look
+further. **The competition was never a public pastebin reached by `curl` — it is
+a well-documented built-in tool**, described in detail in the agent's own
+prompt, and a one-line soft principle elsewhere does not outrank that. The
+routing table compounds this: it lives inside `homelab services`, so it only
+reaches an agent that already thought to look.
+
+Two fixes followed. The preference moved from Viktor's private
+`homelab-rules.md` — which only wizard loads, so non-admins had never seen it —
+into the org-wide `claudeMd`, and gained a clause naming the moment it applies:
+*check it before reaching for an external tool or publishing outside the
+homelab*. Re-running the identical failing prompt against a fresh subagent then
+produced `homelab paste`, with the agent quoting the new clause as its reason.
+The resulting paste was verified decrypting all 180 lines in PrivateBin's own
+frontend.
+
+What remains genuinely open is whether this holds across cases nobody tested.
 
 ## Decisions
 
