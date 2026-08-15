@@ -272,10 +272,9 @@ resource "kubernetes_deployment" "fire_planner" {
         }
 
         init_container {
-          name              = "alembic-migrate"
-          image             = local.image
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "fire_planner", "migrate"]
+          name    = "alembic-migrate"
+          image   = local.image
+          command = ["python", "-m", "fire_planner", "migrate"]
 
           env_from {
             secret_ref {
@@ -1044,9 +1043,8 @@ resource "kubernetes_cron_job_v1" "examples_weekly_delta" {
               name = "ghcr-credentials"
             }
             container {
-              name              = "ingest"
-              image             = local.image
-              image_pull_policy = "IfNotPresent"
+              name  = "ingest"
+              image = local.image
               command = ["python", "-m", "fire_planner", "examples", "ingest",
               "--top=week", "--limit=200"]
 
