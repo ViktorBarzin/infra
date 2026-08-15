@@ -28,6 +28,9 @@ func buildRegistry() []Command {
 	reg = append(reg, messageCommands()...)
 	reg = append(reg, vaultCommands()...)
 	reg = append(reg, inviteCommands()...)
+	reg = append(reg, servicesCommands()...)
+	reg = append(reg, shareCommands()...)
+	reg = append(reg, pasteCommands()...)
 	return reg
 }
 
