@@ -1,6 +1,6 @@
 # Self-hosted service defaults — making agents reach for what we already run
 
-**Status:** approved, not yet built
+**Status:** built and deployed (2026-08-15)
 **Date:** 2026-08-15
 **Owner:** Viktor
 **Scope:** `infra/cli` (two new verbs + a catalog verb), ~22 stack annotations, one
@@ -278,18 +278,49 @@ dispatcher, so both new verbs are counted automatically and appear in
 shows whether the pure-principle rule is carrying the behaviour, and tightening
 the rule to named triggers later is a one-line edit.
 
-## Build order
+## As built (2026-08-15)
 
-1. `homelab services` — live ingress read, routing table, `--search`. Smallest and
-   independently useful.
-2. The 28 descriptions + the lint, so the catalog is complete before agents read it.
-3. `homelab share` — generalise `viz-publish.sh` into the CLI; the credential path
-   is already provisioned and proven for both users.
-4. `homelab paste` — the crypto and the Sablier wake-poll; the largest piece.
-5. The rules line, including the NATS correction.
+All five steps landed the same day.
 
-Each step is independently landable. Steps 3 and 4 both need the gitleaks guard,
-which is shared between them.
+1. **`homelab services`** — live ingress read, routing table, `--search`. Returns
+   138 services.
+2. **28 descriptions + the lint** — every catalog row now carries one (verified
+   live: 138 enabled, 0 blank). `scripts/check-ingress-descriptions.py` runs from
+   `scripts/tg` per stack, so the gap cannot reopen. Four extra descriptions were
+   added in `servarr`, which had the same gap and would otherwise have had an
+   unrelated apply blocked by the new check.
+3. **`homelab share`** — Nextcloud upload plus an expiring public link.
+4. **`homelab paste`** — PrivateBin, with the cryptography done locally.
+5. **Rules line + the NATS removal.**
+
+Shipped as CLI `v0.17.0`. The hourly provisioning run rebuilds
+`/usr/local/bin/homelab` when `cli/VERSION` moves, so the verbs reach everyone's
+PATH on the next pass without further action.
+
+### What the live testing changed
+
+Two defects survived a green unit-test suite and were only caught by running
+against the real services:
+
+- **Sablier reads the default Go user agent as a monitoring probe.** The
+  middleware answers `Go-http-client` requests without waking the workload, so
+  the first paste could never reach a parked PrivateBin. The CLI now identifies
+  itself as `homelab-cli/<version>`. The `ingress_factory` comment had
+  anticipated this exact case ("enrolled apps have no legit Go-client consumers;
+  revisit if one appears").
+- **PrivateBin's `"zlib"` is raw DEFLATE.** The first implementation
+  round-tripped against itself perfectly while producing pastes the real
+  frontend could not read; PrivateBin reports the inflate failure as "waiting on
+  user to provide a password", which reads like a key problem rather than a
+  compression one. A round-trip test cannot catch a misunderstanding shared by
+  both halves of the round trip, so compatibility is now pinned by a golden
+  vector — a paste created through the actual web UI that our decryption path
+  has to reproduce.
+
+Both verbs were then verified end to end: a CLI-generated paste renders
+correctly in PrivateBin's own frontend (unicode included), a shared file
+downloads unauthenticated, and the gitleaks guard blocks a token-bearing file
+while `--force` overrides it.
 
 ## Related
 
