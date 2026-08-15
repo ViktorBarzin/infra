@@ -23,15 +23,11 @@
 set -euo pipefail
 
 # ---- config (all overridable via env) --------------------------------------
-# USB host on the Portal's LAN, pinned to .168 by a Flint reservation covering
-# both the Mac's hardware MAC and its (rotating) macOS private Wi-Fi address.
-# mbp-london.viktorbarzin.lan is the intended value and resolves correctly at
-# Technitium — but NOT through pfSense, whose local AXFR copy of viktorbarzin.lan
-# has been frozen since 2026-08-04: its cached SOA serial (684609) is higher than
-# the primary's (64125), so Unbound thinks it is current and never re-transfers.
-# Every .lan name created since then is invisible LAN-wide. Switch this to the
-# name once that is fixed.
-MAC="${MAC:-viktorbarzin@192.168.8.168}"
+# USB host on the Portal's LAN. By NAME: the Mac's macOS private Wi-Fi address
+# rotates, which is what left its previous DHCP reservation stale. It is pinned to
+# 192.168.8.168 by a Flint reservation covering both that address and the hardware
+# MAC, and mbp-london.viktorbarzin.lan resolves to it.
+MAC="${MAC:-viktorbarzin@mbp-london.viktorbarzin.lan}"
 RADB="${RADB:-/Users/viktorbarzin/Library/Android/sdk/platform-tools/adb}"  # adb path ON the Mac
 FRAME_REPO="${FRAME_REPO:-$HOME/code/portal-immich-frame}"
 FRAME_URL="${FRAME_URL:-}"              # empty => build-apk.sh default (London)
@@ -162,6 +158,12 @@ esac
 # verifier_verify_adb_installs is already 0 — only app-initiated session installs
 # go through the verifier.
 "$ADB" shell settings put global package_verifier_enable 0
+# ...and let the frame bring ITSELF back after an update. Android stops the app to
+# replace it and never restarts it, so without this the update turns the display
+# off until someone walks up to the Portal. The frame relaunches from a
+# MY_PACKAGE_REPLACED receiver, which is a background activity start and needs
+# this app-op on Android 10 (portal-immich-frame v0.1.10+).
+"$ADB" shell appops set "$FPKG" SYSTEM_ALERT_WINDOW allow
 "$ADB" shell settings put system screen_off_timeout 2147483647   # never sleep (LCD, always mains)
 "$ADB" shell settings put secure screensaver_enabled 0           # no dream/screensaver
 "$ADB" shell am start -n "$FPKG/$FACT"
