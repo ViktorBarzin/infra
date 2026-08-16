@@ -506,6 +506,8 @@ install_playwright() {
     # users who already have it enabled, so a bare skip leaves it running.
     run systemctl disable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
     run systemctl disable --now "playwright-snapshot-refresh@$user.timer" >/dev/null 2>&1 || true
+    run systemctl reset-failed "playwright-mcp@$user.service" >/dev/null 2>&1 || true
+    run systemctl reset-failed "playwright-snapshot-refresh@$user.service" >/dev/null 2>&1 || true
     log "playwright MCP DISABLED for $user (roster parked: true)"
     return 0
   fi
@@ -877,6 +879,10 @@ while IFS=$'\t' read -r os_user port; do
     # actually goes away. The .env, sticky port and state are left alone, so
     # unparking restores the same instance on the same port.
     run systemctl disable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
+    # `t3 serve` exits 130 (SIGINT) when stopped and the unit does not declare
+    # that as success, so a clean stop still lands the unit in `failed` and
+    # shows up red in `systemctl --failed`. Clear it; the stop was deliberate.
+    run systemctl reset-failed "t3-serve@$os_user.service" >/dev/null 2>&1 || true
     log "t3-serve DISABLED for $os_user (roster parked: true)"
     continue
   fi
