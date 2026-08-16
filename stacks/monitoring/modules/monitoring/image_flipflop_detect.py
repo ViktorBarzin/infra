@@ -33,6 +33,10 @@ from datetime import datetime, timedelta, timezone
 
 WINDOW_HOURS = 24
 MIN_REPLICASETS = 3
+# How recently the fight must have had a round to count as still running.
+# Sized against the CronJob's 6h period: a live fight always has a round
+# inside it, and a fixed one clears within one scan instead of a whole day.
+ACTIVE_WITHIN_HOURS = 6
 
 SA = "/var/run/secrets/kubernetes.io/serviceaccount"
 
@@ -42,7 +46,8 @@ def _parse(ts):
 
 
 def find_flipflops(replicasets, now, window_hours=WINDOW_HOURS,
-                   min_replicasets=MIN_REPLICASETS):
+                   min_replicasets=MIN_REPLICASETS,
+                   active_within_hours=ACTIVE_WITHIN_HOURS):
     """Return the deployments whose image set is being rewritten in a loop.
 
     `replicasets` is a list of {namespace, owner, creationTimestamp, images}.
@@ -70,28 +75,51 @@ def find_flipflops(replicasets, now, window_hours=WINDOW_HOURS,
         if len(entries) < min_replicasets:
             continue
         entries.sort()
-        sequence = [images for _, images in entries]
 
         # Collapse consecutive duplicates first: several ReplicaSets carrying
         # the same image (scale events, restarts) are one state, not churn.
-        collapsed = [sequence[0]]
-        for images in sequence[1:]:
-            if images != collapsed[-1]:
-                collapsed.append(images)
+        collapsed = [entries[0]]
+        for created, images in entries[1:]:
+            if images != collapsed[-1][1]:
+                collapsed.append((created, images))
+        states = [images for _, images in collapsed]
 
         # A forward-only history has every state exactly once. A repeat means
         # something put back a value that had already been replaced.
-        if len(collapsed) < 3 or len(collapsed) == len(set(collapsed)):
+        if len(collapsed) < 3 or len(states) == len(set(states)):
+            continue
+
+        # Is the fight still running? Take the most recent moment an
+        # already-seen image set came BACK — that is the last actual round of
+        # the fight. Once someone fixes it no further rounds happen, so this
+        # timestamp stops moving and the finding ages out within
+        # `active_within_hours` instead of lingering for the full 24h window.
+        # An alert that keeps firing for a day after the fix is how a new
+        # alert gets muted.
+        #
+        # Deliberately NOT "the newest ReplicaSet": an ordinary deploy to a
+        # brand-new image after the fight ended would revive the stale finding.
+        #
+        # Trade-off: a fight whose rounds are further apart than
+        # `active_within_hours` can need a second scan to surface. Every
+        # instance seen so far cycles far faster than that (Keel polls hourly;
+        # proxy-gw-1 managed six rounds in 30 minutes), and the alternative —
+        # reporting fights that are already over — is the worse failure.
+        last_round = None
+        for idx, (created, images) in enumerate(collapsed):
+            if images in states[:idx]:
+                last_round = created
+        if last_round is None or last_round <= _parse(now) - timedelta(hours=active_within_hours):
             continue
 
         # Report only the images that actually vary — a multi-container pod
         # can be fought over by one sidecar while the app image never moves.
-        varying = set().union(*collapsed) - set.intersection(*map(set, collapsed))
+        varying = set().union(*states) - set.intersection(*map(set, states))
         out.append({
             "namespace": namespace,
             "deployment": deployment,
             "replicaset_count": len(entries),
-            "distinct_states": len(set(collapsed)),
+            "distinct_states": len(set(states)),
             "images": sorted(varying),
         })
     return out
