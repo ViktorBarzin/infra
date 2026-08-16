@@ -47,7 +47,10 @@ Success writes no secrets to the journal. The user's private log records `OK` in
 ## Opting a user out
 
 A roster member who has a devvm account but does not use Claude here should carry
-`claude_auth: false` in `scripts/workstation/roster.yaml`. Without it the per-user
+`claude_auth: false` in `scripts/workstation/roster.yaml`. If they are not using
+the devvm **at all**, prefer `parked: true` instead — it covers this timer plus
+`t3-serve@`, `playwright-mcp@` and `playwright-snapshot-refresh@`, which otherwise
+keep running for an unused account (`parked` implies `claude_auth: false`). Without it the per-user
 timer validates a credential that was never created, fails every ~6h, and raises
 `WorkstationClaudeAuthInvalid` continuously with nothing anyone can act on —
 `ancamilea` did exactly that from 2026-08-10 until the flag was added on 2026-08-16.

@@ -71,6 +71,14 @@ class User:
     # every ~6h forever and raises WorkstationClaudeAuthInvalid with nothing
     # to fix. Reversible: flip back to true and the next reconcile re-enables.
     claude_auth: bool = True
+    # Parked: the account and everything on disk stay, but NONE of the per-user
+    # daemons run (t3-serve, playwright-mcp, playwright-snapshot-refresh,
+    # claude-auth-sync). For someone who has an account here but is not using
+    # the box — those daemons otherwise sit running indefinitely on a shared
+    # VM, and a credential timer among them alerts forever with nothing to fix.
+    # Deliberately reversible: flip to false and the next reconcile brings the
+    # whole set back, because nothing was removed.
+    parked: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,6 +96,7 @@ class Account:
     code_layout: str = "single"
     repos: tuple[str, ...] = ()
     claude_auth: bool = True
+    parked: bool = False
 
 
 @dataclass(frozen=True)
@@ -146,6 +155,11 @@ def _parse_user(os_user: str, spec: dict) -> User:
         raise RosterError(
             f"user {os_user!r}: claude_auth must be true or false, got {claude_auth!r}"
         )
+    parked = spec.get("parked", False)
+    if not isinstance(parked, bool):
+        raise RosterError(
+            f"user {os_user!r}: parked must be true or false, got {parked!r}"
+        )
     return User(
         os_user,
         spec["authentik_user"],
@@ -155,6 +169,7 @@ def _parse_user(os_user: str, spec: dict) -> User:
         code_layout,
         repos,
         claude_auth,
+        parked,
     )
 
 
@@ -274,7 +289,8 @@ def derive_desired_state(
             groups=TIER_GROUPS[u.tier],
             code_layout=u.code_layout,
             repos=u.repos,
-            claude_auth=u.claude_auth,
+            claude_auth=u.claude_auth and not u.parked,
+            parked=u.parked,
         )
         for u in roster.users.values()
     }
@@ -330,6 +346,7 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
                 "code_layout": a.code_layout,
                 "repos": list(a.repos),
                 "claude_auth": a.claude_auth,
+                "parked": a.parked,
             }
             for name, a in ds.accounts.items()
         },
