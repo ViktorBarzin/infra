@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # vzdump-vms — image-level backup of hand-managed Proxmox VMs (NOT in Terraform).
 # Deploy to PVE host at /usr/local/bin/vzdump-vms (strip the .sh).
-# Schedule: Daily 01:00 via systemd timer.
+# Schedule: WEEKLY, Sunday 01:00 via systemd timer (was daily until 2026-08-16).
 #
 # WHY: the hand-managed Linux VMs (devvm, …) have NO image backup. nfs-mirror /
 # daily-backup / offsite-sync cover cluster PVCs, NFS, pfSense and PVE config —
@@ -11,7 +11,19 @@
 # Copy 2). The monthly offsite-sync full pass (days 1-7) mirrors /mnt/backup —
 # including this dir — to Synology with --delete (Copy 3), bounded to local
 # retention. We deliberately do NOT append to the incremental manifest: it never
-# deletes, so daily multi-GB images would accumulate unbounded on Synology.
+# deletes, so multi-GB images would accumulate unbounded on Synology.
+#
+# WHY WEEKLY, NOT DAILY (2026-08-16): .vma has no incremental mode, so every run
+# re-reads the ENTIRE disk — measured 228 GiB in 75 minutes for devvm, ~245 GB,
+# about 40% of all reads on sdc, plus a 69.6 GB archive (~72% of sda's daily
+# writes). During that window sdc had no headroom, which is where its ~90 ms p99
+# read latency came from — and etcd, every VM and every Proxmox-CSI PVC share
+# that spindle. `devvm-home-backup` (daily 03:30) now carries the day-to-day
+# protection: rsync deltas only, 14 hardlinked generations, per-file restore.
+# This image is the BARE-METAL RESTORE FLOOR — it restores the whole VM in one
+# shot, which rsync cannot. Recovering a destroyed devvm = qmrestore the newest
+# image, then rsync the newest devvm-home generation over the top for the last
+# day's work. KEEP=3 therefore now spans 3 weeks rather than 3 days.
 #
 # RESTORE: pick a dump under /mnt/backup/vzdump, then on the PVE host:
 #   qmrestore /mnt/backup/vzdump/vzdump-qemu-<vmid>-<ts>.vma.zst <new-or-same-vmid>
