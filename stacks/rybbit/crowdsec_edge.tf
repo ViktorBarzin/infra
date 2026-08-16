@@ -229,16 +229,43 @@ resource "kubernetes_cron_job_v1" "crowdsec_cf_sync" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/2 * * * *"
-    starting_deadline_seconds     = 110
+    # Every 12h since 2026-08-16 (Viktor), was */2.
+    #
+    # The */2 cadence was not protecting anything — it was breaking the sync.
+    # Measured 2026-08-16: 363 of 363 runs in 24h returned HTTP 429 "you have
+    # been ratelimited" from the Lists API, and every one of them took the
+    # fail-safe path and left the list untouched. The Cloudflare edge list had
+    # therefore not been updated at all for at least a day, and no successful
+    # run appears anywhere in the 7 days Loki holds. This is the same class of
+    # failure as the 2026-06-27 outage noted below; dropping backoff_limit to 0
+    # reduced the burst but the base cadence was still far too aggressive.
+    #
+    # What it is actually syncing is tiny and slow-moving: "LAPI desired: 5
+    # block (ban-only, ip-scope)". Five addresses. The ~23.5k CAPI decisions are
+    # deliberately excluded (enforced at L3 by the firewall-bouncer instead), so
+    # 720 API writes a day were maintaining a five-entry list.
+    #
+    # Trade-off, stated plainly: a newly-detected attacker now reaches
+    # Cloudflare-PROXIED hosts for up to 12h before the edge blocks them, where
+    # the design intent was 2 minutes. That window is real, and it matters
+    # specifically for proxied hosts because the nftables bouncer cannot help
+    # there — it sees the cloudflared tunnel as the source, not the client.
+    # Direct hosts are unaffected and still drop banned IPs in-kernel within
+    # seconds. Set against that: the window today is effectively infinite,
+    # because the sync never succeeds. Two calls a day should sit far under any
+    # rate limit and actually restore the control.
+    schedule                  = "0 */12 * * *"
+    # Was 110s, sized for a 2-minute cadence. At 12h a missed start would mean
+    # half a day of staleness, so allow an hour for the controller to get to it.
+    starting_deadline_seconds = 3600
     job_template {
       metadata {}
       spec {
-        # 0 retries: the */2 schedule IS the retry cadence. backoff_limit=2 made
-        # k8s re-run a failing pod up to 3x within seconds, hammering Cloudflare's
-        # Lists-API write limit inside one 60s window and escalating the throttle
-        # until it stopped clearing (2026-06-27 outage). One attempt per cycle +
-        # the 429-soft-skip in lapi_kv_sync.py keeps the sync gentle/self-healing.
+        # 0 retries: backoff_limit=2 made k8s re-run a failing pod up to 3x
+        # within seconds, hammering Cloudflare's Lists-API write limit inside one
+        # 60s window and escalating the throttle until it stopped clearing
+        # (2026-06-27 outage). One attempt per cycle + the 429-soft-skip in
+        # lapi_kv_sync.py keeps the sync gentle/self-healing.
         backoff_limit              = 0
         ttl_seconds_after_finished = 3600
         template {

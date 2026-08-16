@@ -29,7 +29,7 @@ graph TB
     LAPI[CrowdSec LAPI<br/>3 replicas]
     Agent[CrowdSec Agent<br/>parses Traefik logs]
     FWB[cs-firewall-bouncer<br/>DaemonSet, every node]
-    CFsync[crowdsec-cf-sync<br/>CronJob, every 2 min]
+    CFsync[crowdsec-cf-sync<br/>CronJob, every 12h]
 
     Internet -->|proxied| CFedge
     Internet -->|direct| NFT
@@ -125,7 +125,13 @@ for the supersession history — there is no longer an inline Traefik bouncer.)
   would never see them. Enforcement is instead a single Cloudflare Rules List
   **`crowdsec_ban`** + a zone-scoped WAF custom rule `(ip.src in $crowdsec_ban)`
   → **block** action, which covers every proxied host in the zone.
-- Fed by the **`crowdsec-cf-sync` CronJob** (namespace `rybbit`, every 2 min,
+- Fed by the **`crowdsec-cf-sync` CronJob** (namespace `rybbit`, **every 12h since
+  2026-08-16 — was every 2 min, which Cloudflare rate-limited on 363 of 363 runs in
+  24h so the list stopped being updated at all; 720 API writes/day to maintain a
+  five-entry list is what tripped the limiter. The cost is that a newly-detected
+  attacker now reaches PROXIED hosts for up to 12h, since the nftables bouncer
+  sees the cloudflared tunnel rather than the client and cannot cover them;
+  direct hosts are unaffected and still drop in-kernel within seconds**,
   pure-stdlib Python in a ConfigMap). It pulls local **ban ip-scoped**
   decisions and pushes them into the CF list, but **EXCLUDES the ~31k CAPI
   community blocklist** — that set is far too large for a CF Rules List (the CF
