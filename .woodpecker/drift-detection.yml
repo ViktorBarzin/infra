@@ -1,5 +1,16 @@
 # Daily drift detection — runs terraform plan on all stacks and alerts on drift.
 # Triggered by Woodpecker cron schedule "drift-detection" (must be registered in Woodpecker UI/API).
+#
+# SCHEDULE: `0 4 * * *` (04:00 UTC). It was `@daily` until 2026-08-16, which
+# put it on 00:00 — the same minute as the `renew-tls-certificate` cron
+# (`@weekly`, Sunday 00:00). On renewal Sundays the two overlapped: the new
+# wildcard certificate reached the cluster ~10 minutes into this run while the
+# checkout still held the old one, so every stack planned afterwards reported
+# the same tls_secret as drift (see the confirmation pass below). 04:00 also
+# sits clear of the PVE backup chain (nfs-mirror 02:00, lvm-pvc-snapshot 03:00,
+# devvm-home-backup 03:30, daily-backup 05:00) and finishes well before the
+# 08:00 alert digest. The schedule lives in Woodpecker, not in this file —
+# `GET/PATCH /api/repos/1/cron/4` — so it is recorded here to stay findable.
 
 when:
   event: cron
@@ -142,13 +153,13 @@ steps:
           echo "$EXIT" > "$PLANS/$stack.exit"
           echo "$OUTPUT" | grep -E '(# .*(will|must) be |Plan: [0-9])' > "$PLANS/$stack.out" || true
 
+          # Metrics are NOT emitted here — see the "Emit metrics" block after
+          # the confirmation pass below. Emitting inside this loop meant a
+          # stack could not be reclassified afterwards without rewriting
+          # lines already appended to $METRICS_FILE.
           case $EXIT in
             0)
               echo "OK (no changes)"
-              # drift_stack_state=0 means clean; age-hours irrelevant so we
-              # still push 0 so per-stack gauges don't go stale.
-              printf 'drift_stack_state{stack="%s"} 0\n' "$stack" >> "$METRICS_FILE"
-              printf 'drift_stack_age_hours{stack="%s"} 0\n' "$stack" >> "$METRICS_FILE"
               ;;
             1)
               echo "ERROR"
@@ -158,7 +169,6 @@ steps:
               echo "--- [$stack] plan error (last 30 lines) ---"
               echo "$OUTPUT" | tail -30
               echo "--- end [$stack] ---"
-              printf 'drift_stack_state{stack="%s"} 2\n' "$stack" >> "$METRICS_FILE"
               ;;
             2)
               echo "DRIFT DETECTED"
@@ -171,9 +181,111 @@ steps:
               # that reached it. Match the resource/summary lines wherever they
               # sit on the line instead.
               echo "$OUTPUT" | grep -E 'terraform: +(# .* will be| *# .* must be|Plan: )' | head -20
-              # Fetch first-seen timestamp from Pushgateway (preserve across runs).
-              FIRST_SEEN=$(curl -s "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics" \
-                | awk -v s="$stack" '$1 == "drift_stack_first_seen{stack=\""s"\"}" {print $2; exit}')
+              ;;
+          esac
+        done
+
+        # ── Confirm drift against current master ──
+        # This run clones ONCE and then plans for ~40 minutes, while CI keeps
+        # applying newer commits to the cluster. A stack can therefore differ
+        # purely because our checkout is OLDER than what is deployed: the plan
+        # is truthful about the tree it was handed and wrong about reality.
+        #
+        # 2026-08-16 is the case that forced this. The weekly
+        # renew-tls-certificate cron and this one are both registered at 00:00,
+        # so on renewal Sundays they start together: the drift run cloned at
+        # 00:01, renew-tls committed the new wildcard certificate at 00:06 and
+        # pushed it into 150 of 151 namespaces by 00:11, and every stack
+        # planned after that reported
+        # `module.tls_secret.kubernetes_secret.tls_secret will be updated
+        # in-place`. 79 of the run's 92 changed resources were that one secret
+        # (126 stacks manage it); `ac`, planned in the first minute, was clean.
+        # The report read "79 stacks drifting" and looked identical to a mass
+        # revert. The cron has since been moved to 04:00, which separates
+        # those two jobs — this pass covers the general case, since any commit
+        # landing mid-run has the same effect on the stacks it touches.
+        #
+        # Re-planning ONLY the drifted stacks against current master costs a
+        # fraction of a full run. A stack that still differs afterwards is
+        # real drift. This can still flag a stack whose commit landed but
+        # whose apply has not finished yet — that is a genuine
+        # config-differs-from-cluster state, and it clears itself on the next
+        # run rather than persisting for a whole cycle.
+        #
+        # Errored stacks are deliberately NOT re-planned: "could not be
+        # planned" is a different signal from "differs", and re-running a
+        # failing plan does not make the result more trustworthy. A backend
+        # blip part-way through a run therefore still costs the remaining
+        # stacks their result for that night.
+        DRIFTED_FIRST_PASS=$(awk '$2 == 2 { printf " %s", $1 }' "$RESULTS")
+
+        if [ -n "$DRIFTED_FIRST_PASS" ]; then
+          echo ""
+          echo "=== Confirming drift against current master ==="
+          git fetch --depth=1 origin master 2>&1 | tail -2 || true
+          NEW_COMMIT=$(git rev-parse --short FETCH_HEAD 2>/dev/null || echo "$COMMIT")
+          if [ "$NEW_COMMIT" = "$COMMIT" ]; then
+            echo "master is unchanged at $COMMIT; re-planning anyway to catch an apply that landed mid-run"
+          else
+            echo "checkout was $COMMIT, master is now $NEW_COMMIT — re-planning against $NEW_COMMIT"
+            # Only tracked files move; the ignored .terraform/ init caches
+            # survive, so the re-plan does not re-initialise every backend.
+            # git-crypt unlock (top of this step) configured the smudge
+            # filter, so the re-checkout decrypts normally.
+            if git reset --hard FETCH_HEAD >/dev/null 2>&1; then
+              COMMIT=$NEW_COMMIT
+            else
+              echo "(reset failed — re-planning against $COMMIT instead)"
+            fi
+          fi
+
+          CONFIRMED=$(mktemp)
+          awk '$2 != 2' "$RESULTS" > "$CONFIRMED"
+          for stack in $DRIFTED_FIRST_PASS; do
+            # A stack can vanish in the reset if it was deleted upstream.
+            if [ ! -f "stacks/$stack/terragrunt.hcl" ]; then
+              echo "[$stack] gone from master after reset — dropping"
+              rm -f "$PLANS/$stack.out" "$PLANS/$stack.exit"
+              continue
+            fi
+            echo -n "[$stack] re-planning... "
+            EXIT=0
+            OUTPUT=$(cd "stacks/$stack" && ../../scripts/tg plan -detailed-exitcode -input=false -no-color 2>&1) || EXIT=$?
+            echo "$stack $EXIT" >> "$CONFIRMED"
+            echo "$EXIT" > "$PLANS/$stack.exit"
+            echo "$OUTPUT" | grep -E '(# .*(will|must) be |Plan: [0-9])' > "$PLANS/$stack.out" || true
+            case $EXIT in
+              0) echo "CLEAN on current master (stale checkout, not drift)" ;;
+              1) echo "ERROR on re-plan" ;;
+              2) echo "DRIFT CONFIRMED" ;;
+            esac
+          done
+          mv "$CONFIRMED" "$RESULTS"
+        fi
+
+        # ── Emit metrics from the confirmed results ──
+        # Emitted here rather than inside the plan loop so the confirmation
+        # pass can reclassify a stack without any already-written metric line
+        # needing to be rewritten. The Pushgateway is also read ONCE for the
+        # first-seen timestamps instead of once per drifted stack.
+        PREV_METRICS=$(mktemp)
+        curl -s "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics" > "$PREV_METRICS" || true
+
+        while read -r stack exit_code; do
+          case $exit_code in
+            0)
+              # drift_stack_state=0 means clean; age-hours irrelevant so we
+              # still push 0 so per-stack gauges don't go stale.
+              printf 'drift_stack_state{stack="%s"} 0\n' "$stack" >> "$METRICS_FILE"
+              printf 'drift_stack_age_hours{stack="%s"} 0\n' "$stack" >> "$METRICS_FILE"
+              ;;
+            1)
+              printf 'drift_stack_state{stack="%s"} 2\n' "$stack" >> "$METRICS_FILE"
+              ;;
+            2)
+              # First-seen is preserved across runs so DriftUnaddressed can
+              # age a stack that keeps drifting.
+              FIRST_SEEN=$(awk -v s="$stack" '$1 == "drift_stack_first_seen{stack=\""s"\"}" {print $2; exit}' "$PREV_METRICS")
               if [ -z "$FIRST_SEEN" ] || [ "$FIRST_SEEN" = "0" ]; then
                 FIRST_SEEN=$NOW
               fi
@@ -183,7 +295,7 @@ steps:
               printf 'drift_stack_age_hours{stack="%s"} %s\n' "$stack" "$AGE_HOURS" >> "$METRICS_FILE"
               ;;
           esac
-        done
+        done < "$RESULTS"
 
         # Summary counters, derived from the results file. Woodpecker expands
         # dollar-brace references in this YAML before the shell ever sees it, so

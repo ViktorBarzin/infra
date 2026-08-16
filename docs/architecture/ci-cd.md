@@ -223,8 +223,8 @@ Woodpecker is **deploy + cluster-touching steps only**:
 |----------|------|---------|
 | per-app deploy | `.woodpecker/deploy.yml` (each repo) | `kubectl set image` + Slack notify (event: **manual**) |
 | terragrunt apply | `.woodpecker/default.yml` | Changed-stacks apply on push to master (runs in `infra-ci`). **Skips Tier-0 `vault`** — it's human-applied via OIDC; the CI `ci` role lacks Vault-admin perms (`sys/mounts`, `sys/policies/acl`) so a CI apply 403s |
-| certbot | `.woodpecker/renew-tls.yml` | TLS renewal cron |
-| drift-detection | `.woodpecker/drift-detection.yml` | Nightly Terraform drift (runs in `infra-ci`). **Skips Tier-0 `vault`** (its `plan` 403s under the `ci` role and would fail the whole run). Reports the changed **resources** per stack via `scripts/drift-report.py` — see "Reading a drift report" below |
+| certbot | `.woodpecker/renew-tls.yml` | TLS renewal cron. Schedule `@weekly` (Sunday 00:00) |
+| drift-detection | `.woodpecker/drift-detection.yml` | Terraform drift, **`0 4 * * *`** (was `@daily`/00:00 until 2026-08-16, which collided with `renew-tls`). Runs in `infra-ci`. **Skips Tier-0 `vault`** (its `plan` 403s under the `ci` role and would fail the whole run). Re-plans drifted stacks against current master before reporting, and lists the changed **resources** per stack via `scripts/drift-report.py` — see "Reading a drift report" below |
 | provision-user | `.woodpecker/provision-user.yml` | Add namespace-owner user from Vault spec |
 | registry-config-sync | `.woodpecker/registry-config-sync.yml` | SCP `modules/docker-registry/*` → `10.0.20.10` on change |
 | pve-nfs-exports-sync | `.woodpecker/pve-nfs-exports-sync.yml` | Sync `scripts/pve-nfs-exports` → `/etc/exports` on PVE |
@@ -269,6 +269,38 @@ Three things the report tells you that the old count could not:
   certificate commit at ~00:06 — leaves later stacks diffing against a tree that
   no longer exists. If a wave of stacks all show the same `module.tls_secret`
   change, check that commit before believing it.
+
+#### The confirmation pass (2026-08-16)
+
+Drifted stacks are **re-planned against current master** before anything is
+reported. The first pass finds candidates; the second decides. A stack that
+comes back clean on the re-plan was a stale checkout, not drift, and is counted
+as clean — so the metrics, the Slack report and `DriftStacksMany` all see the
+confirmed set.
+
+This exists because the first pass compares a frozen checkout against a cluster
+that CI keeps applying newer commits to. The worked example: `renew-tls-certificate`
+(`@weekly`, Sunday 00:00) and `drift-detection` were both registered at 00:00, so
+on renewal Sundays they started together. On 2026-08-16 the run cloned at 00:01,
+the new wildcard certificate was committed at 00:06 and pushed into 150 of 151
+namespaces by 00:11, and every stack planned afterwards reported
+`module.tls_secret.kubernetes_secret.tls_secret will be updated in-place`. **79 of
+the run's 92 changed resources were that one secret** — 126 stacks manage it —
+while `ac`, planned in the first minute, was clean. Genuine drift that night was
+about six stacks.
+
+Two follow-on changes: the cron moved from `@daily` (00:00) to **`0 4 * * *`**, which
+separates it from `renew-tls` and from the PVE backup chain; and metrics are emitted
+*after* the confirmation pass rather than inside the plan loop, so a reclassified
+stack needs no metric rewritten (the Pushgateway is also read once for the
+first-seen timestamps instead of once per drifted stack). `drift_stack_first_seen`
+is still preserved across runs, so `DriftUnaddressed` keeps ageing a stack that
+genuinely keeps drifting.
+
+**Errored stacks are deliberately not re-planned** — "could not be planned" is a
+different signal from "differs", and re-running a failing plan does not make the
+result more trustworthy. A backend blip part-way through a run therefore still
+costs the remaining stacks their result for that night.
 
 ### `default.yml` apply: dual-registration de-dup + reliability (2026-06-28)
 
