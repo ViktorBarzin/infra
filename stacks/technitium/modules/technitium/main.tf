@@ -186,6 +186,24 @@ resource "kubernetes_persistent_volume_claim" "primary_config_encrypted" {
   }
 }
 
+# NO node pin here, deliberately. The primary was hand-pinned to k8s-node1 with
+# spec.template.spec.nodeName for a long time to preserve the original client IP
+# for query analysis. That pin was never in Terraform — it was live drift, and
+# it was not what preserved the client IP.
+#
+# What preserves it is externalTrafficPolicy: Local on the technitium-dns
+# LoadBalancer (below): kube-proxy does not SNAT on that path, so the DNS server
+# sees the real source address. That holds on whichever node the pod runs, which
+# is why the secondary and tertiary see real client IPs too. Verified 2026-08-16
+# with the primary moved to k8s-node3: the query log still records 192.168.1.x
+# LAN clients and 10.0.10.10, not node addresses.
+#
+# The pin also had a cost worth remembering: setting nodeName BYPASSES THE
+# SCHEDULER ENTIRELY, so the pod ignored the nvidia.com/gpu=true:NoSchedule taint
+# that reserves k8s-node1 for GPU work — a NoSchedule taint is a scheduler
+# predicate, and the kubelet does not enforce it. The primary therefore sat on
+# the GPU node holding ~1 GiB, preemptable by any gpu-workload pod (1.2M priority
+# vs this pod's tier-0-core 1.0M). Re-adding a pin here would reintroduce both.
 resource "kubernetes_deployment" "technitium" {
   # resource "kubernetes_daemonset" "technitium" {
   metadata {
