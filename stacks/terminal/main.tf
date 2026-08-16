@@ -456,10 +456,16 @@ resource "kubernetes_endpoints" "session_events" {
   }
 }
 
-# IngressRoute: the four authed session-events root paths → session-events.
+# IngressRoute: the authed session-events root paths → session-events.
 # NO strip-prefix — session-events serves /events/{session} etc. verbatim.
 # /hooks/* is deliberately absent: it is loopback-only and must stay off the
 # public ingress.
+#
+# /earlier, /result, /pane and /keys were added on 2026-08-16 with the text
+# view's native render: older turns on demand, a capped tool result fetched in
+# full, the pane behind a blocking prompt, and the keystrokes that answer one
+# (terminal-lobby ADR-0010). Without them the SPA ships those features and the
+# ingress 404s each one.
 resource "kubernetes_manifest" "session_events_ingressroute" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -471,7 +477,7 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`))"
+        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`))"
         kind  = "Rule"
         middlewares = [
           {
