@@ -285,6 +285,37 @@ MyAnonaMouse stays off the tunnel. Its `dynamicSeedbox.php` endpoint exists
 to bind a session to a specific address; routing a private tracker through a
 shared VPN exit risks the account.
 
+## Considered and not built: an on-demand gateway operator (2026-08-16)
+
+Proposed after the service went live: an operator watching pod annotations, so a
+workload asking for a country gets an exit node spun up for it, with the budget
+constants moved into the operator.
+
+Not built, for three reasons.
+
+**Most of it already exists.** `pool.py` is the pool controller — `MAX_COUNTRIES`,
+`RESERVED_SLOTS`, `plan_gateway` (reuse/create/reject) and `plan_reaping` are
+already pure, unit-tested functions, and `broker.py` reconciles them on a 60s
+loop. The proposal is a new *trigger*, not a new component.
+
+**The economics are thin.** A gateway costs `30m` CPU and `128Mi`, and one of six
+slots is in use. Declaring a country in Terraform is cheaper than managing it
+dynamically, and has no cold start.
+
+**The watch loop is the easy part.** Three things are harder:
+
+| Problem | Why it matters |
+|---|---|
+| Cold start | An annotated pod is already running and fires before the tunnel exists. Warm-image gateway reached its exit IP in ~4s, but pod-create → Ready measured 35–46s. A browser has a human who waits; a 03:00 CronJob does not — it fails quietly. Needs a readiness gate, ideally an admission-injected init container. |
+| RBAC | The broker holds a namespaced Role. A cluster-wide annotation watch needs a ClusterRole to list/watch pods in every namespace — a real escalation for the component that mints tunnels. |
+| Self-DoS | `RESERVED_SLOTS` is accounting inside `pool.py`, not enforced at NordVPN. Egress is open cluster-wide by decision, so a workload cycling countries could churn tunnels into the ~10-minute over-limit cooldown and lock out both the browsers and Viktor's own devices. |
+
+**Decision:** keep the single permanent UK gateway; leave five slots for
+on-demand browser countries. Revisit if demand for distinct concurrent countries
+becomes unpredictable, or a consumer needs a country the UK gateway cannot serve.
+If it is ever built, build it as a broker feature with a per-namespace allowlist
+and a spawn rate limit, not as a separate operator.
+
 ## Escape hatch: full-tunnel via WireGuard sidecar
 
 For a client that ignores proxy environment variables, the pattern already
