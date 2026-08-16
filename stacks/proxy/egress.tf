@@ -152,7 +152,24 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
     }
   }
   spec {
-    replicas = 1
+    # 0, NOT 1, until the kubelet sysctl allowlist is restored on the gateway
+    # nodes (2026-08-16). `net.ipv4.ip_forward` is absent from
+    # `allowedUnsafeSysctls` on node2-5, so every pod this Deployment creates is
+    # rejected at admission with `SysctlForbidden` and the ReplicaSet retries in
+    # a tight loop (27 rejected pods in ~40s on the first apply).
+    #
+    # This is PRE-EXISTING, not caused by this stack: the allowlist is written
+    # only by `modules/create-template-vm/k8s-node-post-join-tune.sh` as a
+    # cloud-init runcmd at node-join time, with nothing reconciling it
+    # afterwards. It is also why the broker could not recreate the gateway pod
+    # that vanished around 2026-08-11, leaving a browser reconnecting to an
+    # endpoint-less ClusterIP for four days.
+    #
+    # Everything else here is applied and correct. Flip this to 1 in the same
+    # change that restores the allowlist, and verify with:
+    #   kubectl get --raw /api/v1/nodes/k8s-node3/proxy/configz \
+    #     | jq .kubeletconfig.allowedUnsafeSysctls
+    replicas = 0
     strategy {
       # Recreate, never RollingUpdate: two pods would briefly hold two NordVPN
       # tunnels to the same country on one account-wide NordLynx key.
