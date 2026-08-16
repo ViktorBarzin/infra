@@ -407,9 +407,29 @@ The bridge's HAProxy uses `timeout client 1h` / `timeout server 1h`, which are *
 pfSense files (out-of-band, **not Terraform**):
 - `/usr/local/etc/ipv6-haproxy.cfg` — the 6-frontend bridge config above.
 - `/usr/local/etc/rc.d/ipv6proxy` — service wrapper (`service ipv6proxy {start,stop,status}`); `start` does a graceful `-sf` reload.
-- `/usr/local/etc/ipv6_proxy.sh` — boot entrypoint (config.xml `<shellcmd>`): patches pfSense nginx off `[::]:443/:80` (rebinds to LAN IPv6) to free the tunnel IPv6, then `service ipv6proxy onestart`.
+- `/usr/local/etc/ipv6_proxy.sh` — boot entrypoint (config.xml `<shellcmd>`): rebinds every wildcard `listen [::]:<port>` in the pfSense nginx config onto the LAN IPv6 to free the tunnel IPv6, then `service ipv6proxy onestart`. Tracked at `scripts/pfsense-ipv6-proxy.sh`; deploy with `scp scripts/pfsense-ipv6-proxy.sh root@10.0.20.1:/usr/local/etc/ipv6_proxy.sh`.
 
 **Gotcha:** the backends use **no health `check`** — a plain TCP check hits the PROXY-expecting listeners without a PROXY header and would false-mark them DOWN. This path previously used `socat` (functional, but masked every IPv6 client as `10.0.20.1`); replaced by HAProxy on 2026-05-30 for real client IPs.
+
+**Gotcha — the nginx rebind must stay port-agnostic (2026-08-16).** HAProxy binds every
+frontend or none, so a single unavailable port takes the whole bridge down — all six
+frontends, web *and* mail. `ipv6_proxy.sh` used to guard its rebind on the literal string
+`[::]:443`; once the webConfigurator moved to **8443** that guard stopped matching, the
+rebind was skipped, and nginx kept wildcard `*:80` — which is the tunnel address too, so
+HAProxy's `bind [2001:470:6e:43d::2]:80` could not start. The mismatch was latent until the
+pfSense reboot on 2026-07-18 and then went unnoticed for 29 days: IPv4 was unaffected, and
+Cloudflare-proxied hosts reach the origin over IPv4, so only the ~31 `non-proxied` ingresses
+and IPv6 mail were dark. The guard now matches any `listen [::]:` and the script logs
+whether `[TUNNEL]:443` actually came up.
+
+**Symptoms of a down bridge**, useful for the next diagnosis: over IPv6 a non-proxied host
+gives `connection refused` on 443, while port 80 returns the pfSense nginx `301` to
+`https://<host>:8443/` — i.e. the pfSense login page behind its self-signed certificate. A
+browser following that redirect never falls back to IPv4, because the 301 is a perfectly
+valid response. `ping6` to the tunnel address still succeeds throughout (pfSense answers
+ICMP), so reachability checks look healthy. Verify a repair with
+`service ipv6proxy status` and a forced request:
+`curl --resolve <host>:443:2001:470:6e:43d::2 https://<host>/`.
 
 ### Container Registry Pull-Through Cache
 
