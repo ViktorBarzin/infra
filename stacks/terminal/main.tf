@@ -625,6 +625,29 @@ resource "kubernetes_cron_job_v1" "webterminal_probe" {
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 1
     schedule                      = "*/5 * * * *"
+    # SUSPENDED 2026-08-16 (Viktor). This ran `apk add curl python3` on EVERY
+    # invocation — 47 MB written to the node's container layer per run, 288 runs
+    # a day, ~13.2 GB/day of pure churn plus thousands of small-file writes,
+    # which is IOPS on the shared sdc spindle rather than just bytes. That is
+    # the status-page-pusher anti-pattern the other CronJobs in this repo
+    # explicitly warn about.
+    #
+    # None of its three alerts (WebterminalTtydUnreachable / TokenDegraded /
+    # WebsocketDegraded / ProbeStale) had fired in 30 days, and Uptime Kuma
+    # already carries an external monitor for terminal.viktorbarzin.me, so
+    # up/down coverage survives.
+    #
+    # WHAT IS LOST, honestly: the WebSocket-upgrade check and the
+    # edge-vs-ClusterIP distinction. A broken /ws route would now present as
+    # "the terminal loads but will not connect" rather than as an alert — which
+    # is the exact symptom this job was built for. If that recurs, re-enable
+    # (and rebuild it on python:3.12-alpine so the apk goes away: python3 is
+    # already in that image and the two curl calls are trivially http.client).
+    #
+    # Its four alerts were removed from prometheus_chart_values.tpl in the same
+    # commit — leaving them would have fired ProbeStale forever against the
+    # frozen Pushgateway metrics.
+    suspend = true
     job_template {
       metadata {}
       spec {
