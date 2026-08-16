@@ -1256,9 +1256,11 @@ serverFiles:
         rules:
           # Context (smart) search latency. The vchord clip_index must stay
           # resident in PG shared_buffers; if it decays out of cache an ANN
-          # probe pays a ~1.8s cold storage read vs ~4ms warm. clip-index-prewarm
-          # (immich ns, */5) pins it; immich-search-probe (*/5) measures it and
-          # pushes these gauges to the Pushgateway.
+          # probe pays a ~1.8s cold storage read vs ~4ms warm. Since 2026-08-16
+          # ONE CronJob does both: immich-search-probe (immich ns, */5) prewarms
+          # the index on the :00/:30 ticks, then measures a representative ANN
+          # query and pushes these gauges to the Pushgateway. It also carries a
+          # warmup sidecar that keeps the CLIP model resident.
           # keep_firing_for: probe latency straddles the 1s line while the
           # clip_index is partially evicted — 6 fire/resolve pairs in 7 days for
           # one cache-cold episode (measured 2026-08-10).
@@ -1269,14 +1271,14 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "Immich context search slow: {{ $value | printf \"%.2f\" }}s (>1s) — clip_index likely evicted; check clip-index-prewarm CronJob"
+              summary: "Immich context search slow: {{ $value | printf \"%.2f\" }}s (>1s) — clip_index likely evicted; check the immich-search-probe CronJob, which now also does the prewarm"
           - alert: ImmichClipIndexColdCache
             expr: immich_clip_index_cached_pct{job="immich-search-probe"} >= 0 and immich_clip_index_cached_pct{job="immich-search-probe"} < 50
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Immich clip_index only {{ $value | printf \"%.0f\" }}% resident in PG shared_buffers — smart search will be slow (clip-index-prewarm may be failing)"
+              summary: "Immich clip_index only {{ $value | printf \"%.0f\" }}% resident in PG shared_buffers — smart search will be slow (the prewarm step of immich-search-probe may be failing)"
           - alert: ImmichSearchProbeStale
             expr: time() - immich_smart_search_probe_last_run_timestamp{job="immich-search-probe"} > 1800
             for: 10m

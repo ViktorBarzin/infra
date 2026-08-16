@@ -3110,9 +3110,9 @@ PYEOF
 }
 
 # --- 46. Immich Smart (Context) Search ---
-# Smart search = ML embedding (kept warm by clip-keepalive) + a pgvector ANN
+# Smart search = ML embedding (kept warm by the warmup step of immich-search-probe) + a pgvector ANN
 # query over the vchord clip_index. The index must stay resident in PG
-# shared_buffers (kept warm by clip-index-prewarm); if it decays out of cache a
+# shared_buffers (kept warm by the prewarm step of immich-search-probe); if it decays out of cache a
 # query pays a ~1.8s cold storage read instead of ~4ms warm. We measure both
 # the live ANN latency and the clip_index residency to catch the regression.
 check_immich_search() {
@@ -3148,7 +3148,7 @@ check_immich_search() {
 
     if (( dur_ms > 1500 )); then
         [[ "$QUIET" == true ]] && section_always 46 "Immich Smart Search"
-        fail "Smart search SLOW: $detail — clip_index likely evicted; check clip-index-prewarm CronJob"
+        fail "Smart search SLOW: $detail — clip_index likely evicted; check the immich-search-probe CronJob (it does the prewarm)"
         json_add "immich_search" "FAIL" "$detail"
     elif [[ "$pct" =~ ^[0-9.]+$ ]] && awk "BEGIN{exit !($pct < 50)}"; then
         [[ "$QUIET" == true ]] && section_always 46 "Immich Smart Search"
