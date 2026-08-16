@@ -4032,6 +4032,43 @@ serverFiles:
       # code-1ik (viktorbarzin/dovecot_exporter incompatible with
       # Dovecot 2.3 stats architecture). Re-add the rule group if a
       # working exporter is introduced.
+      - name: Image Ownership
+        # Metrics pushed by the image-flipflop-detect CronJob (image_flipflop.tf,
+        # every 6h). It finds Deployments whose image is being rewritten in a
+        # loop by two owners — Keel versus a Terraform helm_release, a raw
+        # kubernetes_deployment, or an operator like the authentik server.
+        rules:
+          - alert: ImageOwnershipConflict
+            # Two controllers both authoritative over the same container image
+            # rewrite each other indefinitely. The loop is silent by
+            # construction: each side logs an ordinary update and neither knows
+            # the other exists, so this is the ONLY direct signal. Every prior
+            # instance was found through an unrelated downstream symptom — a
+            # flapping alert whose Prometheus kept restarting, a dropped VPN
+            # tunnel, or (authentik/ak-outpost-public) not at all, while it was
+            # downgraded every ~4h at deployment generation 497.
+            #
+            # `for: 30m` only guards against reading a half-written push; the
+            # underlying gauge already requires a 24h pattern, so this does not
+            # fire on a single rollout.
+            expr: image_owner_conflict_count > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} deployment(s) have their image rewritten by two owners — check `image_owner_conflict` for which, then give the workload keel.sh/policy=never (annotation AND label) or pin the image at its other owner"
+          - alert: ImageOwnershipDetectorStale
+            # The detector runs every 6h; 14h means at least two runs were
+            # missed. Without this the gauge above silently freezes at its last
+            # value and a NEW conflict would never be reported — the same
+            # failure mode as a probe that stops running while its last result
+            # still reads healthy.
+            expr: time() - image_owner_conflict_last_run_timestamp > 14 * 3600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "image-flipflop-detect hasn't reported in {{ $value | humanizeDuration }} — the image-ownership signal is stale, check the CronJob in monitoring"
       - name: Infrastructure Drift
         # Metrics pushed by .woodpecker/drift-detection.yml after each cron run.
         # See Wave 7 of the state-drift consolidation plan.
