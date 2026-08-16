@@ -1387,6 +1387,33 @@ resource "null_resource" "pg_job_hunter_db" {
   }
 }
 
+# Create goodreads_sync database for the Goodreads -> Calibre pipeline.
+# Holds one row per shelf item (outcome, reason, md5, calibre id) so each book is
+# attempted once and a miss can be explained later.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-goodreads-sync`, 7d rotation).
+resource "null_resource" "pg_goodreads_sync_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "goodreads_sync"
+    username = "goodreads_sync"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'goodreads_sync'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE goodreads_sync WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'goodreads_sync'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE goodreads_sync OWNER goodreads_sync"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE goodreads_sync TO goodreads_sync"
+        '
+    EOT
+  }
+}
+
 # Create lesson_harvester database for the lesson-harvester service.
 # Role password is managed by Vault Database Secrets Engine (static role `pg-lesson-harvester`, 7d rotation).
 resource "null_resource" "pg_lesson_harvester_db" {

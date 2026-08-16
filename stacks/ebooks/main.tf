@@ -25,6 +25,25 @@ variable "nfs_server" { type = string }
 # sees none), which keeps the off position a value edit — the env blocks stay
 # in place and NO_PROXY goes inert alongside them. Verified live in the running
 # pod on 2026-08-16, both positions.
+# Calibre-web shelf that Goodreads-sourced books land on. Public, owned by
+# Anca's calibre-web user, so the admin session book-search already holds can
+# write to it. "0" disables shelving (the book still imports into the library).
+variable "goodreads_shelf_id" {
+  type = string
+  # Shelf 6: "Goodreads wishlist", public, owned by calibre-web user `anca`.
+  default     = "6"
+  description = "calibre-web shelf id for books sourced from Anca's Goodreads to-read shelf."
+}
+
+# Downloads stay OFF until the matcher has been checked by hand against her real
+# shelf (backend/goodreads/replay.py). With this false the poller still reads the
+# feed and reports what it would fetch, but never fetches.
+variable "goodreads_downloads_enabled" {
+  type        = string
+  default     = "false"
+  description = "Whether the Goodreads poller may actually download books."
+}
+
 variable "book_search_proxy_url" {
   type = string
   # REVERTED 2026-08-16 after measuring. The pilot answered its question and the
@@ -825,6 +844,13 @@ resource "kubernetes_deployment" "book_search" {
             name  = "QBITTORRENT_URL"
             value = "http://qbittorrent.servarr.svc.cluster.local"
           }
+          # Calibre-web shelf that Goodreads-sourced books are added to. The
+          # shelf is public and owned by Anca's calibre-web user, which is what
+          # lets the admin session book-search already holds write to it.
+          env {
+            name  = "GOODREADS_SHELF_ID"
+            value = var.goodreads_shelf_id
+          }
           env {
             name = "QBITTORRENT_PASS"
             value_from {
@@ -1130,4 +1156,176 @@ module "book_search_api_ingress" {
   # auth = "none": Book Search API endpoints — API key auth handled by backend; forward-auth would block downloads.
   auth         = "none"
   ingress_path = ["/api/download-url", "/api/download-status", "/api/send-to-kindle", "/shortcut"]
+}
+
+# ---------------------------------------------------------------------------- #
+# Goodreads -> Calibre auto-ingest                                              #
+#                                                                               #
+# Design: pages.viktorbarzin.me/2026-08-16-goodreads-auto-ingest.html            #
+#                                                                               #
+# When Anca adds a book to her Goodreads to-read shelf it is matched, downloaded #
+# and put on her calibre-web shelf, with nobody in the loop. Runs as its own     #
+# small Deployment rather than inside the book-search pod so a slow feed or a    #
+# stuck download cannot affect the interactive search UI.                        #
+#                                                                               #
+# Goodreads publishes no WebSub hub, so this polls — but the feed honours        #
+# If-None-Match, so a check costs a few hundred bytes when nothing has changed   #
+# and she gets her books within ~2 minutes of shelving them.                     #
+# ---------------------------------------------------------------------------- #
+
+# DB credentials from the Vault database engine (7-day rotation).
+# Pre-req in dbaas: role + database `goodreads_sync`, Vault role
+# `static-creds/pg-goodreads-sync`.
+resource "kubernetes_manifest" "goodreads_db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "goodreads-sync-db-creds"
+      namespace = kubernetes_namespace.ebooks.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "goodreads-sync-db-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            GOODREADS_DATABASE_URL = "postgresql://goodreads_sync:{{ .password }}@postgresql.dbaas.svc.cluster.local:5432/goodreads_sync"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "database/static-creds/pg-goodreads-sync"
+          property = "password"
+        }
+      }]
+    }
+  }
+}
+
+resource "kubernetes_deployment" "goodreads_sync" {
+  metadata {
+    name      = "goodreads-sync"
+    namespace = kubernetes_namespace.ebooks.metadata[0].name
+    labels = {
+      app  = "goodreads-sync"
+      tier = local.tiers.edge
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "goodreads-sync"
+      }
+    }
+    # One writer only: the poller records one row per shelf item, and two
+    # replicas would race to claim the same new book.
+    strategy {
+      type = "Recreate"
+    }
+    template {
+      metadata {
+        labels = {
+          app = "goodreads-sync"
+        }
+      }
+      spec {
+        container {
+          image   = "viktorbarzin/book-search:latest"
+          name    = "goodreads-sync"
+          command = ["python3", "-m", "backend.goodreads.runner"]
+
+          env {
+            name  = "GOODREADS_USER_ID"
+            value = "33074940"
+          }
+          env {
+            name  = "GOODREADS_SHELF"
+            value = "to-read"
+          }
+          env {
+            name  = "GOODREADS_POLL_SECONDS"
+            value = "120"
+          }
+          env {
+            name  = "GOODREADS_DOWNLOADS_ENABLED"
+            value = var.goodreads_downloads_enabled
+          }
+          env {
+            name  = "GOODREADS_SHELF_ID"
+            value = var.goodreads_shelf_id
+          }
+          env {
+            name  = "BOOK_SEARCH_URL"
+            value = "http://book-search.ebooks.svc.cluster.local"
+          }
+          env {
+            name = "API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "calibre-secrets"
+                key  = "book_search_api_key"
+              }
+            }
+          }
+          env {
+            name = "SLACK_WEBHOOK_URL"
+            value_from {
+              secret_key_ref {
+                name = "calibre-secrets"
+                key  = "slack_webhook_url"
+              }
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "goodreads-sync-db-creds"
+            }
+          }
+          # Follows book-search's egress pilot switch so both move together; the
+          # measured result was that the UK exit changes nothing for these hosts,
+          # so this is empty today.
+          dynamic "env" {
+            for_each = var.book_search_proxy_url == "" ? [] : [var.book_search_proxy_url]
+            content {
+              name  = "HTTPS_PROXY"
+              value = env.value
+            }
+          }
+          dynamic "env" {
+            for_each = var.book_search_proxy_url == "" ? [] : [var.book_search_proxy_url]
+            content {
+              name  = "NO_PROXY"
+              value = ".svc.cluster.local,.cluster.local,localhost,127.0.0.1,.viktorbarzin.me"
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "256Mi"
+            }
+          }
+        }
+      }
+    }
+  }
 }
