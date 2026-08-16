@@ -111,6 +111,13 @@ locals {
   # inventory (`kubectl get ingress,ingressroute -A`) minus the exclusions above;
   # reconcile it the same way when hosts are added or removed. Full analysis:
   # docs/adr/0020-mx2-outage-failover-and-external-vantage.md (UPDATE 2026-08-16).
+  #
+  # One entry is NOT an ingress and must stay regardless of that reconcile:
+  # `test-failover` is the ADR-0020 canary (a proxied CNAME to an all-zeros
+  # tunnel UUID in cloudflare.tf, so the edge answers 530 for it always). It is
+  # how the drill in runbooks/backup-mx.md verifies the Worker end-to-end, which
+  # only works while the Worker actually runs on it. Removing it turns the drill
+  # into a silent no-op that reports a raw 530 as if the Worker were broken.
   worker_covered_hosts = [
     "ac", "affine", "aiostreams", "alertmanager",
     "android-emulator", "audiblez", "audiobookshelf", "beadboard",
@@ -136,11 +143,11 @@ locals {
     "proxy", "qbittorrent", "recruiter-responder", "repowise",
     "resume", "rss", "send", "shlink",
     "speedtest", "stacks", "stirling-pdf", "stremio",
-    "tandoor", "tasks", "technitium", "torrserver",
-    "trading", "traefik", "trek", "tripit",
-    "uptime", "url", "valchedrym", "vaultwarden",
-    "vpn", "wealthfolio", "whisker", "wrongmove",
-    "yotovski-status", "yt", "yt-highlights",
+    "tandoor", "tasks", "technitium", "test-failover",
+    "torrserver", "trading", "traefik", "trek",
+    "tripit", "uptime", "url", "valchedrym",
+    "vaultwarden", "vpn", "wealthfolio", "whisker",
+    "wrongmove", "yotovski-status", "yt", "yt-highlights",
   ]
 }
 
