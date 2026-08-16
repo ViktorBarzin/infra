@@ -101,7 +101,19 @@ resource "kubernetes_config_map" "mysql_standalone_cnf" {
       # DETECTION; recovery is restore-from-backup. OK with BBU+UPS+daily
       # mysqldump. Dynamic (no restart). code-oflt 2026-06-30.
       innodb_doublewrite=DETECT_ONLY
-      innodb_flush_neighbors=1
+      # 0, not 1 (2026-08-16). Neighbour flushing drags every contiguous dirty
+      # page in the extent along with the one being flushed, betting that the
+      # resulting sequential write is cheaper than the extra pages. That bet
+      # does not pay here: writes to sdc land in the PERC H730's write-back
+      # cache (measured 0.50 ms/write, faster than a 7200 rpm spindle can
+      # physically do), which already coalesces and reorders, and sdc sits
+      # under an LVM thin pool, so "contiguous" at the filesystem layer is not
+      # contiguous on the platter anyway. Measured before the change: 3.88M
+      # page writes/day against only ~880k row writes — 4.4x amplification —
+      # for 64.9 GB/day, of which 62 GB was page flushing (Innodb_data_written
+      # over Uptime). Dynamic, no restart. Also note MySQL's own default is 0;
+      # the 1 here was a deliberate HDD-era choice, not an inherited default.
+      innodb_flush_neighbors=0
       innodb_lru_scan_depth=256
       innodb_page_cleaners=1
       innodb_adaptive_flushing_lwm=10
