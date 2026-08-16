@@ -412,6 +412,19 @@ cat > /etc/systemd/user/scope.d/50-devvm-pane-cap.conf <<'PANE_EOF'
 [Scope]
 MemoryAccounting=yes
 MemoryMax=6G
+
+# OOMPolicy=continue is LOAD-BEARING — without it this whole drop-in is
+# self-defeating. systemd defaults a scope to OOMPolicy=stop, so once the kernel
+# has correctly killed ONE task, systemd stops the entire unit and takes the
+# surviving claude down with it. `memory.oom.group=0` governs only the KERNEL's
+# choice to group-kill; it says nothing about systemd's reaction afterwards.
+# Proven end-to-end 2026-08-16: the kernel killed python3 (5.44 GiB) and left
+# claude (457 MB) running exactly as intended, then systemd logged
+# "Failed with result 'oom-kill'" and tore the pane down anyway. With
+# OOMPolicy=continue the same test leaves the pane at "A process of this unit
+# has been killed by the OOM killer" and the session keeps running.
+# Same lesson t3-serve@.service learned on 2026-06-10.
+OOMPolicy=continue
 PANE_EOF
 
 # 10b) earlyoom backstop config — RAM-threshold, swap-INDEPENDENT (see header note

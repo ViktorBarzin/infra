@@ -248,3 +248,34 @@ Left open: wizard's tmux runs as a systemd user service and so inherits
 those 30 days that is 32 kills at mean badness 1107 for uid 1000 vs 9 at 974 for
 uid 1002 — a 133-point handicap at identical footprint. One line in
 `~wizard/.config/systemd/user/tmux.service` whenever we want it.
+
+## Addendum 5 (2026-08-16): the pane cap needed `OOMPolicy=continue` — found by testing it
+
+The per-pane `MemoryMax` from addendum 4 was verified end-to-end the same day by
+running a real Claude session in a capped pane and asking it to grow a
+200 MB-at-a-time allocator. The kernel half worked perfectly on the first try:
+pane peak 6144 MB (exactly the cap), `CONSTRAINT_MEMCG` scoped to that pane's own
+scope, `oom_kill 1` / `oom_group_kill 0`, victim `python3` at 5.44 GiB anon-rss
+chosen over `claude` at 457 MB in the same cgroup, and earlyoom did not fire at
+all. The kernel task table makes the ranking explicit: claude 116,910 pages,
+python3 1,429,056 pages, tail 448 pages — python3 killed.
+
+**Then systemd stopped the whole scope anyway** and the conversation died with
+it: `tmux-spawn-<uuid>.scope: Failed with result 'oom-kill'`. A scope defaults to
+`OOMPolicy=stop`, which stops the entire unit as soon as ANY member is
+OOM-killed. `memory.oom.group=0` only governs whether the KERNEL group-kills; it
+says nothing about systemd's reaction, and the two are easy to conflate. This is
+the same failure `t3-serve@.service` hit on 2026-06-10 and fixed with
+`OOMPolicy=continue`; the pane drop-in shipped without it.
+
+Fixed by adding `OOMPolicy=continue` to
+`/etc/systemd/user/scope.d/50-devvm-pane-cap.conf`. Re-running the identical test
+gives the intended result: the 5.63 GiB hog is killed, claude (443 MB) keeps
+running in the same pane, the session survives, all eight other conversations are
+untouched, and earlyoom stays at zero kills. The pane now logs only "A process of
+this unit has been killed by the OOM killer" with no unit failure.
+
+Worth recording as a general point: a containment mechanism is not verified by
+reading the config or the kernel log alone. The kernel log for run 1 looked like
+a complete success — right constraint, right victim, one kill — and the outcome
+was still a lost conversation.

@@ -134,7 +134,16 @@ flowchart TB
 ```
 
 **1. Per-pane cap** — `/etc/systemd/user/scope.d/50-devvm-pane-cap.conf`,
-`[Scope] MemoryMax=6G`, all users.
+`[Scope] MemoryMax=6G` **plus `OOMPolicy=continue`**, all users.
+
+`OOMPolicy=continue` is load-bearing, and the end-to-end test is what surfaced
+it. systemd defaults a scope to `OOMPolicy=stop`: once the kernel has killed one
+task in the unit, systemd stops the whole unit. `memory.oom.group=0` governs only
+whether the *kernel* group-kills; it says nothing about what systemd does next.
+In the first run the kernel did exactly the right thing — killed python3
+(5.44 GiB), left claude (457 MB) running — and then systemd logged
+`Failed with result 'oom-kill'` and tore the pane down, conversation included.
+The same lesson `t3-serve@.service` learned on 2026-06-10.
 
 A top-level `<type>.d/` drop-in applies to every unit of that type
 (`systemd.unit(5)`). Verified on this box that it reaches *transient* units:
@@ -162,6 +171,28 @@ shell on every run since it was written. `=<name>:` is accepted and still matche
 exactly. This is the path that recovers a conversation after its claude dies, so
 it matters more once kills are rare than it did when they were routine.
 Regression test: `tests/tmux-persist/test_resume_in_place.sh`.
+
+## Verified end to end (2026-08-16)
+
+A real Claude session in a fresh capped pane was asked to run an allocator that
+grows 200 MB at a time and never stops. Two runs, the first of which found the
+`OOMPolicy` gap above.
+
+| | Run 1 (`OOMPolicy=stop`, the default) | Run 2 (`OOMPolicy=continue`) |
+|---|---|---|
+| Pane peak | 6144 MB — exactly the cap | 6144 MB — exactly the cap |
+| Kernel victim | `python3`, anon-rss 5.44 GiB | `python3`, anon-rss 5.63 GiB |
+| claude in the same pane | 457 MB, **not** chosen | 443 MB, **not** chosen |
+| `oom_kill` / `oom_group_kill` | 1 / 0 | 1 / 0 |
+| Constraint | `CONSTRAINT_MEMCG`, the pane's own scope | same |
+| earlyoom kills | **0** | **0** |
+| Other sessions | all 8 untouched | all 8 untouched |
+| Session outcome | **torn down by systemd** | **survived** |
+
+The kernel's task table from run 1 shows the ranking working with no help from
+us — `claude` 116,910 pages, `python3` 1,429,056 pages, `tail` 448 pages, and
+`python3` chosen. Claude's own report from inside the surviving pane in run 2:
+"Exit code: 137 … the 5.9 GB hog died, the ~0.5 GB conversation did not."
 
 ## What this does not do
 
