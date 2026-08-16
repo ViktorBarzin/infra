@@ -281,6 +281,56 @@ def test_derive_ttyd_map_has_one_mapping_per_user():
     assert set(body) == {"vbarzin=wizard", "emil.barzin=emo", "ancaelena98=ancamilea"}
 
 
+def _admins_body(ds):
+    return [
+        line
+        for line in ds.ttyd_admins.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def test_derive_ttyd_admins_lists_only_the_admin_tier():
+    # terminal-lobby's act-as switch reads this file to decide who may act as
+    # another user. It cannot use Authentik group membership: every devvm user
+    # is in "Home Server Admins" (that is how they reach the lobby host at
+    # all), so the roster tier is the only thing that distinguishes them.
+    ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS)
+    assert _admins_body(ds) == ["wizard"]
+
+
+def test_derive_ttyd_admins_is_empty_when_nobody_is_an_admin():
+    # Fails closed by construction: no admin tier, no admins, and the act-as
+    # feature is simply unavailable rather than open.
+    roster = _roster(
+        """
+        users:
+          emo: {authentik_user: emil.barzin, k8s_user: emo, tier: power-user}
+        """
+    )
+    ds = eng.derive_desired_state(roster, {"emo": 3774})
+    assert _admins_body(ds) == []
+
+
+def test_derive_ttyd_admins_lists_every_admin():
+    roster = _roster(
+        """
+        users:
+          wizard: {authentik_user: vbarzin,     k8s_user: wizard, tier: admin}
+          emo:    {authentik_user: emil.barzin, k8s_user: emo,    tier: admin}
+        """
+    )
+    ds = eng.derive_desired_state(roster, {"wizard": 3773, "emo": 3774})
+    assert sorted(_admins_body(ds)) == ["emo", "wizard"]
+
+
+def test_derive_ttyd_admins_carries_a_do_not_edit_header():
+    # Same provenance note as the user map: this file is regenerated hourly,
+    # so a hand edit would be silently reverted.
+    ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS)
+    assert ds.ttyd_admins.startswith("#")
+    assert "roster.yaml" in ds.ttyd_admins
+
+
 def test_derive_accounts_assign_tier_groups_and_shell():
     ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS)
     assert ds.accounts["wizard"].groups == ("code-shared", "docker", "sudo")
