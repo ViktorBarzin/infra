@@ -96,13 +96,40 @@ snapshot_path() { echo "$(snapshots_dir "$1")/$2.tsv"; }
 home_of() { getent passwd "$1" | cut -d: -f6; }
 
 # First descendant of $1 whose comm is `claude` (BFS, bounded by process tree).
+#
+# Touches ONLY the pane's own subtree, with no subprocesses at all.
+#
+# It used to call `ps -o comm= -p PID` and `pgrep -P PID` at each node. Both
+# read the ENTIRE process table even when asked about a single pid — measured
+# on the devvm 2026-08-16: 45 ms and 63 ms per call, one `ps` issuing 2,759
+# openat against 679 processes. That was ~2.2 s of the restore picker's ~2.9 s
+# open time, and it grew with how busy the box was rather than with the work.
+#
+# Children come from `/proc/<pid>/task/<tid>/children` (CONFIG_PROC_CHILDREN),
+# unioned over the process's threads because each task lists only the children
+# IT forked. Deliberately NOT a prebuilt ppid map: callers invoke this inside a
+# command substitution, so a subshell-local cache would be rebuilt for every
+# row — a full /proc scan per pane, ~4,700 entries a time, which is how the
+# first cut of this rewrite still spent ~1 s here.
+#
+# Note the `2>/dev/null` sits BEFORE each input redirect: redirections apply
+# left to right, and a process exiting mid-walk makes the OPEN fail, which the
+# shell would otherwise report on the stderr in force at that point.
 claude_pid_under() {
-  local q=("$1") pid kids
+  local q=("$1") pid comm t kids kid
   while ((${#q[@]})); do
     pid="${q[0]}"; q=("${q[@]:1}")
-    [[ "$(ps -o comm= -p "$pid" 2>/dev/null)" == claude ]] && { echo "$pid"; return 0; }
-    read -ra kids <<<"$(pgrep -P "$pid" 2>/dev/null | tr '\n' ' ')" || true
-    ((${#kids[@]})) && q+=("${kids[@]}")
+    read -r comm 2>/dev/null < "/proc/$pid/comm" || continue
+    [[ "$comm" == claude ]] && { echo "$pid"; return 0; }
+    for t in /proc/"$pid"/task/*/children; do
+      # `children` is space-separated with NO trailing newline, so `read` hits
+      # EOF and returns non-zero even though it filled the variable — the
+      # status has to be ignored rather than treated as "no children", or the
+      # walk never descends at all. (/proc/<pid>/comm above does end in \n.)
+      kids=
+      read -r kids 2>/dev/null < "$t" || true
+      for kid in $kids; do q+=("$kid"); done
+    done
   done
   return 1
 }
@@ -329,15 +356,28 @@ snapshot_view() {
 }
 
 # ts <TAB> session-count <TAB> is-newest, newest first.
+#
+# Fork-free per row: this runs over every snapshot a user has ever had (94 for
+# wizard, 200 for emo on 2026-08-16, and the series only grows), and the old
+# `basename` + `grep -c` + `$(...)` trio cost three processes each — ~0.6 s of
+# the restore picker's open time. Parameter expansion and a builtin read do the
+# same work for nothing.
 snapshots_list() {
-  local u="$1" f ts n newest
+  local u="$1" f ts n newest mark line
   users | grep -qxF "$u" || { echo "[tmux-persist] snapshots: '$u' is not a known terminal user" >&2; return 2; }
   migrate_manifest "$u"
   newest="$(newest_snapshot "$u")"
   while read -r f; do
     [[ -n "$f" ]] || continue
-    ts="$(basename "$f" .tsv)"; n="$(grep -c . "$f" || true)"
-    printf '%s\t%s\t%s\n' "$ts" "$n" "$([[ "$f" == "$newest" ]] && echo newest || echo -)"
+    ts="${f##*/}"; ts="${ts%.tsv}"
+    # Count non-empty lines, matching what `grep -c .` reported. The trailing
+    # `|| [[ -n "$line" ]]` keeps a final line with no newline counted.
+    n=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ -n "$line" ]] && n=$((n + 1))
+    done < "$f"
+    if [[ "$f" == "$newest" ]]; then mark=newest; else mark=-; fi
+    printf '%s\t%s\t%s\n' "$ts" "$n" "$mark"
   done < <(snapshot_files "$u" | sort -r)
 }
 
@@ -414,7 +454,7 @@ restore() {
     migrate_manifest "$u"
     f="$(newest_snapshot "$u")"
     [[ -n "$f" && -s "$f" ]] || continue
-    ts="$(basename "$f" .tsv)"
+    ts="${f##*/}"; ts="${ts%.tsv}"
     while IFS=$'\t' read -r -a row; do
       [[ -n "${row[0]:-}" ]] || continue
       [[ "${row[6]}" == "on" ]] || continue      # live, or a deliberate kill
@@ -454,7 +494,7 @@ history_rows() {   # $1 user -> name, cwd, uuid, first_seen, last_seen
   local u="$1" f ts epoch
   while read -r f; do
     [[ -n "$f" ]] || continue
-    ts="$(basename "$f" .tsv)"; epoch="$(ts_to_epoch "$ts")"
+    ts="${f##*/}"; ts="${ts%.tsv}"; epoch="$(ts_to_epoch "$ts")"
     awk -F'\t' -v OFS='\t' -v e="$epoch" 'NF{print $1, $2, ($3!=""?$3:"-"), e}' "$f"
   done < <(snapshot_files "$u") \
   | awk -F'\t' -v OFS='\t' '
@@ -499,7 +539,7 @@ restore_one() {
     [[ -n "$f" ]] || continue
     line="$(awk -F'\t' -v s="$sel" '
       $1""==s"" || $3""==s"" || ($3!="-" && $3!="" && index($3, s)==1) {print; exit}' "$f")"
-    [[ -n "$line" ]] && { ts="$(basename "$f" .tsv)"; break; }
+    [[ -n "$line" ]] && { ts="${f##*/}"; ts="${ts%.tsv}"; break; }
   done < <(snapshot_files "$u" | sort -r)
   [[ -n "$line" ]] || { echo "[tmux-persist] no session matching '$sel' for $u" >&2; return 1; }
   IFS=$'\t' read -r sess cwd uuid <<<"$line"
