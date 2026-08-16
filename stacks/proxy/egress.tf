@@ -229,8 +229,24 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
         }
 
         container {
-          name  = "gluetun"
-          image = "ghcr.io/qdm12/gluetun:latest"
+          name = "gluetun"
+          # Pinned, not `:latest`. Keel (policy=patch, hourly poll) resolves a
+          # floating tag to a concrete one on the live Deployment, and Terraform
+          # then reverts it on the next apply — the two fought and replaced this
+          # pod six times in ~30 minutes on 2026-08-16, each round trip dropping
+          # the NordVPN tunnel. That is worse here than on an ordinary app:
+          # NordVPN refuses an over-limit connection with a ~10-minute cooldown
+          # (memory #10182), so a looping gateway can lock itself out of its own
+          # slot. This is the version Keel had settled on and which was verified
+          # end to end. DIGEST-pinned, not a version tag, for a specific reason:
+          # SOCKS5 is UNRELEASED. The newest gluetun RELEASE (v3.41.3, commit
+          # 3d1e20c, 2026-07-30) has NO socks5 listener at all — pinning to it on
+          # 2026-08-16 silently left Service port 1080 with nothing behind it.
+          # This digest is the `:latest` build (commit 7eed6ea, 2026-08-07) that
+          # was verified to carry BOTH the http proxy and socks5, end to end.
+          # Same pattern as NEKO_IMAGE in main.tf. If you bump this, re-verify
+          # `socks5` appears in the gluetun startup log before trusting :1080.
+          image = "ghcr.io/qdm12/gluetun@sha256:e3272b29a4bc177b389fbdcb54cf9716ccbfc30f04d8b7a35b0a5be9cdb58461"
           security_context {
             capabilities {
               # Kernelspace WireGuard needs no /dev/net/tun, no privileged and
@@ -345,8 +361,9 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
         }
 
         container {
-          name  = "wgserver"
-          image = "ghcr.io/linuxserver/wireguard:latest"
+          name = "wgserver"
+          # Pinned for the same reason as gluetun above.
+          image = "ghcr.io/linuxserver/wireguard:1.0.20260223"
           security_context {
             capabilities {
               add = ["NET_ADMIN"]
@@ -414,6 +431,16 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].labels["tier"],             # stamped by Kyverno sync-tier-label-from-namespace
+
+      # NOTE: do NOT add `spec[0].template[0].spec[0].container[N].image` here.
+      # `ignore_changes` is POSITIONAL, and the live container order is
+      # [wgserver, gluetun] while this file declares [gluetun, wgserver]. Adding
+      # those two paths on 2026-08-16 made Terraform keep the live images at
+      # positions 0 and 1 while applying the declared names in the other order,
+      # which CROSSED them — the container called `gluetun` ran the WireGuard
+      # image and vice versa, and egress went down until the images were pinned
+      # explicitly below. Pinning is what removes the Terraform/Keel fight;
+      # a positional ignore is not a safe substitute here.
     ]
   }
 

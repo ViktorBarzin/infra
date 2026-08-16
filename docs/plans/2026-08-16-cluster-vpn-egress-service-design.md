@@ -303,11 +303,23 @@ interface against.
   as this NordVPN identity, and nothing records who does. Chosen for low
   friction; a NetworkPolicy allowlist remains the natural first hardening step
   if the cluster's tenancy assumptions change.
-- **gluetun runs `:latest`.** `broker.py` defaults to
-  `ghcr.io/qdm12/gluetun:latest` with no override in `main.tf`, the predecessor
-  design's own checklist item for pinning is unticked, and memory #10182 records
-  `:latest` once shipping a build that could not connect. An always-on gateway
-  makes this a standing risk; pinning was considered and left out of this build.
+- **gluetun image pinning — reversed during the build.** This was recorded as an
+  accepted risk, then became mandatory. The gateway Deployment is Keel-enrolled
+  (`policy=patch`, hourly poll), so with a floating `:latest` Keel re-pinned the
+  live image and Terraform reverted it on the next apply. The two fought and
+  replaced the gateway pod six times in about thirty minutes, each round trip
+  dropping the tunnel — which matters more here than on an ordinary app, since
+  NordVPN refuses an over-limit reconnect with a roughly ten-minute cooldown.
+  Both images are now pinned: gluetun by **digest** (`sha256:e3272b29a4bc…`, the
+  `:latest` build at commit `7eed6ea`), the wgserver sidecar to
+  `linuxserver/wireguard:1.0.20260223`.
+  Two things learned the hard way, both worth carrying forward:
+  `ignore_changes` on `container[N].image` is **positional**, and the live
+  container order (`[wgserver, gluetun]`) differs from the declared order, so
+  using it crosses the images and takes egress down. And **SOCKS5 is
+  unreleased** — the newest gluetun *release*, v3.41.3, has no socks5 listener,
+  so pinning to a release tag silently leaves Service port 1080 with nothing
+  behind it. Re-verify `socks5` in the startup log after any image bump.
 - **No country verification.** A tunnel that is up but exiting from an
   unexpected country will not alert. Acceptable while the gateway serves one
   country and the consumer is a pilot.
