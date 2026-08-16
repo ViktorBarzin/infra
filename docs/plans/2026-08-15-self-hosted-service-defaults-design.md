@@ -111,6 +111,28 @@ What remains genuinely open is whether this holds across cases nobody tested.
 | 7 | Where does the routing table live? | In `homelab services` output, not the always-loaded rules. |
 | 8 | Leak guard? | gitleaks scan before upload + a default TTL. |
 | 9 | Backing infra (Postgres, Redis, …)? | Out of scope — web-facing services only. |
+
+> **Amendment (2026-08-16) — decision 9 partially superseded.** The catalog is
+> no longer ingress-only. `cli/services.go` now also lists cluster-internal
+> **Services** carrying the same `gethomepage.dev/*` annotations, rendered with
+> an `[in-cluster]` marker and an explicit `homelab/endpoint` annotation giving
+> the connectable address (a Service may expose several ports; only its owner
+> knows the default contract). Headless Services are skipped.
+>
+> What prompted it: the cluster VPN egress proxy
+> (`docs/plans/2026-08-16-cluster-vpn-egress-service-design.md`) is a ClusterIP
+> **on purpose** — an ingress would publish an open, unauthenticated proxy
+> through Traefik — so an ingress-only catalog could never show it, and a
+> working capability stayed invisible to the agents it was built for.
+>
+> Decision 9's *intent* stands: backing infra (Postgres, Redis, …) is still out
+> of scope. What changed is that "has no web page" is no longer the same test as
+> "is backing infra". Opting a Service in remains deliberate — it must be
+> annotated.
+>
+> Consistent with decisions 2 and 5: the catalog row shipped alongside a rule in
+> the org `claudeMd` naming the moment and the competitor, because #11017/#11044
+> found an inventory entry alone does not change agent behaviour.
 | 10 | Who can run `share`? | Everyone, via per-user credentials at `secret/<user>/nextcloud`. |
 | 11 | The 28 blank catalog rows? | Fill all of them, plus a lint so it cannot regress. |
 
