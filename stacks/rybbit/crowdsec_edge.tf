@@ -286,6 +286,17 @@ resource "kubernetes_cron_job_v1" "crowdsec_cf_sync" {
         # lapi_kv_sync.py keeps the sync gentle/self-healing.
         backoff_limit              = 0
         ttl_seconds_after_finished = 3600
+        # concurrencyPolicy=Forbid with no deadline is a known wedge here: if a
+        # run hangs, every later run is SKIPPED and the job goes quiet rather
+        # than failing — webterminal-probe sat like that for 16.8h once and
+        # 3d19h another time, and phpipam-pfsense-import for 4 days, both on a
+        # black-holed socket that no timeout covered. Every network call in
+        # lapi_kv_sync.py has an explicit timeout now (including the bare
+        # TimeoutError that used to escape urllib's URLError handler), so a
+        # hang should not happen; this is the backstop if one does. Sized well
+        # above a normal run: LAPI fetch + list GET + one PUT + up to 25s of
+        # bulk-op polling, each with a 20s ceiling.
+        active_deadline_seconds = 300
         template {
           metadata {
             labels = {
