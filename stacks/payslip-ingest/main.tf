@@ -113,13 +113,16 @@ resource "kubernetes_manifest" "external_secret" {
             property = "actualbudget_api_key"
           }
         },
-        {
-          secretKey = "ACTUALBUDGET_ENCRYPTION_PASSWORD"
-          remoteRef = {
-            key      = "payslip-ingest"
-            property = "actualbudget_encryption_password"
-          }
-        },
+        # ACTUALBUDGET_ENCRYPTION_PASSWORD is deliberately NOT wired (2026-08-16).
+        # Vault does hold `actualbudget_encryption_password`, but neither budget
+        # file is end-to-end encrypted (encrypt_keyid is null on both
+        # actual-servers) and actual-http-api branches on the header's mere
+        # PRESENCE: with it, every request takes the full downloadBudget() path —
+        # re-download, decrypt and a ~20 MB backup zip — instead of the cheap
+        # loadBudget()+sync(). Measured on a ~118 MB file: 110,000 ms (timeout)
+        # with the header vs 108 ms without. payslip-ingest treats the variable as
+        # optional as of commit 5f6c00d and omits the header when it is unset.
+        # Re-add this block only if the budget file is ever genuinely encrypted.
         {
           secretKey = "ACTUALBUDGET_BUDGET_SYNC_ID"
           remoteRef = {
@@ -364,13 +367,15 @@ resource "kubernetes_cron_job_v1" "actualbudget_payroll_sync" {
     namespace = kubernetes_namespace.payslip_ingest.metadata[0].name
   }
   spec {
-    # Suspended 2026-05-12 — chronic JobFailed with
-    # `KeyError: 'ACTUALBUDGET_API_KEY'` / `..._ENCRYPTION_PASSWORD`.
-    # Vault `secret/payslip-ingest` now has `actualbudget_api_key` and
-    # `actualbudget_budget_sync_id` (copied from `secret/fire-planner`),
-    # but `actualbudget_encryption_password` is still missing. Unsuspend
-    # by removing this line once the encryption password is in Vault.
-    suspend                       = true
+    # Unsuspended 2026-08-16. History: suspended 2026-05-12 on chronic JobFailed
+    # with `KeyError: 'ACTUALBUDGET_API_KEY'` / `..._ENCRYPTION_PASSWORD`, to be
+    # lifted "once the encryption password is in Vault". That framing turned out
+    # to be the wrong fix on both halves — the Vault key had since been added
+    # (the ExternalSecret syncs all six keys), and the encryption password was
+    # never actually needed, since neither budget file is encrypted. The client
+    # now treats it as optional and omits the header (see the ExternalSecret
+    # block above for why sending it is harmful).
+    suspend                       = false
     schedule                      = "0 2 * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
