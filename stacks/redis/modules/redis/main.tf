@@ -235,8 +235,22 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
         termination_grace_period_seconds = 90
 
         container {
-          name    = "redis"
-          image   = "docker.io/library/redis:8-alpine"
+          name = "redis"
+          # PINNED, and it must stay pinned. `redis:8-alpine` is a floating
+          # tag and imagePullPolicy is IfNotPresent, so the version that
+          # actually ran was decided by whatever each NODE happened to have
+          # cached. On 2026-08-16 a config change rolled this pod from its
+          # old node onto k8s-node3, which still had 8.8.0 cached; the AOF
+          # base file on the PVC had been written by 8.10.0 (RDB format
+          # version 15), so the older binary refused it with "Can't handle
+          # RDB format version 15 / AOF loading aborted" and crashlooped.
+          # Nothing was corrupted -- an RDB/AOF is simply not readable by a
+          # binary older than the one that wrote it, and a floating tag makes
+          # that downgrade a coin-flip on every reschedule. An immutable tag
+          # removes the whole class. Bump this deliberately (and never
+          # downwards) after checking the release notes; Keel is opted out
+          # below for the same reason.
+          image   = "docker.io/library/redis:8.10.0-alpine"
           command = ["redis-server", "/etc/redis/redis.conf"]
 
           port {
