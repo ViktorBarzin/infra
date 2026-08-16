@@ -343,10 +343,25 @@ snapshots_list() {
 
 # --- restore ------------------------------------------------------------------
 
+# Wait until this pane is inside its own systemd scope before forking anything.
+#
+# tmux asks systemd to move a new pane into `tmux-spawn-<uuid>.scope` and then
+# execs without waiting for that move to land. A pane command that forks
+# straight away (ours does — `claude …; exec bash -l` is compound, so the shell
+# forks claude) can therefore leave claude behind in the tmux SERVER's cgroup,
+# where the per-pane MemoryMax from setup-devvm.sh §10a-bis does not reach it.
+# Measured 2026-08-16: 1 in 6 fresh panes, and 2 of 8 live claudes, had escaped
+# that way; with this wait, 0 of 8.
+#
+# POSIX sh (tmux runs the pane command through /bin/sh), reads the cgroup with a
+# redirect rather than `grep` so the check itself does not fork, and gives up
+# after ~2s so a host without scope support just carries on uncapped.
+CGROUP_SETTLE='i=0; while [ $i -lt 40 ]; do read -r _cg < /proc/self/cgroup 2>/dev/null; case ${_cg:-} in *tmux-spawn-*) break ;; esac; i=$((i+1)); sleep 0.05; done; '
+
 restore_cmd() {   # $1 sess, $2 uuid ("" -> plain shell)
   if [[ -n "$2" ]]; then
-    printf '%s --dangerously-skip-permissions --resume %s --name "%s"; echo; echo "  claude exited — shell preserved"; exec bash -l' \
-      "$CLAUDE_BIN" "$2" "$1"
+    printf '%s%s --dangerously-skip-permissions --resume %s --name "%s"; echo; echo "  claude exited — shell preserved"; exec bash -l' \
+      "$CGROUP_SETTLE" "$CLAUDE_BIN" "$2" "$1"
   else
     printf 'exec bash -l'
   fi
@@ -359,8 +374,14 @@ spawn_session() {   # $1 user, $2 target name, $3 cwd, $4 uuid
 }
 
 # Type the resume into a live session whose claude died but whose shell survived.
+#
+# The target is `=<sess>:`, not `=<sess>`. send-keys takes a PANE target, and
+# tmux rejects a bare `=name` there ("can't find pane") even though it accepts
+# it for a session or window — the trailing `:` makes it a session-qualified
+# pane target, which resolves to that session's active pane while keeping `=`
+# exact (a plain `<sess>` would prefix-match a longer name).
 resume_in_place() {   # $1 user, $2 sess, $3 uuid
-  tmux_as "$1" send-keys -t "=$2" \
+  tmux_as "$1" send-keys -t "=$2:" \
     "$CLAUDE_BIN --dangerously-skip-permissions --resume $3 --name \"$2\"" C-m
 }
 
