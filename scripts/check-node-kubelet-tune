@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Check that each node's live kubelet config still carries the post-join tune.
+
+WHY THIS EXISTS
+---------------
+`modules/create-template-vm/k8s-node-post-join-tune.sh` applies the homelab's
+kubelet settings exactly once, as a cloud-init runcmd right after `kubeadm
+join`. Nothing reconciles them afterwards, and `kubeadm upgrade node` rewrites
+`/var/lib/kubelet/config.yaml` from the cluster-wide `kube-system/kubelet-config`
+ConfigMap — which does not contain them.
+
+On 2026-07-26/27 the v1.35.7 upgrade did exactly that on all five nodes and
+removed the whole tune. Nothing alerted. The first visible symptom arrived
+weeks later and looked unrelated: the proxy VPN gateway could not start,
+because `net.ipv4.ip_forward` was no longer in `allowedUnsafeSysctls`, and a
+remote browser spent four days reconnecting to a Service with no endpoints.
+
+This script turns that silent class of failure into a signal. It reads each
+node's LIVE kubelet configuration from the kubelet's own `/configz` endpoint —
+not the file on disk, so it reflects what the kubelet actually loaded.
+
+USAGE
+    scripts/check-node-kubelet-tune            # all nodes
+    scripts/check-node-kubelet-tune --json     # machine-readable
+
+Exit codes: 0 = every node fully tuned · 1 = drift found · 2 = could not check.
+
+Re-applying the tune to a running node is a separate, deliberate action: it
+changes memory reservations and eviction thresholds, so it can move pods. See
+`modules/create-template-vm/k8s-node-post-join-tune.sh` for the source of truth.
+"""
+
+import json
+import subprocess
+import sys
+
+# Each entry: key -> a predicate over the loaded KubeletConfiguration.
+# Mirrors k8s-node-post-join-tune.sh. Keep the two in step.
+EXPECTED = {
+    "allowedUnsafeSysctls": lambda c: "net.ipv4.ip_forward" in (c.get("allowedUnsafeSysctls") or []),
+    "shutdownGracePeriodByPodPriority": lambda c: bool(c.get("shutdownGracePeriodByPodPriority")),
+    "systemReserved": lambda c: bool(c.get("systemReserved")),
+    "kubeReserved": lambda c: bool(c.get("kubeReserved")),
+    "evictionHard": lambda c: bool(c.get("evictionHard", {}).get("memory.available")),
+    "evictionSoft": lambda c: bool(c.get("evictionSoft", {}).get("memory.available")),
+    "containerLogMaxSize": lambda c: c.get("containerLogMaxSize") not in (None, ""),
+    "maxParallelImagePulls": lambda c: bool(c.get("maxParallelImagePulls")),
+    "memorySwap": lambda c: (c.get("memorySwap") or {}).get("swapBehavior") == "LimitedSwap",
+}
+
+
+def run(args):
+    return subprocess.run(args, capture_output=True, text=True, timeout=60)
+
+
+def node_names():
+    p = run(["kubectl", "get", "nodes", "-o", "jsonpath={range .items[*]}{.metadata.name}{'\\n'}{end}"])
+    if p.returncode != 0:
+        print("cannot list nodes: %s" % p.stderr.strip(), file=sys.stderr)
+        sys.exit(2)
+    return [n for n in p.stdout.split() if n]
+
+
+def kubelet_config(node):
+    """Live config from the kubelet's /configz. Returns None if unreachable."""
+    p = run(["kubectl", "get", "--raw", "/api/v1/nodes/%s/proxy/configz" % node])
+    if p.returncode != 0 or not p.stdout.strip():
+        return None
+    try:
+        return json.loads(p.stdout)["kubeletconfig"]
+    except (ValueError, KeyError):
+        return None
+
+
+def main():
+    as_json = "--json" in sys.argv
+    report, drifted, unreachable = {}, [], []
+
+    for node in node_names():
+        cfg = kubelet_config(node)
+        if cfg is None:
+            unreachable.append(node)
+            report[node] = {"reachable": False, "missing": []}
+            continue
+        missing = sorted(k for k, ok in EXPECTED.items() if not ok(cfg))
+        report[node] = {"reachable": True, "missing": missing}
+        if missing:
+            drifted.append(node)
+
+    if as_json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for node in sorted(report):
+            r = report[node]
+            if not r["reachable"]:
+                print("%-12s UNREACHABLE (kubelet /configz did not answer)" % node)
+            elif r["missing"]:
+                print("%-12s DRIFTED  missing: %s" % (node, ", ".join(r["missing"])))
+            else:
+                print("%-12s ok" % node)
+        print()
+        if unreachable:
+            print("%d node(s) could not be checked: %s" % (len(unreachable), ", ".join(unreachable)))
+        if drifted:
+            print("%d node(s) lost part of the post-join tune." % len(drifted))
+            print("Source of truth: modules/create-template-vm/k8s-node-post-join-tune.sh")
+            print("Re-applying moves memory reservations, so treat it as a deliberate change.")
+        elif not unreachable:
+            print("All nodes carry the full post-join tune.")
+
+    if unreachable:
+        return 2
+    return 1 if drifted else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
