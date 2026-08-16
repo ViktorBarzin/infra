@@ -71,6 +71,11 @@ resource "kubernetes_namespace" "ebooks" {
     labels = {
       tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
+      # Lets book-search reach the shared headful Chrome's CDP port, which is
+      # the only way Anna's Archive can be searched: AA's DDoS-Guard refuses our
+      # HTTP clients on fingerprint, and only that browser (once a human has
+      # passed its captcha) gets real results.
+      "chrome-service.viktorbarzin.me/client" = "true"
     }
   }
   lifecycle {
