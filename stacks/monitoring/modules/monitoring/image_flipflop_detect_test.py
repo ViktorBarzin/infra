@@ -66,10 +66,10 @@ class FindFlipflops(unittest.TestCase):
         # A -> A -> B -> A still alternates once the consecutive pair is
         # collapsed; the repeat of A after B is the signal.
         items = [
-            rs("ebooks", "book-search", "2026-08-16T09:00:00Z", "img:a"),
-            rs("ebooks", "book-search", "2026-08-16T10:00:00Z", "img:a"),
-            rs("ebooks", "book-search", "2026-08-16T11:00:00Z", "img:b"),
-            rs("ebooks", "book-search", "2026-08-16T12:00:00Z", "img:a"),
+            rs("ebooks", "book-search", "2026-08-16T14:00:00Z", "img:a"),
+            rs("ebooks", "book-search", "2026-08-16T15:00:00Z", "img:a"),
+            rs("ebooks", "book-search", "2026-08-16T16:00:00Z", "img:b"),
+            rs("ebooks", "book-search", "2026-08-16T17:00:00Z", "img:a"),
         ]
         found = find_flipflops(items, now=NOW)
         self.assertEqual(len(found), 1)
@@ -98,9 +98,9 @@ class FindFlipflops(unittest.TestCase):
         # claude-agent-service flipped only its `curl` sidecar; the app
         # image never moved. Comparing just containers[0] would miss it.
         items = [
-            rs("claude-agent", "claude-agent-service", "2026-08-16T09:00:00Z", "svc:latest", "curl:8.11.0"),
-            rs("claude-agent", "claude-agent-service", "2026-08-16T10:00:00Z", "svc:latest", "curl:8.11.1"),
-            rs("claude-agent", "claude-agent-service", "2026-08-16T11:00:00Z", "svc:latest", "curl:8.11.0"),
+            rs("claude-agent", "claude-agent-service", "2026-08-16T15:00:00Z", "svc:latest", "curl:8.11.0"),
+            rs("claude-agent", "claude-agent-service", "2026-08-16T16:00:00Z", "svc:latest", "curl:8.11.1"),
+            rs("claude-agent", "claude-agent-service", "2026-08-16T17:00:00Z", "svc:latest", "curl:8.11.0"),
         ]
         found = find_flipflops(items, now=NOW)
         self.assertEqual(len(found), 1)
@@ -142,12 +142,46 @@ class FindFlipflops(unittest.TestCase):
 
     def test_result_reports_the_two_images_being_fought_over(self):
         items = [
-            rs("monitoring", "prometheus-server", "2026-08-16T10:00:00Z", "alpine:3.21"),
-            rs("monitoring", "prometheus-server", "2026-08-16T11:00:00Z", "alpine:3.21.7"),
-            rs("monitoring", "prometheus-server", "2026-08-16T12:00:00Z", "alpine:3.21"),
+            rs("monitoring", "prometheus-server", "2026-08-16T15:00:00Z", "alpine:3.21"),
+            rs("monitoring", "prometheus-server", "2026-08-16T16:00:00Z", "alpine:3.21.7"),
+            rs("monitoring", "prometheus-server", "2026-08-16T17:00:00Z", "alpine:3.21"),
         ]
         found = find_flipflops(items, now=NOW)
         self.assertCountEqual(found[0]["images"], ["alpine:3.21", "alpine:3.21.7"])
+
+
+    def test_a_fight_that_has_stopped_is_no_longer_reported(self):
+        # THE POINT OF THE RECENCY GUARD. The alternation is real and sits
+        # inside the 24h window, but the last state change was 20h ago —
+        # somebody fixed it. Reporting this keeps the alert firing for a full
+        # day after the fix, which is how a new alert gets muted.
+        items = [
+            rs("monitoring", "prometheus-server", "2026-08-15T20:00:00Z", "alpine:3.21"),
+            rs("monitoring", "prometheus-server", "2026-08-15T21:00:00Z", "alpine:3.21.7"),
+            rs("monitoring", "prometheus-server", "2026-08-15T22:00:00Z", "alpine:3.21"),
+        ]
+        self.assertEqual(find_flipflops(items, now=NOW), [])
+
+    def test_a_fight_still_running_is_reported(self):
+        # Same shape, but the last state change was an hour ago.
+        items = [
+            rs("monitoring", "prometheus-server", "2026-08-16T15:00:00Z", "alpine:3.21"),
+            rs("monitoring", "prometheus-server", "2026-08-16T16:00:00Z", "alpine:3.21.7"),
+            rs("monitoring", "prometheus-server", "2026-08-16T17:00:00Z", "alpine:3.21"),
+        ]
+        self.assertEqual(len(find_flipflops(items, now=NOW)), 1)
+
+    def test_a_recent_ordinary_deploy_does_not_revive_an_old_fight(self):
+        # The fight ended 20h ago; a normal deploy to a NEW image landed 1h
+        # ago. Keying recency off "newest ReplicaSet" rather than "the last
+        # state change" would resurrect the stale finding.
+        items = [
+            rs("app", "thing", "2026-08-15T20:00:00Z", "img:a"),
+            rs("app", "thing", "2026-08-15T21:00:00Z", "img:b"),
+            rs("app", "thing", "2026-08-15T22:00:00Z", "img:a"),
+            rs("app", "thing", "2026-08-16T17:00:00Z", "img:c"),
+        ]
+        self.assertEqual(find_flipflops(items, now=NOW), [])
 
 
 if __name__ == "__main__":

@@ -137,8 +137,27 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
   metadata {
     name      = local.egress_name
     namespace = local.namespace
-    labels    = merge(local.labels, local.egress_selector)
+    # keel.sh/policy=never as a LABEL as well as the annotation below: the
+    # annotation is what Keel reads, the label is what the Kyverno exclude in
+    # keel-annotations.tf selects on. Without the label, Kyverno re-stamps
+    # policy=patch on the next admission and the opt-out silently reverts.
+    labels = merge(local.labels, local.egress_selector, { "keel.sh/policy" = "never" })
     annotations = {
+      # Keel must never touch this gateway. The digest pin on gluetun stops
+      # Keel moving THAT image, but the wgserver sidecar is still a concrete
+      # version tag (linuxserver/wireguard:1.0.20260223) that a `patch` policy
+      # would happily bump — and every image change here REPLACES the pod and
+      # drops the NordVPN tunnel, which then refuses an over-limit reconnect
+      # for ~10 min (memory #10182). On 2026-08-16 the Keel-vs-Terraform fight
+      # over the gluetun tag replaced this pod six times in ~30 minutes.
+      #
+      # This Deployment carries no `app.kubernetes.io/managed-by` label, so the
+      # `keel-never-when-another-owner` Kyverno rule cannot cover it — that is
+      # the documented gap in the label-based approach, and this is the
+      # per-workload opt-out it points at. The image-flipflop-detect CronJob
+      # remains the backstop if this ever regresses.
+      "keel.sh/policy" = "never"
+
       # The NordLynx key is account-wide and rotates on multi-device login
       # (memory #8307). The broker re-fetches it into Secret `nordvpn-wg` and
       # an on-demand gateway picks the new value up at spawn — an always-on pod
