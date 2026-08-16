@@ -362,9 +362,25 @@ env_unset() {
 # Vault token is minted only when this reconcile has admin Vault access (normal
 # onboarding/deployment); routine token renewal is performed by the user service.
 install_claude_auth_sync() {
-  local user="$1" home cfg token_file token policy
+  local user="$1" want="${2:-true}" home cfg token_file token policy
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -z "$home" ]] && return 0
+
+  # roster.yaml `claude_auth: false` — the user has an account here but does
+  # not use Claude on this box. The timer validates a credential that was
+  # never created, so it fails every ~6h forever and raises
+  # WorkstationClaudeAuthInvalid with nothing anyone can fix (ancamilea,
+  # 2026-08-16: alerting since 2026-08-10). DISABLE rather than skip: this
+  # reconcile runs hourly against users who may already have it enabled, so a
+  # bare `return` would leave a previously-enabled timer running forever.
+  # Nothing else is touched — account, clone, t3-serve, Vault token and policy
+  # all stay, so flipping the flag back to true re-enables on the next pass.
+  if [[ "$want" != "true" ]]; then
+    run systemctl disable --now "claude-auth-sync@$user.timer" >/dev/null 2>&1 || true
+    run systemctl reset-failed "claude-auth-sync@$user.service" >/dev/null 2>&1 || true
+    log "claude-auth-sync DISABLED for $user (roster claude_auth: false)"
+    return 0
+  fi
   cfg="$home/.config/claude-auth-sync"
   token_file="$cfg/vault-token"
   policy="workstation-claude-$user"
@@ -794,7 +810,7 @@ sync_tmux_persist
 # 4) per-account: create-if-absent + ADDITIVE tier groups (never strip) + locked clone
 # NB: empty @tsv fields collapse under tab-IFS read (tab is IFS whitespace), so
 # the jq below emits "-" for empty groups/repos and we map it back here.
-while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv; do
+while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv claude_auth; do
   [[ "$groups_csv" == "-" ]] && groups_csv=""
   [[ "$repos_csv" == "-" ]] && repos_csv=""
   if ! id "$os_user" >/dev/null 2>&1; then
@@ -836,8 +852,8 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv; do
   fi
   refresh_codex_mirror "$os_user"            # all tiers — mirror of the managed claudeMd
   install_user_claude_native "$os_user"      # all tiers — per-user native claude (terminal + t3); no npm/npx
-  install_claude_auth_sync "$os_user"        # all tiers — own Claude identity + isolated Vault recovery
-done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end)] | @tsv' "$desired_file")
+  install_claude_auth_sync "$os_user" "$claude_auth"   # all tiers unless roster claude_auth: false
+done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring)] | @tsv' "$desired_file")
 
 # 5) per-user .env (sticky port) + enable t3-serve@
 while IFS=$'\t' read -r os_user port; do

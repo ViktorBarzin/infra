@@ -18,6 +18,19 @@
 #                                   viktor/<name> with the user's own PAT.
 #                                   A single-layout ~/code is auto-migrated.
 #
+# Optional per-user Claude auth (all tiers):
+#   claude_auth: true (default) - enable claude-auth-sync@<user>.timer, which
+#                                 validates the user's own Claude credential
+#                                 every ~6h and backs it up to their Vault path
+#   claude_auth: false          - do NOT run that timer for this user. Use when
+#                                 someone has an account here but does not use
+#                                 Claude on this box: the timer would validate a
+#                                 credential that was never created, fail every
+#                                 run, and raise WorkstationClaudeAuthInvalid
+#                                 forever with nothing to fix. Reversible — the
+#                                 provisioner disables the timer while false and
+#                                 re-enables it when set back to true.
+#
 # wizard IS listed (as admin): the reconcile REGENERATES /etc/ttyd-user-map +
 # dispatch.json from this file, so omitting him would drop his t3 instance. The
 # provisioner skips account/group/clone mutations for already-existing users, so
@@ -25,5 +38,12 @@
 users:
   wizard:    {authentik_user: vbarzin,     k8s_user: wizard, tier: admin}                                          # base config author + cluster-admin
   emo:       {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user}                                     # NET-NEW k8s_users entry (add as power-user before provisioning)
-  ancamilea: {authentik_user: ancaelena98, k8s_user: anca,   tier: namespace-owner, namespaces: [plotting-book], code_layout: workspace, repos: [tripit]}   # ALREADY provisioned in-cluster -- assert, don't re-create
+  ancamilea: {authentik_user: ancaelena98, k8s_user: anca,   tier: namespace-owner, namespaces: [plotting-book], code_layout: workspace, repos: [tripit], claude_auth: false}  # ALREADY provisioned in-cluster -- assert, don't re-create
+  #  claude_auth: false (2026-08-16, Viktor) -- Anca has an account here but is not
+  #  using the devvm and is not expected to soon. She never completed the one-time
+  #  Claude SSO, so the per-user timer had nothing to validate or restore and failed
+  #  every ~6h since 2026-08-10, raising WorkstationClaudeAuthInvalid with nothing
+  #  anyone could fix. Everything else is untouched (account, clone, t3-serve, her
+  #  scoped Vault token + policy) -- set this back to true and the next hourly
+  #  reconcile re-enables the timer.
 # gheorghe:  {authentik_user: vabbit81,    k8s_user: vabbit81, tier: namespace-owner, namespaces: [vabbit81]}      # already a cluster ns-owner; uncomment to give him a devvm workstation
