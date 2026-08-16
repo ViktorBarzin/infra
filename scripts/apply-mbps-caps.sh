@@ -24,6 +24,7 @@ TARGETS=(
   "202:scsi0:150:120"    # k8s-node2
   "203:scsi0:150:120"    # k8s-node3
   "204:scsi0:150:120"    # k8s-node4
+  "205:scsi0:150:120"    # k8s-node5 (built after this list; uncapped until 2026-08-16)
   "220:scsi0:40:40"      # docker-registry
 )
 
