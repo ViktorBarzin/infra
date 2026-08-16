@@ -500,6 +500,15 @@ install_playwright() {
 
   # (4) enable the system template instances. `enable --now` is idempotent and
   #     does NOT restart a running unit, so a live user is undisturbed.
+  if [[ "${2:-false}" == "true" ]]; then
+    # roster `parked: true` — stop the per-user browser MCP rather than skip it,
+    # for the same reason as claude-auth-sync: this reconcile also runs against
+    # users who already have it enabled, so a bare skip leaves it running.
+    run systemctl disable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
+    run systemctl disable --now "playwright-snapshot-refresh@$user.timer" >/dev/null 2>&1 || true
+    log "playwright MCP DISABLED for $user (roster parked: true)"
+    return 0
+  fi
   run systemctl enable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
   run systemctl enable --now "playwright-snapshot-refresh@$user.timer" >/dev/null 2>&1 || true
 }
@@ -862,6 +871,15 @@ while IFS=$'\t' read -r os_user port; do
   # Per-user Enterprise login is authoritative. A legacy shared setup-token has
   # higher credential precedence and would silently defeat user isolation.
   env_unset "$envf" CLAUDE_CODE_OAUTH_TOKEN
+  if [[ "$(jq -r --arg u "$os_user" '.accounts[$u].parked // false' "$desired_file")" == "true" ]]; then
+    # roster `parked: true` — the T3 Code server is the largest per-user daemon
+    # on this shared box; stop it (not just skip) so an already-running instance
+    # actually goes away. The .env, sticky port and state are left alone, so
+    # unparking restores the same instance on the same port.
+    run systemctl disable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
+    log "t3-serve DISABLED for $os_user (roster parked: true)"
+    continue
+  fi
   id "$os_user" >/dev/null 2>&1 && run systemctl enable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
 done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 
@@ -872,7 +890,7 @@ done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 while IFS=$'\t' read -r os_user pw_port; do
   id "$os_user" >/dev/null 2>&1 || continue
   env_set "$ENVDIR/playwright-$os_user.env" PLAYWRIGHT_PORT "$pw_port"
-  install_playwright "$os_user"
+  install_playwright "$os_user" "$(jq -r --arg u "$os_user" '.accounts[$u].parked // false' "$desired_file")"
 done < <(jq -r '.playwright_ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 
 # 5d) per-user homelab-memory (ALL users): replace the claude-memory MCP/plugin with the

@@ -461,3 +461,60 @@ def test_claude_auth_flows_through_to_the_account():
     ds = eng.derive_desired_state(r, {})
     assert ds.accounts["ancamilea"].claude_auth is False
     assert ds.accounts["emo"].claude_auth is True
+
+
+def test_parked_defaults_to_false():
+    r = _roster("users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user}}")
+    assert r.users["emo"].parked is False
+
+
+def test_parked_must_be_a_bool():
+    with pytest.raises(eng.RosterError):
+        _roster(
+            "users: {emo: {authentik_user: e, k8s_user: emo, "
+            "tier: power-user, parked: yes-please}}"
+        )
+
+
+def test_parked_implies_claude_auth_off_in_the_derived_account():
+    # The provisioner acts on the ACCOUNT. A parked account must not report
+    # claude_auth: true, or the desired state would claim a daemon should run
+    # that we have just decided to stop.
+    r = _roster(
+        """
+        users:
+          ancamilea: {authentik_user: ancaelena98, k8s_user: anca,
+                      tier: namespace-owner, namespaces: [plotting-book],
+                      parked: true}
+        """
+    )
+    ds = eng.derive_desired_state(r, {})
+    assert ds.accounts["ancamilea"].parked is True
+    assert ds.accounts["ancamilea"].claude_auth is False
+
+
+def test_parking_does_not_touch_the_rest_of_the_account():
+    # Parking is reversible: the account, layout and repos must survive so
+    # flipping the flag back restores the user exactly.
+    r = _roster(
+        """
+        users:
+          ancamilea: {authentik_user: ancaelena98, k8s_user: anca,
+                      tier: namespace-owner, namespaces: [plotting-book],
+                      code_layout: workspace, repos: [tripit], parked: true}
+        """
+    )
+    a = eng.derive_desired_state(r, {}).accounts["ancamilea"]
+    assert a.tier == "namespace-owner"
+    assert a.code_layout == "workspace"
+    assert a.repos == ("tripit",)
+
+
+def test_an_unparked_user_keeps_its_declared_claude_auth():
+    r = _roster(
+        "users: {emo: {authentik_user: e, k8s_user: emo, "
+        "tier: power-user, claude_auth: false}}"
+    )
+    ds = eng.derive_desired_state(r, {})
+    assert ds.accounts["emo"].parked is False
+    assert ds.accounts["emo"].claude_auth is False
