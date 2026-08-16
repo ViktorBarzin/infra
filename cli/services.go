@@ -16,6 +16,11 @@ type service struct {
 	Host        string
 	Description string
 	Group       string
+	// Internal marks a row that came from a cluster-internal Service rather
+	// than an Ingress. Its Host is an in-cluster address, not something a
+	// browser can open, and the catalog must say so — otherwise an agent reads
+	// it as a URL and reports the service broken when it does not resolve.
+	Internal bool
 }
 
 // routingTable maps the operations agents actually perform to the verb that
@@ -34,6 +39,7 @@ func routingTable() [][2]string {
 		{"see how Claude is used here", "homelab claude-usage [--since 30d]"},
 		{"read one Claude conversation", "homelab claude-usage --session <id|name>"},
 		{"drive a browser through an anti-bot wall", "homelab browser run <script.js>"},
+		{"request must not come from our IP / another country", "HTTPS_PROXY=http://proxy-egress-uk.proxy.svc.cluster.local:8888"},
 		{"see what else we host", "homelab services [--search X]"},
 	}
 }
@@ -54,6 +60,69 @@ type ingressList struct {
 			} `json:"rules"`
 		} `json:"spec"`
 	} `json:"items"`
+}
+
+// serviceList is the subset of `kubectl get svc -A -o json` the catalog reads.
+type serviceList struct {
+	Items []struct {
+		Metadata struct {
+			Name        string            `json:"name"`
+			Namespace   string            `json:"namespace"`
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+		Spec struct {
+			ClusterIP string `json:"clusterIP"`
+		} `json:"spec"`
+	} `json:"items"`
+}
+
+// parseInternalServices catalogues cluster-internal Services that carry the
+// same `gethomepage.dev/*` annotations as ingresses.
+//
+// Some capabilities have no web page and must not get one — the VPN egress
+// proxy is a ClusterIP precisely so an open, unauthenticated proxy is never
+// published through Traefik. Ingress-only discovery made those invisible to
+// agents, which is how a working capability goes unused.
+//
+// The connectable address comes from the `homelab/endpoint` annotation rather
+// than being derived: a Service may expose several ports (the egress proxy
+// serves HTTP on 8888 and SOCKS5 on 1080) and only the owner knows which one a
+// consumer should be told about.
+func parseInternalServices(kubectlJSON string) ([]service, error) {
+	var list serviceList
+	if err := json.Unmarshal([]byte(kubectlJSON), &list); err != nil {
+		return nil, fmt.Errorf("cannot parse service listing: %w", err)
+	}
+	var out []service
+	for _, it := range list.Items {
+		a := it.Metadata.Annotations
+		if a["gethomepage.dev/enabled"] != "true" {
+			continue
+		}
+		// Headless Services have no address to hand out.
+		if it.Spec.ClusterIP == "" || it.Spec.ClusterIP == "None" {
+			continue
+		}
+		endpoint := a["homelab/endpoint"]
+		if endpoint == "" {
+			endpoint = fmt.Sprintf("%s.%s.svc.cluster.local", it.Metadata.Name, it.Metadata.Namespace)
+		}
+		name := a["gethomepage.dev/name"]
+		if name == "" {
+			name = strings.ReplaceAll(it.Metadata.Name, "-", " ")
+		}
+		out = append(out, service{
+			Name:        name,
+			Host:        endpoint,
+			Description: a["gethomepage.dev/description"],
+			Group:       a["gethomepage.dev/group"],
+			Internal:    true,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out, nil
 }
 
 // parseServices turns a kubectl ingress listing into catalog rows: only
@@ -142,6 +211,12 @@ func formatCatalog(svcs []service, query string) string {
 	}
 	for _, s := range svcs {
 		line := fmt.Sprintf("  %-*s  %s", width, s.Host, s.Name)
+		if s.Internal {
+			// Say it plainly: this address is reachable from inside the
+			// cluster only, so nobody pastes it into a browser and concludes
+			// the service is down.
+			line += " [in-cluster]"
+		}
 		if s.Description != "" {
 			line += " — " + s.Description
 		}
