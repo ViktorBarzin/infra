@@ -35,6 +35,37 @@ variable "gpu_total_bytes" {
   description = "Total VRAM on the shared GPU. Free = this minus sum(gpu_pod_memory_used_bytes)."
 }
 
+# Kill switch for ALL Chatterbox scheduling. When false, every one of the four
+# off-peak CronJobs below is suspended and chatterbox-tts simply stays at 0.
+#
+# OFF since 2026-08-16 (Viktor). The four jobs cost ~768 pod creations a day
+# between them, which is not free on this host: each pod create/destroy writes
+# containerd overlay layers, a kubelet pod dir, /var/log/pods and a systemd
+# transient scope plus the ext4 journal metadata for all of it — small random
+# writes, and k8s node root disks are 43% of sdc's write IOPS with cronjob churn
+# as the driver.
+#
+# What the measurement showed: the demand gate has NEVER had work — every run
+# logs "demand: queued=0 replicas=0", and its tripit queue probe additionally
+# fails ~5% of runs. The nightly 02:00-06:00 window did genuinely scale the pod
+# up (6 preflight PASSes in 7 days), but with an empty queue there is nothing
+# for it to synthesise, so it was holding a slice of the contended T4 for no
+# output while vram-guard repeatedly yielded it back.
+#
+# Turning the schedule off therefore also removes a GPU tenant from the T4,
+# which is the more valuable half of this change.
+#
+# NOTHING ELSE IS TOUCHED: the Deployment, image, config, Service and VRAM
+# floor all stay exactly as they are, so flipping this back to true restores
+# the whole mechanism. If you want narration generated before then, scale
+# chatterbox-tts up by hand — but re-enable the guard first, because without it
+# nothing yields the card under VRAM pressure (see the 2026-07-07 OOM cascade
+# that took out node1).
+variable "chatterbox_scheduling_enabled" {
+  type    = bool
+  default = false
+}
+
 variable "offpeak_window_up_schedule" {
   type        = string
   default     = "0 2 * * *" # 02:00 Europe/London (see timezone on the CronJob)
@@ -598,7 +629,12 @@ resource "kubernetes_cron_job_v1" "offpeak" {
     labels    = local.labels
   }
   spec {
-    schedule                      = each.value.schedule
+    schedule = each.value.schedule
+    # All four suspend together — see chatterbox_scheduling_enabled above.
+    # Deliberately all-or-nothing: suspending the guard while window-up still
+    # fires would leave the nightly pod holding the T4 with nothing to yield
+    # the card under VRAM pressure.
+    suspend                       = !var.chatterbox_scheduling_enabled
     timezone                      = "Europe/London"
     concurrency_policy            = "Forbid"
     starting_deadline_seconds     = 120
