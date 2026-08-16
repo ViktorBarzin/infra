@@ -229,35 +229,53 @@ resource "kubernetes_cron_job_v1" "crowdsec_cf_sync" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    # Every 12h since 2026-08-16 (Viktor), was */2.
+    # */15 since 2026-08-16 (was */2 all day, then 0 */12 for a few hours).
     #
-    # The */2 cadence was not protecting anything — it was breaking the sync.
-    # Measured 2026-08-16: 363 of 363 runs in 24h returned HTTP 429 "you have
-    # been ratelimited" from the Lists API, and every one of them took the
-    # fail-safe path and left the list untouched. The Cloudflare edge list had
-    # therefore not been updated at all for at least a day, and no successful
-    # run appears anywhere in the 7 days Loki holds. This is the same class of
-    # failure as the 2026-06-27 outage noted below; dropping backoff_limit to 0
-    # reduced the burst but the base cadence was still far too aggressive.
+    # The cadence was never the whole story, and the 12h reading of it was
+    # wrong. What the logs actually show, over 30 days:
     #
-    # What it is actually syncing is tiny and slow-moving: "LAPI desired: 5
-    # block (ban-only, ip-scope)". Five addresses. The ~23.5k CAPI decisions are
-    # deliberately excluded (enforced at L3 by the firewall-bouncer instead), so
-    # 720 API writes a day were maintaining a five-entry list.
+    #   * Thousands of runs succeed. They log "[ok] block: +0 / -0" — the edge
+    #     list already matched LAPI, so the run issued NO write at all. A
+    #     no-write run cannot be throttled: Cloudflare does not rate-limit the
+    #     GETs, only changes.
+    #   * The 429s begin the moment a decision appears or expires, i.e. on the
+    #     first run that has something to WRITE — and then continue unbroken
+    #     for hours or days. Three such stretches in nine days: 08-07 -> 08-10
+    #     (2.4 days), 08-12 (8h), 08-15 -> 08-16 (1.6 days and counting).
     #
-    # Trade-off, stated plainly: a newly-detected attacker now reaches
-    # Cloudflare-PROXIED hosts for up to 12h before the edge blocks them, where
-    # the design intent was 2 minutes. That window is real, and it matters
-    # specifically for proxied hosts because the nftables bouncer cannot help
-    # there — it sees the cloudflared tunnel as the source, not the client.
-    # Direct hosts are unaffected and still drop banned IPs in-kernel within
-    # seconds. Set against that: the window today is effectively infinite,
-    # because the sync never succeeds. Two calls a day should sit far under any
-    # rate limit and actually restore the control.
-    schedule                  = "0 */12 * * *"
-    # Was 110s, sized for a 2-minute cadence. At 12h a missed start would mean
-    # half a day of staleness, so allow an hour for the controller to get to it.
-    starting_deadline_seconds = 3600
+    # So a slower cadence does not help by itself. Direct measurement on
+    # 2026-08-16 pinned it down further: with the CronJob quiet, a single
+    # one-item POST still returned 429 code 10040 while the response's own
+    # rate-limit headers read `r=1199` remaining of `q=1200;w=300`. Retries
+    # after 75s, 180s and 300s of complete silence failed identically, and PUT
+    # behaved exactly like POST. The limiter rejecting us is not the one it
+    # advertises, and it is not counting requests per five minutes — it is
+    # counting list CHANGES over a much longer window.
+    #
+    # That makes a fixed retry cadence the wrong shape entirely: it presents
+    # the same change over and over, and if attempts count toward the budget
+    # they hold it open. The fix is in lapi_kv_sync.py — an exponential write
+    # backoff (30m/1h/2h/4h/6h, reset on success) persisted through Pushgateway
+    # — so a throttled stretch costs a handful of attempts a day rather than
+    # one per run. The script also now expresses a reconciliation as ONE PUT of
+    # the full desired set instead of a POST plus a DELETE, halving the changes
+    # per sync.
+    #
+    # With writes gated, frequent runs are cheap again and buy back freshness:
+    # a new ban reaches the edge within ~15 min when the API is healthy,
+    # instead of waiting up to 12h. That window matters only for
+    # Cloudflare-PROXIED hosts — the nftables bouncer cannot cover those (it
+    # sees the tunnel, not the client) but still drops banned IPs in-kernel on
+    # direct hosts within seconds.
+    #
+    # The silence is the part that actually hurt: crowdsec_cf_list_sync_success
+    # has been pushed correctly as 0 the whole time and nothing was watching
+    # it. Alerts on that metric, and on the new drift gauge, landed with this
+    # change.
+    schedule = "*/15 * * * *"
+    # Sized for the cadence: a missed start is worth catching up on, but not
+    # hours later. (Was 110s at */2, then 3600s at 12h.)
+    starting_deadline_seconds = 300
     job_template {
       metadata {}
       spec {

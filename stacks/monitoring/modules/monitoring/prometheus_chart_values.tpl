@@ -2453,6 +2453,70 @@ serverFiles:
               severity: warning
             annotations:
               summary: "CrowdSec LAPI down — WAF/IDS degraded (Traefik plugin fails open)"
+          # CrowdSec edge sync (Cloudflare Rules List). Added 2026-08-16 after
+          # the sync sat broken for 1.6 days — and, going back through Loki, in
+          # three separate multi-hour-to-multi-day stretches over nine days —
+          # with nothing firing. crowdsec_cf_list_sync_success was pushed as 0
+          # correctly the whole time; no rule read it. Monitoring covered that
+          # the CronJob's pod existed, which it always did.
+          #
+          # Two signals, because they fail differently:
+          #   * sync_success  — did the last RUN complete without a Cloudflare
+          #                     error. Goes 0 on a 429 or an API failure.
+          #   * drift_items   — how far the edge list is from LAPI right now.
+          #     A run can succeed at doing nothing (the write is deliberately
+          #     held back during backoff) while drift sits above 0 for hours.
+          #     This is the one that tracks actual exposure.
+          - alert: CrowdSecEdgeSyncFailing
+            expr: crowdsec_cf_list_sync_success == 0
+            for: 2h
+            keep_firing_for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CrowdSec -> Cloudflare edge sync failing for 2h — proxied hosts not getting new bans"
+              description: >-
+                The crowdsec-cf-sync CronJob has not completed a clean
+                Cloudflare write in 2h. Usually HTTP 429 code 10040 on the
+                Lists API, which throttles list CHANGES over a long window and
+                has held for days at a time. The script backs off
+                (30m/1h/2h/4h/6h) rather than retrying every run; check
+                crowdsec_cf_list_write_fail_streak for how deep it is. Banned
+                IPs still drop in-kernel on DIRECT hosts via the
+                cs-firewall-bouncer — only Cloudflare-PROXIED hosts are
+                exposed, because there the bouncer sees the tunnel rather than
+                the client.
+          # 6h, not 2h: the backoff ladder deliberately holds writes for up to
+          # 6h, so a shorter window would fire on the fix working as designed.
+          - alert: CrowdSecEdgeListDrifted
+            expr: crowdsec_cf_list_drift_items > 0
+            for: 6h
+            keep_firing_for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cloudflare edge ban list has disagreed with CrowdSec for 6h"
+              description: >-
+                crowdsec_cf_list_drift_items counts entries the edge list and
+                LAPI disagree on (additions plus removals). Sustained drift
+                means either a decision CrowdSec made is not being enforced at
+                the edge, or an expired one is still blocking someone. Check
+                the job logs for the specific addresses — they are logged on
+                every run that finds drift.
+          # Pushgateway never expires a sample, so a stopped CronJob leaves the
+          # last value frozen and looking healthy. Age is the only honest test.
+          - alert: CrowdSecEdgeSyncStale
+            expr: time() - crowdsec_cf_list_sync_last_run_seconds > 5400
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "crowdsec-cf-sync has not run in 90m (schedule is */15)"
+              description: >-
+                The job stopped running entirely rather than failing — a
+                suspended CronJob, an unschedulable pod, or a wedged run under
+                concurrencyPolicy=Forbid. Not the same as the sync failing:
+                this fires when nothing is even trying.
           - alert: KyvernoDown
             expr: (kube_deployment_status_replicas_available{namespace="kyverno", deployment="kyverno-admission-controller"} or on() vector(0)) < 1
             for: 10m

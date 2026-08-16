@@ -82,6 +82,23 @@ BATCH = 1000
 POLL_TIMEOUT = 25  # seconds to wait for one bulk op (the run has ~110s budget)
 POLL_INTERVAL = 1.0
 
+# Write backoff ladder, in seconds. Cloudflare rejects Lists WRITES with HTTP
+# 429 / code 10040 for long stretches (measured 2026-08-16: 1.6 days unbroken,
+# and a 2.4-day stretch the week before) while READS keep working and the
+# published rate-limit headers report a nearly-full budget — `r=1199` of
+# `q=1200;w=300` on the very request being rejected. So the limiter doing the
+# rejecting is NOT the one it advertises, and it is not counting our requests
+# per five minutes. What it does track, per Cloudflare's own support guidance,
+# is the number of list CHANGES over time.
+#
+# The failure mode that follows is self-sustaining: a fixed retry cadence keeps
+# presenting the same change, and if attempts count toward that budget the
+# budget never refills. At the old */2 that was ~720 attempts a day to move a
+# five-entry list. This ladder makes each failure buy quiet instead of another
+# attempt, and resets the moment a write lands.
+BACKOFF_LADDER = [1800, 3600, 7200, 14400, 21600]  # 30m, 1h, 2h, 4h, 6h (cap)
+PGW_JOB = "crowdsec-cf-list-sync"
+
 
 class CFError(Exception):
     """Cloudflare API failure. Carries the HTTP status so the caller can treat a
@@ -117,6 +134,15 @@ def _cf(url, *, method="GET", payload=None, timeout=20):
         raise CFError(f"{method} {url} -> HTTP {e.code} {detail}", status=e.code) from e
     except urllib.error.URLError as e:
         raise CFError(f"{method} {url} -> {e}") from e
+    except (TimeoutError, OSError) as e:
+        # urlopen(timeout=) raises a bare TimeoutError, which is NOT a subclass
+        # of URLError — so before 2026-08-16 a slow Cloudflare response escaped
+        # as an uncaught traceback and exited 1. With backoff_limit=0 that marks
+        # the Job Failed AND skips push_metrics entirely, leaving
+        # crowdsec_cf_list_sync_success frozen at its last value: the freshness
+        # alerts would have been looking at a stale sample. Treat it as an
+        # ordinary API failure so the run reports itself.
+        raise CFError(f"{method} {url} -> {e!r}") from e
     if res is not None and not res.get("success", True):
         raise CFError(f"{method} {url} -> not success: {res.get('errors')}")
     return res
@@ -228,75 +254,113 @@ def _op_id(res):
     return ((res or {}).get("result") or {}).get("operation_id")
 
 
-def cf_add_items(list_id, ips):
-    """POST new IPs to the list (append). Returns the operation_id (async)."""
-    # If callers ever exceed one batch, each POST is a separate bulk op and the
-    # single-pending-op rule forces us to wait between them.
-    last_op = None
-    for i in range(0, len(ips), BATCH):
-        chunk = [{"ip": ip} for ip in ips[i : i + BATCH]]
-        res = _cf(
-            f"{CF_API}/accounts/{CF_ACCOUNT_ID}/rules/lists/{list_id}/items",
-            method="POST",
-            payload=chunk,
-        )
-        last_op = _op_id(res)
-        if i + BATCH < len(ips):  # more chunks coming -> serialize
-            if not _wait_for_op(last_op):
-                return last_op  # timed out; bail (partial), next run continues
-    return last_op
+def cf_replace_items(list_id, ips):
+    """PUT the full desired set — ONE bulk operation. Returns the operation_id.
 
+    Replaces the previous POST-then-DELETE pair. Cloudflare counts list CHANGES,
+    and a sync that both adds and removes used to spend two bulk operations to
+    express one reconciliation; PUT expresses it in one. It also removes the
+    serialize-and-poll dance between the two, which existed only because
+    Cloudflare permits a single pending bulk op per account.
 
-def cf_delete_items(list_id, item_ids):
-    """DELETE items by id. Returns the operation_id (async)."""
-    last_op = None
-    for i in range(0, len(item_ids), BATCH):
-        chunk = {"items": [{"id": iid} for iid in item_ids[i : i + BATCH]]}
-        res = _cf(
-            f"{CF_API}/accounts/{CF_ACCOUNT_ID}/rules/lists/{list_id}/items",
-            method="DELETE",
-            payload=chunk,
-        )
-        last_op = _op_id(res)
-        if i + BATCH < len(item_ids):
-            if not _wait_for_op(last_op):
-                return last_op
-    return last_op
+    PUT is documented as "removes all existing items from the list and adds the
+    provided items" — safe here because `desired` is always the complete set we
+    want, never a delta. The caller must therefore never pass a partial set; the
+    LAPI fail-safe in main() is what guarantees that (an unreadable LAPI skips
+    the run rather than reconciling toward an empty desired state).
+    """
+    res = _cf(
+        f"{CF_API}/accounts/{CF_ACCOUNT_ID}/rules/lists/{list_id}/items",
+        method="PUT",
+        payload=[{"ip": ip, "comment": "crowdsec ban"} for ip in sorted(ips)],
+    )
+    return _op_id(res)
 
 
 def reconcile(label, list_id, desired):
     """Reconcile one list to `desired` (a set of IPs).
 
-    Returns (added, removed). Serializes add->wait->delete so we respect the
-    one-pending-bulk-op-per-account limit. Raises CFError on hard failure.
+    Returns (drift, wrote): how many items differed, and whether a write was
+    actually issued. Raises CFError on hard failure.
+
+    The read is always cheap and always happens — GETs are not what Cloudflare
+    throttles, and knowing the drift is what lets us alert on a stuck list even
+    while we are deliberately not writing.
     """
     existing = cf_list_items(list_id)  # {ip: item_id}
     existing_ips = set(existing)
+    drift = len(desired ^ existing_ips)  # symmetric difference: adds + removes
+
+    if not drift:
+        print(f"[ok] {label}: in sync ({len(desired)} items), no write needed")
+        return 0, False
+
     to_add = sorted(desired - existing_ips)
-    to_remove_ids = [existing[ip] for ip in (existing_ips - desired)]
+    to_remove = sorted(existing_ips - desired)
+    print(f"[info] {label}: drift={drift} (+{len(to_add)} / -{len(to_remove)}) "
+          f"add={to_add} remove={to_remove}")
 
-    added = removed = 0
-    if to_add:
-        op = cf_add_items(list_id, to_add)
-        if _wait_for_op(op):
-            added = len(to_add)
-        else:
-            # add op didn't finish; skip the delete this run to avoid stacking a
-            # second pending op, and report what we attempted.
-            print(f"[warn] {label}: add op not confirmed; deferring deletes", file=sys.stderr)
-            return added, removed
-    if to_remove_ids:
-        op = cf_delete_items(list_id, to_remove_ids)
-        if _wait_for_op(op):
-            removed = len(to_remove_ids)
-    print(f"[ok] {label}: +{added} / -{removed} (desired={len(desired)}, was={len(existing_ips)})")
-    return added, removed
+    op = cf_replace_items(list_id, desired)
+    if _wait_for_op(op):
+        print(f"[ok] {label}: replaced list with {len(desired)} items")
+    else:
+        # The op was accepted but has not reached a terminal state inside our
+        # budget. It is in flight, so it counts as a write either way — do not
+        # re-issue; the next run reads the result and decides afresh.
+        print(f"[warn] {label}: replace op accepted but not confirmed in "
+              f"{POLL_TIMEOUT}s; next run verifies", file=sys.stderr)
+    return drift, True
 
 
 # --------------------------------------------------------------------------- #
-# Metrics (best-effort)
+# Metrics + cross-run backoff state (both live in Pushgateway)
 # --------------------------------------------------------------------------- #
-def push_metrics(block_n, ok):
+# CronJob pods are stateless, so the backoff has to survive somewhere. It lives
+# in the Pushgateway alongside the metrics: the job already writes there, the
+# values never expire (which is a trap for freshness alerts but exactly right
+# for state), and it needs no RBAC, no volume and no second datastore.
+#
+# If the Pushgateway is unreadable we fall back to "no backoff" — one write
+# attempt per run. That is deliberately the permissive direction: the cost is a
+# handful of extra attempts, whereas failing closed would silently stop syncing
+# bans whenever the metrics stack blipped.
+def read_state():
+    """Return (fail_streak, backoff_until) from our own pushed gauges."""
+    if not PUSHGATEWAY:
+        return 0, 0.0
+    try:
+        req = urllib.request.Request(f"{PUSHGATEWAY}/metrics")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode(errors="replace")
+    except Exception as e:
+        print(f"[warn] pushgateway unreadable ({e}); assuming no backoff",
+              file=sys.stderr)
+        return 0, 0.0
+
+    def _get(name):
+        # Pushed samples always come back labelled {instance="",job="..."}, and
+        # timestamps come back in scientific notation (1.786e+09) which int()
+        # rejects — so match on the name prefix and go via float().
+        for line in body.splitlines():
+            if line.startswith("#") or not line.startswith(name):
+                continue
+            rest = line[len(name):]
+            if rest and rest[0] not in "{ ":
+                continue  # a longer metric name that merely shares the prefix
+            if PGW_JOB not in line and rest.startswith("{"):
+                continue
+            try:
+                return float(line.rsplit(" ", 1)[1])
+            except (IndexError, ValueError):
+                continue
+        return 0.0
+
+    return int(_get("crowdsec_cf_list_write_fail_streak")), _get(
+        "crowdsec_cf_list_write_backoff_until_seconds"
+    )
+
+
+def push_metrics(block_n, ok, drift=0, fail_streak=0, backoff_until=0.0):
     if not PUSHGATEWAY:
         return
     payload = (
@@ -306,10 +370,20 @@ def push_metrics(block_n, ok):
         f"crowdsec_cf_list_sync_success {1 if ok else 0}\n"
         "# TYPE crowdsec_cf_list_sync_last_run_seconds gauge\n"
         f"crowdsec_cf_list_sync_last_run_seconds {int(time.time())}\n"
+        # How far the edge list is from LAPI right now. This is the honest
+        # health signal: sync_success says "did this run write cleanly", drift
+        # says "is the edge actually enforcing what CrowdSec decided". A run can
+        # succeed at doing nothing while drift sits at 2 for days.
+        "# TYPE crowdsec_cf_list_drift_items gauge\n"
+        f"crowdsec_cf_list_drift_items {drift}\n"
+        "# TYPE crowdsec_cf_list_write_fail_streak gauge\n"
+        f"crowdsec_cf_list_write_fail_streak {fail_streak}\n"
+        "# TYPE crowdsec_cf_list_write_backoff_until_seconds gauge\n"
+        f"crowdsec_cf_list_write_backoff_until_seconds {int(backoff_until)}\n"
     )
     try:
         _req(
-            f"{PUSHGATEWAY}/metrics/job/crowdsec-cf-list-sync",
+            f"{PUSHGATEWAY}/metrics/job/{PGW_JOB}",
             method="PUT",
             headers={"Content-Type": "text/plain"},
             data=payload.encode(),
@@ -335,27 +409,53 @@ def main():
 
     print(f"[info] LAPI desired: {len(block)} block (ban-only, ip-scope)")
 
-    # 2. Reconcile the single block list. A 429 rate-limit is a SOFT-SKIP (exit
-    # 0, retry next */2 run) — like the LAPI fail-safe above — so a transient
-    # Cloudflare Lists-API throttle never marks the job Failed or triggers a k8s
-    # retry-storm (rapid re-attempts only deepen the throttle until it stops
-    # clearing). Any OTHER CF error still fails loud (non-zero exit).
+    streak, backoff_until = read_state()
+    now = time.time()
+
+    # 2. Reconcile. A 429 is a soft-skip (exit 0) — a Cloudflare throttle is not
+    #    a job failure and must never become a k8s retry-storm. What is new
+    #    since 2026-08-16 is that a 429 also BUYS QUIET: the next write is
+    #    deferred up the ladder, so a throttled stretch costs a handful of
+    #    attempts a day instead of one per run forever.
     try:
-        reconcile("block", CF_BAN_LIST_ID, block)
-    except CFError as e:
-        if e.status == 429:
+        if backoff_until > now:
+            # Read anyway so drift stays observable while we hold off writing.
+            existing = set(cf_list_items(CF_BAN_LIST_ID))
+            drift = len(block ^ existing)
+            mins = int((backoff_until - now) / 60)
             print(
-                f"[skip] Cloudflare rate-limited ({e}); leaving the list "
-                f"untouched this run, will retry next cycle (fail-safe).",
+                f"[hold] write backoff active for another {mins}m "
+                f"(fail streak {streak}); drift={drift}. Reading only.",
                 file=sys.stderr,
             )
-            push_metrics(len(block), ok=False)
+            push_metrics(len(block), ok=(drift == 0), drift=drift,
+                         fail_streak=streak, backoff_until=backoff_until)
+            return 0
+
+        drift, wrote = reconcile("block", CF_BAN_LIST_ID, block)
+    except CFError as e:
+        if e.status == 429:
+            streak += 1
+            wait = BACKOFF_LADDER[min(streak, len(BACKOFF_LADDER)) - 1]
+            backoff_until = now + wait
+            print(
+                f"[skip] Cloudflare rate-limited ({e}); list left untouched. "
+                f"Fail streak {streak}, next write attempt in {wait // 60}m "
+                f"(fail-safe).",
+                file=sys.stderr,
+            )
+            push_metrics(len(block), ok=False, drift=-1, fail_streak=streak,
+                         backoff_until=backoff_until)
             return 0
         print(f"[error] Cloudflare API failure: {e}", file=sys.stderr)
-        push_metrics(len(block), ok=False)
+        push_metrics(len(block), ok=False, fail_streak=streak,
+                     backoff_until=backoff_until)
         return 1
 
-    push_metrics(len(block), ok=True)
+    # A write that landed (or a run that needed none) clears the ladder.
+    if wrote:
+        print("[info] write succeeded; clearing backoff")
+    push_metrics(len(block), ok=True, drift=0, fail_streak=0, backoff_until=0)
     return 0
 
 
