@@ -59,7 +59,7 @@
 | chrome-service | Headed Chromium over CDP (`http://chrome-service.chrome-service.svc:9222`, `connect_over_cdp`; legacy `:3000/<token>` WS pool removed 2026-06-04) for sibling services driving anti-bot pages — snapshot-harvester CronJob + tripit fare scrape | chrome-service |
 | rybbit | Analytics | rybbit |
 | isponsorblocktv | SponsorBlock for TV | isponsorblocktv |
-| actualbudget | Budgeting (factory pattern) | actualbudget |
+| actualbudget | Budgeting (factory pattern). Per-user actual-server + actual-http-api + nightly GoCardless `bank-sync-<user>` CronJob. Runbook: `docs/runbooks/actualbudget-bank-sync.md` | actualbudget |
 | insta2spotify | Instagram reel song ID to Spotify playlist | insta2spotify |
 | trading-bot | Event-driven trading with sentiment analysis | trading-bot |
 | claude-memory | Persistent memory MCP server | claude-memory |

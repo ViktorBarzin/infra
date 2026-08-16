@@ -3,6 +3,17 @@ variable "name" {}
 variable "tag" {
   default = "latest"
 }
+# actual-server and actual-http-api are SEPARATELY released and their version
+# ceilings differ (jhonderson publishes patch releases upstream doesn't, e.g.
+# 26.6.1), so the http-api needs its own tag rather than reusing var.tag. Both
+# images stay in `ignore_changes` — Keel owns the live tag — so this value is
+# only the seed used when a Deployment is CREATED or RECREATED. It was a
+# hardcoded `latest` until 2026-08-16, which meant any recreate pulled whatever
+# was newest at that moment, across a component that migrates the budget file.
+variable "http_api_tag" {
+  type    = string
+  default = "26.8.1"
+}
 variable "tier" { type = string }
 variable "sync_id" {
   type    = string
@@ -224,7 +235,7 @@ resource "kubernetes_deployment" "actualbudget-http-api" {
       }
       spec {
         container {
-          image = "jhonderson/actual-http-api:latest"
+          image = "jhonderson/actual-http-api:${var.http_api_tag}"
           name  = "actualbudget"
           resources {
             requests = {
@@ -309,7 +320,11 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
     job_template {
       metadata {}
       spec {
-        backoff_limit              = 1
+        backoff_limit = 1
+        # Hard ceiling on a single run. The per-curl --max-time values bound each
+        # request; this bounds the whole job so a wedge can never sit Running until
+        # the next day's schedule replaces it. A normal run is 30-95 s.
+        active_deadline_seconds    = 1800
         ttl_seconds_after_finished = 86400
         template {
           metadata {}
@@ -324,16 +339,41 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
               USER_NAME='${var.name}'
               SYNC_ID='${var.sync_id}'
               API_KEY='${random_string.api-key.result}'
-              PW='${var.budget_encryption_password}'
-              PG="http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/bank-sync-$USER_NAME"
+              PGROOT="http://prometheus-prometheus-pushgateway.monitoring:9091"
+              PG="$PGROOT/metrics/job/bank-sync-$USER_NAME"
               API="http://budget-http-api-$USER_NAME"
 
+              # NOTE: we deliberately do NOT send `budget-encryption-password`.
+              # Neither budget file is end-to-end encrypted (encrypt_keyid is null
+              # in the server's account.sqlite), but actual-http-api branches on the
+              # mere PRESENCE of that header: with it, every request takes the
+              # downloadBudget() path — a full re-download, decrypt and ~20 MB backup
+              # zip — instead of the cheap loadBudget()+sync(). Measured 2026-08-16:
+              # 110,000 ms (timeout) with the header vs 108 ms without on anca, and
+              # 340 ms -> 62 ms on viktor. fire-planner has always called this API
+              # without it. RESTORE THE HEADER if E2E encryption is ever enabled.
+              # (var.budget_encryption_password is really the server login password —
+              # it is passed as ACTUAL_SERVER_PASSWORD on the http-api Deployment.)
+
+              # Every curl carries --max-time. Without it the GET below can block
+              # forever on a slow budget load; concurrency_policy=Replace then leaves
+              # the run hanging until the NEXT day's schedule kills it, silently
+              # losing a day's sync while the pushgateway still shows yesterday's
+              # success (observed 2026-08-16, anca: 18+ min, zero log output).
               START=$(date +%s)
 
+              # Snapshot the current per-account timestamps BEFORE we overwrite the
+              # group. A Pushgateway POST replaces the whole metric family for this
+              # job, so any series we don't re-emit disappears entirely — and a
+              # series that disappears can never go stale, which is exactly what
+              # BankSyncAccountStale needs in order to fire on a per-account failure.
+              PRIOR=$(curl -fsS --max-time 15 "$PGROOT/metrics" 2>/dev/null \
+                | grep "^bank_sync_account_last_success_timestamp{" \
+                | grep "job=\"bank-sync-$USER_NAME\"" || true)
+
               # Enumerate active accounts: open + on-budget.
-              ACCOUNTS=$(curl -fsS "$API/v1/budgets/$SYNC_ID/accounts" \
+              ACCOUNTS=$(curl -fsS --max-time 120 "$API/v1/budgets/$SYNC_ID/accounts" \
                 -H "x-api-key: $API_KEY" \
-                -H "budget-encryption-password: $PW" \
                 | jq -c '.data[] | select(.closed == false and .offbudget == false) | {id, name}')
 
               if [ -z "$ACCOUNTS" ]; then
@@ -354,11 +394,10 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
                 NAME=$(echo "$ACCT" | jq -r '.name')
                 LABEL=$(echo "$NAME" | sed -E 's/[^a-zA-Z0-9]+/_/g')
 
-                HTTP_CODE=$(curl -s -o /tmp/r.txt -w '%%{http_code}' \
+                HTTP_CODE=$(curl -s --max-time 300 -o /tmp/r.txt -w '%%{http_code}' \
                   -X POST "$API/v1/budgets/$SYNC_ID/accounts/$ID/banksync" \
                   -H 'accept: application/json' \
-                  -H "x-api-key: $API_KEY" \
-                  -H "budget-encryption-password: $PW") || HTTP_CODE=0
+                  -H "x-api-key: $API_KEY") || HTTP_CODE=0
 
                 NOW=$(date +%s)
                 if [ "$HTTP_CODE" = "200" ]; then
@@ -369,6 +408,17 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
                 else
                   echo "FAIL account=$NAME http=$HTTP_CODE body=$(cat /tmp/r.txt)"
                   printf 'bank_sync_account_success{account="%s"} 0\n' "$LABEL" >> /tmp/payload
+                  # Carry the previous good timestamp forward so the series survives
+                  # this run and can age into BankSyncAccountStale. Emitting 0 here
+                  # would make (time() - 0) > 259200 trivially true and fire the
+                  # alert after a single failed run — which the deliberate
+                  # no-BankSyncFailing design rejects, since GoCardless PSD2 quota
+                  # makes isolated per-account failures routine. First-ever run has
+                  # no prior value, so nothing is emitted (same as before).
+                  PRIOR_TS=$(echo "$PRIOR" | grep "account=\"$LABEL\"" | awk '{print $NF}' | head -1)
+                  if [ -n "$PRIOR_TS" ]; then
+                    printf 'bank_sync_account_last_success_timestamp{account="%s"} %s\n' "$LABEL" "$PRIOR_TS" >> /tmp/payload
+                  fi
                 fi
               done
 
@@ -381,10 +431,40 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
                 ANY=0
               fi
 
-              # Pushgateway POST preserves prior values for label sets not
-              # in the payload, so per-account last_success_timestamp values
-              # for accounts that failed this run keep their prior good
-              # values — that's what BankSyncAccountStale alerts on.
+              # Duplicate-import check. HTTP 200 on /banksync asserts nothing about
+              # whether the import was CORRECT: from 2024-12 to 2026-08-16 a rule
+              # with a `set account` action moved each freshly-imported row out of
+              # the account being synced, and Actual's dedupe is scoped to that
+              # account (WHERE imported_id = ? AND account = ?), so the same
+              # transactions were re-inserted every night — ~93% of rows created per
+              # run — while every metric here stayed green. This counts rows sharing
+              # an imported_id, which is what that failure actually looks like.
+              # Read-only against the local budget file: no GoCardless quota.
+              # Pre-initialised: `set -u` is in effect, so these must exist even
+              # when the query is skipped or fails.
+              DUP_GROUPS=""
+              DUP_EXCESS=""
+              DUPQ='{"ActualQLquery":{"table":"transactions","filter":{"imported_id":{"$ne":null}},"groupBy":["imported_id"],"select":["imported_id",{"n":{"$count":"id"}}]}}'
+              DUPJSON=$(curl -fsS --max-time 60 -X POST "$API/v1/budgets/$SYNC_ID/run-query" \
+                -H 'content-type: application/json' \
+                -H "x-api-key: $API_KEY" \
+                -d "$DUPQ" 2>/dev/null || true)
+
+              if [ -n "$DUPJSON" ]; then
+                DUP_GROUPS=$(echo "$DUPJSON" | jq '[.data.data[]? // .data[]? | select(.n > 1)] | length' 2>/dev/null || echo "")
+                DUP_EXCESS=$(echo "$DUPJSON" | jq '[.data.data[]? // .data[]? | select(.n > 1) | .n - 1] | add // 0' 2>/dev/null || echo "")
+              fi
+              if [ -n "$DUP_GROUPS" ] && [ -n "$DUP_EXCESS" ]; then
+                DUP_OK=1
+              else
+                DUP_OK=0
+                DUP_GROUPS=0
+                DUP_EXCESS=0
+              fi
+
+              # A Pushgateway POST REPLACES every metric family in this job's group —
+              # it does NOT preserve label sets absent from the payload. That is why
+              # the failure branch above re-emits the prior timestamp explicitly.
               {
                 printf '# HELP bank_sync_account_success Per-account sync result (1=ok, 0=fail)\n'
                 printf '# TYPE bank_sync_account_success gauge\n'
@@ -397,12 +477,21 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
                 printf '# HELP bank_sync_duration_seconds Total duration of the cron run\n'
                 printf '# TYPE bank_sync_duration_seconds gauge\n'
                 printf 'bank_sync_duration_seconds %s\n' "$DUR"
+                printf '# HELP bank_sync_duplicate_imported_ids Distinct imported_ids present on more than one live transaction\n'
+                printf '# TYPE bank_sync_duplicate_imported_ids gauge\n'
+                printf 'bank_sync_duplicate_imported_ids %s\n' "$DUP_GROUPS"
+                printf '# HELP bank_sync_excess_imported_rows Live transaction rows beyond one per imported_id\n'
+                printf '# TYPE bank_sync_excess_imported_rows gauge\n'
+                printf 'bank_sync_excess_imported_rows %s\n' "$DUP_EXCESS"
+                printf '# HELP bank_sync_dupcheck_success 1 if the duplicate-import check ran and parsed\n'
+                printf '# TYPE bank_sync_dupcheck_success gauge\n'
+                printf 'bank_sync_dupcheck_success %s\n' "$DUP_OK"
                 if [ "$ANY" = "1" ]; then
                   printf '# HELP bank_sync_last_success_timestamp Unix timestamp of the most recent successful sync of any account\n'
                   printf '# TYPE bank_sync_last_success_timestamp gauge\n'
                   printf 'bank_sync_last_success_timestamp %s\n' "$END"
                 fi
-              } | curl -fsS --data-binary @- "$PG"
+              } | curl -fsS --max-time 30 --data-binary @- "$PG"
               EOT
               ]
             }
