@@ -3268,6 +3268,43 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Bank sync (instance {{ $labels.instance }}): account {{ $labels.account }} has not synced in over 72h. GoCardless requisition may have expired — re-link in Settings → Bank Sync."
+          # Both alerts above only detect ABSENCE of syncing. From 2024-12 to
+          # 2026-08-16 the bank sync ran nightly, returned HTTP 200 for every
+          # account, and kept these two green while re-importing the same
+          # transactions every night (a rule with a `set account` action moved
+          # each imported row out of the account being synced, and Actual's
+          # dedupe is scoped to that account). ~93% of rows created per run were
+          # duplicates. These two alert on the CORRECTNESS of the import instead.
+          # `delta`, not `increase`: this is a Pushgateway gauge that DROPS when
+          # duplicates are cleaned up, and increase() reads a drop as a counter
+          # reset and extrapolates — firing precisely when a cleanup succeeds.
+          - alert: BankSyncDuplicateImports
+            expr: delta(bank_sync_excess_imported_rows[25h]) > 20
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Bank sync (instance {{ $labels.instance }}): duplicate transaction rows grew by more than 20 in 24h. A rule with a `set account` action breaks import dedupe — see docs/runbooks/actualbudget-bank-sync.md."
+          - alert: BankSyncDupCheckFailing
+            expr: bank_sync_dupcheck_success == 0
+            for: 26h
+            labels:
+              severity: info
+            annotations:
+              summary: "Bank sync (instance {{ $labels.instance }}): the duplicate-import check did not complete. The run-query endpoint is experimental upstream and may have changed. NOTE this cannot fire when the job dies before pushing at all — BankSyncStale covers that case."
+          # The nightly run takes 30-95s. A run that takes minutes means the
+          # http-api is on the slow downloadBudget path (see the CronJob comment
+          # in stacks/actualbudget/factory/main.tf). Before 2026-08-16 neither
+          # curl had a timeout and a wedged run sat Running until the next day's
+          # schedule replaced it, silently losing a day's sync while the
+          # pushgateway still showed the previous run's success.
+          - alert: BankSyncSlow
+            expr: bank_sync_duration_seconds > 300
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Bank sync (instance {{ $labels.instance }}) took {{ $value }}s (normal is 30-95s). Check the http-api for the slow budget-download path."
           - alert: EmailRoundtripFailing
             expr: email_roundtrip_success{job="email-roundtrip-monitor"} == 0
             for: 60m
