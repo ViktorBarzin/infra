@@ -484,6 +484,20 @@ resource "kubernetes_service" "proxy_egress_uk" {
     name      = "proxy-egress-uk"
     namespace = local.namespace
     labels    = local.egress_selector
+    # Discoverability. `homelab services` reads these off Ingresses AND off
+    # cluster-internal Services (cli/services.go), so this capability shows up
+    # for agents without being published through Traefik — an ingress here
+    # would be an open, unauthenticated proxy on the internet.
+    # `homelab/endpoint` states WHICH port a consumer should use: this Service
+    # carries both 8888 (HTTP proxy) and 1080 (SOCKS5), and only we know the
+    # HTTP one is the default contract.
+    annotations = {
+      "gethomepage.dev/enabled"     = "true"
+      "gethomepage.dev/name"        = "VPN egress (UK)"
+      "gethomepage.dev/description" = "Route a workload's traffic out through NordVPN UK — set HTTPS_PROXY/ALL_PROXY to the endpoint (socks5h://…:1080 also served). For geo-restricted content and keeping requests off the home IP; it does NOT defeat anti-bot walls."
+      "gethomepage.dev/group"       = "Infrastructure"
+      "homelab/endpoint"            = "proxy-egress-uk.proxy.svc.cluster.local:8888"
+    }
   }
   spec {
     # Same reasoning as proxy-gw-1: without `app=proxy-gateway` this VIP would

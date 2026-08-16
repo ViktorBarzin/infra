@@ -224,7 +224,7 @@ Woodpecker is **deploy + cluster-touching steps only**:
 | per-app deploy | `.woodpecker/deploy.yml` (each repo) | `kubectl set image` + Slack notify (event: **manual**) |
 | terragrunt apply | `.woodpecker/default.yml` | Changed-stacks apply on push to master (runs in `infra-ci`). **Skips Tier-0 `vault`** — it's human-applied via OIDC; the CI `ci` role lacks Vault-admin perms (`sys/mounts`, `sys/policies/acl`) so a CI apply 403s |
 | certbot | `.woodpecker/renew-tls.yml` | TLS renewal cron |
-| drift-detection | `.woodpecker/drift-detection.yml` | Nightly Terraform drift (runs in `infra-ci`). **Skips Tier-0 `vault`** (its `plan` 403s under the `ci` role and would fail the whole run) |
+| drift-detection | `.woodpecker/drift-detection.yml` | Nightly Terraform drift (runs in `infra-ci`). **Skips Tier-0 `vault`** (its `plan` 403s under the `ci` role and would fail the whole run). Reports the changed **resources** per stack via `scripts/drift-report.py` — see "Reading a drift report" below |
 | provision-user | `.woodpecker/provision-user.yml` | Add namespace-owner user from Vault spec |
 | registry-config-sync | `.woodpecker/registry-config-sync.yml` | SCP `modules/docker-registry/*` → `10.0.20.10` on change |
 | pve-nfs-exports-sync | `.woodpecker/pve-nfs-exports-sync.yml` | Sync `scripts/pve-nfs-exports` → `/etc/exports` on PVE |
@@ -234,6 +234,41 @@ Woodpecker is **deploy + cluster-touching steps only**:
 | breakglass-infra-ci | `.woodpecker/breakglass-infra-ci.yml` | **Manual** ghcr pull-and-save of infra-ci to the registry VM |
 
 **No build/test pipeline exists on any repo.** Do not (re)introduce one.
+
+### Reading a drift report (2026-08-16)
+
+The nightly run posts the changed **resources** per stack, not just a list of
+stack names, because a count alone cannot distinguish a one-line certificate
+diff from a stack about to recreate 115 DNS routes — and cannot be
+sanity-checked at all. Formatting and parsing live in `scripts/drift-report.py`
+(unit tests: `python3 scripts/drift_report_test.py`) rather than in the pipeline
+YAML, which has a long history of Woodpecker `${...}` expansion, `set -e`, ANSI
+and line-prefix bugs that are untestable in place.
+
+```
+cloudflared — +115 -11
+    + 115 × module.cloudflared.cloudflare_worker_route.outage_failover_host
+    - 10 × module.cloudflared.cloudflare_worker_route.outage_failover_carveout
+```
+
+Three things the report tells you that the old count could not:
+
+- **Symbols** are `+` created, `-` destroyed, `~` updated in-place, `±` replaced.
+  A stack showing only `±` on `null_resource` is almost always a
+  `triggers = { always = timestamp() }` resource, which can never plan clean by
+  construction — `infra`, `monitoring`, `technitium` and `dbaas` are the standing
+  examples. Those are expected, not a backlog.
+- **"Could not be planned" is separate from "differs"**, and means state
+  unknown. When the errored stacks form a contiguous **alphabetical tail** the
+  report says the run most likely aborted partway and the counts are incomplete.
+  Tier-1 stacks read state from CNPG, so a Postgres blip mid-run fails every
+  stack after it. On 2026-08-16 that produced 29 errors and 79 "drifting", which
+  read as a mass revert; re-planning six by hand returned five clean.
+- **The commit planned against** is named. The run clones master once and then
+  plans for hours, so anything committed mid-run — notably the `renew-tls`
+  certificate commit at ~00:06 — leaves later stacks diffing against a tree that
+  no longer exists. If a wave of stacks all show the same `module.tls_secret`
+  change, check that commit before believing it.
 
 ### `default.yml` apply: dual-registration de-dup + reliability (2026-06-28)
 

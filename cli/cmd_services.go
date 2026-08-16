@@ -24,6 +24,16 @@ func servicesList(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Also catalogue cluster-internal Services carrying the same annotations.
+	// Some capabilities deliberately have no ingress — the VPN egress proxy is
+	// a ClusterIP so an open proxy is never published through Traefik — and
+	// ingress-only discovery left those invisible. A failure here is not fatal:
+	// the web-facing inventory is still worth printing.
+	if sout, serr := exec.Command("kubectl", "get", "svc", "-A", "-o", "json").Output(); serr == nil {
+		if internal, ierr := parseInternalServices(string(sout)); ierr == nil {
+			svcs = append(svcs, internal...)
+		}
+	}
 	query := parseServicesQuery(args)
 	fmt.Print(formatCatalog(filterServices(svcs, query), query))
 	return nil
