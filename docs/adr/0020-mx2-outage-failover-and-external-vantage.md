@@ -133,6 +133,38 @@ All verified as-of 2026-07-08:
     provider won't manage) and MUST be re-asserted `true` on the wildcard + apex
     routes after any recreate. It was found `false` (fail-CLOSED) on 2026-07-17 and
     set `true`.
+- **UPDATE 2026-08-16 — coverage model changed to an explicit ALLOW-LIST.**
+  The "not self-limiting" caveat recorded above is what happened. Two
+  things the carve-out list could not cover drove **121,128 invocations on
+  2026-08-15 (121% of the 100k/day quota)**:
+  1. **A new host is billed the moment it exists.** `terminal-dev.viktorbarzin.me`
+     (a second ttyd terminal, added 2026-07-21 — four days after the July fix)
+     reached 70,899 requests on 2026-08-15, ~89% of it two endpoints the v2
+     lobby polled every ~5s per open tab. It was never considered for a
+     carve-out — under a wildcard route there is no point at which a new host
+     has to declare itself, so nothing surfaced it until the quota alert.
+  2. **Hostnames that do not exist are billed too.** Every invented subdomain
+     resolves through the `*` wildcard CNAME (ADR-0021), so a subdomain scan on
+     2026-08-15 hit 34 non-existent hosts for 37,304 requests. Baseline scan
+     traffic is ~11k/day across ~57 such names — a cost paid daily.
+  Plus nextcloud (67,384/day, mostly DAV sync, including a 40,885-request 503
+  retry storm during a Nextcloud outage window) and a linkwarden client
+  retry-looping on 401 (16,656/day).
+  **Model now (Viktor's call):** the Worker runs ONLY on the hosts named in
+  `local.worker_covered_hosts` (115 browsable hosts) plus the apex. A host that
+  is new, or that does not exist at all, defaults to **no route** — so it costs
+  nothing and cannot regress the quota. This inverts both failure modes above;
+  the trade-off is that outage coverage is now opt-in, and a host left off the
+  list shows Cloudflare's raw error during an outage. That is the intended
+  direction: the quota is a hard daily cliff, while a missing styled page on a
+  rarely-browsed host is cosmetic. Replaying 2026-08-15 traffic against the list
+  gives ~29k invocations instead of 121k, with the scan contributing zero.
+  Fail-open again held: past 100k the requests passed through rather than 1027ing,
+  so nothing went down.
+  - fail-open is now scripted rather than a manual PUT: `scripts/cf-worker-routes-fail-open`
+    reconciles `request_limit_fail_open=true` across every worker-bearing route
+    (`--check` reports drift without changing anything). Run it after any change
+    to the route list — 116 routes make a manual re-assert impractical.
   - The same-zone grey-cloud `fetch()` failure still holds, so the page stays
     BAKED INTO the script (unchanged).
   - **Analytics injection REMOVED (same day).** Investigation found Rybbit is
