@@ -337,11 +337,22 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
             }]
           }
           mutate = {
-            targets = [
-              { apiVersion = "apps/v1", kind = "Deployment" },
-              { apiVersion = "apps/v1", kind = "StatefulSet" },
-              { apiVersion = "apps/v1", kind = "DaemonSet" },
-            ]
+            # DELIBERATELY NO `targets`. In a Kyverno mutateExisting rule,
+            # match/exclude select the TRIGGER while `targets` selects WHAT
+            # GETS PATCHED — they are not the same thing. The first version of
+            # this rule (2026-08-16, reverted within the hour) carried the same
+            # unselected `targets` list as the rule above, so every trigger
+            # event patched EVERY Deployment/StatefulSet/DaemonSet and the
+            # narrow match was ignored entirely: 184 workloads with no second
+            # owner were set to policy=never and Keel stopped updating anything
+            # cluster-wide. The rule above gets away with it only because its
+            # match is already as broad as its targets.
+            #
+            # Without `targets` this is a plain admission-time mutate on the
+            # matched resource itself, which is what we want — a NEW workload
+            # declaring an owner is enrolled correctly at creation. Existing
+            # workloads were reconciled by a one-time sweep (same approach the
+            # match-tag removal above needed, and for the same reason).
             patchStrategicMerge = {
               metadata = {
                 # No `+(...)` anchor: this must OVERWRITE the policy=patch the
