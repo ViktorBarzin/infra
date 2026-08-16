@@ -220,12 +220,13 @@ graph LR
         T0045["00:45 MySQL per-DB dumps<br/>(CronJob)"]
         T0100["01:00 vzdump-vms<br/>live image of hand-managed VMs<br/>(devvm) → sda /mnt/backup/vzdump/"]
         T0200["02:00 nfs-mirror (daily)<br/>sdc /srv/nfs/* → sda /mnt/backup/<svc>/<br/>~10-20 min steady state"]
+        T0330["03:30 devvm-home-backup<br/>rsync --link-dest incremental<br/>devvm /home → sda /mnt/backup/devvm-home/"]
         T0500["05:00 daily-backup<br/>mount LVM snapshots ro<br/>rsync PVC files → /mnt/backup/pvc-data/<br/>+ sqlite + pfsense + pve-config"]
         T0600["06:00 offsite-sync-backup<br/>Step 1: sda → Synology /Viki/pve-backup/<br/>Step 2: sdc/immich + nfs-ssd → /Viki/nfs[-ssd]/"]
         T1200["12:00 LVM thin snapshots (midday)<br/>second daily snapshot"]
     end
 
-    T0000 --> T0015 --> T0045 --> T0100 --> T0200 --> T0500 --> T0600 --> T1200
+    T0000 --> T0015 --> T0045 --> T0100 --> T0200 --> T0330 --> T0500 --> T0600 --> T1200
     INO -.->|change events feed Step 2| T0600
 
     style Nightly fill:#ffe0b2
@@ -334,6 +335,7 @@ graph LR
 | pfSense Backup | Daily 05:00 + daily-backup | PVE host: SSH + API | config.xml + full filesystem tar |
 | Offsite Sync | Daily 06:00 (after daily-backup) | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
 | VM Image Backup (vzdump) | Daily 01:00, keep 3 | PVE host: `vzdump-vms` | Live `vzdump` of hand-managed VMs (devvm) → `/mnt/backup/vzdump/` |
+| devvm /home (incremental) | Daily 03:30, keep 14 | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
 | PostgreSQL Backup (full) | Daily 00:00, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
 | PostgreSQL Backup (per-db) | Daily 00:15, 14d retention | CronJob in `dbaas` namespace | pg_dump -Fc per database → `/backup/per-db/<db>/` |
 | MySQL Backup (full) | Daily 00:30, 14d retention | CronJob in `dbaas` namespace | mysqldump --all-databases |
@@ -619,8 +621,10 @@ PVE side instead (`du -sh` vs `du -slh` on `/mnt/backup/pvc-data`).
 | `/usr/local/bin/daily-backup` | PVE host: PVC file copy + auto SQLite backup + pfSense |
 | `/usr/local/bin/offsite-sync-backup` | PVE host: two-step rsync to Synology (sda + NFS via inotify) |
 | `/usr/local/bin/vzdump-vms` | PVE host: daily live `vzdump` image of hand-managed VMs (devvm) → `/mnt/backup/vzdump/` |
+| `/usr/local/bin/devvm-home-backup` | PVE host: daily incremental `rsync --link-dest` of devvm `/home` → `/mnt/backup/devvm-home/` |
 | `/mnt/backup/` | PVE host: sda mount point (1.1TB backup disk) |
 | `/mnt/backup/vzdump/` | PVE host: vzdump VM images (keep 3 per VMID), mirrored offsite monthly |
+| `/mnt/backup/devvm-home/` | PVE host: devvm `/home` hardlink generations (keep 14), mirrored offsite monthly (`-H` preserves the link farm) |
 | `/mnt/backup/.nfs-changes.log` | NFS change log from inotifywait, consumed by offsite-sync |
 | `/etc/systemd/system/nfs-change-tracker.service` | inotifywait watcher for `/srv/nfs` + `/srv/nfs-ssd` |
 | `/etc/systemd/system/lvm-pvc-snapshot.timer` | Daily 03:00 (LVM snapshots) |
