@@ -4,6 +4,33 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
+# Cluster VPN egress pilot — docs/plans/2026-08-16-cluster-vpn-egress-service-design.md
+#
+# Book-search is the first consumer of the shared VPN egress service: its
+# outbound HTTP is re-originated from inside the UK NordVPN tunnel by gluetun's
+# built-in HTTP proxy listener. In-cluster calls and myanonamouse.net stay
+# direct (see the NO_PROXY env on the Deployment).
+#
+# This is a MEASURED pilot, ON by default so we get data. What motivated it is
+# the Anna's Archive 403, and that 403 is a DDoS-Guard JS challenge keyed on
+# ASN reputation rather than a geo-block (reproduced from the pod, 2026-08-16:
+# 902-byte body, <title>DDoS-Guard</title>). A datacenter/VPN exit may well be
+# challenged at least as often as the current residential IP, so compare
+# download success before and after rather than assuming the route fixes it.
+# The FlareSolverr fallback leg does not move either — FlareSolverr makes its
+# own outbound request from its own pod in servarr.
+#
+# TO REVERT: set this to "" and apply. An empty value produces no proxy mount
+# at all (urllib's getproxies_environment drops empty *_proxy vars, so httpx
+# sees none), which keeps the off position a value edit — the env blocks stay
+# in place and NO_PROXY goes inert alongside them. Verified live in the running
+# pod on 2026-08-16, both positions.
+variable "book_search_proxy_url" {
+  type        = string
+  default     = "http://proxy-egress-uk.proxy.svc.cluster.local:8888"
+  description = "Outbound HTTP proxy for book-search (cluster VPN egress, UK exit). Empty string = no proxy, traffic egresses from the home IP as before."
+}
+
 resource "kubernetes_namespace" "ebooks" {
   metadata {
     name = "ebooks"
@@ -917,6 +944,41 @@ resource "kubernetes_deployment" "book_search" {
                 key  = "slack_webhook_url"
               }
             }
+          }
+          # VPN egress pilot — see var.book_search_proxy_url above for what this
+          # is, why it is a measurement rather than a fix, and how to turn it
+          # off. ALL_PROXY is the one that does the work: httpx runs with
+          # trust_env=True and no client in the app passes proxies=/mounts=/
+          # transport=, so ALL_PROXY becomes a single `all://` mount covering
+          # http and https alike. HTTP_PROXY/HTTPS_PROXY carry the same value so
+          # anything outside httpx (a library or subprocess added later) takes
+          # the same route instead of quietly egressing from the home IP.
+          env {
+            name  = "ALL_PROXY"
+            value = var.book_search_proxy_url
+          }
+          env {
+            name  = "HTTP_PROXY"
+            value = var.book_search_proxy_url
+          }
+          env {
+            name  = "HTTPS_PROXY"
+            value = var.book_search_proxy_url
+          }
+          # Bypass list. Inert while the proxy URL is "", so it stays put across
+          # flips. myanonamouse.net is load-bearing: mam.py documents the MAM
+          # session as ASN/IP-locked, and a UK exit changes both — worse, if
+          # dynamicSeedbox.php then re-locks the session to the VPN address,
+          # flipping the proxy back off breaks MAM a second time.
+          # FQDN suffixes only: the match is against the full hostname, so a
+          # bare short name (`calibre.ebooks`) would still take the tunnel — use
+          # FQDNs in service URLs. No CIDRs either — httpx splits a NO_PROXY
+          # entry on "/" and builds a malformed pattern, and the app makes no
+          # raw-IP HTTP calls. Routing verified live in the pod, 2026-08-16:
+          # in-cluster + MAM + localhost direct, libgen/annas/openlibrary via UK.
+          env {
+            name  = "NO_PROXY"
+            value = ".svc.cluster.local,.cluster.local,localhost,127.0.0.1,myanonamouse.net,.viktorbarzin.me"
           }
           resources {
             requests = {

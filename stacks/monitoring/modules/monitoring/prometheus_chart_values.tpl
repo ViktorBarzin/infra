@@ -3692,6 +3692,41 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Headscale 5xx error rate is {{ $value | printf \"%.1f\" }}%"
+      # Permanent UK egress gateway (stacks/proxy): one gluetun pod behind two
+      # Services — proxy-gw-1 (UDP 51820, geo-browser sessions) and
+      # proxy-egress-uk (TCP 8888 HTTP proxy + 1080 SOCKS5, cluster services).
+      # Both select the same pod, so one deployment-availability metric covers
+      # both; consumers fail closed on gluetun's kill-switch, so "no available
+      # replica" means no cluster VPN egress at all.
+      #
+      # This reads as tunnel health only because the gluetun container carries a
+      # readiness probe on its own healthcheck. Without that probe a pod whose
+      # tunnel is dead still reports Ready (observed on the live proxy browser
+      # pod, 2026-08-16) and this alert would stay green through the outage —
+      # probe and alert are one change, not two.
+      #
+      # `or on() vector(0)` keeps it firing if the Deployment is absent or
+      # renamed; kube_endpoint_* / kube_endpointslice_* are dropped by the
+      # metric_relabel_configs above, so deployment availability is how "no
+      # endpoints" is expressed here. The absent branch carries no labels, so
+      # both annotations are static. 10m rides out a rollout and gluetun's ~11s
+      # VPN self-restart loop, and will also fire through a NordVPN over-limit
+      # cooldown (~10 min) — egress genuinely is down then. The generic
+      # DeploymentReplicasMismatch (30m) remains as a backstop; the overlap is
+      # the same one VaultwardenDown and ChromePoolBrokerDown carry.
+      #
+      # deployment="proxy-gw-1" must track the Deployment name in stacks/proxy.
+      # Rename it there and this expression silently stops matching.
+      - name: VPN Egress
+        rules:
+          - alert: VPNEgressGatewayDown
+            expr: (kube_deployment_status_replicas_available{namespace="proxy", deployment="proxy-gw-1"} or on() vector(0)) < 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cluster VPN egress gateway (UK) has no available replica — proxy consumers and geo-browser sessions are failing closed"
+              description: "No gluetun pod is Ready behind proxy-gw-1 / proxy-egress-uk, so every service pointed at proxy-egress-uk:8888/:1080 and every geo-browser session has lost its tunnel (fail closed, no plaintext fallback). Check `kubectl -n proxy describe deploy proxy-gw-1` and the gluetun container logs; a NordVPN over-limit refusal carries a ~10-min cooldown before a reconnect can succeed."
       - name: "External Access"
         rules:
           - alert: ExternalAccessDivergence
