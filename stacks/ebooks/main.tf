@@ -39,8 +39,11 @@ variable "goodreads_shelf_id" {
 # shelf (backend/goodreads/replay.py). With this false the poller still reads the
 # feed and reports what it would fetch, but never fetches.
 variable "goodreads_downloads_enabled" {
-  type        = string
-  default     = "false"
+  type = string
+  # ON since 2026-08-16. The gate is passed: the matcher was replayed over 50 of
+  # her real shelf items and every pick checked by hand, and the whole path was
+  # run end to end (Strange Houses -> libgen -> Calibre 497 -> her shelf).
+  default     = "true"
   description = "Whether the Goodreads poller may actually download books."
 }
 
