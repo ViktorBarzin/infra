@@ -721,7 +721,21 @@ build_homelab_cli() {
   fi
   tmp="$(mktemp /usr/local/bin/.homelab.XXXXXX)" || { log "WARN: mktemp failed -> skip homelab CLI rebuild"; return 0; }
   # build to a same-fs temp then rename: a mid-flight caller never sees a torn binary
-  if (cd "$src" && go build -buildvcs=false -ldflags "-X main.version=$want" -o "$tmp" .) \
+  # Build entirely off /tmp and off $HOME. Both bite here (found 2026-08-16):
+  #   * /tmp is a 2 GB tmpfs SHARED BY EVERY USER on this box, and it sat at 99%
+  #     full -- go writes its work tree there, so every rebuild died with
+  #     "no space left on device" while the root filesystem had 29 GB free. The
+  #     script swallows build output, so this surfaced only as the generic
+  #     "build failed" warning and the box quietly kept an old binary for a day.
+  #   * systemd runs this unit with HOME=[], so an unqualified `go build` cannot
+  #     resolve its module/build caches either (`go env GOCACHE` reports "off").
+  # Pinning all three to root-owned paths on disk makes the hourly run and a
+  # manual run build identically, and immune to whatever else fills /tmp.
+  mkdir -p /var/cache/homelab-go/{build,mod,tmp} 2>/dev/null || true
+  if (cd "$src" && HOME=/root TMPDIR=/var/cache/homelab-go/tmp \
+        GOCACHE=/var/cache/homelab-go/build \
+        GOMODCACHE=/var/cache/homelab-go/mod \
+        go build -buildvcs=false -ldflags "-X main.version=$want" -o "$tmp" .) \
       && chmod 0755 "$tmp" && mv -f "$tmp" "$dst"; then
     log "homelab CLI rebuilt (${have:-absent} -> $want)"
   else
