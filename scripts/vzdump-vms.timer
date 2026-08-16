@@ -1,12 +1,25 @@
 [Unit]
-Description=Daily vzdump image backup of hand-managed VMs (devvm, …)
+Description=Weekly vzdump image backup of hand-managed VMs (devvm, …)
 Documentation=https://forgejo.viktorbarzin.me/viktor/infra/src/branch/main/docs/architecture/backup-dr.md
 
 [Timer]
-# 01:00 — ahead of nfs-mirror (02:00), lvm-pvc-snapshot (03:00), daily-backup
-# (05:00) and offsite-sync (06:00), so the fresh image is on sda before the
-# monthly full offsite pass mirrors /mnt/backup to Synology.
-OnCalendar=*-*-* 01:00:00
+# WEEKLY since 2026-08-16, was nightly. A full .vma re-reads devvm's entire
+# 228 GiB disk every time it runs — ~245 GB, which was about 40% of all reads
+# on sdc, and for the 75 minutes it took, sdc had no headroom left. That is
+# where its ~90 ms p99 read latency came from.
+#
+# The day-to-day protection is now `devvm-home-backup` (daily 03:30), which
+# rsyncs only the deltas of /home and keeps 14 hardlinked generations with
+# per-file restore. This image stays as the BARE-METAL RESTORE FLOOR: a .vma
+# restores the whole VM in one shot, which rsync cannot, so losing the disk
+# entirely means restoring the newest image and then rsyncing the newest
+# devvm-home generation over the top to recover the last day's work.
+#
+# Sunday 01:00 — same slot as before, ahead of nfs-mirror (02:00),
+# lvm-pvc-snapshot (03:00), devvm-home-backup (03:30), daily-backup (05:00) and
+# offsite-sync (06:00), so a fresh image is on sda before the monthly full
+# offsite pass mirrors /mnt/backup to Synology.
+OnCalendar=Sun *-*-* 01:00:00
 RandomizedDelaySec=10min
 Persistent=true
 
