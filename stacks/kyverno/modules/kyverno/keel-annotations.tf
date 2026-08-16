@@ -262,6 +262,102 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
             }
           }
         }
+        },
+        {
+          # ── Keel must not manage a workload that already has an owner ──
+          #
+          # The rule above enrolls EVERY workload in a keel-enrolled namespace
+          # (154 of them). It never asks whether something else is already
+          # authoritative over `spec.template.spec.containers[*].image`. Where
+          # a second owner exists, the two rewrite each other forever, and the
+          # fight is SILENT BY CONSTRUCTION: Keel logs an ordinary "resource
+          # updated", the other owner logs an ordinary reconcile, and neither
+          # knows the other exists. It only ever surfaces through an unrelated
+          # downstream symptom.
+          #
+          # Measured 2026-08-16: 37 of 206 Keel-managed Deployments declared a
+          # second owner — 28 `Helm` (which here means a Terraform
+          # helm_release), 7 `terraform`, 2 `goauthentik.io`. Three were
+          # actively flip-flopping that day:
+          #   - monitoring/prometheus-server  alpine:3.21 <-> 3.21.7 hourly,
+          #     11 ReplicaSets in 14h, which reset every alert `for:` timer and
+          #     made DriftStacksMany re-fire all day (see the Monitoring
+          #     section of .claude/CLAUDE.md).
+          #   - proxy/proxy-gw-1              gluetun :latest <-> pinned tag,
+          #     6 pod replacements in ~30 min, each dropping the VPN tunnel.
+          #   - authentik/ak-outpost-public   proxy:2026.2.6 <-> 2026.2.4 every
+          #     ~4h at deployment generation 497 — Keel DOWNGRADING an outpost
+          #     that the authentik server then reconciles back. Nobody knew.
+          # Before this rule the fix was applied by hand, per workload, five
+          # separate times (the five exporters 2026-05-31, postiz 2026-05-29,
+          # dbaas/mysql + proxy + prometheus all on 2026-08-16).
+          #
+          # Setting policy=never here is deliberate rather than adding these to
+          # the namespace/label exclude above: Kyverno's add-only mutate cannot
+          # REMOVE the `keel.sh/policy=patch` it has already stamped (the
+          # match-tag removal above needed a one-off kubectl sweep for exactly
+          # this reason), so an exclude alone would leave all 37 still fighting.
+          # A positive set is self-healing and needs no manual cleanup.
+          #
+          # The LABEL is set alongside the annotation so the rule above then
+          # excludes the workload outright on its next admission pass — Keel
+          # reads the annotation, Kyverno's exclude selects on the label.
+          #
+          # This does NOT change the 2026-05-17 enrollment expansion. First-party
+          # apps — ghcr `:latest`/SHA tags, deployed by CI `kubectl set image`
+          # with the image in `ignore_changes` — carry no `managed-by` label and
+          # keep auto-updating exactly as before. Those are the workloads Keel
+          # exists for; these 37 are ones whose version is pinned somewhere else,
+          # where every Keel bump was reverted anyway.
+          #
+          # KNOWN GAP: `managed-by` UNDERCOUNTS. A raw `kubernetes_deployment`
+          # in Terraform carries no such label, so a TF-declared image without
+          # the `# KEEL_IGNORE_IMAGE` marker can still fight and is not caught
+          # here. The image-flip-flop detector (monitoring stack) is the
+          # backstop for that residue — it keys on observed behaviour, not on a
+          # label anyone has to remember to set.
+          name = "keel-never-when-another-owner"
+          match = {
+            any = [{
+              resources = {
+                kinds = ["Deployment", "StatefulSet", "DaemonSet"]
+                namespaceSelector = {
+                  matchLabels = {
+                    "keel.sh/enrolled" = "true"
+                  }
+                }
+                selector = {
+                  matchExpressions = [{
+                    key      = "app.kubernetes.io/managed-by"
+                    operator = "In"
+                    values   = ["Helm", "terraform", "goauthentik.io"]
+                  }]
+                }
+              }
+            }]
+          }
+          mutate = {
+            targets = [
+              { apiVersion = "apps/v1", kind = "Deployment" },
+              { apiVersion = "apps/v1", kind = "StatefulSet" },
+              { apiVersion = "apps/v1", kind = "DaemonSet" },
+            ]
+            patchStrategicMerge = {
+              metadata = {
+                # No `+(...)` anchor: this must OVERWRITE the policy=patch the
+                # rule above already stamped, not preserve it. Annotation-only
+                # and label-only changes on the workload's own metadata do not
+                # touch the pod template, so applying this does not restart
+                # anything.
+                annotations = {
+                  "keel.sh/policy" = "never"
+                }
+                labels = {
+                  "keel.sh/policy" = "never"
+                }
+              }
+            }
+          }
       }]
     }
   })
