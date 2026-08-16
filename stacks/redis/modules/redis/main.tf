@@ -74,9 +74,35 @@ resource "kubernetes_config_map" "redis_v2_conf" {
       # silently evicted queue jobs.
       maxmemory-policy volatile-lru
 
-      save 900 1
-      save 300 100
-      save 60 10000
+      # RDB auto-snapshots cut to ONE lazy save point (2026-08-16, code-oflt).
+      # Was `save 900 1 / 300 100 / 60 10000`. With `appendonly yes` Redis
+      # recovers from appendonlydir/ and never reads dump.rdb, so the old
+      # cadence wrote a full copy of the dataset that nothing read back.
+      # Measured over this pod's 8.9-day life: rdb_saves=3462 (~390/day, the
+      # `save 60 10000` rule saturating its 60s floor — 19 saves in one
+      # sampled hour) against 155.6 GB written by the redis process, of which
+      # RDB is ~131 GB (~14.7 GB/day) and AOF ~25 GB (~2.8 GB/day). At device
+      # level this PVC (dm-266) averaged 18.3 GB/day over 30d on the
+      # IOPS-bound sdc RAID1, and redis is essentially all of it.
+      #
+      # `save 3600 1` keeps ~94% of that saving (~24 dumps/day) while keeping
+      # two properties that `save ""` gives up:
+      #   1. dump.rdb stays <=1h stale instead of <=7 days (the weekly backup
+      #      CronJob's interval). That only matters when the AOF will not
+      #      load, which has happened here — the 2026-05-26 node2 unclean
+      #      reboot corrupted an incremental AOF, which is why
+      #      aof-load-corrupt-tail-max-size exists below. That knob only
+      #      tolerates <=1KB of tail garbage; past that the operator boots
+      #      from dump.rdb.
+      #   2. Redis performs a final blocking SAVE on clean SIGTERM only when
+      #      at least one save point is configured, so every pod roll leaves
+      #      a fresh dump.rdb rather than a stale one.
+      # Durability is unchanged-or-better either way: appendfsync everysec
+      # caps loss at ~1s versus the ~4min the old RDB cadence delivered.
+      # Explicit BGSAVE is unaffected by save points, so the weekly
+      # redis-backup CronJob below still works. DO NOT restore the old
+      # three save points while appendonly is yes.
+      save 3600 1
       rdbcompression yes
       rdbchecksum yes
       stop-writes-on-bgsave-error no
