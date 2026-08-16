@@ -607,7 +607,31 @@ resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
   }
 
   spec {
-    schedule                      = "*/5 * * * *"
+    # */30 since 2026-08-16 (was */5). At 5-minute granularity this was 288 pod
+    # creations a day, and on this host that is not free — each pod create and
+    # destroy writes containerd overlay layers, a kubelet pod dir, /var/log/pods
+    # and a systemd transient scope plus the ext4 journal metadata for all of
+    # it, and k8s node root disks are 43% of sdc's write IOPS with cronjob churn
+    # as the driver.
+    #
+    # Both self-heals below were measured quiet over Loki's full 30-day
+    # retention: 0 runaway detections, 0 restarts, 0 stuck-maintenance clears.
+    # Apache workers ran min 7 / median 11 / max 17 against a threshold of 40,
+    # so the runaway check has ~2.3x headroom before it would even trip.
+    #
+    # It is deliberately SLOWED rather than removed. The maintenance-mode
+    # self-heal is the ONLY detection for a failure that has twice caused a
+    # multi-hour silent outage (~20.5h, and the ~22h 2026-05-26 incident) and
+    # that the health probes structurally CANNOT see — all three hit
+    # /status.php, which answers 200 in maintenance mode, so the pod reads Ready
+    # throughout. Against ~20h undetected, a slower check is still a large win.
+    #
+    # NOTE the interaction with MAINT_GRACE_MIN=30 in the script: it only clears
+    # a flag that has been set for at least 30 minutes, so at a 30-minute
+    # cadence the worst case to clear becomes ~60 minutes rather than ~30. That
+    # is the accepted cost of this change; shorten the cadence (not the grace,
+    # which exists to protect deliberate maintenance windows) if it ever bites.
+    schedule                      = "*/30 * * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"
