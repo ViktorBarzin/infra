@@ -29,7 +29,7 @@ graph TB
     LAPI[CrowdSec LAPI<br/>3 replicas]
     Agent[CrowdSec Agent<br/>parses Traefik logs]
     FWB[cs-firewall-bouncer<br/>DaemonSet, every node]
-    CFsync[crowdsec-cf-sync<br/>CronJob, every 12h]
+    CFsync[crowdsec-cf-sync<br/>CronJob, every 15m]
 
     Internet -->|proxied| CFedge
     Internet -->|direct| NFT
@@ -125,26 +125,70 @@ for the supersession history — there is no longer an inline Traefik bouncer.)
   would never see them. Enforcement is instead a single Cloudflare Rules List
   **`crowdsec_ban`** + a zone-scoped WAF custom rule `(ip.src in $crowdsec_ban)`
   → **block** action, which covers every proxied host in the zone.
-- Fed by the **`crowdsec-cf-sync` CronJob** (namespace `rybbit`, **every 12h since
-  2026-08-16 — was every 2 min, which Cloudflare rate-limited on 363 of 363 runs in
-  24h so the list stopped being updated at all; 720 API writes/day to maintain a
-  five-entry list is what tripped the limiter. The cost is that a newly-detected
-  attacker now reaches PROXIED hosts for up to 12h, since the nftables bouncer
-  sees the cloudflared tunnel rather than the client and cannot cover them;
-  direct hosts are unaffected and still drop in-kernel within seconds**,
-  pure-stdlib Python in a ConfigMap). It pulls local **ban ip-scoped**
+- Fed by the **`crowdsec-cf-sync` CronJob** (namespace `rybbit`, **every 15 min**,
+  pure-stdlib Python in a ConfigMap; see "Cloudflare Lists write throttling"
+  below for why the cadence is what it is). It pulls local **ban ip-scoped**
   decisions and pushes them into the CF list, but **EXCLUDES the ~31k CAPI
   community blocklist** — that set is far too large for a CF Rules List (the CF
   account hard-limits to **one** list), and CAPI is already covered in-kernel on
   direct hosts and by Cloudflare's own managed protections on proxied hosts.
   Registered bouncer key: **`kvsync`**.
-- **Rate-limit resilient (2026-06-27):** Cloudflare's Lists-API *write* endpoint
-  is throttled (~per-60s; `429 retry-after`). The CronJob runs `backoff_limit=0`
-  (one POST per cycle — the `*/2` schedule IS the retry cadence) and treats a CF
-  `429` as a soft-skip (exit 0, retry next cycle), the same fail-safe pattern it
-  uses for LAPI. An earlier `backoff_limit=2` fired 3 rapid POSTs/cycle and
-  escalated the throttle into a stuck state that left the list empty — a
-  self-inflicted DoS that this change prevents.
+### Cloudflare Lists write throttling
+
+Cloudflare rejects writes to the Rules List with `HTTP 429` / error code
+`10040` for long stretches. This has taken the edge sync out three separate
+times in nine days (2026-08-07 to 08-10, 2026-08-12 for 8h, 2026-08-15 to 08-16
+for 1.6 days), and understanding it took two passes.
+
+**What it is not.** It is not our request volume, and the response headers say
+so: a single one-item write returns 429 while reporting `r=1199` remaining of
+`q=1200;w=300` on that same response. Reads are unaffected throughout. Retries
+after 75s, 180s and 300s of complete silence fail identically, and `PUT`
+behaves exactly like `POST`. Measured directly on 2026-08-16 with the CronJob
+quiet.
+
+**What it appears to be.** A separate limiter counting list **changes** over a
+long window, which Cloudflare's own support guidance describes and which does
+not publish headers. The failure mode that follows is self-sustaining: a fixed
+retry cadence keeps presenting the same change, and if attempts count toward
+the budget the budget never refills. At `*/2` that was ~720 attempts a day to
+maintain a five-entry list.
+
+The shape of the log history is the tell. Thousands of runs succeed with
+`[ok] block: +0 / -0` — those runs issue **no write**, because the list already
+matched, and a no-write run cannot be throttled. The 429s start on the first
+run that has something to write and then continue for hours or days.
+
+**How the job handles it (2026-08-16):**
+
+- **One bulk operation per reconciliation.** A `PUT` of the full desired set
+  replaces the previous `POST`-then-`DELETE` pair, halving the changes spent
+  per sync and removing the serialize-and-poll dance between them (Cloudflare
+  permits one pending bulk op per account).
+- **Exponential write backoff** — 30m, 1h, 2h, 4h, 6h, reset on success —
+  persisted across runs through Pushgateway, so a throttled stretch costs a
+  handful of attempts a day rather than one per run. Reads continue during
+  backoff, so drift stays observable while writes are held.
+- **`backoff_limit=0`** and a `429` soft-skip (exit 0), unchanged from
+  2026-06-27. An earlier `backoff_limit=2` fired 3 rapid POSTs per cycle and
+  deepened the throttle.
+- **`*/15` schedule.** With writes gated by the ladder, frequent runs are cheap
+  and buy back freshness: a new ban reaches the edge within ~15 min when the
+  API is healthy.
+
+**The exposure while it is stuck**, stated plainly: a newly-detected attacker
+reaches Cloudflare-**proxied** hosts until the write lands. Direct hosts are
+unaffected — the nftables bouncer drops them in-kernel within seconds — but it
+cannot cover proxied hosts, where it sees the cloudflared tunnel rather than
+the client.
+
+**Alerting (added 2026-08-16).** The sync had no alert on it at all, which is
+why it sat broken for days at a time unnoticed; `crowdsec_cf_list_sync_success`
+was being pushed as `0` correctly the whole time and nothing read it. Three
+rules now do: `CrowdSecEdgeSyncFailing` (no clean write in 2h),
+`CrowdSecEdgeListDrifted` (edge list disagrees with LAPI for 6h — this is the
+one that tracks real exposure, since a run can succeed at doing nothing) and
+`CrowdSecEdgeSyncStale` (job not running at all for 90m).
 - **Block-only, ban-only**: the single-list limit precludes a separate
   captcha/managed-challenge list, and the sync pushes **ban decisions only** —
   captcha-type decisions are NOT synced or enforced anywhere (the interactive
