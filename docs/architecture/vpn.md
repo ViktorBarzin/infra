@@ -32,6 +32,22 @@ Last updated: 2026-04-10
 > `tailscale-subnet-router-probe` (every 6 h) → `TailscaleSubnetRouterDown` /
 > `TailscaleLanUnreachableViaTailnet` / `TailscaleSubnetRouterProbeStale`.
 
+> **Amendment (2026-08-16) — outbound egress is now a first-class service.**
+> Everything below concerns INBOUND remote access (getting to the homelab). As
+> of 2026-08-16 there is also a supported OUTBOUND path: any cluster workload
+> can egress through the existing NordVPN subscription by setting
+> `HTTPS_PROXY`/`ALL_PROXY` to
+> `http://proxy-egress-uk.proxy.svc.cluster.local:8888` (SOCKS5 on
+> `socks5h://…:1080`). It needs no privileges, sidecar or netns sharing —
+> gluetun's userspace listener sits inside the tunnel and re-originates the
+> request. One always-on UK gateway serves both this and the remote browsers
+> from a single tunnel. Fails closed. Verified end to end, including that no
+> request leaks to the home address while the gateway is down.
+> **It does not defeat anti-bot walls** — a datacenter exit scores worse than a
+> residential address on ASN reputation; use `homelab browser run` for those.
+> Design: [`docs/plans/2026-08-16-cluster-vpn-egress-service-design.md`](../plans/2026-08-16-cluster-vpn-egress-service-design.md)
+> · contract: `stacks/proxy/README.md`.
+
 > **Amendment (2026-07-13) — not yet folded into the body below (a full rewrite
 > is design Phase 0).** Two additions since this was written:
 > - **mx2 is now VPN PoP-2, not "mail drain only."** The Oracle Always-Free box
