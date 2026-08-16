@@ -1,6 +1,6 @@
 # Cluster VPN egress — NordVPN as a service any workload can use
 
-**Status:** BUILT + APPLIED (2026-08-16), gateway held at 0 replicas pending a node fix · **Owner:** Viktor
+**Status:** DONE (2026-08-16) — live and verified end to end; the pilot consumer was measured and reverted · **Owner:** Viktor
 **Stack:** `stacks/proxy` (extended) · **Namespace:** `proxy`
 **Predecessors:** [`2026-07-24-geo-browser-nordvpn-design.md`](2026-07-24-geo-browser-nordvpn-design.md) · [`2026-07-25-proxy-scale-design.md`](2026-07-25-proxy-scale-design.md)
 
@@ -332,6 +332,57 @@ interface against.
 - Whether NordLynx key rotation actually fires in practice on this account. The
   Reloader annotation is defensive; no rotation has been observed.
 
+## Verified outcome (2026-08-16)
+
+The service is live. Every step of the verification plan below was executed
+against the running cluster.
+
+```stats
+217.146.93.68 | UK exit (was 176.12.22.76)
+0 | home-IP leaks under failure
+11 | consecutive fail-closed refusals
+0 | consumers that benefited
+```
+
+| Check | Result |
+|---|---|
+| Gateway `2/2 Ready`, tunnel established | Pass — `Public IP address is 217.146.93.68 (United Kingdom, England, London)` |
+| Exit confirmed by NordVPN's own API | Pass — `country=United Kingdom`, `protected=True` |
+| HTTP proxy `:8888` from another namespace | Pass — `217.146.93.68` GB vs `176.12.22.76` BG direct |
+| SOCKS5 `:1080` from another namespace | Pass — same exit, proven with a raw stdlib SOCKS5 client |
+| Fail-closed when the tunnel is gone | Pass — 11 consecutive refusals, **zero** home-IP leaks |
+| Self-heal after the pod is deleted | Pass — Deployment recreated it, resumed on a different UK exit |
+| Budget accounting | Pass — `proxy_gateways_active 1` of `proxy_max_countries 6` |
+| Pilot benefit | **No benefit** — see below |
+
+A note on the fail-closed test, since it is the property that matters most: the
+gateway pod was deleted while a workload in another namespace polled through
+the proxy every three seconds. Every request during the outage failed. None
+silently egressed from the home address.
+
+### The pilot answered its question, and the answer was no
+
+Routing `book-search` through the UK exit changed nothing:
+
+| Endpoint | Direct | Via UK |
+|---|---|---|
+| `annas-archive.gl/search` | 403 | 403 |
+| `googleapis.com/books` | 429 | 429 |
+| libgen | error | error |
+
+This is what the design predicted. Anna's Archive serves a DDoS-Guard challenge
+scored on ASN reputation, and NordVPN exits sit in hosting ASNs that such
+vendors treat more harshly than a residential address — so a datacenter exit
+does not beat a challenge the home address already fails. The Google Books 429
+is a request-rate quota rather than an address block, which no route changes.
+
+The pilot was reverted (`book_search_proxy_url = ""`, applied and verified: the
+pod is back on `176.12.22.76`). **Treat "a datacenter exit does not help against
+a Cloudflare- or DDoS-Guard-fronted target" as established**, and weigh it before
+pointing another scraper at this service. Geo-unlocking, where the destination
+cares which country you are in rather than how reputable your address is, remains
+the use case this fits best.
+
 ## Build outcome (2026-08-16)
 
 Everything in this design is built, reviewed and applied: `2 imported, 2 added,
@@ -339,13 +390,15 @@ Everything in this design is built, reviewed and applied: `2 imported, 2 added,
 state, the broker now treats index 1 as permanent, and the egress Service
 exists. 38 unit tests cover the permanent-gateway rules.
 
-The gateway itself is held at **0 replicas** by one blocker found at apply time.
+One blocker surfaced at apply time and was resolved the same day.
 
 > [!IMPORTANT]
-> **`net.ipv4.ip_forward` is missing from `allowedUnsafeSysctls` on every
-> gateway node.** Each pod the Deployment creates is rejected at admission with
-> `SysctlForbidden`, and the ReplicaSet retries in a tight loop — 27 rejected
-> pods in about 40 seconds on the first apply.
+> **`net.ipv4.ip_forward` was missing from `allowedUnsafeSysctls` on every
+> gateway node.** Each pod the Deployment created was rejected at admission with
+> `SysctlForbidden`, and the ReplicaSet retried in a tight loop — 27 rejected
+> pods in about 40 seconds on the first apply. Restored on node2-5 (edit
+> `/var/lib/kubelet/config.yaml` via `qm guest exec`, restart kubelet, one node
+> at a time, verifying `Ready` between each).
 
 This is pre-existing rather than caused by this change, and it is the missing
 piece of the orphan story above. The allowlist is written only by
@@ -359,15 +412,38 @@ which is why a browser reconnected to an endpoint-less ClusterIP for four days.
 It also means the remote-browser feature cannot currently start a gateway for
 any country, not just the UK.
 
-Restoring the allowlist is a node-level kubelet change (edit
-`/var/lib/kubelet/config.yaml`, restart kubelet, once per node) with a wider
-blast radius than this design covers, so it is being decided separately. Flip
-`replicas` back to 1 in the same change that restores it.
+### The wider finding
 
-**Open follow-up worth considering on its own merits:** a setting applied only
-at node join, with no reconciliation and no alert, will drift again. A
-periodic check that the allowlist is present on labelled gateway nodes would
-turn a silent four-day outage into a signal.
+Investigating that blocker turned up something larger than the sysctl. The
+**entire post-join tune is gone from all six nodes**, wiped by the v1.35.7
+upgrade on 2026-07-26/27 (config mtimes 23:57→02:39, a rolling per-node
+sequence). `kubeadm upgrade node` rewrites each node's config from the
+cluster-wide `kube-system/kubelet-config` ConfigMap, which does not carry these
+settings.
+
+Still missing on all six nodes, confirmed by `scripts/check-node-kubelet-tune`:
+
+| Setting | What it does |
+|---|---|
+| `shutdownGracePeriodByPodPriority` | Priority-ordered graceful shutdown — likely relevant to bead `code-xgcg` |
+| `systemReserved` / `kubeReserved` | Node memory and CPU reservations |
+| `evictionSoft` | Soft eviction thresholds |
+| `maxParallelImagePulls` | Parallel image pulls |
+| `memorySwap: LimitedSwap` | Swap behaviour |
+
+`evictionHard` and `containerLogMaxSize` survived. Only `allowedUnsafeSysctls`
+has been restored, on the four gateway nodes.
+
+Re-applying the rest changes memory reservations and eviction thresholds on
+every node, so it can move pods — a deliberate change rather than a cleanup, and
+one that overlaps an existing bead. It is left for a separate decision.
+
+`scripts/check-node-kubelet-tune` reads each kubelet's live `/configz` and
+reports which settings are absent, so this class of failure produces a signal
+rather than four silent days. Worth running after any Kubernetes upgrade. A
+durable fix means either carrying these keys in the `kubelet-config` ConfigMap
+that kubeadm writes node config from, or re-running the tune from the
+`k8s-version-upgrade` pipeline after each node upgrade; neither is built yet.
 
 ## Verification plan
 
