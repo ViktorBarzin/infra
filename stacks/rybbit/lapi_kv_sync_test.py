@@ -33,7 +33,7 @@ class Recorder:
         self.pushes = []
 
 
-def install(monkeypatch, rec, *, existing, cf_error=None, state=(0, 0.0)):
+def install(monkeypatch, rec, *, existing, cf_error=None, state=(0, 0.0, 0, 0)):
     """Wire the module's I/O to in-memory fakes.
 
     `existing` is the set of IPs Cloudflare currently holds; `cf_error` (if
@@ -155,7 +155,7 @@ def test_backoff_grows_up_the_ladder_then_caps(monkeypatch):
     for streak in range(0, 8):
         rec = Recorder()
         install(monkeypatch, rec, existing={"1.1.1.1"}, cf_error=err,
-                state=(streak, 0.0))
+                state=(streak, 0.0, 0, 0))
         monkeypatch.setattr(k, "fetch_decisions", lambda: {"2.2.2.2"})
         import time as _t
         before = _t.time()
@@ -172,7 +172,7 @@ def test_hold_skips_the_write_but_still_reports_drift(monkeypatch):
     rec = Recorder()
     import time as _t
     install(monkeypatch, rec, existing={"1.1.1.1"},
-            state=(3, _t.time() + 3600))
+            state=(3, _t.time() + 3600, 0, 0))
     monkeypatch.setattr(k, "fetch_decisions", lambda: {"2.2.2.2"})
 
     assert k.main() == 0
@@ -184,7 +184,7 @@ def test_hold_skips_the_write_but_still_reports_drift(monkeypatch):
 
 def test_success_clears_the_ladder(monkeypatch):
     rec = Recorder()
-    install(monkeypatch, rec, existing={"1.1.1.1"}, state=(4, 0.0))
+    install(monkeypatch, rec, existing={"1.1.1.1"}, state=(4, 0.0, 0, 0))
     monkeypatch.setattr(k, "fetch_decisions", lambda: {"2.2.2.2"})
 
     assert k.main() == 0
@@ -235,6 +235,25 @@ def test_unreadable_lapi_never_touches_the_list(monkeypatch):
     assert rec.cf_calls == []
 
 
+def test_unreadable_lapi_does_not_publish_a_false_zero_drift(monkeypatch):
+    """Without a desired set we measured NOTHING, so pushing drift=0 would
+    falsely resolve CrowdSecEdgeListDrifted while the edge is still stale.
+    Carry the last known values forward instead. Same shape as the -1 sentinel
+    bug, opposite direction: never publish a number you did not measure."""
+    rec = Recorder()
+    install(monkeypatch, rec, existing={"1.1.1.1"}, state=(2, 0.0, 5, 3))
+
+    def boom():
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(k, "fetch_decisions", boom)
+    assert k.main() == 0
+    push = rec.pushes[-1]
+    assert push["drift"] == 3        # carried, not reset to 0
+    assert push["block_n"] == 5      # ditto for the ban count
+    assert push["ok"] is False
+
+
 # --------------------------------------------------------------------------- #
 # Pushgateway state parsing
 # --------------------------------------------------------------------------- #
@@ -260,12 +279,17 @@ def test_read_state_parses_labels_and_scientific_notation(monkeypatch):
         'crowdsec_cf_list_write_fail_streak{instance="",job="crowdsec-cf-list-sync"} 3\n'
         "# TYPE crowdsec_cf_list_write_backoff_until_seconds gauge\n"
         'crowdsec_cf_list_write_backoff_until_seconds{instance="",job="crowdsec-cf-list-sync"} 1.786891e+09\n'
+        "# TYPE crowdsec_cf_list_ban_count gauge\n"
+        'crowdsec_cf_list_ban_count{instance="",job="crowdsec-cf-list-sync"} 5\n'
+        "# TYPE crowdsec_cf_list_drift_items gauge\n"
+        'crowdsec_cf_list_drift_items{instance="",job="crowdsec-cf-list-sync"} 2\n'
     )
     monkeypatch.setattr(k.urllib.request, "urlopen",
                         lambda *a, **kw: _pgw_body(body))
-    streak, until = k.read_state()
+    streak, until, bans, drift = k.read_state()
     assert streak == 3
     assert until == 1786891000.0
+    assert (bans, drift) == (5, 2)
 
 
 def test_read_state_is_permissive_when_pushgateway_is_down(monkeypatch):
@@ -275,10 +299,10 @@ def test_read_state_is_permissive_when_pushgateway_is_down(monkeypatch):
         raise OSError("connection refused")
 
     monkeypatch.setattr(k.urllib.request, "urlopen", boom)
-    assert k.read_state() == (0, 0.0)
+    assert k.read_state() == (0, 0.0, 0, 0)
 
 
 def test_read_state_defaults_to_zero_on_a_fresh_pushgateway(monkeypatch):
     monkeypatch.setattr(k.urllib.request, "urlopen",
                         lambda *a, **kw: _pgw_body("# nothing here\n"))
-    assert k.read_state() == (0, 0.0)
+    assert k.read_state() == (0, 0.0, 0, 0)
