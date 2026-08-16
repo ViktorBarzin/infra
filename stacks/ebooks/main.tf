@@ -26,8 +26,20 @@ variable "nfs_server" { type = string }
 # in place and NO_PROXY goes inert alongside them. Verified live in the running
 # pod on 2026-08-16, both positions.
 variable "book_search_proxy_url" {
-  type        = string
-  default     = "http://proxy-egress-uk.proxy.svc.cluster.local:8888"
+  type = string
+  # REVERTED 2026-08-16 after measuring. The pilot answered its question and the
+  # answer was no: routing book-search through the UK exit changed nothing on any
+  # of its blocked endpoints. Measured from the pod, direct vs proxied:
+  #   annas-archive.gl/search  403 -> 403
+  #   googleapis.com/books     429 -> 429   (a quota limit, not an IP block)
+  #   libgen                   error -> error
+  # This matches the design's stated expectation: NordVPN exits sit in hosting
+  # ASNs that anti-bot vendors score more harshly than a residential address, so
+  # a datacenter exit does not beat a challenge the home IP already fails. The
+  # egress service itself is verified working (UK exit, fail-closed, no leak) —
+  # this consumer just gains nothing from it.
+  # Set back to "http://proxy-egress-uk.proxy.svc.cluster.local:8888" to re-run.
+  default     = ""
   description = "Outbound HTTP proxy for book-search (cluster VPN egress, UK exit). Empty string = no proxy, traffic egresses from the home IP as before."
 }
 
