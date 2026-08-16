@@ -73,6 +73,37 @@ resource "helm_release" "prometheus" {
   values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, haos_api_token = var.haos_api_token, authentik_walloff_targets = local.authentik_walloff_targets })]
 }
 
+# The LABEL half of the Keel opt-out — see the long note on
+# `server.deploymentAnnotations` in prometheus_chart_values.tpl for why this
+# Deployment must not be Keel-managed. The ANNOTATION there is what Keel
+# reads; this label is what the Kyverno exclude rule selects on
+# (stacks/kyverno/modules/kyverno/keel-annotations.tf), so Kyverno stops
+# re-stamping keel.sh/policy=patch on future policy updates.
+#
+# Stamped by field-manager patch rather than in the values because the
+# prometheus chart routes Deployment labels through the
+# `prometheus.server.labels` helper and exposes no per-resource labels
+# surface. The chart-wide `commonMetaLabels` would reach it, but also every
+# other object in the release. Same pattern as kubernetes_labels.dashboard_sablier
+# (stacks/k8s-dashboard) and kubernetes_labels.postiz_sablier.
+#
+# Safe against the selector: `commonMetaLabels`/metadata labels are NOT part
+# of `prometheus.server.matchLabels`, so this does not touch the (immutable)
+# Deployment selector, and a Deployment-metadata label is not a pod-template
+# change — stamping it does not roll the pod.
+resource "kubernetes_labels" "prometheus_server_keel_optout" {
+  api_version = "apps/v1"
+  kind        = "Deployment"
+  metadata {
+    name      = "prometheus-server"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  labels = {
+    "keel.sh/policy" = "never"
+  }
+  depends_on = [helm_release.prometheus]
+}
+
 # Local-only Prometheus query-API ingress for ha-sofia REST sensors (added
 # 2026-06-05). ha-sofia (external HAOS) reads R730 iDRAC SNMP metrics
 # (r730_idrac_coolingDeviceReading, etc.) by querying Prometheus directly via

@@ -361,6 +361,34 @@ prometheus-pushgateway:
     limits:
       memory: 256Mi
 server:
+  # Opt this Deployment out of Keel. Terraform declares every image in this
+  # release (prometheus v2.48.1, config-reloader v0.70.0, and the
+  # prometheus-backup sidecar's alpine tag below), so a Keel bump is always
+  # reverted by the next apply and the two just take turns.
+  #
+  # 2026-08-16: Kyverno stamps keel.sh/policy=patch onto every workload in a
+  # keel-enrolled namespace (keel-annotations.tf; `monitoring` is enrolled —
+  # the stale bullet list in that file's exclude comment predates the
+  # 2026-05-17 enrollment expansion). Keel's hourly poll patch-bumped the
+  # sidecar docker.io/library/alpine:3.21 -> library/alpine:3.21.7 (note it
+  # also drops the registry prefix), the next apply put :3.21 back, and each
+  # flip replaced the Prometheus pod: 11 ReplicaSets in 14h, deployment
+  # generation 242, and only 213 of an expected ~2880 self-scrape samples in
+  # 24h. Same fight stacks/proxy hit the same day on its gluetun image.
+  #
+  # The alert consequence is what surfaced it. A restart clears in-memory
+  # alert state, so every `for:` timer restarts from zero — DriftStacksMany
+  # (for: 30m) re-fired and re-resolved all day (each Slack [RESOLVED] lands
+  # within ~2 min of a new ReplicaSet) and DriftStackErrored (for: 2h) could
+  # never stay up long enough to fire at all.
+  #
+  # This annotation is what KEEL reads. The matching LABEL — what Kyverno's
+  # exclude rule selects on — is stamped by kubernetes_labels in
+  # prometheus.tf, since the chart exposes no deployment-labels surface.
+  # Both are needed: excluding the workload stops Kyverno re-adding the
+  # annotation, but cannot remove the policy=patch it already stamped.
+  deploymentAnnotations:
+    keel.sh/policy: never
   # Halve scrape load on apiserver + cAdvisor + node-exporter without losing
   # alerting fidelity. Per-job overrides (snmp-ups 30s, snmp-idrac 1m, etc.)
   # below keep critical metrics fresh; alert `for:` durations were audited and
