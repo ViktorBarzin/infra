@@ -79,6 +79,17 @@ steps:
         # variables — see the summary block below for why.
         RESULTS=$(mktemp)
         METRICS_FILE=$(mktemp)
+        # Per-stack plan output, consumed by scripts/drift-report.py to build a
+        # report that says WHAT differs rather than only which stacks do. Only
+        # the resource-header and Plan: lines are kept — that is all the parser
+        # reads, and a full plan for 150 stacks is a lot of tmpfs for nothing.
+        PLANS=$(mktemp -d)
+        # Record what we are planning against. The run clones master once and
+        # then plans for hours, so anything committed mid-run (the renew-tls
+        # certificate commit lands ~00:06) makes later stacks diff against a
+        # tree we no longer have. Naming the commit makes that visible instead
+        # of it reading as real drift. (2026-08-16)
+        COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
         for stack_dir in stacks/*/; do
           stack=$(basename "$stack_dir")
@@ -128,6 +139,8 @@ steps:
           # stacks even once the pattern itself was right.
           OUTPUT=$(cd "$stack_dir" && ../../scripts/tg plan -detailed-exitcode -input=false -no-color 2>&1) || EXIT=$?
           echo "$stack $EXIT" >> "$RESULTS"
+          echo "$EXIT" > "$PLANS/$stack.exit"
+          echo "$OUTPUT" | grep -E '(# .*(will|must) be |Plan: [0-9])' > "$PLANS/$stack.out" || true
 
           case $EXIT in
             0)
@@ -210,17 +223,30 @@ steps:
         echo "Drift:$DRIFTED_TEXT"
         echo "Errors:$ERRORS_TEXT"
 
+        # ── Build the report that names the actual differences ──
+        # A list of stack names is not actionable and cannot be sanity-checked:
+        # on 2026-08-16 "79 stacks drifting" was really 50-odd false positives
+        # from a stale checkout plus 29 stacks a mid-run Postgres failover had
+        # stopped us measuring at all, and the message looked identical to a
+        # genuine mass revert. drift-report.py prints the changed resources per
+        # stack, keeps "could not be planned" separate from "differs", and flags
+        # the aborted-run signature (errors forming an alphabetical tail).
+        echo ""
+        SLACK_JSON=$(mktemp)
+        python3 scripts/drift-report.py "$PLANS" \
+          --commit "$COMMIT" \
+          --pipeline-url "$CI_PIPELINE_URL" \
+          --slack-json "$SLACK_JSON" || true
+
         # ── Slack only when something is WRONG (drift or errors) ──
         # All-clean runs are silent (Viktor 2026-07-02: CI notifies on
         # failed/actionable runs only; clean is the daily normal).
-        if [ -n "$DRIFTED" ]; then
+        # Post the payload from a FILE: the report contains resource addresses
+        # with for_each keys like route["ac"], and the previous hand-built JSON
+        # string would have produced invalid JSON the moment one appeared.
+        if [ -n "$DRIFTED" ] || [ -n "$ERRORS" ]; then
           curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"channel\":\"general\",\"text\":\":warning: Drift detected in:$DRIFTED_TEXT\nClean: $CLEAN stacks. Errors:$ERRORS_TEXT\"}" \
-            "$SLACK_WEBHOOK" || true
-        elif [ -n "$ERRORS" ]; then
-          curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"channel\":\"general\",\"text\":\":red_circle: Drift detection had errors:$ERRORS_TEXT (clean: $CLEAN)\"}" \
-            "$SLACK_WEBHOOK" || true
+            --data @"$SLACK_JSON" "$SLACK_WEBHOOK" || true
         fi
 
   # Hard-failure catch: the in-script posts above never run if the step
