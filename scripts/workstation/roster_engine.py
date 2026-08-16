@@ -64,6 +64,13 @@ class User:
     namespaces: tuple[str, ...] = ()
     code_layout: str = "single"
     repos: tuple[str, ...] = ()
+    # Whether this user gets the per-user claude-auth-sync timer. Default True:
+    # everyone provisioned here is expected to use Claude. Set false for a
+    # roster member who has an account but does not use Claude on this box —
+    # the timer validates a credential that was never created, so it fails
+    # every ~6h forever and raises WorkstationClaudeAuthInvalid with nothing
+    # to fix. Reversible: flip back to true and the next reconcile re-enables.
+    claude_auth: bool = True
 
 
 @dataclass(frozen=True)
@@ -80,6 +87,7 @@ class Account:
     groups: tuple[str, ...]
     code_layout: str = "single"
     repos: tuple[str, ...] = ()
+    claude_auth: bool = True
 
 
 @dataclass(frozen=True)
@@ -133,6 +141,11 @@ def _parse_user(os_user: str, spec: dict) -> User:
         raise RosterError(
             f"user {os_user!r}: infra is implicit at ~/code/infra — drop it from repos"
         )
+    claude_auth = spec.get("claude_auth", True)
+    if not isinstance(claude_auth, bool):
+        raise RosterError(
+            f"user {os_user!r}: claude_auth must be true or false, got {claude_auth!r}"
+        )
     return User(
         os_user,
         spec["authentik_user"],
@@ -141,6 +154,7 @@ def _parse_user(os_user: str, spec: dict) -> User:
         namespaces,
         code_layout,
         repos,
+        claude_auth,
     )
 
 
@@ -260,6 +274,7 @@ def derive_desired_state(
             groups=TIER_GROUPS[u.tier],
             code_layout=u.code_layout,
             repos=u.repos,
+            claude_auth=u.claude_auth,
         )
         for u in roster.users.values()
     }
@@ -314,6 +329,7 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
                 "groups": list(a.groups),
                 "code_layout": a.code_layout,
                 "repos": list(a.repos),
+                "claude_auth": a.claude_auth,
             }
             for name, a in ds.accounts.items()
         },

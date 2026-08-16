@@ -416,3 +416,48 @@ def test_offboard_plan_includes_destructive_only_when_explicitly_requested():
     destructive = [a for a in full if a.kind == "userdel_archive"]
     assert {a.os_user for a in destructive} == {"emo", "ancamilea"}
     assert all(not a.reversible for a in destructive)
+
+
+def test_claude_auth_defaults_to_enabled():
+    r = _roster("users: {emo: {authentik_user: e, k8s_user: emo, tier: power-user}}")
+    assert r.users["emo"].claude_auth is True
+
+
+def test_claude_auth_can_be_disabled_per_user():
+    # For a roster member who has an account but does not use Claude here.
+    # The per-user timer would otherwise fail every ~6h forever and alert,
+    # because there is no credential to validate or restore.
+    r = _roster(
+        """
+        users:
+          ancamilea: {authentik_user: ancaelena98, k8s_user: anca,
+                      tier: namespace-owner, namespaces: [plotting-book],
+                      claude_auth: false}
+        """
+    )
+    assert r.users["ancamilea"].claude_auth is False
+
+
+def test_claude_auth_must_be_a_bool():
+    with pytest.raises(eng.RosterError):
+        _roster(
+            "users: {emo: {authentik_user: e, k8s_user: emo, "
+            "tier: power-user, claude_auth: nope}}"
+        )
+
+
+def test_claude_auth_flows_through_to_the_account():
+    # The provisioner reads the ACCOUNT, not the roster user, so the flag is
+    # only load-bearing if it survives derive_desired_state.
+    r = _roster(
+        """
+        users:
+          ancamilea: {authentik_user: ancaelena98, k8s_user: anca,
+                      tier: namespace-owner, namespaces: [plotting-book],
+                      claude_auth: false}
+          emo: {authentik_user: e, k8s_user: emo, tier: power-user}
+        """
+    )
+    ds = eng.derive_desired_state(r, {})
+    assert ds.accounts["ancamilea"].claude_auth is False
+    assert ds.accounts["emo"].claude_auth is True

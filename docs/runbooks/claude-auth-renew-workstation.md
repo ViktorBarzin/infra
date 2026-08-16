@@ -44,6 +44,21 @@ Success writes no secrets to the journal. The user's private log records `OK` in
 `~/.local/state/claude-auth-sync/sync.log`; journald receives the same status with
 `identifier=claude-auth-sync` for Loki alerting.
 
+## Opting a user out
+
+A roster member who has a devvm account but does not use Claude here should carry
+`claude_auth: false` in `scripts/workstation/roster.yaml`. Without it the per-user
+timer validates a credential that was never created, fails every ~6h, and raises
+`WorkstationClaudeAuthInvalid` continuously with nothing anyone can act on —
+`ancamilea` did exactly that from 2026-08-10 until the flag was added on 2026-08-16.
+
+The provisioner **disables** the timer while the flag is false rather than merely
+skipping it, because the hourly reconcile also runs against users who already have
+it enabled. Nothing else is removed: the account, clone, `t3-serve@` instance,
+scoped Vault token and Vault policy all stay, so setting the flag back to `true`
+re-enables the timer on the next reconcile. A user who then completes the login in
+step 3 above needs no other change.
+
 ## Automatic recovery
 
 `claude auth status` is not a sufficient health check: it can report logged in
