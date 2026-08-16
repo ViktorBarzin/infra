@@ -65,33 +65,39 @@ def install(monkeypatch, rec, *, existing, cf_error=None, state=(0, 0.0)):
 
 
 # --------------------------------------------------------------------------- #
-# reconcile
+# measure_drift / apply_desired
 # --------------------------------------------------------------------------- #
-def test_in_sync_issues_no_write(monkeypatch):
-    """The common case. A no-op run must not spend a list change — this is why
-    thousands of `[ok]` runs coexisted with a permanently stale list."""
+def test_in_sync_reports_no_drift(monkeypatch):
+    """The common case. main() must not write when drift is 0 — this is why
+    thousands of `[ok]` runs coexisted with a permanently stale list, and why a
+    frequent schedule is affordable."""
     rec = Recorder()
     install(monkeypatch, rec, existing={"1.1.1.1", "2.2.2.2"})
-    drift, wrote = k.reconcile("block", "test-list", {"1.1.1.1", "2.2.2.2"})
-    assert (drift, wrote) == (0, False)
+    monkeypatch.setattr(k, "fetch_decisions", lambda: {"1.1.1.1", "2.2.2.2"})
+
+    assert k.main() == 0
     assert rec.cf_calls == []
+    push = rec.pushes[-1]
+    assert push["ok"] is True and push["drift"] == 0
 
 
 def test_drift_writes_the_full_desired_set_once(monkeypatch):
     """One PUT carrying the whole desired set, not an add plus a delete."""
     rec = Recorder()
     install(monkeypatch, rec, existing={"1.1.1.1", "9.9.9.9"})
-    drift, wrote = k.reconcile("block", "test-list", {"1.1.1.1", "2.2.2.2"})
-    # 9.9.9.9 removed, 2.2.2.2 added -> two items differ
-    assert (drift, wrote) == (2, True)
+    monkeypatch.setattr(k, "fetch_decisions", lambda: {"1.1.1.1", "2.2.2.2"})
+
+    assert k.main() == 0
     assert rec.cf_calls == [("PUT", ["1.1.1.1", "2.2.2.2"])]
 
 
-def test_drift_counts_adds_and_removes(monkeypatch):
+def test_measure_drift_counts_adds_and_removes(monkeypatch):
     rec = Recorder()
     install(monkeypatch, rec, existing={"1.1.1.1"})
-    drift, _ = k.reconcile("block", "test-list", {"2.2.2.2", "3.3.3.3"})
+    drift, add, remove = k.measure_drift("block", "test-list",
+                                         {"2.2.2.2", "3.3.3.3"})
     assert drift == 3  # one removal, two additions
+    assert add == ["2.2.2.2", "3.3.3.3"] and remove == ["1.1.1.1"]
 
 
 def test_empty_desired_is_still_written(monkeypatch):
@@ -100,9 +106,24 @@ def test_empty_desired_is_still_written(monkeypatch):
     skips the run), not here."""
     rec = Recorder()
     install(monkeypatch, rec, existing={"1.1.1.1"})
-    drift, wrote = k.reconcile("block", "test-list", set())
-    assert (drift, wrote) == (1, True)
+    monkeypatch.setattr(k, "fetch_decisions", lambda: set())
+
+    assert k.main() == 0
     assert rec.cf_calls == [("PUT", [])]
+
+
+def test_unreadable_cf_list_fails_loud(monkeypatch):
+    """If we cannot even READ the list, we know nothing — that is a failure,
+    not a quiet skip."""
+    rec = Recorder()
+    install(monkeypatch, rec, existing={"1.1.1.1"})
+    monkeypatch.setattr(k, "fetch_decisions", lambda: {"2.2.2.2"})
+
+    def boom(list_id):
+        raise k.CFError("GET ... -> HTTP 500", status=500)
+
+    monkeypatch.setattr(k, "cf_list_items", boom)
+    assert k.main() == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -120,6 +141,11 @@ def test_429_records_backoff_and_exits_zero(monkeypatch):
     assert push["ok"] is False
     assert push["fail_streak"] == 1
     assert push["backoff_until"] > 0
+    # REGRESSION (seen live 2026-08-16): this pushed -1 as an "unknown"
+    # sentinel, which made CrowdSecEdgeListDrifted (expr: > 0) unable to fire
+    # on the one path where the edge is definitely out of date. The drift was
+    # measured moments earlier and must be reported as measured.
+    assert push["drift"] == 2
 
 
 def test_backoff_grows_up_the_ladder_then_caps(monkeypatch):

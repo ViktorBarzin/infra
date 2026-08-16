@@ -277,29 +277,28 @@ def cf_replace_items(list_id, ips):
     return _op_id(res)
 
 
-def reconcile(label, list_id, desired):
-    """Reconcile one list to `desired` (a set of IPs).
+def measure_drift(label, list_id, desired):
+    """Read the list and report how far it is from `desired`.
 
-    Returns (drift, wrote): how many items differed, and whether a write was
-    actually issued. Raises CFError on hard failure.
-
-    The read is always cheap and always happens — GETs are not what Cloudflare
-    throttles, and knowing the drift is what lets us alert on a stuck list even
-    while we are deliberately not writing.
+    Returns (drift, to_add, to_remove). Reads are cheap and never throttled, so
+    this runs on EVERY path — including while we are backing off and while a
+    write has just been refused. Knowing the drift is the whole point: a run can
+    succeed at doing nothing while the edge quietly disagrees with CrowdSec.
     """
-    existing = cf_list_items(list_id)  # {ip: item_id}
-    existing_ips = set(existing)
-    drift = len(desired ^ existing_ips)  # symmetric difference: adds + removes
-
-    if not drift:
-        print(f"[ok] {label}: in sync ({len(desired)} items), no write needed")
-        return 0, False
-
+    existing_ips = set(cf_list_items(list_id))
     to_add = sorted(desired - existing_ips)
     to_remove = sorted(existing_ips - desired)
-    print(f"[info] {label}: drift={drift} (+{len(to_add)} / -{len(to_remove)}) "
-          f"add={to_add} remove={to_remove}")
+    drift = len(to_add) + len(to_remove)
+    if drift:
+        print(f"[info] {label}: drift={drift} (+{len(to_add)} / -{len(to_remove)}) "
+              f"add={to_add} remove={to_remove}")
+    else:
+        print(f"[ok] {label}: in sync ({len(desired)} items), no write needed")
+    return drift, to_add, to_remove
 
+
+def apply_desired(label, list_id, desired):
+    """Push `desired` to the list as ONE bulk operation. Raises CFError."""
     op = cf_replace_items(list_id, desired)
     if _wait_for_op(op):
         print(f"[ok] {label}: replaced list with {len(desired)} items")
@@ -309,7 +308,6 @@ def reconcile(label, list_id, desired):
         # re-issue; the next run reads the result and decides afresh.
         print(f"[warn] {label}: replace op accepted but not confirmed in "
               f"{POLL_TIMEOUT}s; next run verifies", file=sys.stderr)
-    return drift, True
 
 
 # --------------------------------------------------------------------------- #
@@ -412,27 +410,42 @@ def main():
     streak, backoff_until = read_state()
     now = time.time()
 
-    # 2. Reconcile. A 429 is a soft-skip (exit 0) — a Cloudflare throttle is not
-    #    a job failure and must never become a k8s retry-storm. What is new
-    #    since 2026-08-16 is that a 429 also BUYS QUIET: the next write is
-    #    deferred up the ladder, so a throttled stretch costs a handful of
-    #    attempts a day instead of one per run forever.
+    # 2. Measure first, always. The read is never throttled, and the drift is
+    #    what tells us whether the edge is actually enforcing what CrowdSec
+    #    decided — independent of whether this particular run got to write.
     try:
-        if backoff_until > now:
-            # Read anyway so drift stays observable while we hold off writing.
-            existing = set(cf_list_items(CF_BAN_LIST_ID))
-            drift = len(block ^ existing)
-            mins = int((backoff_until - now) / 60)
-            print(
-                f"[hold] write backoff active for another {mins}m "
-                f"(fail streak {streak}); drift={drift}. Reading only.",
-                file=sys.stderr,
-            )
-            push_metrics(len(block), ok=(drift == 0), drift=drift,
-                         fail_streak=streak, backoff_until=backoff_until)
-            return 0
+        drift, _, _ = measure_drift("block", CF_BAN_LIST_ID, block)
+    except CFError as e:
+        print(f"[error] Cloudflare list unreadable: {e}", file=sys.stderr)
+        push_metrics(len(block), ok=False, fail_streak=streak,
+                     backoff_until=backoff_until)
+        return 1
 
-        drift, wrote = reconcile("block", CF_BAN_LIST_ID, block)
+    if not drift:
+        # Nothing to do, and nothing spent. This is the common case and it is
+        # why a frequent schedule is affordable at all.
+        push_metrics(len(block), ok=True, drift=0, fail_streak=0,
+                     backoff_until=0)
+        return 0
+
+    # 3. There IS drift. Write, unless we are deliberately holding off.
+    if backoff_until > now:
+        mins = int((backoff_until - now) / 60)
+        print(
+            f"[hold] write backoff active for another {mins}m "
+            f"(fail streak {streak}); drift={drift}. Reading only.",
+            file=sys.stderr,
+        )
+        push_metrics(len(block), ok=False, drift=drift, fail_streak=streak,
+                     backoff_until=backoff_until)
+        return 0
+
+    # A 429 is a soft-skip (exit 0) — a Cloudflare throttle is not a job
+    # failure and must never become a k8s retry-storm. It also BUYS QUIET: the
+    # next write moves up the ladder, so a throttled stretch costs a handful of
+    # attempts a day rather than one per run.
+    try:
+        apply_desired("block", CF_BAN_LIST_ID, block)
     except CFError as e:
         if e.status == 429:
             streak += 1
@@ -444,17 +457,19 @@ def main():
                 f"(fail-safe).",
                 file=sys.stderr,
             )
-            push_metrics(len(block), ok=False, drift=-1, fail_streak=streak,
+            # Report the drift we MEASURED, not a sentinel. An earlier version
+            # pushed -1 here, which silently made CrowdSecEdgeListDrifted
+            # (expr: > 0) unable to fire on the one path where drift matters
+            # most — a refused write is exactly when the edge is out of date.
+            push_metrics(len(block), ok=False, drift=drift, fail_streak=streak,
                          backoff_until=backoff_until)
             return 0
         print(f"[error] Cloudflare API failure: {e}", file=sys.stderr)
-        push_metrics(len(block), ok=False, fail_streak=streak,
+        push_metrics(len(block), ok=False, drift=drift, fail_streak=streak,
                      backoff_until=backoff_until)
         return 1
 
-    # A write that landed (or a run that needed none) clears the ladder.
-    if wrote:
-        print("[info] write succeeded; clearing backoff")
+    # The write landed: drift is closed and the ladder resets.
     push_metrics(len(block), ok=True, drift=0, fail_streak=0, backoff_until=0)
     return 0
 
