@@ -322,7 +322,9 @@ log "service units installed + enabled (t3-dispatch + timers; t3-serve@ per-user
 #     virtual disk into an IO storm + multi-minute freeze (hard-killed 2026-06-22).
 #     t3-serve@ was already capped (its [Service] block); the HOLE was the uncapped
 #     user-<uid>.slice (all ssh/tmux work). Design — per user, on BOTH trees:
-#     MemoryMax=16G hard + MemorySwapMax=0 (work never touches disk swap → no
+#     MemoryMax=24G hard (16G until 2026-08-16; raised with the host's 24→32 GiB
+#     RAM bump, Viktor — wizard was working right up against the old ceiling at
+#     ~14.8G) + MemorySwapMax=0 (work never touches disk swap → no
 #     thrash; a runaway is cgroup-OOM-killed locally at the ceiling), plus
 #     fair-share CPU/IO weights.
 #     NO MemoryHigh soft band (removed 2026-07-02; was 12G "throttle to a crawl"):
@@ -354,7 +356,7 @@ cat > /etc/systemd/system/user-.slice.d/50-devvm-resource.conf <<'SLICE_EOF'
 [Slice]
 MemoryAccounting=yes
 MemoryHigh=infinity
-MemoryMax=16G
+MemoryMax=24G
 MemorySwapMax=0
 CPUAccounting=yes
 CPUWeight=100
