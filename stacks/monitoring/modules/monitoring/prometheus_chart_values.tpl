@@ -373,8 +373,9 @@ server:
   # sidecar docker.io/library/alpine:3.21 -> library/alpine:3.21.7 (note it
   # also drops the registry prefix), the next apply put :3.21 back, and each
   # flip replaced the Prometheus pod: 11 ReplicaSets in 14h, deployment
-  # generation 242, and only 213 of an expected ~2880 self-scrape samples in
-  # 24h. Same fight stacks/proxy hit the same day on its gluetun image.
+  # generation 242, and only 213 of an expected ~720 self-scrape samples in 24h
+  # (the self-scrape job inherits global scrape_interval: 2m, so 720 is the
+  # 24h ceiling) — under a third of the expected collection. Same fight stacks/proxy hit the same day on its gluetun image.
   #
   # The alert consequence is what surfaced it. A restart clears in-memory
   # alert state, so every `for:` timer restarts from zero — DriftStacksMany
