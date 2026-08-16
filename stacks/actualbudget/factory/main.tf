@@ -450,16 +450,21 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
                 -H "x-api-key: $API_KEY" \
                 -d "$DUPQ" 2>/dev/null || true)
 
+              # The response is {"data":[{imported_id,n},...]}. The `if` guard on
+              # .data's type is load-bearing: `.data.data[]?` looks defensive but
+              # jq raises "Cannot index array with string" on the INDEXING step
+              # before `[]?` can suppress anything, so that form fails outright
+              # against the real shape (caught 2026-08-16 by dupcheck_success=0
+              # on the first live run — which is what that flag is for).
+              DUPFILTER='if (.data|type)=="array" then .data else (.data.data // []) end'
               if [ -n "$DUPJSON" ]; then
-                DUP_GROUPS=$(echo "$DUPJSON" | jq '[.data.data[]? // .data[]? | select(.n > 1)] | length' 2>/dev/null || echo "")
-                DUP_EXCESS=$(echo "$DUPJSON" | jq '[.data.data[]? // .data[]? | select(.n > 1) | .n - 1] | add // 0' 2>/dev/null || echo "")
+                DUP_GROUPS=$(echo "$DUPJSON" | jq "$DUPFILTER | [.[] | select(.n > 1)] | length" 2>/dev/null || echo "")
+                DUP_EXCESS=$(echo "$DUPJSON" | jq "$DUPFILTER | [.[] | select(.n > 1) | .n - 1] | add // 0" 2>/dev/null || echo "")
               fi
               if [ -n "$DUP_GROUPS" ] && [ -n "$DUP_EXCESS" ]; then
                 DUP_OK=1
               else
                 DUP_OK=0
-                DUP_GROUPS=0
-                DUP_EXCESS=0
               fi
 
               # A Pushgateway POST REPLACES every metric family in this job's group —
@@ -477,12 +482,18 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
                 printf '# HELP bank_sync_duration_seconds Total duration of the cron run\n'
                 printf '# TYPE bank_sync_duration_seconds gauge\n'
                 printf 'bank_sync_duration_seconds %s\n' "$DUR"
-                printf '# HELP bank_sync_duplicate_imported_ids Distinct imported_ids present on more than one live transaction\n'
-                printf '# TYPE bank_sync_duplicate_imported_ids gauge\n'
-                printf 'bank_sync_duplicate_imported_ids %s\n' "$DUP_GROUPS"
-                printf '# HELP bank_sync_excess_imported_rows Live transaction rows beyond one per imported_id\n'
-                printf '# TYPE bank_sync_excess_imported_rows gauge\n'
-                printf 'bank_sync_excess_imported_rows %s\n' "$DUP_EXCESS"
+                # Emitted ONLY when the check actually ran. Publishing a
+                # placeholder 0 on failure would look identical to "no
+                # duplicates" and, worse, make delta() spike on recovery.
+                # Absence is the honest signal; dupcheck_success says why.
+                if [ "$DUP_OK" = "1" ]; then
+                  printf '# HELP bank_sync_duplicate_imported_ids Distinct imported_ids present on more than one live transaction\n'
+                  printf '# TYPE bank_sync_duplicate_imported_ids gauge\n'
+                  printf 'bank_sync_duplicate_imported_ids %s\n' "$DUP_GROUPS"
+                  printf '# HELP bank_sync_excess_imported_rows Live transaction rows beyond one per imported_id\n'
+                  printf '# TYPE bank_sync_excess_imported_rows gauge\n'
+                  printf 'bank_sync_excess_imported_rows %s\n' "$DUP_EXCESS"
+                fi
                 printf '# HELP bank_sync_dupcheck_success 1 if the duplicate-import check ran and parsed\n'
                 printf '# TYPE bank_sync_dupcheck_success gauge\n'
                 printf 'bank_sync_dupcheck_success %s\n' "$DUP_OK"
