@@ -1,6 +1,6 @@
 # Cluster VPN egress — NordVPN as a service any workload can use
 
-**Status:** DESIGNED (2026-08-16) — grilled and confirmed, not yet built · **Owner:** Viktor
+**Status:** BUILT + APPLIED (2026-08-16), gateway held at 0 replicas pending a node fix · **Owner:** Viktor
 **Stack:** `stacks/proxy` (extended) · **Namespace:** `proxy`
 **Predecessors:** [`2026-07-24-geo-browser-nordvpn-design.md`](2026-07-24-geo-browser-nordvpn-design.md) · [`2026-07-25-proxy-scale-design.md`](2026-07-25-proxy-scale-design.md)
 
@@ -331,6 +331,43 @@ interface against.
   confirmed at build time, before anything depends on `:1080`.
 - Whether NordLynx key rotation actually fires in practice on this account. The
   Reloader annotation is defensive; no rotation has been observed.
+
+## Build outcome (2026-08-16)
+
+Everything in this design is built, reviewed and applied: `2 imported, 2 added,
+3 changed, 0 destroyed`. The two orphaned objects were adopted into Terraform
+state, the broker now treats index 1 as permanent, and the egress Service
+exists. 38 unit tests cover the permanent-gateway rules.
+
+The gateway itself is held at **0 replicas** by one blocker found at apply time.
+
+> [!IMPORTANT]
+> **`net.ipv4.ip_forward` is missing from `allowedUnsafeSysctls` on every
+> gateway node.** Each pod the Deployment creates is rejected at admission with
+> `SysctlForbidden`, and the ReplicaSet retries in a tight loop — 27 rejected
+> pods in about 40 seconds on the first apply.
+
+This is pre-existing rather than caused by this change, and it is the missing
+piece of the orphan story above. The allowlist is written only by
+`modules/create-template-vm/k8s-node-post-join-tune.sh` as a cloud-init runcmd
+at node-join time; nothing reconciles it afterwards. Verified absent on
+node2-5 via `/api/v1/nodes/<node>/proxy/configz`, while the
+`proxy.viktorbarzin.me/gateway=true` label is present on all four.
+
+So the gateway pod that vanished around 2026-08-11 could never be recreated —
+which is why a browser reconnected to an endpoint-less ClusterIP for four days.
+It also means the remote-browser feature cannot currently start a gateway for
+any country, not just the UK.
+
+Restoring the allowlist is a node-level kubelet change (edit
+`/var/lib/kubelet/config.yaml`, restart kubelet, once per node) with a wider
+blast radius than this design covers, so it is being decided separately. Flip
+`replicas` back to 1 in the same change that restores it.
+
+**Open follow-up worth considering on its own merits:** a setting applied only
+at node join, with no reconciliation and no alert, will drift again. A
+periodic check that the allowlist is present on labelled gateway nodes would
+turn a silent four-day outage into a signal.
 
 ## Verification plan
 
