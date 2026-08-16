@@ -16,6 +16,26 @@
 # (used by the rollback runbook). The keel namespace itself is always
 # excluded (design decision #11 — supervisor must not auto-update).
 
+locals {
+  # Workloads that declare another controller as the owner of their container
+  # image. Defined once because the `keel-never-when-another-owner` rule below
+  # must apply it in BOTH places — `match` (which resources trigger the rule)
+  # and `mutate.targets` (which resources get patched). Those are different
+  # sets in Kyverno, and letting them drift is exactly how the first version of
+  # that rule set policy=never on all 229 workloads instead of 37.
+  #
+  # `Helm` here means a Terraform helm_release; `goauthentik.io` is the
+  # authentik server reconciling its own outposts. First-party apps carry no
+  # managed-by label at all, so they are untouched and keep auto-updating.
+  keel_second_owner_selector = {
+    matchExpressions = [{
+      key      = "app.kubernetes.io/managed-by"
+      operator = "In"
+      values   = ["Helm", "terraform", "goauthentik.io"]
+    }]
+  }
+}
+
 resource "kubectl_manifest" "policy_inject_keel_annotations" {
   yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
@@ -326,33 +346,39 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
                     "keel.sh/enrolled" = "true"
                   }
                 }
-                selector = {
-                  matchExpressions = [{
-                    key      = "app.kubernetes.io/managed-by"
-                    operator = "In"
-                    values   = ["Helm", "terraform", "goauthentik.io"]
-                  }]
-                }
+                selector = local.keel_second_owner_selector
               }
             }]
           }
           mutate = {
-            # DELIBERATELY NO `targets`. In a Kyverno mutateExisting rule,
-            # match/exclude select the TRIGGER while `targets` selects WHAT
-            # GETS PATCHED — they are not the same thing. The first version of
-            # this rule (2026-08-16, reverted within the hour) carried the same
-            # unselected `targets` list as the rule above, so every trigger
-            # event patched EVERY Deployment/StatefulSet/DaemonSet and the
-            # narrow match was ignored entirely: 184 workloads with no second
-            # owner were set to policy=never and Keel stopped updating anything
-            # cluster-wide. The rule above gets away with it only because its
-            # match is already as broad as its targets.
+            # THE SELECTOR ON `targets` IS THE LOAD-BEARING PART, and it is
+            # easy to leave off by copying the rule above.
             #
-            # Without `targets` this is a plain admission-time mutate on the
-            # matched resource itself, which is what we want — a NEW workload
-            # declaring an owner is enrolled correctly at creation. Existing
-            # workloads were reconciled by a one-time sweep (same approach the
-            # match-tag removal above needed, and for the same reason).
+            # In a Kyverno mutateExisting rule, match/exclude select the
+            # TRIGGER while `targets` selects WHAT GETS PATCHED — they are not
+            # the same set. The first version of this rule (2026-08-16, live
+            # for ~10 min) copied the rule above's UNSELECTED targets list, so
+            # every trigger event patched EVERY Deployment/StatefulSet/DaemonSet
+            # and the narrow match did nothing: 184 workloads with no second
+            # owner were set to policy=never and Keel stopped auto-updating
+            # anything cluster-wide. The rule above is only safe like that
+            # because its match is already as broad as its targets.
+            #
+            # `targets` cannot simply be dropped either — the policy sets
+            # `mutateExistingOnPolicyUpdate`, and Kyverno's validating webhook
+            # rejects the policy outright with
+            #   "rules[N].mutate.targets has to be specified when
+            #    mutateExistingOnPolicyUpdate is set"
+            # So the targets must carry the same selector as the match.
+            #
+            # VALIDATE ANY CHANGE HERE against the cluster's own webhook before
+            # pushing — `kubectl apply --dry-run=server -f <policy>.yaml`
+            # catches both of the above in seconds.
+            targets = [
+              { apiVersion = "apps/v1", kind = "Deployment", selector = local.keel_second_owner_selector },
+              { apiVersion = "apps/v1", kind = "StatefulSet", selector = local.keel_second_owner_selector },
+              { apiVersion = "apps/v1", kind = "DaemonSet", selector = local.keel_second_owner_selector },
+            ]
             patchStrategicMerge = {
               metadata = {
                 # No `+(...)` anchor: this must OVERWRITE the policy=patch the
