@@ -65,19 +65,23 @@ def request(method: str, path: str, key: str, body: dict | None = None) -> dict:
             "X-Auth-Key": key,
         },
     )
-    # The CF API resets connections often enough from here that a single attempt
-    # would make a 116-route reconcile flaky; HTTP errors are NOT retried.
+    # Reconciling the whole route list is ~117 calls back-to-back, which reliably
+    # trips Cloudflare's API rate limit (HTTP 429) partway through — and a reset
+    # connection is common from here too. Both are retried with a widening
+    # backoff; other HTTP errors are real failures and stop the run.
     payload = None
-    for attempt in range(4):
+    for attempt in range(6):
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 payload = json.load(resp)
             break
         except urllib.error.HTTPError as exc:
-            sys.exit(f"{method} {path} failed: HTTP {exc.code} {exc.read().decode()[:300]}")
+            if exc.code not in (429, 500, 502, 503, 504) or attempt == 5:
+                sys.exit(f"{method} {path} failed: HTTP {exc.code} {exc.read().decode()[:300]}")
+            time.sleep(min(60, 5 * 2**attempt))
         except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
-            if attempt == 3:
-                sys.exit(f"{method} {path} failed after 4 attempts: {exc}")
+            if attempt == 5:
+                sys.exit(f"{method} {path} failed after 6 attempts: {exc}")
             time.sleep(2 * (attempt + 1))
     if not payload.get("success", False):
         sys.exit(f"{method} {path} returned errors: {payload.get('errors')}")
@@ -109,7 +113,11 @@ def main() -> int:
             print(f"  DRIFT {r['pattern']} -> {r['script']}")
         return 1
 
+    # Pace the writes. Cloudflare rate-limits this API, and a tight loop of ~117
+    # PUTs trips it partway through; a short gap costs under a minute in total
+    # and keeps the run from spending minutes in backoff instead.
     for r in drifted:
+        time.sleep(0.5)
         request(
             "PUT",
             f"/zones/{args.zone}/workers/routes/{r['id']}",
