@@ -253,6 +253,17 @@ alertmanager:
           - alertname = TailscaleSubnetRouterProbeStale
         target_matchers:
           - alertname =~ "TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet"
+      # sdc disk I/O: when the spindle is already known to be saturated or
+      # serving reads slowly, the volume alerts are describing the same event
+      # from a different angle rather than adding information. Suppress them so
+      # one busy episode is one Slack line, not four. Inhibition only delays
+      # notification — if a volume alert is still firing once saturation clears,
+      # it notifies then, which is the interesting case (high throughput that
+      # the device is nonetheless keeping up with).
+      - source_matchers:
+          - alertname =~ "HDDSaturated|HDDReadLatencyHigh"
+        target_matchers:
+          - alertname =~ "HDDHighIOPS|HDDHighReadRate|HDDHighWriteRate|HDDDailyReadVolume|HDDDailyWriteVolume"
     receivers:
       - name: slack-critical
         slack_configs:
@@ -991,20 +1002,140 @@ serverFiles:
               severity: warning
             annotations:
               summary: "CPU temp: {{ $value | printf \"%.0f\" }}°C (threshold: 75°C)"
+          # sdb is the 1 TB Samsung 850 EVO — a consumer drive at ~28.5% of its
+          # rated 150 TBW and effectively idle (0.1 GB written in 24h). This is
+          # a WEAR canary, not a performance one: an SSD does not care about
+          # 2 MB/s, but 2 MB/s sustained is 173 GB/day, which would consume the
+          # remaining endurance in under two years. If it fires, something new
+          # started writing here and that is worth knowing before it eats the
+          # drive.
           - alert: SSDHighWriteRate
             expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdb"}[2m]) / 1024 / 1024 > 2 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900 # sdb is SSD; value in MB
             for: 10m
             labels:
               severity: info
             annotations:
-              summary: "SSD write rate: {{ $value | printf \"%.1f\" }} MB/s (threshold: 2 MB/s)"
-          - alert: HDDHighWriteRate
-            expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdc"}[2m]) / 1024 / 1024 > 10 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900 # sdc is 11TB HDD; value in MB
-            for: 20m
+              summary: "SSD write rate: {{ $value | printf \"%.1f\" }} MB/s sustained (threshold 2 MB/s ≈ 173 GB/day — this drive is a wear budget, not a workhorse)"
+
+          # ---------------------------------------------------------------
+          # sdc — the 2x12 TB RAID1 spindle that carries pve-root, swap, every
+          # VM disk, the whole Proxmox-CSI PVC fleet, etcd and /srv/nfs. It is
+          # the shared resource on this host, so its saturation is felt by
+          # everything at once.
+          #
+          # Thresholds are anchored to MEASURED 7-day distributions taken
+          # 2026-08-16, each set at or just above p99 so that firing means
+          # "unusual" rather than "a busy Tuesday":
+          #     write MB/s      p50 2.6   p95 7.9    p99 16.3   max 39.6
+          #     read  MB/s      p50 0.3   p95 65.5   p99 88.9   max 114.1
+          #     IOPS            p50 254   p95 1198   p99 1515   max 2212
+          #     util %          p50 4.8   p95 71.8   p99 81.4   max 88.2
+          #     read latency    p50 7.5ms p95 22.9ms p99 92.7ms
+          # Re-derive these if the workload changes materially — a threshold
+          # copied from someone else's disk is worse than no threshold.
+          #
+          # Two of these are the SYMPTOM (latency, saturation) and are warnings;
+          # the rest are VOLUME and are info. An inhibit rule stops the volume
+          # ones notifying while the device is already known to be saturated —
+          # they would only be restating the same event.
+          # ---------------------------------------------------------------
+
+          # The signal that actually correlates with "the homelab feels slow".
+          # Reads are the part the PERC write-back cache cannot absorb, so this
+          # is the closest thing to a user-visible latency SLI on this host.
+          # Guarded on a real read rate (>20 IOPS) so a single slow read on an
+          # otherwise idle device cannot trip it.
+          - alert: HDDReadLatencyHigh
+            expr: |
+              (1000 * rate(node_disk_read_time_seconds_total{job="proxmox-host", device="sdc"}[5m])
+                / clamp_min(rate(node_disk_reads_completed_total{job="proxmox-host", device="sdc"}[5m]), 1) > 50)
+              and (rate(node_disk_reads_completed_total{job="proxmox-host", device="sdc"}[5m]) > 20)
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 15m
+            keep_firing_for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "sdc read latency {{ $value | printf \"%.0f\" }} ms (threshold 50 ms; normal p95 is 23 ms) — everything sharing this spindle is waiting, incl. etcd"
+
+          # Device pinned. Above p99 (81%), so this is genuine saturation
+          # rather than the nightly housekeeping window.
+          - alert: HDDSaturated
+            expr: rate(node_disk_io_time_seconds_total{job="proxmox-host", device="sdc"}[5m]) * 100 > 85 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 15m
+            keep_firing_for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "sdc {{ $value | printf \"%.0f\" }}% busy (threshold 85%; p99 is 81%) — no headroom left on the shared spindle"
+
+          # IOPS is the binding constraint on a 7200 rpm pair, more than
+          # bandwidth is: 1600 random IOPS is far past what the spindles can
+          # actually service, so the queue is building somewhere.
+          - alert: HDDHighIOPS
+            expr: |
+              (rate(node_disk_reads_completed_total{job="proxmox-host", device="sdc"}[5m])
+                + rate(node_disk_writes_completed_total{job="proxmox-host", device="sdc"}[5m])) > 1600
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 15m
+            keep_firing_for: 30m
             labels:
               severity: info
             annotations:
-              summary: "HDD write rate: {{ $value | printf \"%.1f\" }} MB/s (threshold: 10 MB/s)"
+              summary: "sdc {{ $value | printf \"%.0f\" }} IOPS (threshold 1600; p99 is 1515)"
+
+          - alert: HDDHighReadRate
+            expr: rate(node_disk_read_bytes_total{job="proxmox-host", device="sdc"}[5m]) / 1024 / 1024 > 90 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 15m
+            keep_firing_for: 30m
+            labels:
+              severity: info
+            annotations:
+              summary: "sdc read rate {{ $value | printf \"%.1f\" }} MB/s (threshold 90 MB/s; p99 is 89)"
+
+          # Was 10 MB/s for 20m, which sat between p95 (7.9) and p99 (16.3) and
+          # so needed 20 unbroken minutes in the top few percent — it never
+          # fired once in 30 days, through the whole period sdc was the
+          # documented bottleneck. Moved to just above p99 with a shorter `for`,
+          # so it stays quiet in normal operation but can actually trip.
+          - alert: HDDHighWriteRate
+            expr: rate(node_disk_written_bytes_total{job="proxmox-host", device="sdc"}[5m]) / 1024 / 1024 > 20 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900 # sdc is 11TB HDD; value in MB
+            for: 15m
+            keep_firing_for: 30m
+            labels:
+              severity: info
+            annotations:
+              summary: "sdc write rate {{ $value | printf \"%.1f\" }} MB/s (threshold 20 MB/s; p99 is 16)"
+
+          # The rate alerts above all use a 5-minute window with a 15-minute
+          # `for`, so they are blind to the failure mode that actually cost us:
+          # a workload writing or reading steadily, all day, never spiking high
+          # enough or long enough to trip a rate threshold. That is exactly how
+          # sdc reached 464 GB written and 606 GB read per day with nothing
+          # alerting. These two catch the daily total instead.
+          #
+          # Baselines when written (2026-08-16, 30d): 464 GB/day written,
+          # 606 GB/day read. Both should now fall — MySQL, Redis and
+          # paperless-ai were cut, and the nightly full vzdump (245 GB of reads)
+          # went weekly. Thresholds are set above the EXPECTED post-change
+          # steady state so they fire on a regression toward the old behaviour.
+          # REVISIT once a full week of post-change data exists; if the new
+          # baseline settles far below these, tighten them.
+          - alert: HDDDailyWriteVolume
+            expr: increase(node_disk_written_bytes_total{job="proxmox-host", device="sdc"}[24h]) / 1e9 > 600 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 30m
+            labels:
+              severity: info
+            annotations:
+              summary: "sdc wrote {{ $value | printf \"%.0f\" }} GB in 24h (threshold 600 GB; 30d baseline was 464, expected lower now)"
+
+          - alert: HDDDailyReadVolume
+            expr: increase(node_disk_read_bytes_total{job="proxmox-host", device="sdc"}[24h]) / 1e9 > 700 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 30m
+            labels:
+              severity: info
+            annotations:
+              summary: "sdc read {{ $value | printf \"%.0f\" }} GB in 24h (threshold 700 GB; 30d baseline was 606, expected lower now the nightly full image is weekly)"
           # keep_firing_for: host load oscillates across the 50% line, so this
           # fired and cleared 10 times in 7 days (20 Slack posts) for what is
           # really one busy period. Held open so a busy stretch reads as one
