@@ -323,9 +323,14 @@ def apply_desired(label, list_id, desired):
 # handful of extra attempts, whereas failing closed would silently stop syncing
 # bans whenever the metrics stack blipped.
 def read_state():
-    """Return (fail_streak, backoff_until) from our own pushed gauges."""
+    """Return (fail_streak, backoff_until, last_ban_count, last_drift).
+
+    The last two exist so a run that could not MEASURE them can re-publish the
+    previous values rather than overwrite them with zeros — see the LAPI
+    fail-safe in main().
+    """
     if not PUSHGATEWAY:
-        return 0, 0.0
+        return 0, 0.0, 0, 0
     try:
         req = urllib.request.Request(f"{PUSHGATEWAY}/metrics")
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -333,7 +338,7 @@ def read_state():
     except Exception as e:
         print(f"[warn] pushgateway unreadable ({e}); assuming no backoff",
               file=sys.stderr)
-        return 0, 0.0
+        return 0, 0.0, 0, 0
 
     def _get(name):
         # Pushed samples always come back labelled {instance="",job="..."}, and
@@ -353,8 +358,11 @@ def read_state():
                 continue
         return 0.0
 
-    return int(_get("crowdsec_cf_list_write_fail_streak")), _get(
-        "crowdsec_cf_list_write_backoff_until_seconds"
+    return (
+        int(_get("crowdsec_cf_list_write_fail_streak")),
+        _get("crowdsec_cf_list_write_backoff_until_seconds"),
+        int(_get("crowdsec_cf_list_ban_count")),
+        int(_get("crowdsec_cf_list_drift_items")),
     )
 
 
@@ -393,6 +401,8 @@ def push_metrics(block_n, ok, drift=0, fail_streak=0, backoff_until=0.0):
 
 # --------------------------------------------------------------------------- #
 def main():
+    streak, backoff_until, last_bans, last_drift = read_state()
+
     # 1. Desired state from LAPI. Any failure here = SKIP (fail-safe).
     try:
         block = fetch_decisions()
@@ -402,12 +412,18 @@ def main():
             f"(fail-safe: freeze last-known edge state).",
             file=sys.stderr,
         )
-        push_metrics(0, ok=False)
+        # Carry the previous ban_count and drift forward rather than pushing
+        # zeros. Without a desired set we measured NEITHER, and a pushed 0 is
+        # not "no drift" — it is a falsely reassuring value that would resolve
+        # CrowdSecEdgeListDrifted while the edge is still stale. Same failure
+        # shape as the -1 sentinel fixed in 94f19073, in the opposite
+        # direction: do not publish a number you did not measure.
+        push_metrics(last_bans, ok=False, drift=last_drift,
+                     fail_streak=streak, backoff_until=backoff_until)
         return 0
 
     print(f"[info] LAPI desired: {len(block)} block (ban-only, ip-scope)")
 
-    streak, backoff_until = read_state()
     now = time.time()
 
     # 2. Measure first, always. The read is never throttled, and the drift is
