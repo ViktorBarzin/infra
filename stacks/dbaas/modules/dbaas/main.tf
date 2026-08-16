@@ -328,6 +328,17 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Kyverno stamps these two onto every workload in a keel-enrolled
+      # namespace. They are NOT declared here, so without the ignore every
+      # apply plans to strip them and Kyverno immediately re-adds them —
+      # dbaas showed this same two-line diff on every nightly drift run.
+      # `keel.sh/policy` is deliberately absent from this list: it IS declared
+      # in TF as "never", which is what keeps mysql pinned at 8.4.8 after the
+      # 2026-05-18 Keel bump to 8.4.9 forced a PVC wipe + dump-restore. Leaving
+      # policy TF-owned means a future change to it still shows up as drift,
+      # which is what we want for this one.
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       # StatefulSet volumeClaimTemplates are immutable post-creation, and the
       # pvc-autoresizer rewrites their annotations on the live object
       # (storage_limit/threshold), so TF's desired VCT can never apply and a
