@@ -95,7 +95,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeStale|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
+          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeDown|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
       # Planned node maintenance (kured drain-reboot or a manual cordon): the
       # window is announced by NodeMaintenanceInProgress (info — one Slack
       # line), and everything a 3-6 min drain+reboot predictably trips is
@@ -115,7 +115,7 @@ alertmanager:
       - source_matchers:
           - alertname = NFSServerUnresponsive
         target_matchers:
-          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeStale|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable"
+          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable"
       # Traefik down makes service-level alerts noise
       - source_matchers:
           - alertname = TraefikDown
@@ -3519,54 +3519,28 @@ serverFiles:
             annotations:
               summary: "A t3 path-probe leg is dropping repeatedly (>6 in 15m; see leg/reason labels)"
               description: "Users on the same segment are seeing 'disconnected, reconnecting' at this rate. Compare legs to attribute; correlate with devvm node_pressure_* metrics."
+          # Rewired 2026-08-16 from the viktorbarzin-apex-probe CronJob's pushed gauge
+          # to a blackbox dns_apex scrape. probe_success is 0 when Technitium answers
+          # with anything other than the live Traefik LB IP, AND when it fails to
+          # answer at all — both are the same emergency from a caller's point of view.
+          # The former ProbeStale / ProbeNeverRun pair are gone: a scrape target that
+          # stops reporting shows up as `up == 0` below rather than as a stale push.
           - alert: ViktorBarzinApexDrift
-            expr: viktorbarzin_apex_correct{job="viktorbarzin-apex-probe"} == 0
+            expr: probe_success{job="apex-dns"} == 0
             for: 10m
             labels:
               severity: critical
             annotations:
-              summary: "viktorbarzin.me apex A drifted from expected 10.0.20.203"
-              description: "Technitium serves the split-horizon apex for ~80 *.viktorbarzin.me CNAMEs. If this is wrong, every internal service (auth, vault, immich, ha-sofia, ...) breaks. Check Technitium primary zone records via API or web console."
-          - alert: ViktorBarzinApexProbeStale
-            expr: (time() - viktorbarzin_apex_last_correct_timestamp{job="viktorbarzin-apex-probe"}) > 900
-            for: 5m
+              summary: "viktorbarzin.me apex is not resolving to 10.0.20.203 via Technitium"
+              description: "Technitium serves the split-horizon apex that ~80 *.viktorbarzin.me CNAMEs resolve through. If it is wrong or unanswered, every internal service (auth, vault, immich, ha-sofia, ...) breaks and fresh image pulls degrade to the public hairpin. Check the Technitium primary zone A record, and that Traefik's LB IP is still 10.0.20.203 — if the LB moved, update the dns_apex module regexp too."
+          - alert: ViktorBarzinApexProbeDown
+            expr: up{job="apex-dns"} == 0
+            for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "viktorbarzin.me apex probe has not seen a correct result in >15 min"
-              description: "Probe may be failing intermittently or apex may be drifting. Check CronJob `viktorbarzin-apex-probe` in `technitium` namespace."
-          - alert: ViktorBarzinApexProbeNeverRun
-            expr: absent(viktorbarzin_apex_correct{job="viktorbarzin-apex-probe"})
-            for: 30m
-            labels:
-              severity: warning
-            annotations:
-              summary: "viktorbarzin.me apex probe never reported"
-              description: "Check `kubectl -n technitium get cronjob viktorbarzin-apex-probe` and the most recent job pod logs."
-          - alert: AIOStreamsStreamCountLow
-            expr: aiostreams_stream_count{job="aiostreams-stream-probe"} < 50
-            for: 30m
-            labels:
-              severity: warning
-            annotations:
-              summary: "AIOStreams returning <50 streams for the canary title for 30m"
-              description: "Probe for Breaking Bad S01E01 returned {{ $value }} streams. Could indicate an upstream addon outage, RD filter expansion, or a regression in the user's preset filters. Check `kubectl -n aiostreams get cronjob aiostreams-stream-probe` and the most recent job pod logs."
-          - alert: AIOStreamsProbeFailing
-            expr: aiostreams_probe_success{job="aiostreams-stream-probe"} == 0
-            for: 30m
-            labels:
-              severity: warning
-            annotations:
-              summary: "AIOStreams stream-probe failing for 30m"
-              description: "The /api/v1/user fetch or stream search is returning errors, or stream count is below threshold. Check probe logs."
-          - alert: AIOStreamsProbeStale
-            expr: (time() - aiostreams_probe_last_run_timestamp{job="aiostreams-stream-probe"}) > 1800
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "AIOStreams stream-probe hasn't run in >30 min"
-              description: "CronJob may be unschedulable or failing before pushgateway POST."
+              summary: "apex DNS canary is not being scraped"
+              description: "blackbox-exporter is not answering the apex-dns probe, so apex drift would now go undetected. Check the blackbox-exporter deployment in the monitoring namespace."
           - alert: ClaudeOAuthTokenExpiringSoon
             expr: (claude_oauth_token_expiry_timestamp{job="claude-oauth-expiry-monitor"} - time()) < (30 * 86400)
             for: 1h
@@ -4037,54 +4011,6 @@ serverFiles:
       # intermittently. Fix: `kubectl delete pod -n traefik <replica>`.
       - name: Webterminal
         rules:
-          - alert: WebterminalTokenDegraded
-            # /token via Cloudflare must redirect to Authentik (302). Any other
-            # status (especially 404) means a Traefik replica is missing the
-            # terminal Ingress route or ttyd is down.
-            expr: webterminal_probe_token_status{job="webterminal-probe"} != 302 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
-            for: 10m
-            labels:
-              severity: warning
-              subsystem: webterminal
-            annotations:
-              summary: "Webterminal /token returning HTTP {{ $value }} via Cloudflare (expected 302). Likely a Traefik replica with a partial routing table — `kubectl get pods -n traefik` and delete the suspect replica."
-          - alert: WebterminalWebsocketDegraded
-            # WebSocket upgrade to /ws must also redirect (302). 404 here is
-            # the user-visible "Failed to connect. Retrying..." in the lobby
-            # iframe.
-            expr: webterminal_probe_ws_status{job="webterminal-probe"} != 302 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
-            for: 10m
-            labels:
-              severity: critical
-              subsystem: webterminal
-            annotations:
-              summary: "Webterminal WebSocket /ws returning HTTP {{ $value }} via Cloudflare — users see 'Failed to connect' in the iframe. Check Traefik route parity across replicas."
-          - alert: WebterminalTtydUnreachable
-            # In-cluster probe to ttyd Service. Bypasses Cloudflare/Traefik/
-            # Authentik, so non-200 means ttyd itself is down on the DevVM.
-            # severity=warning (was critical until 2026-06-17): ttyd is a DevVM
-            # developer-convenience web terminal, not cluster infrastructure.
-            # As `critical` it tripped the k8s-upgrade preflight's halt-on-alert
-            # gate and — with the old no-retry idempotency — wedged the 1.34.9
-            # upgrade for 5 days. It is not upgrade-blocking; warning is correct.
-            expr: webterminal_probe_ttyd_status{job="webterminal-probe"} != 200 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
-            for: 10m
-            labels:
-              severity: warning
-              subsystem: webterminal
-            annotations:
-              summary: "ttyd in-cluster probe got HTTP {{ $value }} (expected 200) — ttyd on the DevVM (10.0.10.10:7681) is down. `systemctl status ttyd` on devvm."
-          - alert: WebterminalProbeStale
-            # No probe push for >20m means the CronJob isn't running. Either
-            # the kubelet that owns the namespace can't schedule it or the
-            # job is failing before the push step.
-            expr: (time() - max(webterminal_probe_last_success_timestamp{job="webterminal-probe"})) > 1200
-            for: 15m
-            labels:
-              severity: warning
-              subsystem: webterminal
-            annotations:
-              summary: "Webterminal probe hasn't reported a successful run in {{ $value | humanizeDuration }} — `kubectl get cronjob -n terminal webterminal-probe` and inspect recent Jobs."
       # Traefik router parity — detects the root cause of the webterminal
       # outage. When a Traefik replica's Kubernetes Ingress provider fails to
       # sync, its router table will diverge from siblings. Catches the issue
@@ -4457,6 +4383,26 @@ extraScrapeConfigs: |
       module: [icmp_egress]
     static_configs:
       - targets: ["9.9.9.9", "1.1.1.1"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
+  # Split-horizon apex canary. Asks Technitium (the internal authority) for
+  # viktorbarzin.me A and fails unless the answer is the live Traefik LB IP.
+  # Replaced the viktorbarzin-apex-probe CronJob on 2026-08-16 — that ran every
+  # 5 minutes and pip-installed dnspython+requests each time, ~288 pods and
+  # 4.8 GB of writes a day for one DNS question. Feeds ViktorBarzinApexDrift.
+  - job_name: 'apex-dns'
+    scrape_interval: 60s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    params:
+      module: [dns_apex]
+    static_configs:
+      - targets: ["10.0.20.201"] # Technitium primary
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target

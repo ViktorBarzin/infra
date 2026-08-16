@@ -167,6 +167,37 @@ resource "kubernetes_config_map" "blackbox_exporter_config" {
             valid_rcodes          = ["NOERROR"]
           }
         }
+        # Split-horizon apex canary (added 2026-08-16, replaced the
+        # viktorbarzin-apex-probe CronJob). Technitium serves the apex A record
+        # that ~80 *.viktorbarzin.me CNAMEs resolve through, and it must track
+        # the LIVE Traefik LB IP. When Traefik moved from .200 to .203 on
+        # 2026-05-30 and the record went stale, every fresh image pull silently
+        # degraded to public DNS -> hairpin -> ImagePullBackOff.
+        #
+        # This replaces a CronJob that ran every 5 minutes and `pip install`ed
+        # dnspython + requests on each run — 288 pods and ~4.8 GB of writes a
+        # day to answer one DNS question. As a scrape target it costs neither.
+        #
+        # validate_answer_rrs is what makes it a canary rather than a liveness
+        # check: NOERROR alone would pass on a WRONG address, so the answer must
+        # actually contain the expected LB IP. Update the regexp if Traefik's LB
+        # IP ever moves — and note that moving it without updating here is
+        # exactly the failure this is watching for.
+        dns_apex = {
+          prober  = "dns"
+          timeout = "5s"
+          dns = {
+            transport_protocol    = "udp"
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            query_name            = "viktorbarzin.me"
+            query_type            = "A"
+            valid_rcodes          = ["NOERROR"]
+            validate_answer_rrs = {
+              fail_if_not_matches_regexp = [".*\\s+A\\s+10\\.0\\.20\\.203$"]
+            }
+          }
+        }
         # TCP connect (added 2026-07-08, ADR-0019): drives the backup-mx-smtp
         # scrape job — probes mx2.viktorbarzin.me:25 (the Oracle backup MX) from
         # inside the cluster, i.e. out over the internet to the reserved public

@@ -219,7 +219,25 @@ resource "kubernetes_cron_job_v1" "stream_probe" {
     namespace = kubernetes_namespace.aiostreams.metadata[0].name
   }
   spec {
-    schedule                      = "*/5 * * * *"
+    schedule = "*/5 * * * *"
+    # SUSPENDED 2026-08-16 (Viktor). It `pip install`ed requests on every run —
+    # 14 MB to the node's container layer per invocation, 288 runs a day, ~3.9
+    # GB/day plus thousands of small-file writes, which is IOPS on the shared
+    # sdc spindle rather than just bytes.
+    #
+    # AIOStreamsStreamCountLow had not fired in 30 days, and Uptime Kuma already
+    # carries an external monitor for the service, so up/down coverage survives.
+    #
+    # WHAT IS LOST: the semantic check. This asked for two known titles and
+    # counted streams per source (comet/torrentio/torz/knaben) against a
+    # threshold of 50, which catches a source quietly degrading while the
+    # service still answers 200. That now surfaces as "fewer results than usual
+    # when I go to watch something". Accepted deliberately.
+    #
+    # Its three alerts were removed from prometheus_chart_values.tpl in the same
+    # commit — ProbeStale would otherwise fire forever against the frozen
+    # Pushgateway metrics.
+    suspend                       = true
     concurrency_policy            = "Replace"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3

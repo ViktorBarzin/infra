@@ -256,7 +256,19 @@ resource "kubernetes_cron_job_v1" "qbittorrent_ratio_monitor" {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/5 * * * *"
+    # */30 since 2026-08-16 (was */5). This is not a probe — it exports per-tracker
+    # ratio metrics, reconciles the queue preferences (incl. the load-bearing
+    # dont_count_slow_torrents) and reaps dead torrents, so it is kept. But at
+    # */5 it was 288 pod creations a day AND a `pip install requests` on every
+    # one (14 MB to the node container layer per run, ~3.9 GB/day) — the
+    # status-page-pusher anti-pattern.
+    #
+    # Nothing here needs 5-minute resolution: ratios move over hours, and the
+    # reaper only acts on torrents with zero progress, no seeders AND older than
+    # STALLED_MAX_AGE (3 days). The one real cost is that a preference changed
+    # in the qBittorrent UI now sticks for up to 30 minutes before being
+    # reverted, instead of 5.
+    schedule = "*/30 * * * *"
     job_template {
       metadata {}
       spec {
