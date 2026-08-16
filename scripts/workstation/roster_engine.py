@@ -106,6 +106,10 @@ class DesiredState:
     dispatch: dict[str, dict]
     ports: dict[str, int]
     playwright_ports: dict[str, int] = field(default_factory=dict)
+    # /etc/ttyd-admins — who administers this box, one OS user per line.
+    # Defaulted so an older caller constructing DesiredState positionally keeps
+    # working; derive_desired_state always fills it.
+    ttyd_admins: str = ""
 
 
 @dataclass(frozen=True)
@@ -263,6 +267,22 @@ _TTYD_MAP_HEADER = (
     "# <authentik_user>=<os_user>; consumed by t3-dispatch.\n"
 )
 
+# /etc/ttyd-admins — the admin list terminal-lobby's act-as switch reads
+# (docs: terminal-lobby docs/plans/2026-08-16-admin-act-as-user-design.md).
+#
+# It cannot come from Authentik group membership: every devvm user is in
+# "Home Server Admins", because that is what lets them reach the lobby host at
+# all. The roster tier is what actually distinguishes an administrator here, so
+# the same reconcile that writes /etc/ttyd-user-map writes this beside it.
+#
+# One OS user per line; blanks and # comments ignored. An absent or empty file
+# means no admins, so the feature is unavailable rather than open.
+_TTYD_ADMINS_HEADER = (
+    "# Generated from roster.yaml by roster_engine.py — DO NOT EDIT BY HAND.\n"
+    "# OS users with tier: admin. Consumed by terminal-lobby's act-as switch\n"
+    "# (tmux-api, file-api, clipboard-upload, session-events).\n"
+)
+
 
 def derive_desired_state(
     roster: Roster,
@@ -276,6 +296,10 @@ def derive_desired_state(
     ordered = sorted(roster.users.values(), key=lambda u: ports[u.os_user])
     ttyd_lines = [f"{u.authentik_user}={u.os_user}" for u in ordered]
     ttyd_user_map = _TTYD_MAP_HEADER + "\n".join(ttyd_lines) + "\n"
+    # Sorted by name, not by port like the map above: this file is read by
+    # people as often as by services, and its order carries no meaning.
+    admin_lines = sorted(u.os_user for u in ordered if u.tier == "admin")
+    ttyd_admins = _TTYD_ADMINS_HEADER + "".join(f"{u}\n" for u in admin_lines)
     dispatch = {
         u.authentik_user: {"os_user": u.os_user, "port": ports[u.os_user]}
         for u in ordered
@@ -294,7 +318,9 @@ def derive_desired_state(
         )
         for u in roster.users.values()
     }
-    return DesiredState(accounts, ttyd_user_map, dispatch, ports, playwright_ports)
+    return DesiredState(
+        accounts, ttyd_user_map, dispatch, ports, playwright_ports, ttyd_admins
+    )
 
 
 def groups_to_add(desired: Iterable[str], current: Iterable[str]) -> list[str]:
@@ -351,6 +377,7 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
             for name, a in ds.accounts.items()
         },
         "ttyd_user_map": ds.ttyd_user_map,
+        "ttyd_admins": ds.ttyd_admins,
         "dispatch": ds.dispatch,
         "ports": ds.ports,
         "playwright_ports": ds.playwright_ports,

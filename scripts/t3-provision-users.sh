@@ -17,6 +17,11 @@ ENGINE="$WORKSTATION_DIR/roster_engine.py"
 ROSTER="$WORKSTATION_DIR/roster.yaml"
 ENVDIR=/etc/t3-serve
 MAP=/etc/ttyd-user-map
+# Who administers this box, one OS user per line, derived from roster.yaml's
+# tier: admin. Read by terminal-lobby's act-as switch, which lets an admin work
+# as another mapped user. Authentik groups cannot answer this — every devvm user
+# is in "Home Server Admins", which is what gets them to the lobby host at all.
+ADMINS=/etc/ttyd-admins
 DRY_RUN="${DRY_RUN:-0}"
 # Public infra repo for the locked clone (no auth; the monorepo has no remote).
 INFRA_REMOTE="${INFRA_REMOTE:-https://github.com/ViktorBarzin/infra.git}"
@@ -934,12 +939,15 @@ run systemctl enable t3-autoupdate.timer >/dev/null 2>&1 || true
 run systemctl enable --now tmux-persist-save.timer >/dev/null 2>&1 || true
 run systemctl enable tmux-persist-restore.service >/dev/null 2>&1 || true
 
-# 6) regenerate /etc/ttyd-user-map + dispatch.json from the desired state (SSoT:
-#    a roster entry removed here DISAPPEARS, which is what the offboarding cut relies on)
+# 6) regenerate /etc/ttyd-user-map + /etc/ttyd-admins + dispatch.json from the
+#    desired state (SSoT: a roster entry removed here DISAPPEARS, which is what
+#    the offboarding cut relies on — and a demotion from tier: admin drops that
+#    user out of $ADMINS on the next reconcile, within the hour)
 if [[ "$DRY_RUN" == 1 ]]; then
-  log "[dry-run] would regenerate $MAP + $ENVDIR/dispatch.json"
+  log "[dry-run] would regenerate $MAP + $ADMINS + $ENVDIR/dispatch.json"
 else
   jq -r '.ttyd_user_map' "$desired_file" > "$MAP.tmp" && install -m 0644 "$MAP.tmp" "$MAP" && rm -f "$MAP.tmp"
+  jq -r '.ttyd_admins' "$desired_file" > "$ADMINS.tmp" && install -m 0644 "$ADMINS.tmp" "$ADMINS" && rm -f "$ADMINS.tmp"
   jq -c '.dispatch' "$desired_file" > "$ENVDIR/dispatch.json.tmp" && install -m 0644 "$ENVDIR/dispatch.json.tmp" "$ENVDIR/dispatch.json" && rm -f "$ENVDIR/dispatch.json.tmp"
 fi
 
