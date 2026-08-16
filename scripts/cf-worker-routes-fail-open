@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Assert request_limit_fail_open=true on every worker-bearing Cloudflare route.
+
+WHY THIS EXISTS
+---------------
+`request_limit_fail_open` decides what a route does once the account's Workers
+daily request quota is exhausted:
+
+    true  -> bypass the Worker; the request behaves as if no Worker existed
+    false -> Cloudflare 1027 error page
+
+With the outage-failover Worker the answer must always be `true`: a quota
+exhaustion should cost the friendly outage page, never turn every covered host
+into a hard 1027. The field IS exposed by the routes API but is NOT implemented
+by the cloudflare Terraform provider (v4), so Terraform recreates routes with
+the API default (`false`) and cannot be told otherwise. This script is the
+reconciler for that gap — run it after any change to the route list.
+
+It is idempotent and read-only unless a route is actually wrong.
+
+Usage:
+    scripts/cf-worker-routes-fail-open [--check] [--zone ZONE_ID]
+
+    --check   report drift and exit 1 if any route needs fixing; change nothing.
+
+Credentials come from Vault (`secret/platform` -> `cloudflare_api_key`) using the
+ambient ~/.vault-token, matching the rest of the cloudflared tooling.
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+ZONE_DEFAULT = "fd2c5dd4efe8fe38958944e74d0ced6d"  # viktorbarzin.me
+AUTH_EMAIL = "vbarzin@gmail.com"
+API = "https://api.cloudflare.com/client/v4"
+
+
+def api_key() -> str:
+    try:
+        out = subprocess.run(
+            ["vault", "kv", "get", "-field=cloudflare_api_key", "secret/platform"],
+            capture_output=True, text=True, check=True,
+        )
+    except FileNotFoundError:
+        sys.exit("vault CLI not found — this script reads the CF key from secret/platform")
+    except subprocess.CalledProcessError as exc:
+        sys.exit(f"could not read cloudflare_api_key from Vault: {exc.stderr.strip()}")
+    return out.stdout.strip()
+
+
+def request(method: str, path: str, key: str, body: dict | None = None) -> dict:
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        f"{API}{path}",
+        data=data,
+        method=method,
+        headers={
+            "Content-Type": "application/json",
+            "X-Auth-Email": AUTH_EMAIL,
+            "X-Auth-Key": key,
+        },
+    )
+    # The CF API resets connections often enough from here that a single attempt
+    # would make a 116-route reconcile flaky; HTTP errors are NOT retried.
+    payload = None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                payload = json.load(resp)
+            break
+        except urllib.error.HTTPError as exc:
+            sys.exit(f"{method} {path} failed: HTTP {exc.code} {exc.read().decode()[:300]}")
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+            if attempt == 3:
+                sys.exit(f"{method} {path} failed after 4 attempts: {exc}")
+            time.sleep(2 * (attempt + 1))
+    if not payload.get("success", False):
+        sys.exit(f"{method} {path} returned errors: {payload.get('errors')}")
+    return payload
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--check", action="store_true", help="report drift, change nothing, exit 1 if any")
+    ap.add_argument("--zone", default=ZONE_DEFAULT, help=f"zone id (default {ZONE_DEFAULT})")
+    args = ap.parse_args()
+
+    key = api_key()
+    routes = request("GET", f"/zones/{args.zone}/workers/routes", key)["result"]
+
+    # A route with no script runs no Worker, so the failure mode is meaningless
+    # there — only worker-bearing routes are reconciled.
+    bearing = [r for r in routes if r.get("script")]
+    drifted = [r for r in bearing if not r.get("request_limit_fail_open", False)]
+
+    print(f"{len(routes)} routes in zone, {len(bearing)} worker-bearing, {len(drifted)} need fail-open")
+
+    if not drifted:
+        print("all worker-bearing routes already fail open — nothing to do")
+        return 0
+
+    if args.check:
+        for r in drifted:
+            print(f"  DRIFT {r['pattern']} -> {r['script']}")
+        return 1
+
+    for r in drifted:
+        request(
+            "PUT",
+            f"/zones/{args.zone}/workers/routes/{r['id']}",
+            key,
+            {"pattern": r["pattern"], "script": r["script"], "request_limit_fail_open": True},
+        )
+        print(f"  fixed {r['pattern']}")
+
+    after = request("GET", f"/zones/{args.zone}/workers/routes", key)["result"]
+    still = [r for r in after if r.get("script") and not r.get("request_limit_fail_open", False)]
+    if still:
+        print(f"WARNING: {len(still)} routes still not failing open", file=sys.stderr)
+        return 1
+    print(f"verified: all {len([r for r in after if r.get('script')])} worker-bearing routes fail open")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
