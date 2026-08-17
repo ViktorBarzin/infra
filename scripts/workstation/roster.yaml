@@ -1,4 +1,16 @@
-# THE single source of truth for the devvm Workstation lifecycle (onboard -> offboard).
+# The devvm Workstation POLICY TABLE, keyed by user.
+#
+# WHO has access is decided in Authentik's `T3 Users` group (2026-08-17), not here:
+# .woodpecker/t3-membership-sync.yml reconciles the rows below to match that group
+# every 15 minutes — adding a floor-tier row (namespace-owner) for a new member and
+# commenting out the row of anyone who left. So a row for someone outside the group
+# is inert, and DELETING a row does not remove access: it resets that person to the
+# floor and the sync writes the row back. Remove access by removing them from the
+# group.
+#
+# What lives here is everything a group membership cannot say — tier, namespaces,
+# k8s_user, code layout, repos, parked — because `tier` is a privilege grant that is
+# reviewed in a diff and cross-checked against Vault k8s_users.
 # Consumed by roster_engine.py (derive/validate) + t3-provision-users.sh (apply).
 #
 # os_user (the map KEY, pinned) -> authentik_user . k8s_user . tier . namespaces
