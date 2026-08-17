@@ -137,11 +137,13 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
   metadata {
     name      = local.egress_name
     namespace = local.namespace
-    # keel.sh/policy=never as a LABEL as well as the annotation below: the
-    # annotation is what Keel reads, the label is what the Kyverno exclude in
-    # keel-annotations.tf selects on. Without the label, Kyverno re-stamps
-    # policy=patch on the next admission and the opt-out silently reverts.
-    labels = merge(local.labels, local.egress_selector, { "keel.sh/policy" = "never" })
+    # The Keel opt-out is the ANNOTATION below and nothing else. This carried a
+    # matching keel.sh/policy LABEL until 2026-08-17, because the Kyverno
+    # exclude in keel-annotations.tf used to select on a label; it now selects
+    # on the annotation, so the label is redundant — and a keel.sh/* label is
+    # drift on any workload whose stack declares a `labels` map, which this one
+    # does.
+    labels = merge(local.labels, local.egress_selector)
     annotations = {
       # Keel must never touch this gateway. The digest pin on gluetun stops
       # Keel moving THAT image, but the wgserver sidecar is still a concrete

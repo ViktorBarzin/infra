@@ -12,9 +12,10 @@
 #
 # Phase rollout = label more namespaces. No edit to this file per phase.
 #
-# Workloads can individually opt out with the label keel.sh/policy=never
-# (used by the rollback runbook). The keel namespace itself is always
-# excluded (design decision #11 — supervisor must not auto-update).
+# Workloads can individually opt out with the ANNOTATION keel.sh/policy=never
+# (used by the rollback runbook) — never a label, see the exclude rule below.
+# The keel namespace itself is always excluded (design decision #11 —
+# supervisor must not auto-update).
 
 locals {
   # Workloads that declare another controller as the owner of their container
@@ -162,10 +163,21 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
             },
             {
               resources = {
-                selector = {
-                  matchLabels = {
-                    "keel.sh/policy" = "never"
-                  }
+                # Select on the ANNOTATION, not a label. Keel reads the
+                # annotation, so it is the real opt-out; the label was only
+                # ever here so this exclude had something to select on.
+                #
+                # A LABEL this policy adds is DRIFT on every stack that
+                # declares a `labels` map on the workload — the provider
+                # manages that map, so an undeclared key plans as a removal.
+                # Proven 2026-08-17: `kubernetes_deployment.forgejo` planned
+                #   ~ labels = { - "keel.sh/policy" = "never" -> null }
+                # and 10 stacks appeared in one night's drift report this way.
+                # Extra ANNOTATIONS do not diff the same way, which is why the
+                # trigger/pollSchedule pair below has never shown up in a plan.
+                # Keep every keel.sh/* mutation an annotation for that reason.
+                annotations = {
+                  "keel.sh/policy" = "never"
                 }
               }
             },
@@ -319,9 +331,11 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
           # this reason), so an exclude alone would leave all 37 still fighting.
           # A positive set is self-healing and needs no manual cleanup.
           #
-          # The LABEL is set alongside the annotation so the rule above then
-          # excludes the workload outright on its next admission pass — Keel
-          # reads the annotation, Kyverno's exclude selects on the label.
+          # Setting the annotation also makes the rule above exclude the
+          # workload outright on its next admission pass — Keel reads the
+          # annotation and that same annotation is what the exclude selects
+          # on. One field, one owner: see the exclude for why this must never
+          # become a label.
           #
           # This does NOT change the 2026-05-17 enrollment expansion. First-party
           # apps — ghcr `:latest`/SHA tags, deployed by CI `kubectl set image`
@@ -389,9 +403,12 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
                 annotations = {
                   "keel.sh/policy" = "never"
                 }
-                labels = {
-                  "keel.sh/policy" = "never"
-                }
+                # NO label here. This rule set a matching LABEL until
+                # 2026-08-17, which made it drift against every stack that
+                # declares a `labels` map on the workload — the same
+                # two-owners-one-field fight this rule exists to end, just on
+                # labels instead of images. The exclude above now selects on
+                # the annotation, so nothing needs the label.
               }
             }
           }
