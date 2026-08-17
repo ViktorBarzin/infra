@@ -1,7 +1,7 @@
 # Membership-driven provisioning — Authentik as the one user list
 
-**Status:** designed 2026-08-17, awaiting Viktor's go-ahead. **Author:** Viktor
-Barzin (decisions), Claude (research + design).
+**Status:** built and verified in production 2026-08-17. **Author:** Viktor
+Barzin (decisions), Claude (research + build).
 
 ## What we want
 
@@ -205,6 +205,42 @@ from the group and watch the row get commented, the units disabled, the login
 locked, and `t3-dispatch` answer 403 (allowing the 60-second dispatch reload).
 Then `userdel_archive` by hand to clean up, which also exercises the one path this
 automation deliberately never takes.
+
+## What the build measured
+
+Verified against the live estate on 2026-08-17, in this order. The devvm's
+reconcile timer was paused for the group tests, so the throwaway identity never
+became an account on the shared box.
+
+| Check | Result |
+|---|---|
+| 78 engine tests (58 before) | pass — diff, floor tier, textual edits, CLI |
+| `membership` against the real roster + real group | empty plan; steady state reads as steady state |
+| Reversible cut, `DRY_RUN`, seeded snapshot | names all five units + `passwd -l`, data untouched |
+| Roster read from `origin/master` | `roster: using origin/master (working tree differs)` — the trap, closed and visible in a log line |
+| Cron registered | Woodpecker id 37, `*/15 * * * *`, branch master |
+| Sync with membership already in step | pushed nothing, roster unchanged |
+| Probe added to `T3 Users` | pipeline #2142 → commit `20f7e22a`, floor-tier row, dated note |
+| Probe removed from `T3 Users` | pipeline #2144 → commit `19d96bda`, row commented out |
+| `terraform apply` with `ignore_changes` | CI #1145 success; group membership unchanged (the failure that would have locked everyone out) |
+| Probe account on the box | never created — `id t3probe` → no such user |
+| Final state | map + dispatch back to 2 users; nothing cut |
+
+Two defects were found and fixed during the build, both worth recording because
+each would have failed quietly:
+
+- The first cut of the reversible-cut wiring hand-loaded the engine with
+  `importlib`, which breaks `@dataclass` (a module executed outside `sys.modules`
+  cannot resolve its own annotations) — and the shell had `|| true` on it, so the
+  traceback became "nobody left". Now a `deprovision` subcommand with tests, and
+  a failure that logs instead of passing for empty.
+- The cut's `systemctl` calls send output to `/dev/null`, which was swallowing
+  the `[dry-run]` echo with it. A dry run that cannot show what it would do is
+  not worth having, so the actions are named in the log line instead.
+
+One thing the design assumed and the build corrected: `/tmp` is not shared
+between Woodpecker steps, so the plan the announce step reads lands in the
+workspace.
 
 ## Open questions
 
