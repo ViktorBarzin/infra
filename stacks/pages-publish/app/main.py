@@ -10,11 +10,23 @@ work runs in a worker thread so /health stays responsive.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from . import auth, config, publisher
+
+# Without a root handler, module loggers fall back to stderr at WARNING+ only,
+# so the successful-publish audit line would never reach Loki. uvicorn keeps its
+# own loggers non-propagating, so this does not duplicate access logs.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+
+log = logging.getLogger(__name__)
 
 
 class PublishRequest(BaseModel):
@@ -57,7 +69,15 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
         except publisher.PublishError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except publisher.RenderError as e:
+            # Log before raising: Traefik's error-pages middleware replaces a
+            # 500 body with a generic themed page, so this `detail` never
+            # reaches the caller. The log line is the only record of WHY a
+            # publish failed — a 500 with no log cost hours of digging once.
+            log.error("publish failed for %s (%s): %s", user, body.filename, e)
             raise HTTPException(status_code=500, detail=str(e))
+        except Exception:
+            log.exception("unhandled error publishing %s for %s", body.filename, user)
+            raise
 
     return app
 
