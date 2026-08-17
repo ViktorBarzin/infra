@@ -96,4 +96,5 @@ users:
   #  namespace-owner, namespace plotting-book, still in Vault k8s_users.
 # gheorghe:  {authentik_user: vabbit81,    k8s_user: vabbit81, tier: namespace-owner, namespaces: [vabbit81]}      # already a cluster ns-owner; uncomment to give him a devvm workstation
   #  T3 Users membership change 2026-08-17 (t3-membership-sync)
-  t3probe: {authentik_user: t3probe, k8s_user: t3probe, tier: namespace-owner, namespaces: [t3probe], code_layout: workspace}
+#   t3probe: {authentik_user: t3probe, k8s_user: t3probe, tier: namespace-owner, namespaces: [t3probe], code_layout: workspace}
+  #  T3 Users membership change 2026-08-17 (t3-membership-sync)
