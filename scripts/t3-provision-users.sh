@@ -695,6 +695,53 @@ install_skills() {
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
 
+# 0a) run what is COMMITTED, not what happens to be in a working tree.
+#
+# $WORKSTATION_DIR is the admin's own checkout. refresh_user_clone runs only for
+# tier != admin and bails on any dirty tree, so a pushed change to the roster, to
+# this script, or to the engine reached this box only when someone synced the file
+# by hand. With membership driven from Authentik through a CI commit, that gap
+# would stop the chain with no error anywhere: CI reports success, the box keeps
+# the previous state, and a removed user stays provisioned.
+#
+# So fetch once, as the checkout's owner (their git credentials, not root's), and
+# materialise the three inputs from origin/master. EVERY failure path falls back
+# to the working-tree copy — today's behaviour — because a network blip must
+# degrade to "slightly stale" rather than to "no users at all". The re-exec flag
+# skips the fetch on the second pass, so a self-deploy costs one fetch, not two.
+STATEDIR="${STATEDIR:-/var/lib/t3-provision}"
+if [[ "$DRY_RUN" != 1 ]]; then install -d -m 0755 "$STATEDIR"; fi
+clone_root="$(cd "$WORKSTATION_DIR/../.." && pwd)"
+clone_owner="$(stat -c %U "$clone_root" 2>/dev/null || echo root)"
+gitc=(-c filter.git-crypt.smudge=cat -c filter.git-crypt.clean=cat -c filter.git-crypt.required=false)
+committed() {  # committed <repo-path> <dest>; 0 when dest now holds origin/master's copy
+  local src="$1" dst="$2"
+  runuser -u "$clone_owner" -- git -C "$clone_root" "${gitc[@]}" show "origin/master:$src" > "$dst.tmp" 2>/dev/null \
+    && [[ -s "$dst.tmp" ]] && mv "$dst.tmp" "$dst" && return 0
+  rm -f "$dst.tmp"; return 1
+}
+if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
+  if runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git -C "$clone_root" "${gitc[@]}" \
+       fetch --quiet origin master 2>/dev/null; then
+    committed scripts/t3-provision-users.sh "$STATEDIR/t3-provision-users.committed.sh" || true
+    committed scripts/workstation/roster_engine.py "$STATEDIR/roster_engine.committed.py" || true
+    if committed scripts/workstation/roster.yaml "$STATEDIR/roster.committed.yaml" &&
+       python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; sys.exit(0 if d.get("users") else 1)' \
+         "$STATEDIR/roster.committed.yaml" 2>/dev/null; then
+      cmp -s "$STATEDIR/roster.committed.yaml" "$ROSTER" || log "roster: using origin/master (working tree differs)"
+    else
+      log "WARN: no usable roster from origin/master — falling back to $ROSTER"
+      rm -f "$STATEDIR/roster.committed.yaml"
+    fi
+  else
+    log "WARN: git fetch failed — running from the working tree at $WORKSTATION_DIR"
+  fi
+fi
+# Point the three inputs at whatever we managed to materialise; each falls back
+# independently, so a partial failure still runs with the rest committed.
+[[ -s "$STATEDIR/roster.committed.yaml" ]] && ROSTER="$STATEDIR/roster.committed.yaml"
+[[ -s "$STATEDIR/roster_engine.committed.py" ]] && ENGINE="$STATEDIR/roster_engine.committed.py"
+
 # 0) self-deploy: the repo is the authoring surface (like sync_managed_config /
 #    deploy_user_launcher below). Historically nothing else redeployed
 #    /usr/local/bin (only the manual setup-devvm.sh did) — so a committed edit
@@ -704,6 +751,9 @@ for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" 
 #    re-exec flag (no loop), bash -n (never deploy a broken script), DRY_RUN (no
 #    mutation), cmp (no churn when unchanged).
 SELF_SRC="$WORKSTATION_DIR/../t3-provision-users.sh"
+# Prefer origin/master's copy (0a) so landing a change to this script is
+# enough to deploy it; the working tree remains the fallback.
+[[ -s "$STATEDIR/t3-provision-users.committed.sh" ]] && SELF_SRC="$STATEDIR/t3-provision-users.committed.sh"
 SELF_DST=/usr/local/bin/t3-provision-users
 if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" && -r "$SELF_SRC" ]] && ! cmp -s "$SELF_SRC" "$SELF_DST"; then
   if [[ "$DRY_RUN" == 1 ]]; then
@@ -779,46 +829,6 @@ build_homelab_cli() {
 build_homelab_cli
 
 install -d -m 0755 "$ENVDIR"
-
-# 0c) act on the COMMITTED roster, not on whatever is in a working tree.
-#
-# $WORKSTATION_DIR is the admin's own checkout, and refresh_user_clone runs only
-# for tier != admin — and bails on any dirty tree — so a pushed roster change
-# reached this script only once someone happened to sync that file by hand. With
-# membership now driven from Authentik through a CI commit, that gap would stall
-# the whole chain with no error anywhere: CI reports success, the box keeps the
-# previous roster, and a removed user stays provisioned.
-#
-# So: fetch as the tree's owner (their credentials, not root's) and read the
-# roster out of origin/master into a state dir. Every failure path falls back to
-# the working-tree copy — today's behaviour — because a network blip must degrade
-# to "slightly stale" rather than to "no users at all".
-# Overridable so a dry run can point the snapshot + committed-roster cache at a
-# scratch dir and exercise the cut without touching the real state.
-STATEDIR="${STATEDIR:-/var/lib/t3-provision}"
-if [[ "$DRY_RUN" != 1 ]]; then install -d -m 0755 "$STATEDIR"; fi
-clone_root="$(cd "$WORKSTATION_DIR/../.." && pwd)"
-clone_owner="$(stat -c %U "$clone_root" 2>/dev/null || echo root)"
-committed_roster="$STATEDIR/roster.committed.yaml"
-if runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git -C "$clone_root" \
-     -c filter.git-crypt.smudge=cat -c filter.git-crypt.clean=cat \
-     -c filter.git-crypt.required=false fetch --quiet origin master 2>/dev/null &&
-   runuser -u "$clone_owner" -- git -C "$clone_root" \
-     -c filter.git-crypt.smudge=cat -c filter.git-crypt.clean=cat \
-     -c filter.git-crypt.required=false show \
-     origin/master:scripts/workstation/roster.yaml > "$committed_roster.tmp" 2>/dev/null &&
-   [[ -s "$committed_roster.tmp" ]] &&
-   python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; sys.exit(0 if d.get("users") else 1)' \
-     "$committed_roster.tmp" 2>/dev/null; then
-  mv "$committed_roster.tmp" "$committed_roster"
-  if ! cmp -s "$committed_roster" "$ROSTER"; then
-    log "roster: using origin/master (working tree at $ROSTER differs)"
-  fi
-  ROSTER="$committed_roster"
-else
-  rm -f "$committed_roster.tmp"
-  log "WARN: could not read roster from origin/master — falling back to $ROSTER"
-fi
 
 # 1) current sticky ports from existing .env files -> {os_user: port}
 ports_file="$(mktemp)"; pw_ports_file="$(mktemp)"
