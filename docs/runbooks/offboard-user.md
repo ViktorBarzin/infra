@@ -19,10 +19,30 @@ gated `userdel_archive`, which is **never** auto-applied).
 
 ### A1. Reversible cut (revoke access; delete nothing)
 
-1. **Delete the user's entry** from `roster.yaml`; commit + push.
+1. **Delete the user's entry** from `roster.yaml`; commit + push. *(Leaving the
+   line COMMENTED rather than deleting it is fine and preferable — the engine
+   treats commented and absent identically, and re-instating the user becomes one
+   edit.)*
+1b. **Drop them from the Authentik `T3 Users` group** —
+   `stacks/authentik/t3-users.tf`, remove both their `data "authentik_user"`
+   lookup and their entry in the group's `users` list; commit + push and CI
+   applies the stack. Membership lives in HCL today, so the roster removal in
+   step 1 does **not** revoke it: without this the user still passes the edge gate
+   and only then meets dispatch's 403. Check their other groups while you are
+   there (`GET /api/v3/core/users/?search=<login>` → `groups_obj`) — `T3 Users` is
+   usually the only devvm door, but `Home Server Admins` reaches the web terminal
+   at `terminal.viktorbarzin.me` and is not managed in this repo.
 2. **Reconcile** (`sudo /usr/local/bin/t3-provision-users`, or wait for the hourly
-   timer). This **regenerates** `/etc/ttyd-user-map` + `dispatch.json` *without* the
-   user → `t3-dispatch` now returns **403** for them. *(Automated.)*
+   timer). This **regenerates** `/etc/ttyd-user-map` + `/etc/t3-serve/dispatch.json`
+   *without* the user → `t3-dispatch` returns **403** for them. *(Automated.)*
+   Two things to expect here: the provisioner reads the roster from
+   `WORKSTATION_DIR`, i.e. **the admin's own working tree** — a pushed commit does
+   nothing until that tree carries it, so sync the file (`git show
+   origin/master:scripts/workstation/roster.yaml > …`) or the next hourly run puts
+   the user straight back. And `t3-dispatch` re-reads its table on a **60-second
+   tick**, so allow a minute: inside that window the removed user gets a **500**
+   (their entry is still cached, and the session mint then fails), not a 403.
+   Verified 2026-08-17 while cutting `ancamilea`.
 3. **Disable their instance + lock login** *(manual today; Phase 7 will fold this into
    the reconcile):*
    ```bash
