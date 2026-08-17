@@ -466,6 +466,11 @@ resource "kubernetes_endpoints" "session_events" {
 # full, the pane behind a blocking prompt, and the keystrokes that answer one
 # (terminal-lobby ADR-0010). Without them the SPA ships those features and the
 # ingress 404s each one.
+#
+# /commands was added on 2026-08-17: the text view's `/` menu offers the
+# session's OWN skills and custom commands, which the service reads off the
+# user's disk. The page ships the CLI's built-ins, so a missing route costs the
+# per-user half of the menu rather than the menu.
 resource "kubernetes_manifest" "session_events_ingressroute" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -477,7 +482,7 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`))"
+        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`))"
         kind  = "Rule"
         middlewares = [
           {
