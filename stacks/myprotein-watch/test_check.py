@@ -151,7 +151,9 @@ def test_no_deal_when_price_is_above_threshold():
     assert check.find_deals(check.parse_variants(page(STRAWBERRY_90)), WATCH, 28.0) == []
 
 
-def test_unwatched_flavour_never_triggers_even_when_cheap():
+def test_an_explicit_watchlist_still_narrows_to_those_flavours():
+    """WATCH_FLAVOURS is retained as an opt-in narrowing filter, so a flavour
+    outside an explicitly-configured list stays silent."""
     cheap = variant(
         "Impact Whey Protein Powder - 2.7kg - 90servings - Vanilla",
         "Vanilla", "2.7kg - 90servings", "10.00", "97.49", 17712192,
@@ -185,6 +187,307 @@ def test_banana_watch_term_matches_chocolate_banana():
     )
     deals = check.find_deals(check.parse_variants(page(cheap)), WATCH, 28.0)
     assert [d.base_flavour for d in deals] == ["Chocolate Banana"]
+
+
+# --- every flavour is in scope ----------------------------------------------
+# The watchlist used to be four flavours, which meant a genuine bargain on a
+# fifth would never be mentioned. Scope is now every flavour; what keeps the
+# net honest is the protein figure behind each one, not Viktor's taste.
+
+ALL = []  # no narrowing terms — the production default
+
+
+def test_no_watch_terms_means_every_flavour_is_in_scope():
+    cheap = variant(
+        "Impact Whey Protein Powder - 2.7kg - 90servings - Vanilla",
+        "Vanilla", "2.7kg - 90servings", "55.00", "97.49", 17712192,
+    )
+    deals = check.find_deals(check.parse_variants(page(cheap)), ALL, 28.0)
+    assert [d.base_flavour for d in deals] == ["Vanilla"]
+
+
+@pytest.mark.parametrize("env_value", ["", ",", " , ", "  "])
+def test_a_blank_env_var_widens_rather_than_silencing_everything(env_value):
+    """WATCH_FLAVOURS is split on commas, so an empty or whitespace-only value
+    yields blank terms. Those must mean "no filter", not "match nothing" — the
+    latter would quietly stop the job alerting at all."""
+    v = check.parse_variants(page(VANILLA_90))[0]
+    assert check._watched(v, env_value.split(","))
+
+
+def test_previously_watched_flavours_are_unaffected():
+    """Widening the net must not change what the original four already did."""
+    cheap = variant(
+        "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
+        "Strawberry Cream", "2.7kg - 90servings", "55.00", "97.49", 18000003,
+    )
+    parsed = check.parse_variants(page(cheap))
+    assert check.find_deals(parsed, ALL, 28.0) == check.find_deals(parsed, WATCH, 28.0)
+
+
+# --- protein per serving we can actually stand behind ------------------------
+# The page advertises "up to 23g protein" — a ceiling, not a per-flavour figure,
+# and per-flavour macros are not on the page at all. Assuming the ceiling for a
+# flavour carrying chocolate-bar pieces would overstate its protein and so
+# understate its £/kg, making it look like a better deal than it is.
+
+def test_scoop_size_is_derived_from_pack_size_and_servings():
+    v = check.parse_variants(page(VANILLA_90))[0]
+    assert v.scoop_g == pytest.approx(30.0)
+
+
+def test_a_standard_scoop_original_flavour_is_verified():
+    assert check.parse_variants(page(VANILLA_90))[0].protein_verified
+
+
+def test_the_milkshake_line_is_verified_by_its_own_published_claim():
+    assert check.parse_variants(page(CRUMBLE_SHAKE_90))[0].protein_verified
+
+
+def test_biscuit_piece_flavours_stay_verified_despite_a_bigger_scoop():
+    """Their 20 g claim is published and already accounts for the pieces, so a
+    32 g scoop is explained rather than unknown."""
+    v = variant(
+        "Impact Whey Protein Powder - 960g - 30servings - "
+        "Chocolate Caramel with Crunchy Biscuit Pieces",
+        "Chocolate Caramel with Crunchy Biscuit Pieces", "960g - 30servings",
+        "34.99", "34.99", 18000010,
+    )
+    parsed = check.parse_variants(page(v))[0]
+    assert parsed.scoop_g == pytest.approx(32.0)
+    assert parsed.protein_verified
+    assert parsed.whey_g_per_serving == 20.0
+
+
+@pytest.mark.parametrize("flavour,amount,servings_g", [
+    ("Snickers Original", "1KG - 31servings", 32.3),
+    ("Snickers White", "1KG - 30servings", 33.3),
+    ("Mars®", "1KG - 30servings", 33.3),
+    ("Twix®", "1.05kg - 30servings", 35.0),
+    ("Bounty®", "960g - 30servings", 32.0),
+    ("Hotel Chocolat - Chocolate Billionaire", "660g - 20servings", 33.0),
+    ("Jimmy's Coffee - Caramel", "600G - 20servings", 30.0),
+])
+def test_licensed_collab_flavours_are_not_verified(flavour, amount, servings_g):
+    """Separate formulations with no protein claim on this page."""
+    v = check.parse_variants(page(variant(
+        f"Impact Whey Protein Powder - {amount} - {flavour}",
+        flavour, amount, "39.99", "39.99", 18000011,
+    )))[0]
+    assert v.scoop_g == pytest.approx(servings_g, abs=0.1)
+    assert not v.protein_verified
+
+
+@pytest.mark.parametrize("flavour,amount", [
+    ("Natural Vanilla", "810g - 30servings"),
+    ("Mocha", "840g - 30servings"),
+    ("Matcha Latte", "840g - 30servings"),
+])
+def test_original_flavours_with_an_undersized_scoop_are_not_verified(flavour, amount):
+    """A 27–28 g scoop cannot hold the 23 g a 30 g scoop does."""
+    v = check.parse_variants(page(variant(
+        f"Impact Whey Protein Powder - {amount} - {flavour}",
+        flavour, amount, "34.99", "34.99", 18000012,
+    )))[0]
+    assert not v.protein_verified
+
+
+def test_marshmallow_is_not_mistaken_for_the_mars_bar_flavour():
+    v = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 900G - 30servings - Marshmallow",
+        "Marshmallow", "900G - 30servings", "34.99", "34.99", 18000013,
+    )))[0]
+    assert v.protein_verified
+
+
+def test_an_unparseable_pack_size_is_treated_as_unverified():
+    v = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 30servings - Vanilla",
+        "Vanilla", "30servings", "34.99", "34.99", 18000014,
+    )))[0]
+    assert v.scoop_g is None
+    assert not v.protein_verified
+
+
+def test_unverified_flavours_never_fire_the_value_triggers():
+    """However cheap a Twix tub looks, we cannot say it is at his price."""
+    cheap = variant(
+        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
+        "Twix®", "1.05kg - 30servings", "10.00", "39.99", 18000015,
+    )
+    parsed = check.parse_variants(page(cheap))
+    assert check.find_deals(parsed, ALL, 28.0) == []
+    assert check.comparable(parsed, ALL) == []
+
+
+def test_unverified_flavours_still_fire_the_big_sale_trigger():
+    """That trigger answers "is a sale running", which needs no protein figure."""
+    v = variant(
+        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
+        "Twix®", "1.05kg - 30servings", "19.99", "39.99", 18000016,
+    )
+    got = check.find_deep_discounts(check.parse_variants(page(v)), ALL, 40)
+    assert [d.base_flavour for d in got] == ["Twix®"]
+
+
+def test_unverified_flavours_are_left_out_of_cheapest_ever_tracking():
+    v = variant(
+        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
+        "Twix®", "1.05kg - 30servings", "10.00", "39.99", 18000017,
+    )
+    _, new_state = check.decide(
+        check.parse_variants(page(v)), {}, ALL, 28.0)
+    assert "low:18000017" not in new_state
+
+
+def test_a_new_flavour_seeds_its_low_silently_on_first_sighting():
+    """Widening scope adds ~76 unseen SKUs; none of them may alert on sight."""
+    alerts, new_state = check.decide(
+        check.parse_variants(page(VANILLA_90)), {}, ALL, 28.0)
+    assert alerts == []
+    assert new_state["low:17712192"] == pytest.approx(47.10, abs=0.01)
+
+
+# --- one line per price, not per flavour -------------------------------------
+# MyProtein prices by pack size, not by flavour: every 150-serving Milkshake tub
+# is the same £113.99. With all flavours in scope a single price point matches
+# six or more variants, and a sitewide sale would match all ~72 — so the flavours
+# sharing a price are named together instead of repeated a line at a time.
+
+def _same_price_shake(flavours, price="55.00", servings=150, sku_base=18100000):
+    return [
+        variant(
+            f"Impact Whey Protein Powder - 4350g - {servings}servings - {f} (Milkshake)",
+            f"{f} (Milkshake)", f"4350g - {servings}servings", price, "153.99",
+            sku_base + i,
+        )
+        for i, f in enumerate(flavours)
+    ]
+
+
+def test_flavours_sharing_a_price_are_named_on_one_line():
+    parsed = check.parse_variants(page(*_same_price_shake(
+        ["Banana", "Salted Caramel", "Chocolate Fudge"])))
+    text = check.format_slack([check.Alert("deal", v) for v in parsed])["text"]
+    body = [ln for ln in text.split("\n") if ":moneybag:" in ln]
+    assert len(body) == 1
+    for f in ("Banana", "Salted Caramel", "Chocolate Fudge"):
+        assert f in body[0]
+    assert body[0].count("£55.00") == 1
+
+
+def test_different_pack_sizes_stay_on_their_own_lines():
+    parsed = check.parse_variants(page(
+        *_same_price_shake(["Banana"], price="55.00", servings=150),
+        *_same_price_shake(["Banana"], price="30.00", servings=90, sku_base=18150000),
+    ))
+    text = check.format_slack([check.Alert("deal", v) for v in parsed])["text"]
+    assert len([ln for ln in text.split("\n") if ":moneybag:" in ln]) == 2
+
+
+def test_a_long_flavour_list_is_summarised_with_an_explicit_count():
+    flavours = [f"Flavour{i}" for i in range(check.MAX_FLAVOURS_NAMED + 3)]
+    parsed = check.parse_variants(page(*_same_price_shake(flavours)))
+    text = check.format_slack([check.Alert("deal", v) for v in parsed])["text"]
+    line = [ln for ln in text.split("\n") if ":moneybag:" in ln][0]
+    assert "+3 more" in line
+    assert line.count("Flavour") == check.MAX_FLAVOURS_NAMED
+
+
+def test_grouping_does_not_merge_different_triggers():
+    parsed = check.parse_variants(page(*_same_price_shake(["Banana", "Salted Caramel"])))
+    alerts = [check.Alert("deal", parsed[0]), check.Alert("low", parsed[1])]
+    text = check.format_slack(alerts)["text"]
+    assert len([ln for ln in text.split("\n") if ":moneybag:" in ln]) == 1
+    assert len([ln for ln in text.split("\n") if ":chart_with_downwards_trend:" in ln]) == 1
+
+
+def test_grouping_keeps_lines_whose_protein_per_serving_differs_apart():
+    """Same price and serving count, but the biscuit-pieces flavour is 20 g and
+    the plain one 23 g — so their £/kg differs and they are not one price."""
+    plain = variant(
+        "Impact Whey Protein Powder - 900G - 30servings - Vanilla",
+        "Vanilla", "900G - 30servings", "34.99", "34.99", 18200001,
+    )
+    crunch = variant(
+        "Impact Whey Protein Powder - 900G - 30servings - "
+        "Cookie Crumble Crunch with Crunchy Biscuit Pieces",
+        "Cookie Crumble Crunch with Crunchy Biscuit Pieces", "900G - 30servings",
+        "34.99", "34.99", 18200002,
+    )
+    parsed = check.parse_variants(page(plain, crunch))
+    text = check.format_slack([check.Alert("deal", v) for v in parsed])["text"]
+    assert len([ln for ln in text.split("\n") if ":moneybag:" in ln]) == 2
+
+
+# --- the message must not assert what we do not know -------------------------
+
+def _twix_sale_message():
+    v = variant(
+        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
+        "Twix®", "1.05kg - 30servings", "16.00", "97.49", 18000020,
+    )
+    alerts = [check.Alert("discount", check.parse_variants(page(v))[0])]
+    return check.format_slack(alerts)["text"]
+
+
+def test_a_sale_on_an_unverified_flavour_quotes_no_price_per_kg_protein():
+    """Excluding it from the value triggers but still printing a £/kg figure
+    would hand back the very number we said we could not stand behind."""
+    text = _twix_sale_message()
+    assert "/kg protein" not in text
+    assert "84% off" in text and "£16.00" in text
+
+
+def test_a_sale_on_an_unverified_flavour_says_why_the_figure_is_missing():
+    assert "not published" in _twix_sale_message()
+
+
+def test_a_verified_flavour_still_leads_with_price_per_kg_protein():
+    alerts = [check.Alert("deal", check.parse_variants(page(VANILLA_90))[0])]
+    assert "/kg protein" in check.format_slack(alerts)["text"]
+
+
+# --- what the run says it looked at ------------------------------------------
+
+def _scope_lines(variants, watch=None):
+    out = []
+    check.print_scope(variants, watch if watch is not None else [], out.append)
+    return out
+
+
+def test_scope_output_reports_counts_and_the_cheapest():
+    lines = _scope_lines(check.parse_variants(page(VANILLA_90, CRUMBLE_SHAKE_90)))
+    assert "parsed 2 variants (2 in stock); 2 comparable" in lines[0]
+    assert any("Cookie Crumble (Milkshake)" in ln for ln in lines)
+
+
+def test_scope_output_names_what_it_held_back_and_why():
+    twix = variant(
+        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
+        "Twix®", "1.05kg - 30servings", "39.99", "39.99", 18000018,
+    )
+    lines = _scope_lines(check.parse_variants(page(VANILLA_90, twix)))
+    held = [ln for ln in lines if "held out of the value triggers" in ln]
+    assert len(held) == 1
+    assert "Twix®" in held[0]
+
+
+def test_a_truncated_listing_says_so_rather_than_looking_complete():
+    many = [
+        variant(
+            f"Impact Whey Protein Powder - 900G - 30servings - Flavour{i}",
+            f"Flavour{i}", "900G - 30servings", f"{30 + i}.99", "97.49", 19000000 + i,
+        )
+        for i in range(check.LOG_CHEAPEST_N + 4)
+    ]
+    lines = _scope_lines(check.parse_variants(page(*many)))
+    assert any(f"cheapest {check.LOG_CHEAPEST_N} of {len(many)}" in ln for ln in lines)
+
+
+def test_no_truncation_notice_when_everything_is_listed():
+    lines = _scope_lines(check.parse_variants(page(VANILLA_90)))
+    assert not any("cheapest" in ln for ln in lines)
 
 
 # --- the discontinued-flavour comeback --------------------------------------

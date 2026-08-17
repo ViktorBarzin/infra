@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Watch Impact Whey prices on myprotein.com and post to Slack when one of
-Viktor's flavours reaches his buying price.
+"""Watch Impact Whey prices on myprotein.com and post to Slack when a flavour
+reaches Viktor's buying price.
+
+Every flavour is in scope. It started as a four-flavour watchlist, which meant a
+genuine bargain on a fifth would pass unmentioned; taste is a reason to skip
+buying, not a reason not to be told. What bounds the net now is whether we can
+stand behind a flavour's protein figure — see LICENSED_RE and STANDARD_SCOOP_G.
 
 Why this shape: the product page ships every variant as embedded JSON
 (title, flavour, amount, sku, inStock, price, rrp), so a plain HTTP GET is
@@ -27,7 +32,8 @@ Config (all via env):
                           telling (£28 = the dearest Viktor has actually paid)
   DEEP_DISCOUNT_PCT       displayed discount that counts as a big sale
   NEW_LOW_MARGIN          how much better than the record a new low must be
-  WATCH_FLAVOURS          comma-separated flavour substrings
+  WATCH_FLAVOURS          optional comma-separated flavour substrings to narrow
+                          to. Empty (the default) means every flavour.
   DRY_RUN                 "true" prints instead of posting
 """
 
@@ -47,6 +53,7 @@ from typing import Any
 VARIANT_ANCHOR = re.compile(r'\{\s*"title"\s*:\s*"Impact Whey Protein Powder')
 SERVINGS_RE = re.compile(r"(\d+)\s*servings", re.I)
 LINE_SUFFIX_RE = re.compile(r"\s*\(([^)]+)\)\s*$")
+AMOUNT_G_RE = re.compile(r"([\d.]+)\s*(kg|g)\b", re.I)
 
 # Lines whose serving is ~23 g of whey. The +Collagen line is deliberately
 # absent: half of its 20 g "protein" is collagen peptides, so its £/serving is
@@ -67,6 +74,30 @@ PROTEIN_G_MILKSHAKE = 20.0
 PROTEIN_G_CRUNCH = 20.0
 PROTEIN_G_COLLAGEN_WHEY = 10.0
 CRUNCH_RE = re.compile(r"crunch|biscuit pieces", re.I)
+
+# Every flavour is in scope, so the 23 g figure now has to carry flavours it was
+# never checked against. The page advertises "up to 23g protein per serving" — a
+# ceiling — and publishes no per-flavour macros at all (they sit behind an 'i'
+# icon, off this page). Assuming the ceiling for a flavour that carries
+# chocolate-bar pieces would overstate its protein, and therefore understate its
+# £/kg, presenting a worse deal as a better one. So where the figure is an
+# assumption rather than a published claim, the flavour is left out of the value
+# triggers and covered by the big-sale trigger instead, which needs no protein
+# figure to be true.
+#
+# Two signals mark a figure as an assumption:
+#
+# 1. Licensed collaborations are separately formulated and make no claim here.
+LICENSED_RE = re.compile(
+    r"snickers|\bmars\b|\btwix\b|\bbounty\b|hotel chocolat|jimmy'?s coffee", re.I
+)
+# 2. The 23 g claim belongs to the standard 30 g scoop. Where a flavour's own
+#    scoop is materially off that, its protein content is not something we know:
+#    a 27 g scoop cannot hold what a 30 g one does, and mass above 30 g is more
+#    likely inclusions than whey. Flavours whose bigger scoop IS explained by a
+#    published claim (the biscuit-pieces 20 g) are exempt.
+STANDARD_SCOOP_G = 30.0
+SCOOP_TOLERANCE = 0.05
 
 # A "big sale" on MyProtein's own reckoning. Note their RRP is their number and
 # it drifts upward over time, which is why this supplements the £/serving
@@ -113,6 +144,38 @@ class Variant:
     @property
     def price_per_serving(self) -> float | None:
         return self.price / self.servings if self.servings else None
+
+    @property
+    def scoop_g(self) -> float | None:
+        """Grams of powder in one serving, from the pack size and serving count.
+
+        The page states no scoop weight, but it states both of these, and their
+        ratio is what tells us whether a flavour is built like the standard one.
+        """
+        m = AMOUNT_G_RE.search(self.amount)
+        if not m or not self.servings:
+            return None
+        grams = float(m.group(1)) * (1000 if m.group(2).lower() == "kg" else 1)
+        return grams / self.servings
+
+    @property
+    def protein_verified(self) -> bool:
+        """Whether whey_g_per_serving rests on a published claim or an assumption.
+
+        Only the value triggers require this. See the notes on LICENSED_RE and
+        STANDARD_SCOOP_G for why each signal marks a figure as unknown.
+        """
+        # These three lines each publish their own per-serving figure, so their
+        # scoop size does not have to match the plain Original one.
+        if self.line in ("Milkshake", "Collagen"):
+            return True
+        if CRUNCH_RE.search(self.base_flavour):
+            return True
+        if LICENSED_RE.search(self.base_flavour):
+            return False
+        if self.scoop_g is None:
+            return False
+        return abs(self.scoop_g - STANDARD_SCOOP_G) <= STANDARD_SCOOP_G * SCOOP_TOLERANCE
 
     @property
     def whey_g_per_serving(self) -> float:
@@ -221,28 +284,44 @@ def parse_variants(html: str) -> list[Variant]:
 
 
 def _watched(variant: Variant, watch: list[str]) -> bool:
+    """Whether a flavour passes the optional narrowing filter.
+
+    No terms means no narrowing — every flavour is in scope, which is the
+    production default. Blank terms are ignored rather than matching nothing, so
+    an env var set to "" or "," widens instead of silencing the whole job.
+    """
+    terms = [t.strip().lower() for t in watch if t.strip()]
+    if not terms:
+        return True
     flavour = variant.base_flavour.lower()
-    return any(term.strip().lower() in flavour for term in watch if term.strip())
+    return any(term in flavour for term in terms)
 
 
-def comparable_watched(variants: list[Variant], watch: list[str]) -> list[Variant]:
-    """In-stock watched flavours on a line whose £/serving means the same thing.
+def comparable(variants: list[Variant], watch: list[str]) -> list[Variant]:
+    """In-stock variants whose £/kg of protein means the same thing.
 
-    The +Collagen line is excluded: half of its 20 g "protein" is collagen
-    peptides, so its £/serving is not comparable to Original or Milkshake and
-    must not be ranked against them.
+    Two exclusions, for different reasons:
+
+    The +Collagen line, because half of its 20 g "protein" is collagen peptides.
+    Its £/kg is normalised to the whey half, but Viktor's threshold came from
+    whole-whey purchases, so it is not the same product being priced.
+
+    Flavours whose protein per serving we would be guessing at — see
+    Variant.protein_verified. Guessing high is what turns a worse deal into an
+    apparent bargain, so those are covered by the big-sale trigger instead.
     """
     return [
         v for v in variants
         if v.in_stock
         and v.line in DEAL_LINES
+        and v.protein_verified
         and _watched(v, watch)
         and v.price_per_kg_protein is not None
     ]
 
 
 def find_deals(variants: list[Variant], watch: list[str], threshold: float) -> list[Variant]:
-    """Comparable watched variants at or under the £/kg-of-protein threshold.
+    """Comparable variants at or under the £/kg-of-protein threshold.
 
     Deliberately NOT £/serving: the Original line puts 23 g in a serving and
     the Milkshake line 20 g, so the same £/serving is ~15% worse value on the
@@ -250,16 +329,18 @@ def find_deals(variants: list[Variant], watch: list[str], threshold: float) -> l
     applying it per-serving to a 20 g line would alert him on a worse deal
     than he actually buys.
     """
-    return [v for v in comparable_watched(variants, watch)
+    return [v for v in comparable(variants, watch)
             if v.price_per_kg_protein <= threshold]
 
 
 def find_deep_discounts(variants: list[Variant], watch: list[str], min_pct: int) -> list[Variant]:
-    """Watched flavours where MyProtein's own displayed discount is unusually deep.
+    """Anything where MyProtein's own displayed discount is unusually deep.
 
-    This one deliberately covers EVERY line, +Collagen included: the question it
+    This one deliberately covers EVERY line and every flavour — +Collagen and the
+    flavours whose protein figure we are unsure of included. The question it
     answers is "is a big sale running", not "is this good value per gram of
-    whey". The Collagen caveat is carried in the message instead.
+    whey", so it needs no protein figure to be true. The Collagen caveat is
+    carried in the message instead.
     """
     return [
         v for v in variants
@@ -308,7 +389,7 @@ def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
 
     # Cheapest-ever, on the comparable lines only. A first sighting seeds the
     # record silently — we have no history to call it a low against.
-    for v in comparable_watched(variants, watch):
+    for v in comparable(variants, watch):
         key = f"low:{v.sku}"
         pps = v.price_per_kg_protein
         previous = new_state.get(key)
@@ -344,6 +425,11 @@ COLLAGEN_CAVEAT = (
     "so this is not comparable per gram of whey)_"
 )
 
+UNVERIFIED_CAVEAT = (
+    " _(protein per serving is not published for this flavour, so this is a sale "
+    "worth knowing about rather than a verified price per gram of protein)_"
+)
+
 # Ordered by how much they should draw the eye.
 HEADERS = {
     "return": "Cookies and Cream is back",
@@ -354,17 +440,52 @@ HEADERS = {
 
 
 def _detail(v: Variant) -> str:
-    return (f"{v.servings} servings, {v.amount.split(' - ')[0]} — *£{v.price:.2f}* "
-            f"(was £{v.rrp:.2f}, {v.discount_pct}% off) = "
-            f"*£{v.price_per_kg_protein:.2f}/kg protein* "
+    """The price facts. Quotes £/kg of protein only where that figure is real.
+
+    A flavour can reach here through the big-sale trigger without a published
+    protein figure. Printing an inferred £/kg for it would put back exactly the
+    claim the value triggers declined to make, in the more convincing place.
+    """
+    head = (f"{v.servings} servings, {v.amount.split(' - ')[0]} — *£{v.price:.2f}* "
+            f"(was £{v.rrp:.2f}, {v.discount_pct}% off)")
+    if not v.protein_verified:
+        return f"{head} = *£{v.price_per_serving:.2f}/serving*"
+    return (f"{head} = *£{v.price_per_kg_protein:.2f}/kg protein* "
             f"(£{v.price_per_serving:.2f}/serving at {v.whey_g_per_serving:.0f}g)")
+
+
+# How many flavours to name before summarising the rest as a count. Six fits a
+# Slack line; the remainder is counted rather than dropped.
+MAX_FLAVOURS_NAMED = 6
+
+
+def _group_key(v: Variant) -> tuple:
+    """What makes two variants the same offer, differing only by flavour.
+
+    Deliberately not the pack size string: a 150-serving tub is 4350g in one
+    flavour and 4500g in another, yet it is one price and one deal. The protein
+    figure is in the key because it changes £/kg — a biscuit-pieces flavour at
+    the same shelf price is genuinely a different offer.
+    """
+    return (v.line, v.servings, round(v.price, 2), v.whey_g_per_serving)
+
+
+def _flavour_list(variants: list[Variant]) -> str:
+    names = list(dict.fromkeys(v.base_flavour for v in variants))
+    shown = names[:MAX_FLAVOURS_NAMED]
+    rest = len(names) - len(shown)
+    return ", ".join(shown) + (f" +{rest} more" if rest else "")
 
 
 def format_slack(alerts: list[Alert]) -> dict[str, Any]:
     lines: list[str] = []
     for kind in ("return", "deal", "low", "discount"):
+        groups: dict[tuple, list[Variant]] = {}
         for a in [x for x in alerts if x.kind == kind]:
-            v = a.variant
+            groups.setdefault(_group_key(a.variant), []).append(a.variant)
+        for members in groups.values():
+            v = members[0]
+            flavours = _flavour_list(members)
             if kind == "return":
                 lines.append(
                     f":tada: *Cookies and Cream is back* — {v.amount} at £{v.price:.2f} "
@@ -372,16 +493,20 @@ def format_slack(alerts: list[Alert]) -> dict[str, Any]:
                     f"the Original line."
                 )
             elif kind == "deal":
-                lines.append(f":moneybag: *{v.base_flavour}* ({v.line}) — {_detail(v)}")
+                lines.append(f":moneybag: *{flavours}* ({v.line}) — {_detail(v)}")
             elif kind == "low":
                 lines.append(
-                    f":chart_with_downwards_trend: *{v.base_flavour}* ({v.line}) "
+                    f":chart_with_downwards_trend: *{flavours}* ({v.line}) "
                     f"— cheapest recorded — {_detail(v)}"
                 )
             else:
-                caveat = COLLAGEN_CAVEAT if v.line == "Collagen" else ""
+                caveat = ""
+                if v.line == "Collagen":
+                    caveat = COLLAGEN_CAVEAT
+                elif not v.protein_verified:
+                    caveat = UNVERIFIED_CAVEAT
                 lines.append(
-                    f":fire: *{v.base_flavour}* ({v.line}) — *{v.discount_pct}% off* "
+                    f":fire: *{flavours}* ({v.line}) — *{v.discount_pct}% off* "
                     f"— {_detail(v)}{caveat}"
                 )
 
@@ -392,6 +517,44 @@ def format_slack(alerts: list[Alert]) -> dict[str, Any]:
         "text": f"*{header}*\n" + "\n".join(lines),
         "unfurl_links": False,
     }
+
+
+# How many of the cheapest variants to spell out per run. All ~90 comparable
+# variants would be six screens of near-identical lines every six hours; the
+# count of what is left out is printed so the listing is never mistaken for all
+# of it.
+LOG_CHEAPEST_N = 12
+
+
+def print_scope(variants: list[Variant], watch: list[str], out=None) -> None:
+    """Say what was in scope this run, and what was deliberately left out.
+
+    Worth the lines: with every flavour in scope, "no alert" is only meaningful
+    if you can see how much was actually weighed.
+    """
+    say = print if out is None else out
+    cmp_ = sorted(comparable(variants, watch), key=lambda v: v.price_per_kg_protein)
+    unverified = sorted({
+        v.base_flavour for v in variants
+        if v.in_stock and v.line in DEAL_LINES and not v.protein_verified
+        and _watched(v, watch)
+    })
+    in_stock = sum(1 for v in variants if v.in_stock)
+
+    say(f"parsed {len(variants)} variants ({in_stock} in stock); "
+        f"{len(cmp_)} comparable on £/kg protein")
+    shown = cmp_[:LOG_CHEAPEST_N]
+    if len(cmp_) > len(shown):
+        say(f"cheapest {len(shown)} of {len(cmp_)} (the rest are dearer, not skipped):")
+    for v in shown:
+        say(f"  {v.base_flavour} ({v.line}) {v.amount}: £{v.price:.2f} "
+            f"= £{v.price_per_kg_protein:.2f}/kg protein "
+            f"(£{v.price_per_serving:.3f}/serving at {v.whey_g_per_serving:.0f}g, "
+            f"{v.discount_pct}% off)")
+    if unverified:
+        say(f"{len(unverified)} flavour(s) held out of the value triggers — protein "
+            f"per serving not published for them, big-sale trigger still covers "
+            f"them: {', '.join(unverified)}")
 
 
 def fetch(url: str) -> str:
@@ -520,9 +683,8 @@ def main() -> int:
     threshold = float(os.environ.get("THRESHOLD_PER_KG_PROTEIN", "28"))
     deep_pct = int(os.environ.get("DEEP_DISCOUNT_PCT", str(DEEP_DISCOUNT_PCT)))
     low_margin = float(os.environ.get("NEW_LOW_MARGIN", str(NEW_LOW_MARGIN)))
-    watch = os.environ.get(
-        "WATCH_FLAVOURS", "Cookies and Cream,Cookie Crumble,Banana,Strawberry Cream"
-    ).split(",")
+    # Empty by default: every flavour is in scope. Set it to narrow.
+    watch = os.environ.get("WATCH_FLAVOURS", "").split(",")
     dry_run = os.environ.get("DRY_RUN", "").lower() == "true"
     webhook = os.environ.get("SLACK_WEBHOOK_URL", "")
 
@@ -541,13 +703,7 @@ def main() -> int:
         print("parsed 0 variants — the page shape probably changed", file=sys.stderr)
         return 1
 
-    watched = [v for v in variants if _watched(v, watch) and v.in_stock]
-    print(f"parsed {len(variants)} variants; {len(watched)} in-stock watched:")
-    for v in sorted(watched, key=lambda v: v.price_per_kg_protein or 0):
-        print(f"  {v.base_flavour} ({v.line}) {v.amount}: £{v.price:.2f} "
-              f"= £{v.price_per_kg_protein:.2f}/kg protein "
-              f"(£{v.price_per_serving:.3f}/serving at {v.whey_g_per_serving:.0f}g, "
-              f"{v.discount_pct}% off)")
+    print_scope(variants, watch)
 
     state = load_state(state_target, backend)
     alerts, new_state = decide(variants, state, watch, threshold, deep_pct, low_margin)
