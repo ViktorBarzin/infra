@@ -780,6 +780,46 @@ build_homelab_cli
 
 install -d -m 0755 "$ENVDIR"
 
+# 0c) act on the COMMITTED roster, not on whatever is in a working tree.
+#
+# $WORKSTATION_DIR is the admin's own checkout, and refresh_user_clone runs only
+# for tier != admin — and bails on any dirty tree — so a pushed roster change
+# reached this script only once someone happened to sync that file by hand. With
+# membership now driven from Authentik through a CI commit, that gap would stall
+# the whole chain with no error anywhere: CI reports success, the box keeps the
+# previous roster, and a removed user stays provisioned.
+#
+# So: fetch as the tree's owner (their credentials, not root's) and read the
+# roster out of origin/master into a state dir. Every failure path falls back to
+# the working-tree copy — today's behaviour — because a network blip must degrade
+# to "slightly stale" rather than to "no users at all".
+# Overridable so a dry run can point the snapshot + committed-roster cache at a
+# scratch dir and exercise the cut without touching the real state.
+STATEDIR="${STATEDIR:-/var/lib/t3-provision}"
+if [[ "$DRY_RUN" != 1 ]]; then install -d -m 0755 "$STATEDIR"; fi
+clone_root="$(cd "$WORKSTATION_DIR/../.." && pwd)"
+clone_owner="$(stat -c %U "$clone_root" 2>/dev/null || echo root)"
+committed_roster="$STATEDIR/roster.committed.yaml"
+if runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git -C "$clone_root" \
+     -c filter.git-crypt.smudge=cat -c filter.git-crypt.clean=cat \
+     -c filter.git-crypt.required=false fetch --quiet origin master 2>/dev/null &&
+   runuser -u "$clone_owner" -- git -C "$clone_root" \
+     -c filter.git-crypt.smudge=cat -c filter.git-crypt.clean=cat \
+     -c filter.git-crypt.required=false show \
+     origin/master:scripts/workstation/roster.yaml > "$committed_roster.tmp" 2>/dev/null &&
+   [[ -s "$committed_roster.tmp" ]] &&
+   python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; sys.exit(0 if d.get("users") else 1)' \
+     "$committed_roster.tmp" 2>/dev/null; then
+  mv "$committed_roster.tmp" "$committed_roster"
+  if ! cmp -s "$committed_roster" "$ROSTER"; then
+    log "roster: using origin/master (working tree at $ROSTER differs)"
+  fi
+  ROSTER="$committed_roster"
+else
+  rm -f "$committed_roster.tmp"
+  log "WARN: could not read roster from origin/master — falling back to $ROSTER"
+fi
+
 # 1) current sticky ports from existing .env files -> {os_user: port}
 ports_file="$(mktemp)"; pw_ports_file="$(mktemp)"
 trap 'rm -f "$ports_file" "$pw_ports_file" "${desired_file:-}"' EXIT
@@ -949,6 +989,63 @@ else
   jq -r '.ttyd_user_map' "$desired_file" > "$MAP.tmp" && install -m 0644 "$MAP.tmp" "$MAP" && rm -f "$MAP.tmp"
   jq -r '.ttyd_admins' "$desired_file" > "$ADMINS.tmp" && install -m 0644 "$ADMINS.tmp" "$ADMINS" && rm -f "$ADMINS.tmp"
   jq -c '.dispatch' "$desired_file" > "$ENVDIR/dispatch.json.tmp" && install -m 0644 "$ENVDIR/dispatch.json.tmp" "$ENVDIR/dispatch.json" && rm -f "$ENVDIR/dispatch.json.tmp"
+fi
+
+# 7) the REVERSIBLE CUT for anyone who left the roster since the last reconcile.
+#
+# roster_engine.offboard_plan has computed these five actions since the feature
+# was designed and nothing has ever applied them, so a removal left half its
+# work — the map and dispatch dropped the user (step 6), while their daemons kept
+# running and their login stayed open, waiting for someone to remember the
+# runbook. This closes that.
+#
+# The diff is against a SNAPSHOT of the roster this script last applied, so each
+# cut fires exactly once, on the transition, rather than every hour forever. No
+# snapshot (first run after this shipped) means nothing to compare: record one and
+# do nothing, which is also what makes this safe to deploy while people are using
+# the box.
+#
+# unmap_dispatch is already done by step 6. remove_from_t3_group belongs to the
+# Authentik side, which is where the removal STARTS now, so there is nothing to
+# do here. revoke_cluster_rbac is deliberately not applied: T3 Users means devvm
+# access, and someone off this box may still legitimately own a namespace.
+# userdel_archive is never applied here, by design.
+applied_snapshot="$STATEDIR/roster.applied.yaml"
+if [[ -s "$applied_snapshot" ]]; then
+  # Through the engine's CLI, like validate/derive — never by importing this
+  # module from an inline heredoc: a module executed outside sys.modules cannot
+  # resolve its own dataclass annotations, and the first cut of this failed
+  # exactly that way. The failure is LOGGED rather than swallowed; a cut that
+  # cannot be computed must not read as "nobody left".
+  if ! cut_plan="$(python3 "$ENGINE" deprovision --old "$applied_snapshot" --new "$ROSTER")"; then
+    log "WARN: could not compute the offboard diff — no cut applied this run"
+    cut_plan=""
+  fi
+  for gone in $cut_plan; do
+    # Never cut an account that is not there, and never cut root by a typo.
+    id "$gone" >/dev/null 2>&1 || { log "cut: $gone has no account — nothing to do"; continue; }
+    [[ "$gone" != "root" ]] || continue
+    # Named in the log rather than left to `run`'s echo: every call below sends
+    # its output to /dev/null (systemctl is noisy about units that were never
+    # enabled), which would take the dry-run echo with it — and a dry run that
+    # cannot show what it would do is not worth having.
+    cut_units=("t3-serve@$gone.service" "playwright-mcp@$gone.service"
+               "playwright-snapshot-refresh@$gone.timer" "claude-auth-sync@$gone.timer"
+               "tl-t3-sync@$gone.service")
+    log "cut: $gone left the roster — disable ${cut_units[*]}; passwd -l $gone (data untouched)"
+    for unit in "${cut_units[@]}"; do
+      run systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    done
+    run passwd -l "$gone" >/dev/null 2>&1 || true
+    log "cut: $gone done — account, home, clones, ports and Vault backups all kept"
+  done
+fi
+# Record what this run applied, for the next run's diff. Written LAST so a failed
+# reconcile does not claim credit for a state it never reached.
+if [[ "$DRY_RUN" == 1 ]]; then
+  log "[dry-run] would snapshot the applied roster -> $applied_snapshot"
+else
+  install -m 0644 "$ROSTER" "$applied_snapshot"
 fi
 
 log "reconcile complete ($([[ "$DRY_RUN" == 1 ]] && echo DRY-RUN || echo applied))"
