@@ -131,14 +131,24 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
       "app.kubernetes.io/name"      = "mysql"
       "app.kubernetes.io/instance"  = "mysql-standalone"
       "app.kubernetes.io/component" = "primary"
-      # 2026-05-26: defense-in-depth on top of the annotation below. The
-      # Kyverno `inject-keel-annotations` ClusterPolicy reads this LABEL
-      # via its `exclude.any[].resources.selector.matchLabels` rule, so
-      # even if the dbaas namespace exclude were lost the label still
-      # bypasses the mutation. Without the label, a Kyverno reconcile
-      # had silently overwritten our annotation=never → patch this turn
-      # and Keel patch-bumped mysql:8.4.8 → 8.4.9, stalling the DD upgrade.
-      "keel.sh/policy" = "never"
+      # There was a `keel.sh/policy = "never"` LABEL here from 2026-05-26 to
+      # 2026-08-17, as defense-in-depth on top of the annotation below: the
+      # Kyverno `inject-keel-annotations` exclude used to select on that label
+      # (`exclude.any[].resources.selector.matchLabels`), so it bypassed the
+      # mutation even if the dbaas namespace exclude were lost. It earned its
+      # place — without it a Kyverno reconcile had overwritten annotation=never
+      # → patch and Keel patch-bumped mysql:8.4.8 → 8.4.9, stalling the DD
+      # upgrade.
+      #
+      # Removed because that exclude now selects on the ANNOTATION, and because
+      # Kyverno stamping a keel.sh/* label is drift against every stack that
+      # declares a `labels` map (see stacks/kyverno/.../keel-annotations.tf).
+      # What protects this StatefulSet now: the `+(keel.sh/policy)` preserve
+      # anchor in that policy never overwrites an existing annotation value —
+      # the 2026-05-26 overwrite came from an earlier version that did — plus
+      # the dbaas namespace exclude, plus the annotation-based exclude. Lifting
+      # the opt-out still MUST go through the upgrade plan referenced below.
+      #
       # Declared because the sync-tier-label-from-namespace Kyverno policy
       # stamps it live; without it every apply strips the label and the
       # policy re-adds it (perma-drift that fed provider identity bugs).

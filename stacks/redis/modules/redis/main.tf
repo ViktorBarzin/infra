@@ -191,16 +191,18 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
     namespace = kubernetes_namespace.redis.metadata[0].name
     labels = {
       app = "redis-v2"
-      # Keel opt-out: a :8-alpine -> :8.0.6-alpine patch bump (also a
-      # semantic downgrade) rejected `aof-load-corrupt-tail-max-size` and
-      # crashed redis. Both LABEL + ANNOTATION required for full opt-out.
-      "keel.sh/policy" = "never"
       # Declared because the sync-tier-label-from-namespace Kyverno policy
       # stamps it live; without it every apply strips the label and the
       # policy re-adds it (perma-drift that fed provider identity bugs).
       tier = var.tier
     }
     annotations = {
+      # Keel opt-out: a :8-alpine -> :8.0.6-alpine patch bump (also a semantic
+      # downgrade) rejected `aof-load-corrupt-tail-max-size` and crashed redis.
+      # This annotation is the whole opt-out — it is what Keel reads AND what
+      # the Kyverno exclude selects on. A matching LABEL sat in the block above
+      # until 2026-08-17, when the exclude moved off labels (a keel.sh/* label
+      # is drift on any stack declaring a `labels` map).
       "keel.sh/policy" = "never"
     }
   }
