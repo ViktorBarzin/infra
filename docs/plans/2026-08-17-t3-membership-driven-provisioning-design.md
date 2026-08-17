@@ -1,0 +1,204 @@
+# Membership-driven provisioning — Authentik as the one user list
+
+**Status:** designed 2026-08-17, awaiting Viktor's go-ahead. **Author:** Viktor
+Barzin (decisions), Claude (research + design).
+
+## What we want
+
+Adding someone to the Authentik **T3 Users** group should provision them on the
+devvm; removing them should deprovision them. Today both directions are hand
+work in two repos, and the two lists drift — which is how, on 2026-08-17, a
+`deploy.sh` came within one run of locking `ancamilea` out of a lobby she was
+already being removed from, and how removing her took two commits, a manual
+reconcile and two propagation traps.
+
+Viktor's framing, and the decision this design rests on: **there should be a
+single source of truth for users, and Authentik should be that place.**
+
+## The distinction that makes it work
+
+Authentik is the source of truth for **who exists and who has access**. It is
+not the source of truth for **privilege**.
+
+- Group membership is one bit, and access is one bit. That is a clean fit, and
+  it is already how every other door in the estate works.
+- `tier` is a privilege grant — it decides cluster-admin versus read-only versus
+  namespace-owner. `roster_engine.validate_tiers` compares it against Vault
+  `k8s_users` and **aborts the reconcile** on a conflict. That check, the code
+  review, the diff and the 58 pytest cases are worth keeping.
+
+So `roster.yaml` stops being a list of users and becomes a **policy table keyed
+by user**. A row for someone not in the group is inert. The "who" then lives in
+exactly one place, which is what makes this one source of truth rather than the
+two lists we have now.
+
+A consequence worth stating plainly, because it inverts today's mental model:
+**deleting a roster row no longer removes access.** It resets that person's
+policy to the floor, and the reconciler will write the row back. Removing access
+means removing them from the group.
+
+## Where things stand today
+
+| Piece | State |
+|---|---|
+| `roster.yaml` | source of truth for who + policy; 3 users (2 after today) |
+| Authentik `T3 Users` | second user list, hand-maintained in HCL (`stacks/authentik/t3-users.tf`) |
+| Vault `k8s_users` | third list, cluster RBAC; roster tier is validated against it |
+| `roster_engine.offboard_plan` | computes the five reversible actions — **nothing consumes it** |
+| `t3-provision-users.sh` | applies the *provisioning* half; the offboard half is manual per the runbook |
+| `.woodpecker/provision-user.yml` | manual pipeline; drives Vault + the Authentik API for the **cluster** side, never the roster |
+| CI → devvm | no path exists; no pipeline reaches 10.0.10.10 |
+| CI → Forgejo | commits back today (`renew-tls.yml`, via `secrets/deploy_key`) |
+
+The engine already names what a cut is (`roster_engine.py:45`):
+
+```
+disable_instance · unmap_dispatch · remove_from_t3_group · lock_login · revoke_cluster_rbac
+```
+
+This work is mostly wiring up a plan that is already computed and tested.
+
+## The design
+
+Two halves with the roster as the hand-off: CI owns everything that talks to
+Authentik and to git, the devvm owns everything that touches accounts. That split
+is forced — CI holds the Authentik and git credentials and cannot reach the box;
+the box can reach neither Vault (unattended) nor Authentik today.
+
+```mermaid
+flowchart TD
+  subgraph AK["Authentik — the one user list"]
+    G["group: T3 Users<br/>membership = access"]
+  end
+
+  subgraph CI["Woodpecker · t3-membership-sync<br/>cron every 15 min + manual"]
+    R["read group members<br/>(authentik_api_token)"]
+    D{"diff against<br/>roster.yaml rows"}
+    W["commit the roster change<br/>(deploy_key)"]
+    A["announce: Slack + infra issue"]
+  end
+
+  subgraph VM["devvm · t3-provision-users<br/>hourly timer"]
+    F["read roster from origin/master<br/>(NEW — not a working tree)"]
+    P["provision: account, groups, clone,<br/>sticky port, per-user units"]
+    C["apply the reversible cut<br/>(NEW — consumes offboard_plan)"]
+    E["regenerate ttyd-user-map,<br/>ttyd-admins, dispatch.json"]
+  end
+
+  G --> R --> D
+  D -- "in group, no row" --> W
+  D -- "row, not in group" --> W
+  D -- "match" --> X["no-op"]
+  W --> A
+  W -.->|"pushed commit"| F
+  F --> P & C --> E
+```
+
+### The three cases
+
+| Authentik | roster row | what happens |
+|---|---|---|
+| member | present | nothing — steady state |
+| member | absent | CI writes a row at the **floor tier** (`tier: namespace-owner`, `namespaces: [<user>]`, `code_layout: workspace`, no repos), commits, announces. The devvm provisions them on its next run. |
+| not a member | present | CI **comments the row out** with a dated note, commits, announces. The devvm applies the reversible cut on its next run. |
+
+Commenting rather than deleting is deliberate: the engine treats commented and
+absent identically, so the row stays as a record and re-instating someone is one
+edit.
+
+### The floor tier, and the risk we are accepting
+
+The floor is the same default `provision-user.yml` already writes into
+`k8s_users`: `namespace-owner`, namespace named after the user. Anything above
+the floor — `power-user`, `admin`, extra namespaces, `repos`, `code_layout` —
+requires a reviewed commit, and `validate_tiers` still cross-checks it against
+Vault.
+
+**Accepted risk, chosen deliberately (Viktor, 2026-08-17):** an auto-created
+account is a Unix account with a shell on a shared host, and
+`homelab invite create --group "T3 Users"` can drop a brand-new Google self-signup
+into that group. So an invite code aimed at T3 Users becomes a shell account. The
+mitigation is not a gate but an audit trail — the same allow-then-audit model
+already used for emo's direct-master push: every auto-creation posts to Slack and
+files an infra issue naming the user, the group event and the tier it was given.
+If that ever feels too loose, skipping accounts carrying
+`attributes.proxy_only` (which the signup flow stamps) is a one-line change.
+
+### What the devvm gains
+
+1. **The roster is read from `origin/master`, not from a working tree.** Today
+   `WORKSTATION_DIR` points at `/home/wizard/code/infra/scripts/workstation` — the
+   admin's own checkout — so a pushed roster change does nothing until that tree
+   carries it, and `refresh_user_clone` bails on a dirty tree (`return 0` when
+   `status --porcelain` is non-empty), which the admin's tree usually is. Without
+   this fix the automation stalls silently: CI commits, the box never notices.
+   Step 0c fetches as `wizard` and materialises
+   `git show origin/master:scripts/workstation/roster.yaml` into
+   `/var/lib/t3-provision/roster.yaml`, falling back to today's path if the fetch
+   fails, so a network blip degrades to current behaviour rather than to nothing.
+2. **It consumes `offboard_plan`** and applies the reversible actions it already
+   computes: `disable_instance` (`t3-serve@`, `playwright-mcp@`,
+   `claude-auth-sync@`, `tl-t3-sync@`), `lock_login` (`passwd -l`), and
+   `unmap_dispatch` (already implicit in regenerating the three files).
+   `userdel_archive` stays out — never automatic, exactly as now.
+
+### What stays outside this automation
+
+- **`revoke_cluster_rbac`.** T3 Users means devvm access, not cluster access:
+  Anca is out of the group and still rightly owns the `plotting-book` namespace.
+  Tying cluster RBAC to a group is a separate decision with its own group.
+- **`Home Server Admins`**, which gates `terminal.viktorbarzin.me`. Not managed in
+  this repo, and it is a different grant from devvm access.
+- **The web terminal's sudo grant.** `terminal-lobby`'s
+  `devvm/sudoers.d-ttyd-users` stays hand-maintained (Viktor, 2026-08-17): the
+  roster says who exists, that file says which binaries may run as them. So a
+  freshly auto-provisioned user reaches the lobby and sees their sidebar, and
+  every attach fails until that grant is added and terminal-lobby is deployed.
+  The announcement CI posts on auto-creation says so, with the file path — this
+  is the one manual step that a new user's day depends on.
+
+## Failure modes
+
+| Failure | Behaviour |
+|---|---|
+| Authentik unreachable | the sync no-ops and says so; no roster change, nothing deprovisioned on a read failure |
+| A cron tick missed | the next one reconciles; the state is a diff, not an event stream |
+| CI cannot push | the pipeline fails loudly; the roster is unchanged, so the box keeps the last known-good state |
+| Someone hand-deletes a row while the user is in the group | the row is written back at the floor tier — access follows the group, by design |
+| The roster fetch on the box fails | falls back to the working-tree copy (today's behaviour) rather than acting on an empty roster |
+| Two sources disagree mid-flight | the box only ever acts on committed state, so a half-finished CI run cannot half-provision anyone |
+
+## Build order
+
+1. **Roster freshness on the devvm** (`t3-provision-users.sh` step 0c) — on its
+   own, and verifiable on its own: commit a roster change, confirm the hourly run
+   acts on it without touching any working tree. Everything else depends on this.
+2. **Consume `offboard_plan`** for the reversible cut, with `DRY_RUN` output first
+   so the actions can be read before they are applied.
+3. **`.woodpecker/t3-membership-sync.yml`** — Vault k8s auth, read the group, diff,
+   commit, announce. Register the `t3-membership-sync` cron (Woodpecker API, as
+   `drift-detection` and `renew-tls-certificate` are).
+4. **Drop `users` from `stacks/authentik/t3-users.tf`** so Terraform owns only the
+   group's existence, and the group's membership has exactly one author: whoever
+   adds or removes people in Authentik.
+5. **Docs**: the offboard runbook loses the two manual steps this automates; the
+   multi-tenancy architecture doc records Authentik as the user list and the
+   roster as the policy table.
+
+## Verification
+
+End-to-end on a throwaway identity rather than on a real person: create
+`t3probe@viktorbarzin.me` in Authentik, add it to T3 Users, and watch one cron
+tick produce a floor-tier roster row, a Slack post, an issue, and — after the
+devvm's next run — an account, a sticky port and a dispatch entry. Then remove it
+from the group and watch the row get commented, the units disabled, the login
+locked, and `t3-dispatch` answer 403 (allowing the 60-second dispatch reload).
+Then `userdel_archive` by hand to clean up, which also exercises the one path this
+automation deliberately never takes.
+
+## Open questions
+
+None blocking. One deferred by choice: whether cluster RBAC should eventually
+hang off its own Authentik group the same way, which would make `k8s_users` a
+derived artefact too and leave the estate with one user list rather than two and
+a half.
