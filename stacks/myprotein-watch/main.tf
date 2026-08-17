@@ -232,11 +232,12 @@ resource "kubernetes_cron_job_v1" "check" {
                 name  = "NEW_LOW_MARGIN"
                 value = "0.01"
               }
-              # Cookies and Cream is the favourite; the rest are flavours he
-              # said he wants to try (2026-08-15).
+              # Every flavour is in scope (2026-08-17): the four-flavour list
+              # meant a bargain on a fifth went unmentioned. Left unset rather
+              # than removed — setting it narrows again without a code change.
               env {
                 name  = "WATCH_FLAVOURS"
-                value = "Cookies and Cream,Cookie Crumble,Banana,Strawberry Cream"
+                value = ""
               }
 
               volume_mount {

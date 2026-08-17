@@ -88,15 +88,24 @@ DEEPER = "48.00"      # £23.19/kg — a new low AND >50% off
 
 STRAWBERRY = lambda price: variant(900001, "Strawberry Cream", "2.7kg - 90servings", price, FULL)
 COOKIES = lambda: variant(900002, "Cookies and Cream", "2.7kg - 90servings", FULL, FULL)
-UNWATCHED = lambda: variant(900003, "Vanilla", "2.7kg - 90servings", "20.00", FULL)
+# Never on the old four-flavour watchlist, and the cheapest thing on the page.
+# Under the all-flavours scope it is exactly what we now expect to hear about.
+OFFLIST = lambda: variant(900003, "Vanilla", "2.7kg - 90servings", "20.00", FULL)
+# A licensed collab: no published protein figure, so its £/kg is not something
+# we can assert. Priced to qualify on both counts if the guard were missing.
+UNVERIFIED = lambda: variant(900004, "Twix®", "1.05kg - 30servings", "16.00", FULL)
 
-PROMO = page("promo.html", [STRAWBERRY(SALE), COOKIES(), UNWATCHED()])
-DEEP = page("deep.html", [STRAWBERRY(DEEPER), COOKIES(), UNWATCHED()])
-QUIET = page("quiet.html", [STRAWBERRY(FULL), UNWATCHED()])   # no sale, C&C delisted again
+PROMO = page("promo.html", [STRAWBERRY(SALE), COOKIES(), OFFLIST()])
+DEEP = page("deep.html", [STRAWBERRY(DEEPER), COOKIES(), OFFLIST()])
+QUIET = page("quiet.html", [STRAWBERRY(FULL), OFFLIST()])   # no sale, C&C delisted again
+UNKNOWN_PROTEIN = page("unverified.html", [STRAWBERRY(FULL), UNVERIFIED()])
 
 
-def run(url, label):
-    """Invoke the real check.py exactly as the CronJob does."""
+def run(url, label, watch=""):
+    """Invoke the real check.py exactly as the CronJob does.
+
+    watch defaults to "" — the production setting, meaning every flavour.
+    """
     before = len(POSTS)
     env = {
         **os.environ,
@@ -107,7 +116,7 @@ def run(url, label):
         "THRESHOLD_PER_KG_PROTEIN": "28",
         "DEEP_DISCOUNT_PCT": "40",
         "NEW_LOW_MARGIN": "0.01",
-        "WATCH_FLAVOURS": "Cookies and Cream,Cookie Crumble,Banana,Strawberry Cream",
+        "WATCH_FLAVOURS": watch,
     }
     env.pop("DRY_RUN", None)
     r = subprocess.run([sys.executable, CHECK], env=env, capture_output=True, text=True)
@@ -152,7 +161,8 @@ expect(k["deal"], "DEAL fires — the price is inside Viktor's band")
 expect(k["discount"], "DISCOUNT fires — 44% off is past the 40% bar")
 expect(k["return"], "RETURN fires — Cookies and Cream is back on the Original line")
 expect(not k["low"], "no NEW LOW on first sighting (nothing to compare against yet)")
-expect("Vanilla" not in posts[0]["text"], "unwatched Vanilla stays out even though it is cheapest")
+expect("Vanilla" in posts[0]["text"],
+       "ALL FLAVOURS — Vanilla, never on the old watchlist, is reported now it is cheapest")
 expect("£26.57/kg protein" in posts[0]["text"], "message leads with £/kg of protein")
 expect(posts[0]["text"].startswith("*Cookies and Cream is back*"),
        "header leads with the C&C return — the bigger news when several triggers batch")
@@ -188,6 +198,31 @@ expect(k["deal"], "DEAL fires again — a lapsed deal is re-announced")
 expect(not k["low"], "no NEW LOW — £26.57/kg is not better than the £23.19/kg record")
 expect(posts[0]["text"].startswith("*Impact Whey is at your buying price*"),
        "with no return in the batch, the header names the buying price")
+
+# 6. A flavour whose protein figure is not published ---------------------------
+# The failure this guards against is silent: a Twix tub at £16.00 for 30 servings
+# looks like £23.19/kg protein IF you assume the 23 g ceiling, which would read
+# as inside Viktor's band. We do not know its protein content, so it must not
+# claim to be at his price — while still being reported as a big sale.
+r, posts = run(UNKNOWN_PROTEIN, "6. a licensed collab flavour, cheap and 84% off")
+k = kinds(posts)
+expect(r.returncode == 0, "run succeeds")
+expect(len(posts) == 1, "one Slack message")
+expect(k["discount"], "DISCOUNT fires — a big sale is a big sale, no protein figure needed")
+expect("Twix" in posts[0]["text"], "the Twix sale is named")
+expect(not k["deal"], "DEAL does NOT fire — we cannot claim it is at his price per gram")
+expect(not k["low"], "no NEW LOW — unverified flavours are kept out of the record")
+expect("low:900004" not in state(), "and out of cheapest-ever state entirely")
+
+# 7. The narrowing filter still works when set ---------------------------------
+# Kept as a supported knob, so it has to keep working: same page as scenario 1,
+# narrowed to one flavour.
+r, posts = run(page("narrow.html", [STRAWBERRY(SALE), OFFLIST()]),
+               "7. WATCH_FLAVOURS set to narrow back to one flavour",
+               watch="Strawberry Cream")
+expect(r.returncode == 0, "run succeeds")
+expect("Vanilla" not in "\n".join(p["text"] for p in posts),
+       "Vanilla is excluded again when a watchlist is explicitly configured")
 
 print("\n" + "=" * 70)
 if failures:
