@@ -143,6 +143,7 @@ All verified as-of 2026-07-08:
      lobby polled every ~5s per open tab. It was never considered for a
      carve-out — under a wildcard route there is no point at which a new host
      has to declare itself, so nothing surfaced it until the quota alert.
+     (The `terminal-dev` tier was retired later the same day, 2026-08-16.)
   2. **Hostnames that do not exist are billed too.** Every invented subdomain
      resolves through the `*` wildcard CNAME (ADR-0021), so a subdomain scan on
      2026-08-15 hit 34 non-existent hosts for 37,304 requests. Baseline scan
@@ -151,9 +152,10 @@ All verified as-of 2026-07-08:
   retry storm during a Nextcloud outage window) and a linkwarden client
   retry-looping on 401 (16,656/day).
   **Model now (Viktor's call):** the Worker runs ONLY on the hosts named in
-  `local.worker_covered_hosts` (115 browsable hosts) plus the apex. A host that
-  is new, or that does not exist at all, defaults to **no route** — so it costs
-  nothing and cannot regress the quota. This inverts both failure modes above;
+  `local.worker_covered_hosts` (116 entries: 115 browsable hosts + the
+  `test-failover` canary) plus the apex. A host that is new, or that does not
+  exist at all, defaults to **no route** — so it costs nothing and cannot
+  regress the quota. This inverts both failure modes above;
   the trade-off is that outage coverage is now opt-in, and a host left off the
   list shows Cloudflare's raw error during an outage. That is the intended
   direction: the quota is a hard daily cliff, while a missing styled page on a
@@ -161,10 +163,31 @@ All verified as-of 2026-07-08:
   gives ~29k invocations instead of 121k, with the scan contributing zero.
   Fail-open again held: past 100k the requests passed through rather than 1027ing,
   so nothing went down.
+  - **VERIFIED 2026-08-17 — the change works, and beat its own projection.**
+    Hourly invocations (`workersInvocationsAdaptive` by `datetimeHour`) fell from
+    ~4,700/h to ~320/h in the hour the allow-list was applied (2026-08-16 11:25
+    UTC) and have held there: **~324 req/h ≈ 7,800/day, 7.8% of the 100k quota**
+    (~13x headroom), against the ~29k/day projected just above. The projection
+    replayed per-host REQUEST counts; for the excluded hosts those run higher than
+    what the invocation dataset bills, so treat the measured figure as the real
+    one. Live state audited the same day: **117 routes** (the 116
+    `worker_covered_hosts` entries + apex) matching `worker.tf` with zero drift,
+    and `request_limit_fail_open=true` on all 117.
+    - When checking this later, read the **per-hour** series rather than daily
+      totals. The day a route change lands is a mixed day and understates the
+      effect: 2026-08-16 totalled 41,613, which is neither the pre- nor the
+      post-change rate.
+    - Cloudflare's own alert percentages lag the counter, and cluster around the
+      midnight-UTC reset. The 2026-08-15 breach sent alerts at 20:59 UTC (75%),
+      23:34 UTC (91%) and 00:03 UTC on 08-16 (93%) — all three reporting the same
+      08-15 day, on a day that finished at 121%. The last one is date-stamped
+      08-16 and so reads in a mailbox as a post-fix alert, although it predates
+      this change by 11h22m. Compare an alert's UTC timestamp against the deploy
+      time before concluding a quota fix regressed.
   - fail-open is now scripted rather than a manual PUT: `scripts/cf-worker-routes-fail-open`
     reconciles `request_limit_fail_open=true` across every worker-bearing route
     (`--check` reports drift without changing anything). Run it after any change
-    to the route list — 116 routes make a manual re-assert impractical.
+    to the route list — 117 routes make a manual re-assert impractical.
   - The same-zone grey-cloud `fetch()` failure still holds, so the page stays
     BAKED INTO the script (unchanged).
   - **Analytics injection REMOVED (same day).** Investigation found Rybbit is

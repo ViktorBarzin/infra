@@ -58,12 +58,17 @@ resource "cloudflare_worker_script" "outage_failover" {
 # That is the intended direction: the quota is a hard daily cliff, whereas
 # missing the styled page on a rarely-browsed host is cosmetic.
 #
-# Projected effect, replaying 2026-08-15 per-host request counts against this
-# list: roughly a quarter of that day's billed volume, with the scan
-# contributing zero. Treat the absolute number as approximate — Cloudflare's
-# per-host request dataset and its Workers invocation dataset differed by about
-# 2x that day, so the ratio is the reliable part, not the figure. Confirm
-# against actual invocations over the first few days.
+# MEASURED effect (2026-08-17, workersInvocationsAdaptive by datetimeHour).
+# Hourly invocations fell from ~4,700/h to ~320/h in the hour the allow-list was
+# applied (2026-08-16 11:25 UTC) and have held there since: ~324 req/h, i.e.
+# ~7,800/day or 7.8% of the 100k quota. That is well under the ~25%-of-prior-volume
+# this change was projected to reach — the projection replayed per-host REQUEST
+# counts, which for the excluded hosts overcounted what the invocation dataset
+# actually bills.
+#
+# Read the per-hour series, not daily totals, when checking this: the day a route
+# change lands is a mixed day and understates it (2026-08-16 totalled 41,613,
+# which is neither the pre- nor the post-change rate).
 #
 # Grey-cloud names (status, mx2, keyserver, turn, …) never hit any route at all —
 # routes only see proxied traffic.
