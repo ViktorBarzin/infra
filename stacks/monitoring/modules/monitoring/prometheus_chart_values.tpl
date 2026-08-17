@@ -4343,6 +4343,46 @@ serverFiles:
             annotations:
               summary: "pfSense VM (Proxmox VMID 101) is DOWN while the host is up"
               description: "The pfSense VM (qemu/101) reports down while the PVE host (node/pve) is up — the cluster has lost its single-point-of-failure gateway/NAT/DHCP/DNS (no HA). Start VM 101 from Proxmox immediately. Note: an in-guest reboot does NOT trip this (pve_up tracks the qemu process)."
+      - name: MyProtein Watch
+        rules:
+          # This watcher's NORMAL state is silence: it posts to #alerts only when
+          # a price actually qualifies, which may be months apart. So a broken
+          # watcher looks exactly like a quiet market, and the absence of alerts
+          # cannot be read as "no deals" without something else vouching for it.
+          #
+          # These two are that voucher. They cover every way the job can stop
+          # reporting — pod failing, run wedged, CronJob suspended, RBAC on its
+          # state ConfigMap revoked, or the product page changing shape (which
+          # exits non-zero on a zero-variant parse, by design).
+          #
+          # Not covered, and worth knowing: a run that succeeds while silently
+          # evaluating the wrong thing. Success here means "fetched, parsed and
+          # decided", not "decided correctly".
+          #
+          # NOTE: the generic JobFailed rule does NOT cover this job. Its
+          # `for: 2h` cannot be satisfied alongside its own
+          # `(time() - start_time) < 3600` guard, so it has 2047 pending series
+          # and 0 firing over 30d — measured 2026-08-17. That gap applies to
+          # every CronJob in the cluster and is not fixed here.
+          - alert: MyProteinWatchStale
+            # 13h ~= two missed 6h runs, matching TailscaleSubnetRouterProbeStale
+            # above. One transient failure recovers on the next run without
+            # saying anything.
+            expr: (time() - kube_cronjob_status_last_successful_time{cronjob="myprotein-watch", namespace="myprotein-watch"}) > 46800
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "MyProtein price watcher has not completed successfully in {{ $value | humanizeDuration }} (>2 missed 6h runs)"
+              description: "The myprotein-watch CronJob (every 6h, ns myprotein-watch) has no recent successful run, so price alerts are UNVERIFIED rather than absent — a deal could be running unreported. Check `kubectl -n myprotein-watch get jobs` and the last pod's logs. A zero-variant parse (exit 1) means the product page shape changed and check.py's parser needs updating; code + tests live in infra/stacks/myprotein-watch/."
+          - alert: MyProteinWatchNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="myprotein-watch", namespace="myprotein-watch"} == 0
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "MyProtein price watcher has never completed successfully"
+              description: "The myprotein-watch CronJob has no successful run on record. Most likely a deploy-time problem (bad ConfigMap script, missing SLACK_WEBHOOK_URL from ESO, or the ConfigMap-patch Role not applied) rather than a page change."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
