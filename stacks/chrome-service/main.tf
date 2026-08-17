@@ -194,13 +194,21 @@ resource "kubernetes_deployment" "chrome_service" {
       # Deliberate pin: the neko image is digest-pinned (local.neko_image) and
       # the sidecars track local.python_image, so a neko upgrade is a reviewed
       # bump rather than an automatic roll — a display regression here takes the
-      # hand-login surface with it. Opt out of Keel via this label; the
-      # inject-keel-annotations ClusterPolicy excludes workloads
-      # selector-matching keel.sh/policy=never.
-      "keel.sh/policy" = "never"
+      # hand-login surface with it. The Keel opt-out is the annotation below.
     })
     annotations = {
       "reloader.stakater.com/auto" = "true"
+      # Opt out of Keel. This was a LABEL in the merge above until 2026-08-17,
+      # when the inject-keel-annotations exclude moved off labels onto this
+      # annotation (a keel.sh/* label is drift — see
+      # stacks/kyverno/modules/kyverno/keel-annotations.tf).
+      #
+      # `ignore_changes` below covers this key, so declaring it here does not
+      # fight Kyverno on updates — but ignore_changes does not apply on CREATE,
+      # so a recreated Deployment still comes up opted out. That matters: the
+      # neko image is digest-pinned deliberately and an automatic roll would
+      # take the hand-login surface with it.
+      "keel.sh/policy" = "never"
     }
   }
   spec {
