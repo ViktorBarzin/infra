@@ -70,13 +70,13 @@ resource "kubernetes_deployment" "osrm-foot" {
     labels = {
       app  = "osrm-foot"
       tier = local.tiers.aux
-      # Keel opt-out (label = kyverno exclude, annotation = Keel itself). A
-      # floating :latest under the cluster-default patch policy is what silently
-      # froze wrongmove's celery on a five-month-old image; the image is pinned
-      # here and Terraform owns the tag.
-      "keel.sh/policy" = "never"
     }
     annotations = {
+      # Keel opt-out. A floating :latest under the cluster-default patch policy
+      # is what silently froze wrongmove's celery on a five-month-old image; the
+      # image is pinned here and Terraform owns the tag. The annotation is the
+      # whole opt-out since 2026-08-17 — it is what Keel reads and what the
+      # Kyverno exclude selects on.
       "keel.sh/policy" = "never"
     }
   }
@@ -179,13 +179,13 @@ resource "kubernetes_deployment" "osrm-bicycle" {
     labels = {
       app  = "osrm-bicycle"
       tier = local.tiers.aux
-      # Keel opt-out (label = kyverno exclude, annotation = Keel itself). A
-      # floating :latest under the cluster-default patch policy is what silently
-      # froze wrongmove's celery on a five-month-old image; the image is pinned
-      # here and Terraform owns the tag.
-      "keel.sh/policy" = "never"
     }
     annotations = {
+      # Keel opt-out. A floating :latest under the cluster-default patch policy
+      # is what silently froze wrongmove's celery on a five-month-old image; the
+      # image is pinned here and Terraform owns the tag. The annotation is the
+      # whole opt-out since 2026-08-17 — it is what Keel reads and what the
+      # Kyverno exclude selects on.
       "keel.sh/policy" = "never"
     }
   }

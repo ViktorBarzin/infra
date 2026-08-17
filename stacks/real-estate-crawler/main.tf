@@ -237,9 +237,6 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
     labels = {
       app  = "realestate-crawler-ui"
       tier = local.tiers.aux
-      # Keel opt-out: the LABEL puts this workload in the kyverno
-      # inject-keel-annotations exclude; the ANNOTATION stops Keel itself.
-      "keel.sh/policy" = "never"
     }
     annotations = {
       "keel.sh/policy" = "never" # CI owns the image tag (see namespace comment)
@@ -326,9 +323,6 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     labels = {
       app  = "realestate-crawler-api"
       tier = local.tiers.aux
-      # Keel opt-out: the LABEL puts this workload in the kyverno
-      # inject-keel-annotations exclude; the ANNOTATION stops Keel itself.
-      "keel.sh/policy" = "never"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
@@ -639,9 +633,6 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
     labels = {
       app  = "realestate-crawler-celery"
       tier = local.tiers.aux
-      # Keel opt-out: the LABEL puts this workload in the kyverno
-      # inject-keel-annotations exclude; the ANNOTATION stops Keel itself.
-      "keel.sh/policy" = "never"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
@@ -792,9 +783,6 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
     labels = {
       app  = "realestate-crawler-celery-beat"
       tier = local.tiers.aux
-      # Keel opt-out: the LABEL puts this workload in the kyverno
-      # inject-keel-annotations exclude; the ANNOTATION stops Keel itself.
-      "keel.sh/policy" = "never"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
