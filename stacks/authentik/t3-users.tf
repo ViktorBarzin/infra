@@ -33,8 +33,22 @@ data "authentik_user" "emo" {
 
 resource "authentik_group" "t3_users" {
   name = "T3 Users"
+  # BOOTSTRAP MEMBERSHIP ONLY (2026-08-17). Membership is now driven from
+  # Authentik itself — whoever adds or removes someone in the UI or over the API
+  # is the author, and `.woodpecker/t3-membership-sync.yml` reconciles the roster
+  # to match within 15 minutes. Terraform therefore stops asserting this list.
+  #
+  # `ignore_changes` rather than dropping the argument: these two ids are what
+  # makes a FRESH create safe (a group created empty while the edge gate is on
+  # locks everyone out, including wizard — the reason it was written atomically in
+  # the first place), and omitting the attribute risks the provider sending an
+  # empty list on the next apply. This way the create still seeds the two
+  # administrators and every later apply leaves live membership alone.
   users = [
     data.authentik_user.wizard.id,
     data.authentik_user.emo.id,
   ]
+  lifecycle {
+    ignore_changes = [users]
+  }
 }

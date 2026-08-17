@@ -1,0 +1,164 @@
+# Membership-driven provisioning: Authentik's "T3 Users" group is the one user
+# list for the devvm Workstation, and this keeps roster.yaml's policy rows in step
+# with it. Design: docs/plans/2026-08-17-t3-membership-driven-provisioning-design.md
+#
+# The split is forced rather than chosen. This pipeline holds the Authentik and
+# Forgejo credentials and cannot reach 10.0.10.10; the devvm can reach neither
+# Vault unattended nor Authentik. So the roster is the hand-off: CI decides WHO
+# should exist and commits it, and the box's hourly reconcile does the account
+# work from the committed roster (t3-provision-users step 0a).
+#
+# All the logic lives in roster_engine.py (pure, 78 pytest cases) behind one
+# `membership` subcommand. This file only fetches the group, calls it, and
+# commits — deliberately, so the decisions are testable and the YAML is not.
+#
+# The schedule lives in Woodpecker, not here — `GET/PATCH /api/repos/1/cron` —
+# so it is recorded in this comment to stay findable: cron name
+# `t3-membership-sync`, every 15 minutes. Also runnable by hand (event: manual)
+# when you want a membership change to land now rather than within the quarter
+# hour.
+#
+# Worst case if this pipeline is broken or paused: membership changes stop
+# reaching the box. Nothing is deprovisioned by accident, because the box acts on
+# the last COMMITTED roster and a failed run commits nothing.
+
+when:
+  - event: cron
+    cron: t3-membership-sync
+  - event: manual
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      partial: false
+
+steps:
+  - name: sync
+    image: alpine
+    commands:
+      - "apk add --quiet jq curl git git-crypt python3 py3-yaml"
+      # git-crypt: the roster itself is plaintext, but the repo has encrypted
+      # paths and git refuses to work cleanly against them locked.
+      - |
+        curl -k https://10.0.20.100:6443/api/v1/namespaces/woodpecker/configmaps/git-crypt-key \
+          -H "Authorization:Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+          | jq -r .data.key | base64 -d > /tmp/key
+        git-crypt unlock /tmp/key; rm -f /tmp/key
+      # Vault via the k8s service account, as provision-user.yml and renew-tls do.
+      - |
+        SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200
+        VAULT_TOKEN=$(curl -s -X POST "$VAULT_ADDR/v1/auth/kubernetes/login" \
+          -d "{\"role\":\"ci\",\"jwt\":\"$SA_TOKEN\"}" | jq -r .auth.client_token)
+        if [ -z "$VAULT_TOKEN" ] || [ "$VAULT_TOKEN" = "null" ]; then
+          echo "ERROR: Vault kubernetes login failed — cannot read the group"
+          exit 1
+        fi
+        echo "export VAULT_ADDR=$VAULT_ADDR" > /tmp/.venv
+        echo "export VAULT_TOKEN=$VAULT_TOKEN" >> /tmp/.venv
+      # Read the group. A read failure must NOT look like an empty group: an empty
+      # members list would deprovision everyone, so it is treated as a hard error.
+      - |
+        . /tmp/.venv
+        AK_TOKEN=$(curl -s -H "X-Vault-Token: $VAULT_TOKEN" \
+          "$VAULT_ADDR/v1/secret/data/viktor" | jq -r '.data.data.authentik_api_token')
+        GROUP=$(curl -s -G -H "Authorization: Bearer $AK_TOKEN" \
+          --data-urlencode 'name=T3 Users' \
+          https://authentik.viktorbarzin.me/api/v3/core/groups/)
+        COUNT=$(echo "$GROUP" | jq -r '.results | length')
+        if [ "$COUNT" != "1" ]; then
+          echo "ERROR: expected exactly one 'T3 Users' group, got $COUNT — refusing to diff"
+          exit 1
+        fi
+        echo "$GROUP" | jq -c '[.results[0].users_obj[].username]' > /tmp/members.json
+        if [ "$(jq -r 'length' /tmp/members.json)" = "0" ]; then
+          echo "ERROR: 'T3 Users' came back empty — refusing to deprovision everyone"
+          exit 1
+        fi
+        echo "group members: $(cat /tmp/members.json)"
+      # The diff + the roster edit, in the tested engine. Exit 1 here means a
+      # name conflict a human has to resolve; whatever was unambiguous is still
+      # written, so the run is worth committing either way.
+      #
+      # The plan lands in the WORKSPACE, not /tmp: every step is its own
+      # container and only the workspace is shared, so an announce step reading
+      # /tmp would find nothing. It is never staged, so it cannot be committed.
+      - |
+        set +e
+        python3 scripts/workstation/roster_engine.py membership \
+          --roster scripts/workstation/roster.yaml \
+          --group-members-json /tmp/members.json \
+          --apply --note "T3 Users membership change $(date -I) (t3-membership-sync)" \
+          > .membership-plan.json 2> /tmp/plan.err
+        echo "engine_rc=$?" > /tmp/rc.env
+        set -e
+        cat /tmp/plan.err || true
+        cat .membership-plan.json
+      # Commit only when the roster actually changed. Same recipe as renew-tls:
+      # the Forgejo credential comes from Vault (repo 1 has no Forgejo secret
+      # wired) and never enters the remote URL, so it cannot land in a log line.
+      - |
+        . /tmp/.venv
+        . /tmp/rc.env
+        if git diff --quiet -- scripts/workstation/roster.yaml; then
+          echo "roster unchanged — membership already in step"
+        else
+          CIG=$(curl -s -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/secret/data/ci/global")
+          FJ_USER=$(echo "$CIG" | jq -r .data.data.forgejo_user)
+          FJ_TOKEN=$(echo "$CIG" | jq -r .data.data.forgejo_repo_token)
+          if [ -z "$FJ_TOKEN" ] || [ "$FJ_TOKEN" = "null" ]; then
+            echo "ERROR: secret/ci/global has no forgejo_repo_token — roster change NOT recorded"
+            exit 1
+          fi
+          PROV=$(jq -r '[.provision[].os_user] | join(", ")' .membership-plan.json)
+          DEPROV=$(jq -r '.deprovision | join(", ")' .membership-plan.json)
+          umask 077
+          printf 'https://%s:%s@forgejo.viktorbarzin.me\n' "$FJ_USER" "$FJ_TOKEN" > /tmp/.gitcreds
+          git config credential.helper 'store --file=/tmp/.gitcreds'
+          git remote set-url origin https://forgejo.viktorbarzin.me/viktor/infra.git
+          git add scripts/workstation/roster.yaml
+          git -c user.email=ci@viktorbarzin.me -c user.name='Woodpecker CI' commit -m "$(printf 'workstation: T3 Users membership sync\n\nprovisioned: %s\ndeprovisioned: %s\n\nAuthentik group membership is the source of truth for who has devvm\naccess; this reconciles roster.yaml policy rows to match. Provisioned rows\nland at the floor tier (namespace-owner) and can be raised by a reviewed\ncommit. The devvm applies the account work on its next hourly reconcile.\n' "${PROV:-none}" "${DEPROV:-none}")"
+          git fetch origin master
+          if ! git rebase origin/master; then
+            git rebase --abort || true
+            rm -f /tmp/.gitcreds
+            echo "ERROR: rebase onto master failed — roster change NOT recorded"
+            exit 1
+          fi
+          git push origin HEAD:master
+          rm -f /tmp/.gitcreds
+          echo "recorded: provisioned=${PROV:-none} deprovisioned=${DEPROV:-none}"
+        fi
+        [ "$engine_rc" = "0" ] || { echo "ERROR: name conflict(s) above need a human"; exit 1; }
+
+  # Every auto-provision is announced rather than gated (the design's accepted
+  # risk: an invite code naming T3 Users becomes a shell account, so the audit
+  # trail is the control). The message names the one manual step a new user's
+  # terminal depends on — terminal-lobby's sudo grant stays hand-maintained.
+  - name: announce
+    image: alpine
+    commands:
+      - "apk add --quiet jq curl"
+      - |
+        [ -s .membership-plan.json ] || exit 0
+        PROV=$(jq -r '[.provision[].os_user] | join(", ")' .membership-plan.json)
+        DEPROV=$(jq -r '.deprovision | join(", ")' .membership-plan.json)
+        CONF=$(jq -r '.conflicts | join("; ")' .membership-plan.json)
+        [ -n "$PROV$DEPROV$CONF" ] || exit 0
+        TEXT="devvm membership sync — provisioned: ${PROV:-none} · deprovisioned: ${DEPROV:-none}"
+        if [ -n "$PROV" ]; then
+          TEXT="$(printf '%s\nNEW USER at the floor tier (namespace-owner) — raise it with a reviewed roster commit if needed.\nTheir terminal will not attach until terminal-lobby devvm/sudoers.d-ttyd-users gains their grant line and is deployed.' "$TEXT")"
+        fi
+        if [ -n "$CONF" ]; then
+          TEXT="$(printf '%s\nCONFLICT (needs a human): %s' "$TEXT" "$CONF")"
+        fi
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "$(jq -n --arg t "$TEXT" '{channel:"alerts", text:$t}')" \
+          "$SLACK_WEBHOOK" || true
+        echo "$TEXT"
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    when:
+      status: [success, failure]
