@@ -7,21 +7,28 @@ Barzin (decisions), Claude (research + design).
 
 Adding someone to the Authentik **T3 Users** group should provision them on the
 devvm; removing them should deprovision them. Today both directions are hand
-work in two repos, and the two lists drift — which is how, on 2026-08-17, a
-`deploy.sh` came within one run of locking `ancamilea` out of a lobby she was
-already being removed from, and how removing her took two commits, a manual
-reconcile and two propagation traps.
+work in two repos, and the two lists can drift. On 2026-08-17 that showed up
+twice: a stale copy of the identity map in `terminal-lobby` would have dropped
+`ancamilea` on the next deploy, and removing her took two commits, a manual
+reconcile, and two propagation traps that the runbook did not mention.
 
 Viktor's framing, and the decision this design rests on: **there should be a
 single source of truth for users, and Authentik should be that place.**
 
-## The distinction that makes it work
+```stats
+3 | user lists today
+5 | reversible actions already modelled
+0 | things consuming offboard_plan
+15 min | worst-case lag after this
+```
+
+## Who owns what
 
 Authentik is the source of truth for **who exists and who has access**. It is
 not the source of truth for **privilege**.
 
-- Group membership is one bit, and access is one bit. That is a clean fit, and
-  it is already how every other door in the estate works.
+- Group membership is one bit, and access is one bit — and that is already how
+  every other door in the estate works.
 - `tier` is a privilege grant — it decides cluster-admin versus read-only versus
   namespace-owner. `roster_engine.validate_tiers` compares it against Vault
   `k8s_users` and **aborts the reconcile** on a conflict. That check, the code
@@ -32,10 +39,10 @@ by user**. A row for someone not in the group is inert. The "who" then lives in
 exactly one place, which is what makes this one source of truth rather than the
 two lists we have now.
 
-A consequence worth stating plainly, because it inverts today's mental model:
-**deleting a roster row no longer removes access.** It resets that person's
-policy to the floor, and the reconciler will write the row back. Removing access
-means removing them from the group.
+> [!IMPORTANT]
+> This inverts today's mental model: **deleting a roster row no longer removes
+> access.** It resets that person's policy to the floor, and the reconciler writes
+> the row back. Removing access means removing them from the group.
 
 ## Where things stand today
 
@@ -44,7 +51,7 @@ means removing them from the group.
 | `roster.yaml` | source of truth for who + policy; 3 users (2 after today) |
 | Authentik `T3 Users` | second user list, hand-maintained in HCL (`stacks/authentik/t3-users.tf`) |
 | Vault `k8s_users` | third list, cluster RBAC; roster tier is validated against it |
-| `roster_engine.offboard_plan` | computes the five reversible actions — **nothing consumes it** |
+| `roster_engine.offboard_plan` | computes the five reversible actions; nothing consumes it today |
 | `t3-provision-users.sh` | applies the *provisioning* half; the offboard half is manual per the runbook |
 | `.woodpecker/provision-user.yml` | manual pipeline; drives Vault + the Authentik API for the **cluster** side, never the roster |
 | CI → devvm | no path exists; no pipeline reaches 10.0.10.10 |
@@ -114,15 +121,17 @@ the floor — `power-user`, `admin`, extra namespaces, `repos`, `code_layout` �
 requires a reviewed commit, and `validate_tiers` still cross-checks it against
 Vault.
 
-**Accepted risk, chosen deliberately (Viktor, 2026-08-17):** an auto-created
-account is a Unix account with a shell on a shared host, and
-`homelab invite create --group "T3 Users"` can drop a brand-new Google self-signup
-into that group. So an invite code aimed at T3 Users becomes a shell account. The
-mitigation is not a gate but an audit trail — the same allow-then-audit model
-already used for emo's direct-master push: every auto-creation posts to Slack and
-files an infra issue naming the user, the group event and the tier it was given.
-If that ever feels too loose, skipping accounts carrying
-`attributes.proxy_only` (which the signup flow stamps) is a one-line change.
+> [!CAUTION]
+> **Accepted risk, chosen deliberately (Viktor, 2026-08-17).** An auto-created
+> account is a Unix account with a shell on a shared host, and
+> `homelab invite create --group "T3 Users"` can drop a brand-new Google
+> self-signup into that group — so an invite code aimed at T3 Users becomes a
+> shell account. The mitigation is an audit trail rather than a gate, matching the
+> allow-then-audit model already used for emo's direct-master push: every
+> auto-creation posts to Slack and files an infra issue naming the user, the group
+> event and the tier it was given. If that ever feels too loose, skipping accounts
+> carrying `attributes.proxy_only` (which the signup flow stamps) is a one-line
+> change.
 
 ### What the devvm gains
 
@@ -131,7 +140,8 @@ If that ever feels too loose, skipping accounts carrying
    admin's own checkout — so a pushed roster change does nothing until that tree
    carries it, and `refresh_user_clone` bails on a dirty tree (`return 0` when
    `status --porcelain` is non-empty), which the admin's tree usually is. Without
-   this fix the automation stalls silently: CI commits, the box never notices.
+   this fix the chain stops here with no error anywhere: CI reports success and
+   the box keeps the previous roster.
    Step 0c fetches as `wizard` and materialises
    `git show origin/master:scripts/workstation/roster.yaml` into
    `/var/lib/t3-provision/roster.yaml`, falling back to today's path if the fetch
@@ -145,7 +155,7 @@ If that ever feels too loose, skipping accounts carrying
 ### What stays outside this automation
 
 - **`revoke_cluster_rbac`.** T3 Users means devvm access, not cluster access:
-  Anca is out of the group and still rightly owns the `plotting-book` namespace.
+  Anca is out of the group and still owns the `plotting-book` namespace.
   Tying cluster RBAC to a group is a separate decision with its own group.
 - **`Home Server Admins`**, which gates `terminal.viktorbarzin.me`. Not managed in
   this repo, and it is a different grant from devvm access.
@@ -154,8 +164,8 @@ If that ever feels too loose, skipping accounts carrying
   roster says who exists, that file says which binaries may run as them. So a
   freshly auto-provisioned user reaches the lobby and sees their sidebar, and
   every attach fails until that grant is added and terminal-lobby is deployed.
-  The announcement CI posts on auto-creation says so, with the file path — this
-  is the one manual step that a new user's day depends on.
+  The announcement CI posts on auto-creation says so, with the file path: until
+  it is done, a new user can open the lobby but not a terminal.
 
 ## Failure modes
 
@@ -163,7 +173,7 @@ If that ever feels too loose, skipping accounts carrying
 |---|---|
 | Authentik unreachable | the sync no-ops and says so; no roster change, nothing deprovisioned on a read failure |
 | A cron tick missed | the next one reconciles; the state is a diff, not an event stream |
-| CI cannot push | the pipeline fails loudly; the roster is unchanged, so the box keeps the last known-good state |
+| CI cannot push | the pipeline fails and reports it; the roster is unchanged, so the box keeps the last known-good state |
 | Someone hand-deletes a row while the user is in the group | the row is written back at the floor tier — access follows the group, by design |
 | The roster fetch on the box fails | falls back to the working-tree copy (today's behaviour) rather than acting on an empty roster |
 | Two sources disagree mid-flight | the box only ever acts on committed state, so a half-finished CI run cannot half-provision anyone |
