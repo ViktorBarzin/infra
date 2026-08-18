@@ -91,24 +91,35 @@ POLL_INTERVAL = 1.0
 # per five minutes. What it does track, per Cloudflare's own support guidance,
 # is the number of list CHANGES over time.
 #
-# The failure mode that follows is self-sustaining: a fixed retry cadence keeps
-# presenting the same change, and if attempts count toward that budget the
-# budget never refills. At the old */2 that was ~720 attempts a day to move a
-# five-entry list. This ladder makes each failure buy quiet instead of another
-# attempt, and resets the moment a write lands.
+# WHAT THE ALLOWANCE ACTUALLY IS (measured 2026-08-18 from the Cloudflare
+# account audit log, 45 days, n=13 successful writes). Writes land every
+# 3.0-4.9 days, mean ~3.4 — a strikingly regular refill:
 #
-# Ladder raised 2026-08-18 (was 30m/1h/2h/4h/6h). Measured that day: over the
-# trailing 240h there were 1,852 rate-limited attempts and exactly ONE
-# successful write. Three attempts spaced ~6h apart went 429, 429, then
-# succeeded, so the shorter rungs were spending attempts at intervals the
-# limiter does not accept; only the 6h rung was near the useful range. Starting
-# at 2h and capping at 12h keeps write attempts to a couple a day.
+#   07-08, 07-11, 07-15, 07-18, 07-21, 07-25, 07-28,
+#   08-01, 08-04, 08-07, 08-10, 08-15, 08-18
+#
+# The interval is UNCHANGED across a ~100x swing in how hard we pushed: the
+# first ten of those landed while the CronJob ran */2 (up to ~720 write
+# attempts a day), the last three under */15 plus the backoff ladder (a handful
+# a day). So rejected attempts do NOT appear to consume the allowance, and an
+# earlier reading of this file — that a fixed retry cadence "holds the budget
+# open" and never lets it refill — is not supported by the record. Nothing else
+# in the account competes for it either: the only other account writes in that
+# window were a burst of ~250 Worker route operations on 08-16 and occasional
+# ACME DNS records, and the 08-18 write still landed on time.
+#
+# So this ladder does NOT buy quota. What it buys is quiet: fewer pointless
+# attempts, less log noise, and no retry storm. Retuned 2026-08-18 from
+# 30m/1h/2h/4h/6h to 2h/6h/12h to match a ~3-day refill; nothing shorter could
+# ever have helped. The practical constraint to design around is that the edge
+# list accepts about ONE change every three days.
 #
 # Also established 2026-08-18: the limiter is per-ACCOUNT, not per-token — the
 # least-privilege sync token and the global API key are rejected alike, so
 # there is no credential to switch to. Reads are a separate, unthrottled bucket
-# (read_segments_list_items), which is why measuring drift on every run is free
-# and the schedule can stay well ahead of the write cadence.
+# (read_segments_list_items), which is why measuring drift on every run is free.
+# List-LEVEL operations are not gated at all: creating a list returns the
+# max-lists quota error (10019), not a 429.
 BACKOFF_LADDER = [7200, 21600, 43200]  # 2h, 6h, 12h (cap)
 PGW_JOB = "crowdsec-cf-list-sync"
 

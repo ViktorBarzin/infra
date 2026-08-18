@@ -271,10 +271,13 @@ resource "kubernetes_cron_job_v1" "crowdsec_cf_sync" {
     # advertises, and it is not counting requests per five minutes — it is
     # counting list CHANGES over a much longer window.
     #
-    # That makes a fixed retry cadence the wrong shape entirely: it presents
-    # the same change over and over, and if attempts count toward the budget
-    # they hold it open. The fix is in lapi_kv_sync.py — an exponential write
-    # backoff (2h/6h/12h, reset on success) persisted through Pushgateway
+    # Measured 2026-08-18 from the account audit log (45 days, n=13): writes
+    # land every 3.0-4.9 days, and that interval did NOT change across a ~100x
+    # swing in attempt rate. So rejected attempts do not appear to consume the
+    # allowance, and the earlier reading — that a fixed retry cadence holds the
+    # budget open — is not supported. The backoff in lapi_kv_sync.py
+    # (2h/6h/12h, reset on success, persisted through Pushgateway) therefore
+    # buys quiet rather than quota
     # — so a throttled stretch costs a handful of attempts a day rather than
     # one per run. The script also now expresses a reconciliation as ONE PUT of
     # the full desired set instead of a POST plus a DELETE, halving the changes

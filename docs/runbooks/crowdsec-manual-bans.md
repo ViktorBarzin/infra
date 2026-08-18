@@ -85,18 +85,40 @@ Measured 2026-08-18:
   waiting the advertised 60s is not sufficient.
 - The limiter is **per account, not per token**: a least-privilege token and the
   global API key were both rejected within seconds of each other.
-- Successful writes are very rare. Over 240h there were **1,852** rate-limited
-  attempts and **1** success. Three attempts spaced ~6h apart on 08-17/08-18
-  produced two rejections and then one success, so ~6h of quiet is not on its
-  own enough.
 - Reads are unaffected (`read_segments_list_items`, 1200 per 300s).
+- List-**level** operations are not gated at all: creating a list returns the
+  max-lists quota error (`10019`), not a 429. Only item writes are limited.
 
-Not established: whether rejected attempts themselves consume budget. The
-pattern is consistent with a slowly-refilling quota that the pre-2026-08-16
-cadence (a write attempt every 2 minutes whenever the list drifted) had drawn
-down, but that has not been proven. `lapi_kv_sync.py` now backs off
-exponentially (2h/6h/12h since 2026-08-18, persisted in Pushgateway) and the
-CronJob runs hourly, which keeps write attempts to a couple a day. The run
-cadence itself is not the lever — Cloudflare counts list changes, not requests —
-so runs stay frequent enough to keep the drift gauge fresh for the 6h
-`CrowdSecEdgeListDrifted` alert.
+**The allowance is about one change every three days.** From the Cloudflare
+account audit log over 45 days (n=13 successful writes), the intervals were
+3.0, 3.3, 3.2, 3.0, 3.8, 3.0, 4.0, 3.0, 3.1, 3.0, 4.9 and 3.2 days — mean ~3.4.
+
+That interval did not move across a ~100x change in how hard the job pushed:
+the first ten landed while the CronJob ran `*/2` (up to ~720 write attempts a
+day) and the last three under `*/15` plus the backoff ladder (a handful a day).
+On that evidence **rejected attempts do not consume the allowance** — it refills
+on a timer. An earlier reading, that a fixed retry cadence held the budget open,
+does not hold up, and neither does the idea that we were exhausting it: nothing
+else in the account competes for it either (the only other writes in the window
+were ~250 Worker route operations on 08-16 and occasional ACME DNS records, and
+the 08-18 list write still landed on time).
+
+One earlier figure in circulation is worth flagging as an artifact: "one
+successful write in ten days" came from grepping the job logs for `replaced
+list`, a message that only exists in the code deployed on 2026-08-16. Writes on
+08-10 and 08-15 succeeded too and logged differently. The audit log
+(`/accounts/{id}/audit_logs`, `resource.type=iplists`) is the reliable source —
+it records successes only, so it is also the honest way to measure the interval.
+
+The backoff ladder (2h/6h/12h since 2026-08-18, persisted in Pushgateway) and
+the hourly schedule therefore buy quiet, not quota: fewer pointless attempts and
+less log noise. Runs stay frequent enough to keep the drift gauge fresh for the
+6h `CrowdSecEdgeListDrifted` alert.
+
+**Design consequence.** A ~3-day mutation budget is a poor fit for a live ban
+channel: a ban created just after a window closes is not enforced at the edge
+until the next one, and lifting it waits the same. If edge bans need to be
+timely, the enforcement set is better expressed somewhere that is not
+quota-limited — the zone WAF rule expression itself accepts an inline IP set and
+`rulesets_update` calls are not throttled, which suits a set this small (~5
+entries, since CAPI is excluded and enforced in-kernel instead).

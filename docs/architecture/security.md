@@ -147,12 +147,22 @@ after 75s, 180s and 300s of complete silence fail identically, and `PUT`
 behaves exactly like `POST`. Measured directly on 2026-08-16 with the CronJob
 quiet.
 
-**What it appears to be.** A separate limiter counting list **changes** over a
-long window, which Cloudflare's own support guidance describes and which does
-not publish headers. The failure mode that follows is self-sustaining: a fixed
-retry cadence keeps presenting the same change, and if attempts count toward
-the budget the budget never refills. At `*/2` that was ~720 attempts a day to
-maintain a five-entry list.
+**What it appears to be.** A separate limiter counting list **changes**, which
+Cloudflare's own support guidance describes and which publishes no headers.
+
+**What it measures out at (2026-08-18, account audit log, 45 days, n=13).** One
+successful write every **3.0–4.9 days**, mean ~3.4. The interval is unchanged
+across a ~100x swing in attempt rate — the first ten of those landed under `*/2`
+(up to ~720 write attempts a day), the last three under `*/15` plus the backoff
+ladder. So rejected attempts do **not** appear to consume the allowance; it
+refills on a timer. An earlier reading in this document, that a fixed retry
+cadence keeps the budget from ever refilling, is not supported by that record.
+Nor are we crowding it out from elsewhere: the only other account writes in the
+window were ~250 Worker route operations on 08-16 and occasional ACME DNS
+records, and the 08-18 list write still landed on schedule.
+
+List-**level** operations are not gated at all — creating a list returns the
+max-lists quota error (`10019`), not a 429.
 
 The shape of the log history is the tell. Thousands of runs succeed with
 `[ok] block: +0 / -0` — those runs issue **no write**, because the list already
@@ -165,13 +175,15 @@ run that has something to write and then continue for hours or days.
   replaces the previous `POST`-then-`DELETE` pair, halving the changes spent
   per sync and removing the serialize-and-poll dance between them (Cloudflare
   permits one pending bulk op per account).
-- **Exponential write backoff** — 30m, 1h, 2h, 4h, 6h, reset on success —
-  persisted across runs through Pushgateway, so a throttled stretch costs a
-  handful of attempts a day rather than one per run. Reads continue during
-  backoff, so drift stays observable while writes are held.
+- **Exponential write backoff** — 2h, 6h, 12h since 2026-08-18 (was 30m to 6h),
+  reset on success — persisted across runs through Pushgateway. On the 3-day
+  measurement above this buys quiet rather than quota: fewer pointless attempts
+  and less log noise, not an earlier write. Reads continue during backoff, so
+  drift stays observable while writes are held.
 - **`backoff_limit=0`** and a `429` soft-skip (exit 0), unchanged from
-  2026-06-27. An earlier `backoff_limit=2` fired 3 rapid POSTs per cycle and
-  deepened the throttle.
+  2026-06-27. An earlier `backoff_limit=2` fired 3 rapid POSTs per cycle; that
+  was removed as wasteful. It was described here as deepening the throttle,
+  which the 3-day refill measurement does not support.
 - **Hourly schedule** (was `*/15` until 2026-08-18). Cloudflare counts list
   CHANGES, not runs, so the run cadence was never what provoked the 429s — the
   write ladder is. Runs stay frequent enough to keep the drift gauge fresh for
