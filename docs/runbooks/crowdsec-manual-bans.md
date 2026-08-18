@@ -16,31 +16,29 @@ be banned.
 
 ## Where a ban is enforced
 
-A LAPI decision reaches traffic by two independent paths, which is what makes a
-mistaken ban wide-reaching and slow to unwind:
+A LAPI decision reaches traffic by two independent paths, split by what can
+identify the client:
 
 ```mermaid
 flowchart LR
   A["cscli decision<br/>(LAPI)"] --> B["crowdsec-firewall-bouncer<br/>DaemonSet"]
-  A --> C["crowdsec-cf-sync CronJob<br/>(hourly)"]
-  B --> D["nftables DROP on nodes<br/>→ non-proxied hosts"]
-  C --> E["Cloudflare IP list<br/>crowdsec_ban"]
-  E --> F["zone WAF rule<br/>→ ~135 proxied hosts"]
+  A --> C["crowdsec middleware<br/>(in-process Traefik plugin,<br/>polls every 30s)"]
+  B --> D["nftables DROP on nodes<br/>→ direct hosts + non-HTTP ports"]
+  C --> E["403 on the websecure entrypoint<br/>→ every HTTP host, proxied included"]
 ```
 
+- The **Traefik bouncer** picks up a change within one 30s poll. Measured
+  2026-08-18: an unban took **33s** to take effect end to end.
 - The **firewall bouncer** picks up changes within about a minute.
-- The **Cloudflare edge list** is reconciled by `crowdsec-cf-sync`, and that
-  path can lag badly: Cloudflare answers Lists writes with HTTP 429 / code
-  10040, and in the ten days to 2026-08-18 the list took exactly **one**
-  successful write. Removing an address from LAPI does not promptly remove it
-  from the edge.
 
-Because of that asymmetry, a short expiry is the cheap option: it costs little
-when the ban is correct, and clears itself when it is not.
+Both apply to *any* address, internal ones included — see "A ban on an internal
+address" below, because that is the surprising case.
 
-Blocks intended to be long-lived belong in the external blocklist import in
-`stacks/crowdsec`, where they are visible in git and reviewable, rather than in
-an ad-hoc decision no one can find later.
+Until 2026-08-18 the proxied half of this was a Cloudflare IP List plus a zone WAF
+rule, reconciled by a `crowdsec-cf-sync` CronJob. That path could lag for days
+(the Lists API holds a hard ~72h floor between successful item writes), which is
+why this runbook used to be mostly about edge staleness. It is gone; the history
+is at the end, since the ban that motivated the cap was made under it.
 
 ## What the cap is for
 
@@ -58,24 +56,68 @@ same address since 08-16, so non-proxied hosts were affected earlier.
 
 Two things turned a misread into a multi-day outage: the 363-day expiry meant
 nothing would clear it on its own, and the edge list could not be corrected on
-demand. The 7-day cap addresses the first. The second is a property of the
-Cloudflare Lists quota — see below.
+demand. The 7-day cap addresses the first. The second no longer applies —
+enforcement moved into Traefik on 2026-08-18 and an unban now lands in ~33s.
 
-## If a proxied host still blocks after an unban
+The cap is still worth keeping, because the expensive part of that incident was
+not only the slow unwind. The address was misread as a third party from its
+reverse DNS, and a bounded expiry is what limits the damage of a misread: it costs
+little when the ban is correct and clears itself when it is not.
 
-1. Confirm LAPI no longer holds the decision: `homelab crowdsec decisions`.
-2. Confirm the node bouncer dropped it (it logs `N decision(s) deleted`):
+## If a host still blocks after an unban
+
+1. Confirm LAPI no longer holds the decision:
+   `kubectl -n crowdsec exec deploy/crowdsec-lapi -- cscli decisions list --ip <addr>`
+   should print `No active decisions`.
+2. Wait one poll. The Traefik bouncer refreshes every 30s; anything under ~35s is
+   simply not yet picked up.
+3. Check what the bouncer decided, which is logged per blocked request:
+
+   ```bash
+   homelab logs query '{namespace="traefik"} |= "crowdsec-bouncer"' --since 15m
+   ```
+
+   `action=block ip=… host=…` means it is still enforcing — check the `ip=` value,
+   since that is the address it actually judged (the real client from
+   `Cf-Connecting-Ip` for proxied traffic, the TCP peer otherwise), and it may not
+   be the one you unbanned. `action=dry-run-block` means the middleware is in dry
+   run and is not the cause of a block at all.
+4. Confirm the bouncer is polling at all — if it is not, it is serving a frozen
+   set and `CrowdSecL7BouncerNotPolling` should be firing:
+
+   ```bash
+   kubectl -n crowdsec exec deploy/crowdsec-lapi -- cscli bouncers list
+   ```
+
+   The `traefik` row's `last pull` should be within the last minute.
+5. For a direct host or a non-HTTP port, check the node bouncer instead (it logs
+   `N decision(s) deleted`):
    `kubectl logs -n crowdsec ds/crowdsec-firewall-bouncer --tail=20`.
-3. Check the edge list directly — this is usually where a stale entry survives:
-   `kubectl logs -n rybbit job/<latest crowdsec-cf-sync>` shows the intended
-   `drift` and whether the write was rate-limited.
+6. If it still blocks, rule out a different gate — rate-limit (429),
+   Authentik (302), Anubis, or an `ipAllowList` middleware. Only CrowdSec logs a
+   `[crowdsec-bouncer]` line.
 
-If the edge list cannot be written and someone is locked out, the WAF rule in
-`stacks/rybbit/crowdsec_edge.tf` can carry an explicit `ip.src ne <addr>`
-carve-out; the Rulesets API is not gated by the Lists limiter. That is a
-stopgap — remove the clause once the list drains.
+## A ban on an internal address
 
-## Cloudflare Lists write quota — what is known
+The `crowdsec-whitelist` configmap covers RFC1918, the tailnet and internal CIDRs,
+which makes it tempting to assume internal addresses cannot be banned. It is a
+**parser-stage** whitelist: it stops scenarios from *generating* a decision, and
+does nothing about one added by hand.
+
+`cscli decisions add --ip 10.0.10.10` is enforced in-kernel on every node, in both
+the `input` and `forward` hooks. Done on 2026-08-18 while testing, that blackholed
+the devvm's traffic to the cluster — including its DNS to Technitium, so the
+symptom was `Could not resolve host`, not a 403. `cscli decisions delete` restored
+it within ~3s.
+
+If you need to test enforcement, ban an address you are not routing through:
+`192.0.2.1` (TEST-NET-1) is reserved for exactly this.
+
+## History: the Cloudflare Lists write quota
+
+Kept because it is the measurement that retired the edge channel on 2026-08-18,
+and because the numbers took several passes to get right. None of this is on the
+enforcement path any more.
 
 Measured 2026-08-18:
 
@@ -89,11 +131,21 @@ Measured 2026-08-18:
 - List-**level** operations are not gated at all: creating a list returns the
   max-lists quota error (`10019`), not a 429. Only item writes are limited.
 
-**The allowance is about one change every three days.** From the Cloudflare
-account audit log over 45 days (n=13 successful writes), the intervals were
-3.0, 3.3, 3.2, 3.0, 3.8, 3.0, 4.0, 3.0, 3.1, 3.0, 4.9 and 3.2 days — mean ~3.4.
+**The allowance is a hard ~72-hour floor between successful writes.** Reading the
+audit log over the list's complete history (22 events, 16 intervals) rather than a
+45-day window: 8 of 16 intervals fall in `[72h, 72h+120s)`, **three land on
+exactly 259,200s**, and no interval anywhere sits between 4.5h and 72h. Longer
+gaps are explained by there being no drift when a window opened, so the floor —
+not the mean — is the statistic that describes the limiter. An earlier reading in
+this file gave "about one change every three days, mean ~3.4"; that is the same
+data with the floor averaged away.
 
-That interval did not move across a ~100x change in how hard the job pushed:
+Rejected attempts do not consume the budget: `08-01 01:12:03 → 08-04 01:12:03` is
+exactly 72h 0s with ~1,900 refusals in between. But every window in which drift
+existed was fully consumed — **the edge list disagreed with CrowdSec for 107 of
+216 observed hours over 30 days.**
+
+The interval did not move across a ~100x change in how hard the job pushed:
 the first ten landed while the CronJob ran `*/2` (up to ~720 write attempts a
 day) and the last three under `*/15` plus the backoff ladder (a handful a day).
 On that evidence **rejected attempts do not consume the allowance** — it refills
@@ -110,15 +162,17 @@ list`, a message that only exists in the code deployed on 2026-08-16. Writes on
 (`/accounts/{id}/audit_logs`, `resource.type=iplists`) is the reliable source —
 it records successes only, so it is also the honest way to measure the interval.
 
-The backoff ladder (2h/6h/12h since 2026-08-18, persisted in Pushgateway) and
-the hourly schedule therefore buy quiet, not quota: fewer pointless attempts and
-less log noise. Runs stay frequent enough to keep the drift gauge fresh for the
-6h `CrowdSecEdgeListDrifted` alert.
+The backoff ladder (2h/6h/12h) and the hourly schedule bought quiet, not quota:
+fewer pointless attempts and less log noise. Both are gone with the job. Worth
+recording for next time: a **deadline at `last_success + 72h`** would have been
+the correct tuning, and the ladder cost about 4h 25m of avoidable staleness on its
+last cycle.
 
-**Design consequence.** A ~3-day mutation budget is a poor fit for a live ban
-channel: a ban created just after a window closes is not enforced at the edge
-until the next one, and lifting it waits the same. If edge bans need to be
-timely, the enforcement set is better expressed somewhere that is not
-quota-limited — the zone WAF rule expression itself accepts an inline IP set and
-`rulesets_update` calls are not throttled, which suits a set this small (~5
-entries, since CAPI is excluded and enforced in-kernel instead).
+**Design consequence, and what was done about it.** A 72h mutation floor is not
+usable for a live ban channel: a ban created just after a window closes waits for
+the next one, and lifting it waits the same. Enforcement moved in-process into
+Traefik instead (`stacks/traefik/modules/traefik/crowdsec-bouncer-plugin/`), where
+the decision set is polled every 30s and nothing is rate-limited. An inline IP set
+in the WAF rule expression was the other option considered — `rulesets_update` is
+not throttled — but it keeps enforcement at the edge, where the client IP is all
+Cloudflare can offer and every change is still a zone-config write.

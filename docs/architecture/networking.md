@@ -286,7 +286,7 @@ out-of-band gate.
 ```mermaid
 sequenceDiagram
     participant Client
-    participant CFedge as Cloudflare (edge WAF: crowdsec_ban block)
+    participant CFedge as Cloudflare (edge: managed DDoS + Bot Fight)
     participant Cloudflared
     participant Traefik
     participant AntiAI
@@ -320,11 +320,13 @@ sequenceDiagram
 
 ### Middleware Chain
 
-CrowdSec IP-reputation enforcement is **not** in this chain — it is out-of-band
-(host nftables on direct hosts; the Cloudflare edge WAF `crowdsec_ban` rule on
-proxied hosts), so banned IPs never reach the chain and there is no per-request
-CrowdSec hop. Every ingress created by the `ingress_factory` module follows this
-Traefik chain:
+CrowdSec IP-reputation enforcement runs **ahead of** this chain, as an entrypoint
+middleware on `websecure` (`traefik-crowdsec@kubernetescrd`) rather than per
+ingress — so it covers every router on the entrypoint, including the catchall and
+the hand-rolled ingresses that never go through `ingress_factory`. It costs one
+in-memory map lookup per request and returns 403 on a hit. Direct hosts are also
+dropped in-kernel below Traefik by `cs-firewall-bouncer`. Every ingress created by
+the `ingress_factory` module then follows this Traefik chain:
 
 1. **Anti-AI bot-block** (`ai-bot-block` ForwardAuth, on by default via `ingress_factory`): blocks/tarpits known AI crawlers. **Fail-open** (currently a no-op `return 200` — poison-fountain scaled to 0; see `docs/architecture/security.md`).
 2. **Authentik Forward-Auth** (if `protected = true`): SSO authentication via OIDC. Non-authenticated users are redirected to login. Auth headers are stripped before forwarding to backend.
@@ -452,7 +454,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 | pfSense | `stacks/pfsense/` | VM + cloud-init config |
 | Technitium | `stacks/technitium/` | Deployment, Service, PVC |
 | Traefik | `stacks/platform/` (sub-module) | Helm release, IngressRoute CRDs |
-| CrowdSec | `stacks/crowdsec/` (+ edge in `stacks/rybbit/`) | Helm release, LAPI + agent; `cs-firewall-bouncer` DaemonSet (nftables, direct hosts) + Cloudflare edge sync (proxied hosts) |
+| CrowdSec | `stacks/crowdsec/` (+ the Traefik plugin in `stacks/traefik/`) | Helm release, LAPI + agent; `cs-firewall-bouncer` DaemonSet (nftables, direct hosts + non-HTTP) + the in-process `crowdsec` entrypoint middleware (all HTTP, incl. proxied) |
 | Authentik | `stacks/authentik/` | Helm release, ingress, OIDC configs |
 | MetalLB | `stacks/platform/` (sub-module) | Helm release, IPAddressPool |
 | Cloudflared | `stacks/cloudflared/` | Deployment (3 replicas), tunnel config; runs `--no-autoupdate` (in-place self-updates exited the pods and severed all tunnel WebSockets, 2026-06-09/10) |
@@ -540,30 +542,42 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 **Decision**: Technitium handles internal `.lan` domains with near-zero latency. Cloudflare handles public domains with global DNS. K8s nodes use Technitium as primary, which forwards non-.lan queries to Cloudflare.
 
-### Why CrowdSec Enforcement Is Out-of-Band (and Fails Open)
+### Why CrowdSec Enforces In Traefik for HTTP (and Fails Open)
 
-CrowdSec used to enforce inline as a Traefik middleware (the
-`crowdsec-bouncer-traefik-plugin`). On Traefik 3.7.5 the Yaegi plugin handler was
-never invoked, so it enforced nothing; the plugin was removed and enforcement
-moved off the request path entirely (full history in
-`docs/architecture/security.md`). It now runs on two surfaces:
+Enforcement is split by what can identify the client, and for web traffic that is
+only Traefik. Full history in `docs/architecture/security.md`.
 
-- **Direct hosts** → `cs-firewall-bouncer` DaemonSet drops banned IPs in the host
-  nftables, in **both the `input` and `forward` hooks**. The `forward` hook is
-  the load-bearing one: with Traefik on a dedicated LB IP at
+- **All HTTP (which means all proxied hosts)** → the in-process `crowdsec`
+  middleware on the `websecure` entrypoint. `cloudflare_proxied_names = []`, so
+  every HTTP host rides the zone wildcard and is proxied; proxied traffic arrives
+  from the in-cluster cloudflared pod, so at L3 the node sees `10.10.x.x` and a
+  host-level drop has nothing to match on. The plugin takes the client IP from the
+  unspoofable TCP peer — trusting `Cf-Connecting-Ip`/`X-Forwarded-For` only from
+  the cloudflared pod CIDR — which is the same peer-trust model as `real-ip`, and
+  is unimplementable in a ForwardAuth backend whose peer is always a Traefik pod.
+- **Direct hosts and non-HTTP ports** → `cs-firewall-bouncer` DaemonSet drops
+  banned IPs in the host nftables, in **both the `input` and `forward` hooks**. The
+  `forward` hook is the load-bearing one: with Traefik on a dedicated LB IP at
   `externalTrafficPolicy=Local`, client packets are DNAT'd to the Traefik **pod**
   and transit the node's `forward` chain (not `input`) — which is exactly why the
   ingress must preserve the **real client IP** end-to-end (ETP=Local + PROXY-v2
-  for IPv6; see the Traefik LB IP and IPv6 ingress notes above). Without the real
-  client IP the firewall-bouncer (and the CF edge rule) would have nothing to
-  match on.
-- **Proxied hosts** → a Cloudflare edge WAF rule (`ip.src in $crowdsec_ban`) fed
-  by the `crowdsec-cf-sync` CronJob.
+  for IPv6; see the Traefik LB IP and IPv6 ingress notes above). The same real
+  client IP is what the Traefik plugin reads for non-proxied requests.
 
-Both **fail open**: if LAPI is unreachable, the firewall-bouncer simply stops
-receiving new decisions (existing drops persist) and the CF sync skips a run —
-neither ever blocks legitimate traffic. Availability > strict bot blocking, and
-out-of-band enforcement adds **zero per-request latency** (no Traefik hop).
+Proxied hosts were enforced at the **Cloudflare edge** until 2026-08-18, via an IP
+List plus a zone WAF rule. That channel was retired because the Lists API holds a
+hard ~72h floor between successful item writes, which left the edge list
+disagreeing with CrowdSec for 107 of 216 observed hours; in-cluster the same unban
+now takes effect in ~33s. Cloudflare's managed DDoS L7 protection and Bot Fight
+Mode are unrelated to that and remain in place.
+
+Both surfaces **fail open**: if LAPI is unreachable the firewall-bouncer stops
+receiving new decisions (existing drops persist) and the Traefik plugin keeps
+serving its last known decision set — never blocking legitimate traffic.
+Availability > strict bot blocking. Fail-open being *structural* is why this is an
+in-process plugin and not a ForwardAuth: Traefik's `forward.go` returns 500/502
+when an auth backend is unreachable and offers no way to make that allow, which is
+why `auth-proxy` and `bot-block-proxy` exist as shims around it.
 
 ### Why HTTP/3 (QUIC)?
 
