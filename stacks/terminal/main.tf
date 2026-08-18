@@ -461,6 +461,13 @@ resource "kubernetes_endpoints" "session_events" {
 # /hooks/* is deliberately absent: it is loopback-only and must stay off the
 # public ingress.
 #
+# /search and /answer-text were added on 2026-08-18. /search finds text
+# anywhere in a session's transcript — the browser holds only the last 20 turns,
+# so the search has to run where the whole file is. /answer-text types the free
+# text of an "Other" answer into the pane without submitting it, which is the
+# one thing neither /keys (no letters, by design) nor /prompt (clears the line,
+# forces an Enter) can do.
+#
 # /earlier, /result, /pane and /keys were added on 2026-08-16 with the text
 # view's native render: older turns on demand, a capped tool result fetched in
 # full, the pane behind a blocking prompt, and the keystrokes that answer one
@@ -482,7 +489,7 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`))"
+        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`))"
         kind  = "Rule"
         middlewares = [
           {
