@@ -2,6 +2,31 @@
 
 **Status:** designed 2026-06-09, awaiting implementation. **Supersedes the *membership* model** of `2026-06-07-multi-user-workstation-design.md` (which used `roster.yaml` as the source of truth). Everything else in v1 stands unchanged — config inheritance (managed `claudeMd` + `~/.claude` symlinks), the per-user git-crypt-locked clone, the generic OIDC kubeconfig, swap, the `o-rx` admin-tree hardening, the emo cutover. This doc changes **only how workstation membership is defined and reconciled.**
 
+> **Amended 2026-08-17 — realised, with two deliberate differences.** Membership-driven
+> provisioning shipped on that date; see
+> [`2026-08-17-t3-membership-driven-provisioning-design.md`](./2026-08-17-t3-membership-driven-provisioning-design.md).
+> The goal this doc set — *group membership grants the workstation, in one place* — is
+> met. Two things were decided differently:
+>
+> 1. **`roster.yaml` was kept, not retired**, and demoted to a POLICY table keyed by
+>    user. A group carries one bit; `tier`, `namespaces`, `k8s_user`, `code_layout` and
+>    `repos` cannot live in it, and `tier` is a privilege grant that
+>    `validate_tiers` checks against Vault `k8s_users` and aborts on. Keeping those in a
+>    reviewed diff was Viktor's explicit call. A row for someone outside the group is
+>    inert, so "who" still lives in exactly one place.
+> 2. **CI reads Authentik, not the provisioner.** This doc's Task 3 mints a read-only
+>    Authentik token for the devvm; that was not built, because the box has no
+>    unattended credential path today (every timer run logs
+>    `k8s_users unreachable -> skipping tier validation`), while Woodpecker already
+>    authenticates to Vault with its k8s service account and drives the Authentik API.
+>    So `.woodpecker/t3-membership-sync.yml` does the reading and commits the roster,
+>    and the box acts on the committed file. **This doc's approach remains the
+>    alternative** if we later want the box to read Authentik directly — the token and
+>    policy sketched in Task 3 are still the way to do it.
+>
+> The email-derived `os_user` idea did land, as `os_name_for()` (sanitised, unix-safe,
+> identity kept verbatim), and so did the floor-tier default for a new member.
+
 ## Problem
 
 In v1 a workstation user is defined across three places with three identifiers (`os_user` / `authentik_user` / `k8s_user`, plus `email`): a git `roster.yaml`, a separate Authentik group, and Vault `k8s_users`. It's confusing and multi-place. Goal: **one definition, in Authentik, keyed by email; group membership grants the workstation.**
