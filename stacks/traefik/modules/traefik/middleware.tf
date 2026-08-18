@@ -633,12 +633,16 @@ resource "kubectl_manifest" "middleware_crowdsec" {
           # wall someone out of the login / WebAuthn flow they would need to fix
           # it. Carried over from the Cloudflare WAF rule this replaces.
           skipHosts = ["authentik.viktorbarzin.me", "public-auth.viktorbarzin.me"]
-          # DRY RUN: decide and log, never block. This is how the middleware
-          # first lands, so what it WOULD block can be measured before it does —
-          # the decision lines are `[crowdsec-bouncer] action=dry-run-block ...`
+          # ENFORCING. It landed as dryRun=true first and the measured window was
+          # clean: zero organic would-blocks in an hour, since the enforced set is
+          # currently the 4 non-CAPI decisions (cscli-import scanner IPs). The
+          # only dry-run hits were the deliberate test bans.
+          #
+          # Flip back to true to decide-and-log without blocking. Either way the
+          # decision lines are `[crowdsec-bouncer] action=block|dry-run-block ...`
           # on the traefik pods' stdout, which is also the alerting surface
           # (Prometheus counters are not cheaply available inside Yaegi).
-          dryRun = true
+          dryRun = false
         }
       }
     }
