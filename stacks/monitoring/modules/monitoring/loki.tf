@@ -685,6 +685,72 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           # "Rejecting ... registration is disabled"), so this matcher never
           # false-fires on the rejected attempts a closed server now produces.
           # lane=security routes it to the existing #security Slack receiver.
+          name = "CrowdSec L7 bouncer"
+          rules = [
+            {
+              # The in-process Traefik bouncer (stacks/traefik
+              # crowdsec-bouncer-plugin) runs under Yaegi, where Prometheus
+              # counters are not cheaply available, so its decisions are
+              # structured log lines and this is where they are alerted on.
+              # Liveness lives in prometheus_chart_values.tpl instead
+              # (CrowdSecL7BouncerNotPolling, off LAPI's per-bouncer counter).
+              #
+              # Fail-open means a LAPI outage is NOT an availability incident —
+              # traffic keeps flowing on the last known decision set. It is a
+              # staleness incident: nothing new is enforced and an unban does not
+              # take effect. 30m before firing, since a single failed poll during
+              # a LAPI roll is routine and the next one 30s later recovers.
+              alert = "CrowdSecL7BouncerRefreshFailing"
+              expr  = "sum(count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=refresh-failed\" [15m])) > 0"
+              for   = "30m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "Traefik CrowdSec bouncer cannot reach LAPI — serving a stale ban set"
+                description = <<-EOT
+                  The bouncer has been failing to refresh decisions for 30m. It
+                  fails OPEN on the last known set, so nothing is being blocked
+                  that was not already blocked, and legitimate traffic is
+                  unaffected — but a new ban will not be enforced and a DELETED
+                  ban will keep blocking. The log line carries the underlying
+                  error; a connection refused usually means crowdsec-lapi.
+                EOT
+              }
+            },
+            {
+              # The feedback loop this guards: blocked requests now reach Traefik
+              # and are access-logged, so a burst of 403s can itself trip
+              # crowdsecurity/http-403-abuse, whose profile notifies per decision.
+              # A false-positive ban on a busy shared address would show up here
+              # first, as sustained blocking on one IP across many hosts.
+              #
+              # Threshold is deliberately loose: the enforced set is currently the
+              # 4 non-CAPI decisions, and normal scanner traffic against a banned
+              # IP is a handful of requests. Re-derive it before enabling CAPI —
+              # 22.7k community bans will change the baseline completely.
+              alert = "CrowdSecL7BlockBurst"
+              expr  = "sum by (ip) (count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=block\" | regexp \"ip=(?P<ip>[^ ]+)\" [15m])) > 200"
+              for   = "15m"
+              labels = {
+                severity = "info"
+              }
+              annotations = {
+                summary     = "CrowdSec bouncer has blocked {{ $labels.ip }} over 200 times in 15m"
+                description = <<-EOT
+                  Either a real attacker persisting against a ban, or a false
+                  positive on an address that carries legitimate traffic — a
+                  NAT/CGNAT egress, or one of our own. Check what the address is
+                  before assuming: our own London WAN egress was hand-banned on
+                  2026-08-16 exactly this way. `cscli decisions list --ip <ip>`
+                  shows the scenario that decided it, and `cscli decisions delete
+                  --ip <ip>` takes effect within one 30s poll.
+                EOT
+              }
+            },
+          ]
+        },
+        {
           name = "Matrix"
           rules = [
             {
@@ -702,8 +768,8 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # negligible. Non-matching lines would aggregate into one
               # empty-label series, which reads as an unnamed signup rather than
               # silently vanishing.
-              expr   = "sum by (mxid, client_ip, device) (count_over_time({namespace=\"matrix\",container=\"matrix\"} |= \"registered on this server\" | regexp `New user \"(?P<mxid>[^\"]+)\" registered on this server from IP (?P<client_ip>\\S+) with device name (?P<device>.*)` [10m])) > 0"
-              for = "0m"
+              expr = "sum by (mxid, client_ip, device) (count_over_time({namespace=\"matrix\",container=\"matrix\"} |= \"registered on this server\" | regexp `New user \"(?P<mxid>[^\"]+)\" registered on this server from IP (?P<client_ip>\\S+) with device name (?P<device>.*)` [10m])) > 0"
+              for  = "0m"
               # Raised info -> warning on 2026-08-15 when registration was closed.
               # While signups were open this fired on every routine stranger and
               # info was right; on a closed server a signup should only happen
