@@ -172,9 +172,12 @@ run that has something to write and then continue for hours or days.
 - **`backoff_limit=0`** and a `429` soft-skip (exit 0), unchanged from
   2026-06-27. An earlier `backoff_limit=2` fired 3 rapid POSTs per cycle and
   deepened the throttle.
-- **`*/15` schedule.** With writes gated by the ladder, frequent runs are cheap
-  and buy back freshness: a new ban reaches the edge within ~15 min when the
-  API is healthy.
+- **Hourly schedule** (was `*/15` until 2026-08-18). Cloudflare counts list
+  CHANGES, not runs, so the run cadence was never what provoked the 429s — the
+  write ladder is. Runs stay frequent enough to keep the drift gauge fresh for
+  the 6h `CrowdSecEdgeListDrifted` window; a much slower schedule would start
+  blinding that alert rather than saving quota. A new ban reaches the edge
+  within ~1h when the API is healthy.
 
 **The exposure while it is stuck**, stated plainly: a newly-detected attacker
 reaches Cloudflare-**proxied** hosts until the write lands. Direct hosts are
@@ -185,10 +188,10 @@ the client.
 **Alerting (added 2026-08-16).** The sync had no alert on it at all, which is
 why it sat broken for days at a time unnoticed; `crowdsec_cf_list_sync_success`
 was being pushed as `0` correctly the whole time and nothing read it. Three
-rules now do: `CrowdSecEdgeSyncFailing` (no clean write in 2h),
+rules now do: `CrowdSecEdgeSyncFailing` (no clean write in 6h),
 `CrowdSecEdgeListDrifted` (edge list disagrees with LAPI for 6h — this is the
 one that tracks real exposure, since a run can succeed at doing nothing) and
-`CrowdSecEdgeSyncStale` (job not running at all for 90m).
+`CrowdSecEdgeSyncStale` (job not running at all for 3h).
 - **Block-only, ban-only**: the single-list limit precludes a separate
   captcha/managed-challenge list, and the sync pushes **ban decisions only** —
   captcha-type decisions are NOT synced or enforced anywhere (the interactive

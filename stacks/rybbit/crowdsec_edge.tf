@@ -246,7 +246,9 @@ resource "kubernetes_cron_job_v1" "crowdsec_cf_sync" {
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    # */15 since 2026-08-16 (was */2 all day, then 0 */12 for a few hours).
+    # Hourly since 2026-08-18; */15 from 2026-08-16 (was */2 all day, then
+    # 0 */12 for a few hours). See the schedule argument below for why the run
+    # cadence is not the lever that governs the 429s.
     #
     # The cadence was never the whole story, and the 12h reading of it was
     # wrong. What the logs actually show, over 30 days:
@@ -272,24 +274,34 @@ resource "kubernetes_cron_job_v1" "crowdsec_cf_sync" {
     # That makes a fixed retry cadence the wrong shape entirely: it presents
     # the same change over and over, and if attempts count toward the budget
     # they hold it open. The fix is in lapi_kv_sync.py — an exponential write
-    # backoff (30m/1h/2h/4h/6h, reset on success) persisted through Pushgateway
+    # backoff (2h/6h/12h, reset on success) persisted through Pushgateway
     # — so a throttled stretch costs a handful of attempts a day rather than
     # one per run. The script also now expresses a reconciliation as ONE PUT of
     # the full desired set instead of a POST plus a DELETE, halving the changes
     # per sync.
     #
-    # With writes gated, frequent runs are cheap again and buy back freshness:
-    # a new ban reaches the edge within ~15 min when the API is healthy,
-    # instead of waiting up to 12h. That window matters only for
-    # Cloudflare-PROXIED hosts — the nftables bouncer cannot cover those (it
-    # sees the tunnel, not the client) but still drops banned IPs in-kernel on
-    # direct hosts within seconds.
+    # With writes gated, runs are cheap: a no-drift run issues no write at all,
+    # and the read side is a separate, unthrottled bucket. That window matters
+    # only for Cloudflare-PROXIED hosts — the nftables bouncer cannot cover
+    # those (it sees the tunnel, not the client) but still drops banned IPs
+    # in-kernel on direct hosts within seconds.
     #
     # The silence is the part that actually hurt: crowdsec_cf_list_sync_success
     # has been pushed correctly as 0 the whole time and nothing was watching
-    # it. Alerts on that metric, and on the new drift gauge, landed with this
-    # change.
-    schedule = "*/15 * * * *"
+    # it. Alerts on that metric, and on the drift gauge, landed with that
+    # change and did fire for the 2026-08-18 incident.
+    #
+    # Hourly since 2026-08-18 (was */15), at Viktor's request to sync less
+    # often after a false-positive ban on our own WAN IP reached the edge. Worth
+    # being explicit about what this does and does not change: Cloudflare counts
+    # list CHANGES, not runs, so the run cadence was never what provoked the
+    # 429s — the write ladder is. Measured that day, the */15 schedule was
+    # already producing only ~4-6 write attempts a day because the ladder
+    # absorbed the rest. The slowdown that matters is the ladder moving to
+    # 2h/6h/12h. Hourly runs keep drift measurement fresh enough for the 6h
+    # CrowdSecEdgeListDrifted alert while cutting run volume 4x; going much
+    # slower would start blinding that alert rather than saving quota.
+    schedule = "0 * * * *"
     # Sized for the cadence: a missed start is worth catching up on, but not
     # hours later. (Was 110s at */2, then 3600s at 12h.)
     starting_deadline_seconds = 300
