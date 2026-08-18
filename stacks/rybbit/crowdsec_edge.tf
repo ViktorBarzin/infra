@@ -1,5 +1,14 @@
 # =============================================================================
-# CrowdSec edge enforcement for Cloudflare-PROXIED hosts — control plane
+# CrowdSec edge enforcement for Cloudflare-PROXIED hosts — BEING RETIRED
+# =============================================================================
+# Enforcement for proxied hosts now happens IN-CLUSTER, at the Traefik websecure
+# entrypoint (stacks/traefik: crowdsec-bouncer-plugin + the `crowdsec`
+# Middleware). This file is mid-removal: the zone WAF block rule is already gone
+# (see below), and the list, the API token and the sync CronJob follow. The
+# ruleset resource itself is preserved and detached rather than destroyed.
+#
+# The original design notes are kept below for the history of why the edge was
+# used at all, and why it could not be kept.
 # =============================================================================
 # Proxied hosts terminate at the Cloudflare edge, so the in-cluster CrowdSec
 # bouncer (which keys on the real client IP seen by Traefik) never gets to
@@ -91,9 +100,9 @@ resource "cloudflare_list" "crowdsec_ban" {
 # Cloudflare allows only ONE entrypoint ruleset per zone+phase, and the zone
 # already has the stock `default` http_request_firewall_custom ruleset (created
 # out-of-band, id 106a1342bc88454ea59c47ad3431fe0e). Creating a second one fails
-# the singleton constraint, so we IMPORT the existing ruleset and manage all of
-# its rules here: our CrowdSec ban/captcha rules FIRST, and the pre-existing
-# (currently disabled) skip rule preserved verbatim below it.
+# the singleton constraint, so the existing ruleset was IMPORTED and its rules
+# managed here. Only the pre-existing (currently disabled) skip rule is left; the
+# CrowdSec block rule has been removed now that enforcement is in-cluster.
 import {
   to = cloudflare_ruleset.crowdsec
   id = "zone/fd2c5dd4efe8fe38958944e74d0ced6d/106a1342bc88454ea59c47ad3431fe0e"
@@ -105,40 +114,27 @@ resource "cloudflare_ruleset" "crowdsec" {
   kind    = "zone"
   phase   = "http_request_firewall_custom"
 
-  # The WAF rule references the IP list by name ($crowdsec_ban), so the list
-  # must exist before this ruleset is created/updated.
-  depends_on = [cloudflare_list.crowdsec_ban]
-
-  # CrowdSec ban — block every IP in the single edge list, EXCEPT on the
-  # Authentik auth hosts. The sync (lapi_kv_sync.py) now writes ONLY "ban"
-  # decisions into crowdsec_ban — captcha is no longer downgraded to a hard
-  # block. The auth-host carve-out guarantees a CrowdSec hit can never wall a
-  # user out of the login / WebAuthn flow they authenticate through: without it,
-  # a false-positive ban would 403 the passkey ceremony + session-refresh XHRs
-  # on every proxied host, auth included. 2026-06-20.
+  # The CrowdSec block rule that used to live here is GONE: enforcement moved
+  # in-cluster to the Traefik entrypoint bouncer (stacks/traefik —
+  # crowdsec-bouncer-plugin + the `crowdsec` Middleware), which sees the real
+  # client IP for proxied hosts and applies a decision within one 30s poll.
   #
-  # HOME-EGRESS CARVE-OUT (2026-08-18). 137.220.71.46 is our own London WAN
-  # egress IP. On 2026-08-16 it was hand-banned via `cscli decisions add` for
-  # 363 days: a Linkwarden /api/v1/search 401 retry loop was traced to it, and
-  # its reverse DNS (71.220.137.46.bcube.co.uk) read as an unrelated third
-  # party rather than as our own ISP's PTR domain. The traffic was our own Mac
-  # (Nextcloud desktop client + browser).
+  # The edge channel could not keep up with LAPI at all: the Cloudflare Lists API
+  # holds a hard ~72h floor between successful item writes (8 of 16 observed
+  # intervals landed in [72h, 72h+120s), three of them at exactly 259,200s, and
+  # nothing between 4.5h and 72h), which left the edge list disagreeing with
+  # CrowdSec for 107 of 216 observed hours. It also could not be corrected in an
+  # emergency: a hand-written ban on our own London WAN egress reached the edge
+  # two days later and blocked every proxied host, and the fix had to be a
+  # temporary `ip.src ne 137.220.71.46` clause in this rule because the list
+  # itself was unwritable for days. Both the block rule and that carve-out go
+  # away together, and removing them needs no Lists write.
   #
-  # The LAPI decision is deleted, so the sync WANTS to drop the IP from the
-  # edge list — but Cloudflare answers every Lists write with HTTP 429 / code
-  # 10040 and the list has taken exactly ONE successful write in 10 days
-  # (2026-08-18 05:45 UTC — the one that pushed this ban to the edge). Until
-  # that quota recovers the list cannot be corrected, so the carve-out is
-  # expressed in the RULE, which is not subject to the Lists limiter.
-  #
-  # Remove this clause once `crowdsec_ban` no longer contains the IP. It is a
-  # dynamic address, so it also stops being meaningful if the WAN IP changes.
-  rules {
-    action      = "block"
-    expression  = "(ip.src in $crowdsec_ban) and not (http.host in {\"authentik.viktorbarzin.me\" \"public-auth.viktorbarzin.me\"}) and ip.src ne 137.220.71.46"
-    description = "CrowdSec: block banned IPs (auth hosts carved out)"
-    enabled     = true
-  }
+  # This RESOURCE deliberately stays, holding only the skip rule below. It is the
+  # zone's `default` http_request_firewall_custom PHASE ENTRYPOINT (id
+  # 106a1342bc88454ea59c47ad3431fe0e), so deleting it would wipe the zone's
+  # entire custom-rules phase. It is detached from state in a second step, with
+  # `removed { lifecycle { destroy = false } }`.
   # Pre-existing rule, imported and preserved verbatim (currently disabled).
   # NOTE: Cloudflare auto-attaches logging{enabled=true} to skip rules. It must
   # be declared here to match live, otherwise editing the OTHER rule re-sends
