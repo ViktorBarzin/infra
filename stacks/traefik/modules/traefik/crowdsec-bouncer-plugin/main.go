@@ -471,6 +471,12 @@ func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http
 
 	key := lapiURL + "\x00" + lapiKey + "\x00" + strings.Join(origins, ",") + "\x00" + strconv.Itoa(int(interval/time.Second))
 	b.store = sharedStore(key, func(s *store) {
+		// Logged HERE, not once per New(): Traefik rebuilds the middleware chain
+		// on every dynamic-config reload, which on this cluster is ~285 times an
+		// hour — a per-New() line was pure noise, and it is also the reason the
+		// poller is shared rather than started per instance.
+		b.logf(fmt.Sprintf("[crowdsec-bouncer] action=started name=%s lapi=%s interval=%s dryRun=%t origins=%s skipHosts=%d",
+			name, lapiURL, interval, b.dryRun, strings.Join(origins, ","), len(b.skipHosts)))
 		// Load once synchronously so the first request through a fresh Traefik
 		// pod is already enforced instead of failing open for a whole interval.
 		if err := s.refresh(client, lapiURL, lapiKey, origins, b.logf); err != nil {
@@ -478,9 +484,6 @@ func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http
 		}
 		go s.poll(client, lapiURL, lapiKey, origins, interval, b.logf)
 	})
-
-	b.logf(fmt.Sprintf("[crowdsec-bouncer] action=started name=%s lapi=%s interval=%s dryRun=%t origins=%s skipHosts=%d",
-		name, lapiURL, interval, b.dryRun, strings.Join(origins, ","), len(b.skipHosts)))
 	return b, nil
 }
 
