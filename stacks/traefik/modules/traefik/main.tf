@@ -146,7 +146,28 @@ resource "helm_release" "traefik" {
           tls = {
             enabled = true
           }
+          # Entrypoint middlewares are PREPENDED to every router on websecure, so
+          # this covers all ~195 Ingresses, the 10 IngressRoutes and the catchall
+          # — including the hand-rolled ingresses that never go through
+          # ingress_factory. That reach is the point: doing it per-ingress via the
+          # factory would fan a modules/ change out over 33 platform + ~95 app
+          # stacks applied serially, and lock-contended stacks are SKIPPED rather
+          # than failed, which would leave some ingresses on the old chain.
+          #
+          # crowdsec comes first so a banned client is rejected before any
+          # compression work. It only gates HTTP on this entrypoint: the
+          # api/dashboard/ping routers live on the `traefik` entrypoint (:8080),
+          # the two IngressRouteTCPs have their own entrypoints, and there is no
+          # ACME/HTTP-01 path through Traefik at all (no certResolver anywhere —
+          # certs come from the renew-tls Woodpecker cron).
+          #
+          # ORDERING: never leave a router referencing a Middleware that does not
+          # exist. The `crowdsec` Middleware (middleware.tf) is created before
+          # this reference is added, and `entryPoints` is STATIC config — changing
+          # it is a helm upgrade plus a 3-replica roll, not an annotation edit, so
+          # a rollback here costs minutes rather than seconds.
           middlewares = [
+            "traefik-crowdsec@kubernetescrd",
             "traefik-compress@kubernetescrd",
           ]
         }
