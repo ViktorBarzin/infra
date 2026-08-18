@@ -39,13 +39,9 @@
 # down to just the preserved skip rule (applied separately), and is detached from
 # state here rather than destroyed.
 #
-# This `removed` block can be deleted once it has applied; it is inert afterwards.
+# The `removed { from = cloudflare_ruleset.crowdsec  lifecycle { destroy = false } }`
+# block that performed that detach has applied and been deleted — it is inert once
+# the resource is out of state. This file is kept as comments only, so that the
+# next person to wonder why a zone ruleset we clearly once managed is absent from
+# Terraform finds the answer here rather than in git history.
 # =============================================================================
-
-removed {
-  from = cloudflare_ruleset.crowdsec
-
-  lifecycle {
-    destroy = false
-  }
-}
