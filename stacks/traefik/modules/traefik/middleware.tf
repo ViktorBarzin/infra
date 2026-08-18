@@ -580,6 +580,73 @@ resource "kubectl_manifest" "middleware_real_ip" {
   depends_on = [helm_release.traefik]
 }
 
+# crowdsec: enforces CrowdSec ban decisions in-process. Attached to the
+# `websecure` ENTRYPOINT (main.tf), not to individual routers, so it covers all
+# ~195 Ingresses, the 10 IngressRoutes and the catchall without per-ingress
+# wiring — including the hand-rolled ingresses that bypass ingress_factory.
+#
+# Why in-process rather than the Cloudflare edge: every HTTP host in the zone is
+# proxied (`cloudflare_proxied_names = []`), so proxied traffic reaches Traefik
+# from the cloudflared pod and the L3 nftables bouncer only ever sees 10.10.x.x.
+# The edge channel that covered those hosts is throttled by a hard 72h floor
+# between successful Lists-API writes, so the edge list disagreed with LAPI for
+# 107 of 216 observed hours. Here a decision lands within one poll (~30s).
+#
+# Why not ForwardAuth: Traefik's forward.go answers 500/502 when the auth backend
+# is unreachable with no option to allow (which is why auth-proxy and
+# bot-block-proxy exist as shims), and a ForwardAuth backend's RemoteAddr is
+# always a Traefik pod, so it cannot tell a real Cf-Connecting-Ip from a spoofed
+# one. In-process both problems disappear.
+#
+# MUST be kubectl_manifest, NOT kubernetes_manifest: a plugin-shaped Middleware
+# spec (spec.plugin.<name>) breaks kubernetes_manifest's type inference and
+# taints on every apply — same reason real-ip and sablier use kubectl.
+resource "kubectl_manifest" "middleware_crowdsec" {
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "crowdsec"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      plugin = {
+        crowdsec = {
+          lapiUrl = "http://crowdsec-service.crowdsec.svc.cluster.local:8080"
+          lapiKey = var.crowdsec_bouncer_key
+          # Fresh enough that an unban is felt immediately (the whole point of
+          # moving off the edge), cheap because the origin filter below keeps the
+          # response at a few KB.
+          pollSeconds = 30
+          # Origins to ENFORCE. CAPI is deliberately ABSENT: it is ~22.7k
+          # community bans that have never been enforced on proxied hosts, and
+          # its false positives (CGNAT, carrier ranges) would land as
+          # user-visible 403s. It is already dropped in-kernel on direct hosts by
+          # cs-firewall-bouncer. Adding "CAPI" enables it — measure in dryRun
+          # first, and note the snapshot then weighs ~3MB per poll.
+          origins = ["crowdsec", "cscli", "cscli-import", "lists", "console"]
+          # Trust Cf-Connecting-Ip / X-Forwarded-For ONLY from the cloudflared pod
+          # peer; any other peer is judged on its own unspoofable TCP address.
+          # Same model and same CIDR as real-ip.
+          trustedProxyCIDRs = ["10.10.0.0/16"]
+          # Never gate the auth hosts: a false-positive ban must not be able to
+          # wall someone out of the login / WebAuthn flow they would need to fix
+          # it. Carried over from the Cloudflare WAF rule this replaces.
+          skipHosts = ["authentik.viktorbarzin.me", "public-auth.viktorbarzin.me"]
+          # DRY RUN: decide and log, never block. This is how the middleware
+          # first lands, so what it WOULD block can be measured before it does —
+          # the decision lines are `[crowdsec-bouncer] action=dry-run-block ...`
+          # on the traefik pods' stdout, which is also the alerting surface
+          # (Prometheus counters are not cheaply available inside Yaegi).
+          dryRun = true
+        }
+      }
+    }
+  })
+
+  depends_on = [helm_release.traefik]
+}
+
 # X-Robots-Tag header to discourage compliant AI crawlers
 resource "kubernetes_manifest" "middleware_anti_ai_headers" {
   manifest = {
