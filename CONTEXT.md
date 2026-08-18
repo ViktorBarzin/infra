@@ -166,8 +166,8 @@ The channel by which non-proxied **public domain** traffic reaches the cluster, 
 _Avoid_: "the tunnel" without "Cloudflared" (could mean Headscale).
 
 **Ingress chain**:
-The opinionated stack of Traefik middlewares that `ingress_factory` layers onto every Ingress. Slots, in order: forward-auth (per **Ingress auth**) → anti-AI scraping (default-on when no Authentik is in the path) → CrowdSec bouncer (fail-open) → retry (2× / 100ms) → rate-limit (429, not 503). Adding or removing a middleware is a Stack-level choice, but the chain order is convention.
-_Avoid_: "middleware list", "Traefik chain". The Anubis PoW gate is upstream of this chain, not inside it.
+The opinionated stack of Traefik middlewares that `ingress_factory` layers onto every Ingress. Slots, in order: forward-auth (per **Ingress auth**) → anti-AI scraping (default-on when no Authentik is in the path) → retry (2× / 100ms) → rate-limit (429, not 503). Adding or removing a middleware is a Stack-level choice, but the chain order is convention.
+_Avoid_: "middleware list", "Traefik chain". The Anubis PoW gate is upstream of this chain, not inside it. So is the **CrowdSec bouncer** (fail-open): it is an ENTRYPOINT middleware on `websecure`, prepended to every router on the entrypoint, so it is deliberately not one of these per-Ingress slots — that is what lets it cover the catchall and the hand-rolled ingresses too.
 
 **MetalLB / LB IP**:
 The bare-metal load-balancer that assigns external IPs to `type=LoadBalancer` Services. Two IPs matter: the **shared LB IP** `10.0.20.200` (~10 services — PG state-backend, headscale, wireguard, coturn, xray… — all `externalTrafficPolicy: Cluster`) and **Traefik's dedicated LB IP** `10.0.20.203` (`externalTrafficPolicy: Local`). Traefik runs on its own IP because ETP:Local preserves the **real client IP** (for CrowdSec) and enables QUIC, and MetalLB forbids mixed ETP on one shared IP.
