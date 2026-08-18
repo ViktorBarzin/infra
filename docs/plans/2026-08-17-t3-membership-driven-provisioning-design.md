@@ -22,6 +22,31 @@ single source of truth for users, and Authentik should be that place.**
 15 min | worst-case lag after this
 ```
 
+## Prior art
+
+This was designed once before, on 2026-06-09
+(`2026-06-09-workstation-authentik-membership-{design,plan}.md`, "Workstation
+Membership v2"), with the same goal and never implemented. It was found during the
+2026-08-17 wrap-up rather than during this design's research, which is a miss worth
+recording: it reached the same conclusion about Authentik owning membership, and it
+proposed a route this design rejected for a reason that plan had already solved.
+
+Where the two differ:
+
+| | 2026-06-09 | shipped 2026-08-17 |
+|---|---|---|
+| `roster.yaml` | retired | kept, demoted to a policy table |
+| Who reads the group | the devvm provisioner, with a read-only Authentik token minted in Terraform (its Task 3) | Woodpecker CI, which already holds a Vault credential |
+| `os_user` from an email | `derive_os_user()` | `os_name_for()` — same idea |
+| Floor default for a new member | yes | yes |
+
+The roster was kept because a group cannot carry `tier`, `namespaces`, `k8s_user`,
+`code_layout` or `repos`, and `tier` is a privilege grant that `validate_tiers`
+checks against Vault `k8s_users`. The reader moved to CI because the devvm has no
+unattended credential today — but that is exactly what the older plan's Task 3
+would have provided, so **if the box should ever read Authentik directly, that token
+and policy are the way to do it.**
+
 ## Who owns what
 
 Authentik is the source of truth for **who exists and who has access**. It is
