@@ -116,9 +116,26 @@ resource "cloudflare_ruleset" "crowdsec" {
   # user out of the login / WebAuthn flow they authenticate through: without it,
   # a false-positive ban would 403 the passkey ceremony + session-refresh XHRs
   # on every proxied host, auth included. 2026-06-20.
+  #
+  # HOME-EGRESS CARVE-OUT (2026-08-18). 137.220.71.46 is our own London WAN
+  # egress IP. On 2026-08-16 it was hand-banned via `cscli decisions add` for
+  # 363 days: a Linkwarden /api/v1/search 401 retry loop was traced to it, and
+  # its reverse DNS (71.220.137.46.bcube.co.uk) read as an unrelated third
+  # party rather than as our own ISP's PTR domain. The traffic was our own Mac
+  # (Nextcloud desktop client + browser).
+  #
+  # The LAPI decision is deleted, so the sync WANTS to drop the IP from the
+  # edge list — but Cloudflare answers every Lists write with HTTP 429 / code
+  # 10040 and the list has taken exactly ONE successful write in 10 days
+  # (2026-08-18 05:45 UTC — the one that pushed this ban to the edge). Until
+  # that quota recovers the list cannot be corrected, so the carve-out is
+  # expressed in the RULE, which is not subject to the Lists limiter.
+  #
+  # Remove this clause once `crowdsec_ban` no longer contains the IP. It is a
+  # dynamic address, so it also stops being meaningful if the WAN IP changes.
   rules {
     action      = "block"
-    expression  = "(ip.src in $crowdsec_ban) and not (http.host in {\"authentik.viktorbarzin.me\" \"public-auth.viktorbarzin.me\"})"
+    expression  = "(ip.src in $crowdsec_ban) and not (http.host in {\"authentik.viktorbarzin.me\" \"public-auth.viktorbarzin.me\"}) and ip.src ne 137.220.71.46"
     description = "CrowdSec: block banned IPs (auth hosts carved out)"
     enabled     = true
   }
