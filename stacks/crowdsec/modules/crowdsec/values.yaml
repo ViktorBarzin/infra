@@ -132,10 +132,20 @@ lapi:
         secretKeyRef:
           name: crowdsec-lapi-secrets
           key: dbPassword
-    # Real enforcement path that replaces the dead Traefik Yaegi plugin:
-    #   kvsync   -> LAPI->Cloudflare-KV sync CronJob (proxied hosts, edge Worker)
-    #   firewall -> cs-firewall-bouncer DaemonSet (direct hosts, in-kernel nftables drop)
-    # Registered at LAPI startup (idempotent across the 3 replicas / restarts).
+    # Enforcement bouncers, registered at LAPI startup (idempotent across the 3
+    # replicas / restarts):
+    #   traefik  -> in-process Traefik plugin on the websecure entrypoint. This
+    #               is the only layer that sees the real client IP for
+    #               Cloudflare-PROXIED hosts, which is every HTTP host in the
+    #               zone, so it is where public web traffic is actually enforced.
+    #   firewall -> cs-firewall-bouncer DaemonSet (direct hosts, in-kernel
+    #               nftables drop; sees only the tunnel for proxied traffic).
+    #   kvsync   -> LAPI->Cloudflare-list sync CronJob. Being retired: the
+    #               Cloudflare Lists API enforces a hard 72h floor between
+    #               successful writes, which left the edge list disagreeing with
+    #               LAPI for 107 of 216 observed hours.
+    - name: BOUNCER_KEY_traefik
+      value: "${TRAEFIK_CROWDSEC_API_KEY}"
     - name: BOUNCER_KEY_kvsync
       value: "${KVSYNC_CROWDSEC_API_KEY}"
     - name: BOUNCER_KEY_firewall
