@@ -60,6 +60,20 @@ agent:
       mountPath: /etc/crowdsec/scenarios/http-429-abuse.yaml
       subPath: "http-429-abuse.yaml"
       readonly: true
+    # These two REPLACE the hub symlink at the same path, which is what makes
+    # them an override rather than a second scenario with a duplicate name. A
+    # ConfigMap key on its own is inert — the mount is what lands the file.
+    # subPath mounts do not refresh on a ConfigMap change, so editing one of
+    # these only takes effect when the agent pods restart; changing this list
+    # does that by itself.
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/http-probing.yaml
+      subPath: "http-probing.yaml"
+      readonly: true
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/http-crawl-non_statics.yaml
+      subPath: "http-crawl-non_statics.yaml"
+      readonly: true
     - name: whitelist
       mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml
       subPath: "whitelist.yaml"
