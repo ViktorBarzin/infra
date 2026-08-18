@@ -16,11 +16,6 @@ variable "tier" { type = string }
 variable "slack_webhook_url" { type = string }
 variable "mysql_host" { type = string }
 variable "postgresql_host" { type = string }
-variable "kvsync_bouncer_key" {
-  type        = string
-  sensitive   = true
-  description = "API key for the LAPI->Cloudflare-KV sync job (proxied-edge control plane). Seeded into LAPI via BOUNCER_KEY_kvsync; the rybbit-stack CronJob presents the same key to pull decisions."
-}
 variable "firewall_bouncer_key" {
   type        = string
   sensitive   = true
@@ -77,6 +72,67 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
         behavior: abusive_403
         remediation: true
     YAML
+    # ---------------------------------------------------------------------
+    # Two hub scenarios re-declared LOCALLY to fix their groupby. Upstream both
+    # group by "evt.Meta.source_ip + '/' + evt.Parsed.target_fqdn", but the
+    # traefik CLF parser never creates target_fqdn — verified with `cscli explain`
+    # on a real access-log line: the field is absent from evt.Parsed entirely,
+    # while traefik_router_name is populated
+    # ("forgejo-forgejo-forgejo-viktorbarzin-me@kubernetes"). The same finding is
+    # why the nextcloud-webdav whitelist below is scoped by traefik_router_name.
+    #
+    # So the key collapses to "<ip>/" and every host shares ONE bucket per IP.
+    # That is more aggressive than upstream intends, not less: 10 distinct 404
+    # paths spread across ten different hosts look identical to 10 probes against
+    # one. Grouping by router restores the per-host partitioning upstream is
+    # written for, which is a LOOSENING — it removes cross-host false positives
+    # rather than adding detections.
+    #
+    # These are verbatim copies of the hub definitions with ONLY groupby changed,
+    # so they need re-diffing against the hub when crowdsec's collections update.
+    "http-probing.yaml" : <<-YAML
+      # 404 scan
+      type: leaky
+      name: crowdsecurity/http-probing
+      description: "Detect site scanning/probing from a single ip"
+      filter: "evt.Meta.service == 'http' && evt.Meta.http_status in ['404', '403', '400'] && evt.Parsed.static_ressource == 'false'"
+      groupby: "evt.Meta.source_ip + '/' + evt.Parsed.traefik_router_name"
+      distinct: "evt.Meta.http_path"
+      capacity: 10
+      reprocess: true
+      leakspeed: "10s"
+      blackhole: 5m
+      labels:
+        remediation: true
+        classification:
+          - attack.T1595
+        behavior: "http:scan"
+        label: "HTTP Probing"
+        spoofable: 0
+        service: http
+        confidence: 1
+      YAML
+    "http-crawl-non_statics.yaml" : <<-YAML
+      type: leaky
+      name: crowdsecurity/http-crawl-non_statics
+      description: "Detect aggressive crawl on non static resources"
+      filter: "evt.Meta.log_type in ['http_access-log', 'http_error-log'] && evt.Parsed.static_ressource == 'false' && evt.Parsed.verb in ['GET', 'HEAD']"
+      distinct: "evt.Parsed.file_name"
+      leakspeed: 0.5s
+      capacity: 40
+      cache_size: 5
+      groupby: "evt.Meta.source_ip + '/' + evt.Parsed.traefik_router_name"
+      blackhole: 1m
+      labels:
+        confidence: 1
+        spoofable: 0
+        classification:
+          - attack.T1595
+        behavior: "http:crawl"
+        service: http
+        label: "Aggressive Crawl"
+        remediation: true
+      YAML
     "http-429-abuse.yaml" : <<-YAML
       type: leaky
       name: crowdsecurity/http-429-abuse
@@ -181,7 +237,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, KVSYNC_CROWDSEC_API_KEY = var.kvsync_bouncer_key, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key })]
+  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key })]
   timeout       = 1200
   wait          = true
   wait_for_jobs = true
