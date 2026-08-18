@@ -22,7 +22,7 @@ mistaken ban wide-reaching and slow to unwind:
 ```mermaid
 flowchart LR
   A["cscli decision<br/>(LAPI)"] --> B["crowdsec-firewall-bouncer<br/>DaemonSet"]
-  A --> C["crowdsec-cf-sync CronJob<br/>(*/15)"]
+  A --> C["crowdsec-cf-sync CronJob<br/>(hourly)"]
   B --> D["nftables DROP on nodes<br/>→ non-proxied hosts"]
   C --> E["Cloudflare IP list<br/>crowdsec_ban"]
   E --> F["zone WAF rule<br/>→ ~135 proxied hosts"]
@@ -95,5 +95,8 @@ Not established: whether rejected attempts themselves consume budget. The
 pattern is consistent with a slowly-refilling quota that the pre-2026-08-16
 cadence (a write attempt every 2 minutes whenever the list drifted) had drawn
 down, but that has not been proven. `lapi_kv_sync.py` now backs off
-exponentially (30m/1h/2h/4h/6h, persisted in Pushgateway) and the CronJob runs
-`*/15`, which keeps attempts to a handful a day either way.
+exponentially (2h/6h/12h since 2026-08-18, persisted in Pushgateway) and the
+CronJob runs hourly, which keeps write attempts to a couple a day. The run
+cadence itself is not the lever — Cloudflare counts list changes, not requests —
+so runs stay frequent enough to keep the drift gauge fresh for the 6h
+`CrowdSecEdgeListDrifted` alert.

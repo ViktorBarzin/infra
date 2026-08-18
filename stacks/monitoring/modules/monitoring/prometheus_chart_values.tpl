@@ -2467,20 +2467,23 @@ serverFiles:
           #     A run can succeed at doing nothing (the write is deliberately
           #     held back during backoff) while drift sits above 0 for hours.
           #     This is the one that tracks actual exposure.
+          # 6h, not 2h: since 2026-08-18 the write ladder's FIRST rung is 2h, so a
+          # single refused write holds sync_success at 0 for 2h by design. A 2h
+          # window would fire on the backoff behaving correctly.
           - alert: CrowdSecEdgeSyncFailing
             expr: crowdsec_cf_list_sync_success == 0
-            for: 2h
+            for: 6h
             keep_firing_for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "CrowdSec -> Cloudflare edge sync failing for 2h — proxied hosts not getting new bans"
+              summary: "CrowdSec -> Cloudflare edge sync failing for 6h — proxied hosts not getting new bans"
               description: >-
                 The crowdsec-cf-sync CronJob has not completed a clean
-                Cloudflare write in 2h. Usually HTTP 429 code 10040 on the
+                Cloudflare write in 6h. Usually HTTP 429 code 10040 on the
                 Lists API, which throttles list CHANGES over a long window and
                 has held for days at a time. The script backs off
-                (30m/1h/2h/4h/6h) rather than retrying every run; check
+                (2h/6h/12h) rather than retrying every run; check
                 crowdsec_cf_list_write_fail_streak for how deep it is. Banned
                 IPs still drop in-kernel on DIRECT hosts via the
                 cs-firewall-bouncer — only Cloudflare-PROXIED hosts are
@@ -2506,12 +2509,12 @@ serverFiles:
           # Pushgateway never expires a sample, so a stopped CronJob leaves the
           # last value frozen and looking healthy. Age is the only honest test.
           - alert: CrowdSecEdgeSyncStale
-            expr: time() - crowdsec_cf_list_sync_last_run_seconds > 5400
+            expr: time() - crowdsec_cf_list_sync_last_run_seconds > 10800
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "crowdsec-cf-sync has not run in 90m (schedule is */15)"
+              summary: "crowdsec-cf-sync has not run in 3h (schedule is hourly)"
               description: >-
                 The job stopped running entirely rather than failing — a
                 suspended CronJob, an unschedulable pod, or a wedged run under

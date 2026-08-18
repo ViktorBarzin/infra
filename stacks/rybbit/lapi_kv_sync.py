@@ -96,7 +96,20 @@ POLL_INTERVAL = 1.0
 # budget never refills. At the old */2 that was ~720 attempts a day to move a
 # five-entry list. This ladder makes each failure buy quiet instead of another
 # attempt, and resets the moment a write lands.
-BACKOFF_LADDER = [1800, 3600, 7200, 14400, 21600]  # 30m, 1h, 2h, 4h, 6h (cap)
+#
+# Ladder raised 2026-08-18 (was 30m/1h/2h/4h/6h). Measured that day: over the
+# trailing 240h there were 1,852 rate-limited attempts and exactly ONE
+# successful write. Three attempts spaced ~6h apart went 429, 429, then
+# succeeded, so the shorter rungs were spending attempts at intervals the
+# limiter does not accept; only the 6h rung was near the useful range. Starting
+# at 2h and capping at 12h keeps write attempts to a couple a day.
+#
+# Also established 2026-08-18: the limiter is per-ACCOUNT, not per-token — the
+# least-privilege sync token and the global API key are rejected alike, so
+# there is no credential to switch to. Reads are a separate, unthrottled bucket
+# (read_segments_list_items), which is why measuring drift on every run is free
+# and the schedule can stay well ahead of the write cadence.
+BACKOFF_LADDER = [7200, 21600, 43200]  # 2h, 6h, 12h (cap)
 PGW_JOB = "crowdsec-cf-list-sync"
 
 

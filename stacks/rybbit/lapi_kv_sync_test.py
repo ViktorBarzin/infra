@@ -162,8 +162,11 @@ def test_backoff_grows_up_the_ladder_then_caps(monkeypatch):
         k.main()
         waits.append(round(rec.pushes[-1]["backoff_until"] - before))
 
-    assert waits[:5] == k.BACKOFF_LADDER            # 30m, 1h, 2h, 4h, 6h
-    assert waits[5:] == [k.BACKOFF_LADDER[-1]] * 3  # capped, never unbounded
+    # Length-agnostic: the ladder's rungs are tuning, not behaviour. Hardcoding
+    # 5 here meant retuning the ladder broke this test for the wrong reason.
+    n = len(k.BACKOFF_LADDER)
+    assert waits[:n] == k.BACKOFF_LADDER
+    assert waits[n:] == [k.BACKOFF_LADDER[-1]] * (8 - n)  # capped, never unbounded
 
 
 def test_hold_skips_the_write_but_still_reports_drift(monkeypatch):
