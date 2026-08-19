@@ -582,6 +582,79 @@ resource "kubernetes_manifest" "file_api_ingressroute" {
 # whitelist). AUTHED (unlike the public fonts/manifest/icons carve-out): the SPA
 # frames it same-origin so the session cookie flows; the terminal connection it
 # opens (/ws + /token) stays authed on ttyd regardless. NO strip — clipboard
+# --- skills-api (:7688) ------------------------------------------------------
+# The skill manager's backend (terminal-lobby ADR-0011). Same shape as file-api:
+# a Service with hand-written Endpoints at the DevVM, and an authed IngressRoute
+# that does NOT strip the prefix, because the service's own routes already carry
+# /skills. It is a separate service rather than more surface on session-events so
+# that releasing it cannot drop an open transcript stream, and so its one
+# privileged write path stays auditable on its own.
+resource "kubernetes_service" "skills_api" {
+  metadata {
+    name      = "skills-api"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+    labels = {
+      app = "skills-api"
+    }
+  }
+
+  spec {
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 7688
+    }
+  }
+}
+
+resource "kubernetes_endpoints" "skills_api" {
+  metadata {
+    name      = "skills-api"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+  }
+
+  subset {
+    address {
+      ip = "10.0.10.10"
+    }
+    port {
+      name = "http"
+      port = 7688
+    }
+  }
+}
+
+resource "kubernetes_manifest" "skills_api_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "skills-api"
+      namespace = kubernetes_namespace.terminal.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match = "Host(`terminal.viktorbarzin.me`) && PathPrefix(`/skills/`)"
+        kind  = "Rule"
+        middlewares = [
+          {
+            name      = "authentik-forward-auth"
+            namespace = "traefik"
+          }
+        ]
+        services = [{
+          name = "skills-api"
+          port = 80
+        }]
+      }]
+      tls = {
+        secretName = var.tls_secret_name
+      }
+    }
+  }
+}
+
 # serves the exact path /term.html.
 resource "kubernetes_manifest" "term_html_ingressroute" {
   manifest = {
