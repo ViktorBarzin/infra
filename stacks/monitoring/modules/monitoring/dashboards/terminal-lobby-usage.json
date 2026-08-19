@@ -949,7 +949,7 @@
         {
           "type": "table",
           "title": "Boot timing and device context",
-          "description": "One row per tab boot: how long the page took to load and what it was loaded on. This is where 'it is slow on my phone' becomes a number.",
+          "description": "One row per tab boot: how long the page took to load and what it was loaded on. This is where 'it is slow on my phone' becomes a number. The eng column lists what that engine is MISSING out of the short list the lobby depends on, measured on the device rather than read off the user agent \u2014 every browser on iPadOS runs the system WebKit, so the version string there describes nothing. Empty is a current browser.",
           "datasource": {
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
@@ -963,7 +963,68 @@
           "targets": [
             {
               "refId": "A",
-              "expr": "{job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", ttfb=\"attrs[\\\"tl.nav.ttfb\\\"]\", load=\"attrs[\\\"tl.nav.load\\\"]\", bytes=\"attrs[\\\"tl.nav.bytes\\\"]\", net=\"attrs[\\\"tl.net.type\\\"]\", rtt=\"attrs[\\\"tl.net.rtt\\\"]\", cpu=\"attrs[\\\"tl.dev.cpu\\\"]\", mem=\"attrs[\\\"tl.dev.mem\\\"]\", plat=\"attrs[\\\"tl.dev.plat\\\"]\" | name = \"app.context\" | user =~ \"$user\"",
+              "expr": "{job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", ttfb=\"attrs[\\\"tl.nav.ttfb\\\"]\", load=\"attrs[\\\"tl.nav.load\\\"]\", bytes=\"attrs[\\\"tl.nav.bytes\\\"]\", net=\"attrs[\\\"tl.net.type\\\"]\", rtt=\"attrs[\\\"tl.net.rtt\\\"]\", cpu=\"attrs[\\\"tl.dev.cpu\\\"]\", mem=\"attrs[\\\"tl.dev.mem\\\"]\", plat=\"attrs[\\\"tl.dev.plat\\\"]\", eng=\"attrs[\\\"tl.eng.missing\\\"]\" | name = \"app.context\" | user =~ \"$user\"",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              }
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Lobby API calls per device",
+          "description": "How many API calls each device actually made, counted from its own rollups. A device that keeps loading the page while its line sits flat is reaching the lobby and failing before the request leaves the browser \u2014 which is what an old engine did on 2026-08-19, when AbortSignal.timeout (Safari 16) threw ahead of every fetch and the sidebar read 'Failed to load' over an empty session list. Nothing reached the ingress, so no server-side panel could have shown it. Read beside the engine table: gaps there plus a flat line here is a browser that cannot talk to us.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 49
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (device) (sum_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", device=\"attrs[\\\"tl.device\\\"]\", v=\"attrs[\\\"tl.api.n\\\"]\" | name = \"perf.rollup\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__interval]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "{{device}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "table",
+          "title": "Engines missing an API we polyfill",
+          "description": "Every boot from a browser lacking something the lobby depends on. Empty is the healthy state. A row is not by itself a fault: baseline-polyfills.ts fills in AbortSignal.timeout and URL.canParse, so those devices run on the polyfill. RegExp lookbehind is NOT filled in \u2014 a device listing it loses the GFM markdown extensions (tables, task lists, strikethrough). Keep the probe list in step with frontend-v2/src/lib/baseline-polyfills.ts.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 49
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "{job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", device=\"attrs[\\\"tl.device\\\"]\", plat=\"attrs[\\\"tl.dev.plat\\\"]\", w=\"attrs[\\\"tl.dev.w\\\"]\", h=\"attrs[\\\"tl.dev.h\\\"]\", eng=\"attrs[\\\"tl.eng.missing\\\"]\" | name = \"app.context\" | user =~ \"$user\" | eng != \"\"",
               "datasource": {
                 "type": "loki",
                 "uid": "P8E80F9AEF21F6940"
