@@ -162,12 +162,12 @@ global:
     # (public package, anonymous pull — no imagePullSecret needed, like the
     # upstream goauthentik image). Keel is NO LONGER enrolled for this namespace
     # (see main.tf) so it can't bump/downgrade the tag; helm also defaults the tag
-    # to the chart appVersion (2026.2.2) — so BOTH repository AND tag are pinned
+    # to the chart appVersion (2026.5.6) — so BOTH repository AND tag are pinned
     # explicitly here to prevent the 2026-06-10 downgrade-boot-storm class.
     # UPGRADE = bump the Dockerfile FROM tag + this tag together (e.g. ->
     # 2026.3.0-patch1), let GHA rebuild, then apply.
     repository: ghcr.io/viktorbarzin/authentik-server
-    tag: "2026.2.6-patch3"
+    tag: "2026.5.6-patch3"
 
 worker:
   # 2 replicas: workers handle background tasks (LDAP sync, email,
