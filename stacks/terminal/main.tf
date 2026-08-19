@@ -635,7 +635,16 @@ resource "kubernetes_manifest" "skills_api_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal.viktorbarzin.me`) && PathPrefix(`/skills/`)"
+        # BOTH forms, and the bare one is load-bearing: the panel's first call is
+        # GET /skills exactly (the whole inventory), with nothing after the
+        # prefix, so PathPrefix(`/skills/`) alone does not match it — that
+        # request fell through to the catch-all, ttyd answered 404, and the
+        # Skills group rendered nothing but an error (2026-08-19). file-api needs
+        # no equivalent because every one of its routes carries a verb
+        # (/files/list, /files/read, /files/write). An unauthenticated probe
+        # cannot tell the two cases apart, since Authentik gates the catch-all
+        # too, so verify this one as a logged-in browser or against the router.
+        match = "Host(`terminal.viktorbarzin.me`) && (Path(`/skills`) || PathPrefix(`/skills/`))"
         kind  = "Rule"
         middlewares = [
           {
