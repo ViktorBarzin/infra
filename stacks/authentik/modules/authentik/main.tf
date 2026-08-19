@@ -67,7 +67,8 @@ resource "helm_release" "authentik" {
   chart      = "authentik"
   # version    = "2025.10.3"
   # version    = "2025.12.4"
-  version = "2026.2.2"
+  # version    = "2026.2.2"
+  version = "2026.5.6"
   atomic  = true
   timeout = 6000
 
