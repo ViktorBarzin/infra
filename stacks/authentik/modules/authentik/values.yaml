@@ -164,8 +164,28 @@ global:
     # (see main.tf) so it can't bump/downgrade the tag; helm also defaults the tag
     # to the chart appVersion (2026.8.0) — so BOTH repository AND tag are pinned
     # explicitly here to prevent the 2026-06-10 downgrade-boot-storm class.
-    # UPGRADE = bump the Dockerfile FROM tag + this tag together (e.g. ->
-    # 2026.3.0-patch1), let GHA rebuild, then apply.
+    # UPGRADE — learned the hard way on the 2026.2.4 -> 2026.8.0 run (2026-08-19):
+    #  1. NO SKIPPING MINOR LINES. authentik's upgrade docs require landing the
+    #     latest patch of each minor in turn, and it does NOT support downgrade.
+    #     2026.2.4 -> 2026.8.0 was three hops: 2026.2.6, 2026.5.6, 2026.8.0.
+    #     Back the DB up first; a jumped upgrade already cost us a partial
+    #     migration failure once (2025.10 -> 2026.2).
+    #  2. THREE places carry the tag and must move together: the Dockerfile FROM,
+    #     the hardcoded tags in .github/workflows/build-authentik.yml, and this
+    #     tag. Re-verify both guarded patches against the new upstream source.
+    #  3. TWO COMMITS PER HOP, in this order. Push the Dockerfile/workflow change
+    #     first and wait for GHA to publish the tag; only then push this tag plus
+    #     the chart version. CI applies on push and helm_release is atomic, so
+    #     pointing values at a tag GHA has not built yet fails the pull and rolls
+    #     the release back.
+    #  4. The chart line is sparser than the app line (there is no chart 2026.2.6),
+    #     and chart != image: pinning repository+tag here is what lets them differ.
+    #  5. Expect a long first pod. The 2026.5 -> 2026.8 migrations outran
+    #     Woodpecker's step timeout, which killed the pipeline mid-helm-upgrade and
+    #     left the release in pending-upgrade while the rollout finished fine on
+    #     its own. Cure is the #6073 recipe: delete the orphaned
+    #     sh.helm.release.v1.goauthentik.v<N> secret (does not touch pods), then
+    #     re-apply so helm records a clean revision.
     repository: ghcr.io/viktorbarzin/authentik-server
     tag: "2026.8.0-patch3"
 
