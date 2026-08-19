@@ -167,7 +167,7 @@ global:
     # UPGRADE = bump the Dockerfile FROM tag + this tag together (e.g. ->
     # 2026.3.0-patch1), let GHA rebuild, then apply.
     repository: ghcr.io/viktorbarzin/authentik-server
-    tag: "2026.2.4-patch3"
+    tag: "2026.2.6-patch3"
 
 worker:
   # 2 replicas: workers handle background tasks (LDAP sync, email,
