@@ -19,7 +19,7 @@
 # login-capable source type, add its lowercase accessor to the list below.
 # Upstream: the bare select_subclasses() is still present in main (no fix/PR as of
 # 2026-06-28) — drop this overlay once upstream narrows the query.
-FROM ghcr.io/goauthentik/server:2026.2.4
+FROM ghcr.io/goauthentik/server:2026.2.6
 
 USER root
 RUN set -eux; \
