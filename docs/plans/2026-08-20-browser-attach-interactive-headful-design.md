@@ -1,11 +1,45 @@
 # `homelab browser attach` — interactive headful browsing
 
-**Status:** approved (design), not yet implemented
+**Status:** superseded — chrome-agent dropped 2026-08-20; not implemented
 **Date:** 2026-08-20
 **Author:** Viktor Barzin (design session with Claude)
 **Owning repo:** `infra` (CLI + chrome-service broker); guidance text in `~/code/docs/agents/shared/`
 
 ## Summary
+
+> [!IMPORTANT]
+> **Superseded on 2026-08-20, the same day it was written. chrome-agent was
+> dropped and uninstalled; nothing here was implemented.**
+>
+> This design chose chrome-agent as the execution layer for `attach` on three
+> claimed differentiators. All three were tested afterwards against Playwright
+> on the same harness, and none held:
+>
+> - **Push-based event streaming.** A Playwright script using `page.on(...)`
+>   emits the same line-delimited flushed JSON that Claude Code's `Monitor`
+>   consumes — navigation, load, `requestfailed` with the error string, console
+>   and page errors.
+> - **Full CDP surface.** `new_cdp_session()` (page-scoped) and
+>   `new_browser_cdp_session()` (browser-scoped) send arbitrary
+>   `Domain.method`. `CrashReportContext.getEntries` — the example
+>   chrome-agent's README uses to demonstrate this very claim — returns
+>   `{"entries": []}` through Playwright, and `SystemInfo.getInfo`,
+>   `Page.printToPDF` and `DOMSnapshot.captureSnapshot` all work.
+> - **Trusted input for human-like behaviour.** Both dispatch through the same
+>   CDP `Input` pipeline and both produce `isTrusted: true`. On a 31-point mouse
+>   path chrome-agent took 9,313 ms (244 ms between events, 35 px steps) against
+>   Playwright's 563 ms (16.4 ms between events). Chrome coalesces `mousemove`
+>   to the compositor frame rate (~16.7 ms), so Playwright sits on that floor
+>   while chrome-agent is 14x coarser — more detectable, not less.
+>
+> **What remains valid:** the two-axis guidance (escalate headless -> cluster
+> headful on a signature; then pick batch vs interactive by task shape), the
+> interactive-headful gap itself, the broker per-session-deadline change, and
+> the measured facts below. **What changes:** if `attach` is ever built, its
+> execution layer should be Playwright/patchright — one execution layer instead
+> of two, no alpha dependency, and local-file uploads keep working, so the
+> upload limitation recorded below disappears.
+
 
 Add an interactive mode to the cluster browser. Today `homelab browser run`
 drives the shared headful Chrome as a **batch** script: you write the whole flow
