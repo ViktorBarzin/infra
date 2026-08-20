@@ -60,6 +60,13 @@ Project health, as of 2026-08-20: v0.5.7, MIT, created 2026-04-11, 153 stars,
 three issues filed 2026-08-19 are still unanswered, one of which — no persistent
 profile — matters for us.
 
+```stats
+238 ms | one-shot latency (median)
+7 vs 2 | calls for the same task, vs Playwright MCP
+1.15 MB | raw AX tree, one page
+16.6 KB | same page, custom extractor
+```
+
 Measured on the devvm (Chrome 148, headless) and against a pool worker:
 
 | Measurement | Result |
@@ -76,9 +83,9 @@ Measured on the devvm (Chrome 148, headless) and against a pool worker:
 The README's "~50–80 ms per call" figure measures the CDP round-trip. Wall-clock
 per CLI invocation is roughly 238 ms because each call pays interpreter startup.
 
-Two behaviours are worth recording because they cost time to discover:
+Two behaviours are worth recording:
 
-- `launch --headless` gives a **780×493** viewport, at which responsive sites
+- `launch --headless` gives a 780×493 viewport, at which responsive sites
   collapse widgets. Wikipedia's search input returned rect `[0,0,0,0]` with
   `offsetParent: false`, and coordinate clicks silently hit nothing.
   `Emulation.setDeviceMetricsOverride` resolves it. Pool workers already run at
@@ -87,14 +94,14 @@ Two behaviours are worth recording because they cost time to discover:
   "Multiple page targets found" until `--target N` or `--url <substring>` is
   threaded through each call.
 
-What chrome-agent does **not** do: it is blocked by anti-bot walls exactly as
+What chrome-agent does not do: it is blocked by anti-bot walls exactly as
 headless Playwright is (DuckDuckGo served a CAPTCHA to both), and it deliberately
 does not patch `navigator.webdriver` on the grounds that such overrides are
 independently detectable.
 
 ### Feasibility of driving a cluster worker
 
-Verified on 2026-08-20 rather than assumed. `chrome-agent`'s CDP client targets
+Verified on 2026-08-20. `chrome-agent`'s CDP client targets
 `localhost:<port>`, and the liveness check in `registry.py::_instance_is_alive`
 ends with:
 
@@ -118,28 +125,31 @@ required.
 task shape.
 
 ```mermaid
-flowchart TB
-    subgraph ORCH["homelab — orchestration (shared)"]
-        direction LR
-        L["lease worker<br/>(chrome-fleet broker)"] --> S["seed cookies +<br/>localStorage"]
-        S --> P["port-forward<br/>CDP"]
-        P --> ST["inject stealth.js"]
-        ST --> T["teardown on exit<br/>(+ broker deadline backstop)"]
+flowchart TD
+    subgraph ORCH["homelab — orchestration (shared by both modes)"]
+        L["lease worker<br/>chrome-fleet broker"]
+        S["seed cookies + localStorage"]
+        P["port-forward CDP"]
+        ST["inject stealth.js"]
+        T["teardown on exit<br/>broker deadline backstop"]
+        L --> S --> P --> ST --> T
     end
 
-    ORCH --> RUN
-    ORCH --> ATT
+    ORCH --> Q{"task shape?"}
+
+    Q -->|"deterministic,<br/>run to completion"| RUN
+    Q -->|"exploratory,<br/>or watch events"| ATT
 
     subgraph RUN["browser run — batch"]
         R1["Playwright / patchright-core"]
         R2["actionability waits<br/>local-file uploads<br/>storageState seeding"]
-        R1 --- R2
+        R1 --> R2
     end
 
     subgraph ATT["browser attach — interactive"]
-        A1["chrome-agent (raw CDP)"]
+        A1["chrome-agent — raw CDP"]
         A2["per-step control<br/>Monitor push events<br/>full CDP surface"]
-        A1 --- A2
+        A1 --> A2
     end
 ```
 
@@ -173,10 +183,14 @@ sequenceDiagram
 ## The guidance model
 
 The current text in `docs/agents/shared/10-homelab.md` presents browser choice as
-one escalation ladder. That worked when there were two options, but `attach` and
-`run` sit at the **same** anti-bot level — the same pod, the same stealth. If
-they were presented as rungs 2 and 3, an agent blocked by a bot wall would
-escalate from `run` to `attach` and find nothing had changed.
+one escalation ladder. That worked when there were two options, but this adds a
+second, independent axis.
+
+> [!IMPORTANT]
+> `attach` and `run` sit at the same anti-bot level — the same pod, the same
+> stealth. If they were presented as rungs 2 and 3, an agent blocked by a bot
+> wall would escalate from `run` to `attach` and find nothing had changed.
+> Escalation and mode are separate questions, and the guidance has to say so.
 
 So the guidance separates the two questions:
 
@@ -212,7 +226,7 @@ use. This mirrors the split already working well for the error-code cheat sheet.
 | chrome-agent version | Latest on each attach, into a homelab-owned dir, falling back to the installed copy if PyPI is unreachable | Viktor's call. The homelab-owned dir avoids clobbering a user's own `uv tool install` |
 | Page reading | `homelab browser snapshot <instance>` | 16.6 KB versus 1.15 MB raw; gives the interactive mode a sensible default answer to "what is on this page" |
 | `--shared-context` | Allowed, with a warning | Interactive write-back work is a real need; the warning notes contention with `chesscom-streak` and `tripit`. Pool remains the default |
-| Uploads | Documented limitation; route to `run` | `DOM.setFileInputFiles` resolves paths inside the pod, so a local path would fail confusingly |
+| Uploads | Documented limitation; route to `run` | `DOM.setFileInputFiles` resolves paths inside the pod, so a local devvm path does not resolve |
 
 ## Changes required
 
@@ -242,9 +256,13 @@ fingerprint for it.
 
 ## Limitations and open questions
 
-- **Uploads are unavailable in attach sessions.** `DOM.setFileInputFiles` takes
-  paths the browser resolves, which for a pool worker means paths inside the pod.
-  Flows needing an upload use `run`.
+> [!WARNING]
+> **Uploads are unavailable in attach sessions.** `DOM.setFileInputFiles` takes
+> paths the browser resolves, which for a pool worker means paths inside the pod
+> — a local devvm path will not resolve, and the call can appear to succeed.
+> Flows needing an upload use `run`, where Playwright's `setInputFiles` streams
+> the file content over CDP.
+
 - **New tabs do not inherit stealth.js.** `addScriptToEvaluateOnNewDocument` is
   per-target. `homelab browser stealth <inst> --target N` re-applies it; this is
   a manual step, and an agent that forgets it gets a less-protected tab.
