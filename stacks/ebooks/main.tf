@@ -38,6 +38,21 @@ variable "goodreads_shelf_id" {
 # Downloads stay OFF until the matcher has been checked by hand against her real
 # shelf (backend/goodreads/replay.py). With this false the poller still reads the
 # feed and reports what it would fetch, but never fetches.
+# Kindle address that Goodreads-sourced books are forwarded to once they are in
+# Calibre. Only books the pipeline actually FETCHES are sent: a book the library
+# already held may already be on the device, and clearing a duplicate off a
+# Kindle is fiddly. Empty disables forwarding, and the poller reports books as
+# shelved-only exactly as it did before. Reflowable formats only (epub/azw3/mobi)
+# — see backend/kindle.py for why a pdf is shelved instead of sent.
+variable "goodreads_kindle_email" {
+  type = string
+  # Anca's Send-to-Kindle address. calibre-web@viktorbarzin.me has to stay on her
+  # Amazon approved-sender list for Amazon to accept these; a rejection comes back
+  # as a bounce, which the OutboundMailBounced alert now catches.
+  default     = "ancaelena98_4RMJsy@kindle.com"
+  description = "Kindle address for books sourced from Anca's Goodreads to-read shelf. Empty = shelve only."
+}
+
 variable "goodreads_downloads_enabled" {
   type = string
   # ON since 2026-08-16. The gate is passed: the matcher was replayed over 50 of
@@ -903,6 +918,12 @@ resource "kubernetes_deployment" "book_search" {
           env {
             name  = "GOODREADS_SHELF_ID"
             value = var.goodreads_shelf_id
+          }
+          # Forwarding happens here rather than in the poller because this is
+          # where the SMTP credentials and the Calibre library both already are.
+          env {
+            name  = "GOODREADS_KINDLE_EMAIL"
+            value = var.goodreads_kindle_email
           }
           env {
             name = "QBITTORRENT_PASS"
