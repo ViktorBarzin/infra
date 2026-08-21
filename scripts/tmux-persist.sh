@@ -19,11 +19,14 @@
 # to still be listed. Older snapshots keep the pre-loss set reachable.
 #
 #   save        — snapshot the live set when it differs from the newest one.
-#                 The uuid comes from the claude process's argv — the
+#                 The uuid comes from the session's @claude_transcript stamp, or
+#                 failing that from the claude process's argv — the
 #                 `--session-id` a fresh start-claude.sh launch pins, or the
-#                 `--resume` a restore carries — so it is correct per-process
-#                 regardless of how the session was launched (see uuid_of_claude
-#                 for the nameless-session fallbacks). Runs every 5 min via
+#                 `--resume` a restore carries (see uuid_of_claude for the full
+#                 order and the fallbacks a bare `claude` needs). One
+#                 conversation is recorded against at most ONE session per
+#                 capture; see capture_live for why that matters.
+#                 Runs every 5 min via
 #                 tmux-persist-save.timer. A capture with no live sessions
 #                 (no server, OR a stale socket left behind by an OOM-killed
 #                 server) writes nothing, so it can't wipe history before
@@ -52,6 +55,9 @@ MAP="${TMUX_PERSIST_MAP:-/etc/ttyd-user-map}"
 SNAPSHOT_KEEP="${TMUX_PERSIST_SNAPSHOT_KEEP:-200}"
 CLAUDE_BIN="${TMUX_PERSIST_CLAUDE_BIN:-claude}"
 TEST_SOCKET="${TMUX_PERSIST_TEST_SOCKET:-}"
+# Stands in for every user's home, so a test can own the projects tree that
+# transcript resolution reads instead of the real ~/.claude of whoever runs it.
+HOME_ROOT="${TMUX_PERSIST_HOME_ROOT:-}"
 MODE="${1:-}"
 
 log() { echo "[tmux-persist] $*"; }
@@ -93,7 +99,7 @@ snapshot_files() { ls -1 "$(snapshots_dir "$1")"/*.tsv 2>/dev/null | sort || tru
 newest_snapshot() { snapshot_files "$1" | tail -1; }
 snapshot_path() { echo "$(snapshots_dir "$1")/$2.tsv"; }
 
-home_of() { getent passwd "$1" | cut -d: -f6; }
+home_of() { [[ -n "$HOME_ROOT" ]] && { printf '%s\n' "$HOME_ROOT"; return 0; }; getent passwd "$1" | cut -d: -f6; }
 
 # First descendant of $1 whose comm is `claude` (BFS, bounded by process tree).
 #
@@ -135,8 +141,21 @@ claude_pid_under() {
 }
 
 # Conversation uuid of a claude process ($1 pid, $2 user, $3 cwd, $4 tmux session
-# name [optional]). Sources, in order (claude does NOT hold its transcript fd open,
-# so fd-sniffing doesn't work):
+# name [optional], $5 the session's @claude_transcript stamp [optional]).
+#
+# Prints "<certainty>\t<uuid>", lowest certainty = most sure. The caller needs the
+# certainty because a conversation belongs to exactly ONE session: when two rows
+# want the same uuid, the row that KNOWS keeps it and the row that guessed gives
+# it up (see capture_live). Use uuid_only when the uuid alone is wanted.
+#
+# Sources, in order (claude does NOT hold its transcript fd open, so fd-sniffing
+# doesn't work):
+#  0. the @claude_transcript STAMP, left on the tmux session by Claude Code's own
+#     SessionStart hook. Per-session and exact, and it beats argv because it names
+#     the conversation claude is writing to NOW: after a /clear, argv still names
+#     the id the process was launched with, a transcript claude has abandoned.
+#     Sessions started before the stamp existed carry none, so the guesses below
+#     stay — the stamp is the fast path out of them, not a replacement.
 #  1. an EXPLICIT id in argv — `--session-id <uuid>` (fresh launcher sessions since
 #     2026-07-26) or `--resume <uuid>` (this script's own restores + manual recovery).
 #     Authoritative and per-process, so it can't confuse concurrent sessions.
@@ -147,16 +166,29 @@ claude_pid_under() {
 #  3. LAST RESORT: newest <uuid>.jsonl by mtime in the cwd-slug dir. This alone
 #     mis-attributes concurrent same-cwd sessions (it returns whichever conversation
 #     is most active for EVERY pane) — the bug that source 1 exists to avoid; kept
-#     only so a nameless one-off session still restores something.
+#     only so a nameless one-off session still restores something. Being the least
+#     certain answer, it is also the first one capture_live drops on a collision.
 # Always returns 0; empty output means "no conversation" (restored as a shell).
 uuid_of_claude() {
-  local uuid slug dir start f sess="${4:-}" p t
+  local uuid slug dir start f sess="${4:-}" stamp="${5:-}" p t root
+  root="$(home_of "$2")/.claude/projects"
+  # 0. the stamp. Written by the session's own user, so it is untrusted input:
+  #    only an existing <uuid>.jsonl inside that user's own projects root is
+  #    accepted, and a path with a `..` component is refused rather than
+  #    normalised — there is nothing legitimate above the root to reach for.
+  if [[ -n "$stamp" && "$stamp" != *"/../"* && "$stamp" != */.. \
+        && "$stamp" == "$root"/*/*.jsonl && -f "$stamp" ]]; then
+    f="${stamp##*/}"; f="${f%.jsonl}"
+    if [[ "$f" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+      printf '0\t%s\n' "$f"; return 0
+    fi
+  fi
   uuid="$(tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null \
           | grep -A1 -xE -- '--session-id|--resume' | tail -1 \
           | grep -oE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || true)"
-  [[ -n "$uuid" ]] && { echo "$uuid"; return 0; }
+  [[ -n "$uuid" ]] && { printf '1\t%s\n' "$uuid"; return 0; }
   slug="${3//\//-}"; slug="${slug//./-}"
-  dir="$(home_of "$2")/.claude/projects/$slug"
+  dir="$root/$slug"
   [[ -d "$dir" ]] || return 0
   start=$(( $(date +%s) - $(ps -o etimes= -p "$1" 2>/dev/null | tr -d ' ' || echo 0) - 5 ))
   # 2. name-aware: newest transcript (touched since start) whose own name == $sess.
@@ -164,27 +196,70 @@ uuid_of_claude() {
     while read -r _ p; do
       t="$(grep -m1 -oE '"(customTitle|agentName)":"[^"]*"' "$p" 2>/dev/null \
            | head -1 | sed -E 's/.*:"(.*)"$/\1/')"
-      [[ "$t" == "$sess" ]] && { f="$(basename "$p")"; echo "${f%.jsonl}"; return 0; }
+      [[ "$t" == "$sess" ]] && { f="${p##*/}"; printf '2\t%s\n' "${f%.jsonl}"; return 0; }
     done < <(find "$dir" -maxdepth 1 -name '*.jsonl' -newermt "@$start" -printf '%T@ %p\n' 2>/dev/null | sort -rn)
   fi
   # 3. last resort: newest by mtime.
   f="$(find "$dir" -maxdepth 1 -name '*.jsonl' -newermt "@$start" -printf '%T@ %f\n' 2>/dev/null \
        | sort -rn | head -1 | awk '{print $2}' || true)"
-  [[ -n "$f" ]] && echo "${f%.jsonl}"
+  [[ -n "$f" ]] && printf '3\t%s\n' "${f%.jsonl}"
   return 0
 }
 
+# uuid_of_claude without the certainty column, for callers that only need to know
+# WHICH conversation. Pure parameter expansion: resolve_row calls this per row of
+# the restore picker, and that path is kept fork-free (test_no_fork_hot_paths).
+uuid_only() { local a; a="$(uuid_of_claude "$@")"; printf '%s\n' "${a#*$'\t'}"; }
+
 # --- save ---------------------------------------------------------------------
 
+# A conversation belongs to exactly ONE session, so this resolves every pane
+# first and only then decides who keeps what.
+#
+# Without that second pass, two sessions sharing a cwd both fall through to
+# "newest .jsonl by mtime in the slug dir" and are saved carrying the SAME uuid.
+# Restoring those rows then resumes one conversation several times over, and
+# since each live name already holds a different one, the picker suffixes them —
+# so the restore both loses the conversations asked for and adds duplicate
+# sessions to the list (emo, 2026-08-21: five sessions in /home/emo collapsed
+# onto whichever transcript had been touched last, a different one each tick).
+#
+# Rows are emitted in session-name order, the order they arrive in: a snapshot is
+# only written when it DIFFERS from the newest one, so a reordering would read as
+# a change on every tick.
 capture_live() {   # $1 user -> TSV rows on stdout
-  local u="$1" sess pane_pid pane_cwd cpid uuid
-  while IFS=$'\t' read -r sess pane_pid pane_cwd; do
+  local u="$1" sess pane_pid pane_cwd stamp cpid answer uuid
+  local -a rows=() order=()
+  local -A cwd_of=() owner=() saved=()
+  # Pass 1: ask every pane which conversation it is running, and how sure it is.
+  while IFS=$'\t' read -r sess pane_pid pane_cwd stamp; do
     [[ -n "$sess" ]] || continue
-    uuid=""
-    if cpid="$(claude_pid_under "$pane_pid")"; then uuid="$(uuid_of_claude "$cpid" "$u" "$pane_cwd" "$sess")"; fi
-    printf '%s\t%s\t%s\n' "$sess" "$pane_cwd" "${uuid:--}"
-  done < <(tmux_as "$u" list-panes -a -F $'#{session_name}\t#{pane_pid}\t#{pane_current_path}' 2>/dev/null \
+    answer=""
+    if cpid="$(claude_pid_under "$pane_pid")"; then
+      answer="$(uuid_of_claude "$cpid" "$u" "$pane_cwd" "$sess" "$stamp")"
+    fi
+    order+=("$sess"); cwd_of["$sess"]="$pane_cwd"
+    # "<certainty>\t<uuid>\t<session>"; certainty 9 is "no answer at all", which
+    # sorts last. The uuid is `-` rather than empty on purpose: TAB is IFS
+    # WHITESPACE, so `read` collapses a run of them and an empty middle field
+    # would shift every column after it (the same trap the history rows hit).
+    rows+=("${answer:-9$'\t'-}"$'\t'"$sess")
+  done < <(tmux_as "$u" list-panes -a \
+             -F $'#{session_name}\t#{pane_pid}\t#{pane_current_path}\t#{@claude_transcript}' 2>/dev/null \
            | sort -u -t$'\t' -k1,1)
+
+  # Pass 2: most-certain rows choose first, so a session that KNOWS its
+  # conversation keeps it and a session that merely guessed the same one is saved
+  # with none — which restores as a plain shell, not as somebody else's history.
+  while IFS=$'\t' read -r _ uuid sess; do
+    [[ -n "$sess" && "$uuid" != "-" ]] || continue
+    [[ -n "${owner[$uuid]:-}" ]] && continue
+    owner["$uuid"]="$sess"; saved["$sess"]="$uuid"
+  done < <( ((${#rows[@]})) && printf '%s\n' "${rows[@]}" | sort -s -t$'\t' -k1,1n )
+
+  for sess in "${order[@]}"; do
+    printf '%s\t%s\t%s\n' "$sess" "${cwd_of[$sess]}" "${saved[$sess]:--}"
+  done
 }
 
 prune_snapshots() {
@@ -282,15 +357,21 @@ suffixed_name() {
   printf '%s%s' "$base" "$suffix"
 }
 
-# Per live session: name, pane_pid, pane_current_command. Cached per invocation.
-declare -A LIVE_CMD LIVE_PID
+# Per live session: name, pane_pid, pane_current_command, @claude_transcript.
+# Cached per invocation. The stamp rides along in the same format string so
+# resolve_row can identify a live conversation exactly — comparing a GUESSED live
+# uuid against the snapshot is what made a session whose conversation had not
+# changed read as `live_other_conv`, and get restored beside itself under a
+# suffixed name.
+declare -A LIVE_CMD LIVE_PID LIVE_STAMP
 load_live() {
-  local u="$1" sess pid cmd
-  LIVE_CMD=(); LIVE_PID=()
-  while IFS=$'\t' read -r sess pid cmd; do
+  local u="$1" sess pid cmd stamp
+  LIVE_CMD=(); LIVE_PID=(); LIVE_STAMP=()
+  while IFS=$'\t' read -r sess pid cmd stamp; do
     [[ -n "$sess" ]] || continue
-    LIVE_CMD["$sess"]="$cmd"; LIVE_PID["$sess"]="$pid"
-  done < <(tmux_as "$u" list-panes -a -F $'#{session_name}\t#{pane_pid}\t#{pane_current_command}' 2>/dev/null \
+    LIVE_CMD["$sess"]="$cmd"; LIVE_PID["$sess"]="$pid"; LIVE_STAMP["$sess"]="$stamp"
+  done < <(tmux_as "$u" list-panes -a \
+             -F $'#{session_name}\t#{pane_pid}\t#{pane_current_command}\t#{@claude_transcript}' 2>/dev/null \
            | sort -u -t$'\t' -k1,1)
 }
 
@@ -320,7 +401,7 @@ resolve_row() {
   else
     live_uuid=""
     if cpid="$(claude_pid_under "${LIVE_PID[$sess]}")"; then
-      live_uuid="$(uuid_of_claude "$cpid" "$u" "$cwd" "$sess")"
+      live_uuid="$(uuid_only "$cpid" "$u" "$cwd" "$sess" "${LIVE_STAMP[$sess]:-}")"
     fi
     if [[ -n "$live_uuid" && "$live_uuid" == "$uuid" ]]; then
       state="live_same"; action="skip"; def="off"
