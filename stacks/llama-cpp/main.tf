@@ -7,16 +7,11 @@ locals {
   # model. One Service, one /v1 endpoint, model selected by the
   # OpenAI `model` field. mostlygeek/llama-swap is production-grade
   # (3.9k★, v211, May 2026).
-  # PINNED TO A DIGEST, not the floating :cuda tag (2026-08-21). This digest is
-  # the 2026-08-20 rebuild, carrying llama.cpp b10524. The pin is load-bearing,
-  # not hygiene: Qwen3.8's Gated DeltaNet CUDA path was broken until ~b10450
-  # (ece963f41) and it fails by emitting GARBAGE TOKENS rather than erroring
-  # (llama.cpp discussion #27164), so a silently-stale :cuda layer would look
-  # like a bad quant. The running pod was still on b9879 (2026-07-06) because
-  # a mutable tag defaults to imagePullPolicy IfNotPresent. Note the same
-  # discussion's finding that swapping llama-server alone is not enough — the
-  # stale libggml-cuda.so must go too, which a digest change guarantees.
-  llamaswap_image = "ghcr.io/mostlygeek/llama-swap@sha256:50c640b15d7914ba356eb1e034680907b6c25eff7bdbe0071d77b907abfc0e0b"
+  # NOTE: this value does NOT reach the Deployment. The container's image field
+  # is Keel-owned and Terraform-ignored (see KEEL_IGNORE_IMAGE below), so
+  # pinning a digest here would read as a guarantee while changing nothing.
+  # Build selection is by imagePullPolicy: Always + Keel's :cuda tracking.
+  llamaswap_image = "ghcr.io/mostlygeek/llama-swap:cuda"
 
   # Model set: two vision VLMs (qwen3vl-8b/4b) + one text-only LLM (qwen3-8b).
   # All Apache-2.0, GGUF Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob).
@@ -396,7 +391,19 @@ resource "kubernetes_deployment" "llama_swap" {
           # dumps a ~536MiB core into the writable layer every few seconds —
           # 2026-07-07 that filled node1 (~148GiB in 50min) and the DiskPressure
           # eviction storm took out the DNS primary. Crash logs go to stdout.
-          command = ["/bin/sh", "-c", "ulimit -c 0 && exec /app/llama-swap -config /app/config.yaml -listen :8080"]
+          # Always, because `image` is a MUTABLE tag (:cuda, rebuilt ~nightly)
+          # that Terraform must not manage (KEEL_IGNORE_IMAGE). The default
+          # IfNotPresent silently froze this pod on llama.cpp b9879 from
+          # 2026-07-06: the layer was cached on node1, so six weeks of pod
+          # recreations all reused it while the tag moved on. That mattered on
+          # 2026-08-21 — Qwen3.8's Gated DeltaNet CUDA path is only correct from
+          # ~b10450 and fails by emitting GARBAGE TOKENS rather than erroring
+          # (llama.cpp discussion #27164), so a stale layer presents as a bad
+          # quant, not as a stale image. Cost of Always is one registry HEAD per
+          # pod start; the stack already tracks :cuda via Keel hourly, so this
+          # follows the existing design rather than departing from it.
+          image_pull_policy = "Always"
+          command           = ["/bin/sh", "-c", "ulimit -c 0 && exec /app/llama-swap -config /app/config.yaml -listen :8080"]
           port {
             container_port = 8080
             name           = "http"
