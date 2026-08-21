@@ -49,6 +49,12 @@ locals {
     # .github/workflows/build-excalidraw.yml). The deployment references the
     # cloned secret.
     "excalidraw",
+    # trading-bot: migrated off public DockerHub onto PRIVATE
+    # ghcr.io/viktorbarzin/trading-bot-{service,dashboard} (ADR-0002). The repo
+    # had no build path at all between the in-cluster pipeline's retirement in
+    # June 2026 and this migration. Both Deployments and the migrations Job
+    # reference the cloned secret.
+    "trading-bot",
     # hermes-agent: PRIVATE ghcr.io/viktorbarzin/hermes-agent (Hermes v2
     # Discord assistant, spec infra#75). Deployment + git-init initContainer
     # reference the cloned secret.
