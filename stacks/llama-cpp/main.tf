@@ -96,13 +96,26 @@ locals {
     # is the first build where the DeltaNet CUDA path was touched, so this is
     # that revisit.
     #
-    # UD-IQ1_S (6.19 GB / 5904 MiB) is chosen for the PROBE because tok/s is
-    # architecture-bound, not quant-bound, and it is the only quant that fits
-    # today's free VRAM (9904 MiB) while leaving ~2.6 GB clear of the ADR-0016
-    # watchdog's 1536 MiB floor — so it answers the speed question WITHOUT
-    # pausing immich-ml/stremio or amending the gpumem seating chart. IQ1_S is
-    # far too crushed to judge QUALITY on; if the probe is fast, the quality
-    # run is UD-Q2_K_XL (9.83 GB) with immich paused.
+    # PROBE RESULT (b10524, UD-IQ1_S, 2026-08-21): the architecture now runs —
+    # 8.51 tok/s decode, ~17x the 0.5 tok/s that qwen3.5-9b managed on b9879,
+    # so b10524's DeltaNet work is real. It is still only ~16% of this card's
+    # bandwidth-bound ceiling (~52 tok/s for 5.77 GiB of weights at 320 GB/s),
+    # so there is no fused Turing DeltaNet kernel in mainline yet. For scale,
+    # the incumbent qwen3-8b Q4_K_M does 33 tok/s.
+    #
+    # Measured VRAM was much kinder than the usual dense-model rule of thumb:
+    # 5905 MiB of weights cost 6602 MiB resident, i.e. ~697 MiB of overhead
+    # rather than the ~50-60% that memory-id-7049 teaches — because 48 of the
+    # 64 layers keep no KV cache at all.
+    #
+    # IQ1_S quality was unusable (fluent but collapsed into repetition loops),
+    # which is what its 76.3% top-1 predicts and is NOT the DeltaNet bug — that
+    # one produces non-linguistic garbage. So this is now UD-Q2_K_XL (9.83 GB /
+    # 9375 MiB), the largest quant that fits: 9375 + ~700 MiB overhead + the
+    # ~2697 MiB frigate holds leaves ~2.6 GB clear of the ADR-0016 watchdog
+    # floor, but ONLY with immich-ml scaled to 0 for the window. Expect decode
+    # to fall to ~5-6 tok/s, since decode here is bandwidth-bound and these
+    # weights are 1.59x larger.
     #
     # 64 layers = 48x DeltaNet (no KV cache) + 16x full attention, so KV is
     # cheap: ~2 GB at 32K, hence ctx 8192 costs ~0.5 GB. text_only skips the
@@ -110,7 +123,7 @@ locals {
     # REMOVE THIS ENTRY (and unpin nothing else) when the probe concludes.
     qwen38-27b = {
       hf_repo        = "unsloth/Qwen3.8-27B-GGUF"
-      gguf_pattern   = "*UD-IQ1_S*.gguf"
+      gguf_pattern   = "*UD-Q2_K_XL*.gguf"
       mmproj_pattern = ""
       ctx_size       = 8192
       gpu_layers     = 99
