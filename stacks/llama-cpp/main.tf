@@ -47,6 +47,12 @@ locals {
   #     warmup; qwen3-4b mislabeled correspondent. Neither a clear win. Removed.
   #   Real finding: a clear "sender not recipient" prompt fixes correspondent for
   #   qwen3-8b itself — no migration needed.
+  # 2026-08-21 — the interactive qwen38-27b entry was REMOVED again once the
+  # hands-on test finished. It could not safely stay once immich-ml was back:
+  # resident 9670 MiB leaves ~1000 MiB free, under the ADR-0016 watchdog's
+  # 1536 MiB floor, so one click on it in the web UI would have had llama-swap
+  # recycled — possibly mid-job for paperless-ai. To use it again, re-add the
+  # entry AND scale immich-ml to 0 for the session; the numbers are below.
   # 2026-08-21, round 3 — Qwen3.8-27B (dense 27B, the same Gated DeltaNet hybrid
   # family as the rejected qwen3.5-9b) tested on-card at UD-IQ1_S and UD-Q2_K_XL
   # under llama.cpp b10524, then REMOVED. It genuinely runs now — Q2_K_XL gave
