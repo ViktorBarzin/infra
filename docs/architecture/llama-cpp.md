@@ -54,8 +54,9 @@ vendors its own llama.cpp fork, so on a new architecture it is behind
 upstream by an amount you cannot read off the model page — and the failure
 you would get is a silent quality one that looks like a bad quant. We run
 b10524 pinned by digest, which is newer than we would have got, and
-llama-swap's own web UI covers the "just try it by hand" use case that
-prompted the question. Ollama's ecosystem-polish advantage is unchanged;
+llama-swap serves its own web UI, which covers the "just try it by hand"
+use case that prompted the question — it was exposed for that trial and
+taken down afterwards (see Endpoints). Ollama's ecosystem-polish advantage is unchanged;
 it is simply not what was needed here.
 
 ## Components
@@ -67,7 +68,6 @@ it is simply not what was needed here.
 | llama-swap Service | `kubernetes_service.llama_swap` | ClusterIP `:8080` → `llama-swap.llama-cpp.svc.cluster.local` |
 | Models PVC | `module.nfs_models` (NFS-RWX `/srv/nfs-ssd/llamacpp`) | Shared GGUF store, 30Gi |
 | Download Job | `kubernetes_job_v1.download_models` | Pulls Q4_K_M GGUF + mmproj per model, creates stable `model.gguf` / `mmproj.gguf` symlinks, warms page cache |
-| Ingress | `module.ingress` | `llm.viktorbarzin.me` → llama-swap's web UI, Authentik-gated (`auth = "required"`, Home Server Admins). Added 2026-08-21 for interactive use. No `setup_tls_secret` call — Kyverno's `sync-tls-secret` already puts the wildcard `tls-secret` in the namespace |
 
 ## Storage
 
@@ -193,10 +193,15 @@ Method, numbers, and the broader SoTA survey:
   on `/v1/chat/completions`)
 - `GET /metrics` — Prometheus
 - `GET /health` — 200 once a model is fully loaded; 503 during load
-- `GET /ui/` — llama-swap's own web UI (`/` 302-redirects here). Reachable
-  in a browser at **https://llm.viktorbarzin.me** behind Authentik. Note the
-  UI can load and unload models, so using it while a consumer job is running
-  can evict that job's model — which is why it is admin-gated.
+- `GET /ui/` — llama-swap serves its own web UI here (`/` 302-redirects to
+  it). **Not exposed.** It was published at `llm.viktorbarzin.me` behind
+  Authentik on 2026-08-21 for the Qwen3.8-27B trial and removed the same day
+  once that finished. Two reasons it is not worth leaving up by default: the
+  UI can load and *unload* models, so browsing it while a consumer job runs
+  can evict that job's model; and llama-swap holds one model at a time, so
+  every interactive use competes with the six consumers below. To use it
+  again, re-add an `ingress_factory` module (`auth = "required"`, service
+  `llama-swap`, port 8080) or port-forward the Service.
 
 ## Known issues / decisions
 
