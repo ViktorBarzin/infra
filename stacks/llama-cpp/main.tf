@@ -47,6 +47,16 @@ locals {
   #     warmup; qwen3-4b mislabeled correspondent. Neither a clear win. Removed.
   #   Real finding: a clear "sender not recipient" prompt fixes correspondent for
   #   qwen3-8b itself — no migration needed.
+  # 2026-08-21, round 3 — Qwen3.8-27B (dense 27B, the same Gated DeltaNet hybrid
+  # family as the rejected qwen3.5-9b) tested on-card at UD-IQ1_S and UD-Q2_K_XL
+  # under llama.cpp b10524, then REMOVED. It genuinely runs now — Q2_K_XL gave
+  # 8.2 tok/s decode / 113 tok/s prefill with coherent, accurate output, where
+  # the same architecture managed 0.5 tok/s on b9879 — but 8 tok/s against
+  # qwen3-8b's 33, needing 9670 MiB (immich-ml must scale to 0 for it to fit),
+  # is not a trade worth making for triage and enrichment work. The DeltaNet
+  # CUDA path is correct on Turing now but still unfused, reaching only ~16% of
+  # the card's bandwidth ceiling. Full numbers in
+  # docs/research/2026-07-16-local-llm-sota-and-upgrade.md §0.1.
   #
   # Filenames are matched by glob in the download Job (huggingface_hub
   # snapshot_download with allow_patterns). Stable symlinks model.gguf /
@@ -84,48 +94,6 @@ locals {
       gguf_pattern   = "*Q4_K_M*.gguf"
       mmproj_pattern = ""
       ctx_size       = 16384
-      gpu_layers     = 99
-      text_only      = true
-    }
-    # TEMPORARY (2026-08-21) — an on-card speed probe, not a candidate yet.
-    # Qwen3.8-27B (dense 27B VLM, Apache-2.0) is the same hybrid Gated DeltaNet
-    # + Gated Attention family as qwen3.5-9b, which loaded fine here but
-    # generated at ~0.5 tok/s on b9879 — no performant CUDA path on SM 7.5
-    # (docs/research/2026-07-16-local-llm-sota-and-upgrade.md L34/L43). That
-    # research queued "revisit when llama.cpp lands an optimized path"; b10524
-    # is the first build where the DeltaNet CUDA path was touched, so this is
-    # that revisit.
-    #
-    # PROBE RESULT (b10524, UD-IQ1_S, 2026-08-21): the architecture now runs —
-    # 8.51 tok/s decode, ~17x the 0.5 tok/s that qwen3.5-9b managed on b9879,
-    # so b10524's DeltaNet work is real. It is still only ~16% of this card's
-    # bandwidth-bound ceiling (~52 tok/s for 5.77 GiB of weights at 320 GB/s),
-    # so there is no fused Turing DeltaNet kernel in mainline yet. For scale,
-    # the incumbent qwen3-8b Q4_K_M does 33 tok/s.
-    #
-    # Measured VRAM was much kinder than the usual dense-model rule of thumb:
-    # 5905 MiB of weights cost 6602 MiB resident, i.e. ~697 MiB of overhead
-    # rather than the ~50-60% that memory-id-7049 teaches — because 48 of the
-    # 64 layers keep no KV cache at all.
-    #
-    # IQ1_S quality was unusable (fluent but collapsed into repetition loops),
-    # which is what its 76.3% top-1 predicts and is NOT the DeltaNet bug — that
-    # one produces non-linguistic garbage. So this is now UD-Q2_K_XL (9.83 GB /
-    # 9375 MiB), the largest quant that fits: 9375 + ~700 MiB overhead + the
-    # ~2697 MiB frigate holds leaves ~2.6 GB clear of the ADR-0016 watchdog
-    # floor, but ONLY with immich-ml scaled to 0 for the window. Expect decode
-    # to fall to ~5-6 tok/s, since decode here is bandwidth-bound and these
-    # weights are 1.59x larger.
-    #
-    # 64 layers = 48x DeltaNet (no KV cache) + 16x full attention, so KV is
-    # cheap: ~2 GB at 32K, hence ctx 8192 costs ~0.5 GB. text_only skips the
-    # 0.93 GB mmproj — vision is real on this model but the VRAM is not there.
-    # REMOVE THIS ENTRY (and unpin nothing else) when the probe concludes.
-    qwen38-27b = {
-      hf_repo        = "unsloth/Qwen3.8-27B-GGUF"
-      gguf_pattern   = "*UD-Q2_K_XL*.gguf"
-      mmproj_pattern = ""
-      ctx_size       = 8192
       gpu_layers     = 99
       text_only      = true
     }
