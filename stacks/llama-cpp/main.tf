@@ -96,36 +96,6 @@ locals {
       ctx_size       = 16384
       gpu_layers     = 99
       text_only      = true
-    } # ON-DEMAND, INTERACTIVE ONLY — do NOT point a consumer at this.
-    # Viktor wanted to try the 27B by hand after the 2026-08-21 benchmark, so
-    # it lives here for the llama-swap chat UI rather than for any service.
-    #
-    # It does NOT fit alongside immich-ml: resident is ~9670 MiB, and with
-    # frigate (~2677) + immich-ml (~1964) that leaves ~1037 MiB, under the
-    # ADR-0016 watchdog's 1536 MiB floor — so the watchdog would recycle
-    # llama-swap mid-conversation, since llama-swap is then the biggest
-    # over-budget tenant. Scale immich-ml to 0 for the session:
-    #
-    #   kubectl scale deploy/immich-machine-learning -n immich --replicas=0
-    #   ... use it ...
-    #   kubectl scale deploy/immich-machine-learning -n immich --replicas=1
-    #
-    # immich-ml only pauses photo ML indexing, which catches up afterwards.
-    # ttl=600 means the 27B unloads 10 min after your last message, so the
-    # squeeze ends on its own even if the pause is forgotten.
-    #
-    # Measured 2026-08-21 (llama.cpp b10524): 8.2 tok/s generation, 113 tok/s
-    # prefill, coherent and accurate. That is ~4x slower than qwen3-8b's 33
-    # tok/s, which is why no consumer uses it. Q2_K_XL is the largest quant
-    # that fits at all; IQ4_XS and above exceed the card even when empty.
-    # Background: docs/research/2026-07-16-local-llm-sota-and-upgrade.md §0.1.
-    qwen38-27b = {
-      hf_repo        = "unsloth/Qwen3.8-27B-GGUF"
-      gguf_pattern   = "*UD-Q2_K_XL*.gguf"
-      mmproj_pattern = ""
-      ctx_size       = 8192
-      gpu_layers     = 99
-      text_only      = true
     }
   }
 
