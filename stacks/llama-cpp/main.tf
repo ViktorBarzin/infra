@@ -169,48 +169,6 @@ resource "kubernetes_namespace" "llama_cpp" {
   }
 }
 
-variable "tls_secret_name" {
-  type      = string
-  sensitive = true
-}
-
-# No setup_tls_secret module here on purpose. The Kyverno ClusterPolicy
-# `sync-tls-secret` already generates the wildcard `tls-secret` into every
-# namespace — it has been in llama-cpp since the namespace was created — so
-# creating it from Terraform as well would collide with the existing object.
-# The wildcard cert (CN viktorbarzin.me, SAN *.viktorbarzin.me) covers the
-# ingress host; the variable below is just the secret's name.
-
-# Browser access to llama-swap's own web UI (it serves a SPA at /ui/ and
-# redirects / there), so the models can be used by hand instead of only by
-# recruiter-responder / paperless-ai / nextcloud-todos over the ClusterIP.
-#
-# auth = "required" (the module default, stated explicitly here because it is
-# load-bearing): llama-swap ships NO authentication of its own, and the UI can
-# load and UNLOAD models — so an unauthenticated visitor could evict a model
-# out from under a running consumer job. Authentik is the only gate, and
-# allowed_groups stays at the module default of Home Server Admins.
-#
-# Generation is slow enough to matter here: at ~8 tok/s a long answer takes
-# over a minute. The UI streams over SSE, so bytes keep flowing and Cloudflare
-# stays happy; a non-streaming client posting to /v1/chat/completions through
-# this hostname can still hit CF's ~100s origin limit and see a 524. Use the
-# in-cluster Service for batch work — that path is unchanged.
-module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  name            = "llm"
-  service_name    = "llama-swap"
-  namespace       = kubernetes_namespace.llama_cpp.metadata[0].name
-  port            = 8080
-  auth            = "required"
-  dns_type        = "proxied"
-  tls_secret_name = var.tls_secret_name
-  extra_annotations = {
-    "gethomepage.dev/description" = "Self-hosted LLM chat — llama.cpp on the T4"
-    "gethomepage.dev/icon"        = "mdi-robot-happy"
-  }
-}
-
 # Shared model store. NFS-RWX so the download Job can write while
 # the llama-swap Deployment mounts it. Path /srv/nfs-ssd/llamacpp on
 # the Proxmox host (SSD-backed for fast model load — Q4_K_M 8B mmaps in
