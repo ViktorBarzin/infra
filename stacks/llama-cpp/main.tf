@@ -7,7 +7,16 @@ locals {
   # model. One Service, one /v1 endpoint, model selected by the
   # OpenAI `model` field. mostlygeek/llama-swap is production-grade
   # (3.9k★, v211, May 2026).
-  llamaswap_image = "ghcr.io/mostlygeek/llama-swap:cuda"
+  # PINNED TO A DIGEST, not the floating :cuda tag (2026-08-21). This digest is
+  # the 2026-08-20 rebuild, carrying llama.cpp b10524. The pin is load-bearing,
+  # not hygiene: Qwen3.8's Gated DeltaNet CUDA path was broken until ~b10450
+  # (ece963f41) and it fails by emitting GARBAGE TOKENS rather than erroring
+  # (llama.cpp discussion #27164), so a silently-stale :cuda layer would look
+  # like a bad quant. The running pod was still on b9879 (2026-07-06) because
+  # a mutable tag defaults to imagePullPolicy IfNotPresent. Note the same
+  # discussion's finding that swapping llama-server alone is not enough — the
+  # stale libggml-cuda.so must go too, which a digest change guarantees.
+  llamaswap_image = "ghcr.io/mostlygeek/llama-swap@sha256:50c640b15d7914ba356eb1e034680907b6c25eff7bdbe0071d77b907abfc0e0b"
 
   # Model set: two vision VLMs (qwen3vl-8b/4b) + one text-only LLM (qwen3-8b).
   # All Apache-2.0, GGUF Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob).
@@ -65,6 +74,35 @@ locals {
       gguf_pattern   = "*Q4_K_M*.gguf"
       mmproj_pattern = ""
       ctx_size       = 16384
+      gpu_layers     = 99
+      text_only      = true
+    }
+    # TEMPORARY (2026-08-21) — an on-card speed probe, not a candidate yet.
+    # Qwen3.8-27B (dense 27B VLM, Apache-2.0) is the same hybrid Gated DeltaNet
+    # + Gated Attention family as qwen3.5-9b, which loaded fine here but
+    # generated at ~0.5 tok/s on b9879 — no performant CUDA path on SM 7.5
+    # (docs/research/2026-07-16-local-llm-sota-and-upgrade.md L34/L43). That
+    # research queued "revisit when llama.cpp lands an optimized path"; b10524
+    # is the first build where the DeltaNet CUDA path was touched, so this is
+    # that revisit.
+    #
+    # UD-IQ1_S (6.19 GB / 5904 MiB) is chosen for the PROBE because tok/s is
+    # architecture-bound, not quant-bound, and it is the only quant that fits
+    # today's free VRAM (9904 MiB) while leaving ~2.6 GB clear of the ADR-0016
+    # watchdog's 1536 MiB floor — so it answers the speed question WITHOUT
+    # pausing immich-ml/stremio or amending the gpumem seating chart. IQ1_S is
+    # far too crushed to judge QUALITY on; if the probe is fast, the quality
+    # run is UD-Q2_K_XL (9.83 GB) with immich paused.
+    #
+    # 64 layers = 48x DeltaNet (no KV cache) + 16x full attention, so KV is
+    # cheap: ~2 GB at 32K, hence ctx 8192 costs ~0.5 GB. text_only skips the
+    # 0.93 GB mmproj — vision is real on this model but the VRAM is not there.
+    # REMOVE THIS ENTRY (and unpin nothing else) when the probe concludes.
+    qwen38-27b = {
+      hf_repo        = "unsloth/Qwen3.8-27B-GGUF"
+      gguf_pattern   = "*UD-IQ1_S*.gguf"
+      mmproj_pattern = ""
+      ctx_size       = 8192
       gpu_layers     = 99
       text_only      = true
     }
@@ -206,7 +244,11 @@ resource "kubernetes_job_v1" "download_models" {
                 )
                 # Resolve actual filenames and create stable symlinks so
                 # llama-swap config is filename-agnostic.
-                ggufs = [p for p in glob.glob(f"{local_dir}/*Q4_K_M*.gguf") if "mmproj" not in p.lower()]
+                # Glob by the model's OWN gguf_pattern. This was hardcoded to
+                # *Q4_K_M* until 2026-08-21, which worked only because every
+                # model happened to be Q4_K_M: any other quant downloaded fine
+                # and then failed the symlink step with "no GGUF found".
+                ggufs = [p for p in glob.glob(f"{local_dir}/{cfg['gguf_pattern']}") if "mmproj" not in p.lower()]
                 if not ggufs:
                     raise SystemExit(f"no GGUF found in {local_dir}")
                 gguf_link = f"{local_dir}/model.gguf"
