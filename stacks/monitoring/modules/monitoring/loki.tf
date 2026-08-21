@@ -817,6 +817,93 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Mail delivery failures (added 2026-08-21). Calibre-Web's "Send to
+          # Kindle" had been failing since the 2025-11-30 migration to
+          # calibre-web-automated, and nothing watched postfix's refusals, so it
+          # stayed invisible until someone noticed the books never arrived.
+          # Background on the credential itself: the init_container comment in
+          # stacks/ebooks/main.tf.
+          #
+          # Thresholds are measured, not guessed — checked against the full 30d
+          # Loki retention on 2026-08-21: the in-cluster reject filter matched 13
+          # lines in 30 days (all of them that one incident), and status=bounced
+          # and status=deferred each matched zero. So >0 really is the noise
+          # floor here. Rejecting inbound spam is constant and wanted, which is
+          # why none of these rules look at rejects in general.
+          #
+          # Known gap, deliberately uncovered: 192.168.1.127 (helo=pve.local) is
+          # refused ~100-200x/24h because it has no PTR, so mail from that
+          # Proxmox host does not arrive. That is a NOQUEUE reject from a
+          # non-cluster client, so it falls outside these rules on purpose — a
+          # rule for that class would fire continuously until the host's relay
+          # path is sorted out. Worth fixing; then a fourth rule can cover it.
+          #
+          # Route: Loki ruler -> Alertmanager -> #alerts.
+          name = "Mail delivery"
+          rules = [
+            {
+              # One of our own services was refused relay. Postfix resolves
+              # in-cluster clients to *.svc.cluster.local, and an internet
+              # sender cannot forge that into the client position, so this
+              # separates "a service of ours cannot send mail" from ordinary
+              # spam rejection. The usual cause is credentials: mynetworks is
+              # deliberately empty, so SASL AUTH is the only relay path, and a
+              # service that fails to authenticate lands here.
+              alert  = "ClusterServiceCannotRelayMail"
+              expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"NOQUEUE: reject\" |~ `svc\\.cluster\\.local\\[` [15m])) > 0"
+              for    = "5m"
+              labels = { severity = "warning", subsystem = "mail" }
+              annotations = {
+                summary     = "An in-cluster service is being refused mail relay"
+                description = "A pod tried to send mail through the mailserver and was refused. Find the sender and the reason with: homelab logs query '{namespace=\"mailserver\"} |= \"NOQUEUE: reject\" |~ `svc.cluster.local[`' --since 1h — the line carries from=, to= and the helo, and the helo is the pod IP. A reject line with no sasl_username= means the client never authenticated, which is what happens when its stored password is unusable; check the sending service's SMTP credential against the secret it reads."
+              }
+            },
+            {
+              # A host of ours failed SASL AUTH. The constant background of
+              # failed logins comes from public IPs guessing usernames; scoping
+              # to private client IPs leaves only our own senders, where a
+              # failure means a real credential problem (rotated secret, stale
+              # copy) that is about to turn into undelivered mail.
+              alert  = "InternalMailAuthFailure"
+              expr   = "sum(count_over_time({namespace=\"mailserver\"} |~ `SASL (LOGIN|PLAIN) authentication failed` |~ `\\[(10\\.|192\\.168\\.)` [15m])) > 0"
+              for    = "5m"
+              labels = { severity = "warning", subsystem = "mail" }
+              annotations = {
+                summary     = "A host on the internal network is failing SMTP authentication"
+                description = "SASL AUTH is failing for a client on 10.x or 192.168.x — our own network, not an internet password-guesser. The sasl_username= on the log line names the account. Most likely its password was rotated in Vault while a consumer still holds the old copy. Check the failing service's secret and, for Calibre-Web specifically, that the seed-smtp-password init container ran clean."
+              }
+            },
+            {
+              # Permanent delivery failure after we accepted the message.
+              # Outbound mail leaves via the Brevo smarthost, so a rejection by
+              # the far end (Amazon refusing a Send-to-Kindle address that is no
+              # longer approved, for instance) comes back as a bounce rather
+              # than an SMTP error the sending app can see.
+              alert  = "OutboundMailBounced"
+              expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"status=bounced\" [1h])) > 0"
+              for    = "0m"
+              labels = { severity = "warning", subsystem = "mail" }
+              annotations = {
+                summary     = "Mail we accepted has bounced"
+                description = "Postfix logged status=bounced, so a message was accepted from a sender and then permanently rejected downstream — the sending application already reported success. Read the reason with: homelab logs query '{namespace=\"mailserver\"} |= \"status=bounced\"' --since 2h. For Send-to-Kindle, a bounce from Amazon usually means the From address is not on that Kindle's approved-sender list, or the @kindle.com address has changed."
+              }
+            },
+            {
+              # Sustained queue deferrals. A lone deferral is normal (remote
+              # greylisting) and clears itself, so this waits for a handful
+              # rather than firing on the first one.
+              alert  = "OutboundMailDeferred"
+              expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"status=deferred\" [1h])) > 5"
+              for    = "15m"
+              labels = { severity = "warning", subsystem = "mail" }
+              annotations = {
+                summary     = "Mail is piling up deferred in the queue (>5/1h)"
+                description = "More than five deferrals in an hour, against a 30d baseline of zero — mail is sitting in the queue rather than being delivered. Check the queue and the reason: kubectl -n mailserver exec deploy/mailserver -- postqueue -p, then homelab logs query '{namespace=\"mailserver\"} |= \"status=deferred\"' --since 2h. Common causes are the Brevo smarthost refusing or throttling us, and DNS resolution failing for the destination."
+              }
+            },
+          ]
+        },
+        {
           # Immich share-link analytics (recording rules → Prometheus
           # remote-write, 2026-07-06). Continuous per-slug counters that
           # OUTLIVE Loki's 30d log retention (Prometheus keeps 26w): a shared
