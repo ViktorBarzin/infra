@@ -7,11 +7,26 @@ locals {
   # model. One Service, one /v1 endpoint, model selected by the
   # OpenAI `model` field. mostlygeek/llama-swap is production-grade
   # (3.9k★, v211, May 2026).
-  # NOTE: this value does NOT reach the Deployment. The container's image field
-  # is Keel-owned and Terraform-ignored (see KEEL_IGNORE_IMAGE below), so
-  # pinning a digest here would read as a guarantee while changing nothing.
-  # Build selection is by imagePullPolicy: Always + Keel's :cuda tracking.
-  llamaswap_image = "ghcr.io/mostlygeek/llama-swap:cuda"
+  # PINNED BY DIGEST (2026-08-21) = the 2026-08-20 :cuda rebuild, llama.cpp
+  # b10524. Terraform now owns this field again (the KEEL_IGNORE_IMAGE
+  # ignore_changes below is gone), because nothing else could select a build:
+  # imagePullPolicy is Kyverno-owned and the keel.sh/* annotations are
+  # Terraform-ignored, so :cuda + a node-cached layer had this pod serving
+  # llama.cpp b9879 from 2026-07-06 for six weeks of rollouts.
+  #
+  # Pinning an inference ENGINE is the safer default regardless of this probe.
+  # Qwen3.8's Gated DeltaNet CUDA path was only correct from ~b10450 and a
+  # wrong build fails by emitting GARBAGE TOKENS rather than erroring
+  # (llama.cpp discussion #27164) — so an engine that changes under us presents
+  # as a model/quant quality regression, which is expensive to diagnose and
+  # reaches real consumers (recruiter-responder, paperless-ai, nextcloud-todos).
+  # A digest also makes IfNotPresent safe and gives Keel no tag to poll, so the
+  # apply/keel fight KEEL_LIFECYCLE_V1 describes cannot restart.
+  #
+  # TO UPGRADE llama.cpp: bump this digest deliberately and check generation
+  # output on each model afterwards. Reverting this commit restores Keel's
+  # hourly :cuda tracking.
+  llamaswap_image = "ghcr.io/mostlygeek/llama-swap@sha256:50c640b15d7914ba356eb1e034680907b6c25eff7bdbe0071d77b907abfc0e0b"
 
   # Model set: two vision VLMs (qwen3vl-8b/4b) + one text-only LLM (qwen3-8b).
   # All Apache-2.0, GGUF Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob).
@@ -391,19 +406,14 @@ resource "kubernetes_deployment" "llama_swap" {
           # dumps a ~536MiB core into the writable layer every few seconds —
           # 2026-07-07 that filled node1 (~148GiB in 50min) and the DiskPressure
           # eviction storm took out the DNS primary. Crash logs go to stdout.
-          # Always, because `image` is a MUTABLE tag (:cuda, rebuilt ~nightly)
-          # that Terraform must not manage (KEEL_IGNORE_IMAGE). The default
-          # IfNotPresent silently froze this pod on llama.cpp b9879 from
-          # 2026-07-06: the layer was cached on node1, so six weeks of pod
-          # recreations all reused it while the tag moved on. That mattered on
-          # 2026-08-21 — Qwen3.8's Gated DeltaNet CUDA path is only correct from
-          # ~b10450 and fails by emitting GARBAGE TOKENS rather than erroring
-          # (llama.cpp discussion #27164), so a stale layer presents as a bad
-          # quant, not as a stale image. Cost of Always is one registry HEAD per
-          # pod start; the stack already tracks :cuda via Keel hourly, so this
-          # follows the existing design rather than departing from it.
-          image_pull_policy = "Always"
-          command           = ["/bin/sh", "-c", "ulimit -c 0 && exec /app/llama-swap -config /app/config.yaml -listen :8080"]
+          # imagePullPolicy is deliberately NOT set here: the Kyverno
+          # ClusterPolicy `set-image-pull-policy` mutates it at admission
+          # (Always for :latest, IfNotPresent otherwise), so a value set here is
+          # silently rewritten — the apply reports OK and the Deployment
+          # generation never changes. IfNotPresent is correct anyway now that
+          # the image is a digest: a digest names exactly one build, so "if not
+          # present" can only ever pull the build we asked for.
+          command = ["/bin/sh", "-c", "ulimit -c 0 && exec /app/llama-swap -config /app/config.yaml -listen :8080"]
           port {
             container_port = 8080
             name           = "http"
@@ -485,7 +495,9 @@ resource "kubernetes_deployment" "llama_swap" {
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE
+      # KEEL_IGNORE_IMAGE removed 2026-08-21 — the image is a pinned digest now,
+      # so Terraform owns it and Keel has no tag to poll. Restore this line if
+      # the image ever goes back to a floating tag.
       # KEEL_LIFECYCLE_V1 — stop the apply→keel fight: every keel digest
       # update patches `keel.sh/update-time` on the pod template and
       # `kubernetes.io/change-cause` + bumps the K8s rollout revision on
