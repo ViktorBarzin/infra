@@ -84,7 +84,6 @@
 | travel_blog | Travel blog | travel_blog |
 | dashy | Dashboard | dashy |
 | send | Firefox Send | send |
-| webmux | Browser grid of live SSH/mosh sessions (github.com/jordanhubbard/webmux), on trial alongside terminal-lobby. Runs as a systemd --user unit on the devvm (`10.0.10.10:7692`, `~/.config/webmux`, node/node-pty — upstream ships no image); TF owns only the ingress + Endpoints→:7692. `auth=required` (Authentik) AND webmux's own login (`auth.mode: local`, Argon2id+JWT) because the backend port is LAN-reachable; owner credentials in Vault `secret/webmux`. | webmux |
 | ytdlp | YouTube downloader | ytdlp |
 | wealthfolio | Finance tracking | wealthfolio |
 | audiobookshelf | Audiobook server (may be merged into ebooks stack) | audiobookshelf |
