@@ -43,6 +43,21 @@ ecosystem polish (Go/JS SDKs, langchain-ollama, n8n nodes, HA built-in)
 — the latter is mooted by fronting llama.cpp with **LiteLLM** at the
 gateway.
 
+**2026-08-21 — a sharper version of the same reason.** Asked whether we
+could just use Ollama to try Qwen3.8-27B, the answer turned out to be a
+concrete instance of the staleness pattern above rather than a preference.
+Qwen3.8's Gated DeltaNet layers only compute correctly on llama.cpp from
+about **b10450**, and an older build fails by emitting fluent-but-wrong
+tokens rather than by erroring ([llama.cpp
+#27164](https://github.com/ggml-org/llama.cpp/discussions/27164)). Ollama
+vendors its own llama.cpp fork, so on a new architecture it is behind
+upstream by an amount you cannot read off the model page — and the failure
+you would get is a silent quality one that looks like a bad quant. We run
+b10524 pinned by digest, which is newer than we would have got, and
+llama-swap's own web UI covers the "just try it by hand" use case that
+prompted the question. Ollama's ecosystem-polish advantage is unchanged;
+it is simply not what was needed here.
+
 ## Components
 
 | Component | Resource | Purpose |
@@ -52,6 +67,7 @@ gateway.
 | llama-swap Service | `kubernetes_service.llama_swap` | ClusterIP `:8080` → `llama-swap.llama-cpp.svc.cluster.local` |
 | Models PVC | `module.nfs_models` (NFS-RWX `/srv/nfs-ssd/llamacpp`) | Shared GGUF store, 30Gi |
 | Download Job | `kubernetes_job_v1.download_models` | Pulls Q4_K_M GGUF + mmproj per model, creates stable `model.gguf` / `mmproj.gguf` symlinks, warms page cache |
+| Ingress + TLS | `module.ingress`, `module.tls_secret` | `llm.viktorbarzin.me` → llama-swap's web UI, Authentik-gated (`auth = "required"`, Home Server Admins). Added 2026-08-21 for interactive use |
 
 ## Storage
 
@@ -102,6 +118,17 @@ kubectl scale -n immich deploy/immich-machine-learning --replicas=1
 | `qwen3-8b` | `unsloth/Qwen3-8B-GGUF` | Q4_K_M | 16384 | no (text-only) |
 | `qwen3vl-8b` | `Qwen/Qwen3-VL-8B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
 | `qwen3vl-4b` | `Qwen/Qwen3-VL-4B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
+| `qwen38-27b` | `unsloth/Qwen3.8-27B-GGUF` | UD-Q2_K_XL | 8192 | no (text-only) |
+
+`qwen38-27b` is **interactive-only — no consumer should point at it.** It
+needs immich-ml scaled to 0 to fit (~9670 MiB resident; with frigate and
+immich-ml up, free VRAM lands under the ADR-0016 watchdog floor and the
+watchdog recycles llama-swap mid-conversation). It runs at 8.2 tok/s
+against qwen3-8b's 33, so it is a curiosity rather than an upgrade — see
+the round-3 row in
+`docs/research/2026-07-16-local-llm-sota-and-upgrade.md` §0.1. `ttl = 600`
+means it unloads 10 minutes after the last message, so a forgotten immich
+pause stops mattering on its own.
 
 (`minicpm-v-4-5` was dropped 2026-07-16 — unused, "nothing special" in the
 2026-05-10 benchmark.)
@@ -166,6 +193,10 @@ Method, numbers, and the broader SoTA survey:
   on `/v1/chat/completions`)
 - `GET /metrics` — Prometheus
 - `GET /health` — 200 once a model is fully loaded; 503 during load
+- `GET /ui/` — llama-swap's own web UI (`/` 302-redirects here). Reachable
+  in a browser at **https://llm.viktorbarzin.me** behind Authentik. Note the
+  UI can load and unload models, so using it while a consumer job is running
+  can evict that job's model — which is why it is admin-gated.
 
 ## Known issues / decisions
 
