@@ -357,6 +357,56 @@ resource "kubernetes_deployment" "calibre-web-automated" {
         }
       }
       spec {
+        # Calibre-Web keeps its SMTP password Fernet-encrypted in
+        # /config/app.db, decryptable only with /config/.key. When the two
+        # disagree it does not surface an error: config_sql.py catches
+        # InvalidToken and blanks the field, and tasks/mail.py then skips SMTP
+        # AUTH altogether, so the mailserver refuses every send. The 2025-11-30
+        # migration to calibre-web-automated hit that — app.db was carried over
+        # from /mnt/main/calibre, the hidden .key was not — and "Send to Kindle"
+        # failed silently until 2026-08-21. Re-seeding from the Vault-backed
+        # secret on every start makes the secret the single source of truth, so
+        # a lost key is repaired on the next restart instead of becoming another
+        # silent outage. Idempotent: no write when the stored value already
+        # matches. Alerts on the resulting refusals: ClusterServiceCannotRelayMail
+        # (stacks/monitoring/modules/monitoring/loki.tf).
+        init_container {
+          # The CWA image already ships python3 + cryptography + sqlite3, and
+          # the seeding logic does not depend on the Calibre-Web version, so
+          # reusing it avoids a second image to keep current.
+          name    = "seed-smtp-password"
+          image   = "viktorbarzin/calibre-web-automated:latest"
+          command = ["python3", "-c", file("${path.module}/files/seed-smtp-password.py")]
+          env {
+            name = "SMTP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "calibre-secrets"
+                key  = "smtp_password"
+              }
+            }
+          }
+          # Match the main container's PUID/PGID (abc = 1000:1000) so anything
+          # this creates — a regenerated .key, SQLite's -wal/-shm — stays
+          # writable by Calibre-Web.
+          security_context {
+            run_as_user  = 1000
+            run_as_group = 1000
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/config"
+          }
+        }
         container {
           image = "viktorbarzin/calibre-web-automated:latest"
           name  = "calibre-web-automated"
