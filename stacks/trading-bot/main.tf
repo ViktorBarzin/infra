@@ -81,6 +81,10 @@ resource "kubernetes_manifest" "external_secret" {
             TRADING_MEET_KEVIN_CHANNEL_ID = "{{ .meet_kevin_channel_id }}"
             TRADING_SLACK_WEBHOOK_URL     = "{{ .slack_webhook_url }}"
             TRADING_SLACK_BOT_TOKEN       = "{{ .slack_bot_token }}"
+            # IMAP for the newsletter source. Reads spam@viktorbarzin.me, where
+            # the catch-all delivers dailywealth-meetkevin@viktorbarzin.me.
+            TRADING_KEVIN_IMAP_USER     = "{{ .imap_user }}"
+            TRADING_KEVIN_IMAP_PASSWORD = "{{ .imap_password }}"
           }
         }
       }
@@ -98,6 +102,8 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "slack_webhook_url", remoteRef = { key = "trading-bot", property = "slack_webhook_url" } },
         # slack_bot_token is sourced from secret/viktor (shared bot identity), NOT secret/trading-bot.
         { secretKey = "slack_bot_token", remoteRef = { key = "viktor", property = "slack_bot_token" } },
+        { secretKey = "imap_user", remoteRef = { key = "trading-bot", property = "imap_user" } },
+        { secretKey = "imap_password", remoteRef = { key = "trading-bot", property = "imap_password" } },
       ]
     }
   }
@@ -215,9 +221,16 @@ resource "kubernetes_job" "migrations" {
     template {
       metadata {}
       spec {
+        # ADR-0002: images now come from PRIVATE ghcr, so every pod needs the
+        # ghcr-credentials Secret that the kyverno stack clones into this
+        # namespace (allowlisted in kyverno/modules/kyverno/ghcr-credentials.tf).
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+
         container {
           name              = "migrations"
-          image             = "viktorbarzin/trading-bot-service:latest"
+          image             = "ghcr.io/viktorbarzin/trading-bot-service:latest"
           image_pull_policy = "Always"
           command           = ["python", "-m", "alembic", "upgrade", "head"]
           env {
@@ -292,9 +305,16 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
         }
       }
       spec {
+        # ADR-0002: images now come from PRIVATE ghcr, so every pod needs the
+        # ghcr-credentials Secret that the kyverno stack clones into this
+        # namespace (allowlisted in kyverno/modules/kyverno/ghcr-credentials.tf).
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+
         container {
           name  = "dashboard"
-          image = "viktorbarzin/trading-bot-dashboard:latest"
+          image = "ghcr.io/viktorbarzin/trading-bot-dashboard:latest"
           port {
             container_port = 80
             protocol       = "TCP"
@@ -311,7 +331,7 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
         }
         container {
           name    = "api-gateway"
-          image   = "viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
           command = ["python", "-m", "services.api_gateway.main"]
           port {
             container_port = 8000
@@ -395,9 +415,16 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
       }
       spec {
+        # ADR-0002: images now come from PRIVATE ghcr, so every pod needs the
+        # ghcr-credentials Secret that the kyverno stack clones into this
+        # namespace (allowlisted in kyverno/modules/kyverno/ghcr-credentials.tf).
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+
         container {
           name    = "signal-generator"
-          image   = "viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
           command = ["python", "-m", "services.signal_generator.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -432,7 +459,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
         container {
           name    = "learning-engine"
-          image   = "viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
           command = ["python", "-m", "services.learning_engine.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -467,7 +494,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
         container {
           name    = "market-data"
-          image   = "viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
           command = ["python", "-m", "services.market_data.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -502,7 +529,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
         container {
           name    = "meet-kevin-watcher"
-          image   = "viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
           command = ["python", "-m", "services.meet_kevin_watcher.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -514,6 +541,28 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           env {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9097"
+          }
+          # Newsletter source ("The Daily Wealth") — the watcher's second loop.
+          # IMAP creds arrive via trading-bot-secrets (env_from below).
+          env {
+            name  = "TRADING_KEVIN_NEWSLETTER_ENABLED"
+            value = "true"
+          }
+          env {
+            name  = "TRADING_KEVIN_NEWSLETTER_ADDRESS"
+            value = "dailywealth-meetkevin@viktorbarzin.me"
+          }
+          env {
+            name  = "TRADING_KEVIN_IMAP_HOST"
+            value = "mailserver.mailserver.svc.cluster.local"
+          }
+          # Interim cadence while the real send time is unknown. Each issue
+          # records sent_at + received_at, so once the send time is observed the
+          # source row's poll_cron takes over (PATCH the API, no deploy) and this
+          # becomes the safety net.
+          env {
+            name  = "TRADING_KEVIN_NEWSLETTER_POLL_INTERVAL_SECONDS"
+            value = "7200"
           }
           env_from {
             secret_ref {
@@ -537,7 +586,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
         container {
           name    = "kevin-signal-bridge"
-          image   = "viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
           command = ["python", "-m", "services.kevin_signal_bridge.main"]
           dynamic "env" {
             for_each = local.common_env
@@ -577,7 +626,7 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
         container {
           name    = "trade-executor"
-          image   = "viktorbarzin/trading-bot-service:latest"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
           command = ["python", "-m", "services.trade_executor.main"]
           dynamic "env" {
             for_each = local.common_env
