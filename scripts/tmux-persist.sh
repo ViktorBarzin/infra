@@ -199,9 +199,20 @@ uuid_of_claude() {
       [[ "$t" == "$sess" ]] && { f="${p##*/}"; printf '2\t%s\n' "${f%.jsonl}"; return 0; }
     done < <(find "$dir" -maxdepth 1 -name '*.jsonl' -newermt "@$start" -printf '%T@ %p\n' 2>/dev/null | sort -rn)
   fi
-  # 3. last resort: newest by mtime.
-  f="$(find "$dir" -maxdepth 1 -name '*.jsonl' -newermt "@$start" -printf '%T@ %f\n' 2>/dev/null \
-       | sort -rn | head -1 | awk '{print $2}' || true)"
+  # 3. last resort: newest by mtime — and only when it is the ONLY candidate.
+  #
+  # "Newest wins" is evidence when one conversation has been active in this
+  # directory since the process started, and a coin toss when several have: the
+  # answer is then just whoever wrote last, which changes minute to minute. That
+  # is what this fallback is for — a nameless one-off session in a directory of
+  # its own — so it now abstains rather than guessing between rivals. Abstaining
+  # saves `-` and restores a plain shell; guessing wrong restores a session onto
+  # somebody else's history, which is the complaint this whole path caused.
+  local -a recent
+  mapfile -t recent < <(find "$dir" -maxdepth 1 -name '*.jsonl' -newermt "@$start" \
+                          -printf '%T@ %f\n' 2>/dev/null | sort -rn | head -2)
+  (( ${#recent[@]} == 1 )) || return 0
+  f="${recent[0]#* }"
   [[ -n "$f" ]] && printf '3\t%s\n' "${f%.jsonl}"
   return 0
 }

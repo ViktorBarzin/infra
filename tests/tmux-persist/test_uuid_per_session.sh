@@ -85,10 +85,59 @@ tp save >/dev/null 2>&1
 assert_eq "$(row_uuid alpha)" "-" \
   "a stamp that climbs out of the projects root is refused"
 
-# --- no two rows may carry one uuid -------------------------------------------
-# With the stamps gone, both panes fall through to the guess and both want B.
+# --- the guess abstains between rivals ----------------------------------------
+# With the stamps gone both panes fall through to the guess, and BOTH
+# transcripts have been written since they started. "Newest wins" is then only
+# whoever wrote last, so neither session may claim either conversation.
 tt set-option -u -t alpha @claude_transcript
 tt set-option -u -t bravo @claude_transcript
+touch "$PROJ/$UUID_A.jsonl" "$PROJ/$UUID_B.jsonl"
+
+tp save >/dev/null 2>&1
+
+assert_eq "$(row_uuid alpha)" "-" \
+  "with two conversations live in one directory the guess abstains for alpha"
+assert_eq "$(row_uuid bravo)" "-" \
+  "and abstains for bravo too, rather than racing on mtime"
+
+# --- but it still answers when it is the only candidate ------------------------
+# A session alone in its own directory is what the fallback exists for, so
+# abstaining must not have turned it off altogether.
+SOLO="$TEST_TMP/solo"; mkdir -p "$SOLO"
+solo_slug="${SOLO//\//-}"; solo_slug="${solo_slug//./-}"
+SOLO_PROJ="$HOME_ROOT/.claude/projects/$solo_slug"; mkdir -p "$SOLO_PROJ"
+UUID_S="cccccccc-3333-4333-8333-cccccccccccc"
+: > "$SOLO_PROJ/$UUID_S.jsonl"
+tt new-session -d -s solo -c "$SOLO" "exec $BIN/claude 3600" 2>/dev/null
+
+tp save >/dev/null 2>&1
+
+assert_eq "$(row_uuid solo)" "$UUID_S" \
+  "a lone session in its own directory still resolves by mtime"
+
+# --- no two rows may carry one uuid -------------------------------------------
+# The collision that actually reached production: a restore had started four
+# sessions with `--resume <same uuid>`, so four panes each named that
+# conversation from argv — confidently, and identically.
+#
+# bash is the fixture here because comm is the FILE's name: a copy called
+# `claude` is what claude_pid_under matches, while the flags trailing -c's
+# command land in /proc/<pid>/cmdline for argv resolution to read.
+#
+# `; true` is load-bearing. bash exec-optimises a lone command in -c, replacing
+# itself with it — which leaves the pane as `sleep`, comm and all, and the flags
+# gone from cmdline. A second statement makes it stay and wait.
+ABIN="$TEST_TMP/argvbin"; mkdir -p "$ABIN"
+cp "$(command -v bash)" "$ABIN/claude"
+mk_resuming_session() { # $1 name, $2 uuid
+  tt new-session -d -s "$1" -c "$WORK" \
+    "exec $ABIN/claude -c 'sleep 3600; true' --resume $2" 2>/dev/null
+}
+
+tt kill-session -t alpha 2>/dev/null
+tt kill-session -t bravo 2>/dev/null
+mk_resuming_session twin_one "$UUID_B"
+mk_resuming_session twin_two "$UUID_B"
 
 tp save >/dev/null 2>&1
 
@@ -98,22 +147,21 @@ assert_eq "$dupes" "" \
 
 claimed="$(cut -f3 "$(newest_snap)" | grep -c "^$UUID_B\$")"
 assert_eq "$claimed" "1" \
-  "the contested conversation goes to exactly one session"
+  "the contested conversation goes to exactly one of the twins"
 
-unresolved="$(cut -f3 "$(newest_snap)" | grep -c '^-$')"
-assert_eq "$unresolved" "1" \
-  "the other session is saved with no conversation, not with someone else's"
+assert_eq "$(cut -f3 "$(newest_snap)" | grep -c '^-$')" "1" \
+  "the other twin is saved with no conversation, not with a copy of the first"
 
-# --- a stamped row is not robbed by an unstamped one --------------------------
-# alpha has no stamp and its guess is B; bravo IS stamped with B. The stamp is
-# the exact answer, so bravo must keep B whichever order the panes are listed in.
-tt set-option -t bravo @claude_transcript "$PROJ/$UUID_B.jsonl"
+# --- a certain answer outranks a guess ----------------------------------------
+# twin_one names B from argv; twin_two is STAMPED with B. The stamp is the exact
+# answer, so it keeps B whichever order the panes happen to be listed in.
+tt set-option -t twin_two @claude_transcript "$PROJ/$UUID_B.jsonl"
 
 tp save >/dev/null 2>&1
 
-assert_eq "$(row_uuid bravo)" "$UUID_B" \
+assert_eq "$(row_uuid twin_two)" "$UUID_B" \
   "the session that is certain of its conversation keeps it"
-assert_eq "$(row_uuid alpha)" "-" \
-  "the session that only guessed it yields, rather than duplicating it"
+assert_eq "$(row_uuid twin_one)" "-" \
+  "the session that was less sure yields, rather than duplicating it"
 
 finish
