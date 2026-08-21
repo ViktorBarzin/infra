@@ -198,11 +198,12 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
-module "tls_secret" {
-  source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = kubernetes_namespace.llama_cpp.metadata[0].name
-  tls_secret_name = var.tls_secret_name
-}
+# No setup_tls_secret module here on purpose. The Kyverno ClusterPolicy
+# `sync-tls-secret` already generates the wildcard `tls-secret` into every
+# namespace — it has been in llama-cpp since the namespace was created — so
+# creating it from Terraform as well would collide with the existing object.
+# The wildcard cert (CN viktorbarzin.me, SAN *.viktorbarzin.me) covers the
+# ingress host; the variable below is just the secret's name.
 
 # Browser access to llama-swap's own web UI (it serves a SPA at /ui/ and
 # redirects / there), so the models can be used by hand instead of only by

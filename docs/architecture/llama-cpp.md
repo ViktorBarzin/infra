@@ -67,7 +67,7 @@ it is simply not what was needed here.
 | llama-swap Service | `kubernetes_service.llama_swap` | ClusterIP `:8080` → `llama-swap.llama-cpp.svc.cluster.local` |
 | Models PVC | `module.nfs_models` (NFS-RWX `/srv/nfs-ssd/llamacpp`) | Shared GGUF store, 30Gi |
 | Download Job | `kubernetes_job_v1.download_models` | Pulls Q4_K_M GGUF + mmproj per model, creates stable `model.gguf` / `mmproj.gguf` symlinks, warms page cache |
-| Ingress + TLS | `module.ingress`, `module.tls_secret` | `llm.viktorbarzin.me` → llama-swap's web UI, Authentik-gated (`auth = "required"`, Home Server Admins). Added 2026-08-21 for interactive use |
+| Ingress | `module.ingress` | `llm.viktorbarzin.me` → llama-swap's web UI, Authentik-gated (`auth = "required"`, Home Server Admins). Added 2026-08-21 for interactive use. No `setup_tls_secret` call — Kyverno's `sync-tls-secret` already puts the wildcard `tls-secret` in the namespace |
 
 ## Storage
 
