@@ -165,8 +165,24 @@ resource "kubernetes_deployment" "recruiter_responder" {
   }
 
   spec {
+    # OFF as of 2026-08-21, by Viktor's decision — deliberately 0, not a
+    # temporary scale-down, so it survives applies, reboots and Keel rollouts.
+    #
+    # Everything else is intentionally left standing so this is a one-line
+    # revert: the pg-recruiter-responder database and its Vault static role,
+    # the ingress and hostname, the ExternalSecrets, and openclaw's
+    # recruiter-api plugin (openclaw installs that from the
+    # ghcr.io/viktorbarzin/recruiter-responder image in an init container, so
+    # it keeps working; anything in that plugin which calls THIS Service will
+    # now get a Service with no endpoints).
+    #
+    # Consequences while it is 0: no IMAP IDLE watcher, so recruiter mail is
+    # simply left unread in the mailbox rather than triaged, and the
+    # APScheduler jobs do not run. Nothing queues up inside the app.
+    #
+    # Original note, still true if it is ever turned back on:
     # IMAP IDLE + APScheduler want a single leader; concurrency hurts both.
-    replicas = 1
+    replicas = 0
     strategy {
       type = "Recreate"
     }
@@ -370,6 +386,6 @@ module "ingress" {
   tls_secret_name  = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/description" = "Automated recruiter email triage"
-    "gethomepage.dev/icon" = "mdi-email-fast"
+    "gethomepage.dev/icon"        = "mdi-email-fast"
   }
 }
