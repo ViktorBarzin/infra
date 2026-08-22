@@ -583,6 +583,58 @@ install_memory() {
   return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the whole reconcile
 }
 
+# Shared agent rules -> every user's ~/.claude/rules/, re-copied when the source
+# changes. Before this, only the org claudeMd reached everyone: homelab.md was a
+# symlink in wizard's home (emo never had it) and execution.md/planning.md were
+# loose per-user files under no version control, so emo's had drifted months
+# behind. Adding a user now inherits the whole set with no hand-copy to go stale.
+#
+# 99-personal.md is created once and NEVER overwritten — it is the per-user slot
+# that keeps "mine" separable from "everyone's".
+# Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
+install_shared_rules() {
+  local user="$1" home rules src dst base personal
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  [[ -d "$SHARED_RULES_DIR" ]] || { log "WARN: $SHARED_RULES_DIR missing -> skip shared rules for $user"; return 0; }
+  rules="$home/.claude/rules"
+  run install -d -o "$user" -g "$user" -m 0755 "$rules" || return 0
+
+  for src in "$SHARED_RULES_DIR"/*.md; do
+    [[ -r "$src" ]] || continue
+    base="$(basename "$src")"
+    [[ "$base" == "README.md" ]] && continue   # explains the layout; not a rule
+    dst="$rules/$base"
+    cmp -s "$src" "$dst" 2>/dev/null && continue
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] shared rule $base -> $user"; continue; fi
+    install -o "$user" -g "$user" -m 0644 "$src" "$dst" \
+      && log "shared rule $base -> $user (source changed)"
+  done
+
+  # Retire the pre-2026-08-15 layout once its replacement is in place, or the
+  # same rules load twice — and for emo the stale copy would load alongside the
+  # current one.
+  [[ -e "$rules/10-homelab.md" && -L "$rules/homelab.md" ]] && run rm -f "$rules/homelab.md"
+  [[ -e "$rules/20-execution.md" && -f "$rules/execution.md" ]] && run rm -f "$rules/execution.md"
+  [[ -e "$rules/30-planning.md"  && -f "$rules/planning.md"  ]] && run rm -f "$rules/planning.md"
+
+  personal="$rules/99-personal.md"
+  if [[ ! -e "$personal" && "$DRY_RUN" != 1 ]]; then
+    install -o "$user" -g "$user" -m 0644 /dev/stdin "$personal" <<'PERSONAL'
+# Personal rules — yours alone
+
+The provisioner never writes this file, so anything here survives every
+reconcile. Everything else in this directory is shared and WILL be overwritten
+from `docs/agents/shared/` — edit it there if the change should reach everyone.
+
+Use this for preferences that are genuinely yours: how you like output framed,
+tools you prefer, shortcuts that would not make sense for someone else.
+PERSONAL
+    log "created personal rules slot for $user"
+  fi
+  return 0
+}
+
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
