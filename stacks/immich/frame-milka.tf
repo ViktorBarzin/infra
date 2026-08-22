@@ -55,10 +55,15 @@ resource "kubernetes_config_map" "frame_config_milka" {
     Accounts:
         - ImmichServerUrl: http://immich.viktorbarzin.me
           ApiKey: ${data.vault_kv_secret_v2.emo_immich_frame_milka.data["key"]}
-          # 1825 days covers 3146 of her 3149 assets; her library spans
-          # 2012-2025 but is overwhelmingly 2024-2025, and uploads appear to
-          # have stopped in Dec 2025 (her phone backup needs re-enabling).
+          # 1825 days covers essentially the whole library; it spans 2012-2026
+          # but is overwhelmingly 2024-2026.
           ImagesFromDays: 1825
+          # Skip the chat/greeting-card/screenshot album. Her library arrives
+          # mostly through Viber, so a large share of it is forwarded greeting
+          # cards, joke text-images, courier-app screenshots and conversation
+          # captures — none of which belong on a photo frame.
+          ExcludedAlbums:
+            - 0d174625-d279-49dd-a446-0eaeda03d7ff
     EOF
   }
 }
