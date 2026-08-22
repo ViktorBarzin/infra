@@ -60,6 +60,20 @@ agent:
       mountPath: /etc/crowdsec/scenarios/http-429-abuse.yaml
       subPath: "http-429-abuse.yaml"
       readonly: true
+    # These two REPLACE the hub symlink at the same path, which is what makes
+    # them an override rather than a second scenario with a duplicate name. A
+    # ConfigMap key on its own is inert — the mount is what lands the file.
+    # subPath mounts do not refresh on a ConfigMap change, so editing one of
+    # these only takes effect when the agent pods restart; changing this list
+    # does that by itself.
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/http-probing.yaml
+      subPath: "http-probing.yaml"
+      readonly: true
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/http-crawl-non_statics.yaml
+      subPath: "http-crawl-non_statics.yaml"
+      readonly: true
     - name: whitelist
       mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml
       subPath: "whitelist.yaml"
@@ -132,12 +146,22 @@ lapi:
         secretKeyRef:
           name: crowdsec-lapi-secrets
           key: dbPassword
-    # Real enforcement path that replaces the dead Traefik Yaegi plugin:
-    #   kvsync   -> LAPI->Cloudflare-KV sync CronJob (proxied hosts, edge Worker)
-    #   firewall -> cs-firewall-bouncer DaemonSet (direct hosts, in-kernel nftables drop)
-    # Registered at LAPI startup (idempotent across the 3 replicas / restarts).
-    - name: BOUNCER_KEY_kvsync
-      value: "${KVSYNC_CROWDSEC_API_KEY}"
+    # Enforcement bouncers, registered at LAPI startup (idempotent across the 3
+    # replicas / restarts):
+    #   traefik  -> in-process Traefik plugin on the websecure entrypoint. This
+    #               is the only layer that sees the real client IP for
+    #               Cloudflare-PROXIED hosts, which is every HTTP host in the
+    #               zone, so it is where public web traffic is actually enforced.
+    #   firewall -> cs-firewall-bouncer DaemonSet (direct hosts, in-kernel
+    #               nftables drop; sees only the tunnel for proxied traffic).
+    #
+    # The third bouncer, kvsync, is GONE (2026-08-18) along with the Cloudflare
+    # edge list it fed: the Lists API enforces a hard ~72h floor between
+    # successful writes, which left the edge disagreeing with LAPI for 107 of 216
+    # observed hours. Its stale LAPI rows were deleted with `cscli bouncers
+    # delete` — it self-registered one row per CronJob pod IP and had leaked 443.
+    - name: BOUNCER_KEY_traefik
+      value: "${TRAEFIK_CROWDSEC_API_KEY}"
     - name: BOUNCER_KEY_firewall
       value: "${FIREWALL_CROWDSEC_API_KEY}"
   dashboard:

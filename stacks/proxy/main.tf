@@ -219,6 +219,24 @@ resource "kubernetes_deployment" "broker" {
           "prometheus.io/scrape" = "true"
           "prometheus.io/port"   = "8080"
           "prometheus.io/path"   = "/metrics"
+          # Roll the broker from TERRAFORM whenever its code changes, rather than
+          # leaving the restart to Reloader alone. Reloader is asynchronous and
+          # Terraform sees no diff without this, so an apply that ships new broker
+          # code AND creates/changes the gateway Deployment would race: the OLD
+          # broker keeps running its 60s reaper while the new gateway pod appears,
+          # and a broker that predates pool.PERMANENT_IDX treats that pod as an
+          # ordinary idle gateway and deletes its Service, peers ConfigMap and
+          # WireGuard Secret out from under it. With a real diff here, the default
+          # `wait_for_rollout = true` blocks until the new broker is the only one
+          # serving, and `depends_on = [kubernetes_deployment.broker]` on the
+          # gateway (egress.tf) orders the gateway after that. Reloader stays as
+          # the trigger for secret/configmap changes Terraform does not author.
+          "checksum/broker-scripts" = sha256(join(",", [
+            filesha256("${path.module}/files/broker/broker.py"),
+            filesha256("${path.module}/files/broker/pool.py"),
+            filesha256("${path.module}/files/broker/wgkeys.py"),
+            filesha256("${path.module}/files/broker/index.html"),
+          ]))
         }
       }
       spec {
@@ -333,7 +351,13 @@ resource "kubernetes_deployment" "broker" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
   depends_on = [kubernetes_manifest.es_secrets, kubernetes_manifest.es_turn]

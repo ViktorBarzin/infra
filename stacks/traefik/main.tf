@@ -19,7 +19,10 @@ module "traefik" {
   redis_host             = var.redis_host
   tls_secret_name        = var.tls_secret_name
   auth_fallback_htpasswd = data.vault_kv_secret_v2.secrets.data["auth_fallback_htpasswd"]
-  x402_wallet_address    = lookup(data.vault_kv_secret_v2.viktor.data, "x402_wallet_address", "")
+  # Same Vault key stacks/crowdsec seeds into LAPI as BOUNCER_KEY_traefik, so
+  # the plugin can authenticate to LAPI. Both stacks must read the same field.
+  crowdsec_bouncer_key = data.vault_kv_secret_v2.secrets.data["traefik_bouncer_key"]
+  x402_wallet_address  = lookup(data.vault_kv_secret_v2.viktor.data, "x402_wallet_address", "")
   # Reuses the existing Alertmanager Slack incoming webhook — same channel as
   # other infra alerts. Payment events arrive as a normal Slack message.
   x402_notify_webhook_url = lookup(data.vault_kv_secret_v2.viktor.data, "alertmanager_slack_api_url", "")

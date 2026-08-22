@@ -750,6 +750,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-technitium",
     "pg-goldmane-edges",
     "pg-tasks",
+    "pg-goodreads-sync",
   ]
 
   postgresql {
@@ -989,6 +990,16 @@ resource "vault_database_secret_backend_static_role" "pg_goldmane_edges" {
 # tasks PWA (Reminders-style front-end over Nextcloud CalDAV) — 7-day rotation
 # for the `tasks` CNPG role. Consumed by stacks/tasks via a vault-database
 # ExternalSecret -> TASKS_DB_DSN (remoteRef static-creds/pg-tasks).
+# State for the Goodreads -> Calibre pipeline: one row per shelf item recording
+# what happened to it, so a book is attempted once and misses stay explainable.
+resource "vault_database_secret_backend_static_role" "pg_goodreads_sync" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-goodreads-sync"
+  username        = "goodreads_sync"
+  rotation_period = 604800
+}
+
 resource "vault_database_secret_backend_static_role" "pg_tasks" {
   backend         = vault_mount.database.path
   db_name         = vault_database_secret_backend_connection.postgresql.name

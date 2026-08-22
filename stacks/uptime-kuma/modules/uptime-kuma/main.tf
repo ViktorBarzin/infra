@@ -81,13 +81,6 @@ resource "kubernetes_deployment" "uptime-kuma" {
     labels = {
       app  = "uptime-kuma"
       tier = var.tier
-      # Opt out of Kyverno's inject-keel-annotations ClusterPolicy. The Kyverno
-      # rule excludes any workload with this LABEL (see
-      # stacks/kyverno/modules/kyverno/keel-annotations.tf, exclude.any
-      # matchLabels keel.sh/policy=never). Without the label, Kyverno would
-      # silently re-add `keel.sh/policy=force` after every reconcile, undoing
-      # the annotation below.
-      "keel.sh/policy" = "never"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"

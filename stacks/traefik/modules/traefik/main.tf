@@ -6,6 +6,11 @@ variable "auth_fallback_htpasswd" {
   description = "htpasswd-format string for emergency basicAuth fallback when Authentik is down"
   sensitive   = true
 }
+variable "crowdsec_bouncer_key" {
+  type        = string
+  sensitive   = true
+  description = "LAPI bouncer API key for the in-process crowdsec-bouncer plugin. Registered at LAPI startup by stacks/crowdsec via BOUNCER_KEY_traefik; both sides read Vault secret/platform -> traefik_bouncer_key."
+}
 variable "x402_wallet_address" {
   type        = string
   default     = ""
@@ -141,7 +146,28 @@ resource "helm_release" "traefik" {
           tls = {
             enabled = true
           }
+          # Entrypoint middlewares are PREPENDED to every router on websecure, so
+          # this covers all ~195 Ingresses, the 10 IngressRoutes and the catchall
+          # — including the hand-rolled ingresses that never go through
+          # ingress_factory. That reach is the point: doing it per-ingress via the
+          # factory would fan a modules/ change out over 33 platform + ~95 app
+          # stacks applied serially, and lock-contended stacks are SKIPPED rather
+          # than failed, which would leave some ingresses on the old chain.
+          #
+          # crowdsec comes first so a banned client is rejected before any
+          # compression work. It only gates HTTP on this entrypoint: the
+          # api/dashboard/ping routers live on the `traefik` entrypoint (:8080),
+          # the two IngressRouteTCPs have their own entrypoints, and there is no
+          # ACME/HTTP-01 path through Traefik at all (no certResolver anywhere —
+          # certs come from the renew-tls Woodpecker cron).
+          #
+          # ORDERING: never leave a router referencing a Middleware that does not
+          # exist. The `crowdsec` Middleware (middleware.tf) is created before
+          # this reference is added, and `entryPoints` is STATIC config — changing
+          # it is a helm upgrade plus a 3-replica roll, not an annotation edit, so
+          # a rollback here costs minutes rather than seconds.
           middlewares = [
+            "traefik-crowdsec@kubernetescrd",
             "traefik-compress@kubernetescrd",
           ]
         }
@@ -212,6 +238,12 @@ resource "helm_release" "traefik" {
       # "Plugins are disabled because an error has occurred.") including
       # api-token-middleware above — after any change here verify plugin load
       # in the logs AND that paperless-mcp still gates.
+      # `go build` + `go test` do NOT catch that class: a plugin can compile and
+      # pass its tests while Yaegi rejects it at import. BEFORE applying a change
+      # to any plugin below, run `scripts/yaegi-plugin-gate` (it loads the
+      # vendored files under the same yaegi version this Traefik embeds — see its
+      # README for the invocations and for the variadic-struct-field panic that
+      # motivated it).
       localPlugins = {
         sablier = {
           moduleName = "github.com/sablierapp/sablier-traefik-plugin"
@@ -238,6 +270,35 @@ resource "helm_release" "traefik" {
             "go.mod"       = file("${path.module}/real-ip-plugin/go.mod")
             ".traefik.yml" = file("${path.module}/real-ip-plugin/.traefik.yml")
             "main.go"      = file("${path.module}/real-ip-plugin/main.go")
+          }
+        }
+        # CrowdSec ban enforcement, in-process. Vendored as a LOCAL plugin, same
+        # rationale as sablier and realip above.
+        #
+        # This is where CrowdSec bans are enforced for public web traffic.
+        # `cloudflare_proxied_names = []` means every HTTP host rides the
+        # zone-wide wildcard and is proxied, so proxied traffic arrives from the
+        # in-cluster cloudflared pod and the nftables bouncer sees 10.10.x.x
+        # rather than the client. Enforcement previously lived at the Cloudflare
+        # edge for that reason, until the Lists API turned out to hold a hard 72h
+        # floor between successful writes (the edge list disagreed with LAPI for
+        # 107 of 216 observed hours). In-process, a decision lands within one
+        # poll interval, and the plugin can trust the real TCP peer the way
+        # realip does — a ForwardAuth backend cannot, since its peer is always a
+        # Traefik pod and Traefik's forwardedheaders does not manage
+        # Cf-Connecting-Ip.
+        #
+        # Consumed by the `crowdsec` Middleware CR in middleware.tf (plugin key
+        # `crowdsec` in Middleware.spec.plugin.crowdsec), attached to the
+        # websecure entrypoint so it covers every router on it.
+        crowdsec = {
+          moduleName = "github.com/viktorbarzin/crowdsec-bouncer-plugin"
+          mountPath  = "/plugins-local/src/github.com/viktorbarzin/crowdsec-bouncer-plugin"
+          type       = "inlinePlugin"
+          source = {
+            "go.mod"       = file("${path.module}/crowdsec-bouncer-plugin/go.mod")
+            ".traefik.yml" = file("${path.module}/crowdsec-bouncer-plugin/.traefik.yml")
+            "main.go"      = file("${path.module}/crowdsec-bouncer-plugin/main.go")
           }
         }
       }
@@ -562,6 +623,8 @@ resource "kubernetes_deployment" "bot_block_proxy" {
       metadata[0].annotations["keel.sh/pollSchedule"],
       metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].labels["tier"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 }
@@ -679,6 +742,27 @@ resource "kubernetes_deployment" "x402_gateway" {
             name  = "NOTIFY_WEBHOOK_URL"
             value = var.x402_notify_webhook_url
           }
+          # Local sources are never asked to pay. Our own browsing and our own
+          # automation present exactly the UAs BOT_UA_REGEX charges for
+          # (python-requests, scrapy, HeadlessChrome, ClaudeBot), so without
+          # this the local-browsing bypass would end at Anubis and every local
+          # script would get a 402 instead of the app. The gateway matches this
+          # against X-Real-Ip, which the real-ip plugin stamps with the
+          # unspoofable TCP peer earlier in the chain — a client cannot forge it.
+          #
+          # MIRRORS the canonical list in
+          # modules/kubernetes/anubis_instance/main.tf (var.trusted_local_cidrs).
+          # Two copies on purpose: CI fans a modules/ edit out to that module's
+          # consuming app stacks, and a stacks/traefik edit re-applies this
+          # platform stack — so each copy is applied where it is edited. A single
+          # shared definition would leave one side unapplied. CHANGE BOTH.
+          #
+          # Private + CGNAT only; our public egress IP (176.12.22.76) is
+          # deliberately absent, so the skip is unreachable from the internet.
+          env {
+            name  = "TRUSTED_CIDRS"
+            value = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7,fe80::/10"
+          }
           resources {
             requests = {
               cpu    = "10m"
@@ -733,6 +817,7 @@ resource "kubernetes_deployment" "x402_gateway" {
       metadata[0].annotations["keel.sh/pollSchedule"],
       metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].labels["tier"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }
@@ -1015,6 +1100,8 @@ resource "kubernetes_deployment" "auth_proxy" {
       metadata[0].annotations["keel.sh/pollSchedule"],
       metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].labels["tier"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 }

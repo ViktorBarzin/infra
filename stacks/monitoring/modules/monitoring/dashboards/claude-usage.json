@@ -1,0 +1,630 @@
+{
+  "uid": "claude-usage",
+  "title": "Claude Usage",
+  "description": "How Claude Code is used on the devvm (infra ADR-0025) \u2014 cost, tokens, tools, session shape and prompts. Metrics come from Prometheus (26 weeks), events from Loki (30 days). Everything is keyed on os_user, which is stamped per-user by /etc/profile.d/26-claude-otel-attrs.sh; Claude's own user_email is the Anthropic account and is identical for everyone on this box. Counter panels use increase(), which needs at least two samples of a series inside the window; metrics are PUSHED at session end rather than scraped, so panels stay empty until a few sessions have run and fill in from there.",
+  "tags": [
+    "claude",
+    "telemetry",
+    "cost"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "user",
+        "label": "OS user",
+        "type": "custom",
+        "query": "wizard,emo",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "session",
+        "label": "Session",
+        "type": "textbox",
+        "query": ".+",
+        "current": {
+          "text": ".+",
+          "value": ".+"
+        },
+        "description": "Matches the tmux session NAME (Hunter, Yale) or the session id, as a regex. '.+' is everything; click a row in Sessions to focus one."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Cost and volume",
+      "description": "From Prometheus, 26-week retention. Claude's own accounting; how it relates to the subscription rather than per-token API pricing is not yet established.",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Spend, selected range",
+      "description": "Claude's reported cost over the dashboard range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(claude_code_cost_usage_USD_total{os_user=~\"$user\"}[$__range]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Sessions",
+      "description": "Every session that sent a prompt in this range, by tmux name where it has one. Sessions started outside tmux (headless, cron, t3) show no name -- that is real, not missing data. Click a row to filter the prompts.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 10,
+        "x": 6,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tmux_session, session_id, os_user) (count_over_time({service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | tmux_session =~ \"$session\" or session_id =~ \"$session\" | prompt !~ \"(?s)(<task-notification|\\\\[SYSTEM NOTIFICATION|<cross-session-message|Base directory for this skill).*\" [$__range]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "tmux_session": "Name",
+              "session_id": "Session id",
+              "os_user": "User",
+              "Value": "Prompts"
+            },
+            "indexByName": {
+              "tmux_session": 0,
+              "os_user": 1,
+              "Value": 2,
+              "session_id": 3
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Prompts",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "links": [
+            {
+              "title": "Show only this session's prompts",
+              "url": "d/claude-usage/claude-usage?var-session=${__data.fields.Name}&var-user=${user:queryparam}&from=${__from}&to=${__to}"
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Session id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show only this session's prompts (by id)",
+                    "url": "d/claude-usage/claude-usage?var-session=${__data.fields['Session id']}&var-user=${user:queryparam}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Tokens",
+      "description": "All token types combined.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(claude_code_token_usage_tokens_total{os_user=~\"$user\"}[$__range]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Active time",
+      "description": "Time Claude was actually working, not wall-clock session length.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(claude_code_active_time_seconds_total{os_user=~\"$user\"}[$__range]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spend per user",
+      "description": "The comparison this dashboard exists for.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (os_user) (increase(claude_code_cost_usage_USD_total{os_user=~\"$user\"}[$__interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "legendFormat": "{{os_user}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens by type",
+      "description": "cacheRead against input is the efficiency signal: a high cacheRead share means context is being reused rather than re-sent.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (type) (increase(claude_code_token_usage_tokens_total{os_user=~\"$user\"}[$__interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "legendFormat": "{{type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "Efficiency",
+      "description": "",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "panels": []
+    },
+    {
+      "type": "piechart",
+      "title": "Token mix",
+      "description": "Where the tokens actually go.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (type) (increase(claude_code_token_usage_tokens_total{os_user=~\"$user\"}[$__range]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "legendFormat": "{{type}}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost per session",
+      "description": "Divided by sessions started in the same window; clamped so an interval with no new session does not divide by zero.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (os_user) (increase(claude_code_cost_usage_USD_total{os_user=~\"$user\"}[$__interval])) / clamp_min(sum by (os_user) (increase(claude_code_session_count_total{os_user=~\"$user\"}[$__interval])), 1)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "legendFormat": "{{os_user}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "What happens in a session",
+      "description": "From Loki, 30-day retention. These are the events, where the detail lives.",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Events by kind",
+      "description": "user_prompt, assistant_response, api_request, tool decisions, compaction, hook execution.",
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event_name) (count_over_time({service_name=\"claude-code\"} | event_name != \"\" [$__interval]))",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "legendFormat": "{{event_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "API errors",
+      "description": "Errors Claude hit talking to the API.",
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (os_user) (count_over_time({service_name=\"claude-code\"} | event_name = \"api_error\" [$__interval]))",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "legendFormat": "{{os_user}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "What people actually asked",
+      "collapsed": false,
+      "description": "The raw user input. Everything by default; pick a session in the table to read just that conversation.",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Sessions",
+      "description": "Every session that sent a prompt in this range, by tmux name where it has one. Sessions started outside tmux (headless, cron, t3) show no name -- that is real, not missing data. Click a row to filter the prompts.",
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 10,
+        "x": 0,
+        "y": 42
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "queryType": "instant",
+          "instant": true,
+          "expr": "sum by (tmux_session, session_id, os_user) (count_over_time({service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | tmux_session =~ \"$session\" or session_id =~ \"$session\" | prompt !~ \"(?s)(<task-notification|\\\\[SYSTEM NOTIFICATION|<cross-session-message|Base directory for this skill).*\" [$__range]))"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "tmux_session": "Name",
+              "session_id": "Session id",
+              "os_user": "User",
+              "Value": "Prompts"
+            },
+            "indexByName": {
+              "tmux_session": 0,
+              "os_user": 1,
+              "Value": 2,
+              "session_id": 3
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Prompts",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "filterable": true
+          },
+          "links": [
+            {
+              "title": "Show only this session's prompts",
+              "url": "d/claude-usage/claude-usage?var-session=${__data.fields.Name}&var-user=${user:queryparam}&from=${__from}&to=${__to}"
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Session id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show only this session's prompts (by id)",
+                    "url": "d/claude-usage/claude-usage?var-session=${__data.fields['Session id']}&var-user=${user:queryparam}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Prompts",
+      "description": "What people actually typed, newest first. Harness-injected turns (task notifications, cross-session messages, skill bodies) arrive as user_prompt events too and are filtered out here -- they are real input to the model, but not a person's words. Prompt text is recorded verbatim (ADR-0025).",
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 14,
+        "x": 10,
+        "y": 42
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "expr": "{service_name=\"claude-code\"} | event_name = \"user_prompt\" | os_user =~ \"$user\" | tmux_session =~ \"$session\" or session_id =~ \"$session\" | prompt !~ \"(?s)(<task-notification|\\\\[SYSTEM NOTIFICATION|<cross-session-message|Base directory for this skill).*\" | line_format \"{{.prompt}}\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    }
+  ]
+}

@@ -7,7 +7,26 @@ locals {
   # model. One Service, one /v1 endpoint, model selected by the
   # OpenAI `model` field. mostlygeek/llama-swap is production-grade
   # (3.9k★, v211, May 2026).
-  llamaswap_image = "ghcr.io/mostlygeek/llama-swap:cuda"
+  # PINNED BY DIGEST (2026-08-21) = the 2026-08-20 :cuda rebuild, llama.cpp
+  # b10524. Terraform now owns this field again (the KEEL_IGNORE_IMAGE
+  # ignore_changes below is gone), because nothing else could select a build:
+  # imagePullPolicy is Kyverno-owned and the keel.sh/* annotations are
+  # Terraform-ignored, so :cuda + a node-cached layer had this pod serving
+  # llama.cpp b9879 from 2026-07-06 for six weeks of rollouts.
+  #
+  # Pinning an inference ENGINE is the safer default regardless of this probe.
+  # Qwen3.8's Gated DeltaNet CUDA path was only correct from ~b10450 and a
+  # wrong build fails by emitting GARBAGE TOKENS rather than erroring
+  # (llama.cpp discussion #27164) — so an engine that changes under us presents
+  # as a model/quant quality regression, which is expensive to diagnose and
+  # reaches real consumers (recruiter-responder, paperless-ai, nextcloud-todos).
+  # A digest also makes IfNotPresent safe and gives Keel no tag to poll, so the
+  # apply/keel fight KEEL_LIFECYCLE_V1 describes cannot restart.
+  #
+  # TO UPGRADE llama.cpp: bump this digest deliberately and check generation
+  # output on each model afterwards. Reverting this commit restores Keel's
+  # hourly :cuda tracking.
+  llamaswap_image = "ghcr.io/mostlygeek/llama-swap@sha256:50c640b15d7914ba356eb1e034680907b6c25eff7bdbe0071d77b907abfc0e0b"
 
   # Model set: two vision VLMs (qwen3vl-8b/4b) + one text-only LLM (qwen3-8b).
   # All Apache-2.0, GGUF Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob).
@@ -28,6 +47,22 @@ locals {
   #     warmup; qwen3-4b mislabeled correspondent. Neither a clear win. Removed.
   #   Real finding: a clear "sender not recipient" prompt fixes correspondent for
   #   qwen3-8b itself — no migration needed.
+  # 2026-08-21 — the interactive qwen38-27b entry was REMOVED again once the
+  # hands-on test finished. It could not safely stay once immich-ml was back:
+  # resident 9670 MiB leaves ~1000 MiB free, under the ADR-0016 watchdog's
+  # 1536 MiB floor, so one click on it in the web UI would have had llama-swap
+  # recycled — possibly mid-job for paperless-ai. To use it again, re-add the
+  # entry AND scale immich-ml to 0 for the session; the numbers are below.
+  # 2026-08-21, round 3 — Qwen3.8-27B (dense 27B, the same Gated DeltaNet hybrid
+  # family as the rejected qwen3.5-9b) tested on-card at UD-IQ1_S and UD-Q2_K_XL
+  # under llama.cpp b10524, then REMOVED. It genuinely runs now — Q2_K_XL gave
+  # 8.2 tok/s decode / 113 tok/s prefill with coherent, accurate output, where
+  # the same architecture managed 0.5 tok/s on b9879 — but 8 tok/s against
+  # qwen3-8b's 33, needing 9670 MiB (immich-ml must scale to 0 for it to fit),
+  # is not a trade worth making for triage and enrichment work. The DeltaNet
+  # CUDA path is correct on Turing now but still unfused, reaching only ~16% of
+  # the card's bandwidth ceiling. Full numbers in
+  # docs/research/2026-07-16-local-llm-sota-and-upgrade.md §0.1.
   #
   # Filenames are matched by glob in the download Job (huggingface_hub
   # snapshot_download with allow_patterns). Stable symlinks model.gguf /
@@ -148,11 +183,22 @@ module "nfs_models" {
   storage    = "30Gi"
 }
 
-# One-shot download Job. Pulls Q4_K_M GGUF + mmproj for every model in
-# locals.models into /models/<id>/, creates stable model.gguf /
-# mmproj.gguf symlinks, then warms the page cache. Idempotent —
-# huggingface_hub's snapshot_download skips files that already exist
-# with matching size; symlinks are recreated each run.
+# Download Job. Pulls Q4_K_M GGUF + mmproj for every model in locals.models
+# into /models/<id>/, creates stable model.gguf / mmproj.gguf symlinks, then
+# warms the page cache. Idempotent — huggingface_hub's snapshot_download skips
+# files that already exist with matching size; symlinks are recreated each run.
+#
+# NO ttl_seconds_after_finished, deliberately (2026-08-15). It used to be 86400,
+# which deleted the finished Job after a day — so Terraform found it missing and
+# planned to create it again, every day, forever. The Job body was never the
+# problem; the TTL was, because a self-deleting resource can't be reconciled.
+#
+# Letting the finished Job persist costs one completed object in the namespace
+# and keeps locals.models honest: it feeds llama-swap's server config too
+# (-m /models/<id>/model.gguf), so adding a model there changes this Job's spec,
+# Terraform replaces it, and the new model is actually fetched. Deleting the Job
+# instead would have left that half-wired — the server would reference a model
+# nothing had downloaded.
 resource "kubernetes_job_v1" "download_models" {
   metadata {
     name      = "download-models"
@@ -160,8 +206,7 @@ resource "kubernetes_job_v1" "download_models" {
     labels    = local.labels
   }
   spec {
-    backoff_limit              = 2
-    ttl_seconds_after_finished = 86400
+    backoff_limit = 2
     template {
       metadata { labels = local.labels }
       spec {
@@ -196,7 +241,11 @@ resource "kubernetes_job_v1" "download_models" {
                 )
                 # Resolve actual filenames and create stable symlinks so
                 # llama-swap config is filename-agnostic.
-                ggufs = [p for p in glob.glob(f"{local_dir}/*Q4_K_M*.gguf") if "mmproj" not in p.lower()]
+                # Glob by the model's OWN gguf_pattern. This was hardcoded to
+                # *Q4_K_M* until 2026-08-21, which worked only because every
+                # model happened to be Q4_K_M: any other quant downloaded fine
+                # and then failed the symlink step with "no GGUF found".
+                ggufs = [p for p in glob.glob(f"{local_dir}/{cfg['gguf_pattern']}") if "mmproj" not in p.lower()]
                 if not ggufs:
                     raise SystemExit(f"no GGUF found in {local_dir}")
                 gguf_link = f"{local_dir}/model.gguf"
@@ -344,6 +393,13 @@ resource "kubernetes_deployment" "llama_swap" {
           # dumps a ~536MiB core into the writable layer every few seconds —
           # 2026-07-07 that filled node1 (~148GiB in 50min) and the DiskPressure
           # eviction storm took out the DNS primary. Crash logs go to stdout.
+          # imagePullPolicy is deliberately NOT set here: the Kyverno
+          # ClusterPolicy `set-image-pull-policy` mutates it at admission
+          # (Always for :latest, IfNotPresent otherwise), so a value set here is
+          # silently rewritten — the apply reports OK and the Deployment
+          # generation never changes. IfNotPresent is correct anyway now that
+          # the image is a digest: a digest names exactly one build, so "if not
+          # present" can only ever pull the build we asked for.
           command = ["/bin/sh", "-c", "ulimit -c 0 && exec /app/llama-swap -config /app/config.yaml -listen :8080"]
           port {
             container_port = 8080
@@ -426,7 +482,9 @@ resource "kubernetes_deployment" "llama_swap" {
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE
+      # KEEL_IGNORE_IMAGE removed 2026-08-21 — the image is a pinned digest now,
+      # so Terraform owns it and Keel has no tag to poll. Restore this line if
+      # the image ever goes back to a floating tag.
       # KEEL_LIFECYCLE_V1 — stop the apply→keel fight: every keel digest
       # update patches `keel.sh/update-time` on the pod template and
       # `kubernetes.io/change-cause` + bumps the K8s rollout revision on

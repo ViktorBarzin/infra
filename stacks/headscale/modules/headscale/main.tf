@@ -125,8 +125,8 @@ resource "kubernetes_deployment" "headscale" {
       }
       spec {
         container {
-          image = "headscale/headscale:0.28.0"
-          # image   = "headscale/headscale:0.28.0-debug" # -debug is for debug images
+          image = "headscale/headscale:0.29.3"
+          # image   = "headscale/headscale:0.29.3-debug" # -debug is for debug images
           name    = "headscale"
           command = ["headscale", "serve"]
 
@@ -268,7 +268,10 @@ resource "kubernetes_deployment" "headscale" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [spec[0].template[0].spec[0].dns_config,
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[1].image, # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 resource "kubernetes_service" "headscale" {
@@ -403,6 +406,12 @@ resource "kubernetes_service" "headscale-server" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type                    = "LoadBalancer"
     external_traffic_policy = "Cluster"

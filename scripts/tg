@@ -138,6 +138,13 @@ if $is_tf_op && [ -n "$STACK_NAME" ]; then
   if ! "$REPO_ROOT/scripts/check-allowed-groups.py" "$REPO_ROOT/stacks/$STACK_NAME"; then
     exit 1
   fi
+  # Every dashboard-visible ingress needs a catalog description. The same
+  # annotations feed home.viktorbarzin.me and `homelab services`, which is how
+  # agents discover what we already self-host; a row with only a hostname
+  # carries little. Secondary/carve-out ingresses opt out instead.
+  if ! "$REPO_ROOT/scripts/check-ingress-descriptions.py" "$REPO_ROOT/stacks/$STACK_NAME"; then
+    exit 1
+  fi
 fi
 
 # Acquire lock for mutating operations (Tier 0 only — Tier 1 uses pg_advisory_lock)

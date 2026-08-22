@@ -88,9 +88,8 @@ resource "kubernetes_deployment" "xray" {
       }
       spec {
         container {
-          image             = "teddysun/xray"
-          name              = "xray"
-          image_pull_policy = "IfNotPresent"
+          image = "teddysun/xray"
+          name  = "xray"
           port {
             container_port = 7443 // reality
             protocol       = "TCP"
@@ -152,7 +151,14 @@ resource "kubernetes_deployment" "xray" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 
@@ -197,6 +203,12 @@ resource "kubernetes_service" "xray-reality" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type = "LoadBalancer"
     selector = {

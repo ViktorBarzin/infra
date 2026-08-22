@@ -52,6 +52,7 @@ graph TB
             SplitHorizon[split-horizon-sync<br/>every 6h]
             DNSOpt[dns-optimization<br/>every 6h]
             PassSync[password-sync<br/>every 6h]
+            StaticRec[static-records<br/>hourly]
             DNSSync[phpipam-dns-sync<br/>every 15min]
         end
     end
@@ -92,7 +93,7 @@ graph TB
 | CoreDNS | K8s `kube-system` | Cluster default | K8s service discovery + forwarding to Technitium |
 | NodeLocal DNSCache | K8s `kube-system` (DaemonSet) | `k8s-dns-node-cache:1.23.1` | Per-node DNS cache, transparent interception on 10.96.0.10 + 169.254.20.10. Insulates pods from CoreDNS/Technitium/pfSense disruption. |
 | Cloudflare DNS | SaaS | N/A | Public zone management — 185/200 records (free-plan hard cap; see "Zone record budget") |
-| pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium; DoT upstream to Cloudflare |
+| pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium and serves it `for-downstream` (see "Zone serial" below); DoT upstream to Cloudflare |
 | Kea DHCP-DDNS | 10.0.20.1 | pfSense 2.7.x | Automatic DNS registration on DHCP lease |
 | phpIPAM | K8s namespace `phpipam` | v1.7.0 | IPAM ↔ DNS bidirectional sync |
 
@@ -100,13 +101,38 @@ graph TB
 
 | Stack | Path | DNS Resources |
 |-------|------|---------------|
-| Technitium | `stacks/technitium/` | 3 deployments, services, PVCs, 4 CronJobs, CoreDNS ConfigMap |
+| Technitium | `stacks/technitium/` | 3 deployments, services, PVCs, 5 CronJobs, CoreDNS ConfigMap |
 | NodeLocal DNSCache | `stacks/nodelocal-dns/` | DaemonSet (5 pods), ConfigMap, kube-dns-upstream Service, headless metrics Service |
 | Cloudflared | `stacks/cloudflared/` | Cloudflare DNS records (A, AAAA, CNAME, MX, TXT), tunnel config |
 | phpIPAM | `stacks/phpipam/` | dns-sync CronJob, pfsense-import CronJob |
 | pfSense | `stacks/pfsense/` | VM config only (Unbound config is managed out-of-band via pfSense web UI / direct config.xml edits; see `docs/runbooks/pfsense-unbound.md`) |
 
 ## DNS Resolution Paths
+
+### Zone serial — `viktorbarzin.lan` uses the date scheme, and must keep doing so
+
+pfSense does **not** forward `.lan` to Technitium. Unbound holds its own AXFR
+copy (`auth-zone`, master `10.0.20.201`, `for-downstream: yes`) and answers LAN
+clients from it, refreshing on the zone's SOA refresh (900s). It receives no
+NOTIFY: the zone's NS record is the Technitium **pod name**, so nothing points at
+pfSense.
+
+That makes the serial load-bearing. A refresh only transfers when the master's
+serial is **higher** than the cached one — a lower serial reads as "nothing new".
+On 2026-08-15 the primary's plain counter had regressed below the copy pfSense
+held (`64125` vs `684609`), so Unbound had not re-transferred since 2026-08-04
+and **every `.lan` record created after that date was invisible to every LAN
+client**, while queries straight to `10.0.20.201` were correct.
+
+Fixed by switching the zone to Technitium's **date-based serial scheme**
+(`useSerialDateScheme`), taking the serial to `2026081500`. Keep it there: a plain
+counter can regress if the zone is ever recreated, and the failure is silent.
+
+**Symptom to recognise:** an old `.lan` name resolves everywhere, a newly added
+one resolves only at `10.0.20.201` and NXDOMAINs elsewhere with a fresh negative
+TTL each time — which looks like negative caching and is not. Compare
+`dig +short @10.0.20.201 viktorbarzin.lan SOA` with the serial pfSense returns;
+a lower number upstream is the signature.
 
 ### K8s Pod → Internal Domain (.viktorbarzin.lan)
 
@@ -277,7 +303,7 @@ Technitium's **Split Horizon AddressTranslation** app post-processes DNS respons
 
 - **Affected**: Non-proxied domains (ha-sofia, immich, headscale, calibre, vaultwarden, etc.) for 192.168.1.x clients
 - **Not affected**: Cloudflare-proxied domains (resolve to Cloudflare edge IPs, no translation needed)
-- **10.0.x.x clients (k8s nodes, devvm, other VMs)** — handled at the resolver since 2026-06-10: **pfSense Unbound carries a domain override forwarding the whole `viktorbarzin.me` zone to Technitium** (`10.0.20.201`). Technitium's split-horizon zone answers with the zone apex A record, which auto-tracks the live Traefik LB IP (`technitium-ingress-dns-sync` CNAMEs every ingress host hourly; `viktorbarzin-apex-probe` is the drift canary). Every client of pfSense Unbound — all VLANs, k8s nodes included — therefore gets internal answers with **zero per-host configuration** (no `/etc/hosts` pins, no resolved drop-ins; both earlier same-day approaches were removed, nodes are stock). Names not behind Traefik keep distinct records in the zone (e.g. `mail.viktorbarzin.me → 10.0.20.1`, verified working on :993/:25; since 2026-06-10 its :443 also works internally — pfSense carries an SNI-routed HAProxy frontend on 443 that sends hostname traffic to Traefik and bare-IP/no-SNI traffic to the webGUI, which moved to :8443; see `docs/runbooks/mailserver-pfsense-haproxy.md`). See `docs/runbooks/pfsense-unbound.md` for the override config + rollback, and `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md` for the incident that motivated this (kubelet forgejo pulls riding the broken hairpin; the containerd hosts.toml mirror cannot fix it — Traefik 404s bare-IP requests and the registry auth realm is an absolute public URL).
+- **10.0.x.x clients (k8s nodes, devvm, other VMs)** — handled at the resolver since 2026-06-10: **pfSense Unbound carries a domain override forwarding the whole `viktorbarzin.me` zone to Technitium** (`10.0.20.201`). Technitium's split-horizon zone answers with the zone apex A record, which auto-tracks the live Traefik LB IP (`technitium-ingress-dns-sync` CNAMEs every ingress host hourly; the `apex-dns` blackbox scrape is the drift canary — a `dns_apex` module asking Technitium for the apex A record every 60s and failing unless the answer is the live LB IP, replacing the `viktorbarzin-apex-probe` CronJob on 2026-08-16). Every client of pfSense Unbound — all VLANs, k8s nodes included — therefore gets internal answers with **zero per-host configuration** (no `/etc/hosts` pins, no resolved drop-ins; both earlier same-day approaches were removed, nodes are stock). Names not behind Traefik keep distinct records in the zone (e.g. `mail.viktorbarzin.me → 10.0.20.1`, verified working on :993/:25; since 2026-06-10 its :443 also works internally — pfSense carries an SNI-routed HAProxy frontend on 443 that sends hostname traffic to Traefik and bare-IP/no-SNI traffic to the webGUI, which moved to :8443; see `docs/runbooks/mailserver-pfsense-haproxy.md`). See `docs/runbooks/pfsense-unbound.md` for the override config + rollback, and `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md` for the incident that motivated this (kubelet forgejo pulls riding the broken hairpin; the containerd hosts.toml mirror cannot fix it — Traefik 404s bare-IP requests and the registry auth realm is an absolute public URL).
   - **devvm**: also covered by a `~viktorbarzin.me → 10.0.20.201` resolved routing domain (predates the pfSense override, provisioned by `setup-devvm.sh`) — redundant-but-harmless belt-and-suspenders.
   - **in-cluster PODS are ordinary internal clients too** (since 2026-06-10 evening): CoreDNS's dedicated `viktorbarzin.me:53` block (in `stacks/technitium`, TF-managed) forwards to the Technitium ClusterIP (`10.96.0.53`, same as the `.lan` block), so pods get the same split-horizon answers as everyone else. This works because on k8s 1.34 **pods CAN reach the ETP=Local Traefik LB IP** — kube-proxy short-circuits in-cluster traffic to LB IPs via the cluster path (verified from pods on three non-Traefik nodes; re-verify after major k8s upgrades — the canary is the uptime-kuma `[External]` fleet going red). forgejo stays pinned to Traefik's **ClusterIP** in the same block so CI pushes survive a Technitium outage. History: the block briefly forwarded to `8.8.8.8/1.1.1.1` (morning of 2026-06-10), which kept pods on public IPs and the broken TP-Link NAT loopback — 27 non-proxied `[External]` uptime-kuma monitors dark (beads code-yh33). Note: in-cluster `[External]` monitors now test DNS+Traefik+service via the internal path for ALL names, including Cloudflare-proxied ones — genuine edge-path fidelity is the job of a true external vantage, not in-cluster probes. **Since 2026-07-08 that vantage is deployed: gatus on mx2** (Oracle Frankfurt, [ADR-0020](../adr/0020-mx2-outage-failover-and-external-vantage.md)) probes the public hostnames from outside, serves `status.viktorbarzin.me`, and fires edge-unreachable Slack alerts — superseding the earlier ha-london aspiration.
   - **Trade-off**: `viktorbarzin.me` resolution via pfSense now depends on in-cluster Technitium (3 replicas). During a full cluster outage the zone SERVFAILs LAN-wide — acceptable, the services behind it are down anyway; node bootstrap images pull via the IP-addressed `10.0.20.10` mirrors, so cold-start self-unwinds.
@@ -418,23 +444,52 @@ Summary:
 | `technitium-password-sync` | `0 */6 * * *` | technitium | Vault-rotated MySQL password → Technitium config, configure PG logging |
 | `technitium-split-horizon-sync` | `15 */6 * * *` | technitium | Split Horizon + DNS Rebinding Protection on all 3 instances |
 | `technitium-dns-optimization` | `30 */6 * * *` | technitium | Min cache TTL 60s, emrsn.org stub zone |
+| `technitium-static-records` | `35 * * * *` | technitium | Internal-only A records for names served by a LoadBalancer rather than an Ingress (currently `turn`) |
 | `phpipam-dns-sync` | `*/15 * * * *` | phpipam | Bidirectional phpIPAM ↔ Technitium DNS sync |
 | `phpipam-pfsense-import` | `0 * * * *` | phpipam | Import Kea DHCP leases + ARP from pfSense |
 
 ### Password Rotation Flow
 
-Vault's database engine rotates the Technitium MySQL password every 7 days. The flow:
+Vault's database engine rotates the Technitium **PostgreSQL** password every 7 days
+(static role `pg-technitium`). The flow:
 
 ```
 Vault DB engine rotates password
-  → ExternalSecret (refreshInterval=15m) pulls from static-creds/mysql-technitium
+  → ExternalSecret (refreshInterval=15m) pulls from static-creds/pg-technitium
   → K8s Secret technitium-db-creds updated
   → CronJob technitium-password-sync (every 6h):
     1. Logs into Technitium API
-    2. Disables MySQL query logging (migrated to PG)
+    2. Uninstalls MySQL + SQLite query-log plugins (migrated to PG)
     3. Checks PG plugin is loaded (warns if missing)
     4. Configures PG query logging (90-day retention)
+    5. Sets maxLogFileDays=7 on all three instances (see below)
 ```
+
+> **The ExternalSecret MUST track `pg-technitium`, not `mysql-technitium`.**
+> Until 2026-08-05 it read `static-creds/mysql-technitium` — a leftover from when
+> query logging went to MySQL — while step 4 injected that value into the
+> **PostgreSQL** connection string. A MySQL role's password can never authenticate
+> to Postgres, so every query-log flush threw `Npgsql 28P01` and the exception
+> traces accumulated in `/etc/dns/logs/` until the 5Gi primary config PVC was full.
+> Technitium's `LogManager` opens the day's log file *before* it binds `:53`, so
+> a full config PVC is a hard startup failure that no restart can clear: the DNS
+> primary crashlooped for 27.6h (2026-08-04 02:00 → 08-05 UTC). DNS kept serving
+> throughout via secondary + tertiary.
+>
+> Three guards now exist: the corrected Vault role, `maxLogFileDays=7` (was the
+> 365-day default), and a 10Gi autoresize ceiling (was 5Gi, already exhausted).
+
+### PostgreSQL Query-Log Database
+
+The `technitium` database is created idempotently by the `technitium-pg-db-init`
+Job (`CREATE DATABASE technitium OWNER technitium`). The **role** is created and
+rotated by Vault, but the **database** was never created until 2026-08-05 — so
+query logging was silently dead (no rows, and a broken Grafana
+`technitium-postgres` datasource) even when the password was right. The role has
+`rolcreatedb=false`, so the Job bootstraps with the CNPG root credential from
+Vault. The app's connection string carries no `Database=`, so Npgsql defaults to
+the username `technitium` — which is why the missing database and the wrong
+password produced the same-looking auth-path failure.
 
 ## Monitoring
 

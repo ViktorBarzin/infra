@@ -196,6 +196,112 @@ graph LR
 
 When a node goes down, all pod-level alerts for pods scheduled on that node are suppressed, reducing noise and focusing attention on the root cause.
 
+### Repeat notifications from flapping alerts
+
+Alert-on-change routing (`repeat_interval: 8760h` for warning/info) dedupes an
+alert that *stays* firing. It does not help an alert that resolves and fires
+again, because each cycle is a new alert instance and `send_resolved` turns each
+one into two Slack posts. Two rule shapes flap this way:
+
+**Event-count rules (Loki).** `count_over_time({...} |~ "..." [5m]) > 0` with
+`for: 0m` fires on an event and resolves the moment the lookback window empties,
+then fires again on the next event. The firing duration equals the window, which
+is the diagnostic signature — measured 2026-08-10, `WorkstationClaudeAuthInvalid`
+fired for exactly 15m on all 24 of its occurrences (its window was `[15m]`).
+Fix: make the window longer than the interval between the events it detects, so a
+recurring condition is one continuous alert. `KernelOOMKiller` went `[5m]` →
+`[2h]` (spanned an hourly OOM loop), `WorkstationClaudeAuthInvalid` `[15m]` →
+`[7h]` (spans the ~6h per-user sync timer), `T3AutoUpdateRolledBack` → `[12h]`.
+
+**Threshold rules (Prometheus).** A value sitting near its threshold crosses it
+repeatedly. Fix: `keep_firing_for`, which holds the alert firing after the
+expression stops matching (Prometheus ≥ 2.42; validate rule changes with
+`promtool check rules` inside the prometheus pod, which pins the running
+version). Applied to `ATSOverload`, `ClusterCannotTolerateNonGpuNodeLoss` (6h),
+`HighSystemLoad`, `HighPowerUsage` (GPU), `ServerHighPowerUsage` (R730),
+`ImmichSmartSearchSlow`, `GPUVRAMLow`, `PodCrashLooping`, `PodStuckPending`,
+`IngressTTFBHigh`, `HighService4xxRate`, `AnubisChallengeStoreErrors`.
+
+`IngressTTFBHigh`/`IngressTTFBCritical` were rebuilt on **2026-08-15** and are
+worth reading as a cautionary example. They averaged `duration_seconds_sum /
+_count` over a 5-minute window, guarded only by `rate(...) > 0.05` — three
+requests a minute. At that volume a 5m window holds ~15 requests, so whichever
+one happened to be slow *became* the average: one Home Assistant stream, one
+matrix `/sync`, one crawler call. That produced **81 firings in 7 days across 8
+services**, and every service probed at 13-143 ms while its alert was firing.
+They now take a **p95 over 30m** from
+`traefik_service_request_duration_seconds_bucket` (kept in the scrape for this
+purpose, ~1.3k series). `keep_firing_for` dropped 1h → 15m at the same time,
+since it existed to damp the mean's fire/resolve churn.
+
+Two things generalise from it. A **mean is not a latency signal on a
+low-traffic service** — any new latency alert here wants a quantile, and a
+minimum-volume guard is not a substitute. And per the kured caveat below, an
+alert that flaps also holds the node-reboot gate closed, so latency-alert noise
+is not only Slack noise.
+
+One caveat worth knowing: kured halts node reboots while any firing alert is
+outside its `alertFilterRegexp` allowlist (`^(Watchdog|RebootRequired|
+KuredNodeWasNotDrained|InfoInhibitor|KernelOOMKiller)$`). Holding an alert
+firing for longer therefore also holds the reboot gate closed for longer. For
+`ClusterCannotTolerateNonGpuNodeLoss` that is the behaviour you want — if the
+cluster cannot afford to lose a node, it should not drain one — but if OS
+patching starts lagging, check what is being held open before widening a
+threshold.
+
+### One alertname, one meaning
+
+`HighPowerUsage` was defined **twice** — once for the T4 GPU (group `Nvidia
+Tesla T4 GPU`) and once for R730 server power (group `Power`) — and both were
+live. Alertmanager groups by `alertname`, so the two could batch into one
+notification, inhibit-rule target lists could not address one without the
+other, and a Slack line reading `[INFO] HighPowerUsage` did not say whether the
+server or the GPU was hot; only the summary text distinguished them. The R730
+rule is now `ServerHighPowerUsage` (2026-08-10), and the
+`NodeMaintenanceInProgress` inhibit list carries both names. It was the only
+duplicate in the 298-rule set — worth re-checking when adding rules, since
+nothing enforces uniqueness.
+
+Neither change silences anything or moves a threshold: the same conditions still
+notify, once per episode instead of once per oscillation. Measured baseline
+before the change: 447 `#alerts` messages in 7 days (349 alert events), with
+every alert showing equal firing and resolved counts.
+
+**Alerts must name the thing that broke.** Two were aggregating by a label that
+did not exist, so they could not say what to look at:
+
+- `WorkstationClaudeAuthInvalid` used `sum by (unit)`, but the
+  `{job="devvm-journal", identifier="claude-auth-sync"}` stream carries no `unit`
+  label (only host, identifier, job, service_name, detected_level). Every user
+  collapsed into one series and the summary rendered as `...failed on` with
+  nothing after it. The user is in the line body (`user=<name> FAIL ...`) and is
+  now extracted with `| regexp`.
+- `KernelOOMKiller` reported only the node. The killed process name is in the
+  journal line's parenthesised comm field and is now extracted into `proc`.
+
+When adding a rule that groups by a label, confirm the label exists on the live
+stream first — an empty group key silently degrades to "one series, no detail".
+
+### Metric units: the ATS reads deciwatts
+
+`automatic_transfer_switch_load_power_watts` is in **0.1 W units despite its
+name**. `tuya_bridge` publishes raw Tuya datapoints unscaled
+(`metrics_definition.py` calls `metrics[code].set(float(val))`), and this device
+reports deciwatts; `load_current_amps` is likewise deciamps.
+
+Anchor for the conversion (2026-08-10): the raw 1-day average is 2218. Read as
+watts that would be 2218 W from this one ATS, against a whole-house
+`fuse_main_active_power` averaging 0.651 kW — 3.4× the entire house, so the raw
+value cannot be watts. Real load is therefore ~222 W average, p95 ~331 W,
+max ~350 W.
+
+`dashboards/ups.json` already divides by 10. `ATSOverload` did not, so it
+compared a deciwatt value against `3000` (tripping at 300 W of real load) and
+its summary reported "3351W" for a 335 W load. The rule now divides by 10 in
+both the expression and the message, keeping the same 300 W trip point. The
+device's rated continuous capacity is not recorded in this repo — revisit the
+300 W threshold once it is known.
+
 ### GPU Monitoring
 
 NVIDIA GPU metrics are collected via dcgm-exporter with configurable resource limits (`dcgmExporter.resources`). Metrics include GPU utilization, memory usage, temperature, and power consumption.
@@ -269,11 +375,11 @@ spec:
 - **RegistryCatalogInaccessible**: Probe cannot fetch `/v2/_catalog` (auth failure or registry down)
 
 #### Immich Smart Search Alerts
-- **ImmichSmartSearchSlow**: Representative context-search ANN query >1s for 15m. Root cause is almost always the `clip_index` (vchord, ~665MB) decaying out of PG `shared_buffers` — a cold list read is ~1.8s vs ~4ms warm. Remediation: confirm the `clip-index-prewarm` CronJob (immich ns, `*/5`) is succeeding; manual fix `kubectl exec -n immich -c immich-postgresql <pg-pod> -- psql -U postgres -d immich -c "SELECT pg_prewarm('clip_index')"`.
+- **ImmichSmartSearchSlow**: Representative context-search ANN query >1s for 15m. Root cause is almost always the `clip_index` (vchord, ~665MB) decaying out of PG `shared_buffers` — a cold list read is ~1.8s vs ~4ms warm. Remediation: confirm the `immich-search-probe` CronJob (immich ns, `*/5`) is succeeding — it runs the prewarm on the :00/:30 ticks; manual fix `kubectl exec -n immich -c immich-postgresql <pg-pod> -- psql -U postgres -d immich -c "SELECT pg_prewarm('clip_index')"`.
 - **ImmichClipIndexColdCache**: `clip_index` <50% resident in shared_buffers for 15m (leading indicator; same remediation).
 - **ImmichSearchProbeStale**: `immich-search-probe` hasn't reported in >30m (CronJob broken). Inhibits the two above so frozen Pushgateway gauges don't false-fire.
 
-The Immich smart-search monitoring uses two CronJobs in the `immich` namespace (both `*/5`): `clip-index-prewarm` re-runs `pg_prewarm('clip_index')` to keep the vector index hot during runtime (the `postStart` prewarm only fires at pod start; `pg_prewarm.autoprewarm` only reloads at startup, so the index otherwise decays under job buffer-pressure), and `immich-search-probe` (postgres init-container measures a random-vector ANN latency + `pg_buffercache` residency → curl sidecar pushes `immich_smart_search_db_seconds` / `immich_clip_index_cached_pct` / `immich_smart_search_probe_success` / `immich_smart_search_probe_last_run_timestamp` to the Pushgateway). Also surfaced by cluster-health check #46 (`check_immich_search`). Note this is the **Postgres** half of smart-search warmth; the **ML model** half is kept warm by the separate `clip-keepalive` CronJob.
+Immich smart-search monitoring is ONE CronJob in the `immich` namespace since 2026-08-16 — `immich-search-probe` (`*/5`), which absorbed the former `clip-index-prewarm` and `clip-keepalive` jobs (three separate `*/5` jobs firing on the same tick cost 864 pod creations/day for one namespace; merging them changed no cadence and no latency). Its init container re-runs `pg_prewarm('clip_index')` on the :00/:30 ticks to keep the vector index hot during runtime (the `postStart` prewarm only fires at pod start; `pg_prewarm.autoprewarm` only reloads at startup, so the index otherwise decays under job buffer-pressure — 48 re-warms a day is ample against a decay measured in days), a `warmup` sidecar pings the CLIP textual encoder every tick so the ML model stays resident, and the probe itself (postgres init-container measures a random-vector ANN latency + `pg_buffercache` residency → curl sidecar pushes `immich_smart_search_db_seconds` / `immich_clip_index_cached_pct` / `immich_smart_search_probe_success` / `immich_smart_search_probe_last_run_timestamp` to the Pushgateway). Also surfaced by cluster-health check #46 (`check_immich_search`). Both halves of smart-search warmth — the **Postgres** index and the **ML model** — are now kept warm by this one job.
 
 The email monitoring system uses a CronJob (`email-roundtrip-monitor`, every 10 min) in the `mailserver` namespace that:
 1. Sends a test email via Mailgun HTTP API to `smoke-test@viktorbarzin.me`

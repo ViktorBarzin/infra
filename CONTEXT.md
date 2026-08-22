@@ -30,6 +30,10 @@ _Avoid_: calling it a "Module" unqualified (it isn't reusable); "submodule".
 Terraform state-backend partition. **Tier 0** = bootstrap Stacks (`infra`, `platform`, `cnpg`, `vault`, `dbaas`, `external-secrets`) on local SOPS-encrypted state. **Tier 1** = every other Stack, on PG-backed state.
 _Avoid_: "phase", "bootstrap stack" — say Tier 0 explicitly.
 
+**Corpus**:
+The set of repositories the repowise Service indexes, together with their derived per-repo indexes. Defined by a **rule** — every Forgejo `viktor/*` repo that is neither archived nor empty — and re-derived on every reconcile pass, so it is never a curated list that can drift. Repos living only on GitHub are outside it; mirroring one to Forgejo is what admits it. The Corpus describes **master as last indexed**, not anyone's working tree.
+_Avoid_: "workspace" (collides with **Workstation** and with `~/code` as a workspace directory, and near-collides with a git worktree — repowise's own CLI still says `repowise workspace`, but our prose says Corpus); "the index" for the whole set (that is the derived artefact, not the membership).
+
 ### Cluster
 
 **Node**:
@@ -124,7 +128,8 @@ _Avoid_: treating it as a per-user seed target (it is a live shared source, not 
 
 **Infra visibility**:
 What a non-admin **Workstation** may SEE of the infra: the public repo **code** and the person's own **RBAC**-scoped view of the live cluster (kubectl / dashboard within their namespaces). Explicitly excludes the **git-crypt** secrets (`terraform.tfvars`, `secrets/`) and any out-of-scope mutation. The boundary that "respect their permissions" enforces — violated today because `~/code` is one git-crypt-*unlocked* tree shared via the `code-shared` group.
-_Avoid_: reading "see the infra" as access to secrets or apply rights.
+**Deliberately widened 2026-08-14 (Viktor):** every **Workstation** holds an MCP token for the repowise Service, so a non-admin can query architecture, dependency graph, git history and code health across the whole **Corpus** — including the 24 private repos. The git-crypt exclusion is unaffected (those files are ciphertext in the indexed clone), and the widening is code/architecture knowledge, not credentials or apply rights. Revocation is per-holder: drop that token from `bearer_tokens` in Vault `secret/repowise` and re-apply.
+_Avoid_: reading "see the infra" as access to secrets or apply rights; citing the pre-2026-08-14 "public repo code only" scope as still complete.
 
 ### Networking
 
@@ -161,8 +166,8 @@ The channel by which non-proxied **public domain** traffic reaches the cluster, 
 _Avoid_: "the tunnel" without "Cloudflared" (could mean Headscale).
 
 **Ingress chain**:
-The opinionated stack of Traefik middlewares that `ingress_factory` layers onto every Ingress. Slots, in order: forward-auth (per **Ingress auth**) → anti-AI scraping (default-on when no Authentik is in the path) → CrowdSec bouncer (fail-open) → retry (2× / 100ms) → rate-limit (429, not 503). Adding or removing a middleware is a Stack-level choice, but the chain order is convention.
-_Avoid_: "middleware list", "Traefik chain". The Anubis PoW gate is upstream of this chain, not inside it.
+The opinionated stack of Traefik middlewares that `ingress_factory` layers onto every Ingress. Slots, in order: forward-auth (per **Ingress auth**) → anti-AI scraping (default-on when no Authentik is in the path) → retry (2× / 100ms) → rate-limit (429, not 503). Adding or removing a middleware is a Stack-level choice, but the chain order is convention.
+_Avoid_: "middleware list", "Traefik chain". The Anubis PoW gate is upstream of this chain, not inside it. So is the **CrowdSec bouncer** (fail-open): it is an ENTRYPOINT middleware on `websecure`, prepended to every router on the entrypoint, so it is deliberately not one of these per-Ingress slots — that is what lets it cover the catchall and the hand-rolled ingresses too.
 
 **MetalLB / LB IP**:
 The bare-metal load-balancer that assigns external IPs to `type=LoadBalancer` Services. Two IPs matter: the **shared LB IP** `10.0.20.200` (~10 services — PG state-backend, headscale, wireguard, coturn, xray… — all `externalTrafficPolicy: Cluster`) and **Traefik's dedicated LB IP** `10.0.20.203` (`externalTrafficPolicy: Local`). Traefik runs on its own IP because ETP:Local preserves the **real client IP** (for CrowdSec) and enables QUIC, and MetalLB forbids mixed ETP on one shared IP.

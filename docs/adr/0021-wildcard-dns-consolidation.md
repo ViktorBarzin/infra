@@ -75,9 +75,10 @@ calls the cluster-local Service; the public hostname had zero callers).
 Accepted trade-offs:
 
 - Unknown/typo'd subdomains resolve and serve Traefik's 404 via the tunnel
-  (was NXDOMAIN). Scanner traffic hits the CrowdSec-protected edge; the
-  `crowdsec-cf-sync` zone WAF rule and rate-limit middleware apply as for
-  any proxied host. A hostname that must NXDOMAIN publicly is no longer
+  (was NXDOMAIN). Scanner traffic reaches Traefik through the tunnel, where the
+  CrowdSec entrypoint bouncer and rate-limit middleware apply as for any proxied
+  host. (Until 2026-08-18 the CrowdSec half of that was a Cloudflare zone WAF
+  rule fed by `crowdsec-cf-sync`; enforcement is now in-process in Traefik.) A hostname that must NXDOMAIN publicly is no longer
   possible on `.me`.
 - Anyone can make `<anything>.viktorbarzin.me` resolve (e.g. for phishing
   lures); it serves only the 404/error page. Same exposure class as any

@@ -32,6 +32,22 @@ Last updated: 2026-04-10
 > `tailscale-subnet-router-probe` (every 6 h) → `TailscaleSubnetRouterDown` /
 > `TailscaleLanUnreachableViaTailnet` / `TailscaleSubnetRouterProbeStale`.
 
+> **Amendment (2026-08-16) — outbound egress is now a first-class service.**
+> Everything below concerns INBOUND remote access (getting to the homelab). As
+> of 2026-08-16 there is also a supported OUTBOUND path: any cluster workload
+> can egress through the existing NordVPN subscription by setting
+> `HTTPS_PROXY`/`ALL_PROXY` to
+> `http://proxy-egress-uk.proxy.svc.cluster.local:8888` (SOCKS5 on
+> `socks5h://…:1080`). It needs no privileges, sidecar or netns sharing —
+> gluetun's userspace listener sits inside the tunnel and re-originates the
+> request. One always-on UK gateway serves both this and the remote browsers
+> from a single tunnel. Fails closed. Verified end to end, including that no
+> request leaks to the home address while the gateway is down.
+> **It does not defeat anti-bot walls** — a datacenter exit scores worse than a
+> residential address on ASN reputation; use `homelab browser run` for those.
+> Design: [`docs/plans/2026-08-16-cluster-vpn-egress-service-design.md`](../plans/2026-08-16-cluster-vpn-egress-service-design.md)
+> · contract: `stacks/proxy/README.md`.
+
 > **Amendment (2026-07-13) — not yet folded into the body below (a full rewrite
 > is design Phase 0).** Two additions since this was written:
 > - **mx2 is now VPN PoP-2, not "mail drain only."** The Oracle Always-Free box
@@ -161,13 +177,24 @@ Headscale is a self-hosted alternative to Tailscale's commercial control plane. 
 - **OIDC authentication**: Users log in via Authentik, no pre-shared keys.
 - **ACL policies**: Fine-grained control over which clients can reach which destinations.
 
-**Client onboarding**:
+**Client onboarding** — self-service, no admin step:
 1. User installs Tailscale client (official macOS/iOS/Android app)
 2. Runs: `tailscale login --login-server https://headscale.viktorbarzin.me`
 3. Browser opens to Authentik SSO login
-4. After successful login, Tailscale presents a registration URL
-5. Admin approves the device via `headscale nodes register --user <username> --key <key>`
-6. Client is added to the mesh, receives IP in 100.64.0.0/10 range
+4. On success the node registers itself and receives an IP in `100.64.0.0/10`
+
+Every family node registers this way (`register_method: OIDC`); the user just has
+to be listed in `oidc.allowed_users`. There is **no** approval round-trip and no
+pre-auth key to hand out — a device enrols the moment its owner completes the
+Authentik login. (`headscale nodes register` was the pre-OIDC flow and is
+deprecated upstream in favour of `headscale auth register`; neither is part of
+normal onboarding here.) Pre-auth keys are reserved for headless rebuilds that
+cannot run a browser — mx2 uses one, see [`backup-mx.md`](../runbooks/backup-mx.md).
+
+**Reachability**: a non-admin user's nodes reach the Sofia LAN, the internet via
+the exit node, and **their own other devices** (the `autogroup:self` rule in
+`acl.hujson`). They do not reach another user's devices. `group:admin` reaches
+everything. Full policy: `stacks/headscale/acl.hujson`.
 
 **Connectivity test**: `ping 10.0.20.100` (Sofia K8s API server) verifies full access to the homelab network.
 

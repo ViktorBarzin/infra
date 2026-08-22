@@ -99,6 +99,29 @@ graph TB
 | MetalLB | v0.15.3 Helm chart | K8s | LoadBalancer IPs (10.0.20.200-10.0.20.220), all services on 10.0.20.200 |
 | Registry Cache | Container | 10.0.20.10 | Pull-through for docker.io:5000, ghcr.io:5010 |
 
+## WAN Bandwidth (measured 2026-08-09)
+
+| Direction | Measured |
+|---|---|
+| Download | **201 Mbps** |
+| Upload | **118.55 Mbps** |
+| Ping | 48 ms |
+
+Measured with `speedtest-cli` from the devvm. Recorded here because its absence
+caused real wasted work: an Immich edge cache was designed in August 2026 around
+an uplink figure of ~30 Mbps that had been *inferred from peak observed egress*
+rather than measured. Peak demand is not a ceiling — a service that never needed
+more than 30 Mbps produces the same graph as a 30 Mbps link.
+
+Two consequences worth carrying:
+
+- **An off-site cache or edge only adds serving capacity if its own link beats
+  118 Mbps.** The `mx2` E2.1.Micro caps at 50 Mbps, so it subtracts. An Ampere
+  A1 (~2 Gbps) would clear the bar.
+- **Re-measure before relying on this**, and treat any "the uplink is saturated"
+  claim as unproven until a speed test says so. Full write-up:
+  `docs/research/immich-front-cache.md` (2026-08-09 amendment).
+
 ## CCTV Segment (dCCTV) — as-built 2026-07-03 (ADR-0017 rev 4)
 
 Isolated camera segment for owned cameras at the Sofia site (first: `vermont-garage`, HiLook IPC-T241H-C at the garage entrance). Decision + rejected alternatives + diagrams: `docs/adr/0017-cctv-segment-dedicated-pfsense-leg.md`.
@@ -224,7 +247,7 @@ VMs tag traffic on vmbr1 to isolate workloads. pfSense bridges VLAN 20 to the up
 - Listens on LAN (10.0.10.1), OPT1 (10.0.20.1), localhost only — NOT on WAN (192.168.1.2)
 - Forwards `.viktorbarzin.lan` to Technitium (10.0.20.201), public queries to 1.1.1.1
 - Serves K8s VLAN clients and pfSense's own DNS needs
-- Aliases: `technitium_dns` (10.0.20.201), `k8s_shared_lb` (10.0.20.200)
+- Aliases: `technitium_dns` (10.0.20.201), `k8s_shared_lb` (10.0.20.200), `coturn_lb` (10.0.20.205)
 
 **External (Cloudflare)** — zone on the Free plan (200-record cap), ~87
 records since the 2026-07-09 wildcard consolidation (ADR-0021):
@@ -247,7 +270,7 @@ records since the 2026-07-09 wildcard consolidation (ADR-0021):
   (51820/udp, 3478, 7443) that the IPv6 HAProxy bridge (443/80+mail) never
   carries, so AAAA records only misdirected v6-preferring clients.
 - **Internal-IP domains** (grey cloud, A → `10.0.20.203` Traefik LB, `ingress_factory` `dns_type = "internal"`):
-  - highlights-immich, highlights-immich-emo — publicly *resolvable* but only *routable* from home LANs / WG sites / VPN (spokes policy-route `10.0.0.0/8` down the tunnel, so kiosk devices with baked-in URLs need no per-site DNS overrides). The record is reachability, not a gate — enforcement is the `home-lans-only` Traefik ipAllowList (Sofia/London/Valchedrym LANs + 10/8) on the ingress. See `docs/plans/2026-07-04-immich-frame-lan-only-design.md`.
+  - highlights-immich, highlights-immich-emo — publicly *resolvable* but only *routable* from home LANs / WG sites / VPN (spokes policy-route `10.0.0.0/8` down the tunnel, so kiosk devices with baked-in URLs need no per-site DNS overrides). The record is reachability, not a gate — enforcement is the `home-lans-only` Traefik ipAllowList (Sofia/London/Valchedrym LANs + 10/8) on the ingress. Both also carry `traefik-error-pages-403@kubernetescrd` **ahead of** the allowlist, so a denied source IP gets the themed error page instead of Traefik's bare `Forbidden` text (2026-08-10). See `docs/plans/2026-07-04-immich-frame-lan-only-design.md`.
   - family, hermes-agent, mladost3, torrserver — household-only apps whose
     explicit internal record **shadows the `*` wildcard** (without it they
     would resolve through the proxy and go public). Same `home-lans-only`
@@ -263,7 +286,7 @@ out-of-band gate.
 ```mermaid
 sequenceDiagram
     participant Client
-    participant CFedge as Cloudflare (edge WAF: crowdsec_ban block)
+    participant CFedge as Cloudflare (edge: managed DDoS + Bot Fight)
     participant Cloudflared
     participant Traefik
     participant AntiAI
@@ -297,11 +320,13 @@ sequenceDiagram
 
 ### Middleware Chain
 
-CrowdSec IP-reputation enforcement is **not** in this chain — it is out-of-band
-(host nftables on direct hosts; the Cloudflare edge WAF `crowdsec_ban` rule on
-proxied hosts), so banned IPs never reach the chain and there is no per-request
-CrowdSec hop. Every ingress created by the `ingress_factory` module follows this
-Traefik chain:
+CrowdSec IP-reputation enforcement runs **ahead of** this chain, as an entrypoint
+middleware on `websecure` (`traefik-crowdsec@kubernetescrd`) rather than per
+ingress — so it covers every router on the entrypoint, including the catchall and
+the hand-rolled ingresses that never go through `ingress_factory`. It costs one
+in-memory map lookup per request and returns 403 on a hit. Direct hosts are also
+dropped in-kernel below Traefik by `cs-firewall-bouncer`. Every ingress created by
+the `ingress_factory` module then follows this Traefik chain:
 
 1. **Anti-AI bot-block** (`ai-bot-block` ForwardAuth, on by default via `ingress_factory`): blocks/tarpits known AI crawlers. **Fail-open** (currently a no-op `return 200` — poison-fountain scaled to 0; see `docs/architecture/security.md`).
 2. **Authentik Forward-Auth** (if `protected = true`): SSO authentication via OIDC. Non-authenticated users are redirected to login. Auth headers are stripped before forwarding to backend.
@@ -325,16 +350,17 @@ The `websecure` entrypoint sets `respondingTimeouts` in `stacks/traefik/modules/
 
 ### MetalLB & Load Balancing
 
-MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer 2 mode**; **five are in use**. Most LoadBalancer services share **10.0.20.200** (`metallb.io/allow-shared-ip: shared`, `externalTrafficPolicy: Cluster`). **Four services hold dedicated IPs with `externalTrafficPolicy: Local`** to preserve the real client source IP (and, for Traefik, to make QUIC/HTTP3 work — a shared IP forbids the mixed ETP the UDP listener needs).
+MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer 2 mode**; **six are in use**. Most LoadBalancer services share **10.0.20.200** (`metallb.io/allow-shared-ip: shared`, `externalTrafficPolicy: Cluster`). **Five services hold dedicated IPs with `externalTrafficPolicy: Local`** to preserve the real client source IP (and, for Traefik, to make QUIC/HTTP3 work — a shared IP forbids the mixed ETP the UDP listener needs).
 
 > **Why not consolidate to fewer IPs?** The four dedicated IPs can't be merged. MetalLB L2 only lets `ETP=Local` services share an IP if they have *identical pod selectors* (Traefik/KMS/Technitium/Frigate don't), and a shared `ETP=Local` IP announces from a single node — blackholing any service whose pods aren't on it. Traefik additionally can never leave a dedicated IP (QUIC needs the UDP listener on its own ETP=Local IP). Merging would cost client-IP preservation or HA, so the 5-IP layout is deliberate — not sprawl. Full analysis: `docs/plans/2026-06-03-lb-ip-hygiene-design.md`.
 
 | IP | ETP | Services (ns/name → ports) |
 |----|-----|----------------------------|
-| **10.0.20.200** (shared) | Cluster | dbaas/postgresql-lb→5432 · beads-server/dolt→3306 · coturn/coturn→3478 TCP+UDP, 49152-49252/UDP · headscale/headscale-server→41641/UDP, 3479/UDP · wireguard/wireguard→51820/UDP · servarr/qbittorrent-torrenting→50000 TCP+UDP · shadowsocks/shadowsocks→8388 TCP+UDP · tor-proxy/torrserver-bt→5665 TCP+UDP · xray/xray-reality→7443 |
+| **10.0.20.200** (shared) | Cluster | dbaas/postgresql-lb→5432 · beads-server/dolt→3306 · headscale/headscale-server→41641/UDP, 3479/UDP · wireguard/wireguard→51820/UDP · servarr/qbittorrent-torrenting→50000 TCP+UDP · shadowsocks/shadowsocks→8388 TCP+UDP · tor-proxy/torrserver-bt→5665 TCP+UDP · xray/xray-reality→7443 |
 | **10.0.20.201** (dedicated) | Local | technitium/technitium-dns→53 UDP+TCP |
 | **10.0.20.202** (dedicated)¹ | Local | kms/windows-kms→1688 |
 | **10.0.20.203** (dedicated) | Local | traefik/traefik→80, 443, 443/UDP (HTTP/3), 10200 (piper), 10300 (whisper) |
+| **10.0.20.205** (dedicated) | Local | coturn/coturn→3478 TCP+UDP, 49152-49252/UDP |
 | **10.0.20.204** (dedicated) | Local | frigate/frigate-rtsp→8554 RTSP (TCP+UDP), 8555 WebRTC/go2rtc (TCP+UDP) |
 
 **Mailserver does NOT use a LB IP** — inbound mail enters via pfSense HAProxy on `10.0.20.1:{25,465,587,993}` → NodePorts `30125-30128` (PROXY-v2; see "Mail Server" below). (Earlier revisions of this table wrongly listed mailserver on `.200` and KMS on `.200` — both corrected 2026-06-03.)
@@ -351,7 +377,8 @@ These IPs are referenced by consumers that do **not** auto-follow when an IP mov
 - **`.201` Technitium:** assigner `stacks/technitium/modules/technitium/main.tf` · DNS records `config.tfvars` (ns1/ns2/`viktorbarzin.lan`, dnscrypt forwarder) · `modules/create-template-vm/cloud_init.yaml` FallbackDNS · `scripts/provision-k8s-worker` · pfSense NAT 53 (**literal `10.0.20.201`**, not the `technitium_dns` alias — known inconsistency).
 - **`.202` KMS:** assigner `stacks/kms/main.tf` · pfSense NAT 1688 → `k8s_kms_lb` · Cloudflare `vlmcs` public A → WAN → `.202`.
 - **`.204` Frigate go2rtc:** assigner `stacks/frigate/main.tf` · go2rtc WebRTC ICE candidate in Frigate `config.yml` (on the `frigate-config` PVC, OOB — `webrtc.candidates: [10.0.20.204:8555]`) · HA-sofia Frigate integration `rtsp_url_template` (OOB — `rtsp://10.0.20.204:8554/{{ name }}`). **No DNS indirection**: go2rtc inserts the literal into the ICE host candidate and won't resolve a hostname (verified in go2rtc source), so the Service annotation is the single source of truth for this IP.
-- **`.200` shared:** the 9 assigners above · PG state backend `scripts/tg` + `scripts/migrate-state-to-pg` (`@10.0.20.200:5432`) · pfSense NAT (wireguard/shadowsocks/coturn/headscale-STUN/qbittorrent/xray) → `k8s_shared_lb`, outbound-NAT self rule, CrowdSec syslog `remoteserver .200:30514`.
+- **`.200` shared:** the 8 assigners above · PG state backend `scripts/tg` + `scripts/migrate-state-to-pg` (`@10.0.20.200:5432`) · pfSense NAT (wireguard/shadowsocks/headscale-STUN/qbittorrent/xray) → `k8s_shared_lb`, outbound-NAT self rule, CrowdSec syslog `remoteserver .200:30514`.
+- **`.205` coturn:** pfSense NAT (TURN signaling 3478 tcp/udp + relay range 49152-49252/udp) → `coturn_lb` · `stacks/technitium` internal `turn.viktorbarzin.me` A record · `stacks/chrome-service` + `stacks/proxy` `COTURN_BACKEND_URL` (and the proxy's gluetun `FIREWALL_OUTBOUND_SUBNETS`). Moved off the shared `.200` on 2026-08-11: ETP=Cluster's SNAT made coturn see a node IP instead of the real peer, so it handed internal addresses out as STUN-derived candidates and no relay-based ICE pair could complete — both neko browsers sat at ICE `checking`. Same reasoning as Traefik's `.203`.
 
 Critical services are scaled to **3 replicas**:
 - Traefik (PDB: minAvailable=2)
@@ -382,9 +409,29 @@ The bridge's HAProxy uses `timeout client 1h` / `timeout server 1h`, which are *
 pfSense files (out-of-band, **not Terraform**):
 - `/usr/local/etc/ipv6-haproxy.cfg` — the 6-frontend bridge config above.
 - `/usr/local/etc/rc.d/ipv6proxy` — service wrapper (`service ipv6proxy {start,stop,status}`); `start` does a graceful `-sf` reload.
-- `/usr/local/etc/ipv6_proxy.sh` — boot entrypoint (config.xml `<shellcmd>`): patches pfSense nginx off `[::]:443/:80` (rebinds to LAN IPv6) to free the tunnel IPv6, then `service ipv6proxy onestart`.
+- `/usr/local/etc/ipv6_proxy.sh` — boot entrypoint (config.xml `<shellcmd>`): rebinds every wildcard `listen [::]:<port>` in the pfSense nginx config onto the LAN IPv6 to free the tunnel IPv6, then `service ipv6proxy onestart`. Tracked at `scripts/pfsense-ipv6-proxy.sh`; deploy with `scp scripts/pfsense-ipv6-proxy.sh root@10.0.20.1:/usr/local/etc/ipv6_proxy.sh`.
 
 **Gotcha:** the backends use **no health `check`** — a plain TCP check hits the PROXY-expecting listeners without a PROXY header and would false-mark them DOWN. This path previously used `socat` (functional, but masked every IPv6 client as `10.0.20.1`); replaced by HAProxy on 2026-05-30 for real client IPs.
+
+**Gotcha — the nginx rebind must stay port-agnostic (2026-08-16).** HAProxy binds every
+frontend or none, so a single unavailable port takes the whole bridge down — all six
+frontends, web *and* mail. `ipv6_proxy.sh` used to guard its rebind on the literal string
+`[::]:443`; once the webConfigurator moved to **8443** that guard stopped matching, the
+rebind was skipped, and nginx kept wildcard `*:80` — which is the tunnel address too, so
+HAProxy's `bind [2001:470:6e:43d::2]:80` could not start. The mismatch was latent until the
+pfSense reboot on 2026-07-18 and then went unnoticed for 29 days: IPv4 was unaffected, and
+Cloudflare-proxied hosts reach the origin over IPv4, so only the ~31 `non-proxied` ingresses
+and IPv6 mail were dark. The guard now matches any `listen [::]:` and the script logs
+whether `[TUNNEL]:443` actually came up.
+
+**Symptoms of a down bridge**, useful for the next diagnosis: over IPv6 a non-proxied host
+gives `connection refused` on 443, while port 80 returns the pfSense nginx `301` to
+`https://<host>:8443/` — i.e. the pfSense login page behind its self-signed certificate. A
+browser following that redirect never falls back to IPv4, because the 301 is a perfectly
+valid response. `ping6` to the tunnel address still succeeds throughout (pfSense answers
+ICMP), so reachability checks look healthy. Verify a repair with
+`service ipv6proxy status` and a forced request:
+`curl --resolve <host>:443:2001:470:6e:43d::2 https://<host>/`.
 
 ### Container Registry Pull-Through Cache
 
@@ -407,7 +454,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 | pfSense | `stacks/pfsense/` | VM + cloud-init config |
 | Technitium | `stacks/technitium/` | Deployment, Service, PVC |
 | Traefik | `stacks/platform/` (sub-module) | Helm release, IngressRoute CRDs |
-| CrowdSec | `stacks/crowdsec/` (+ edge in `stacks/rybbit/`) | Helm release, LAPI + agent; `cs-firewall-bouncer` DaemonSet (nftables, direct hosts) + Cloudflare edge sync (proxied hosts) |
+| CrowdSec | `stacks/crowdsec/` (+ the Traefik plugin in `stacks/traefik/`) | Helm release, LAPI + agent; `cs-firewall-bouncer` DaemonSet (nftables, direct hosts + non-HTTP) + the in-process `crowdsec` entrypoint middleware (all HTTP, incl. proxied) |
 | Authentik | `stacks/authentik/` | Helm release, ingress, OIDC configs |
 | MetalLB | `stacks/platform/` (sub-module) | Helm release, IPAddressPool |
 | Cloudflared | `stacks/cloudflared/` | Deployment (3 replicas), tunnel config; runs `--no-autoupdate` (in-place self-updates exited the pods and severed all tunnel WebSockets, 2026-06-09/10) |
@@ -495,30 +542,42 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 
 **Decision**: Technitium handles internal `.lan` domains with near-zero latency. Cloudflare handles public domains with global DNS. K8s nodes use Technitium as primary, which forwards non-.lan queries to Cloudflare.
 
-### Why CrowdSec Enforcement Is Out-of-Band (and Fails Open)
+### Why CrowdSec Enforces In Traefik for HTTP (and Fails Open)
 
-CrowdSec used to enforce inline as a Traefik middleware (the
-`crowdsec-bouncer-traefik-plugin`). On Traefik 3.7.5 the Yaegi plugin handler was
-never invoked, so it enforced nothing; the plugin was removed and enforcement
-moved off the request path entirely (full history in
-`docs/architecture/security.md`). It now runs on two surfaces:
+Enforcement is split by what can identify the client, and for web traffic that is
+only Traefik. Full history in `docs/architecture/security.md`.
 
-- **Direct hosts** → `cs-firewall-bouncer` DaemonSet drops banned IPs in the host
-  nftables, in **both the `input` and `forward` hooks**. The `forward` hook is
-  the load-bearing one: with Traefik on a dedicated LB IP at
+- **All HTTP (which means all proxied hosts)** → the in-process `crowdsec`
+  middleware on the `websecure` entrypoint. `cloudflare_proxied_names = []`, so
+  every HTTP host rides the zone wildcard and is proxied; proxied traffic arrives
+  from the in-cluster cloudflared pod, so at L3 the node sees `10.10.x.x` and a
+  host-level drop has nothing to match on. The plugin takes the client IP from the
+  unspoofable TCP peer — trusting `Cf-Connecting-Ip`/`X-Forwarded-For` only from
+  the cloudflared pod CIDR — which is the same peer-trust model as `real-ip`, and
+  is unimplementable in a ForwardAuth backend whose peer is always a Traefik pod.
+- **Direct hosts and non-HTTP ports** → `cs-firewall-bouncer` DaemonSet drops
+  banned IPs in the host nftables, in **both the `input` and `forward` hooks**. The
+  `forward` hook is the load-bearing one: with Traefik on a dedicated LB IP at
   `externalTrafficPolicy=Local`, client packets are DNAT'd to the Traefik **pod**
   and transit the node's `forward` chain (not `input`) — which is exactly why the
   ingress must preserve the **real client IP** end-to-end (ETP=Local + PROXY-v2
-  for IPv6; see the Traefik LB IP and IPv6 ingress notes above). Without the real
-  client IP the firewall-bouncer (and the CF edge rule) would have nothing to
-  match on.
-- **Proxied hosts** → a Cloudflare edge WAF rule (`ip.src in $crowdsec_ban`) fed
-  by the `crowdsec-cf-sync` CronJob.
+  for IPv6; see the Traefik LB IP and IPv6 ingress notes above). The same real
+  client IP is what the Traefik plugin reads for non-proxied requests.
 
-Both **fail open**: if LAPI is unreachable, the firewall-bouncer simply stops
-receiving new decisions (existing drops persist) and the CF sync skips a run —
-neither ever blocks legitimate traffic. Availability > strict bot blocking, and
-out-of-band enforcement adds **zero per-request latency** (no Traefik hop).
+Proxied hosts were enforced at the **Cloudflare edge** until 2026-08-18, via an IP
+List plus a zone WAF rule. That channel was retired because the Lists API holds a
+hard ~72h floor between successful item writes, which left the edge list
+disagreeing with CrowdSec for 107 of 216 observed hours; in-cluster the same unban
+now takes effect in ~33s. Cloudflare's managed DDoS L7 protection and Bot Fight
+Mode are unrelated to that and remain in place.
+
+Both surfaces **fail open**: if LAPI is unreachable the firewall-bouncer stops
+receiving new decisions (existing drops persist) and the Traefik plugin keeps
+serving its last known decision set — never blocking legitimate traffic.
+Availability > strict bot blocking. Fail-open being *structural* is why this is an
+in-process plugin and not a ForwardAuth: Traefik's `forward.go` returns 500/502
+when an auth backend is unreachable and offers no way to make that allow, which is
+why `auth-proxy` and `bot-block-proxy` exist as shims around it.
 
 ### Why HTTP/3 (QUIC)?
 

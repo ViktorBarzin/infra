@@ -104,6 +104,21 @@ module "nfs_data_host" {
   access_modes = ["ReadWriteOnce"]
 }
 
+# Replay torrent cache. Shares the servarr qBittorrent downloads export so the
+# backend can serve a file while qBittorrent is still writing it — a PVC cannot
+# cross namespaces, so this is a second claim onto the same NFS path rather than
+# a second copy of the data. Subdirectory of the export, so F1 replays stay
+# separate from everything else servarr downloads.
+module "nfs_replay_cache" {
+  source       = "../../modules/kubernetes/nfs_volume"
+  name         = "f1-stream-replay-cache"
+  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
+  nfs_server   = var.nfs_server
+  nfs_path     = "/srv/nfs/servarr/downloads/f1-replays"
+  storage      = "200Gi"
+  access_modes = ["ReadWriteMany"]
+}
+
 resource "kubernetes_deployment" "f1-stream" {
   metadata {
     name      = "f1-stream"
@@ -134,20 +149,31 @@ resource "kubernetes_deployment" "f1-stream" {
       }
       spec {
         container {
-          image             = "ghcr.io/viktorbarzin/f1-stream:${var.image_tag}"
-          image_pull_policy = "Always"
-          name              = "f1-stream"
+          image = "ghcr.io/viktorbarzin/f1-stream:${var.image_tag}"
+          name  = "f1-stream"
           # Right-sized 2026-06-05: was 1Gi (bundled-Chromium era). The image is
           # now CDP-only (verifier drives the remote chrome-service), so actual
           # usage is ~116Mi and the VPA upperBound (incl. live races) is ~185Mi.
           # 256Mi = upperBound x ~1.3 (bursty); requests=limits per convention.
+          #
+          # Raised 2026-08-10 (384Mi -> 512Mi). The pod is TWO processes, and the
+          # 2026-06 sizing only accounted for uvicorn. Playwright's bundled Node
+          # driver is a second long-lived process that reached ~316MB while
+          # uvicorn sat at ~61MB, i.e. ~377MB against a 384Mi ceiling -- about
+          # 7MB of headroom, so any growth OOMKilled the pod (9 restarts on
+          # 2026-08-10, exit 137, hourly). The driver leak itself is fixed in
+          # f1-stream (independent page/context close + driver recycled every
+          # PLAYBACK_VERIFY_RECYCLE_AFTER verifies), which should hold steady
+          # state near ~200Mi; this ceiling is deliberately above the historical
+          # ~377MB peak so a regression still shows up as an OOM rather than
+          # being absorbed silently.
           resources {
             limits = {
-              memory = "384Mi"
+              memory = "512Mi"
             }
             requests = {
               cpu    = "50m"
-              memory = "256Mi"
+              memory = "320Mi"
             }
           }
           port {
@@ -212,15 +238,47 @@ resource "kubernetes_deployment" "f1-stream" {
             name  = "PLAYBACK_VERIFY_PROXY_BASE"
             value = "http://f1.f1-stream.svc.cluster.local"
           }
+          # Replay torrent streaming: qBittorrent does the fetching (auth is
+          # bypassed for 10.0.0.0/8, so no credentials), we read the partial
+          # file off the shared export.
+          env {
+            name  = "QBITTORRENT_URL"
+            value = "http://qbittorrent.servarr.svc"
+          }
+          env {
+            name  = "REPLAY_CACHE_DIR"
+            value = "/replay-cache"
+          }
+          # qBittorrent's own view of the same directory, for savepath on add.
+          env {
+            name  = "REPLAY_CACHE_REMOTE_DIR"
+            value = "/downloads/f1-replays"
+          }
+          env {
+            name  = "REPLAY_CACHE_CAP_GB"
+            value = "150"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
+          }
+          # Read-only: qBittorrent owns these files, we only stream them out.
+          volume_mount {
+            name       = "replay-cache"
+            mount_path = "/replay-cache"
+            read_only  = true
           }
         }
         volume {
           name = "data"
           persistent_volume_claim {
             claim_name = module.nfs_data_host.claim_name
+          }
+        }
+        volume {
+          name = "replay-cache"
+          persistent_volume_claim {
+            claim_name = module.nfs_replay_cache.claim_name
           }
         }
         # Pull the (private) Forgejo-registry image. Kyverno syncs
@@ -293,8 +351,9 @@ module "anubis" {
   namespace        = kubernetes_namespace.f1-stream.metadata[0].name
   target_url       = "http://${kubernetes_service.f1-stream.metadata[0].name}.${kubernetes_namespace.f1-stream.metadata[0].name}.svc.cluster.local"
   shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/6"
-  policy_yaml      = <<-EOT
-    bots:
+  # Rules only — the module owns the `bots:` key so it can always render the
+  # trusted-local-networks ALLOW rule first (see modules/.../anubis_instance).
+  policy_rules_yaml = <<-EOT
       - import: (data)/bots/_deny-pathological.yaml
       - import: (data)/bots/aggressive-brazilian-scrapers.yaml
       - import: (data)/meta/ai-block-aggressive.yaml
@@ -318,7 +377,7 @@ module "anubis" {
       # threw "Unexpected token '<', '<!doctype '" and the Replays refresh
       # "crashed". Only the `/replays` HTML *page* stays challenged (like /watch).
       - name: f1-data-routes
-        path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|replays/events|schedule|streams)(/|\?|$)
+        path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|schedule|streams)(/|\?|$)
         action: ALLOW
       # Allow non-GET methods unconditionally — AI scrapers GET the body,
       # they don't POST. Mutating XHRs and CORS preflight need to bypass.

@@ -115,6 +115,38 @@ London frame now depends on the WG tunnel instead of Cloudflare+cloudflared
 Cutover window: cached proxied answers keep working ≤ ~5 min TTL, then the
 WebView's own retry picks up the new path.
 
+## Amendment 2026-08-10 — themed page on the denial
+
+The gate is unchanged; only what a denied visitor *sees* changed. Traefik's
+`ipAllowList` answers with a bare `text/plain` "Forbidden", which gives a
+household member who opened the host from the wrong network nothing to act on.
+Both frame ingresses now list `traefik-error-pages-403@kubernetescrd` **before**
+`traefik-home-lans-only@kubernetescrd` in `extra_middlewares`, routing the 403 to
+the existing `error-pages` service (tarampampam, `TEMPLATE_NAME=shuffle`) on the
+original 403 status.
+
+Two things make this safe to scope this narrowly:
+
+- The middleware is **opt-in**, not part of the default `ingress_factory` chain.
+  Widening the shared `error-pages` middleware (500-504) to 403 instead would
+  have rewritten every 403 in the cluster, Authentik denials and app/API JSON
+  403s included.
+- ImmichFrame itself emits **no 403s** — `/api/Asset`,
+  `/api/Asset/RandomImageAndInfo`, `/api/Config`, `/api/Album`, unknown paths and
+  a bogus bearer token all return 200 against the pod (probed 2026-08-10), and
+  `AuthenticationSecret` is unset in `Settings.yml`. So on these two hostnames
+  the allowlist is the only thing that can produce a 403.
+
+Open item to revisit if `AuthenticationSecret` is ever enabled: ImmichFrame would
+then 403 API calls, and this middleware would replace those bodies. The blast
+radius is bounded by content negotiation (error-pages answers `text/plain` or
+JSON by `Accept`, not an HTML SPA shell), but the pairing should be re-checked
+at that point.
+
+Ordering is load-bearing and easy to lose in a refactor: a middleware only sees
+responses from what sits downstream of it, and the allowlist short-circuits
+without calling next — listed *after* it, the error page would never render.
+
 ## Verification & rollback
 
 Verify: public dig → `10.0.20.203` (both hosts); Technitium dig → `.203`;

@@ -135,13 +135,23 @@ resource "kubernetes_cron_job_v1" "helm_unstick" {
                 mount_path = "/scripts"
                 read_only  = true
               }
+              # kubectl buffers every matched Secret in memory before the
+              # jsonpath projection runs, and the monitoring namespace alone
+              # holds 61 helm release records (~8.3 MiB of gzipped manifests,
+              # loki's 7 revisions at ~0.30 MiB each). Measured peak RSS is
+              # ~128 MiB — the old 96Mi ceiling memcg-OOM-killed kubectl on
+              # EVERY run (~7-8 kills per run, ~610/day on whichever node the
+              # pod landed on), which the `|| true` below silently swallowed
+              # into an empty result: the job reported success while never
+              # actually inspecting a single release. Sized at 2x the measured
+              # peak so revision growth does not silently re-break it.
               resources {
                 requests = {
                   cpu    = "10m"
-                  memory = "48Mi"
+                  memory = "96Mi"
                 }
                 limits = {
-                  memory = "96Mi"
+                  memory = "256Mi"
                 }
               }
             }

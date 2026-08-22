@@ -2,7 +2,9 @@
 # nfs-mirror — local 2nd copy of /srv/nfs (selective) → /mnt/backup
 #
 # Deploy to PVE host at /usr/local/bin/nfs-mirror.
-# Schedule: weekly Mon 04:00 via nfs-mirror.timer.
+# Schedule: daily 02:00 via nfs-mirror.timer (OnCalendar=*-*-* 02:00:00,
+#           Persistent=true). The header used to say weekly Mon 04:00; the
+#           unit on the host disagreed, checked 2026-08-22.
 #
 # ROLE in the 3-2-1 strategy:
 #   Copy 1 (sdc):       /srv/nfs/* (live PVE NFS)
@@ -87,6 +89,15 @@ EXCLUDES=(
     --exclude='/prometheus-backup/' # metrics TSDB snapshots
     --exclude='/audiblez/'         # generated audiobooks
     --exclude='/ebook2audiobook/'  # generated audiobooks
+
+    # ---- f1-stream replay cache: live-only, never backed up (2026-08-22) ----
+    # Torrented race replays the f1-stream backend fetches on demand so they can
+    # be streamed in the browser. Regenerable from the swarm, capped at 150G and
+    # evicted least-recently-played, so a backup would carry gigabytes of
+    # transient media that the app deletes on its own. Viktor's call: do not
+    # back these up. Excluding here covers the offsite leg too, since everything
+    # except immich reaches Synology through this mirror.
+    --exclude='/servarr/downloads/f1-replays/'
 
     # ---- Synology / Windows / macOS cruft ----
     --exclude='/@eaDir/'

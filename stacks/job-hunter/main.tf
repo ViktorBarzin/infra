@@ -296,6 +296,13 @@ resource "kubernetes_deployment" "job_hunter" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      # Stakater Reloader stamps this on every secret-triggered restart. The
+      # 2026-08-14 switch to `reloadStrategy = annotations` (stacks/reloader)
+      # moved the marker off the env list and onto this pod-template
+      # annotation, on the expectation that Terraform does not manage it — but
+      # it does wherever the pod template declares annotations, as here, so the
+      # marker planned as a removal on every run. RELOADER_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"],
     ]
   }
 

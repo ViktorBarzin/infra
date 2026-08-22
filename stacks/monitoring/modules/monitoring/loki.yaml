@@ -11,7 +11,19 @@ loki:
           prefix: loki_index_
           period: 24h
   ingester:
-    chunk_idle_period: 12h
+    # 1h, NOT the 12h this inherited (upstream default is 30m). A stream stays
+    # resident in the ingester for chunk_idle_period after its LAST line, and
+    # this cluster mints a short-lived pod for every CronJob run — so at 12h,
+    # thousands of streams belonging to pods that finished hours ago each held
+    # a slot. On 2026-08-15 that pinned loki_ingester_memory_streams at exactly
+    # 5000/5000 (max_global_streams_per_user) while only ~100 streams were
+    # actually receiving data, and Loki was rejecting NEW streams cluster-wide
+    # with reason="stream_limit".
+    #
+    # The write cost of lowering it is small: an idle stream flushes once
+    # either way, just sooner. Only a bursty stream that goes quiet and resumes
+    # pays, by starting a new chunk — and there are ~100 such streams, not 5000.
+    chunk_idle_period: 1h
     max_chunk_age: 24h
     chunk_retain_period: 1m
     chunk_target_size: 1572864
@@ -86,6 +98,13 @@ deploymentMode: SingleBinary
 
 singleBinary:
   replicas: 1
+  # Loki was not scraped at all until 2026-08-15 — no loki_* series existed in
+  # Prometheus, so the stream-limit exhaustion above ran silently and could not
+  # have alerted. The cluster's scrape job discovers endpoints by annotation.
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3100"
+    prometheus.io/path: /metrics
   persistence:
     enabled: true
     size: 50Gi

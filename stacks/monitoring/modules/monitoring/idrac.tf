@@ -168,6 +168,7 @@ module "idrac-redfish-exporter-ingress" {
   ssl_redirect            = false
   port                    = 9090
   extra_annotations = {
+    "gethomepage.dev/description" = "iDRAC Redfish metrics exporter"
     "gethomepage.dev/icon" = "dell.png"
   }
 }

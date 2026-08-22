@@ -81,6 +81,10 @@ resource "kubernetes_manifest" "external_secret" {
             TRADING_MEET_KEVIN_CHANNEL_ID = "{{ .meet_kevin_channel_id }}"
             TRADING_SLACK_WEBHOOK_URL     = "{{ .slack_webhook_url }}"
             TRADING_SLACK_BOT_TOKEN       = "{{ .slack_bot_token }}"
+            # IMAP for the newsletter source. Reads spam@viktorbarzin.me, where
+            # the catch-all delivers dailywealth-meetkevin@viktorbarzin.me.
+            TRADING_KEVIN_IMAP_USER     = "{{ .imap_user }}"
+            TRADING_KEVIN_IMAP_PASSWORD = "{{ .imap_password }}"
           }
         }
       }
@@ -98,6 +102,8 @@ resource "kubernetes_manifest" "external_secret" {
         { secretKey = "slack_webhook_url", remoteRef = { key = "trading-bot", property = "slack_webhook_url" } },
         # slack_bot_token is sourced from secret/viktor (shared bot identity), NOT secret/trading-bot.
         { secretKey = "slack_bot_token", remoteRef = { key = "viktor", property = "slack_bot_token" } },
+        { secretKey = "imap_user", remoteRef = { key = "trading-bot", property = "imap_user" } },
+        { secretKey = "imap_password", remoteRef = { key = "trading-bot", property = "imap_password" } },
       ]
     }
   }
@@ -195,6 +201,14 @@ resource "kubernetes_job" "db_init" {
   timeouts {
     create = "2m"
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno mutates the pod dns_config (ndots) on
+    # admission. A Job's pod template is immutable, so Terraform can't update
+    # that in place — it would REPLACE the Job and re-run it on every apply.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+    ]
+  }
 }
 
 # Migrations job - runs alembic migrations
@@ -207,9 +221,16 @@ resource "kubernetes_job" "migrations" {
     template {
       metadata {}
       spec {
+        # ADR-0002: images now come from PRIVATE ghcr, so every pod needs the
+        # ghcr-credentials Secret that the kyverno stack clones into this
+        # namespace (allowlisted in kyverno/modules/kyverno/ghcr-credentials.tf).
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+
         container {
           name              = "migrations"
-          image             = "viktorbarzin/trading-bot-service:latest"
+          image             = "ghcr.io/viktorbarzin/trading-bot-service:latest"
           image_pull_policy = "Always"
           command           = ["python", "-m", "alembic", "upgrade", "head"]
           env {
@@ -237,6 +258,14 @@ resource "kubernetes_job" "migrations" {
     create = "5m"
   }
   depends_on = [kubernetes_job.db_init]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno mutates the pod dns_config (ndots) on
+    # admission. A Job's pod template is immutable, so Terraform can't update
+    # that in place — it would REPLACE the Job and re-run it on every apply.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+    ]
+  }
 }
 
 # Frontend deployment - dashboard + api-gateway
@@ -276,10 +305,16 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
         }
       }
       spec {
+        # ADR-0002: images now come from PRIVATE ghcr, so every pod needs the
+        # ghcr-credentials Secret that the kyverno stack clones into this
+        # namespace (allowlisted in kyverno/modules/kyverno/ghcr-credentials.tf).
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+
         container {
-          name              = "dashboard"
-          image             = "viktorbarzin/trading-bot-dashboard:latest"
-          image_pull_policy = "Always"
+          name  = "dashboard"
+          image = "ghcr.io/viktorbarzin/trading-bot-dashboard:latest"
           port {
             container_port = 80
             protocol       = "TCP"
@@ -295,10 +330,9 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
           }
         }
         container {
-          name              = "api-gateway"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.api_gateway.main"]
+          name    = "api-gateway"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.api_gateway.main"]
           port {
             container_port = 8000
             protocol       = "TCP"
@@ -339,6 +373,10 @@ resource "kubernetes_deployment" "trading-bot-frontend" {
       spec[0].template[0].spec[0].container[0].image,
       spec[0].template[0].spec[0].container[1].image,
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
   depends_on = [kubernetes_job.migrations]
@@ -377,11 +415,17 @@ resource "kubernetes_deployment" "trading-bot-workers" {
         }
       }
       spec {
+        # ADR-0002: images now come from PRIVATE ghcr, so every pod needs the
+        # ghcr-credentials Secret that the kyverno stack clones into this
+        # namespace (allowlisted in kyverno/modules/kyverno/ghcr-credentials.tf).
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+
         container {
-          name              = "signal-generator"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.signal_generator.main"]
+          name    = "signal-generator"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.signal_generator.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -414,10 +458,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           }
         }
         container {
-          name              = "learning-engine"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.learning_engine.main"]
+          name    = "learning-engine"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.learning_engine.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -450,10 +493,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           }
         }
         container {
-          name              = "market-data"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.market_data.main"]
+          name    = "market-data"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.market_data.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -486,10 +528,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           }
         }
         container {
-          name              = "meet-kevin-watcher"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.meet_kevin_watcher.main"]
+          name    = "meet-kevin-watcher"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.meet_kevin_watcher.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -500,6 +541,28 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           env {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9097"
+          }
+          # Newsletter source ("The Daily Wealth") — the watcher's second loop.
+          # IMAP creds arrive via trading-bot-secrets (env_from below).
+          env {
+            name  = "TRADING_KEVIN_NEWSLETTER_ENABLED"
+            value = "true"
+          }
+          env {
+            name  = "TRADING_KEVIN_NEWSLETTER_ADDRESS"
+            value = "dailywealth-meetkevin@viktorbarzin.me"
+          }
+          env {
+            name  = "TRADING_KEVIN_IMAP_HOST"
+            value = "mailserver.mailserver.svc.cluster.local"
+          }
+          # Interim cadence while the real send time is unknown. Each issue
+          # records sent_at + received_at, so once the send time is observed the
+          # source row's poll_cron takes over (PATCH the API, no deploy) and this
+          # becomes the safety net.
+          env {
+            name  = "TRADING_KEVIN_NEWSLETTER_POLL_INTERVAL_SECONDS"
+            value = "7200"
           }
           env_from {
             secret_ref {
@@ -522,10 +585,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           }
         }
         container {
-          name              = "kevin-signal-bridge"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.kevin_signal_bridge.main"]
+          name    = "kevin-signal-bridge"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.kevin_signal_bridge.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -563,10 +625,9 @@ resource "kubernetes_deployment" "trading-bot-workers" {
           }
         }
         container {
-          name              = "trade-executor"
-          image             = "viktorbarzin/trading-bot-service:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "services.trade_executor.main"]
+          name    = "trade-executor"
+          image   = "ghcr.io/viktorbarzin/trading-bot-service:latest"
+          command = ["python", "-m", "services.trade_executor.main"]
           dynamic "env" {
             for_each = local.common_env
             content {
@@ -578,10 +639,13 @@ resource "kubernetes_deployment" "trading-bot-workers" {
             name  = "TRADING_OTEL_METRICS_PORT"
             value = "9099"
           }
-          env {
-            name  = "TRADING_PAPER_TRADING"
-            value = "true"
-          }
+          # TRADING_PAPER_TRADING is deliberately NOT redeclared here: the
+          # dynamic block above already emits it from local.common_env (same
+          # value, "true"), so a static copy made Terraform render 26 env
+          # entries against the 25 that are live. An env list is positional,
+          # so that one extra entry shifted the five below it by one and read
+          # as four renames plus an "added" TRADING_SLACK_CHANNEL — drift no
+          # apply could settle, because the duplicate was in the config.
           # Kevin v2 risk caps (per services/trade_executor/config.py)
           env {
             name  = "TRADING_KEVIN_DAILY_TRADE_CAP"
@@ -638,6 +702,10 @@ resource "kubernetes_deployment" "trading-bot-workers" {
       spec[0].template[0].spec[0].container[4].image,
       spec[0].template[0].spec[0].container[5].image,
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
   depends_on = [kubernetes_job.migrations]

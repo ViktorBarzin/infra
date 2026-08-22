@@ -1,5 +1,17 @@
 # Beads Auto-Dispatch Runbook
 
+> **Auto-dispatch is OFF as of 2026-08-16.** `beads_dispatcher_enabled` in
+> `stacks/beads-server/main.tf` defaults to `false`, so both CronJobs below are
+> suspended. It was polling and finding nothing — no bead has been assigned to
+> the `agent` sentinel for as long as Loki retains, so every run logged "no
+> eligible beads" while the pair cost ~864 pod creations/day on a host whose
+> shared spindle is short of exactly that kind of small random write.
+>
+> **Manual dispatch from BeadBoard still works** and is unaffected. To turn the
+> automatic pipeline back on, set `beads_dispatcher_enabled = true` and apply
+> the `beads-server` stack — nothing else needs changing, and everything below
+> describes how it behaves once running.
+
 Users can hand work to the headless `beads-task-runner` agent by assigning a
 bead to the sentinel user `agent`. Two CronJobs in the `beads-server`
 namespace drive the pipeline:

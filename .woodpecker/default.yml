@@ -204,6 +204,49 @@ steps:
             fi
             echo "$stack" >> .app_apply
           done
+
+          # ── Fan a SHARED-MODULE change out to the app stacks that consume it ──
+          #
+          # The GLOBAL_CHANGED branch above re-applies every PLATFORM stack when
+          # anything under modules/ changes, but app stacks were only ever
+          # detected from stacks/ paths. So a shared-module edit reached none of
+          # its ~113 app consumers, and the repo silently diverged from the
+          # cluster until someone applied each stack by hand.
+          #
+          # That is exactly how ADR-0023 played out: ingress_factory started
+          # stamping authentik.viktorbarzin.me/allowed-groups, no app stack was
+          # re-applied, and 34 of them still lacked the annotation weeks later —
+          # a third of the 118-stack DriftStacksMany run on 2026-08-14.
+          #
+          # Fan-out is targeted rather than "apply everything": only stacks whose
+          # HCL actually references the changed module path. Consumer counts as of
+          # 2026-08-14 — ingress_factory 113, setup_tls_secret 108, nfs_volume 57,
+          # anubis_instance 9 — so a shared-module push is a long run, but for a
+          # stack already in sync the apply is a no-op after init+plan, and the
+          # provider cache is pre-warmed below. Correctness over a short pipeline:
+          # the alternative is divergence that only the nightly drift run catches.
+          #
+          # Module roots are taken at BOTH two and three path segments, because
+          # modules/ holds both shapes (modules/kubernetes/ingress_factory and
+          # modules/create-template-vm).
+          MODULE_ROOTS=$(git diff --name-only "$DIFF_BASE" HEAD | grep '^modules/' \
+            | awk -F/ 'NF>=3 {print $1"/"$2"/"$3} NF>=2 {print $1"/"$2}' | sort -u || true)
+          if [ -n "$MODULE_ROOTS" ]; then
+            echo "Shared module(s) changed — fanning out to consuming app stacks:"
+            echo "$MODULE_ROOTS" | sed 's/^/  /'
+            for mroot in $MODULE_ROOTS; do
+              [ -d "$mroot" ] || continue
+              grep -rl "$mroot\"" stacks/ 2>/dev/null | cut -d/ -f2 | sort -u | while read -r stack; do
+                if echo "$PLATFORM_STACKS" | grep -qw "$stack"; then
+                  continue  # platform stacks already covered by GLOBAL_CHANGED
+                fi
+                [ -f "stacks/$stack/terragrunt.hcl" ] || continue
+                echo "$stack" >> .app_apply
+              done
+            done
+            sort -u .app_apply -o .app_apply
+            echo "App stacks after module fan-out: $(wc -l < .app_apply | tr -d ' ')"
+          fi
         fi
 
         PLATFORM_COUNT=$(wc -l < .platform_apply | tr -d ' ')

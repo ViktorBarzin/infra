@@ -21,6 +21,43 @@ The learn pod git-syncs and serves the page ~30s later.
   basenamed to its leaf. The service is structurally incapable of writing
   outside `pages/<user>/` or `pages/shared/` (asserted with a realpath check).
 
+## How a publish reaches master (no rebase, by design)
+
+`/repo` is a per-pod **emptyDir** clone, and one replica plus an asyncio lock
+means publishes are serialized. Each attempt inside `publish()` runs:
+
+1. `sync_to_master` — abandon any interrupted rebase/merge, `fetch origin
+   master`, `reset --hard FETCH_HEAD`, `checkout -B master`.
+2. `render_page` — regenerate the page **and** that dir's `index.html`.
+3. `stage_and_commit` — `git add`/`status` scoped to `pages/<user>/`; an
+   unchanged dir returns the URL without committing.
+4. `push_to_master` — one attempt. A rejection is a lost race, not an error:
+   loop back to step 1, up to `DEFAULT_ATTEMPTS` (5).
+
+Re-rendering is what makes the retry safe — a page is a pure function of its
+markdown, so regenerating it on the master that won produces the same bytes with
+nothing to merge. Step 2 must stay *after* step 1: the renderer rebuilds
+`index.html` from the files on disk, so rendering against a stale checkout would
+publish an index missing whatever landed meanwhile.
+
+**Why not `pull --rebase`** (what this replaced, 2026-08-17): every publish
+regenerates `pages/<user>/index.html`, so two concurrent publishes conflict
+there reliably. A conflicted rebase stops with `.git/rebase-merge` on disk and a
+detached HEAD, and every later publish then fails on *"there is already a
+rebase-merge directory"* — one lost race returned **HTTP 500 for every user**
+until the pod was replaced, with 10 commits stranded in the emptyDir. A stale
+rebase found at step 1 is now abandoned, so such a pod heals on the next
+request.
+
+**Read the logs, not the response, when a publish 500s.** Traefik's
+`error-pages` middleware (500–504, default ingress chain) replaces the FastAPI
+`detail` with a generic themed body, so the caller only ever sees *"The server
+met an unexpected condition"*. The reason is logged instead:
+
+```bash
+homelab logs query '{namespace="pages-publish"} |~ "ERROR|WARNING"' --since 24h
+```
+
 ## API
 
 - `GET /health` → `200 {"status":"ok"}`, no auth.
@@ -44,7 +81,7 @@ The learn pod git-syncs and serves the page ~30s later.
 
 ```bash
 pip install -r requirements.txt   # + pytest httpx for tests
-python3 -m pytest                  # 47 tests; git + render subprocess are stubbed
+python3 -m pytest                  # 60 tests; git + render subprocess are stubbed
 ```
 
 Build: `docker build -t pages-publish .` (context = this dir). Runs uvicorn on

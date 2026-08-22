@@ -20,4 +20,7 @@ module "loki-write-ingress" {
   allow_local_access_only = true
   ssl_redirect            = false
   port                    = 3100
+  extra_annotations = {
+    "gethomepage.dev/description" = "Log aggregation query API"
+  }
 }

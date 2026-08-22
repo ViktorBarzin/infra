@@ -464,8 +464,9 @@ module "ingress_protected" {
   port            = 80
   service_name    = "instagram-poster"
   extra_annotations = {
-    "gethomepage.dev/icon" = "instagram.png"
-    "gethomepage.dev/name" = "Instagram Poster"
+    "gethomepage.dev/description" = "Scheduled Instagram posting"
+    "gethomepage.dev/icon"        = "instagram.png"
+    "gethomepage.dev/name"        = "Instagram Poster"
   }
 }
 
@@ -541,7 +542,19 @@ resource "kubernetes_cron_job_v1" "ig_ingest_feed" {
     labels    = local.labels
   }
   spec {
-    schedule                      = "0 */6 * * *"
+    schedule = "0 */6 * * *"
+    # Suspended (2026-08-16) for the same reason the Deployment above is at
+    # replicas = 0 and ig-refresh-token is suspended: the Instagram Graph
+    # integration has been parked since 2026-06-24 pending a Meta long-lived
+    # token. This cron was the one piece of that parking that got missed, so it
+    # kept POSTing every 6h to a Service with no endpoints, failed, exhausted
+    # its backoff_limit and raised JobFailed — three failed Jobs in the last
+    # 12h alone, and every 6h for the ~53 days since the app was scaled down.
+    #
+    # UNSUSPEND TOGETHER WITH `replicas = 1` above and ig-refresh-token: this
+    # job only does `curl POST /ig-ingest`, so on its own against a 0-replica
+    # Deployment it can only ever fail.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3

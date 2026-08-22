@@ -178,6 +178,7 @@ module "ingress" {
   auth            = "required"
   max_body_size   = "10m"
   extra_annotations = {
+    "gethomepage.dev/description" = "Boarding pass and lounge tracker"
     "gethomepage.dev/icon" = "mdi-airplane"
   }
 }

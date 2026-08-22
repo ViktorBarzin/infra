@@ -31,6 +31,22 @@ shellcheck
 # MemAvailable% and is swap-independent.
 earlyoom
 
+# Python libraries the agents' throwaway analysis scripts reach for. Measured, not
+# guessed: over 30 days of emo's sessions these were the ModuleNotFoundError hits
+# (PIL 12x, aiohttp 4x, the rest 2x each) — each one costing a failed run plus a
+# retry. Preferred as apt packages over `pip --break-system-packages` so they are
+# distro-managed and survive a Python upgrade. python3-cryptography was already
+# present. tidalapi and playwright are deliberately NOT here: tidalapi is one
+# user's niche dependency, and browser automation goes through the Playwright MCP
+# or `homelab browser`, not a local pip install.
+python3-pil          # Pillow — image inspection/annotation of screenshots
+python3-aiohttp      # async HTTP against device and Home Assistant APIs
+python3-openpyxl     # .xlsx read/write
+python3-xlsxwriter   # .xlsx generation
+python3-reportlab    # PDF generation
+python3-paramiko     # SSH from Python to LAN devices
+python3-paho-mqtt    # MQTT — Home Assistant / ESPHome device traffic
+
 # --- installed by setup-devvm.sh via NON-apt paths (not apt-installable) ---
 # nodejs + npm                -> NodeSource repo (claude-code needs node >= 18; distro nodejs is too old)
 # gh (GitHub CLI)             -> GitHub's own apt repo (cli.github.com), NOT in the default Ubuntu repos

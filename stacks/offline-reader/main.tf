@@ -246,7 +246,10 @@ module "ingress" {
   name              = "offline-reader"
   port              = 8000
   tls_secret_name   = var.tls_secret_name
-  extra_annotations = { "gethomepage.dev/icon" = "mdi-book-arrow-down" }
+  extra_annotations = {
+    "gethomepage.dev/icon"        = "mdi-book-arrow-down"
+    "gethomepage.dev/description" = "Saved articles for offline reading"
+  }
 }
 
 # Auth-bypass carve-out for /api/ingest only: gated by INGEST_TOKEN INSIDE the app
