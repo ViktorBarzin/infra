@@ -351,8 +351,9 @@ module "anubis" {
   namespace        = kubernetes_namespace.f1-stream.metadata[0].name
   target_url       = "http://${kubernetes_service.f1-stream.metadata[0].name}.${kubernetes_namespace.f1-stream.metadata[0].name}.svc.cluster.local"
   shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/6"
-  policy_yaml      = <<-EOT
-    bots:
+  # Rules only — the module owns the `bots:` key so it can always render the
+  # trusted-local-networks ALLOW rule first (see modules/.../anubis_instance).
+  policy_rules_yaml = <<-EOT
       - import: (data)/bots/_deny-pathological.yaml
       - import: (data)/bots/aggressive-brazilian-scrapers.yaml
       - import: (data)/meta/ai-block-aggressive.yaml
