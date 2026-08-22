@@ -99,9 +99,13 @@ PROMO = page("promo.html", [STRAWBERRY(SALE), COOKIES(), OFFLIST()])
 DEEP = page("deep.html", [STRAWBERRY(DEEPER), COOKIES(), OFFLIST()])
 QUIET = page("quiet.html", [STRAWBERRY(FULL), OFFLIST()])   # no sale, C&C delisted again
 UNKNOWN_PROTEIN = page("unverified.html", [STRAWBERRY(FULL), UNVERIFIED()])
+# Genuinely nothing qualifying: list price only. QUIET is NOT this — it still
+# carries the off-list Vanilla at £9.66/kg, which qualifies; QUIET is silent
+# only because dedup already announced it.
+FULL_PRICE = page("fullprice.html", [STRAWBERRY(FULL)])
 
 
-def run(url, label, watch=""):
+def run(url, label, watch="", digest=False):
     """Invoke the real check.py exactly as the CronJob does.
 
     watch defaults to "" — the production setting, meaning every flavour.
@@ -117,6 +121,7 @@ def run(url, label, watch=""):
         "DEEP_DISCOUNT_PCT": "40",
         "NEW_LOW_MARGIN": "0.01",
         "WATCH_FLAVOURS": watch,
+        "DIGEST": "true" if digest else "",
     }
     env.pop("DRY_RUN", None)
     r = subprocess.run([sys.executable, CHECK], env=env, capture_output=True, text=True)
@@ -223,6 +228,37 @@ r, posts = run(page("narrow.html", [STRAWBERRY(SALE), OFFLIST()]),
 expect(r.returncode == 0, "run succeeds")
 expect("Vanilla" not in "\n".join(p["text"] for p in posts),
        "Vanilla is excluded again when a watchlist is explicitly configured")
+
+# 8. The daily heartbeat ------------------------------------------------------
+# The point of the digest is that it speaks when NOTHING is happening, which is
+# precisely the case no other scenario covers: every alert path above needs
+# something to qualify first. QUIET is the page where nothing does.
+before = json.dumps(state(), sort_keys=True)
+r, posts = run(FULL_PRICE, "8. daily digest, list prices only (the heartbeat)", digest=True)
+expect(r.returncode == 0, "run succeeds")
+expect(len(posts) == 1, "POSTS ANYWAY — a quiet market still produces a heartbeat")
+expect("watcher OK" in posts[0]["text"], "it says the watcher is alive")
+expect("\n" not in posts[0]["text"], "one line, as asked")
+expect("nothing at or under" in posts[0]["text"], "and states nothing qualifies")
+expect(json.dumps(state(), sort_keys=True) == before,
+       "STATE UNTOUCHED — the digest cannot swallow an alert the next run owes")
+
+# 9. The digest during a live deal ---------------------------------------------
+r, posts = run(PROMO, "9. digest while a deal is running", digest=True)
+expect(len(posts) == 1, "one message")
+expect("a deal is live" in posts[0]["text"],
+       "it flags the live deal instead of reading as all-clear")
+
+# 10. The digest reports a deal the alerting run has gone quiet about ----------
+# Scenario 4 proved the alerting run stays SILENT on a still-running deal it
+# already announced. That is right for alerts and wrong for reassurance: days
+# later Viktor would see nothing and could not tell a running sale from a dead
+# job. The digest reads current reality, not the dedup state, so it keeps
+# surfacing the offer for as long as it lasts.
+r, posts = run(QUIET, "10. digest on a deal already announced days ago", digest=True)
+expect(len(posts) == 1, "the digest still speaks")
+expect("a deal is live" in posts[0]["text"],
+       "and still reports the running offer that alerting has deduped away")
 
 print("\n" + "=" * 70)
 if failures:

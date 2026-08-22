@@ -280,3 +280,124 @@ resource "kubernetes_cron_job_v1" "check" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
+
+# The daily heartbeat, added 2026-08-22.
+#
+# The check above speaks only when a price qualifies, which can be months apart.
+# Viktor had a week of total silence and could not tell a working watcher from a
+# dead one — a fair reading, since both look the same from Slack. This posts one
+# line every morning whether or not anything qualified, so silence stops being
+# ambiguous: no digest by ~08:30 is itself the signal.
+#
+# A separate CronJob rather than a flag on the one above, for three reasons: it
+# needs its own schedule; a digest failure must not mark the alerting run failed
+# (or vice versa); and it deliberately gets NO state access, so it cannot mark a
+# deal "already announced" and silence an alert Viktor was owed. It reads the
+# page and posts a string — that is the whole job, which is why it runs on the
+# default ServiceAccount with no Role.
+resource "kubernetes_cron_job_v1" "digest" {
+  metadata {
+    name      = "${local.name}-digest"
+    namespace = kubernetes_namespace_v1.myprotein_watch.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    schedule = "0 8 * * *"
+    timezone = "Europe/London"
+    # Forbid + a 10-min deadline: a wedged digest should skip, not queue up a
+    # backlog of yesterday's heartbeats.
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 600
+
+    job_template {
+      metadata {
+        labels = local.labels
+      }
+      spec {
+        backoff_limit              = 2
+        ttl_seconds_after_finished = 86400
+        # Bounded so a black-holed fetch cannot wedge the Job forever and block
+        # every later heartbeat under concurrency_policy Forbid.
+        active_deadline_seconds = 300
+
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            restart_policy = "OnFailure"
+
+            container {
+              name              = "digest"
+              image             = "docker.io/library/python:3.12-alpine"
+              image_pull_policy = "IfNotPresent"
+              command           = ["python3", "/scripts/check.py"]
+
+              env {
+                name = "SLACK_WEBHOOK_URL"
+                value_from {
+                  secret_key_ref {
+                    name = local.name
+                    key  = "SLACK_WEBHOOK_URL"
+                  }
+                }
+              }
+              # Posts the one-line heartbeat and returns before any state is
+              # read or written.
+              env {
+                name  = "DIGEST"
+                value = "true"
+              }
+              # Same bar the alerting run measures against, so the digest and
+              # the alerts can never quote different thresholds at Viktor.
+              env {
+                name  = "THRESHOLD_PER_KG_PROTEIN"
+                value = "28"
+              }
+              env {
+                name  = "WATCH_FLAVOURS"
+                value = ""
+              }
+
+              volume_mount {
+                name       = "script"
+                mount_path = "/scripts"
+                read_only  = true
+              }
+
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "48Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+
+            volume {
+              name = "script"
+              config_map {
+                name = kubernetes_config_map_v1.script.metadata[0].name
+              }
+            }
+
+            dns_config {
+              option {
+                name  = "ndots"
+                value = "2"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}

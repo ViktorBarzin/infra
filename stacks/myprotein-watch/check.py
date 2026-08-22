@@ -34,6 +34,8 @@ Config (all via env):
   NEW_LOW_MARGIN          how much better than the record a new low must be
   WATCH_FLAVOURS          optional comma-separated flavour substrings to narrow
                           to. Empty (the default) means every flavour.
+  DIGEST                  "true" posts the one-line daily heartbeat instead of
+                          evaluating triggers. Touches no state.
   DRY_RUN                 "true" prints instead of posting
 """
 
@@ -144,6 +146,19 @@ class Variant:
     @property
     def price_per_serving(self) -> float | None:
         return self.price / self.servings if self.servings else None
+
+    @property
+    def pack_size(self) -> str | None:
+        """The pack weight as the page states it — when it states one.
+
+        Not guaranteed: on 2026-08-22 a 120-serving Milkshake shipped with the
+        amount "120servings" and no weight at all, and it was the cheapest
+        variant on the page, so it is what a message would name. Servings and
+        protein per serving are both known there, so pricing is unaffected —
+        only the size we can show a human.
+        """
+        m = AMOUNT_G_RE.search(self.amount)
+        return m.group(0).strip() if m else None
 
     @property
     def scoop_g(self) -> float | None:
@@ -446,7 +461,8 @@ def _detail(v: Variant) -> str:
     protein figure. Printing an inferred £/kg for it would put back exactly the
     claim the value triggers declined to make, in the more convincing place.
     """
-    head = (f"{v.servings} servings, {v.amount.split(' - ')[0]} — *£{v.price:.2f}* "
+    size = f", {v.pack_size}" if v.pack_size else ""
+    head = (f"{v.servings} servings{size} — *£{v.price:.2f}* "
             f"(was £{v.rrp:.2f}, {v.discount_pct}% off)")
     if not v.protein_verified:
         return f"{head} = *£{v.price_per_serving:.2f}/serving*"
@@ -555,6 +571,45 @@ def print_scope(variants: list[Variant], watch: list[str], out=None) -> None:
         say(f"{len(unverified)} flavour(s) held out of the value triggers — protein "
             f"per serving not published for them, big-sale trigger still covers "
             f"them: {', '.join(unverified)}")
+
+
+def digest_line(variants: list[Variant], watch: list[str], threshold: float) -> str:
+    """One line saying the watcher is alive and where the market sits.
+
+    Exists because this job's normal state is silence: it alerts only when a
+    price qualifies, which can be months apart, so no-news was indistinguishable
+    from a broken job. This posts on a schedule regardless, which is the whole
+    point — it must NOT be conditional on anything being interesting.
+
+    Read-only by construction: it takes no state and returns a string. The
+    alerting run owns the dedup state, and a digest that touched it could
+    swallow an alert Viktor was owed.
+    """
+    cmp_ = sorted(comparable(variants, watch), key=lambda v: v.price_per_kg_protein)
+    in_scope = len(cmp_)
+    if not cmp_:
+        # Nothing priceable per gram of protein — still a heartbeat, but do not
+        # invent a figure for it.
+        return (f":eyes: *MyProtein watcher OK* — {len(variants)} variants parsed, "
+                f"none of them comparable on protein price right now.")
+
+    noun = "variant" if in_scope == 1 else "variants"
+    best = cmp_[0]
+    size = f"{best.pack_size}" if best.pack_size else f"{best.servings} servings"
+    where = f"{best.base_flavour} ({best.line}), {size}, {best.discount_pct}% off"
+    if best.price_per_kg_protein <= threshold:
+        # A deal is live as the digest fires. Saying "nothing qualifies" here
+        # would contradict the alert that went out hours earlier.
+        return (f":moneybag: *MyProtein watcher OK — a deal is live* — cheapest "
+                f"*£{best.price_per_kg_protein:.2f}/kg protein* ({where}), "
+                f"at or under your £{threshold:.2f}. {in_scope} {noun} in scope.")
+    return (f":eyes: *MyProtein watcher OK* — {in_scope} {noun} in scope, cheapest "
+            f"*£{best.price_per_kg_protein:.2f}/kg protein* ({where}); "
+            f"nothing at or under £{threshold:.2f}.")
+
+
+def format_digest(line: str) -> dict[str, Any]:
+    return {"text": line, "unfurl_links": False}
 
 
 def fetch(url: str) -> str:
@@ -686,6 +741,7 @@ def main() -> int:
     # Empty by default: every flavour is in scope. Set it to narrow.
     watch = os.environ.get("WATCH_FLAVOURS", "").split(",")
     dry_run = os.environ.get("DRY_RUN", "").lower() == "true"
+    digest = os.environ.get("DIGEST", "").lower() == "true"
     webhook = os.environ.get("SLACK_WEBHOOK_URL", "")
 
     if not webhook and not dry_run:
@@ -704,6 +760,19 @@ def main() -> int:
         return 1
 
     print_scope(variants, watch)
+
+    # The digest deliberately returns before any state is read or written. It is
+    # a heartbeat, not a second alerting path: sharing the dedup state would let
+    # it mark a deal as "already announced" and silence the real alert.
+    if digest:
+        payload = format_digest(digest_line(variants, watch, threshold))
+        print(payload["text"])
+        if dry_run:
+            print("(dry run — not posting)")
+            return 0
+        post_slack(webhook, payload)
+        print("posted the daily digest to Slack")
+        return 0
 
     state = load_state(state_target, backend)
     alerts, new_state = decide(variants, state, watch, threshold, deep_pct, low_margin)
