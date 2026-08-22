@@ -179,9 +179,11 @@ module "ingress_milka" {
   # stripped the RFC1918 answer for internal-DNS hosts; fixed 2026-08-06 with
   # rebind_domain='viktorbarzin.me' on that router.
   # auth = "none": kiosk WebView, no user auth by design; gated by the home-lans-only ipAllowList instead.
-  auth              = "none"
-  dns_type          = "internal"
-  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
+  auth     = "none"
+  dns_type = "internal"
+  # Ordering matters: error-pages-403 only intercepts what is downstream of
+  # it, so it must precede the allowlist. Same as frame.tf / frame-emo.tf.
+  extra_middlewares = ["traefik-error-pages-403@kubernetescrd", "traefik-home-lans-only@kubernetescrd"]
   # Not externally reachable — explicit opt-out so external-monitor-sync does
   # not opt it back in.
   external_monitor = false
@@ -189,4 +191,9 @@ module "ingress_milka" {
   name             = "highlights-immich-milka"
   tls_secret_name  = var.tls_secret_name
   service_name     = "immich-frame-milka"
+  extra_annotations = {
+    "gethomepage.dev/description" = "Immich photo frame feed for Milka's kiosk in Valchedrym"
+    "gethomepage.dev/icon"        = "immich.png"
+    "gethomepage.dev/name"        = "Immich Highlights (Milka)"
+  }
 }
