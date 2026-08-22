@@ -425,9 +425,12 @@ stdlib-Python service on the stock `playwright/python` image (broker.py +
 via ConfigMap; pip-installs playwright at startup for the seed/screenshot
 **subprocesses** — no custom image, the `gate.py` pattern). Stateless: session
 state is reconstructed from pod labels each request (no Redis). k8s via the in-pod
-SA token/CA. API: `POST /acquire` {owner,purpose} → {pod,cdpPort,session};
+SA token/CA. API: `POST /acquire` {owner,purpose} → {pod,cdpPort,podIP,session};
 `POST /release` {session}; `GET /sessions`; `GET /seed` (fresh cached
-storage_state); `GET /metrics`; `GET /healthz`. SA `chrome-broker` = pods
+storage_state); `GET /metrics`; `GET /healthz`. `podIP` is for **in-cluster**
+callers, which dial the worker's CDP directly because no Service selects
+`app=chrome-worker` (the devvm CLI keeps port-forwarding to `pod/<name>`);
+`/sessions` still redacts the IP, since FleetView is browser-facing. SA `chrome-broker` = pods
 create/delete/get/list/patch (namespace-scoped; `rbac.tf`).
 
 **Workers.** One session per pod. **Bare burst pods** (broker-created from
