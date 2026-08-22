@@ -27,7 +27,19 @@ FROM ghcr.io/goauthentik/server:2026.8.0
 USER root
 RUN set -eux; \
     F=/authentik/stages/identification/stage.py; \
-    grep -q 'order_by("name").select_subclasses()' "$F"; \
+    grep -q 'order_by("name").select_subclasses()' "$F" || { \
+      echo "=== SLOW-1a GUARD TRIPPED ==="; \
+      echo "The upstream target line is gone from $F."; \
+      echo "This is EXPECTED, not a bug: the fix went upstream as"; \
+      echo "goauthentik/authentik#25238, merged to main and cherry-picked to"; \
+      echo "version-2026.8 on 2026-08-21. Any base image newer than the"; \
+      echo "version/2026.8.0 tag already narrows this query itself."; \
+      echo "DO: delete this entire PATCH #1 RUN block and the comment above it."; \
+      echo "DO NOT: repair the grep or re-apply the sed. It is redundant now."; \
+      echo "KEEP: PATCH #2 below (old-browser SFE). That one is NOT upstream --"; \
+      echo "  its PR #25247 is milestoned for 2026.11 as nice-to-have."; \
+      exit 1; \
+    }; \
     sed -i 's/order_by("name")\.select_subclasses()/order_by("name").select_subclasses("oauthsource", "samlsource", "plexsource", "telegramsource", "kerberossource")/' "$F"; \
     grep -q 'select_subclasses("oauthsource", "samlsource", "plexsource", "telegramsource", "kerberossource")' "$F"; \
     PY="$(command -v python || command -v python3)"; "$PY" -c "import ast,sys; ast.parse(open('$F').read())"; \
