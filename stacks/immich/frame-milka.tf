@@ -9,6 +9,11 @@
 # write there; move it alongside the other frame keys if that ever changes.
 # The key is READ-ONLY by construction (asset/album/timeline read + view +
 # download, no write or delete scopes) so the frame can never alter her library.
+# It MUST include face.read: ImmichFrame fetches /api/faces per photo to centre
+# the crop on faces, and without that scope Immich 403s and the frame answers
+# 500 on every cycle while still showing the photo. Minted without it on
+# 2026-08-06 and added on 2026-08-22 once the live 500s surfaced — the six
+# endpoints checked at mint time did not include this one.
 #
 # Her account has 3149 assets and ZERO albums, so this frame is account-wide on
 # a date window instead of album-filtered like Emo's. Note that a large share of
