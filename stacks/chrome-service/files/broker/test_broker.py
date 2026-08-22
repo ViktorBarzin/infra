@@ -69,3 +69,28 @@ def test_worker_name_is_unique_and_dns_safe():
     assert a.startswith("chrome-worker-")
     assert a.islower() and a.replace("-", "").isalnum()
     assert len(a) <= 63  # k8s name limit
+
+
+def test_wait_ready_returns_the_worker_so_acquire_can_read_its_ip(monkeypatch):
+    """/acquire reports podIP from what wait_ready hands back.
+
+    In-cluster callers (e.g. f1-stream's replays sourcing) dial the worker's CDP
+    by IP — there is no Service selecting app=chrome-worker — so a wait_ready
+    that stopped returning the worker would silently empty that field.
+    """
+    worker = {"name": "chrome-worker-abc", "ready": True, "ip": "10.10.1.5", "session": "abc"}
+    monkeypatch.setattr(broker, "list_workers", lambda: [worker])
+    assert broker.wait_ready("chrome-worker-abc") is worker
+    assert broker.wait_ready("chrome-worker-abc")["ip"] == "10.10.1.5"
+
+
+def test_list_workers_shape_carries_ip(monkeypatch):
+    """The pod IP must survive list_workers, which is where /acquire reads it."""
+    monkeypatch.setattr(broker, "kube", lambda *a, **k: {"items": [{
+        "metadata": {"name": "chrome-worker-abc", "labels": {}, "annotations": {}},
+        "status": {"phase": "Running", "podIP": "10.10.1.5",
+                   "containerStatuses": [{"ready": True}]},
+    }]})
+    got = broker.list_workers()[0]
+    assert got["ip"] == "10.10.1.5"
+    assert got["ready"] is True

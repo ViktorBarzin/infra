@@ -364,7 +364,12 @@ class Handler(BaseHTTPRequestHandler):
             free = pick_free_worker(workers)
             if free:
                 claim_worker(free["name"], session, owner, purpose)
+                # podIP lets an IN-CLUSTER caller dial CDP directly; the devvm
+                # CLI keeps port-forwarding to pod/<name> as before. Deliberately
+                # not added to /sessions, which redacts it for browser-facing
+                # FleetView.
                 return self._send(200, {"pod": free["name"], "cdpPort": 9222,
+                                        "podIP": free.get("ip", ""),
                                         "session": session, "reused": True})
             # Count only NON-terminal pods toward capacity (Failed/Succeeded orphans
             # are GC'd by the reaper and must not wedge the pool).
@@ -377,10 +382,12 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(500, {"error": f"create worker: {e}"})
         try:
-            wait_ready(name)
+            worker = wait_ready(name)
         except Exception as e:
             return self._send(500, {"error": f"worker not ready: {e}"})
-        return self._send(200, {"pod": name, "cdpPort": 9222, "session": session, "reused": False})
+        return self._send(200, {"pod": name, "cdpPort": 9222,
+                                "podIP": worker.get("ip", ""),
+                                "session": session, "reused": False})
 
     def _serve_static(self, path):
         # Allowlist static asset extensions — STATIC_DIR also holds broker.py,
