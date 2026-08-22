@@ -2,7 +2,9 @@
 # nfs-mirror — local 2nd copy of /srv/nfs (selective) → /mnt/backup
 #
 # Deploy to PVE host at /usr/local/bin/nfs-mirror.
-# Schedule: weekly Mon 04:00 via nfs-mirror.timer.
+# Schedule: daily 02:00 via nfs-mirror.timer (OnCalendar=*-*-* 02:00:00,
+#           Persistent=true). The header used to say weekly Mon 04:00; the
+#           unit on the host disagreed, checked 2026-08-22.
 #
 # ROLE in the 3-2-1 strategy:
 #   Copy 1 (sdc):       /srv/nfs/* (live PVE NFS)
