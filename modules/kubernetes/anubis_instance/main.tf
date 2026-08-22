@@ -25,6 +25,13 @@ terraform {
 # which fixed the 2026-07-14 blank-page flap on proxied sites but 500'd
 # header-less requests on non-proxied ones. Post-mortem:
 # docs/post-mortems/2026-07-14-anubis-x-real-ip-cookie-flap.md.
+#
+# LOCAL BYPASS (2026-08-22): this module renders the `bots:` key itself and puts a
+# trusted-local-networks ALLOW rule first, so browsing and automation from our own
+# networks reach the real app instead of the proof-of-work page. It rests on
+# exactly the X-Real-Ip guarantee described above — the trust decision reads a
+# header the client cannot set. See var.trusted_local_cidrs and
+# docs/plans/2026-08-22-local-network-bot-wall-bypass-design.md.
 
 variable "name" {
   type        = string
@@ -93,10 +100,49 @@ variable "memory" {
   description = "requests==limits memory. Anubis docs suggest 128Mi handles many concurrent clients."
 }
 
-variable "policy_yaml" {
+variable "policy_rules_yaml" {
   type        = string
   default     = null
-  description = "Override the strict default bot-policy YAML. Leave null to use the catch-all CHALLENGE policy."
+  description = <<-EOT
+    Override the default bot-policy RULES. This is the contents of the `bots:`
+    list ONLY — do NOT include the top-level `bots:` key. The module owns that
+    key so it can always render the trusted-local-networks ALLOW rule first;
+    see `trusted_local_cidrs`. Leave null to use the strict default rules.
+
+    Renamed from `policy_yaml` (which took a whole policy document) on
+    2026-08-22 deliberately: a caller still passing a full document now fails
+    at plan time with "Unsupported argument" instead of silently producing a
+    policy whose first rule is not the trusted-network bypass.
+  EOT
+}
+
+variable "trusted_local_cidrs" {
+  type = list(string)
+  default = [
+    "10.0.0.0/8",     # VLANs (devvm 10.0.10.10), k8s pods/services, WG tunnel IPs
+    "172.16.0.0/12",  # RFC1918
+    "192.168.0.0/16", # Sofia LAN + London (incl. guest) + Valchedrym, via WG
+    "100.64.0.0/10",  # Headscale tailnet (CGNAT)
+    "fc00::/7",       # IPv6 ULA
+    "fe80::/10",      # IPv6 link-local
+  ]
+  description = <<-EOT
+    Source networks that skip the whole bot policy — rendered as the FIRST rule
+    so local browsing and local automation reach the real app instead of the
+    proof-of-work interstitial. This list is the CANONICAL definition.
+
+    MIRRORED in stacks/traefik/modules/traefik/main.tf as the x402-gateway's
+    TRUSTED_CIDRS env, because the two live in different CI fan-out scopes: a
+    modules/ edit re-applies this module's consuming app stacks, and a
+    stacks/traefik edit re-applies the traefik platform stack. Keeping a copy in
+    each place means every edit is applied where it is made. Change both.
+
+    Private + CGNAT ranges only. Our public egress IP is deliberately absent, so
+    the bypass is unreachable from the internet by construction — no dependency
+    on the ISP keeping our lease. Matching is against X-Real-Ip, which the
+    vendored Traefik real-ip plugin overwrites with the unspoofable TCP peer for
+    any peer outside the pod CIDR, so a client cannot forge its way in.
+  EOT
 }
 
 variable "cpu_request" {
@@ -135,8 +181,7 @@ locals {
   # CLI scrapers) fall through to ALLOW. We import the same upstream
   # snippets and append a catch-all CHALLENGE so anyone without JS+PoW
   # capability is filtered.
-  default_policy_yaml = <<-EOT
-    bots:
+  default_policy_rules_yaml = <<-EOT
       # Hard-deny known-bad bots first — runs before the method bypass so
       # a declared bad bot can't sneak through by sending a POST.
       - import: (data)/bots/_deny-pathological.yaml
@@ -168,11 +213,44 @@ locals {
         action: CHALLENGE
   EOT
 
-  # Final policy YAML: defaults (or caller override) plus an optional store
-  # block when shared_store_url is set. Store block is module-managed and
-  # appended universally — callers passing a custom policy_yaml shouldn't
-  # include their own `store:` block (they would collide).
-  rendered_policy_yaml = "${coalesce(var.policy_yaml, local.default_policy_yaml)}${local.store_yaml_block}"
+  # Trusted-local ALLOW rule, rendered by the module for EVERY caller so no site
+  # can miss it. Built with join() rather than a heredoc so the YAML indentation
+  # is explicit: sequence items sit at column 0 under `bots:` (valid YAML, and
+  # the same level the rules heredocs land on after `<<-` de-indents them), and
+  # mixing levels within one sequence would be a parse error.
+  #
+  # POSITION IS LOAD-BEARING — this MUST stay the first rule. Anubis evaluates
+  # rules in order, first match wins (lib/policy/policy.go), and
+  # `_deny-pathological` imports headless-browsers.yaml which DENYs any
+  # HeadlessChrome UA. A trusted-network rule placed after it would still block
+  # local Playwright and agent traffic, which is most of the point.
+  trusted_local_rule_yaml = join("\n", concat([
+    "# Trusted local networks bypass every check below — LAN, VLANs, WireGuard",
+    "# spokes, Headscale tailnet and the cluster itself. Lets local humans skip the",
+    "# proof-of-work interstitial and lets non-JS local clients (curl, Playwright,",
+    "# scripts, in-cluster probes) reach the real app at all.",
+    "#",
+    "# Matched against X-Real-Ip, which the vendored Traefik real-ip plugin",
+    "# overwrites with the unspoofable TCP peer for every peer outside the pod",
+    "# CIDR — ingress_factory auto-attaches it to all anubis-* backends. So this",
+    "# cannot be forged from the internet, and our public egress IP is",
+    "# deliberately NOT in the list. See var.trusted_local_cidrs.",
+    "- name: trusted-local-networks",
+    "  action: ALLOW",
+    "  remote_addresses:",
+    ], [for cidr in var.trusted_local_cidrs : "  - \"${cidr}\""]
+  ))
+
+  # Final policy YAML: the module-owned `bots:` key, the trusted-local rule, the
+  # caller's rules (or the strict defaults), then an optional store block when
+  # shared_store_url is set. Store block is module-managed and appended
+  # universally — callers passing custom rules shouldn't include their own
+  # `store:` block (they would collide).
+  rendered_policy_yaml = join("\n", [
+    "bots:",
+    local.trusted_local_rule_yaml,
+    trimspace(coalesce(var.policy_rules_yaml, local.default_policy_rules_yaml)),
+  ]) + local.store_yaml_block
 }
 
 # Bot policy ConfigMap. Mounted into the pod and referenced by POLICY_FNAME.
