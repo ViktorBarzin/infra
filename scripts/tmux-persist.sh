@@ -101,6 +101,21 @@ snapshot_path() { echo "$(snapshots_dir "$1")/$2.tsv"; }
 
 home_of() { [[ -n "$HOME_ROOT" ]] && { printf '%s\n' "$HOME_ROOT"; return 0; }; getent passwd "$1" | cut -d: -f6; }
 
+# Every path that takes a session name from a client — the lobby, ttyd's ?arg=,
+# tmux-attach.sh, tmux-api — validates it against this pattern. A name it
+# rejects therefore belongs to no one who could attach, rename or kill it, and
+# is not somebody's work for us to preserve across a reboot.
+#
+# The case this exists for: terminal-lobby keeps a PRE-WARMED Claude session
+# ready so that creating one costs a tmux rename rather than a ~2.7s cold start,
+# and names that slot past the 32-character limit exactly so no client can
+# address it. Snapshotting one would put a row in the picker nobody can act on;
+# restoring one would resurrect a slot at boot as though it were real work.
+# Written as "what the lobby can address" rather than "the pool prefix" so it
+# also covers names tmux accepts but this stack never hands out.
+LOBBY_NAME_RE='^[a-zA-Z0-9_-]{1,32}$'
+addressable() { [[ "$1" =~ $LOBBY_NAME_RE ]]; }
+
 # First descendant of $1 whose comm is `claude` (BFS, bounded by process tree).
 #
 # Touches ONLY the pane's own subtree, with no subprocesses at all.
@@ -245,6 +260,9 @@ capture_live() {   # $1 user -> TSV rows on stdout
   # Pass 1: ask every pane which conversation it is running, and how sure it is.
   while IFS=$'\t' read -r sess pane_pid pane_cwd stamp; do
     [[ -n "$sess" ]] || continue
+    # Skipped here rather than at restore, so an unaddressable session never
+    # enters a snapshot in the first place and no later reader has to know.
+    addressable "$sess" || continue
     answer=""
     if cpid="$(claude_pid_under "$pane_pid")"; then
       answer="$(uuid_of_claude "$cpid" "$u" "$pane_cwd" "$sess" "$stamp")"
@@ -549,6 +567,10 @@ restore() {
     ts="${f##*/}"; ts="${ts%.tsv}"
     while IFS=$'\t' read -r -a row; do
       [[ -n "${row[0]:-}" ]] || continue
+      # Second line of defence. capture_live keeps these out of new snapshots,
+      # but a snapshot written before that rule existed — or edited by hand —
+      # must not be able to bring one back either.
+      addressable "${row[0]}" || continue
       [[ "${row[6]}" == "on" ]] || continue      # live, or a deliberate kill
       apply_row "$u" "${row[@]}" || true
     done < <(snapshot_view "$u" "$ts")
