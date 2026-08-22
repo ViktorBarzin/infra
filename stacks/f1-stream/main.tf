@@ -104,6 +104,21 @@ module "nfs_data_host" {
   access_modes = ["ReadWriteOnce"]
 }
 
+# Replay torrent cache. Shares the servarr qBittorrent downloads export so the
+# backend can serve a file while qBittorrent is still writing it — a PVC cannot
+# cross namespaces, so this is a second claim onto the same NFS path rather than
+# a second copy of the data. Subdirectory of the export, so F1 replays stay
+# separate from everything else servarr downloads.
+module "nfs_replay_cache" {
+  source       = "../../modules/kubernetes/nfs_volume"
+  name         = "f1-stream-replay-cache"
+  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
+  nfs_server   = var.nfs_server
+  nfs_path     = "/srv/nfs/servarr/downloads/f1-replays"
+  storage      = "200Gi"
+  access_modes = ["ReadWriteMany"]
+}
+
 resource "kubernetes_deployment" "f1-stream" {
   metadata {
     name      = "f1-stream"
@@ -223,15 +238,47 @@ resource "kubernetes_deployment" "f1-stream" {
             name  = "PLAYBACK_VERIFY_PROXY_BASE"
             value = "http://f1.f1-stream.svc.cluster.local"
           }
+          # Replay torrent streaming: qBittorrent does the fetching (auth is
+          # bypassed for 10.0.0.0/8, so no credentials), we read the partial
+          # file off the shared export.
+          env {
+            name  = "QBITTORRENT_URL"
+            value = "http://qbittorrent.servarr.svc"
+          }
+          env {
+            name  = "REPLAY_CACHE_DIR"
+            value = "/replay-cache"
+          }
+          # qBittorrent's own view of the same directory, for savepath on add.
+          env {
+            name  = "REPLAY_CACHE_REMOTE_DIR"
+            value = "/downloads/f1-replays"
+          }
+          env {
+            name  = "REPLAY_CACHE_CAP_GB"
+            value = "150"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
+          }
+          # Read-only: qBittorrent owns these files, we only stream them out.
+          volume_mount {
+            name       = "replay-cache"
+            mount_path = "/replay-cache"
+            read_only  = true
           }
         }
         volume {
           name = "data"
           persistent_volume_claim {
             claim_name = module.nfs_data_host.claim_name
+          }
+        }
+        volume {
+          name = "replay-cache"
+          persistent_volume_claim {
+            claim_name = module.nfs_replay_cache.claim_name
           }
         }
         # Pull the (private) Forgejo-registry image. Kyverno syncs
