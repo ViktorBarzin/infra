@@ -61,6 +61,27 @@ data "kubernetes_service" "traefik" {
 # redis.redis.svc.cluster.local.viktorbarzin.lan) by returning NXDOMAIN for any
 # query with 2+ labels before .viktorbarzin.lan. Legitimate single-label queries
 # (e.g. idrac.viktorbarzin.lan) fall through to Technitium.
+#
+# The 1.168.192.in-addr.arpa block gives pods reverse DNS for the physical LAN.
+# Technitium is authoritative for that zone, but nothing was asking it: the .:53
+# block sends in-addr.arpa to 10.0.20.1 first, pfSense answers an authoritative
+# NXDOMAIN, and that ends the lookup — the later upstreams never get a turn. So
+# every in-cluster reverse lookup of a LAN host failed while the forward lookup
+# worked fine.
+#
+# What that broke: postfix's reject_unknown_client_hostname needs
+# forward-confirmed reverse DNS for the connecting client, so the Proxmox host at
+# 192.168.1.127 was refused with "450 4.7.25 cannot find your hostname" 100-217
+# times a day and its daily reports never arrived. Found 2026-08-21 while tracing
+# a different mail fault; measured over the full 30d of Loki retention.
+#
+# Scoped to 192.168.1.0/24 deliberately. The cluster/VM range
+# (20.0.10.in-addr.arpa) has to keep being answered by the kubernetes plugin in
+# the .:53 block, which synthesises names like
+# 10-0-20-105.node-local-dns.kube-system.svc.cluster.local that do
+# forward-confirm — that is how mail from pods passes the same postfix check.
+# Technitium holds no PTR for those node IPs, so pointing that zone here would
+# refuse mail from every pod in the cluster.
 resource "kubernetes_config_map" "coredns" {
   metadata {
     name      = "coredns"
@@ -138,6 +159,18 @@ resource "kubernetes_config_map" "coredns" {
           rcode NXDOMAIN
           fallthrough
         }
+        forward . 10.96.0.53 {
+          health_check 5s
+          max_fails 2
+        }
+        cache {
+          success 10000 300 6
+          denial 10000 300 60
+          serve_stale 86400s
+        }
+      }
+      1.168.192.in-addr.arpa:53 {
+        errors
         forward . 10.96.0.53 {
           health_check 5s
           max_fails 2
