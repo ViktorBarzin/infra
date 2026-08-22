@@ -176,6 +176,13 @@ resource "kubernetes_cron_job_v1" "check" {
       spec {
         backoff_limit              = 2
         ttl_seconds_after_finished = 86400
+        # A real run takes ~5s. Bounded because this CronJob is Forbid with no
+        # deadline otherwise: a fetch that black-holes mid-connection leaves the
+        # Job Running forever and every later run is SKIPPED, which is how
+        # webterminal-probe and phpipam-pfsense-import each sat wedged for days
+        # on 2026-08-10. MyProteinWatchStale would eventually say so, but the
+        # deadline is what actually lets the next run happen.
+        active_deadline_seconds = 300
 
         template {
           metadata {

@@ -4370,6 +4370,18 @@ serverFiles:
             annotations:
               summary: "MyProtein daily digest has not posted in {{ $value | humanizeDuration }} (>2 missed daily runs)"
               description: "The myprotein-watch-digest CronJob (daily 08:00 Europe/London, ns myprotein-watch) has no recent successful run, so the daily 'watcher OK' line in #alerts has stopped arriving and its silence no longer means anything. The digest is read-only and holds no state, so this is a fetch, image-pull or webhook-secret problem rather than a parser one — check `kubectl -n myprotein-watch get jobs` and the last digest pod's logs. Price alerting itself is covered separately by MyProteinWatchStale."
+          # Companion to the above, matching the pair used for the check job and
+          # for every backup CronJob in this file: a job that has NEVER succeeded
+          # has no last-success timestamp to age, so the staleness rule alone
+          # would stay silent about a digest that was broken from its first run.
+          - alert: MyProteinWatchDigestNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="myprotein-watch-digest", namespace="myprotein-watch"} == 0
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "MyProtein daily digest has never posted successfully"
+              description: "The myprotein-watch-digest CronJob has no successful run on record, so the daily heartbeat has never arrived. Most likely a deploy-time problem — missing SLACK_WEBHOOK_URL from ESO, or the script ConfigMap not mounted — rather than anything about MyProtein's page."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
