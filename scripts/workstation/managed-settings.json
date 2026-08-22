@@ -43,6 +43,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/claude-se-hook prompt-submit",
+            "timeout": 8
+          }
+        ]
       }
     ],
     "PreToolUse": [
