@@ -831,12 +831,12 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           # floor here. Rejecting inbound spam is constant and wanted, which is
           # why none of these rules look at rejects in general.
           #
-          # Known gap, deliberately uncovered: 192.168.1.127 (helo=pve.local) is
-          # refused ~100-200x/24h because it has no PTR, so mail from that
-          # Proxmox host does not arrive. That is a NOQUEUE reject from a
-          # non-cluster client, so it falls outside these rules on purpose — a
-          # rule for that class would fire continuously until the host's relay
-          # path is sorted out. Worth fixing; then a fourth rule can cover it.
+          # That gap is now closed. When this group shipped, 192.168.1.127
+          # (helo=pve.local) was being refused ~100-200x/24h and a rule for it
+          # would have fired continuously, so the class was left out. The cause
+          # turned out to be in-cluster reverse DNS rather than a missing record
+          # (fixed 2026-08-22), and InternalHostCannotSendMail below now covers
+          # it against a zero floor.
           #
           # Route: Loki ruler -> Alertmanager -> #alerts.
           name = "Mail delivery"
@@ -899,6 +899,35 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               annotations = {
                 summary     = "Mail is piling up deferred in the queue (>5/1h)"
                 description = "More than five deferrals in an hour, against a 30d baseline of zero — mail is sitting in the queue rather than being delivered. Check the queue and the reason: kubectl -n mailserver exec deploy/mailserver -- postqueue -p, then homelab logs query '{namespace=\"mailserver\"} |= \"status=deferred\"' --since 2h. Common causes are the Brevo smarthost refusing or throttling us, and DNS resolution failing for the destination."
+              }
+            },
+            {
+              # A host on our own network refused relay for a reason other than
+              # authentication. In practice that means reverse DNS, since
+              # smtpd_sender_restrictions ends in reject_unknown_client_hostname:
+              # a client whose PTR is missing, or does not forward-confirm, is
+              # turned away with 450 4.7.25 and its mail is retried until the
+              # sending host gives up.
+              #
+              # Left out when this group shipped on 2026-08-21 because the
+              # Proxmox host was tripping it 100-217x/24h and the rule would
+              # have fired continuously. That was fixed on 2026-08-22 (CoreDNS
+              # gained a 1.168.192.in-addr.arpa block so pods can resolve LAN
+              # reverse DNS at all), and the floor is now zero, so >0 means
+              # something real.
+              #
+              # for=15m on purpose: a CoreDNS or Technitium blip makes reverse
+              # DNS fail for a few seconds and the sending host simply retries,
+              # so a shorter window would page for something that heals itself.
+              # Fifteen minutes of a host unable to send mail is still caught
+              # long before a person would notice.
+              alert  = "InternalHostCannotSendMail"
+              expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"cannot find your hostname\" |~ `\\[(10\\.|192\\.168\\.)` [15m])) > 0"
+              for    = "15m"
+              labels = { severity = "warning", subsystem = "mail" }
+              annotations = {
+                summary     = "An internal host is being refused mail relay — reverse DNS is failing"
+                description = "A host on 10.x or 192.168.x is getting 450 4.7.25 'cannot find your hostname', so its mail is not being accepted and will sit in its queue until it gives up. Find the host: homelab logs query '{namespace=\"mailserver\"} |= \"cannot find your hostname\"' --since 1h. Then check reverse DNS the way postfix does, from inside a pod: dig -x <ip> must return a name, and that name must resolve back to the same address. If the PTR resolves against Technitium (dig -x <ip> @10.96.0.53) but not through CoreDNS, the zone is missing a block in stacks/technitium/modules/technitium/main.tf — that was the 2026-08-22 fault, which had been silently discarding the nightly Proxmox backup report for a month."
               }
             },
           ]
