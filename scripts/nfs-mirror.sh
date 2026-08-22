@@ -88,6 +88,15 @@ EXCLUDES=(
     --exclude='/audiblez/'         # generated audiobooks
     --exclude='/ebook2audiobook/'  # generated audiobooks
 
+    # ---- f1-stream replay cache: live-only, never backed up (2026-08-22) ----
+    # Torrented race replays the f1-stream backend fetches on demand so they can
+    # be streamed in the browser. Regenerable from the swarm, capped at 150G and
+    # evicted least-recently-played, so a backup would carry gigabytes of
+    # transient media that the app deletes on its own. Viktor's call: do not
+    # back these up. Excluding here covers the offsite leg too, since everything
+    # except immich reaches Synology through this mirror.
+    --exclude='/servarr/downloads/f1-replays/'
+
     # ---- Synology / Windows / macOS cruft ----
     --exclude='/@eaDir/'
     --exclude='*@synoeastream'
