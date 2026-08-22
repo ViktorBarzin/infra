@@ -298,13 +298,27 @@ resource "kubernetes_deployment" "dawarich" {
               }
             }
           }
+          # glibc allocates one malloc arena per thread (up to 8x ncores), and
+          # Ruby never returns the freed-but-fragmented pages — that is what
+          # drove steady-state RSS from 242 MiB at boot to a ~890 MiB plateau.
+          # Capping arenas trades a little allocator contention (sidekiq runs
+          # concurrency=2) for a far flatter memory profile.
+          env {
+            name  = "MALLOC_ARENA_MAX"
+            value = "2"
+          }
+          # The hourly `bulk_stats_calculating_job` (schedule.yml, "0 */1 * * *")
+          # spikes on top of that plateau and blew through the old 1Gi limit
+          # every hour — ~5 KernelOOMKiller CRITICAL pages a day. Request stays
+          # at 768Mi so this does not add scheduling pressure (see
+          # ClusterCannotTolerateNonGpuNodeLoss); only the ceiling moves.
           resources {
             requests = {
               cpu    = "50m"
               memory = "768Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "2Gi"
             }
           }
           liveness_probe {

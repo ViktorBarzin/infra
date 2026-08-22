@@ -49,6 +49,12 @@ locals {
     # .github/workflows/build-excalidraw.yml). The deployment references the
     # cloned secret.
     "excalidraw",
+    # trading-bot: migrated off public DockerHub onto PRIVATE
+    # ghcr.io/viktorbarzin/trading-bot-{service,dashboard} (ADR-0002). The repo
+    # had no build path at all between the in-cluster pipeline's retirement in
+    # June 2026 and this migration. Both Deployments and the migrations Job
+    # reference the cloned secret.
+    "trading-bot",
     # hermes-agent: PRIVATE ghcr.io/viktorbarzin/hermes-agent (Hermes v2
     # Discord assistant, spec infra#75). Deployment + git-init initContainer
     # reference the cloned secret.
@@ -74,6 +80,16 @@ locals {
     # pages-publish: PRIVATE ghcr.io/viktorbarzin/pages-publish (markdown →
     # pages.viktorbarzin.me publish service). Deployment references the cloned secret.
     "pages-publish",
+    # chesscom-streak: PRIVATE ghcr.io/viktorbarzin/chesscom-streak (daily
+    # Chess.com streak CronJob). Kept private deliberately — a public package
+    # under this name would advertise the automation to the site it runs against.
+    "chesscom-streak",
+    # repowise: PRIVATE ghcr.io/viktorbarzin/repowise (codebase intelligence
+    # over the Forgejo Corpus, built from upstream source by
+    # .github/workflows/build-repowise.yml). Private deliberately — publishing
+    # a derived image of an AGPL-3.0 work would be distribution and carry a
+    # source-offer obligation. Keel also needs this secret to poll the tag list.
+    "repowise",
   ]
 }
 
@@ -93,6 +109,12 @@ resource "kubernetes_secret" "ghcr_credentials" {
         }
       }
     })
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno stamps generate.kyverno.io/clone-source onto
+    # its own clone SOURCE (null value), so Terraform planned to strip it every
+    # run and this stack never went clean. Added 2026-08-14.
+    ignore_changes = [metadata[0].labels]
   }
 }
 

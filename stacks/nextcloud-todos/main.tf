@@ -339,6 +339,7 @@ module "ingress" {
   ingress_path     = ["/cb"]
   tls_secret_name  = var.tls_secret_name
   extra_annotations = {
+    "gethomepage.dev/description" = "Nextcloud task automation"
     "gethomepage.dev/icon" = "nextcloud.png"
   }
 }

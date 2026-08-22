@@ -90,6 +90,45 @@ ZSHENV_EOF
 fi
 log "claude setup-token interactive loader (/etc/profile.d/25 + /etc/zsh/zshenv hook)"
 
+# 2c) Claude telemetry resource attributes (infra ADR-0025) — PER-USER, so a
+#     session can be attributed to the OS user who ran it. This CANNOT live in
+#     managed-settings.json: that file's `env` block overrides the shell, and
+#     it is one shared string, so every user would report the same value.
+#     It matters because the identity Claude reports natively is the ANTHROPIC
+#     ACCOUNT (user_email), which is the same for everyone on this box — a
+#     session run as emo arrives labelled viktorbarzin@meta.com.
+cat > /etc/profile.d/26-claude-otel-attrs.sh <<'PROFILE_EOF'
+# Stamp Claude Code's OpenTelemetry export with the OS user running it.
+# Sourced by bash login (/etc/profile) and by zsh via /etc/zsh/zshenv (Debian's
+# zsh zprofile does NOT source /etc/profile). Claude Code reads this only when
+# managed-settings.json does not set it — see infra ADR-0025.
+# tmux.session is the HUMAN name of the session this shell runs in (the lobby
+# names them Hunter, Yale, HA_status, ...). Claude Code knows the name -- 
+# start-claude.sh passes --name -- but does NOT export it as a telemetry
+# attribute, so it is added here or it is not available at all.
+#
+# Read once, at shell start: OTEL_RESOURCE_ATTRIBUTES is consumed by Claude at
+# launch, so a later `tmux rename-session` will not reach an already-running
+# session. Absent outside tmux (headless, cron, plain t3), where there is no
+# session to name.
+_tl_sess=""
+if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+  _tl_sess="$(tmux display-message -p '#S' 2>/dev/null | tr -d ',=' )"
+fi
+export OTEL_RESOURCE_ATTRIBUTES="host.name=devvm,deployment.environment=homelab,os.user=$(id -un)${_tl_sess:+,tmux.session=$_tl_sess}"
+unset _tl_sess
+PROFILE_EOF
+chmod 0644 /etc/profile.d/26-claude-otel-attrs.sh
+if ! grep -q '26-claude-otel-attrs.sh' /etc/zsh/zshenv 2>/dev/null; then
+  cat >> /etc/zsh/zshenv <<'ZSHENV_EOF'
+
+# Claude telemetry resource attributes for zsh (login, ttyd/tmux panes, scripts):
+# Debian's /etc/zsh/zprofile does NOT source /etc/profile, so profile.d is missed.
+[ -r /etc/profile.d/26-claude-otel-attrs.sh ] && . /etc/profile.d/26-claude-otel-attrs.sh
+ZSHENV_EOF
+fi
+log "claude OTel resource attributes (/etc/profile.d/26 + /etc/zsh/zshenv hook)"
+
 # 2b) t3 (the per-user coding surface) — GATED NIGHTLY TRACKER (2026-06-16; was pinned).
 #     t3 is pre-1.0 and ships breaking auth-schema + bootstrap-API changes (2026-06-09
 #     outage: a blind nightly auto-update broke pairing for ALL users). The daily
@@ -283,7 +322,9 @@ log "service units installed + enabled (t3-dispatch + timers; t3-serve@ per-user
 #     virtual disk into an IO storm + multi-minute freeze (hard-killed 2026-06-22).
 #     t3-serve@ was already capped (its [Service] block); the HOLE was the uncapped
 #     user-<uid>.slice (all ssh/tmux work). Design — per user, on BOTH trees:
-#     MemoryMax=16G hard + MemorySwapMax=0 (work never touches disk swap → no
+#     MemoryMax=24G hard (16G until 2026-08-16; raised with the host's 24→32 GiB
+#     RAM bump, Viktor — wizard was working right up against the old ceiling at
+#     ~14.8G) + MemorySwapMax=0 (work never touches disk swap → no
 #     thrash; a runaway is cgroup-OOM-killed locally at the ceiling), plus
 #     fair-share CPU/IO weights.
 #     NO MemoryHigh soft band (removed 2026-07-02; was 12G "throttle to a crawl"):
@@ -301,6 +342,18 @@ log "service units installed + enabled (t3-dispatch + timers; t3-serve@ per-user
 #     stays alive) and --prefers the agent/browser hogs. earlyoom pkg = packages.txt
 #     (§1). Per-cgroup MemoryMax is the PRIMARY guard; earlyoom is the aggregate net.
 #     Post-mortem: docs/post-mortems/2026-06-22-devvm-mem-io-overload-containment.md
+#
+#     PER-PANE CAP (10a-bis, 2026-08-16) — the per-user 24G cap is a real ceiling
+#     but it rarely BINDS FIRST: two users' caps total 48G on a 31.3 GiB box, so
+#     the box-wide earlyoom threshold is reached long before either slice does.
+#     In practice earlyoom was the only guard that ever fired, and its ranking
+#     picked conversations: 100 kills in the 30 days to 2026-08-16 were 89
+#     `claude`, 5 python3, 5 chrome, 1 an 18.6 GiB process — mean 600 MiB
+#     reclaimed per kill, so it had to kill six times to claw back what one
+#     correct victim would have. Capping each tmux PANE closes that gap: the
+#     kernel then picks the victim from inside the pane, by raw RSS, so a
+#     spawned build dies and the ~0.5 GiB claude that spawned it does not.
+#     Design: docs/plans/2026-08-16-devvm-pane-memory-cap.md
 
 # 10a) per-user caps + fair-share weights on EVERY user-<uid>.slice (ssh/tmux)
 install -d -m 0755 /etc/systemd/system/user-.slice.d
@@ -315,13 +368,64 @@ cat > /etc/systemd/system/user-.slice.d/50-devvm-resource.conf <<'SLICE_EOF'
 [Slice]
 MemoryAccounting=yes
 MemoryHigh=infinity
-MemoryMax=16G
+MemoryMax=24G
 MemorySwapMax=0
 CPUAccounting=yes
 CPUWeight=100
 IOAccounting=yes
 IOWeight=100
 SLICE_EOF
+
+# 10a-bis) per-PANE cap (2026-08-16). tmux 3.4 links libsystemd and puts every
+#      pane in its own transient `tmux-spawn-<uuid>.scope`, so one drop-in on the
+#      `scope` UNIT TYPE caps each pane independently, for every user, with no
+#      per-session wiring. A top-level `<type>.d/` drop-in applies to all units of
+#      that type (systemd.unit(5)) and DOES reach transient units — verified on
+#      this box: the value lands on a fresh pane AND on already-running panes at
+#      the next `daemon-reload`, and reverts when the file is removed.
+install -d -m 0755 /etc/systemd/user/scope.d
+cat > /etc/systemd/user/scope.d/50-devvm-pane-cap.conf <<'PANE_EOF'
+# Per-pane memory cap for the shared devvm (setup-devvm.sh §10a-bis, 2026-08-16).
+#
+# WHY PER PANE. A pane's cgroup holds the shell, its claude, and everything that
+# claude spawns. At the cap the kernel OOM-kills the single highest-RSS task IN
+# THAT PANE (`memory.oom.group=0`, so one task — not the pane), which is the
+# spawned build/browser/test run, not the ~0.5 GiB claude above it. That is the
+# ordering we want, and it needs no process-name matching: comm is unreliable
+# here (the claude binary reports its version string `2.1.233`, t3-serve reports
+# `MainThread`), so any regex-based scheme mis-ranks exactly the processes that
+# matter. The kernel ranks by RSS and cannot be fooled that way.
+#
+# WHY 6G. Working panes measured 0.6-1.3 GB on 2026-08-16, so this is ~5x the
+# busiest observed and leaves ~4.7 GB above a typical claude for legitimate
+# builds, test suites and chrome. It bounds ONE pane, not the aggregate — nine
+# capped panes are still 54G of headroom on a 31.3 GiB box, which is why the
+# earlyoom net in 10b stays.
+#
+# MemoryMax ONLY, never MemoryHigh — with MemorySwapMax=0 inherited from the
+# user slice, a soft band livelocks instead of killing (see the 2026-07-02
+# post-mortem addendum). Cap-and-kill.
+#
+# Applies to every user scope, which includes the small `run-r*.scope` ttyd
+# attach wrappers; those hold a tmux client of a few MB, so the cap is inert
+# for them.
+[Scope]
+MemoryAccounting=yes
+MemoryMax=6G
+
+# OOMPolicy=continue is LOAD-BEARING — without it this whole drop-in is
+# self-defeating. systemd defaults a scope to OOMPolicy=stop, so once the kernel
+# has correctly killed ONE task, systemd stops the entire unit and takes the
+# surviving claude down with it. `memory.oom.group=0` governs only the KERNEL's
+# choice to group-kill; it says nothing about systemd's reaction afterwards.
+# Proven end-to-end 2026-08-16: the kernel killed python3 (5.44 GiB) and left
+# claude (457 MB) running exactly as intended, then systemd logged
+# "Failed with result 'oom-kill'" and tore the pane down anyway. With
+# OOMPolicy=continue the same test leaves the pane at "A process of this unit
+# has been killed by the OOM killer" and the session keeps running.
+# Same lesson t3-serve@.service learned on 2026-06-10.
+OOMPolicy=continue
+PANE_EOF
 
 # 10b) earlyoom backstop config — RAM-threshold, swap-INDEPENDENT (see header note
 #      on why systemd-oomd is inert with swap=0). The Debian unit reads /etc/default.
@@ -334,7 +438,40 @@ cat > /etc/default/earlyoom <<'EARLYOOM_EOF'
 #   --avoid    never the box's nervous system / your way back in
 #   --prefer   target the agent/browser/build hogs that actually exhaust RAM
 #   -r 3600    hourly memory report (the 60s default is log spam)
-EARLYOOM_ARGS="-m 5,3 -s 100,100 -r 3600 --avoid ^(systemd|systemd-.*|sshd|dockerd|containerd|init|t3-dispatch|tmux.*)$ --prefer ^(python3|node|chrome|chromium|ugrep|rg|go|claude)$"
+#
+# `claude` was REMOVED from --prefer on 2026-08-16. --prefer adds 300 to a
+# victim's oom_score, and on this box that outweighs an enormous amount of RSS:
+# every tmux-hosted process inherits oom_score_adj=200 (systemd's
+# DefaultOOMScoreAdjust on the user manager), which puts the baseline near 800
+# and leaves RSS moving the score by only ~0.014/MB. Measured live: a 320 MB
+# claude scored 804 and a 605 MB one 808. So on 2026-08-16 six ~500 MB
+# conversations were killed at badness 1104-1168 while an 18,685 MiB process sat
+# at 1068 and survived the round — the +300 bounty beat 18 GB of memory.
+# Without it claude competes on raw score, and the biggest one goes first.
+# It is deliberately NOT moved to --avoid: a leaked claude has to stay killable,
+# or the box has no way out. The per-pane cap in 10a-bis is what should normally
+# fire; this stays the aggregate net for consumers with no pane scope
+# (t3-serve-hosted claudes in system-t3-serve.slice, docker, stray scripts).
+#
+# `[0-9]+\.[0-9]+\.[0-9]+` was ADDED the same day, and it is the pattern that
+# matches the actual balloon. Claude Code spawns its search tools through its own
+# binary, so the child keeps `exe=~/.local/share/claude/versions/<ver>` and the
+# kernel records comm as the VERSION STRING while argv is the real tool. `ugrep`
+# has been in this list since 2026-06-22 and never once matched, because the
+# process the kernel sees is called `2.1.232`. Resolved from t3-cgroup-snap:
+# across all rotations, every version-comm sample is a spawned search tool
+# (114x ugrep, 25x bfs, 3x rg) and none is a session — one grew 10.1 -> 11.5 GiB
+# in 33 s on 2026-08-14. This also identifies the unattributed `Comm='2.1.205'`
+# balloon left open in addendum 3 of the 2026-06-22 post-mortem.
+# A session started via the `claude` symlink reports comm `claude`, so the two
+# stay distinguishable — recheck that if Claude Code changes how it spawns.
+#
+# The dot is written `[.]`, not `\.`: systemd's EnvironmentFile parser strips
+# backslashes out of a double-quoted value, so `\.` reaches earlyoom as a bare
+# `.` — an any-character wildcard that would also prefer a comm like
+# `123a456b789`. Verified by reading the daemon's own /proc/<pid>/cmdline rather
+# than this file. A bracket expression needs no escaping and survives intact.
+EARLYOOM_ARGS="-m 5,3 -s 100,100 -r 3600 --avoid ^(systemd|systemd-.*|sshd|dockerd|containerd|init|t3-dispatch|tmux.*)$ --prefer ^(python3|node|chrome|chromium|ugrep|rg|go|[0-9]+[.][0-9]+[.][0-9]+)$"
 EARLYOOM_EOF
 
 # 10c) capped docker.slice (top-level sibling of system/user slices); daemon.json
@@ -402,6 +539,16 @@ SYS_EOF
 
 # 10g) activate: reload, arm earlyoom, restart dockerd ONLY if daemon.json changed.
 systemctl daemon-reload
+# The pane cap (10a-bis) lives under /etc/systemd/user, so the SYSTEM reload above
+# does not reach it. A user manager started after this point reads it at startup;
+# already-running ones need their own reload, which applies the cap to panes that
+# are ALREADY open (verified 2026-08-16) — no session restart, nothing killed, as
+# long as no live pane already sits above the cap.
+while read -r _uid _user _rest; do
+  [[ -n "${_user:-}" ]] || continue
+  systemctl --user --machine="${_user}@.host" daemon-reload 2>/dev/null \
+    || log "WARN: could not reload ${_user}'s user manager — pane cap applies to their NEW panes only"
+done < <(loginctl list-users --no-legend 2>/dev/null)
 # earlyoom reads /etc/default/earlyoom (10b); enable + restart so new args take effect
 # even on a re-run where it was already running.
 systemctl enable --now earlyoom.service >/dev/null 2>&1 \
@@ -414,7 +561,7 @@ if [[ $docker_restart -eq 1 ]] && systemctl is-active --quiet docker; then
   log "restarting dockerd to apply cgroup-parent=docker.slice (running containers bounce briefly)"
   systemctl restart docker || log "WARN: docker restart failed"
 fi
-log "§10 resource containment: per-user 12G/16G swap=0, earlyoom RAM backstop, docker.slice"
+log "§10 resource containment: per-user 24G swap=0, per-pane 6G, earlyoom RAM backstop, docker.slice"
 
 # Run one foreground reconcile while the admin Vault token borrowed in section 8
 # is still available. This is what mints new roster users' isolated periodic

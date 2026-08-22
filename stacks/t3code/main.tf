@@ -97,6 +97,177 @@ module "ingress" {
   }
 }
 
+# === Native-client (mobile/desktop app) access ===============================
+# The T3 mobile app is a bearer-token client: it cannot complete Authentik's
+# browser SSO redirect, so every request it makes 302s to the login page and it
+# fails at the first hop with "Remote environment endpoint returned an invalid
+# response" (it gets Authentik's HTML where it expects the JSON descriptor).
+#
+# Per-user routing is IMPOSSIBLE for a native client on a shared hostname, and
+# that is a protocol constraint, not a missing feature here (verified against
+# t3code @ 6bc6cb6b):
+#   * connection/onboarding.ts:89-94 — the app GETs /.well-known/t3/environment
+#     BEFORE it sends the pairing code, so its first request carries no
+#     credential and no identity of any kind.
+#   * authorization/service.ts:113,242 — every reconnect re-fetches that same
+#     credential-less descriptor and hard-fails if `environmentId` changed, so
+#     we cannot answer with an arbitrary instance's descriptor.
+#   * rpc/http.ts:89-95 — the client sets `url.pathname = "/"`, so a per-user
+#     path prefix is discarded before the request is built.
+# `t3-dispatch` routes on the Authentik-injected X-authentik-username, which a
+# native client never has. So native access here is scoped to ONE user
+# (wizard); everyone else keeps browser access exactly as before. Lifting this
+# needs upstream support for client-supplied custom headers (then the app can
+# carry an Authentik credential and dispatch routes it like any browser).
+#
+# SECURITY: these routes deliberately skip Authentik, so t3's own bearer/pairing
+# auth is the only gate on them. Two consequences worth knowing:
+#   * They point STRAIGHT at wizard's `t3 serve` (:3773), NEVER at t3-dispatch
+#     (:3780). Without the Authentik middleware to overwrite it, a client could
+#     forge `X-authentik-username: <someone-else>` and dispatch would proxy —
+#     and auto-pair — into that person's instance.
+#   * Anyone can now reach wizard's t3 auth surface by attaching an
+#     `Authorization: Bearer` header; an invalid token gets a t3 401. The
+#     default rate-limit middleware stays attached to slow credential guessing.
+resource "kubernetes_service" "t3_native" {
+  metadata {
+    name      = "t3-native"
+    namespace = kubernetes_namespace.t3code.metadata[0].name
+    labels    = { app = "t3" }
+  }
+
+  spec {
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 3773
+    }
+  }
+}
+
+resource "kubernetes_endpoints" "t3_native" {
+  metadata {
+    name      = "t3-native"
+    namespace = kubernetes_namespace.t3code.metadata[0].name
+  }
+
+  subset {
+    address {
+      ip = "10.0.10.10"
+    }
+    port {
+      name = "http"
+      port = 3773
+    }
+  }
+}
+
+# Browser traffic is separated from native-client traffic two ways, and it
+# needs both. The t3 web UI authenticates same-origin with cookies and sends NO
+# Authorization header (apps/web/.../httpLayer.ts: bearer only when
+# `window.desktopBridge` exists), so none of these rules can capture another
+# user's browser session.
+#
+# The first discriminator is the Authentik session cookie (`authentik_proxy_
+# <hash>`, scoped to viktorbarzin.me), which a browser always carries here.
+# On its own it is NOT enough, because it is self-poisoning: Authentik answers
+# an unauthenticated request with a 302 that CARRIES `Set-Cookie:
+# authentik_proxy_…`, and the app's CFNetwork cookie jar keeps it. So the app's
+# first failed attempt plants the very cookie that then disqualifies it from
+# the carve-out forever — cookie-less tools (curl, the blackbox probe) pass
+# while the real app is stuck on the Authentik path (observed 2026-08-13:
+# `T3Code/26 CFNetwork/… Darwin/…` served 302 by the Ingress router).
+#
+# So the app is also identified POSITIVELY by its User-Agent, and either
+# signal admits it. A browser never sends `T3Code/`, so browsers stay on the
+# Authentik path — including old-WebKit ones, which is why this is a positive
+# match on the app rather than a negative match on browser-only headers like
+# `Sec-Fetch-*` (emo's iPadOS 15.8 Safari does not send those, and would be
+# misrouted as a native client). Spoofing the UA grants no new reach: it lands
+# on the same t3 bearer gate that rule 1 already exposes to anyone willing to
+# set an Authorization header.
+#
+# Priority sits above the catch-all `Host(...)` Ingress that module.ingress
+# renders, so these three win; everything else still goes through Authentik to
+# t3-dispatch and per-user routing is untouched.
+resource "kubernetes_manifest" "t3_native_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "t3-native"
+      namespace = kubernetes_namespace.t3code.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [
+        # 1. Every authenticated API call the app makes after pairing.
+        {
+          kind        = "Rule"
+          match       = "Host(`t3.viktorbarzin.me`) && HeaderRegexp(`Authorization`, `(?i)^Bearer `)"
+          priority    = 1000
+          middlewares = local.t3_native_middlewares
+          services = [{
+            name = kubernetes_service.t3_native.metadata[0].name
+            port = 80
+          }]
+        },
+        # 2. The two pre-pairing endpoints, which carry no credential at all:
+        #    the descriptor fetch and the pairing-code -> bearer exchange.
+        {
+          kind        = "Rule"
+          match       = "Host(`t3.viktorbarzin.me`) && (Path(`/.well-known/t3/environment`) || Path(`/oauth/token`)) && (!HeaderRegexp(`Cookie`, `authentik_proxy_`) || HeaderRegexp(`User-Agent`, `(?i)^T3Code/`))"
+          priority    = 1000
+          middlewares = local.t3_native_middlewares
+          services = [{
+            name = kubernetes_service.t3_native.metadata[0].name
+            port = 80
+          }]
+        },
+        # 3. The WebSocket. Its ticket rides the query string, not a header
+        #    (authorization/remote.ts:184-190), so rule 1 cannot catch it.
+        #    The ticket is ALSO the discriminator here, and a better one than
+        #    either signal above: the browser's t3 WebSocket is a bare
+        #    `GET /ws` authenticated by the session cookie, while a native
+        #    client always carries `?wsTicket=<signed, ~5min ticket>` — so
+        #    presence of the ticket separates the two on its own, and it is a
+        #    real credential rather than a spoofable header.
+        #    Neither signal from rules 1-2 works for this request: the app's
+        #    WS upgrade sends NO User-Agent (logged as "-" 2026-08-13) while
+        #    still carrying the poisoned Authentik cookie, so requiring either
+        #    of them sent every upgrade to Authentik, which 302s it and kills
+        #    the connection.
+        {
+          kind        = "Rule"
+          match       = "Host(`t3.viktorbarzin.me`) && Path(`/ws`) && QueryRegexp(`wsTicket`, `.+`)"
+          priority    = 1000
+          middlewares = local.t3_native_middlewares
+          services = [{
+            name = kubernetes_service.t3_native.metadata[0].name
+            port = 80
+          }]
+        },
+      ]
+      tls = {
+        secretName = var.tls_secret_name
+      }
+    }
+  }
+}
+
+locals {
+  # Mirrors the ingress_factory default chain minus the pieces that would break
+  # a native JSON/WebSocket client: no Authentik (the whole point), and no
+  # anti-AI PoW/UA filtering (it would block a non-browser client, same reason
+  # module.ingress_probe sets anti_ai_scraping = false). error-pages only
+  # intercepts 500-504, so t3's JSON 4xx bodies reach the app intact.
+  t3_native_middlewares = [
+    { name = "retry", namespace = "traefik" },
+    { name = "error-pages", namespace = "traefik" },
+    { name = "rate-limit", namespace = "traefik" },
+  ]
+}
+
 # === Drop-attribution probe surface ==========================================
 # /probe/* on the t3 host is dispatch's unauthenticated echo surface (see
 # scripts/t3-dispatch/probe.go) for the t3-probe below. Guarded against
@@ -194,7 +365,15 @@ resource "kubernetes_deployment_v1" "t3_probe" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
+    ]
   }
 }
 

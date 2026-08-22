@@ -35,6 +35,16 @@ resource "kubernetes_namespace" "learning" {
 # CNPG cluster (ADR-0003) is the v2 upgrade — swap DB_CONNECTION_STRING and wire
 # the dbaas/vault static-role recipe; nothing else changes.
 resource "kubernetes_persistent_volume_claim" "data" {
+  # wait_until_bound is a TOP-LEVEL argument of the resource, not a spec
+  # attribute. It sat inside spec{} until 2026-08-14, which made every plan of
+  # this stack fail outright with:
+  #   Error: Unsupported argument ... An argument named "wait_until_bound" is
+  #   not expected here.
+  # so `learning` was the single persistent drift_error_count=1 in the nightly
+  # drift run, and the stack could be neither planned nor applied. Compare
+  # stacks/trek, which has always had it in the right place, and the PVC
+  # template in .claude/CLAUDE.md.
+  wait_until_bound = false # WaitForFirstConsumer SC binds on pod schedule; blocking here deadlocks the apply (orphan PVC cleared, re-applied 2026-07-27)
   metadata {
     name      = "learning-data"
     namespace = kubernetes_namespace.learning.metadata[0].name
@@ -42,7 +52,6 @@ resource "kubernetes_persistent_volume_claim" "data" {
   spec {
     access_modes       = ["ReadWriteOnce"]
     storage_class_name = "proxmox-lvm-encrypted"
-    wait_until_bound   = false # WaitForFirstConsumer SC binds on pod schedule; blocking here deadlocks the apply (orphan PVC cleared, re-applied 2026-07-27)
     resources {
       requests = { storage = "1Gi" }
     }
@@ -140,6 +149,7 @@ resource "kubernetes_deployment" "learning" {
       metadata[0].annotations["keel.sh/pollSchedule"],
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — CI set-image wins
       metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
   depends_on = [kubernetes_persistent_volume_claim.data]

@@ -38,6 +38,12 @@ Claude sessions per user, isolated by `--isolated`), wired into their Claude in
   `claude mcp add --scope user … playwright` AS the user (clobber-proof, if-absent)
   and `systemctl enable --now` the system instances. Idempotent; never restarts a
   running instance or rewrites an existing `~/.claude.json` entry.
+- **Legacy-unit retirement**: `install_playwright()` also calls
+  `retire_legacy_playwright_units()` — stop + disable + rename any surviving
+  `~/.config/systemd/user/playwright-*` unit to `<unit>.superseded-by-system-unit`
+  before enabling the template instance. Enabling the new unit is not enough on a
+  box that predates it: the old one hardcodes its own `--port`, so the new one
+  cannot bind. See "A user's browser MCP is dead" below.
 - **Pinned version**: bump `@playwright/mcp@<ver>` in
   `scripts/workstation/playwright/playwright-mcp@.service` (the `@latest` →
   silent-fleet-roll footgun is why; see the `T3_PIN` rationale in `setup-devvm.sh`).
@@ -47,7 +53,7 @@ Claude sessions per user, isolated by `--isolated`), wired into their Claude in
 ### Log into a new site (warm the profile)
 
 1. Open `https://chrome.viktorbarzin.me/` (Authentik will gate).
-2. The noVNC view of the in-cluster headed chromium loads. Click on the
+2. The neko view of the in-cluster headed Chrome loads. Click on the
    browser window, navigate, log in.
 3. Cookies land in `/profile/chromium-data/Default/Cookies` on the PVC.
 4. Within ≤60 min, the snapshot-harvester CronJob picks them up and
@@ -167,7 +173,7 @@ sudo systemctl restart playwright-mcp@<user>.service
 ### Snapshot file is suspiciously small or empty cookies array
 
 The persistent chromium context isn't holding any cookies. Probably
-means the user hasn't logged into anything via noVNC, or chromium was
+means the user hasn't logged into anything via the neko view, or Chrome was
 relaunched without preserving `/profile/chromium-data`.
 
 **Diagnose**:
@@ -177,7 +183,52 @@ kubectl -n chrome-service exec deploy/chrome-service -c chrome-service -- \
 ```
 
 A populated `Cookies` SQLite file should be several hundred KB once
-real logins exist. If it's missing or empty, log in via noVNC.
+real logins exist. If it's missing or empty, log in via the neko view.
+
+### "Target page, context or browser has been closed"
+
+A user's Claude playwright tools all fail this way, while `claude mcp get
+playwright` still shows the entry.
+
+**Cause**: the per-user `playwright-mcp@<user>` instance is crash-looping on
+`EADDRINUSE` because something else holds its `PLAYWRIGHT_PORT` — usually a
+surviving pre-template `~/.config/systemd/user/playwright-mcp.service`, which
+hardcodes its own port. Enabling the system instance does not displace it. This
+hid for ~16 days across all three users (2026-07-29 → 2026-08-14) with six-figure
+restart counts, and the ports were cross-wired between users, so it reads as one
+user squatting on another's port rather than each being blocked by its own
+leftover.
+
+**Diagnose**:
+
+```bash
+systemctl is-active playwright-mcp@<user>            # activating/auto-restart = looping
+systemctl show playwright-mcp@<user> -p NRestarts    # six figures = looping for weeks
+journalctl -u playwright-mcp@<user> -n 20            # EADDRINUSE names the port
+
+# Who holds it? The listener's comm is `MainThread` (node), which does not look
+# like playwright — resolve the pid, not the name.
+sudo ss -ltnp | grep 893
+cat /proc/<pid>/cgroup
+#   user@<uid>.service/app.slice/...  -> a LEGACY systemd --user unit (usual cause)
+#   system.slice/...                  -> the current template instance
+```
+
+**Fix** (idempotent, safe to re-run):
+
+```bash
+sudo /usr/local/bin/t3-provision-users.sh     # retire_legacy_playwright_units + re-enable
+sudo systemctl restart playwright-mcp@<user>
+```
+
+Confirm each user holds their OWN assigned port afterwards — a legacy unit may
+have been bound to someone else's, so check the mapping, not just that something
+is listening:
+
+```bash
+grep . /etc/t3-serve/playwright-*.env    # the assignment
+sudo ss -ltnp | grep 893                 # what is live
+```
 
 ## Token rotation
 

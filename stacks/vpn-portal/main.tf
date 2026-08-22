@@ -66,9 +66,8 @@ resource "kubernetes_deployment" "vpn_portal" {
       spec {
         service_account_name = kubernetes_service_account.vpn_portal.metadata[0].name
         container {
-          name              = "vpn-portal"
-          image             = "ghcr.io/viktorbarzin/vpn-portal:${var.image_tag}"
-          image_pull_policy = "Always"
+          name  = "vpn-portal"
+          image = "ghcr.io/viktorbarzin/vpn-portal:${var.image_tag}"
           port {
             container_port = 3000
           }
@@ -177,9 +176,10 @@ module "ingress" {
   port             = 80
   tls_secret_name  = var.tls_secret_name
   extra_annotations = {
-    "gethomepage.dev/icon"  = "wireguard.png"
-    "gethomepage.dev/name"  = "VPN Portal"
-    "gethomepage.dev/group" = "Identity & Security"
+    "gethomepage.dev/description" = "Self-service VPN config portal"
+    "gethomepage.dev/icon"        = "wireguard.png"
+    "gethomepage.dev/name"        = "VPN Portal"
+    "gethomepage.dev/group"       = "Identity & Security"
   }
 }
 

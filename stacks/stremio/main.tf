@@ -99,9 +99,8 @@ resource "kubernetes_deployment" "stremio" {
         image_pull_secrets { name = "ghcr-credentials" } # Kyverno-synced (allowlist in stacks/kyverno)
 
         container {
-          name              = "stremio"
-          image             = local.image
-          image_pull_policy = "Always"
+          name  = "stremio"
+          image = local.image
 
           port {
             container_port = 8080
@@ -398,6 +397,11 @@ resource "kubernetes_deployment" "cinemeta_proxy" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 }
@@ -435,4 +439,7 @@ module "cinemeta_ingress" {
   name            = "cinemeta"
   service_name    = kubernetes_service.cinemeta_proxy.metadata[0].name
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/description" = "Cinemeta metadata proxy for Stremio clients"
+  }
 }

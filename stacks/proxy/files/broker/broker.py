@@ -12,6 +12,13 @@ Model (validated by Spike G, memory #10214):
     country gateway + headful Chromium + noVNC, sharing one netns so the browser
     egresses leak-proof through the gateway).  A persistent encrypted PVC holds
     the Chromium profile, so logins/tabs survive across visits.
+  * Gateway index pool.PERMANENT_IDX is the always-on cluster VPN egress gateway
+    (pool.PERMANENT_COUNTRY), declared in Terraform as a Deployment plus its
+    Services and key Secret: the broker reuses it, keeps writing its peers
+    ConfigMap, and never creates, reaps or deletes it. Because it is a Deployment,
+    every gateway lookup here keys off the `proxy/gw-idx` LABEL — its pods carry
+    generated name suffixes, so name-keyed calls would silently 404.
+    Design: docs/plans/2026-08-16-cluster-vpn-egress-service-design.md
 
 Peer wiring is ConfigMap-driven (the vpn-portal pattern, memory #9732): the
 broker maintains a per-gateway peers ConfigMap; the gateway sidecar reconciles
@@ -60,6 +67,18 @@ STRIP_MW = os.environ.get("STRIP_MIDDLEWARE", "%s-strip-session@kubernetescrd" %
 NORDVPN_TOKEN = os.environ.get("NORDVPN_TOKEN", "")
 DEADLINE = int(os.environ.get("SESSION_DEADLINE_SECONDS", "0"))  # 0 = persistent
 GW_IDLE_SECONDS = int(os.environ.get("GW_IDLE_SECONDS", "600"))  # reap empty gateways
+# The NordLynx key is account-wide and rotates on multi-device login (memory
+# #8307). The broker used to re-fetch it only at startup and on the gateway-create
+# path — which the permanent gateway never takes — so the Deployment's
+# `secret.reloader.stakater.com/reload: nordvpn-wg` annotation had nothing to
+# react to. Re-fetching on a slow timer gives Reloader its trigger; an unchanged
+# key is a no-op write (the apiserver skips identical updates), so a quiet account
+# never restarts the gateway.
+NORDVPN_KEY_REFRESH_SECONDS = int(os.environ.get("NORDVPN_KEY_REFRESH_SECONDS", "21600"))
+# Re-home a browser whose gateway has vanished (delete the wedged pod, recreate it
+# on a live gateway, profile PVC kept). Set to 0 to only surface them — the log
+# line and the proxy_browsers_stranded gauge are emitted either way.
+STRANDED_REHOME = os.environ.get("STRANDED_REHOME", "1") == "1"
 PORT = int(os.environ.get("PORT", "8080"))
 GLUETUN_IMAGE = os.environ.get("GLUETUN_IMAGE", "ghcr.io/qdm12/gluetun:latest")
 WGTOOLS_IMAGE = os.environ.get("WGTOOLS_IMAGE", "ghcr.io/linuxserver/wireguard:latest")
@@ -105,7 +124,7 @@ GPU_BROWSERS_MAX = int(os.environ.get("GPU_BROWSERS_MAX", "1"))
 # FIREWALL_OUTBOUND_SUBNETS (the LB IP, added there). The user's real browser
 # reaches coturn's FRONTEND (STUN + TURN) via the public domain (WAN NAT). coturn
 # advertises relay candidates on its external-ip=WAN either way.
-COTURN_BACKEND_URL = os.environ.get("COTURN_BACKEND_URL", "turn:10.0.20.200:3478")
+COTURN_BACKEND_URL = os.environ.get("COTURN_BACKEND_URL", "turn:10.0.20.205:3478")
 COTURN_FRONTEND_URL = os.environ.get("COTURN_FRONTEND_URL", "turn:turn.viktorbarzin.me:3478")
 COTURN_STUN_URL = os.environ.get("COTURN_STUN_URL", "stun:turn.viktorbarzin.me:3478")
 COTURN_REALM = os.environ.get("COTURN_REALM", "viktorbarzin.me")
@@ -134,7 +153,12 @@ COUNTRIES = [
 
 _TOKEN = open(_TOKEN_PATH).read().strip() if os.path.exists(_TOKEN_PATH) else ""
 _SSL = ssl.create_default_context(cafile=_CA_PATH) if os.path.exists(_CA_PATH) else ssl.create_default_context()
-_lock = threading.Lock()  # serialise capacity-check + create (TOCTOU)
+# Serialises capacity-check + create (TOCTOU). Re-entrant because the reaper's
+# re-home path holds it across ensure_gateway() AND the create_browser() that
+# follows — create_browser takes the same lock, and a plain Lock would deadlock
+# the reaper thread on itself. Every other caller behaves exactly as before.
+_lock = threading.RLock()
+_stranded_browsers = 0    # last reaper tick's count, exported on /metrics
 
 
 # ------------------------------------------------------------------ k8s REST
@@ -160,8 +184,18 @@ def k8s(method, path, body=None, content_type="application/json"):
 def _apply(kind_path, name, body):
     """Create, or PUT-replace on 409, an object. kind_path is the collection URL."""
     st, resp = k8s("POST", kind_path, body)
-    if st == 409:
-        return k8s("PUT", kind_path + "/" + name, body)
+    if st != 409:
+        return st, resp
+    st, resp = k8s("PUT", kind_path + "/" + name, body)
+    if st == 422:
+        # A full replace is rejected when it would clear an immutable field — a
+        # Service's spec.clusterIP, which these bodies deliberately never carry.
+        # Without this fallback an EXISTING Service silently keeps its old spec,
+        # so e.g. the gateway selector fix would only ever reach freshly created
+        # Services. A merge patch touches only the keys we send (ownerReferences
+        # included, since they are absent from the body).
+        st, resp = k8s("PATCH", kind_path + "/" + name, body,
+                       content_type="application/merge-patch+json")
     return st, resp
 
 
@@ -254,10 +288,15 @@ def build_gw_peers_cm(idx, peers_text):
 
 
 def build_gw_service(idx):
+    # The selector MUST include app=proxy-gateway: browser pods carry the same
+    # proxy/gw-idx label (build_br_pod), so selecting on the index alone puts a
+    # browser behind its own gateway's ClusterIP. Live, that made a browser dial
+    # ITSELF on :51820 for four days while the Service still looked healthy —
+    # one endpoint, just the wrong pod, so no "service has no endpoints" check fired.
     return {"apiVersion": "v1", "kind": "Service",
             "metadata": {"name": _gw_name(idx), "namespace": NS,
                          "labels": {"app": "proxy-gateway", "proxy/gw-idx": str(idx)}},
-            "spec": {"selector": {"proxy/gw-idx": str(idx)},
+            "spec": {"selector": {"app": "proxy-gateway", "proxy/gw-idx": str(idx)},
                      "ports": [{"name": "wg", "port": 51820, "targetPort": 51820, "protocol": "UDP"}]}}
 
 
@@ -464,7 +503,7 @@ def build_br_pod(userkey, country, gw_idx, wg_ip, gw_pub, gw_endpoint_ip, pubkey
                      {"name": "FIREWALL_INPUT_PORTS", "value": "%d,%d" % (NEKO_PORT, NEKO_UDPMUX)},
                      # Cluster CIDRs + the coturn LB IP so neko reaches coturn DIRECT
                      # (not through the NordVPN tunnel) for its relay allocation.
-                     {"name": "FIREWALL_OUTBOUND_SUBNETS", "value": "10.10.0.0/16,10.96.0.0/12,10.0.20.200/32"},
+                     {"name": "FIREWALL_OUTBOUND_SUBNETS", "value": "10.10.0.0/16,10.96.0.0/12,10.0.20.205/32"},
                      {"name": "WIREGUARD_PRIVATE_KEY",
                       "valueFrom": {"secretKeyRef": {"name": _br_name(userkey) + "-wg",
                                                      "key": "WIREGUARD_PRIVATE_KEY"}}},
@@ -542,14 +581,35 @@ def _list(kind, selector="app in (proxy-gateway,proxy-browser)"):
     return obj.get("items", []) if isinstance(obj, dict) else []
 
 
+def _idx_label(obj):
+    """Gateway index from the proxy/gw-idx LABEL, or None if absent/unparseable.
+
+    Every gateway lookup keys off this label rather than the object name: the
+    permanent gateway is a Deployment, so its pod is `proxy-gw-1-<rs>-<suffix>`
+    and any name-keyed pod call would silently 404. A bare dict index here used to
+    take down the whole reaper tick (and every create_browser) with a KeyError if
+    a pod carried app=proxy-gateway without the index label.
+    """
+    raw = (obj.get("metadata", {}).get("labels") or {}).get("proxy/gw-idx")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def list_gateways():
     out = []
     for p in _list("pods", "app=proxy-gateway"):
         md = p.get("metadata", {})
         if md.get("deletionTimestamp"):
             continue
+        idx = _idx_label(p)
+        if idx is None:
+            print("gateway pod %s has no usable proxy/gw-idx label — ignored"
+                  % md.get("name"), flush=True)
+            continue
         an = md.get("annotations", {})
-        out.append({"idx": int(md["labels"]["proxy/gw-idx"]),
+        out.append({"idx": idx, "name": md.get("name"),
                     "country": an.get("proxy/country-name"),
                     "pubkey": an.get("proxy/wg-pub"),
                     "last_used": int(an.get("proxy/last-used", "0"))})
@@ -569,6 +629,9 @@ def list_browsers():
         out.append({"userkey": md["labels"]["proxy/user"],
                     "gateway_idx": int(md["labels"].get("proxy/gw-idx", "0")),
                     "country": an.get("proxy/country-name"),
+                    # the login the browser was created for — the reaper needs it
+                    # to recreate a stranded browser under the same userkey/URL
+                    "owner": an.get("proxy/owner", ""),
                     "wg_pub": an.get("proxy/wg-pub"), "wg_ip": an.get("proxy/wg-ip"),
                     "token": an.get("proxy/token"),
                     "started": int(an.get("proxy/started", "0")),
@@ -591,36 +654,270 @@ def update_gw_peers(idx):
            build_gw_peers_cm(idx, "\n".join(lines) + "\n"))
 
 
+def _gw_pods(idx):
+    """Live gateway pods for `idx`, resolved from the LABEL, not the object name.
+
+    The permanent gateway is a Deployment, so its pod is `proxy-gw-1-<rs>-<sfx>`
+    and any name-keyed pod call silently 404s.
+    """
+    return [p for p in _list("pods", "app=proxy-gateway,proxy/gw-idx=%d" % idx)
+            if not (p.get("metadata") or {}).get("deletionTimestamp")]
+
+
+def _gw_pod_names(idx):
+    """Live pod names for gateway `idx`."""
+    return [n for n in ((p.get("metadata") or {}).get("name") for p in _gw_pods(idx)) if n]
+
+
+def _gw_pod_ready(idx):
+    """True when gateway `idx` has a pod that is Running with all containers Ready.
+
+    Used to gate the PERMANENT gateway's reuse path. Its identity comes from
+    Terraform rather than from a listed pod, so `plan_gateway` answers "reuse"
+    for its country whether or not the pod exists — deliberately, since falling
+    through to "create" during a rollout would open a SECOND tunnel to the same
+    country on the account-wide NordLynx key. The consequence is that everything
+    else `ensure_gateway` checks (the wg Secret, the Service's ClusterIP) exists
+    independently of the pod, so a gateway that is scaled to zero, unschedulable
+    or stuck in a NordVPN cooldown would still look complete and a browser wired
+    to it would dial a VIP with no endpoint behind it. This is the check that
+    distinguishes "momentarily absent" from "not running", so the request fails
+    with a retryable message instead.
+    """
+    for p in _gw_pods(idx):
+        st = p.get("status", {})
+        cs = st.get("containerStatuses", [])
+        if st.get("phase") == "Running" and cs and all(c.get("ready") for c in cs):
+            return True
+    return False
+
+
 def _touch_gw(idx):
-    k8s("PATCH", "/api/v1/namespaces/%s/pods/%s" % (NS, _gw_name(idx)),
-        {"metadata": {"annotations": {"proxy/last-used": str(int(time.time()))}}},
-        content_type="application/merge-patch+json")
+    for name in _gw_pod_names(idx):
+        k8s("PATCH", "/api/v1/namespaces/%s/pods/%s" % (NS, name),
+            {"metadata": {"annotations": {"proxy/last-used": str(int(time.time()))}}},
+            content_type="application/merge-patch+json")
+
+
+def _stamp_gw_last_used_if_absent(idx):
+    """Give a gateway pod a `proxy/last-used` annotation if it has none — once.
+
+    The permanent gateway is a Deployment and its pod template deliberately
+    carries no timestamp (a literal one in a template is stale the moment it is
+    written, and generating one per apply would roll the tunnel on every apply).
+    This broker never reads it for PERMANENT_IDX — `plan_reaping` skips that index
+    outright — but a broker build that predates PERMANENT_IDX reads a missing
+    annotation as `0`, i.e. idle since the epoch, and its `delete_gateway` would
+    strip the Service, peers ConfigMap and WireGuard Secret out from under a
+    running pod. Terraform orders the broker rollout ahead of this Deployment
+    (see the checksum annotation in main.tf), so no such broker should be alive
+    when the pod appears; stamping the annotation once is the cheap second line
+    of defence — one write per gateway pod, nothing recurring.
+    """
+    for p in _gw_pods(idx):
+        md = p.get("metadata", {})
+        if (md.get("annotations") or {}).get("proxy/last-used"):
+            continue
+        name = md.get("name")
+        if not name:
+            continue
+        k8s("PATCH", "/api/v1/namespaces/%s/pods/%s" % (NS, name),
+            {"metadata": {"annotations": {"proxy/last-used": str(int(time.time()))}}},
+            content_type="application/merge-patch+json")
+        print("stamped proxy/last-used on gateway pod %s" % name, flush=True)
+
+
+def _gw_pubkey_from_secret(idx):
+    """Derive the gateway's WireGuard public key from its private-key Secret.
+
+    The pod annotation is the usual source, but the permanent gateway is a
+    Deployment: during a rollout no pod is listed while a browser still needs its
+    public key to build a working peer. The Secret is the same file the wg-server
+    sidecar loads into wg0 (`wg set wg0 private-key /gw-wg/privkey`), so a key
+    derived from it cannot disagree with what the gateway actually holds.
+    """
+    st, sec = k8s("GET", "/api/v1/namespaces/%s/secrets/%s-wg" % (NS, _gw_name(idx)))
+    if st != 200:
+        return None
+    b64 = (sec.get("data") or {}).get("privkey")
+    if not b64:
+        return None
+    try:
+        return wgkeys.public_from_private(base64.b64decode(b64).decode().strip())
+    except Exception as e:
+        print("gateway %d: cannot derive public key from its Secret: %s" % (idx, e), flush=True)
+        return None
+
+
+def ensure_permanent_gateway_secret():
+    """Create the permanent gateway's WireGuard server-key Secret IF IT IS ABSENT.
+
+    Terraform declares that gateway's Deployment and Services but cannot generate
+    an X25519 keypair, and the only code that ever wrote `proxy-gw-1-wg` was
+    `ensure_gateway`'s create branch — which is now refused for the permanent
+    index (and unreachable anyway, since plan_gateway never returns "create" for
+    its country). Today the Secret survives only as a leftover from the retired
+    on-demand gateway at that index. On a fresh cluster, a namespace rebuild, a DR
+    restore, or after anyone tidies up "the old gateway", the pod would sit in
+    ContainerCreating forever (the volume is deliberately non-optional) and every
+    request for that country would fail with "no WireGuard key available", with no
+    code path able to recover it. This closes that gap.
+
+    CREATE-ONLY, never replace: the wg-server sidecar reads /gw-wg/privkey once at
+    container start, so writing a new key under a running pod would leave browsers
+    handing out a public key the gateway no longer holds — handshakes then fail
+    silently on both sides. A 409 (another broker replica won the race) is success.
+
+    Returns True only when this call created the Secret.
+    """
+    idx = pool.PERMANENT_IDX
+    name = "%s-wg" % _gw_name(idx)
+    st, _ = k8s("GET", "/api/v1/namespaces/%s/secrets/%s" % (NS, name))
+    if st == 200:
+        return False
+    if st != 404:
+        raise RuntimeError("cannot read Secret %s (HTTP %s)" % (name, st))
+    priv, _pub = wgkeys.genkeypair()
+    st, resp = k8s("POST", "/api/v1/namespaces/%s/secrets" % NS, build_gw_secret(idx, priv))
+    if st == 409:
+        return False
+    if st not in (200, 201):
+        raise RuntimeError("cannot create Secret %s (HTTP %s): %s" % (
+            name, st, (resp or {}).get("message", "")))
+    print("created permanent gateway key Secret %s (was absent)" % name, flush=True)
+    return True
+
+
+def _create_gw_pod(idx, country, pubkey):
+    """POST the gateway pod and CHECK the result; returns the created object.
+
+    The POST used to be fire-and-forget, so a 409 against a same-name pod still
+    Terminating from a reap was discarded and ensure_gateway happily returned a
+    {idx, pubkey, endpoint_ip} for a gateway that did not exist — which
+    create_browser then baked into a browser's immutable gluetun env. The retry
+    mirrors the browser path (which has always had it) and any other non-2xx now
+    surfaces as a 409/500 to the caller instead of a phantom gateway.
+    """
+    body = build_gw_pod(idx, country, pubkey)
+    st, resp = 0, {}
+    for _ in range(30):
+        st, resp = k8s("POST", "/api/v1/namespaces/%s/pods" % NS, body)
+        if st != 409:
+            break
+        time.sleep(1)
+    if st not in (200, 201, 202):
+        raise RuntimeError("gateway %d pod create failed (HTTP %s): %s" % (
+            idx, st, (resp or {}).get("message", "")))
+    return resp
+
+
+def _own_gateway_objects(idx, pod):
+    """Make the gateway Pod the OWNER of its Service, peers ConfigMap and Secret.
+
+    Those three carried no ownerReferences, and delete_gateway issues four
+    independent DELETEs — so one transient apiserver error mid-sequence stranded
+    whatever came after it, permanently invisible (every broker read starts from
+    the gateway POD). With the pod as owner, kube's garbage collector removes the
+    whole set the moment the pod goes, whatever happens to the broker.
+
+    blockOwnerDeletion stays false: setting it needs `delete` on pods/finalizers,
+    which the broker's Role deliberately does not grant.
+    """
+    if idx == pool.PERMANENT_IDX:
+        return                                  # Terraform owns the permanent set
+    uid = (pod.get("metadata") or {}).get("uid")
+    if not uid:
+        return
+    patch = {"metadata": {"ownerReferences": [
+        {"apiVersion": "v1", "kind": "Pod", "name": _gw_name(idx), "uid": uid,
+         "controller": False, "blockOwnerDeletion": False}]}}
+    for path in ("services/%s" % _gw_name(idx),
+                 "configmaps/%s-peers" % _gw_name(idx),
+                 "secrets/%s-wg" % _gw_name(idx)):
+        k8s("PATCH", "/api/v1/namespaces/%s/%s" % (NS, path), patch,
+            content_type="application/merge-patch+json")
 
 
 def ensure_gateway(country):
     """Return {idx, pubkey, endpoint_ip} for `country`, creating the gateway if
-    absent. Raises RuntimeError at the concurrent-country cap."""
+    absent. Raises RuntimeError at the concurrent-country cap, or when the
+    gateway is not usable yet (no Ready pod at the permanent index, no key, no
+    ClusterIP) — a browser wired to half a gateway looks alive and never connects.
+
+    Callers hold `_lock` across this and the create that follows: it serialises
+    the capacity-check-then-allocate sequence, which is not safe to run twice
+    concurrently (both sides would pick the same lowest-free index).
+    """
     gateways = list_gateways()
     action, payload = pool.plan_gateway(country, gateways)
     if action == "reject":
         raise RuntimeError(payload["reason"])
-    if action == "reuse":
-        idx = payload["idx"]
-        _touch_gw(idx)
-        gw = next(g for g in gateways if g["idx"] == idx)
-        return {"idx": idx, "pubkey": gw["pubkey"], "endpoint_ip": _gw_endpoint_ip(idx)}
     idx = payload["idx"]
+    if action == "reuse":
+        # The permanent gateway is reused BY COUNTRY, not by listing (pool.py
+        # short-circuits it so a rollout can never start a second tunnel to the
+        # same country). Everything else below then reads objects that outlive the
+        # pod — the wg Secret and the Terraform-owned Service's ClusterIP — so
+        # without this check a gateway that is scaled to zero, unschedulable, or
+        # in a NordVPN over-limit cooldown would still return a complete-looking
+        # {idx, pubkey, endpoint_ip} and the caller would bake it into a browser's
+        # immutable gluetun env: a Running pod, a loading UI and no internet, with
+        # no self-healing (plan_stranded_browsers treats this index as always
+        # serving its country, and a user's retry is a no-op for a Running pod).
+        # Fail closed with a retryable message instead; a rollout clears in
+        # seconds, and a genuinely down gateway is what VPNEgressGatewayDown is for.
+        if idx == pool.PERMANENT_IDX and not _gw_pod_ready(idx):
+            raise RuntimeError(
+                "gateway %d (%s) is not ready yet — the permanent gateway has no "
+                "Ready pod (rolling out, or its tunnel is down); try again shortly"
+                % (idx, country))
+        _touch_gw(idx)
+        gw = next((g for g in gateways if g["idx"] == idx), None)
+        # The permanent gateway is reused by country, not by listing — its pod is
+        # absent during any rollout, so fall back to the Secret for its key.
+        pubkey = (gw or {}).get("pubkey") or _gw_pubkey_from_secret(idx)
+        if not pubkey:
+            raise RuntimeError(
+                "gateway %d (%s) is not ready yet — no WireGuard key available"
+                % (idx, country))
+        endpoint_ip = _gw_endpoint_ip(idx)
+        if not endpoint_ip:
+            raise RuntimeError(
+                "gateway %d (%s) is not ready yet — Service %s has no ClusterIP"
+                % (idx, country, _gw_name(idx)))
+        return {"idx": idx, "pubkey": pubkey, "endpoint_ip": endpoint_ip}
+    if idx == pool.PERMANENT_IDX:
+        # Unreachable via plan_gateway (it short-circuits the permanent country to
+        # reuse); kept as the last guard before we would PUT-replace the
+        # Terraform-declared Service and blank the peers ConfigMap.
+        raise RuntimeError("refusing to create gateway %d — reserved for the "
+                           "permanent Terraform-declared gateway" % idx)
     priv, pub = wgkeys.genkeypair()
     ensure_nordvpn_secret()
     _apply("/api/v1/namespaces/%s/secrets" % NS, _gw_name(idx) + "-wg", build_gw_secret(idx, priv))
     _apply("/api/v1/namespaces/%s/configmaps" % NS, _gw_name(idx) + "-peers", build_gw_peers_cm(idx, "\n"))
     _apply("/api/v1/namespaces/%s/services" % NS, _gw_name(idx), build_gw_service(idx))
-    k8s("POST", "/api/v1/namespaces/%s/pods" % NS, build_gw_pod(idx, country, pub))
-    return {"idx": idx, "pubkey": pub, "endpoint_ip": _gw_endpoint_ip(idx)}
+    _own_gateway_objects(idx, _create_gw_pod(idx, country, pub))
+    endpoint_ip = _gw_endpoint_ip(idx)
+    if not endpoint_ip:
+        raise RuntimeError("gateway %d: Service %s has no ClusterIP" % (idx, _gw_name(idx)))
+    return {"idx": idx, "pubkey": pub, "endpoint_ip": endpoint_ip}
 
 
 def delete_gateway(idx):
-    k8s("DELETE", "/api/v1/namespaces/%s/pods/%s" % (NS, _gw_name(idx)))
+    """Delete a gateway pod and its Service / peers ConfigMap / wg Secret.
+
+    Refuses the permanent index independently of plan_reaping: those two are pure
+    logic, this is the destructive edge. The broker's Role grants no access to
+    Deployments, so a stray delete here could not remove the permanent gateway
+    itself — it would strip the Service, peers and key out from under a running
+    pod, which is worse.
+    """
+    if idx == pool.PERMANENT_IDX:
+        print("refusing to delete gateway %d — permanent, Terraform-owned" % idx, flush=True)
+        return
+    for name in _gw_pod_names(idx) or [_gw_name(idx)]:
+        k8s("DELETE", "/api/v1/namespaces/%s/pods/%s" % (NS, name))
     k8s("DELETE", "/api/v1/namespaces/%s/services/%s" % (NS, _gw_name(idx)))
     k8s("DELETE", "/api/v1/namespaces/%s/configmaps/%s-peers" % (NS, _gw_name(idx)))
     k8s("DELETE", "/api/v1/namespaces/%s/secrets/%s-wg" % (NS, _gw_name(idx)))
@@ -634,24 +931,36 @@ def browser_for(userkey):
     return None
 
 
-def create_browser(user, country):
+def create_browser(user, country, force=False):
+    """Create (or recreate) this user's browser and return its URL.
+
+    `force` recreates even when a live browser for the same country already
+    exists — the reaper's re-home path, where the pod is Running but wired to a
+    gateway that can no longer carry it, so the usual early return would make the
+    re-home a no-op.
+    """
     if country not in COUNTRIES:
         raise ValueError("unknown country")
     userkey = _userkey(user)
     token = _token(userkey)
     with _lock:
         existing = browser_for(userkey)
-        if existing and existing["country"] == country and not existing["dead"]:
+        if existing and not force and existing["country"] == country and not existing["dead"]:
             return {"country": country, "url": _url(token), "token": token}
-        if existing:                      # switching country / recovering a dead pod
-            _delete_browser_pod(userkey)  # keep the PVC (reuses this user's slot)
-        elif NEKO_GPU and len([b for b in list_browsers() if not b.get("dead")]) >= GPU_BROWSERS_MAX:
+        if not existing and NEKO_GPU and len(
+                [b for b in list_browsers() if not b.get("dead")]) >= GPU_BROWSERS_MAX:
             # Brand-new browser but the GPU browser slot(s) are taken: reject
             # cleanly instead of creating a PVC+pod that can't schedule. A
             # WaitForFirstConsumer PVC whose pod never schedules sits Pending and
             # fires PVCStuckPending at 10m (infra#83 follow-up). Retry when free.
             raise RuntimeError("at capacity — the browser GPU is fully in use; try again in a few minutes")
+        # Resolve the gateway BEFORE touching the user's existing pod. This used
+        # to run after the delete, so a country-tunnel rejection (or a gateway
+        # that is not ready) destroyed the browser they had and then failed,
+        # leaving them with nothing until they noticed and retried.
         gw = ensure_gateway(country)
+        if existing:                      # switching country / recovering / re-homing
+            _delete_browser_pod(userkey)  # keep the PVC (reuses this user's slot)
         used_ips = [b["wg_ip"] for b in list_browsers() if b["gateway_idx"] == gw["idx"] and b["wg_ip"]]
         wg_ip = pool.alloc_client_ip(gw["idx"], used_ips)
         priv, pub = wgkeys.genkeypair()
@@ -716,13 +1025,148 @@ def _reap_orphan_pvcs():
         print("reaped stuck Pending profile PVC:", md.get("name"), flush=True)
 
 
+def _reap_orphan_browser_routing(state):
+    """Delete Service+Ingress+wg-secret left behind by a browser pod that vanished.
+
+    plan_reaping() only reaps browsers it can still SEE as pods, so a pod removed
+    outside delete_browser (eviction, node drain, GC of a Failed pod) strands its
+    routing objects: the hostname 503s and the auto-discovered external monitor
+    goes red until someone notices (one pair sat that way for 13 days). The
+    profile PVC is deliberately untouched — it holds the user's Chromium profile
+    and is reused when they next open a browser.
+    """
+    live = {md.get("name") for md in
+            (p.get("metadata", {}) for p in _list("pods", "app=proxy-browser"))
+            if md.get("name")}
+    routes = []
+    for svc in _list("services", "app=proxy-browser"):
+        md = svc.get("metadata", {})
+        userkey = md.get("labels", {}).get("proxy/user")
+        if userkey and md.get("name"):
+            routes.append({"userkey": userkey, "name": md["name"]})
+    orphans, new_state = pool.plan_orphan_routing_reaping(routes, live, state)
+    for userkey in orphans:
+        name = _br_name(userkey)
+        k8s("DELETE", "/apis/networking.k8s.io/v1/namespaces/%s/ingresses/%s" % (NS, name))
+        k8s("DELETE", "/api/v1/namespaces/%s/services/%s" % (NS, name))
+        k8s("DELETE", "/api/v1/namespaces/%s/secrets/%s-wg" % (NS, name))
+        new_state.pop(userkey, None)
+        print("reaped orphaned browser routing (pod gone):", name, flush=True)
+    return new_state
+
+
+def _reap_orphan_gateways(state):
+    """Delete a gateway's Service + peers ConfigMap + wg Secret when its pod is gone.
+
+    The gateway-side mirror of _reap_orphan_browser_routing, and the backstop
+    behind the ownerReferences stamped in _own_gateway_objects (which only cover
+    gateways created since). Without it, a delete_gateway interrupted mid-sequence
+    leaves objects that NOTHING can ever see again — every broker read starts from
+    the gateway pod — so the Service keeps a ClusterIP that browsers dial into a
+    black hole. That is the four-day outage this fixes.
+    """
+    live = {g["idx"] for g in list_gateways()}
+    found = set()
+    for kind in ("services", "configmaps", "secrets"):
+        for obj in _list(kind, "app=proxy-gateway"):
+            idx = _idx_label(obj)
+            if idx is not None:
+                found.add(idx)
+    orphans, new_state = pool.plan_orphan_gateway_reaping(sorted(found), live, state)
+    for idx in orphans:
+        delete_gateway(idx)
+        new_state.pop(idx, None)
+        print("reaped orphaned gateway objects (pod gone): idx", idx, flush=True)
+    return new_state
+
+
+def _rehome_stranded_browsers(browsers, gateways, state):
+    """Recreate browsers whose gateway has vanished (or now serves another country).
+
+    plan_reaping has no case for this: it walks gateways, so a browser pointing at
+    nothing is invisible to it, and the user's own retry is a no-op too
+    (create_browser returns early for a Running pod). The browser therefore
+    reconnects to a dead ClusterIP indefinitely — observed for four days.
+
+    The gateway is confirmed to exist BEFORE the wedged pod is deleted, so a
+    capacity rejection leaves the user's browser exactly where it was. The profile
+    PVC is kept, and the token (hence the URL) is derived from the userkey, so a
+    re-home is invisible to the user beyond a restart.
+
+    The whole ensure-then-recreate runs under `_lock`, the same lock create_browser
+    takes: it exists to serialise the capacity-check-then-create sequence, and a
+    reaper tick racing an HTTP create would otherwise have both sides allocate the
+    SAME lowest-free gateway index — the loser's Secret PUT-replacing the winner's
+    keypair while the winner's wgserver has already loaded the old key, so every
+    browser wired from that Secret handshakes into silence.
+    """
+    global _stranded_browsers
+    stranded, new_state = pool.plan_stranded_browsers(
+        [{"id": b["userkey"], "gateway_idx": b["gateway_idx"],
+          "country": b["country"], "dead": b["dead"]} for b in browsers],
+        [{"idx": g["idx"], "country": g["country"]} for g in gateways], state)
+    _stranded_browsers = len(stranded)
+    by_key = {b["userkey"]: b for b in browsers}
+    for userkey in stranded:
+        b = by_key.get(userkey, {})
+        owner, country = b.get("owner") or "", b.get("country")
+        print("stranded browser %s: gateway idx %s no longer serves %s"
+              % (userkey, b.get("gateway_idx"), country), flush=True)
+        if not STRANDED_REHOME:
+            continue
+        if not country or not owner or _userkey(owner) != userkey:
+            print("  not re-homing %s automatically: no usable proxy/owner "
+                  "annotation to recreate it under" % userkey, flush=True)
+            continue
+        with _lock:
+            try:
+                ensure_gateway(country)   # fail here and the wedged pod is untouched
+            except Exception as e:
+                print("  cannot re-home %s yet: %s" % (userkey, e), flush=True)
+                continue
+            try:
+                # force=True: the pod is Running and already carries this country,
+                # so the ordinary early return would make the re-home a no-op.
+                # create_browser deletes the old pod itself, AFTER it has a usable
+                # gateway in hand and while still holding this lock — the profile
+                # PVC survives and there is no window with the user left podless.
+                create_browser(owner, country, force=True)
+                new_state.pop(userkey, None)
+                print("  re-homed %s onto a live %s gateway" % (userkey, country), flush=True)
+            except Exception as e:
+                print("  re-home of %s failed: %s" % (userkey, e), flush=True)
+    return new_state
+
+
 # ------------------------------------------------------------------ reaper
 def reaper():
+    orphan_routing_state = {}
+    orphan_gateway_state = {}
+    stranded_state = {}
+    last_key_refresh = time.time()        # main() has just fetched it
     while True:
+        try:
+            # Self-heals a permanent gateway whose key Secret is missing (fresh
+            # cluster / DR restore / manual cleanup): without it the pod never
+            # leaves ContainerCreating and nothing in the system can recover.
+            ensure_permanent_gateway_secret()
+            # One-shot per pod; closes the window in which a broker older than
+            # PERMANENT_IDX would read the annotation-less pod as idle forever.
+            _stamp_gw_last_used_if_absent(pool.PERMANENT_IDX)
+        except Exception as e:
+            print("permanent-gateway upkeep error:", e, flush=True)
         try:
             _reap_orphan_pvcs()
         except Exception as e:
             print("orphan-pvc reap error:", e, flush=True)
+        try:
+            orphan_routing_state = _reap_orphan_browser_routing(orphan_routing_state)
+        except Exception as e:
+            print("orphan-routing reap error:", e, flush=True)
+        try:
+            orphan_gateway_state = _reap_orphan_gateways(orphan_gateway_state)
+        except Exception as e:
+            print("orphan-gateway reap error:", e, flush=True)
         try:
             browsers = list_browsers()
             gateways = list_gateways()
@@ -733,13 +1177,27 @@ def reaper():
                 now=time.time(), gw_idle_seconds=GW_IDLE_SECONDS)
             for uk in dead_browsers:
                 _delete_browser_pod(uk)
-            for g in gateways:            # re-assert peers (recover restarts) then reap idle
-                if g["idx"] not in dead_gws:
-                    update_gw_peers(g["idx"])
+            # Re-assert peers (recovers a gateway restart), then reap the idle ones.
+            # The permanent gateway is added unconditionally: it still serves
+            # browsers over WireGuard, and driving this off the listed pods alone
+            # would skip it on every tick of a Deployment rollout.
+            keep = {g["idx"] for g in gateways if g["idx"] not in dead_gws}
+            keep.add(pool.PERMANENT_IDX)
+            for idx in sorted(keep):
+                update_gw_peers(idx)
             for idx in dead_gws:
                 delete_gateway(idx)
+            stranded_state = _rehome_stranded_browsers(browsers, gateways, stranded_state)
         except Exception as e:
             print("reaper error:", e, flush=True)
+        if time.time() - last_key_refresh >= NORDVPN_KEY_REFRESH_SECONDS:
+            # Gives the gateway Deployment's Reloader annotation something to fire
+            # on when the account-wide NordLynx key rotates; a no-op otherwise.
+            try:
+                ensure_nordvpn_secret()
+                last_key_refresh = time.time()
+            except Exception as e:
+                print("nordvpn key refresh error:", e, flush=True)
         time.sleep(60)
 
 
@@ -783,9 +1241,12 @@ class H(BaseHTTPRequestHandler):
                     "# TYPE proxy_gateways_active gauge\nproxy_gateways_active %d\n"
                     "# HELP proxy_browsers_active Active user browsers\n"
                     "# TYPE proxy_browsers_active gauge\nproxy_browsers_active %d\n"
+                    "# HELP proxy_browsers_stranded Browsers whose gateway is gone "
+                    "or now serves another country\n"
+                    "# TYPE proxy_browsers_stranded gauge\nproxy_browsers_stranded %d\n"
                     "# HELP proxy_max_countries Concurrent-country ceiling\n"
                     "# TYPE proxy_max_countries gauge\nproxy_max_countries %d\n"
-                    % (g, b, pool.MAX_COUNTRIES - pool.RESERVED_SLOTS))
+                    % (g, b, _stranded_browsers, pool.MAX_COUNTRIES - pool.RESERVED_SLOTS))
             return self._send(200, body, "text/plain; version=0.0.4")
         if self.path == "/api/countries":
             return self._send(200, json.dumps(
@@ -830,6 +1291,13 @@ def main():
         print("startup: nordvpn secret ensured", flush=True)
     except Exception as e:
         print("startup: ensure_nordvpn_secret failed (will retry on demand):", e, flush=True)
+    try:
+        ensure_permanent_gateway_secret()
+        print("startup: permanent gateway key present", flush=True)
+    except Exception as e:
+        # Not fatal: the reaper retries every tick, and the gateway pod stays in
+        # ContainerCreating (visible as PodStuckPending) until it lands.
+        print("startup: ensure_permanent_gateway_secret failed (reaper will retry):", e, flush=True)
     threading.Thread(target=reaper, daemon=True).start()
     print("proxy-broker on :%d (ns=%s host=%s max_countries=%d)" % (
         PORT, NS, HOST, pool.MAX_COUNTRIES - pool.RESERVED_SLOTS), flush=True)

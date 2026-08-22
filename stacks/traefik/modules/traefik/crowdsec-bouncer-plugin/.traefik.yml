@@ -1,0 +1,9 @@
+displayName: CrowdSec Bouncer
+
+type: middleware
+
+import: github.com/viktorbarzin/crowdsec-bouncer-plugin
+
+summary: "Enforces CrowdSec ban decisions in-process on the websecure entrypoint. A background goroutine polls the LAPI decision snapshot (server-side filtered by origin) into an in-memory set; each request costs one map lookup on the client IP, which is derived from the unspoofable TCP peer exactly as real-ip-plugin does — Cf-Connecting-Ip/X-Forwarded-For are honoured only when the peer is a trusted in-cluster proxy (cloudflared), so a banned client cannot spoof its way out. Ban-only (captcha and other remediations are ignored), fails open (LAPI unreachable serves the last known set; never loaded allows), skips the Authentik auth hosts so a false positive cannot wall someone out of login, and supports dryRun to log decisions without blocking."
+
+testData: {}

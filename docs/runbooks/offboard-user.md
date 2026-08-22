@@ -19,17 +19,41 @@ gated `userdel_archive`, which is **never** auto-applied).
 
 ### A1. Reversible cut (revoke access; delete nothing)
 
-1. **Delete the user's entry** from `roster.yaml`; commit + push.
-2. **Reconcile** (`sudo /usr/local/bin/t3-provision-users`, or wait for the hourly
-   timer). This **regenerates** `/etc/ttyd-user-map` + `dispatch.json` *without* the
-   user → `t3-dispatch` now returns **403** for them. *(Automated.)*
-3. **Disable their instance + lock login** *(manual today; Phase 7 will fold this into
-   the reconcile):*
-   ```bash
-   sudo systemctl disable --now t3-serve@<os_user>.service
-   sudo passwd -l <os_user>
-   ```
-4. **Revoke git + group access** *(manual)*:
+**As of 2026-08-17 this is one action: remove them from the Authentik `T3 Users`
+group.** Membership is the source of truth for who has devvm access, and the rest
+follows on its own. Design:
+`../plans/2026-08-17-t3-membership-driven-provisioning-design.md`.
+
+1. **Remove them from `T3 Users`** in Authentik (UI or API). Nothing else is
+   needed for the cut. While you are there, check their other groups
+   (`GET /api/v3/core/users/?search=<login>` → `groups_obj`): `T3 Users` is
+   normally the only devvm door, but `Home Server Admins` reaches the web terminal
+   at `terminal.viktorbarzin.me` and is not managed in this repo.
+
+Then, without you:
+
+- **within 15 minutes** — `t3-membership-sync` (Woodpecker cron; also runnable by
+  hand for an immediate landing) comments their row out of `roster.yaml`, commits
+  it, and posts what it did to `#alerts`.
+- **within the hour** — the devvm reconcile reads that committed roster,
+  regenerates `/etc/ttyd-user-map` + `/etc/t3-serve/dispatch.json` without them
+  (`t3-dispatch` then answers **403**), disables `t3-serve@`, `playwright-mcp@`,
+  `playwright-snapshot-refresh@`, `claude-auth-sync@` and `tl-t3-sync@`, and locks
+  the login. Their account, home, clones, sticky ports and Vault backups are all
+  left in place.
+
+`sudo /usr/local/bin/t3-provision-users` runs that second half immediately if you
+do not want to wait. Two things to expect while watching: `t3-dispatch` re-reads
+its table on a **60-second tick**, so for up to a minute a removed user gets a
+**500** (their entry is still cached and the session mint fails) rather than a 403
+— verified 2026-08-17 while cutting `ancamilea`. And the reconcile now acts on the
+**committed** roster, so a working tree that is behind no longer matters.
+
+An admin (`tier: admin`) is never cut by a membership diff: group membership is
+exactly what it would revoke, and an admin locked out cannot undo it. They are
+reported as `protected` in the sync's output instead.
+
+2. **Revoke git + group access** *(still manual — Forgejo is not part of the sync)*:
    ```bash
    # legacy secret-bearing group, if they were ever in it
    sudo gpasswd -d <os_user> code-shared

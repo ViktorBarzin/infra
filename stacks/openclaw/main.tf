@@ -1522,7 +1522,19 @@ resource "kubernetes_deployment" "openclaw" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      # container[2] is openclaw-exporter, the only one floating a tag
+      # (python:3.12-slim). container[0] pins openclaw itself — leave it to TF.
+      spec[0].template[0].spec[0].container[2].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[1].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[3].image, # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 
@@ -1727,7 +1739,14 @@ resource "kubernetes_deployment" "task_webhook" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 
@@ -1813,7 +1832,27 @@ resource "kubernetes_cron_job_v1" "task_processor" {
     }
   }
   spec {
-    schedule                      = "*/5 * * * *"
+    schedule = "*/5 * * * *"
+    # SUSPENDED 2026-08-16 (Viktor). Every run logs "No pending issues to
+    # process" — it polls Forgejo for issues to hand to OpenClaw and there have
+    # been none. At */5 that is 288 pod creations a day, and on this host pod
+    # churn is the cost that matters: each create/destroy writes containerd
+    # overlay layers, a kubelet pod dir, /var/log/pods and a systemd transient
+    # scope plus the ext4 journal metadata for all of it — small random writes,
+    # and k8s node root disks are 43% of sdc's write IOPS with cronjob churn as
+    # the driver.
+    #
+    # Nothing else is touched: the OpenClaw Deployment, its config, the
+    # task-processor script in the pod and the daily memory-sync CronJob all
+    # stay exactly as they are. Remove this line to resume polling, or exec the
+    # script by hand for a one-off:
+    #   kubectl exec -n openclaw deploy/openclaw -c openclaw -- \
+    #     bash /workspace/infra/scripts/task-processor.sh
+    #
+    # NOTE the openclaw namespace does not ship to Loki, so there is no
+    # queryable history here — this was decided on live pod output plus the
+    # absence of any Forgejo issue queued for the agent.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
@@ -2200,6 +2239,7 @@ module "openlobster_ingress" {
   port            = 80
   auth            = "required"
   extra_annotations = {
-    "gethomepage.dev/icon" = "openclaw.png"
+    "gethomepage.dev/icon"        = "openclaw.png"
+    "gethomepage.dev/description" = "Multi-user Telegram AI assistant (trial)"
   }
 }

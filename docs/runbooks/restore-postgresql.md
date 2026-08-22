@@ -1,6 +1,6 @@
 # Restore PostgreSQL (CNPG)
 
-Last updated: 2026-04-06
+Last updated: 2026-08-15
 
 ## Prerequisites
 - `kubectl` access to the cluster
@@ -13,6 +13,30 @@ Last updated: 2026-04-06
 - Mirrored to sda: `/mnt/backup/nfs-mirror/postgresql-backup/` (PVE host 192.168.1.127)
 - Replicated to Synology NAS: `Synology/Backup/Viki/pve-backup/nfs-mirror/postgresql-backup/`
 - Retention: 14 days (on NFS), latest only (on sda), unlimited (on Synology)
+
+There is no CNPG-level backup on `pg-cluster` (`spec.backup` is unset, no
+barman object store), so these dumps are the whole recovery story — there is no
+PITR to fall back on.
+
+### Long-lived migration snapshots — check these for anything older than 14 days
+Two uncompressed one-off dumps sit alongside the rolling ones and are **not**
+subject to the 14-day retention:
+
+| File | Taken |
+|---|---|
+| `/mnt/main/postgresql-backup/pre_iscsi_migration.sql` | 3 Mar 2026 |
+| `/mnt/main/postgresql-backup/pre-encryption-migration.sql` | 13 Apr 2026 |
+
+They matter because a **silent** data loss is usually older than the rolling
+window by the time anyone notices, and the `dump_*` glob used below does not
+match them. On 2026-08-15 the `linkwarden` database was found completely empty;
+every retained daily dump had already rolled over to schema-only, and the 3 Mar
+file was the only surviving copy of the data. Keep both files.
+
+**Diagnostic**: a per-db dump whose byte size is *identical* across many
+consecutive days is schema-only — that database is empty, and has been since
+before the oldest retained dump. Bisect the two snapshots above to bracket when
+the data disappeared.
 
 ## Restore from pg_dumpall
 
@@ -120,6 +144,83 @@ kubectl rollout restart deployment -n <namespace>
 ```
 
 **Advantages over full restore**: Only the target database is affected. All other databases continue running with their current data.
+
+## Restore One Database's Data Into a Live Schema (from a `pg_dumpall` .sql)
+
+Use this when the per-db `.dump` files are useless (e.g. they have all rolled
+over to schema-only) and the data only survives inside a full `pg_dumpall`
+snapshot, while the live database already has its schema and is being served.
+Verified 2026-08-15 recovering `linkwarden` from `pre_iscsi_migration.sql`.
+
+### 1. Cut the database's section out of the dump
+`pg_dumpall` output is one file per cluster, delimited by `\connect` lines:
+
+```bash
+# find the section boundaries
+grep -n 'connect <dbname>' /backup/pre_iscsi_migration.sql        # start
+awk 'NR>$START && /^.connect /{print NR; exit}' /backup/pre_iscsi_migration.sql  # end
+awk 'NR>=$START && NR<$END' /backup/pre_iscsi_migration.sql > section.sql
+```
+
+Keep only the `COPY <table> (...) FROM stdin;` blocks through their terminating
+`\.`, plus the `SELECT pg_catalog.setval(...)` lines so new rows get IDs after
+the restored ones. Discard all DDL — the live database already has the schema.
+
+### 2. Load it with FK triggers disabled
+`pg_dump` emits COPY blocks in **alphabetical** order, which violates existing
+foreign keys (e.g. `AccessToken` before `User`). Rather than hand-maintaining a
+topological order, disable the triggers for the load:
+
+```sql
+BEGIN;
+SET session_replication_role = replica;
+-- COPY blocks here
+SET session_replication_role = DEFAULT;
+-- setval statements here
+COMMIT;
+```
+
+```bash
+kubectl exec -i -n dbaas pg-cluster-2 -c postgres -- \
+  psql -d <dbname> -v ON_ERROR_STOP=1 < restore.sql
+```
+
+`session_replication_role` needs superuser, which the `postgres` user inside the
+CNPG pod has.
+
+### 3. Validate the foreign keys the load skipped
+Replica mode bypassed FK checking, so verify it explicitly rather than assuming:
+
+```sql
+DO $$
+DECLARE r RECORD; n BIGINT; bad INT := 0;
+BEGIN
+  FOR r IN SELECT conname, conrelid::regclass AS src, confrelid::regclass AS tgt,
+        (SELECT string_agg(quote_ident(a.attname), ',' ORDER BY x.ord)
+           FROM unnest(conkey) WITH ORDINALITY x(att,ord)
+           JOIN pg_attribute a ON a.attrelid=conrelid AND a.attnum=x.att) AS scols,
+        (SELECT string_agg(quote_ident(a.attname), ',' ORDER BY x.ord)
+           FROM unnest(confkey) WITH ORDINALITY x(att,ord)
+           JOIN pg_attribute a ON a.attrelid=confrelid AND a.attnum=x.att) AS tcols
+      FROM pg_constraint WHERE contype='f' AND connamespace='public'::regnamespace
+  LOOP
+    EXECUTE format('SELECT count(*) FROM ONLY %s s WHERE (%s) IS NOT NULL AND NOT EXISTS '
+                   '(SELECT 1 FROM ONLY %s t WHERE (t.%s)=(s.%s))',
+                   r.src, r.scols, r.tgt, r.tcols, r.scols) INTO n;
+    IF n > 0 THEN RAISE WARNING 'ORPHANS % on %', n, r.conname; bad := bad+1; END IF;
+  END LOOP;
+  IF bad = 0 THEN RAISE NOTICE 'FK integrity OK'; ELSE RAISE EXCEPTION '% FKs have orphans', bad; END IF;
+END $$;
+```
+
+### Notes
+- **Schema drift is tolerated automatically.** `COPY` names its columns, so a
+  dump predating a new *nullable* column loads fine and leaves it NULL (the
+  2026-08-15 restore crossed a `Link.metaDescription` addition this way). A new
+  NOT NULL column without a default would need the value supplied.
+- **Do not restore `_prisma_migrations`** (or any migration-history table) from
+  a dump older than the live schema — it would tell the ORM that migrations
+  already applied are still pending, and the next deploy would try to re-run them.
 
 ## Alternative: Restore from sda Backup
 

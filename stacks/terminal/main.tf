@@ -456,10 +456,28 @@ resource "kubernetes_endpoints" "session_events" {
   }
 }
 
-# IngressRoute: the four authed session-events root paths → session-events.
+# IngressRoute: the authed session-events root paths → session-events.
 # NO strip-prefix — session-events serves /events/{session} etc. verbatim.
 # /hooks/* is deliberately absent: it is loopback-only and must stay off the
 # public ingress.
+#
+# /search and /answer-text were added on 2026-08-18. /search finds text
+# anywhere in a session's transcript — the browser holds only the last 20 turns,
+# so the search has to run where the whole file is. /answer-text types the free
+# text of an "Other" answer into the pane without submitting it, which is the
+# one thing neither /keys (no letters, by design) nor /prompt (clears the line,
+# forces an Enter) can do.
+#
+# /earlier, /result, /pane and /keys were added on 2026-08-16 with the text
+# view's native render: older turns on demand, a capped tool result fetched in
+# full, the pane behind a blocking prompt, and the keystrokes that answer one
+# (terminal-lobby ADR-0010). Without them the SPA ships those features and the
+# ingress 404s each one.
+#
+# /commands was added on 2026-08-17: the text view's `/` menu offers the
+# session's OWN skills and custom commands, which the service reads off the
+# user's disk. The page ships the CLI's built-ins, so a missing route costs the
+# per-user half of the menu rather than the menu.
 resource "kubernetes_manifest" "session_events_ingressroute" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -471,7 +489,7 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`))"
+        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`))"
         kind  = "Rule"
         middlewares = [
           {
@@ -564,6 +582,88 @@ resource "kubernetes_manifest" "file_api_ingressroute" {
 # whitelist). AUTHED (unlike the public fonts/manifest/icons carve-out): the SPA
 # frames it same-origin so the session cookie flows; the terminal connection it
 # opens (/ws + /token) stays authed on ttyd regardless. NO strip — clipboard
+# --- skills-api (:7688) ------------------------------------------------------
+# The skill manager's backend (terminal-lobby ADR-0011). Same shape as file-api:
+# a Service with hand-written Endpoints at the DevVM, and an authed IngressRoute
+# that does NOT strip the prefix, because the service's own routes already carry
+# /skills. It is a separate service rather than more surface on session-events so
+# that releasing it cannot drop an open transcript stream, and so its one
+# privileged write path stays auditable on its own.
+resource "kubernetes_service" "skills_api" {
+  metadata {
+    name      = "skills-api"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+    labels = {
+      app = "skills-api"
+    }
+  }
+
+  spec {
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 7688
+    }
+  }
+}
+
+resource "kubernetes_endpoints" "skills_api" {
+  metadata {
+    name      = "skills-api"
+    namespace = kubernetes_namespace.terminal.metadata[0].name
+  }
+
+  subset {
+    address {
+      ip = "10.0.10.10"
+    }
+    port {
+      name = "http"
+      port = 7688
+    }
+  }
+}
+
+resource "kubernetes_manifest" "skills_api_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "skills-api"
+      namespace = kubernetes_namespace.terminal.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        # BOTH forms, and the bare one is load-bearing: the panel's first call is
+        # GET /skills exactly (the whole inventory), with nothing after the
+        # prefix, so PathPrefix(`/skills/`) alone does not match it — that
+        # request fell through to the catch-all, ttyd answered 404, and the
+        # Skills group rendered nothing but an error (2026-08-19). file-api needs
+        # no equivalent because every one of its routes carries a verb
+        # (/files/list, /files/read, /files/write). An unauthenticated probe
+        # cannot tell the two cases apart, since Authentik gates the catch-all
+        # too, so verify this one as a logged-in browser or against the router.
+        match = "Host(`terminal.viktorbarzin.me`) && (Path(`/skills`) || PathPrefix(`/skills/`))"
+        kind  = "Rule"
+        middlewares = [
+          {
+            name      = "authentik-forward-auth"
+            namespace = "traefik"
+          }
+        ]
+        services = [{
+          name = "skills-api"
+          port = 80
+        }]
+      }]
+      tls = {
+        secretName = var.tls_secret_name
+      }
+    }
+  }
+}
+
 # serves the exact path /term.html.
 resource "kubernetes_manifest" "term_html_ingressroute" {
   manifest = {
@@ -625,10 +725,44 @@ resource "kubernetes_cron_job_v1" "webterminal_probe" {
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 1
     schedule                      = "*/5 * * * *"
+    # SUSPENDED 2026-08-16 (Viktor). This ran `apk add curl python3` on EVERY
+    # invocation — 47 MB written to the node's container layer per run, 288 runs
+    # a day, ~13.2 GB/day of pure churn plus thousands of small-file writes,
+    # which is IOPS on the shared sdc spindle rather than just bytes. That is
+    # the status-page-pusher anti-pattern the other CronJobs in this repo
+    # explicitly warn about.
+    #
+    # None of its three alerts (WebterminalTtydUnreachable / TokenDegraded /
+    # WebsocketDegraded / ProbeStale) had fired in 30 days, and Uptime Kuma
+    # already carries an external monitor for terminal.viktorbarzin.me, so
+    # up/down coverage survives.
+    #
+    # WHAT IS LOST, honestly: the WebSocket-upgrade check and the
+    # edge-vs-ClusterIP distinction. A broken /ws route would now present as
+    # "the terminal loads but will not connect" rather than as an alert — which
+    # is the exact symptom this job was built for. If that recurs, re-enable
+    # (and rebuild it on python:3.12-alpine so the apk goes away: python3 is
+    # already in that image and the two curl calls are trivially http.client).
+    #
+    # Its four alerts were removed from prometheus_chart_values.tpl in the same
+    # commit — leaving them would have fired ProbeStale forever against the
+    # frozen Pushgateway metrics.
+    suspend = true
     job_template {
       metadata {}
       spec {
-        backoff_limit              = 1
+        backoff_limit = 1
+        # A hung run must not block every later run. With concurrency_policy
+        # Forbid and no deadline, one wedged Job stops the schedule dead: on
+        # 2026-08-10 02:00 this pod's `apk add curl python3` opened a TLS
+        # connection to the Alpine CDN that never returned (ESTABLISHED but
+        # black-holed, no FIN/RST, and apk applies no timeout), so the Job sat
+        # Running for 3d19h and the probe reported nothing for nearly four days
+        # -- WebterminalProbeStale fired the whole time while the webterminal
+        # itself was perfectly healthy (a fresh run returns token=302 ws=302
+        # ttyd=200 in 7s). 300s is ~40x a normal run and well over the sum of
+        # the script's own curl/socket timeouts, so it only ever trips on a hang.
+        active_deadline_seconds    = 300
         ttl_seconds_after_finished = 600
         template {
           metadata {

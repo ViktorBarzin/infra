@@ -1,5 +1,16 @@
 # Daily drift detection — runs terraform plan on all stacks and alerts on drift.
 # Triggered by Woodpecker cron schedule "drift-detection" (must be registered in Woodpecker UI/API).
+#
+# SCHEDULE: `0 4 * * *` (04:00 UTC). It was `@daily` until 2026-08-16, which
+# put it on 00:00 — the same minute as the `renew-tls-certificate` cron
+# (`@weekly`, Sunday 00:00). On renewal Sundays the two overlapped: the new
+# wildcard certificate reached the cluster ~10 minutes into this run while the
+# checkout still held the old one, so every stack planned afterwards reported
+# the same tls_secret as drift (see the confirmation pass below). 04:00 also
+# sits clear of the PVE backup chain (nfs-mirror 02:00, lvm-pvc-snapshot 03:00,
+# devvm-home-backup 03:30, daily-backup 05:00) and finishes well before the
+# 08:00 alert digest. The schedule lives in Woodpecker, not in this file —
+# `GET/PATCH /api/repos/1/cron/4` — so it is recorded here to stay findable.
 
 when:
   event: cron
@@ -74,12 +85,22 @@ steps:
       # Emits two timestamps per drifted stack so the Pushgateway/Prometheus
       # side can compute drift-age-hours via `time() - drift_stack_first_seen`.
       - |
-        DRIFTED=""
-        CLEAN=0
-        ERRORS=""
         NOW=$(date +%s)
-        # Metrics accumulator — written once per stack, then pushed as a batch.
-        METRICS=""
+        # Per-stack results and metrics accumulate in files rather than shell
+        # variables — see the summary block below for why.
+        RESULTS=$(mktemp)
+        METRICS_FILE=$(mktemp)
+        # Per-stack plan output, consumed by scripts/drift-report.py to build a
+        # report that says WHAT differs rather than only which stacks do. Only
+        # the resource-header and Plan: lines are kept — that is all the parser
+        # reads, and a full plan for 150 stacks is a lot of tmpfs for nothing.
+        PLANS=$(mktemp -d)
+        # Record what we are planning against. The run clones master once and
+        # then plans for hours, so anything committed mid-run (the renew-tls
+        # certificate commit lands ~00:06) makes later stacks diff against a
+        # tree we no longer have. Naming the commit makes that visible instead
+        # of it reading as real drift. (2026-08-16)
+        COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
         for stack_dir in stacks/*/; do
           stack=$(basename "$stack_dir")
@@ -92,72 +113,252 @@ steps:
           # (2026-06-27)
           [ "$stack" = "vault" ] && continue
 
-          echo -n "[$stack] planning... "
-          OUTPUT=$(cd "$stack_dir" && terragrunt plan -detailed-exitcode -input=false 2>&1)
-          EXIT=$?
+          # `_template` is the new-stack scaffold, not a deployed stack: it ships
+          # a terragrunt.hcl (so it passes the guard above) but only a
+          # main.tf.example, so there is nothing to plan. It also sorts FIRST
+          # under `stacks/*/` in the C locale ('_' < 'a'), so planning it took
+          # down the whole nightly run before a single real stack was checked —
+          # the 2026-08-08 logs end at "[_template] planning..." with no
+          # per-stack results and nothing pushed to the Pushgateway. Skip every
+          # underscore-prefixed scaffold directory. (2026-08-08)
+          case "$stack" in _*) continue ;; esac
 
+          echo -n "[$stack] planning... "
+          # Plan through scripts/tg, NOT terragrunt directly. Tier-1 stacks keep
+          # their state in the PG backend and read the connection string from
+          # PG_CONN_STR, which only scripts/tg knows how to build (it fetches
+          # database/static-creds/pg-terraform-state from Vault). Calling
+          # terragrunt bare left conn_str empty, so terraform fell back to
+          # localhost and every Tier-1 stack died in `Initializing the backend`
+          # with `dial tcp [::1]:5432: connect: connection refused` — 150-odd
+          # stacks, invisible because the run aborted at the first one. tg also
+          # handles Tier-0 SOPS state decrypt, and takes no advisory lock for a
+          # non-mutating verb, so a nightly plan cannot block an apply.
+          #
+          # `|| EXIT=$?` is load-bearing. Woodpecker runs step commands under
+          # `set -e`, and a bare `OUTPUT=$(...)` assignment carries the exit
+          # status of the command substitution — so any non-zero exit killed the
+          # whole step right here. `-detailed-exitcode` returns non-zero for BOTH
+          # outcomes we care about (1 = error, 2 = drift), which left `EXIT=$?`
+          # and the case block below unreachable for anything but a clean stack.
+          # Skipping the offending stack (vault 2026-06-27, _template
+          # 2026-08-08) only ever moved the abort to the next one in sort order.
+          EXIT=0
+          # -no-color matters for more than readability: without it terraform
+          # writes ANSI escapes between "terraform:" and the resource marker,
+          # so the diff grep below silently matched nothing on 118 drifted
+          # stacks even once the pattern itself was right.
+          OUTPUT=$(cd "$stack_dir" && ../../scripts/tg plan -detailed-exitcode -input=false -no-color 2>&1) || EXIT=$?
+          echo "$stack $EXIT" >> "$RESULTS"
+          echo "$EXIT" > "$PLANS/$stack.exit"
+          echo "$OUTPUT" | grep -E '(# .*(will|must) be |Plan: [0-9])' > "$PLANS/$stack.out" || true
+
+          # Metrics are NOT emitted here — see the "Emit metrics" block after
+          # the confirmation pass below. Emitting inside this loop meant a
+          # stack could not be reclassified afterwards without rewriting
+          # lines already appended to $METRICS_FILE.
           case $EXIT in
             0)
               echo "OK (no changes)"
-              CLEAN=$((CLEAN + 1))
-              # drift_stack_state=0 means clean; age-hours irrelevant so we
-              # still push 0 so per-stack gauges don't go stale.
-              METRICS="${METRICS}drift_stack_state{stack=\"$stack\"} 0\n"
-              METRICS="${METRICS}drift_stack_age_hours{stack=\"$stack\"} 0\n"
               ;;
             1)
               echo "ERROR"
-              ERRORS="$ERRORS $stack"
-              METRICS="${METRICS}drift_stack_state{stack=\"$stack\"} 2\n"
+              # $OUTPUT was previously captured and never printed, so a failing
+              # stack left nothing to debug from. Tail it: enough to identify
+              # the error without dumping a full plan into the log.
+              echo "--- [$stack] plan error (last 30 lines) ---"
+              echo "$OUTPUT" | tail -30
+              echo "--- end [$stack] ---"
               ;;
             2)
               echo "DRIFT DETECTED"
-              DRIFTED="$DRIFTED $stack"
-              # Fetch first-seen timestamp from Pushgateway (preserve across runs).
-              FIRST_SEEN=$(curl -s "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics" \
-                | awk -v s="$stack" '$1 == "drift_stack_first_seen{stack=\""s"\"}" {print $2; exit}')
-              if [ -z "$FIRST_SEEN" ] || [ "$FIRST_SEEN" = "0" ]; then
-                FIRST_SEEN="$NOW"
-              fi
-              AGE_HOURS=$(( (NOW - FIRST_SEEN) / 3600 ))
-              METRICS="${METRICS}drift_stack_state{stack=\"$stack\"} 1\n"
-              METRICS="${METRICS}drift_stack_first_seen{stack=\"$stack\"} $FIRST_SEEN\n"
-              METRICS="${METRICS}drift_stack_age_hours{stack=\"$stack\"} $AGE_HOURS\n"
+              # Log which resources moved. Until the `set -e` fix above, exit 2
+              # aborted the run too, so a drifted stack was never actually
+              # reported — this is the first run shape where this branch runs.
+              # Terragrunt prefixes every terraform line with a timestamp and
+              # "STDOUT terraform: ", so anchoring on the bare terraform format
+              # matched nothing and this printed an empty diff on the first run
+              # that reached it. Match the resource/summary lines wherever they
+              # sit on the line instead.
+              echo "$OUTPUT" | grep -E 'terraform: +(# .* will be| *# .* must be|Plan: )' | head -20
               ;;
           esac
         done
 
-        # Summary counters — single gauge per run.
-        DRIFT_COUNT=$(echo "$DRIFTED" | wc -w)
-        ERROR_COUNT=$(echo "$ERRORS" | wc -w)
-        METRICS="${METRICS}drift_stack_count $DRIFT_COUNT\n"
-        METRICS="${METRICS}drift_error_count $ERROR_COUNT\n"
-        METRICS="${METRICS}drift_clean_count $CLEAN\n"
-        METRICS="${METRICS}drift_detection_last_run_timestamp $NOW\n"
+        # ── Confirm drift against current master ──
+        # This run clones ONCE and then plans for ~40 minutes, while CI keeps
+        # applying newer commits to the cluster. A stack can therefore differ
+        # purely because our checkout is OLDER than what is deployed: the plan
+        # is truthful about the tree it was handed and wrong about reality.
+        #
+        # 2026-08-16 is the case that forced this. The weekly
+        # renew-tls-certificate cron and this one are both registered at 00:00,
+        # so on renewal Sundays they start together: the drift run cloned at
+        # 00:01, renew-tls committed the new wildcard certificate at 00:06 and
+        # pushed it into 150 of 151 namespaces by 00:11, and every stack
+        # planned after that reported
+        # `module.tls_secret.kubernetes_secret.tls_secret will be updated
+        # in-place`. 79 of the run's 92 changed resources were that one secret
+        # (126 stacks manage it); `ac`, planned in the first minute, was clean.
+        # The report read "79 stacks drifting" and looked identical to a mass
+        # revert. The cron has since been moved to 04:00, which separates
+        # those two jobs — this pass covers the general case, since any commit
+        # landing mid-run has the same effect on the stacks it touches.
+        #
+        # Re-planning ONLY the drifted stacks against current master costs a
+        # fraction of a full run. A stack that still differs afterwards is
+        # real drift. This can still flag a stack whose commit landed but
+        # whose apply has not finished yet — that is a genuine
+        # config-differs-from-cluster state, and it clears itself on the next
+        # run rather than persisting for a whole cycle.
+        #
+        # Errored stacks are deliberately NOT re-planned: "could not be
+        # planned" is a different signal from "differs", and re-running a
+        # failing plan does not make the result more trustworthy. A backend
+        # blip part-way through a run therefore still costs the remaining
+        # stacks their result for that night.
+        DRIFTED_FIRST_PASS=$(awk '$2 == 2 { printf " %s", $1 }' "$RESULTS")
+
+        if [ -n "$DRIFTED_FIRST_PASS" ]; then
+          echo ""
+          echo "=== Confirming drift against current master ==="
+          git fetch --depth=1 origin master 2>&1 | tail -2 || true
+          NEW_COMMIT=$(git rev-parse --short FETCH_HEAD 2>/dev/null || echo "$COMMIT")
+          if [ "$NEW_COMMIT" = "$COMMIT" ]; then
+            echo "master is unchanged at $COMMIT; re-planning anyway to catch an apply that landed mid-run"
+          else
+            echo "checkout was $COMMIT, master is now $NEW_COMMIT — re-planning against $NEW_COMMIT"
+            # Only tracked files move; the ignored .terraform/ init caches
+            # survive, so the re-plan does not re-initialise every backend.
+            # git-crypt unlock (top of this step) configured the smudge
+            # filter, so the re-checkout decrypts normally.
+            if git reset --hard FETCH_HEAD >/dev/null 2>&1; then
+              COMMIT=$NEW_COMMIT
+            else
+              echo "(reset failed — re-planning against $COMMIT instead)"
+            fi
+          fi
+
+          CONFIRMED=$(mktemp)
+          awk '$2 != 2' "$RESULTS" > "$CONFIRMED"
+          for stack in $DRIFTED_FIRST_PASS; do
+            # A stack can vanish in the reset if it was deleted upstream.
+            if [ ! -f "stacks/$stack/terragrunt.hcl" ]; then
+              echo "[$stack] gone from master after reset — dropping"
+              rm -f "$PLANS/$stack.out" "$PLANS/$stack.exit"
+              continue
+            fi
+            echo -n "[$stack] re-planning... "
+            EXIT=0
+            OUTPUT=$(cd "stacks/$stack" && ../../scripts/tg plan -detailed-exitcode -input=false -no-color 2>&1) || EXIT=$?
+            echo "$stack $EXIT" >> "$CONFIRMED"
+            echo "$EXIT" > "$PLANS/$stack.exit"
+            echo "$OUTPUT" | grep -E '(# .*(will|must) be |Plan: [0-9])' > "$PLANS/$stack.out" || true
+            case $EXIT in
+              0) echo "CLEAN on current master (stale checkout, not drift)" ;;
+              1) echo "ERROR on re-plan" ;;
+              2) echo "DRIFT CONFIRMED" ;;
+            esac
+          done
+          mv "$CONFIRMED" "$RESULTS"
+        fi
+
+        # ── Emit metrics from the confirmed results ──
+        # Emitted here rather than inside the plan loop so the confirmation
+        # pass can reclassify a stack without any already-written metric line
+        # needing to be rewritten. The Pushgateway is also read ONCE for the
+        # first-seen timestamps instead of once per drifted stack.
+        PREV_METRICS=$(mktemp)
+        curl -s "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics" > "$PREV_METRICS" || true
+
+        while read -r stack exit_code; do
+          case $exit_code in
+            0)
+              # drift_stack_state=0 means clean; age-hours irrelevant so we
+              # still push 0 so per-stack gauges don't go stale.
+              printf 'drift_stack_state{stack="%s"} 0\n' "$stack" >> "$METRICS_FILE"
+              printf 'drift_stack_age_hours{stack="%s"} 0\n' "$stack" >> "$METRICS_FILE"
+              ;;
+            1)
+              printf 'drift_stack_state{stack="%s"} 2\n' "$stack" >> "$METRICS_FILE"
+              ;;
+            2)
+              # First-seen is preserved across runs so DriftUnaddressed can
+              # age a stack that keeps drifting.
+              FIRST_SEEN=$(awk -v s="$stack" '$1 == "drift_stack_first_seen{stack=\""s"\"}" {print $2; exit}' "$PREV_METRICS")
+              if [ -z "$FIRST_SEEN" ] || [ "$FIRST_SEEN" = "0" ]; then
+                FIRST_SEEN=$NOW
+              fi
+              AGE_HOURS=$(( (NOW - FIRST_SEEN) / 3600 ))
+              printf 'drift_stack_state{stack="%s"} 1\n' "$stack" >> "$METRICS_FILE"
+              printf 'drift_stack_first_seen{stack="%s"} %s\n' "$stack" "$FIRST_SEEN" >> "$METRICS_FILE"
+              printf 'drift_stack_age_hours{stack="%s"} %s\n' "$stack" "$AGE_HOURS" >> "$METRICS_FILE"
+              ;;
+          esac
+        done < "$RESULTS"
+
+        # Summary counters, derived from the results file. Woodpecker expands
+        # dollar-brace references in this YAML before the shell ever sees it, so
+        # the previous braced METRICS accumulator expanded to nothing and only
+        # the LAST assignment survived — the 2026-08-14 push carried just
+        # drift_detection_last_run_timestamp and no per-stack series at all, and
+        # the summary read "Errors: none" after 150 errors. Files avoid both
+        # that and any subshell-scoping question; keep $VAR unbraced below.
+        CLEAN=$(awk '$2 == 0' "$RESULTS" | wc -l)
+        DRIFT_COUNT=$(awk '$2 == 2' "$RESULTS" | wc -l)
+        ERROR_COUNT=$(awk '$2 == 1' "$RESULTS" | wc -l)
+        DRIFTED=$(awk '$2 == 2 { printf " %s", $1 }' "$RESULTS")
+        ERRORS=$(awk '$2 == 1 { printf " %s", $1 }' "$RESULTS")
+
+        printf 'drift_stack_count %s\n' "$DRIFT_COUNT" >> "$METRICS_FILE"
+        printf 'drift_error_count %s\n' "$ERROR_COUNT" >> "$METRICS_FILE"
+        printf 'drift_clean_count %s\n' "$CLEAN" >> "$METRICS_FILE"
+        printf 'drift_detection_last_run_timestamp %s\n' "$NOW" >> "$METRICS_FILE"
 
         # ── Push to Pushgateway ──
         # One batched push keeps the run atomic: either all metrics land or none.
-        printf "%b" "$METRICS" | curl -s --data-binary @- \
+        curl -s --data-binary @"$METRICS_FILE" \
           http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/drift-detection \
           || echo "(pushgateway unavailable, metrics lost for this run)"
+
+        # Braced variable references are deliberately avoided in this block for
+        # the Woodpecker-interpolation reason above; the old default-value form
+        # one form that survived, but keeping one style is less error-prone.
+        DRIFTED_TEXT=" none"
+        ERRORS_TEXT=" none"
+        [ -n "$DRIFTED" ] && DRIFTED_TEXT="$DRIFTED"
+        [ -n "$ERRORS" ] && ERRORS_TEXT="$ERRORS"
 
         echo ""
         echo "=== Drift Detection Summary ==="
         echo "Clean: $CLEAN stacks"
-        echo "Drift: ${DRIFTED:-none}"
-        echo "Errors: ${ERRORS:-none}"
+        echo "Drift:$DRIFTED_TEXT"
+        echo "Errors:$ERRORS_TEXT"
+
+        # ── Build the report that names the actual differences ──
+        # A list of stack names is not actionable and cannot be sanity-checked:
+        # on 2026-08-16 "79 stacks drifting" was really 50-odd false positives
+        # from a stale checkout plus 29 stacks a mid-run Postgres failover had
+        # stopped us measuring at all, and the message looked identical to a
+        # genuine mass revert. drift-report.py prints the changed resources per
+        # stack, keeps "could not be planned" separate from "differs", and flags
+        # the aborted-run signature (errors forming an alphabetical tail).
+        echo ""
+        SLACK_JSON=$(mktemp)
+        python3 scripts/drift-report.py "$PLANS" \
+          --commit "$COMMIT" \
+          --pipeline-url "$CI_PIPELINE_URL" \
+          --slack-json "$SLACK_JSON" || true
 
         # ── Slack only when something is WRONG (drift or errors) ──
         # All-clean runs are silent (Viktor 2026-07-02: CI notifies on
         # failed/actionable runs only; clean is the daily normal).
-        if [ -n "$DRIFTED" ]; then
+        # Post the payload from a FILE: the report contains resource addresses
+        # with for_each keys like route["ac"], and the previous hand-built JSON
+        # string would have produced invalid JSON the moment one appeared.
+        if [ -n "$DRIFTED" ] || [ -n "$ERRORS" ]; then
           curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"channel\":\"general\",\"text\":\":warning: Drift detected in:${DRIFTED}\nClean: ${CLEAN} stacks. Errors:${ERRORS:-none}\"}" \
-            "$SLACK_WEBHOOK" || true
-        elif [ -n "$ERRORS" ]; then
-          curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"channel\":\"general\",\"text\":\":red_circle: Drift detection had errors: ${ERRORS} (clean: ${CLEAN})\"}" \
-            "$SLACK_WEBHOOK" || true
+            --data @"$SLACK_JSON" "$SLACK_WEBHOOK" || true
         fi
 
   # Hard-failure catch: the in-script posts above never run if the step

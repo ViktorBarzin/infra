@@ -221,11 +221,11 @@ resource "oci_core_instance" "mx2" {
       # for the xray REALITY/Shadowsocks + dnstt provisioning in the setup
       # script below. Same UUID/SS password as the portal identity so one client
       # config works across the home and OCI PoPs.
-      oci_xray_uuid       = data.vault_kv_secret_v2.viktor.data["oci_xray_uuid"]
+      oci_xray_uuid        = data.vault_kv_secret_v2.viktor.data["oci_xray_uuid"]
       oci_xray_ss_password = data.vault_kv_secret_v2.viktor.data["oci_xray_ss_password"]
-      oci_reality_privkey = data.vault_kv_secret_v2.viktor.data["oci_reality_privkey"]
-      oci_reality_shortid = data.vault_kv_secret_v2.viktor.data["oci_reality_shortid"]
-      dnstt_privkey       = data.vault_kv_secret_v2.viktor.data["dnstt_server_privkey"]
+      oci_reality_privkey  = data.vault_kv_secret_v2.viktor.data["oci_reality_privkey"]
+      oci_reality_shortid  = data.vault_kv_secret_v2.viktor.data["oci_reality_shortid"]
+      dnstt_privkey        = data.vault_kv_secret_v2.viktor.data["dnstt_server_privkey"]
     }))
   }
 

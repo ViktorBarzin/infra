@@ -147,6 +147,14 @@ locals {
     # that rollout — same image-first hold-order as FARE/CALENDAR/RESEARCH above.
     LODGING_PROVIDER = "playwright"
     LODGING_CDP_URL  = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+    # Anonymous Booking.com property SEARCH (GET /api/lodging/search, `tripit
+    # lodging search`) — distinct from LODGING_PROVIDER above, which prices ONE
+    # representative area rate. Calls Booking.com's own FullSearch GraphQL over
+    # plain HTTP: no browser, no cookies, no credentials, so there is nothing to
+    # configure but the switch. Defaults OFF in the app so tests and local dev
+    # never call out; prod opts in here. Stays SIGNED OUT deliberately — prices
+    # are public (geniusLevel 0) and no account is ever attached.
+    LODGING_SEARCH_ENABLED = "1"
     # Calendar-conflict column (tripit issue #19): read the owner's Nextcloud
     # calendar over CalDAV to flag date clashes on a planning Option. Base +
     # user are non-secret; the app-password arrives via tripit-secrets. Same
@@ -996,6 +1004,7 @@ module "ingress" {
     "traefik-tripit-rate-limit@kubernetescrd",
   ]
   extra_annotations = {
+    "gethomepage.dev/description" = "Self-hosted travel itinerary planner"
     "gethomepage.dev/icon" = "mdi-airplane-takeoff"
     "gethomepage.dev/name" = "TripIt"
   }

@@ -161,14 +161,30 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # OOM-killer takes: a real container OOM (which also fires
               # ContainerOOMKilled) or a global node OOM (which only happens
               # when the node is at its memory limit). See memory #8811 / #10378.
+              # Names the killed process. The old rule aggregated by node only,
+              # so the alert said "killed a real container/app on k8s-node3"
+              # and you had to go read the journal to learn what died. The
+              # journal line is
+              #   Memory cgroup out of memory: Killed process 3185742 (kubectl) \
+              #   total-vm:... anon-rss:...
+              # so `proc` comes straight out of the parenthesised comm field.
+              #
+              # The 5m window is widened to 2h because this alert fires per
+              # OOM EVENT: with `for: 0m` it went firing -> resolved as soon as
+              # the 5m lookback emptied, then fired again on the next kill.
+              # Measured 2026-08-10: 21 fire/resolve pairs in 7 days = 42 Slack
+              # posts, every firing duration <= 5m, driven by ONE leaking pod
+              # (f1-stream, OOMKilled roughly hourly). A 2h window spans that
+              # cadence so a repeating OOM loop reads as one continuous alert
+              # and resolves 2h after the last kill.
               alert = "KernelOOMKiller"
-              expr  = "sum by (node) (count_over_time({job=\"node-journal\"} |~ \"(?i)Out of memory.*Killed process\" != \"(kubectl)\" != \"(bash)\" [5m])) > 0"
+              expr  = "sum by (node, proc) (count_over_time({job=\"node-journal\"} |~ \"(?i)Out of memory.*Killed process\" != \"(kubectl)\" != \"(bash)\" | regexp \"Killed process [0-9]+ \\\\((?P<proc>[^)]+)\\\\)\" [2h])) > 0"
               for   = "0m"
               labels = {
                 severity = "critical"
               }
               annotations = {
-                summary = "OOM killer killed a real container/app on {{ $labels.node }}"
+                summary = "OOM killer killed {{ $labels.proc }} on {{ $labels.node }}"
               }
             },
             {
@@ -329,8 +345,14 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             {
               # The enforcer's health-check failed a build and auto-rolled-back the
               # binary. The gate worked — but a bad nightly shipped, so you should know.
+              # Window widened 15m -> 12h: this is an event-count alert with
+              # `for: 0m`, so each rollback fired then resolved 15m later when
+              # the lookback emptied, and the next nightly retry fired it again.
+              # Measured 2026-08-10: 7 fire/resolve pairs in 7 days = 14 Slack
+              # posts, every firing duration 15-20m. A 12h window keeps one
+              # alert per nightly cycle instead of one per rollback event.
               alert  = "T3AutoUpdateRolledBack"
-              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"rolling back|rolled back\" [15m])) > 0"
+              expr   = "sum(count_over_time({job=\"devvm-journal\", identifier=~\"t3-autoupdate|t3-migrate-idle|t3-watchdog\"} |~ \"rolling back|rolled back\" [12h])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
@@ -415,12 +437,30 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # Per-user Claude refresh/backup/restore exhausted its automatic
               # recovery path. This is actionable: that user needs interactive SSO,
               # or the scoped Vault token/bootstrap needs repair.
+              # Groups by the USER, which is the whole point of the alert.
+              # It used to `sum by (unit)`, but this stream carries no `unit`
+              # label (its labels are host, identifier, job, service_name,
+              # detected_level), so the group key was always empty: every user
+              # collapsed into one series and the summary rendered as
+              # "...recovery failed on" with nothing after it. Verified against
+              # live Loki 2026-08-10. The user is in the line body instead —
+              #   user=ancamilea FAIL no recoverable Claude OAuth credential...
+              # — so it is extracted with regexp. (logfmt would choke on the
+              # bare FAIL/WARN token that follows.)
+              #
+              # Window widened 15m -> 7h. The per-user timer runs every ~6h, and
+              # with a 15m lookback the alert resolved 15m after each run and
+              # re-fired at the next one: 24 fire/resolve pairs in 7 days = 48
+              # Slack posts, every single firing duration exactly 15m, for one
+              # standing condition (a user who has never completed interactive
+              # SSO). 7h spans the timer interval, so a persistent failure stays
+              # one continuous alert and clears once a run succeeds.
               alert  = "WorkstationClaudeAuthInvalid"
-              expr   = "sum by (unit) (count_over_time({job=\"devvm-journal\", identifier=\"claude-auth-sync\"} |~ \"FAIL\" [15m])) > 0"
+              expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"claude-auth-sync\"} |~ \"FAIL\" | regexp \"user=(?P<user>[a-zA-Z0-9_.-]+)\" [7h])) > 0"
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
-                summary     = "Per-user Claude authentication recovery failed on {{ $labels.unit }}"
+                summary     = "Claude authentication recovery failed for user={{ $labels.user }}"
                 description = "The Workstation renewal agent could not validate Claude auth, renew its scoped Vault token, or recover from the Vault backup. Follow the per-user SSO recovery runbook."
                 runbook     = "docs/runbooks/claude-auth-renew-workstation.md"
               }
@@ -637,21 +677,108 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
-          # Matrix (tuwunel) — open registration is ON, so notify on every new
-          # signup. tuwunel logs `... New user "@x:..." registered on this server`
-          # only on SUCCESS (the disabled-path logs "Rejecting ... registration is
-          # disabled"), so this matcher never false-fires on rejected attempts.
+          # Matrix (tuwunel) — notify on every new signup. Registration was open
+          # when this rule was written and is CLOSED as of 2026-08-15, which makes
+          # the rule more valuable rather than less: it is now the canary that
+          # tells us if the door reopened. tuwunel logs `... New user "@x:..."
+          # registered on this server` only on SUCCESS (the disabled path logs
+          # "Rejecting ... registration is disabled"), so this matcher never
+          # false-fires on the rejected attempts a closed server now produces.
           # lane=security routes it to the existing #security Slack receiver.
+          name = "CrowdSec L7 bouncer"
+          rules = [
+            {
+              # The in-process Traefik bouncer (stacks/traefik
+              # crowdsec-bouncer-plugin) runs under Yaegi, where Prometheus
+              # counters are not cheaply available, so its decisions are
+              # structured log lines and this is where they are alerted on.
+              # Liveness lives in prometheus_chart_values.tpl instead
+              # (CrowdSecL7BouncerNotPolling, off LAPI's per-bouncer counter).
+              #
+              # Fail-open means a LAPI outage is NOT an availability incident —
+              # traffic keeps flowing on the last known decision set. It is a
+              # staleness incident: nothing new is enforced and an unban does not
+              # take effect. 30m before firing, since a single failed poll during
+              # a LAPI roll is routine and the next one 30s later recovers.
+              alert = "CrowdSecL7BouncerRefreshFailing"
+              expr  = "sum(count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=refresh-failed\" [15m])) > 0"
+              for   = "30m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "Traefik CrowdSec bouncer cannot reach LAPI — serving a stale ban set"
+                description = <<-EOT
+                  The bouncer has been failing to refresh decisions for 30m. It
+                  fails OPEN on the last known set, so nothing is being blocked
+                  that was not already blocked, and legitimate traffic is
+                  unaffected — but a new ban will not be enforced and a DELETED
+                  ban will keep blocking. The log line carries the underlying
+                  error; a connection refused usually means crowdsec-lapi.
+                EOT
+              }
+            },
+            {
+              # The feedback loop this guards: blocked requests now reach Traefik
+              # and are access-logged, so a burst of 403s can itself trip
+              # crowdsecurity/http-403-abuse, whose profile notifies per decision.
+              # A false-positive ban on a busy shared address would show up here
+              # first, as sustained blocking on one IP across many hosts.
+              #
+              # Threshold is deliberately loose: the enforced set is currently the
+              # 4 non-CAPI decisions, and normal scanner traffic against a banned
+              # IP is a handful of requests. Re-derive it before enabling CAPI —
+              # 22.7k community bans will change the baseline completely.
+              alert = "CrowdSecL7BlockBurst"
+              expr  = "sum by (ip) (count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=block\" | regexp \"ip=(?P<ip>[^ ]+)\" [15m])) > 200"
+              for   = "15m"
+              labels = {
+                severity = "info"
+              }
+              annotations = {
+                summary     = "CrowdSec bouncer has blocked {{ $labels.ip }} over 200 times in 15m"
+                description = <<-EOT
+                  Either a real attacker persisting against a ban, or a false
+                  positive on an address that carries legitimate traffic — a
+                  NAT/CGNAT egress, or one of our own. Check what the address is
+                  before assuming: our own London WAN egress was hand-banned on
+                  2026-08-16 exactly this way. `cscli decisions list --ip <ip>`
+                  shows the scenario that decided it, and `cscli decisions delete
+                  --ip <ip>` takes effect within one 30s poll.
+                EOT
+              }
+            },
+          ]
+        },
+        {
           name = "Matrix"
           rules = [
             {
-              alert  = "MatrixNewUserRegistered"
-              expr   = "sum(count_over_time({namespace=\"matrix\",container=\"matrix\"} |= \"registered on this server\" [10m])) > 0"
-              for    = "0m"
-              labels = { severity = "info", lane = "security" }
+              alert = "MatrixNewUserRegistered"
+              # Carries WHO in the alert itself (2026-08-15) rather than telling
+              # the reader to go grep the pod. The full tuwunel line is
+              # `New user "@x:host" registered on this server from IP <ip> with
+              # device name <dev>`, so mxid/client_ip/device are extracted into
+              # labels and land in the Slack text — the client name separates a
+              # real client (Element, SchildiChat) from a scripted signup at a
+              # glance. Backtick-quoted regex so the literal `"` around the mxid
+              # needs no second layer of escaping. Verified against every
+              # matching line in Loki's 30-day retention (2026-08-15): all parse,
+              # and at ~2 signups/month the per-signup label cardinality is
+              # negligible. Non-matching lines would aggregate into one
+              # empty-label series, which reads as an unnamed signup rather than
+              # silently vanishing.
+              expr = "sum by (mxid, client_ip, device) (count_over_time({namespace=\"matrix\",container=\"matrix\"} |= \"registered on this server\" | regexp `New user \"(?P<mxid>[^\"]+)\" registered on this server from IP (?P<client_ip>\\S+) with device name (?P<device>.*)` [10m])) > 0"
+              for  = "0m"
+              # Raised info -> warning on 2026-08-15 when registration was closed.
+              # While signups were open this fired on every routine stranger and
+              # info was right; on a closed server a signup should only happen
+              # when Viktor deliberately runs `!admin users create-user`, so
+              # anything else means allow_registration has regressed.
+              labels = { severity = "warning", lane = "security" }
               annotations = {
-                summary     = "New user registered on Matrix (tuwunel) — open registration is ON"
-                description = "A new account was created on matrix.viktorbarzin.me. See who with: kubectl -n matrix logs deploy/matrix | grep 'New user'. If unexpected/abuse, revert to token-gated registration in stacks/matrix."
+                summary     = "New Matrix signup: {{ $labels.mxid }} from {{ $labels.client_ip }}"
+                description = "Client/device name: \"{{ $labels.device }}\". Registration on matrix.viktorbarzin.me has been CLOSED since 2026-08-15, so this is expected only if you just created the account yourself with `!admin users create-user`. If you did not, check that TUWUNEL_ALLOW_REGISTRATION is still false in stacks/matrix (a regression there reopens the server to strangers), then `!admin users deactivate {{ $labels.mxid }}` in the admin room."
               }
             },
           ]
@@ -685,6 +812,122 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               annotations = {
                 summary     = "Unusually high homelab vault fetch volume (>100/10m) for {{ $labels.user }}"
                 description = "A burst of credential fetches for one user — possible runaway loop or exfiltration. Cross-check the op-log parent process and the Vault audit stream (namespace=vault,container=audit-tail) for reads of secret/data/workstation/claude-users/{{ $labels.user }}."
+              }
+            },
+          ]
+        },
+        {
+          # Mail delivery failures (added 2026-08-21). Calibre-Web's "Send to
+          # Kindle" had been failing since the 2025-11-30 migration to
+          # calibre-web-automated, and nothing watched postfix's refusals, so it
+          # stayed invisible until someone noticed the books never arrived.
+          # Background on the credential itself: the init_container comment in
+          # stacks/ebooks/main.tf.
+          #
+          # Thresholds are measured, not guessed — checked against the full 30d
+          # Loki retention on 2026-08-21: the in-cluster reject filter matched 13
+          # lines in 30 days (all of them that one incident), and status=bounced
+          # and status=deferred each matched zero. So >0 really is the noise
+          # floor here. Rejecting inbound spam is constant and wanted, which is
+          # why none of these rules look at rejects in general.
+          #
+          # That gap is now closed. When this group shipped, 192.168.1.127
+          # (helo=pve.local) was being refused ~100-200x/24h and a rule for it
+          # would have fired continuously, so the class was left out. The cause
+          # turned out to be in-cluster reverse DNS rather than a missing record
+          # (fixed 2026-08-22), and InternalHostCannotSendMail below now covers
+          # it against a zero floor.
+          #
+          # Route: Loki ruler -> Alertmanager -> #alerts.
+          name = "Mail delivery"
+          rules = [
+            {
+              # One of our own services was refused relay. Postfix resolves
+              # in-cluster clients to *.svc.cluster.local, and an internet
+              # sender cannot forge that into the client position, so this
+              # separates "a service of ours cannot send mail" from ordinary
+              # spam rejection. The usual cause is credentials: mynetworks is
+              # deliberately empty, so SASL AUTH is the only relay path, and a
+              # service that fails to authenticate lands here.
+              alert  = "ClusterServiceCannotRelayMail"
+              expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"NOQUEUE: reject\" |~ `svc\\.cluster\\.local\\[` [15m])) > 0"
+              for    = "5m"
+              labels = { severity = "warning", subsystem = "mail" }
+              annotations = {
+                summary     = "An in-cluster service is being refused mail relay"
+                description = "A pod tried to send mail through the mailserver and was refused. Find the sender and the reason with: homelab logs query '{namespace=\"mailserver\"} |= \"NOQUEUE: reject\" |~ `svc.cluster.local[`' --since 1h — the line carries from=, to= and the helo, and the helo is the pod IP. A reject line with no sasl_username= means the client never authenticated, which is what happens when its stored password is unusable; check the sending service's SMTP credential against the secret it reads."
+              }
+            },
+            {
+              # A host of ours failed SASL AUTH. The constant background of
+              # failed logins comes from public IPs guessing usernames; scoping
+              # to private client IPs leaves only our own senders, where a
+              # failure means a real credential problem (rotated secret, stale
+              # copy) that is about to turn into undelivered mail.
+              alert  = "InternalMailAuthFailure"
+              expr   = "sum(count_over_time({namespace=\"mailserver\"} |~ `SASL (LOGIN|PLAIN) authentication failed` |~ `\\[(10\\.|192\\.168\\.)` [15m])) > 0"
+              for    = "5m"
+              labels = { severity = "warning", subsystem = "mail" }
+              annotations = {
+                summary     = "A host on the internal network is failing SMTP authentication"
+                description = "SASL AUTH is failing for a client on 10.x or 192.168.x — our own network, not an internet password-guesser. The sasl_username= on the log line names the account. Most likely its password was rotated in Vault while a consumer still holds the old copy. Check the failing service's secret and, for Calibre-Web specifically, that the seed-smtp-password init container ran clean."
+              }
+            },
+            {
+              # Permanent delivery failure after we accepted the message.
+              # Outbound mail leaves via the Brevo smarthost, so a rejection by
+              # the far end (Amazon refusing a Send-to-Kindle address that is no
+              # longer approved, for instance) comes back as a bounce rather
+              # than an SMTP error the sending app can see.
+              alert  = "OutboundMailBounced"
+              expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"status=bounced\" [1h])) > 0"
+              for    = "0m"
+              labels = { severity = "warning", subsystem = "mail" }
+              annotations = {
+                summary     = "Mail we accepted has bounced"
+                description = "Postfix logged status=bounced, so a message was accepted from a sender and then permanently rejected downstream — the sending application already reported success. Read the reason with: homelab logs query '{namespace=\"mailserver\"} |= \"status=bounced\"' --since 2h. For Send-to-Kindle, a bounce from Amazon usually means the From address is not on that Kindle's approved-sender list, or the @kindle.com address has changed."
+              }
+            },
+            {
+              # Sustained queue deferrals. A lone deferral is normal (remote
+              # greylisting) and clears itself, so this waits for a handful
+              # rather than firing on the first one.
+              alert  = "OutboundMailDeferred"
+              expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"status=deferred\" [1h])) > 5"
+              for    = "15m"
+              labels = { severity = "warning", subsystem = "mail" }
+              annotations = {
+                summary     = "Mail is piling up deferred in the queue (>5/1h)"
+                description = "More than five deferrals in an hour, against a 30d baseline of zero — mail is sitting in the queue rather than being delivered. Check the queue and the reason: kubectl -n mailserver exec deploy/mailserver -- postqueue -p, then homelab logs query '{namespace=\"mailserver\"} |= \"status=deferred\"' --since 2h. Common causes are the Brevo smarthost refusing or throttling us, and DNS resolution failing for the destination."
+              }
+            },
+            {
+              # A host on our own network refused relay for a reason other than
+              # authentication. In practice that means reverse DNS, since
+              # smtpd_sender_restrictions ends in reject_unknown_client_hostname:
+              # a client whose PTR is missing, or does not forward-confirm, is
+              # turned away with 450 4.7.25 and its mail is retried until the
+              # sending host gives up.
+              #
+              # Left out when this group shipped on 2026-08-21 because the
+              # Proxmox host was tripping it 100-217x/24h and the rule would
+              # have fired continuously. That was fixed on 2026-08-22 (CoreDNS
+              # gained a 1.168.192.in-addr.arpa block so pods can resolve LAN
+              # reverse DNS at all), and the floor is now zero, so >0 means
+              # something real.
+              #
+              # for=15m on purpose: a CoreDNS or Technitium blip makes reverse
+              # DNS fail for a few seconds and the sending host simply retries,
+              # so a shorter window would page for something that heals itself.
+              # Fifteen minutes of a host unable to send mail is still caught
+              # long before a person would notice.
+              alert  = "InternalHostCannotSendMail"
+              expr   = "sum(count_over_time({namespace=\"mailserver\"} |= \"cannot find your hostname\" |~ `\\[(10\\.|192\\.168\\.)` [15m])) > 0"
+              for    = "15m"
+              labels = { severity = "warning", subsystem = "mail" }
+              annotations = {
+                summary     = "An internal host is being refused mail relay — reverse DNS is failing"
+                description = "A host on 10.x or 192.168.x is getting 450 4.7.25 'cannot find your hostname', so its mail is not being accepted and will sit in its queue until it gives up. Find the host: homelab logs query '{namespace=\"mailserver\"} |= \"cannot find your hostname\"' --since 1h. Then check reverse DNS the way postfix does, from inside a pod: dig -x <ip> must return a name, and that name must resolve back to the same address. If the PTR resolves against Technitium (dig -x <ip> @10.96.0.53) but not through CoreDNS, the zone is missing a block in stacks/technitium/modules/technitium/main.tf — that was the 2026-08-22 fault, which had been silently discarding the nightly Proxmox backup report for a month."
               }
             },
           ]

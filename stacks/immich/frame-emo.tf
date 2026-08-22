@@ -81,8 +81,7 @@ resource "kubernetes_deployment" "immich-frame-emo" {
           # Always-pull: nodes had a STALE cached immich_v3 (pre-v1.0.34,
           # before Immich-v3 album loading was fixed) and IfNotPresent kept
           # reusing it, breaking ExcludedAlbums. Force a fresh pull.
-          image_pull_policy = "Always"
-          name              = "immich-frame-emo"
+          name = "immich-frame-emo"
           resources {
             requests = {
               cpu    = "10m"
@@ -124,6 +123,7 @@ resource "kubernetes_deployment" "immich-frame-emo" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 }
@@ -158,9 +158,11 @@ module "ingress_emo" {
   # via Technitium; the public internal-IP record covers any resolver).
   # LAN-only design: docs/plans/2026-07-04-immich-frame-lan-only-design.md.
   # auth = "none": kiosk WebView, no user auth by design; gated by the home-lans-only ipAllowList instead.
-  auth              = "none"
-  dns_type          = "internal"
-  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
+  auth     = "none"
+  dns_type = "internal"
+  # Ordering rationale in frame.tf / the middleware definition: error-pages-403
+  # only intercepts what is downstream of it, so it must precede the allowlist.
+  extra_middlewares = ["traefik-error-pages-403@kubernetescrd", "traefik-home-lans-only@kubernetescrd"]
   # Not externally reachable — explicit opt-out so external-monitor-sync
   # drops the old [External] monitor instead of default-opting it back in.
   external_monitor = false
@@ -169,7 +171,8 @@ module "ingress_emo" {
   tls_secret_name  = var.tls_secret_name
   service_name     = "immich-frame-emo"
   extra_annotations = {
-    "gethomepage.dev/icon" = "immich.png"
-    "gethomepage.dev/name" = "Immich Highlights (Emo)"
+    "gethomepage.dev/description" = "Immich photo frame feed for Emo's kiosk"
+    "gethomepage.dev/icon"        = "immich.png"
+    "gethomepage.dev/name"        = "Immich Highlights (Emo)"
   }
 }

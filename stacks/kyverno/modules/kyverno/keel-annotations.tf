@@ -12,9 +12,30 @@
 #
 # Phase rollout = label more namespaces. No edit to this file per phase.
 #
-# Workloads can individually opt out with the label keel.sh/policy=never
-# (used by the rollback runbook). The keel namespace itself is always
-# excluded (design decision #11 — supervisor must not auto-update).
+# Workloads can individually opt out with the ANNOTATION keel.sh/policy=never
+# (used by the rollback runbook) — never a label, see the exclude rule below.
+# The keel namespace itself is always excluded (design decision #11 —
+# supervisor must not auto-update).
+
+locals {
+  # Workloads that declare another controller as the owner of their container
+  # image. Defined once because the `keel-never-when-another-owner` rule below
+  # must apply it in BOTH places — `match` (which resources trigger the rule)
+  # and `mutate.targets` (which resources get patched). Those are different
+  # sets in Kyverno, and letting them drift is exactly how the first version of
+  # that rule set policy=never on all 229 workloads instead of 37.
+  #
+  # `Helm` here means a Terraform helm_release; `goauthentik.io` is the
+  # authentik server reconciling its own outposts. First-party apps carry no
+  # managed-by label at all, so they are untouched and keep auto-updating.
+  keel_second_owner_selector = {
+    matchExpressions = [{
+      key      = "app.kubernetes.io/managed-by"
+      operator = "In"
+      values   = ["Helm", "terraform", "goauthentik.io"]
+    }]
+  }
+}
 
 resource "kubectl_manifest" "policy_inject_keel_annotations" {
   yaml_body = yamlencode({
@@ -142,10 +163,21 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
             },
             {
               resources = {
-                selector = {
-                  matchLabels = {
-                    "keel.sh/policy" = "never"
-                  }
+                # Select on the ANNOTATION, not a label. Keel reads the
+                # annotation, so it is the real opt-out; the label was only
+                # ever here so this exclude had something to select on.
+                #
+                # A LABEL this policy adds is DRIFT on every stack that
+                # declares a `labels` map on the workload — the provider
+                # manages that map, so an undeclared key plans as a removal.
+                # Proven 2026-08-17: `kubernetes_deployment.forgejo` planned
+                #   ~ labels = { - "keel.sh/policy" = "never" -> null }
+                # and 10 stacks appeared in one night's drift report this way.
+                # Extra ANNOTATIONS do not diff the same way, which is why the
+                # trigger/pollSchedule pair below has never shown up in a plan.
+                # Keep every keel.sh/* mutation an annotation for that reason.
+                annotations = {
+                  "keel.sh/policy" = "never"
                 }
               }
             },
@@ -262,6 +294,124 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
             }
           }
         }
+        },
+        {
+          # ── Keel must not manage a workload that already has an owner ──
+          #
+          # The rule above enrolls EVERY workload in a keel-enrolled namespace
+          # (154 of them). It never asks whether something else is already
+          # authoritative over `spec.template.spec.containers[*].image`. Where
+          # a second owner exists, the two rewrite each other forever, and the
+          # fight is SILENT BY CONSTRUCTION: Keel logs an ordinary "resource
+          # updated", the other owner logs an ordinary reconcile, and neither
+          # knows the other exists. It only ever surfaces through an unrelated
+          # downstream symptom.
+          #
+          # Measured 2026-08-16: 37 of 206 Keel-managed Deployments declared a
+          # second owner — 28 `Helm` (which here means a Terraform
+          # helm_release), 7 `terraform`, 2 `goauthentik.io`. Three were
+          # actively flip-flopping that day:
+          #   - monitoring/prometheus-server  alpine:3.21 <-> 3.21.7 hourly,
+          #     11 ReplicaSets in 14h, which reset every alert `for:` timer and
+          #     made DriftStacksMany re-fire all day (see the Monitoring
+          #     section of .claude/CLAUDE.md).
+          #   - proxy/proxy-gw-1              gluetun :latest <-> pinned tag,
+          #     6 pod replacements in ~30 min, each dropping the VPN tunnel.
+          #   - authentik/ak-outpost-public   proxy:2026.2.6 <-> 2026.2.4 every
+          #     ~4h at deployment generation 497 — Keel DOWNGRADING an outpost
+          #     that the authentik server then reconciles back. Nobody knew.
+          # Before this rule the fix was applied by hand, per workload, five
+          # separate times (the five exporters 2026-05-31, postiz 2026-05-29,
+          # dbaas/mysql + proxy + prometheus all on 2026-08-16).
+          #
+          # Setting policy=never here is deliberate rather than adding these to
+          # the namespace/label exclude above: Kyverno's add-only mutate cannot
+          # REMOVE the `keel.sh/policy=patch` it has already stamped (the
+          # match-tag removal above needed a one-off kubectl sweep for exactly
+          # this reason), so an exclude alone would leave all 37 still fighting.
+          # A positive set is self-healing and needs no manual cleanup.
+          #
+          # Setting the annotation also makes the rule above exclude the
+          # workload outright on its next admission pass — Keel reads the
+          # annotation and that same annotation is what the exclude selects
+          # on. One field, one owner: see the exclude for why this must never
+          # become a label.
+          #
+          # This does NOT change the 2026-05-17 enrollment expansion. First-party
+          # apps — ghcr `:latest`/SHA tags, deployed by CI `kubectl set image`
+          # with the image in `ignore_changes` — carry no `managed-by` label and
+          # keep auto-updating exactly as before. Those are the workloads Keel
+          # exists for; these 37 are ones whose version is pinned somewhere else,
+          # where every Keel bump was reverted anyway.
+          #
+          # KNOWN GAP: `managed-by` UNDERCOUNTS. A raw `kubernetes_deployment`
+          # in Terraform carries no such label, so a TF-declared image without
+          # the `# KEEL_IGNORE_IMAGE` marker can still fight and is not caught
+          # here. The image-flip-flop detector (monitoring stack) is the
+          # backstop for that residue — it keys on observed behaviour, not on a
+          # label anyone has to remember to set.
+          name = "keel-never-when-another-owner"
+          match = {
+            any = [{
+              resources = {
+                kinds = ["Deployment", "StatefulSet", "DaemonSet"]
+                namespaceSelector = {
+                  matchLabels = {
+                    "keel.sh/enrolled" = "true"
+                  }
+                }
+                selector = local.keel_second_owner_selector
+              }
+            }]
+          }
+          mutate = {
+            # THE SELECTOR ON `targets` IS THE LOAD-BEARING PART, and it is
+            # easy to leave off by copying the rule above.
+            #
+            # In a Kyverno mutateExisting rule, match/exclude select the
+            # TRIGGER while `targets` selects WHAT GETS PATCHED — they are not
+            # the same set. The first version of this rule (2026-08-16, live
+            # for ~10 min) copied the rule above's UNSELECTED targets list, so
+            # every trigger event patched EVERY Deployment/StatefulSet/DaemonSet
+            # and the narrow match did nothing: 184 workloads with no second
+            # owner were set to policy=never and Keel stopped auto-updating
+            # anything cluster-wide. The rule above is only safe like that
+            # because its match is already as broad as its targets.
+            #
+            # `targets` cannot simply be dropped either — the policy sets
+            # `mutateExistingOnPolicyUpdate`, and Kyverno's validating webhook
+            # rejects the policy outright with
+            #   "rules[N].mutate.targets has to be specified when
+            #    mutateExistingOnPolicyUpdate is set"
+            # So the targets must carry the same selector as the match.
+            #
+            # VALIDATE ANY CHANGE HERE against the cluster's own webhook before
+            # pushing — `kubectl apply --dry-run=server -f <policy>.yaml`
+            # catches both of the above in seconds.
+            targets = [
+              { apiVersion = "apps/v1", kind = "Deployment", selector = local.keel_second_owner_selector },
+              { apiVersion = "apps/v1", kind = "StatefulSet", selector = local.keel_second_owner_selector },
+              { apiVersion = "apps/v1", kind = "DaemonSet", selector = local.keel_second_owner_selector },
+            ]
+            patchStrategicMerge = {
+              metadata = {
+                # No `+(...)` anchor: this must OVERWRITE the policy=patch the
+                # rule above already stamped, not preserve it. Annotation-only
+                # and label-only changes on the workload's own metadata do not
+                # touch the pod template, so applying this does not restart
+                # anything.
+                annotations = {
+                  "keel.sh/policy" = "never"
+                }
+                # NO label here. This rule set a matching LABEL until
+                # 2026-08-17, which made it drift against every stack that
+                # declares a `labels` map on the workload — the same
+                # two-owners-one-field fight this rule exists to end, just on
+                # labels instead of images. The exclude above now selects on
+                # the annotation, so nothing needs the label.
+              }
+            }
+          }
       }]
     }
   })

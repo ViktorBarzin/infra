@@ -48,6 +48,14 @@ locals {
   # Small relay range — 100 ports is plenty for a home lab (~50 concurrent streams)
   min_port = 49152
   max_port = 49252
+  # Dedicated MetalLB address (pool 10.0.20.200-220). It must NOT be the shared
+  # .200: sharing forces externalTrafficPolicy=Cluster, whose SNAT hides the real
+  # client from coturn and breaks STUN/TURN. Consumers that must track it:
+  #   • pfSense alias `coturn_lb` (the two coturn NAT rules)
+  #   • stacks/technitium static_records.tf  (internal turn.viktorbarzin.me)
+  #   • stacks/chrome-service COTURN_BACKEND_URL
+  #   • stacks/proxy broker COTURN_BACKEND_URL + gluetun FIREWALL_OUTBOUND_SUBNETS
+  lb_ip = "10.0.20.205"
 }
 
 resource "kubernetes_namespace" "coturn" {
@@ -219,18 +227,44 @@ resource "kubernetes_deployment" "coturn" {
 }
 
 # LoadBalancer service with MetalLB — exposes STUN/TURN signaling + relay ports
+#
+# DEDICATED IP + externalTrafficPolicy: Local (2026-08-11). This used to share
+# 10.0.20.200 with nine other services, which forced ETP=Cluster (MetalLB refuses
+# mixed policies on a shared IP) — and Cluster means kube-proxy SNATs every
+# client, so coturn saw a node IP instead of the real peer. That is fatal for
+# STUN/TURN rather than merely untidy: coturn told a probe running on the public
+# internet that its address was 10.0.20.103, so the srflx candidates it hands out
+# are internal addresses and no relay-based ICE pair can complete. Both neko
+# browsers (chrome-service and proxy) sat at ICE `checking` forever because of it.
+#
+# Same reasoning and remedy as Traefik's move to its own .203 — see
+# docs/plans/2026-05-30-traefik-dedicated-ip-etp-local-*.
+#
+# Requires the matching pfSense NAT: the two coturn rules (3478 tcp/udp, and the
+# 49152-49252/udp relay range) target the `coturn_lb` alias, NOT the shared
+# `k8s_shared_lb` alias the other nine services use. Keep the alias and this
+# address in step.
 resource "kubernetes_service" "coturn" {
   metadata {
     name      = "coturn"
     namespace = kubernetes_namespace.coturn.metadata[0].name
     annotations = {
-      "metallb.io/loadBalancerIPs" = "10.0.20.200"
-      "metallb.io/allow-shared-ip" = "shared"
+      "metallb.io/loadBalancerIPs" = local.lb_ip
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type = "LoadBalancer"
+    # Preserves the client source address, which STUN/TURN fundamentally needs.
+    # Only nodes running a coturn pod answer for this IP; MetalLB announces from
+    # whichever node holds the endpoint.
+    external_traffic_policy = "Local"
     selector = {
       app = "coturn"
     }

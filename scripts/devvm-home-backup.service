@@ -1,0 +1,20 @@
+[Unit]
+Description=Daily file-level incremental backup of devvm /home to sda
+Documentation=https://forgejo.viktorbarzin.me/viktor/infra/src/branch/main/docs/architecture/backup-dr.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/devvm-home-backup
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=devvm-home-backup
+# 3h budget. A steady-state run is minutes (rsync only reads deltas), but the
+# FIRST run copies ~33 GB and every later run still has to stat ~555k files
+# across a live home dir on the contended sdc spindle. rsync itself carries
+# --timeout=3600 for a stalled transfer; this is the outer wall-clock stop.
+TimeoutStartSec=10800
+# Keep the scan off sdc's critical path — this is a background housekeeping job,
+# never worth starving a VM or etcd for.
+Nice=10
+IOSchedulingClass=idle

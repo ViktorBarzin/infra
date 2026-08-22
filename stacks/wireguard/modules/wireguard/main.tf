@@ -106,9 +106,8 @@ resource "kubernetes_deployment" "wireguard" {
           }
         }
         container {
-          image             = "sclevine/wg:latest"
-          name              = "wireguard"
-          image_pull_policy = "IfNotPresent"
+          image = "sclevine/wg:latest"
+          name  = "wireguard"
           lifecycle {
             post_start {
               # Switch the container's `iptables` symlink to iptables-nft
@@ -169,36 +168,6 @@ resource "kubernetes_deployment" "wireguard" {
           }
         }
 
-        container {
-          name              = "prometheus-exporter"
-          image             = "mindflavor/prometheus-wireguard-exporter"
-          image_pull_policy = "IfNotPresent"
-          command           = ["prometheus_wireguard_exporter", "-a", "true", "-v", "true", "-n", "/etc/wireguard/wg0.conf"]
-          volume_mount {
-            name       = "wg0-conf"
-            mount_path = "/etc/wireguard/wg0.conf"
-            sub_path   = "wg0.conf"
-          }
-          security_context {
-            capabilities {
-              add = ["NET_ADMIN"]
-            }
-          }
-          port {
-            container_port = 9586
-            protocol       = "TCP"
-          }
-          resources {
-            requests = {
-              cpu    = "10m"
-              memory = "32Mi"
-            }
-            limits = {
-              memory = "32Mi"
-            }
-          }
-        }
-
         # Reconciles portal-registered roaming peers onto the live wg0. The
         # vpn-portal (secret/vpn-portal wg_peers) registers only client PUBLIC
         # keys (client-side keygen); the ExternalSecret renders them to
@@ -208,9 +177,8 @@ resource "kubernetes_deployment" "wireguard" {
         # in peers.txt, so the STATIC peers baked into wg0.conf are never
         # removed. peers.txt absent (no registrations yet) → no-op.
         container {
-          name              = "wg-peer-sync"
-          image             = "sclevine/wg:latest"
-          image_pull_policy = "IfNotPresent"
+          name  = "wg-peer-sync"
+          image = "sclevine/wg:latest"
           command = ["/bin/sh", "-c", <<-EOT
             set -u
             STATE=/run/wg-managed/managed.list
@@ -257,6 +225,35 @@ resource "kubernetes_deployment" "wireguard" {
             }
           }
         }
+
+        container {
+          name    = "prometheus-exporter"
+          image   = "mindflavor/prometheus-wireguard-exporter"
+          command = ["prometheus_wireguard_exporter", "-a", "true", "-v", "true", "-n", "/etc/wireguard/wg0.conf"]
+          volume_mount {
+            name       = "wg0-conf"
+            mount_path = "/etc/wireguard/wg0.conf"
+            sub_path   = "wg0.conf"
+          }
+          security_context {
+            capabilities {
+              add = ["NET_ADMIN"]
+            }
+          }
+          port {
+            container_port = 9586
+            protocol       = "TCP"
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "32Mi"
+            }
+          }
+        }
         volume {
           name = "wg0-key"
           secret {
@@ -288,6 +285,19 @@ resource "kubernetes_deployment" "wireguard" {
         }
       }
     }
+  }
+  lifecycle {
+    # dns_config is declared explicitly above (ndots=2), so it already matches
+    # what Kyverno injects — no KYVERNO_LIFECYCLE_V1 line needed here.
+    ignore_changes = [
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[1].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[2].image,                     # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 
@@ -346,6 +356,12 @@ resource "kubernetes_service" "wireguard" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type                    = "LoadBalancer"
     external_traffic_policy = "Cluster"

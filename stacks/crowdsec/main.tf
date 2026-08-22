@@ -29,8 +29,11 @@ module "crowdsec" {
   crowdsec_dash_machine_id       = data.vault_kv_secret_v2.secrets.data["crowdsec_dash_machine_id"]
   crowdsec_dash_machine_password = data.vault_kv_secret_v2.secrets.data["crowdsec_dash_machine_password"]
   slack_webhook_url              = data.vault_kv_secret_v2.secrets.data["alertmanager_slack_api_url"]
-  # Real enforcement replacing the dead Traefik plugin: kvsync feeds the proxied
-  # edge Worker via Cloudflare KV; firewall is the direct-host nftables bouncer.
-  kvsync_bouncer_key   = data.vault_kv_secret_v2.secrets.data["kvsync_bouncer_key"]
+  # Enforcement bouncers. traefik is the in-process L7 plugin and the only one
+  # that covers Cloudflare-proxied hosts (i.e. every HTTP host in the zone);
+  # firewall is the direct-host nftables bouncer. The kvsync key went with the
+  # Cloudflare edge list on 2026-08-18; secret/platform still holds the now-unused
+  # kvsync_bouncer_key field, deliberately left rather than deleted.
+  traefik_bouncer_key  = data.vault_kv_secret_v2.secrets.data["traefik_bouncer_key"]
   firewall_bouncer_key = data.vault_kv_secret_v2.secrets.data["firewall_bouncer_key"]
 }

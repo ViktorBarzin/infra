@@ -249,9 +249,8 @@ resource "kubernetes_deployment" "yt_highlights" {
           effect = "NoSchedule"
         }
         container {
-          name              = "yt-highlights"
-          image             = "viktorbarzin/yt-highlights:v20-20260127"
-          image_pull_policy = "Always"
+          name  = "yt-highlights"
+          image = "viktorbarzin/yt-highlights:v20-20260127"
           port {
             container_port = 8000
           }

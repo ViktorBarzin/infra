@@ -16,6 +16,14 @@ resource "kubernetes_secret" "tls_secret" {
     "tls.crt" = file("${path.root}/secrets/fullchain.pem")
     "tls.key" = file("${path.root}/secrets/privkey.pem")
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: the sync-tls-secret policy stamps
+    # generate.kyverno.io/clone-source onto its own source Secret (with a null
+    # value), so Terraform planned to strip it on every run and this stack never
+    # went clean. Same treatment the shared setup_tls_secret module already
+    # applies downstream. Added 2026-08-14.
+    ignore_changes = [metadata[0].labels]
+  }
 }
 
 resource "kubectl_manifest" "sync_tls_secret" {

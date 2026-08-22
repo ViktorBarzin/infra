@@ -108,10 +108,32 @@ resource "kubernetes_deployment" "pages_publish" {
     # Own single-tag :latest image (ADR-0002) — Keel polls the digest and rolls
     # the deployment. force+poll is safe here: this is our own single-tag repo,
     # not the multi-tag-upstream hazard the CLAUDE.md force-policy warning is about.
+    #
+    # `match-tag` is REQUIRED for that to actually happen, and its absence is why
+    # this deployment silently stopped auto-deploying (found 2026-08-17: ghcr
+    # :latest had moved to a new digest and the pod still ran the old one across
+    # ~3 poll windows). Without it Keel registers only a "watch repository tags"
+    # job — it scans for NEW TAGS, which never appear in a repo that only ever
+    # publishes `:latest` + a commit SHA — and logs `digest=` empty. With it Keel
+    # registers a "watch tag digest" job and rolls on a digest change under the
+    # same tag string. `k8s-portal` and `interview-prep-app` declare it for
+    # exactly this reason; they roll, this did not.
+    #
+    # It is stripped fleet-wide by the Kyverno add-keel-annotations rule after
+    # the 2026-06-01 incident (post-mortems/2026-06-01-keel-match-tag-image-swap.md),
+    # where `force + match-tag` cross-assigned container images and took the blog
+    # down ~6 days. That hazard needs a MULTI-IMAGE pod sharing a floating tag —
+    # this pod runs one container, so there is no sibling image to swap with.
+    # Verified with `kubectl annotate --dry-run=server` that admission keeps it.
+    #
+    # Deliberately NOT in lifecycle.ignore_changes below: if a recreate ever loses
+    # it to admission, an apply must put it back and the nightly drift report must
+    # be able to see it missing. Silent loss here means silent no-deploys.
     annotations = {
       "keel.sh/policy"       = "force"
       "keel.sh/trigger"      = "poll"
       "keel.sh/pollSchedule" = "@every 5m"
+      "keel.sh/match-tag"    = "true"
     }
   }
 
@@ -255,6 +277,7 @@ resource "kubernetes_deployment" "pages_publish" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
 
@@ -284,13 +307,16 @@ resource "kubernetes_service" "pages_publish" {
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": bearer-token API, Authentik would break programmatic clients
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = local.namespace
-  name            = "pages-publish"
+  auth      = "none"
+  dns_type  = "proxied"
+  namespace = local.namespace
+  name      = "pages-publish"
   # Route to the Service's 8080 (svc-builder put it on 8080, not the
   # ingress_factory default 80) — otherwise Traefik can't resolve the backend
   # port and POST /publish returns a stray 405 while GET falls through.
   port            = 8080
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/description" = "Publishing API behind pages.viktorbarzin.me"
+  }
 }

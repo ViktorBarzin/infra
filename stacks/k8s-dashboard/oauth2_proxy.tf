@@ -142,7 +142,8 @@ resource "kubernetes_deployment" "oauth2_proxy" {
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
-      metadata[0].labels["tier"], # stamped from namespace tier label
+      metadata[0].labels["tier"],                                         # stamped from namespace tier label
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }

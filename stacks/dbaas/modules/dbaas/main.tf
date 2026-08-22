@@ -101,7 +101,19 @@ resource "kubernetes_config_map" "mysql_standalone_cnf" {
       # DETECTION; recovery is restore-from-backup. OK with BBU+UPS+daily
       # mysqldump. Dynamic (no restart). code-oflt 2026-06-30.
       innodb_doublewrite=DETECT_ONLY
-      innodb_flush_neighbors=1
+      # 0, not 1 (2026-08-16). Neighbour flushing drags every contiguous dirty
+      # page in the extent along with the one being flushed, betting that the
+      # resulting sequential write is cheaper than the extra pages. That bet
+      # does not pay here: writes to sdc land in the PERC H730's write-back
+      # cache (measured 0.50 ms/write, faster than a 7200 rpm spindle can
+      # physically do), which already coalesces and reorders, and sdc sits
+      # under an LVM thin pool, so "contiguous" at the filesystem layer is not
+      # contiguous on the platter anyway. Measured before the change: 3.88M
+      # page writes/day against only ~880k row writes — 4.4x amplification —
+      # for 64.9 GB/day, of which 62 GB was page flushing (Innodb_data_written
+      # over Uptime). Dynamic, no restart. Also note MySQL's own default is 0;
+      # the 1 here was a deliberate HDD-era choice, not an inherited default.
+      innodb_flush_neighbors=0
       innodb_lru_scan_depth=256
       innodb_page_cleaners=1
       innodb_adaptive_flushing_lwm=10
@@ -119,14 +131,24 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
       "app.kubernetes.io/name"      = "mysql"
       "app.kubernetes.io/instance"  = "mysql-standalone"
       "app.kubernetes.io/component" = "primary"
-      # 2026-05-26: defense-in-depth on top of the annotation below. The
-      # Kyverno `inject-keel-annotations` ClusterPolicy reads this LABEL
-      # via its `exclude.any[].resources.selector.matchLabels` rule, so
-      # even if the dbaas namespace exclude were lost the label still
-      # bypasses the mutation. Without the label, a Kyverno reconcile
-      # had silently overwritten our annotation=never → patch this turn
-      # and Keel patch-bumped mysql:8.4.8 → 8.4.9, stalling the DD upgrade.
-      "keel.sh/policy" = "never"
+      # There was a `keel.sh/policy = "never"` LABEL here from 2026-05-26 to
+      # 2026-08-17, as defense-in-depth on top of the annotation below: the
+      # Kyverno `inject-keel-annotations` exclude used to select on that label
+      # (`exclude.any[].resources.selector.matchLabels`), so it bypassed the
+      # mutation even if the dbaas namespace exclude were lost. It earned its
+      # place — without it a Kyverno reconcile had overwritten annotation=never
+      # → patch and Keel patch-bumped mysql:8.4.8 → 8.4.9, stalling the DD
+      # upgrade.
+      #
+      # Removed because that exclude now selects on the ANNOTATION, and because
+      # Kyverno stamping a keel.sh/* label is drift against every stack that
+      # declares a `labels` map (see stacks/kyverno/.../keel-annotations.tf).
+      # What protects this StatefulSet now: the `+(keel.sh/policy)` preserve
+      # anchor in that policy never overwrites an existing annotation value —
+      # the 2026-05-26 overwrite came from an earlier version that did — plus
+      # the dbaas namespace exclude, plus the annotation-based exclude. Lifting
+      # the opt-out still MUST go through the upgrade plan referenced below.
+      #
       # Declared because the sync-tier-label-from-namespace Kyverno policy
       # stamps it live; without it every apply strips the label and the
       # policy re-adds it (perma-drift that fed provider identity bugs).
@@ -316,6 +338,17 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Kyverno stamps these two onto every workload in a keel-enrolled
+      # namespace. They are NOT declared here, so without the ignore every
+      # apply plans to strip them and Kyverno immediately re-adds them —
+      # dbaas showed this same two-line diff on every nightly drift run.
+      # `keel.sh/policy` is deliberately absent from this list: it IS declared
+      # in TF as "never", which is what keeps mysql pinned at 8.4.8 after the
+      # 2026-05-18 Keel bump to 8.4.9 forced a PVC wipe + dump-restore. Leaving
+      # policy TF-owned means a future change to it still shows up as drift,
+      # which is what we want for this one.
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       # StatefulSet volumeClaimTemplates are immutable post-creation, and the
       # pvc-autoresizer rewrites their annotations on the live object
       # (storage_limit/threshold), so TF's desired VCT can never apply and a
@@ -882,8 +915,9 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   auth            = "required"
   extra_annotations = {
-    "gethomepage.dev/icon" = "phpmyadmin.png"
-    "gethomepage.dev/name" = "phpMyAdmin"
+    "gethomepage.dev/description" = "MySQL admin UI (phpMyAdmin)"
+    "gethomepage.dev/icon"        = "phpmyadmin.png"
+    "gethomepage.dev/name"        = "phpMyAdmin"
   }
 }
 
@@ -1374,6 +1408,33 @@ resource "null_resource" "pg_job_hunter_db" {
   }
 }
 
+# Create goodreads_sync database for the Goodreads -> Calibre pipeline.
+# Holds one row per shelf item (outcome, reason, md5, calibre id) so each book is
+# attempted once and a miss can be explained later.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-goodreads-sync`, 7d rotation).
+resource "null_resource" "pg_goodreads_sync_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "goodreads_sync"
+    username = "goodreads_sync"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'goodreads_sync'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE goodreads_sync WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'goodreads_sync'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE goodreads_sync OWNER goodreads_sync"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE goodreads_sync TO goodreads_sync"
+        '
+    EOT
+  }
+}
+
 # Create lesson_harvester database for the lesson-harvester service.
 # Role password is managed by Vault Database Secrets Engine (static role `pg-lesson-harvester`, 7d rotation).
 resource "null_resource" "pg_lesson_harvester_db" {
@@ -1767,6 +1828,9 @@ module "ingress-pgadmin" {
   name            = "pgadmin"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  extra_annotations = {
+    "gethomepage.dev/description" = "PostgreSQL admin UI"
+  }
 }
 
 

@@ -20,9 +20,25 @@ variable "claude_agent_service_image_tag" {
 
 # Kill switch for auto-dispatch. When false, both CronJobs are suspended. The
 # manual BeadBoard Dispatch button keeps working either way.
+#
+# OFF since 2026-08-16 (Viktor). Auto-dispatch was polling and finding nothing:
+# every run logged "no eligible beads (assignee=agent, status=open, has
+# acceptance_criteria)" because no bead is assigned to `agent` at all, and none
+# had been for as long as Loki retains. The dispatcher fired every 2 minutes and
+# the reaper every 10, so the pair cost ~864 pod creations/day to do nothing.
+#
+# That is not free on this host: each pod create/destroy writes containerd
+# overlay layers, a kubelet pod dir, /var/log/pods and a systemd transient
+# scope, plus the ext4 journal metadata for all of it — small random writes,
+# which is precisely what the shared sdc spindle is short of. The dispatcher
+# also runs the claude-agent-service image, much heavier than the alpine jobs
+# around it, so a cold node pays an image pull on top.
+#
+# Flip back to true to restore auto-dispatch; nothing else needs changing, and
+# manual dispatch from BeadBoard is unaffected meanwhile.
 variable "beads_dispatcher_enabled" {
   type    = bool
-  default = true
+  default = false
 }
 
 resource "kubernetes_namespace" "beads" {
@@ -279,6 +295,12 @@ resource "kubernetes_service" "dolt" {
       "metallb.universe.tf/loadBalancerIPs" = "10.0.20.200"
       "metallb.io/allow-shared-ip"          = "shared"
     }
+  }
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
   }
   spec {
     type                    = "LoadBalancer"

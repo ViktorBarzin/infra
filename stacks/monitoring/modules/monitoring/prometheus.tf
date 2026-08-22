@@ -73,6 +73,16 @@ resource "helm_release" "prometheus" {
   values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, haos_api_token = var.haos_api_token, authentik_walloff_targets = local.authentik_walloff_targets })]
 }
 
+# Keel opt-out for this Deployment lives ENTIRELY in the annotation — see the
+# long note on `server.deploymentAnnotations` in prometheus_chart_values.tpl.
+# Keel reads the annotation, and since 2026-08-17 the Kyverno exclude rule
+# selects on that same annotation too (stacks/kyverno/.../keel-annotations.tf).
+#
+# There was a `kubernetes_labels.prometheus_server_keel_optout` here until
+# 2026-08-17, stamping a matching keel.sh/policy LABEL for the exclude to
+# select on. Removed: a keel.sh/* label is drift against any stack declaring a
+# `labels` map on the workload, and it bought nothing the annotation does not.
+
 # Local-only Prometheus query-API ingress for ha-sofia REST sensors (added
 # 2026-06-05). ha-sofia (external HAOS) reads R730 iDRAC SNMP metrics
 # (r730_idrac_coolingDeviceReading, etc.) by querying Prometheus directly via
@@ -97,6 +107,57 @@ module "prometheus-query-ingress" {
   port                    = 80
   ingress_path            = ["/api/v1/query"]
   extra_annotations = {
-    "gethomepage.dev/icon" = "prometheus.png"
+    "gethomepage.dev/description" = "Prometheus query API"
+    "gethomepage.dev/icon"        = "prometheus.png"
+  }
+}
+
+# OTLP metric ingest for Claude Code's native telemetry
+# (docs/adr/0025-claude-session-telemetry.md). Claude sessions on the devvm
+# export claude_code.* metrics over OTLP/HTTP to
+# /api/v1/otlp/v1/metrics, enabled by the otlp-write-receiver feature flag in
+# prometheus_chart_values.tpl.
+#
+# A SEPARATE ingress rather than another path on prometheus-query: that one is
+# documented as read-only and named for it, and this one accepts writes.
+#
+# The host is .me, not .lan, for a TLS reason rather than a routing one. The
+# wildcard certificate covers *.viktorbarzin.me only, so a .lan host fails
+# hostname verification — which the existing LAN clients work around with
+# insecure_skip_verify. Claude's exporter is inside the Claude process, and the
+# only way to relax verification there is NODE_TLS_REJECT_UNAUTHORIZED, which
+# would also stop verifying its calls to the Anthropic API. A hostname the
+# certificate already covers avoids the problem instead of suppressing it.
+module "prometheus-otlp-ingress" {
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # auth = "none": an OTLP exporter is not a browser and holds no SSO cookie;
+  # Authentik would 302 every push. The LAN allowlist is the gate, exactly as
+  # for prometheus-query above.
+  auth                    = "none"
+  namespace               = kubernetes_namespace.monitoring.metadata[0].name
+  name                    = "prometheus-otlp"
+  service_name            = "prometheus-server"
+  root_domain             = "viktorbarzin.me"
+  tls_secret_name         = var.tls_secret_name
+  allow_local_access_only = true
+  ssl_redirect            = false
+  port                    = 80
+  ingress_path            = ["/api/v1/otlp"]
+  # A .me host defaults to dns_type = "none", which since the wildcard
+  # consolidation (ADR-0021) is NOT private — every recordless name resolves
+  # through the tunnel and reaches Traefik. "internal" publishes the internal
+  # Traefik LB address instead, so the name resolves anywhere but only routes
+  # from the LAN/VPN. The IP allowlist above is the actual gate; this keeps a
+  # write endpoint off the public path entirely.
+  dns_type = "internal"
+  # Internal-only, so no Uptime Kuma external monitor — one would probe from
+  # outside and be permanently red.
+  external_monitor = false
+  # Telemetry arrives in bursts at each export interval, from every active
+  # session at once. The default rate limit is sized for browsers.
+  skip_default_rate_limit = true
+  extra_annotations = {
+    "gethomepage.dev/description" = "Prometheus OTLP metric ingest for Claude Code telemetry (LAN only)"
+    "gethomepage.dev/icon"        = "prometheus.png"
   }
 }

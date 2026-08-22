@@ -14,12 +14,15 @@
 # monorepo's plans/ tree of published HTML plan snapshots (infra#72); the
 # Caddyfile splits the two sites by Host header, module "ingress_plans" below.
 #
-# Access is OWNER-ONLY: the repo is Viktor's, so only his Authentik identity
-# (vbarzin, injected by authentik-forward-auth as a full email) is served;
-# everyone else gets 403. Other users get their own repo wired in if they
-# ever adopt /teach. In-cluster callers could spoof the header by curling
-# the Service directly — same trust class as ttyd/t3-dispatch, recorded in
-# the ADR.
+# Access is GROUP-GATED, then open within the group: Authentik admits only
+# "Home Server Admins" (vbarzin, emil.barzin — see module "ingress_pages"),
+# and from 2026-08-09 every admitted identity can read every page space.
+# pages/<user>/ is an authoring namespace, not an access boundary; unlisted
+# identities still get 403. Before that date each identity was pinned to its
+# own directory, which meant a page URL handed to the other person resolved
+# against THEIR directory and 404'd — sharing a link simply did not work.
+# In-cluster callers could spoof the header by curling the Service directly —
+# same trust class as ttyd/t3-dispatch, recorded in the ADR.
 #
 # Deploy key: read-only on ViktorBarzin/monorepo ("learn-viewer git-sync"),
 # private key + github known_hosts in Vault secret/learn (ssh, known_hosts)
@@ -109,11 +112,17 @@ resource "kubernetes_config_map" "caddyfile" {
       	handle /healthz {
       		respond "ok" 200
       	}
-      	# pages.viktorbarzin.me: per-user private page spaces (pages/<user>/) + a
-      	# shared area (pages/shared/), served from the git-synced monorepo pages/
-      	# tree. Each Authentik identity maps to a STATIC directory below — the
-      	# untrusted X-Authentik-Username header is never interpolated into a path,
-      	# so a spoofed value can't drive traversal. /assets/* is the shared
+      	# pages.viktorbarzin.me: per-user page spaces (pages/<user>/) + a shared
+      	# area (pages/shared/), served from the git-synced monorepo pages/ tree.
+      	# Every page is readable by every identity that clears the Authentik gate
+      	# (allowed-groups "Home Server Admins" — see the ingress below); the
+      	# per-user split is a NAMESPACE for authoring, not an access boundary
+      	# (Viktor, 2026-08-09). Each identity still maps to STATIC try_files
+      	# candidates — the untrusted X-Authentik-Username header is never
+      	# interpolated into a path, so a spoofed value can't drive traversal.
+      	# Own space is tried FIRST so existing bare-filename URLs keep resolving
+      	# to their author's page; the other spaces are the fallback, which is what
+      	# makes a handed-over link work instead of 404ing. /assets/* is the shared
       	# stylesheet+mermaid. plans.viktorbarzin.me 301-redirects here (renamed
       	# from plans/ 2026-07-26). learn.viktorbarzin.me is served by the separate 'learning' app stack
       	# (PWA; repointed 2026-07-27).
@@ -140,12 +149,22 @@ resource "kubernetes_config_map" "caddyfile" {
       		root * /repo/src/current/pages
       		file_server
       	}
+      	# pages/tools/ is the renderer's source, not published content — the
+      	# try_files fallthrough below would otherwise expose it at /tools/*.
+      	@pages_tools {
+      		host pages.viktorbarzin.me
+      		path /tools/*
+      	}
+      	handle @pages_tools {
+      		respond "Not Found" 404
+      	}
       	@pages_wizard {
       		host pages.viktorbarzin.me
       		header_regexp X-Authentik-Username ^vbarzin(@.*)?$
       	}
       	handle @pages_wizard {
-      		root * /repo/src/current/pages/wizard
+      		root * /repo/src/current/pages
+      		try_files /wizard{path} /wizard{path}index.html /emo{path} /emo{path}index.html /shared{path} /shared{path}index.html
       		file_server
       	}
       	@pages_emo {
@@ -153,7 +172,8 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^emil\.barzin(@.*)?$
       	}
       	handle @pages_emo {
-      		root * /repo/src/current/pages/emo
+      		root * /repo/src/current/pages
+      		try_files /emo{path} /emo{path}index.html /wizard{path} /wizard{path}index.html /shared{path} /shared{path}index.html
       		file_server
       	}
       	handle {
@@ -299,7 +319,14 @@ resource "kubernetes_deployment" "learn" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].container[1].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 

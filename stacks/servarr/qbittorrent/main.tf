@@ -220,6 +220,12 @@ resource "kubernetes_service" "qbittorrent-torrenting" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type                    = "LoadBalancer"
     external_traffic_policy = "Cluster"
@@ -250,7 +256,19 @@ resource "kubernetes_cron_job_v1" "qbittorrent_ratio_monitor" {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/5 * * * *"
+    # */30 since 2026-08-16 (was */5). This is not a probe — it exports per-tracker
+    # ratio metrics, reconciles the queue preferences (incl. the load-bearing
+    # dont_count_slow_torrents) and reaps dead torrents, so it is kept. But at
+    # */5 it was 288 pod creations a day AND a `pip install requests` on every
+    # one (14 MB to the node container layer per run, ~3.9 GB/day) — the
+    # status-page-pusher anti-pattern.
+    #
+    # Nothing here needs 5-minute resolution: ratios move over hours, and the
+    # reaper only acts on torrents with zero progress, no seeders AND older than
+    # STALLED_MAX_AGE (3 days). The one real cost is that a preference changed
+    # in the qBittorrent UI now sticks for up to 30 minutes before being
+    # reverted, instead of 5.
+    schedule = "*/30 * * * *"
     job_template {
       metadata {}
       spec {
@@ -308,7 +326,7 @@ resource "kubernetes_config_map" "ratio_monitor_script" {
   }
   data = {
     "monitor.py" = <<-PYEOF
-import requests, json, sys
+import requests, json, sys, time
 from collections import defaultdict
 from urllib.parse import urlparse
 
@@ -318,11 +336,21 @@ PUSHGW = "http://prometheus-prometheus-pushgateway.monitoring:9091"
 # Completed private-tracker torrents must remain announceable. A low active
 # upload limit leaves them in queuedUP: qBittorrent's local seed clock still
 # advances, but the tracker sees no seed time and records hit-and-runs.
+# Stalled torrents must not hold active download slots. Seen 2026-08-08: five
+# 0%-complete, 0-seeder mam-farming torrents occupied all 5 download slots
+# indefinitely, so every healthy queued download sat at queuedDL forever and
+# only a manual force-start moved them. With this on, a torrent transferring
+# below slow_torrent_dl_rate_threshold (2 KiB/s) for longer than
+# slow_torrent_inactive_timer (60 s) stops counting toward the active limits,
+# so unfinishable torrents release their slot instead of squatting on it.
+# This also helps the seeding concern above rather than working against it:
+# slow seeders stop consuming upload slots, so more stay announceable.
 required_queue_preferences = {
     "queueing_enabled": True,
     "max_active_downloads": 5,
     "max_active_uploads": 500,
     "max_active_torrents": 505,
+    "dont_count_slow_torrents": True,
 }
 
 try:
@@ -351,6 +379,42 @@ try:
 except Exception as e:
     print(f"ERROR: {e}", file=sys.stderr)
     sys.exit(1)
+
+# Reap unfinishable downloads. mam-farming kept queuing torrents with no
+# seeders; before dont_count_slow_torrents they held every active download slot
+# and starved real downloads, and they still accumulate in the queue and leave
+# empty save directories behind. Only genuinely dead ones are removed: zero
+# progress AND no seeders AND older than the age limit. A PARTIAL download is
+# deliberately left alone even when stalled — it holds real data and may resume
+# if a seeder returns. Requiring num_complete <= 0 also spares a torrent that
+# simply has not announced yet, and the age limit gives a slow swarm days to
+# appear before anything is deleted.
+STALLED_MAX_AGE = 259200  # 3 days
+now = time.time()
+dead = [
+    t for t in torrents
+    if (t.get("progress") or 0) == 0
+    and t.get("state") in ("stalledDL", "queuedDL", "downloading", "metaDL")
+    and (t.get("num_complete") or 0) <= 0
+    and now - (t.get("added_on") or now) > STALLED_MAX_AGE
+]
+reaped = 0
+if dead:
+    try:
+        resp = requests.post(
+            f"{QB_URL}/api/v2/torrents/delete",
+            data={"hashes": "|".join(t["hash"] for t in dead), "deleteFiles": "true"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        reaped = len(dead)
+        for t in dead:
+            age_days = (now - (t.get("added_on") or now)) / 86400
+            print(f"Reaped dead torrent (0 pct, no seeders, {age_days:.1f}d old): {t.get('name')}")
+        gone = set(t["hash"] for t in dead)
+        torrents = [t for t in torrents if t["hash"] not in gone]
+    except Exception as e:
+        print(f"ERROR reaping dead torrents: {e}", file=sys.stderr)
 
 try:
     transfer = requests.get(f"{QB_URL}/api/v2/transfer/info", timeout=10).json()
@@ -457,6 +521,9 @@ qbt_dl_speed_bytes {dl_speed}
 # HELP qbt_ul_speed_bytes Current upload speed
 # TYPE qbt_ul_speed_bytes gauge
 qbt_ul_speed_bytes {ul_speed}
+# HELP qbt_dead_torrents_reaped Dead torrents removed this run (0 pct, no seeders, past the age limit)
+# TYPE qbt_dead_torrents_reaped gauge
+qbt_dead_torrents_reaped {reaped}
 """
 resp = requests.post(
     f"{PUSHGW}/metrics/job/qbt-ratio-monitor/tracker/global",

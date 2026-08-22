@@ -220,9 +220,18 @@ else
         #   Retain). Nextcloud moved to nextcloud-data-encrypted on 2026-04-13;
         #   this old unencrypted PV lingers (Retain) and was still being backed
         #   up weekly, filling the offsite Synology. Stop copying it (2026-06-01).
+        #   repowise/repowise-workspace — the Corpus: git clones of every
+        #   Forgejo repo plus their derived SQLite indexes. Entirely
+        #   regenerable (the reconciler re-clones and reindexes from scratch),
+        #   and every byte of it already lives in Forgejo, which is backed up.
+        #   LVM snapshots are kept for 7-day rollback; only the offsite legs
+        #   are skipped. Same rationale as ollama / prometheus-backup.
         case "${ns_pvc}" in
             nextcloud/nextcloud-data-proxmox)
                 log "  skip ${ns_pvc} (orphaned pre-encryption PVC)"
+                continue ;;
+            repowise/repowise-workspace)
+                log "  skip ${ns_pvc} (regenerable index, live-only)"
                 continue ;;
         esac
 
@@ -250,8 +259,33 @@ else
             fi
         fi
 
-        # Mount snapshot read-only, rsync files
-        if timeout 30 mount -o "${MOUNT_OPTS}" "${MOUNT_DEV}" "${PVC_MOUNT}" 2>&1; then
+        # Mount snapshot read-only, rsync files.
+        #
+        # 120s, retried once, since 2026-08-16 (was a single 30s attempt).
+        # freshrss was skipped on 2026-08-16 with a bare "Failed to mount
+        # snapshot" and no error text from mount itself — the signature of
+        # `timeout` SIGTERM-ing it rather than mount reporting a problem. That
+        # run's PVC phase took 50 minutes against 17 the day before for the
+        # same 77 PVCs, so the spindle was heavily contended; both `ro` and
+        # `ro,noload` mount the same snapshot fine when it is not.
+        #
+        # 30s was also the tightest budget in the script by a wide margin
+        # (rsync 1800s, sqlite 300s, /etc/pve rsync 300s) while being the step
+        # that has to activate a thin snapshot on the contended disk. One
+        # missed PVC costs a day of history for that volume AND marks the whole
+        # backup failed, which is a poor trade against waiting another 90s.
+        mount_ok=0
+        for attempt in 1 2; do
+            if timeout 120 mount -o "${MOUNT_OPTS}" "${MOUNT_DEV}" "${PVC_MOUNT}" 2>&1; then
+                mount_ok=1
+                [ "${attempt}" -eq 2 ] && log "  mount of ${snap} succeeded on retry"
+                break
+            fi
+            # A partial mount would make the retry fail with EBUSY; clear it.
+            umount "${PVC_MOUNT}" 2>/dev/null || true
+            [ "${attempt}" -eq 1 ] && sleep 5
+        done
+        if [ "${mount_ok}" -eq 1 ]; then
             dst="${BACKUP_ROOT}/pvc-data/${WEEK}/${ns_pvc}"
             mkdir -p "${dst}"
             rsync_rc=0

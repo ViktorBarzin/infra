@@ -17,6 +17,11 @@ ENGINE="$WORKSTATION_DIR/roster_engine.py"
 ROSTER="$WORKSTATION_DIR/roster.yaml"
 ENVDIR=/etc/t3-serve
 MAP=/etc/ttyd-user-map
+# Who administers this box, one OS user per line, derived from roster.yaml's
+# tier: admin. Read by terminal-lobby's act-as switch, which lets an admin work
+# as another mapped user. Authentik groups cannot answer this — every devvm user
+# is in "Home Server Admins", which is what gets them to the lobby host at all.
+ADMINS=/etc/ttyd-admins
 DRY_RUN="${DRY_RUN:-0}"
 # Public infra repo for the locked clone (no auth; the monorepo has no remote).
 INFRA_REMOTE="${INFRA_REMOTE:-https://github.com/ViktorBarzin/infra.git}"
@@ -29,9 +34,11 @@ REPO_REMOTE_BASE="${REPO_REMOTE_BASE:-https://forgejo.viktorbarzin.me/viktor}"
 # Per-user OIDC kubeconfig (kubelogin/PKCE; cluster server+CA copied from the admin kubeconfig).
 OIDC_ISSUER="${OIDC_ISSUER:-https://authentik.viktorbarzin.me/application/o/kubernetes/}"
 ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
-# OS users (space-separated) that receive the vendored agent skills (scripts/workstation/claude-skills).
-# Allowlist: install_skills no-ops for anyone not listed. Extend here to roll out to more users.
-SKILL_USERS="${SKILL_USERS:-emo}"
+# Shared agent rules (docs/agents/shared/*.md) copied into EVERY user's
+# ~/.claude/rules/. Lives in wizard's PRIVATE monorepo, not in this repo: the
+# homelab rules carry internal topology (IPs, hostnames) and this repo's GitHub
+# mirror is public. Same reason ADMIN_KUBECONFIG points outside the repo.
+SHARED_RULES_DIR="${SHARED_RULES_DIR:-/home/wizard/code/docs/agents/shared}"
 
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
@@ -160,7 +167,10 @@ install_user_repo() {
 # propagates claudeMd/model edits to /etc — and thus every user's NEXT session —
 # within one reconcile cycle. No manual install step.
 sync_managed_config() {
-  local src="$WORKSTATION_DIR/managed-settings.json" dst=/etc/claude-code/managed-settings.json
+  # MANAGED_SRC is origin/master's copy when step 0a could fetch one, and the
+  # working tree otherwise — set there, defaulted here so this stays callable
+  # on its own.
+  local src="${MANAGED_SRC:-$WORKSTATION_DIR/managed-settings.json}" dst=/etc/claude-code/managed-settings.json
   [[ -r "$src" ]] || return 0
   python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$src" 2>/dev/null \
     || { log "WARN: $src is invalid JSON — managed-config sync skipped"; return 0; }
@@ -356,9 +366,25 @@ env_unset() {
 # Vault token is minted only when this reconcile has admin Vault access (normal
 # onboarding/deployment); routine token renewal is performed by the user service.
 install_claude_auth_sync() {
-  local user="$1" home cfg token_file token policy
+  local user="$1" want="${2:-true}" home cfg token_file token policy
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -z "$home" ]] && return 0
+
+  # roster.yaml `claude_auth: false` — the user has an account here but does
+  # not use Claude on this box. The timer validates a credential that was
+  # never created, so it fails every ~6h forever and raises
+  # WorkstationClaudeAuthInvalid with nothing anyone can fix (ancamilea,
+  # 2026-08-16: alerting since 2026-08-10). DISABLE rather than skip: this
+  # reconcile runs hourly against users who may already have it enabled, so a
+  # bare `return` would leave a previously-enabled timer running forever.
+  # Nothing else is touched — account, clone, t3-serve, Vault token and policy
+  # all stay, so flipping the flag back to true re-enables on the next pass.
+  if [[ "$want" != "true" ]]; then
+    run systemctl disable --now "claude-auth-sync@$user.timer" >/dev/null 2>&1 || true
+    run systemctl reset-failed "claude-auth-sync@$user.service" >/dev/null 2>&1 || true
+    log "claude-auth-sync DISABLED for $user (roster claude_auth: false)"
+    return 0
+  fi
   cfg="$home/.config/claude-auth-sync"
   token_file="$cfg/vault-token"
   policy="workstation-claude-$user"
@@ -466,10 +492,48 @@ install_playwright() {
     log "WARN: claude not found for $user -> playwright MCP not wired (retries next run)"
   fi
 
-  # (3) enable the system template instances. `enable --now` is idempotent and
+  # (3) retire the hand-made `systemd --user` units the template unit replaced.
+  #     Enabling the system instance is NOT enough on a box that predates it:
+  #     the old user unit keeps running with its own HARDCODED --port, the new
+  #     one cannot bind, and it crash-loops on EADDRINUSE forever. Found
+  #     2026-08-14 with all three users broken and 184k-187k restarts each,
+  #     wizard's and ancamilea's ports cross-wired (each holding the other's).
+  #     The unit file is renamed rather than deleted so the retirement is
+  #     visible and reversible.
+  retire_legacy_playwright_units "$user"
+
+  # (4) enable the system template instances. `enable --now` is idempotent and
   #     does NOT restart a running unit, so a live user is undisturbed.
+  if [[ "${2:-false}" == "true" ]]; then
+    # roster `parked: true` — stop the per-user browser MCP rather than skip it,
+    # for the same reason as claude-auth-sync: this reconcile also runs against
+    # users who already have it enabled, so a bare skip leaves it running.
+    run systemctl disable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
+    run systemctl disable --now "playwright-snapshot-refresh@$user.timer" >/dev/null 2>&1 || true
+    run systemctl reset-failed "playwright-mcp@$user.service" >/dev/null 2>&1 || true
+    run systemctl reset-failed "playwright-snapshot-refresh@$user.service" >/dev/null 2>&1 || true
+    log "playwright MCP DISABLED for $user (roster parked: true)"
+    return 0
+  fi
   run systemctl enable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
   run systemctl enable --now "playwright-snapshot-refresh@$user.timer" >/dev/null 2>&1 || true
+}
+
+# Stop + disable + rename the pre-template per-user playwright units, if present.
+# Idempotent: a user who never had them, or was already migrated, is a no-op.
+retire_legacy_playwright_units() {
+  local user="$1" home uid unit f
+  home="$(getent passwd "$user" | cut -d: -f6)" || return 0
+  uid="$(id -u "$user" 2>/dev/null)" || return 0
+  for unit in playwright-mcp.service playwright-snapshot-refresh.timer playwright-snapshot-refresh.service; do
+    f="$home/.config/systemd/user/$unit"
+    [[ -f "$f" ]] || continue
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] retire legacy $unit -> $user"; continue; fi
+    runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" \
+      systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+    mv "$f" "$f.superseded-by-system-unit"
+    log "retired legacy user unit $unit for $user (superseded by the system template)"
+  done
 }
 
 # Per-user homelab-memory setup — migrate off the claude-memory MCP/plugin to the
@@ -488,10 +552,10 @@ install_memory() {
 
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] memory: hooks + settings wire + claude_memory MCP removal -> $user"; return 0; fi
 
-  # (1) (re)install the 4 hook scripts, owned by the user (refreshed each reconcile so fixes land)
+  # (1) (re)install the hook scripts, owned by the user (refreshed each reconcile so fixes land)
   install -d -o "$user" -g "$user" -m 0755 "$hooks_dst"
   local h
-  for h in homelab-memory-recall.py auto-learn.py pre-compact-backup.sh post-compact-recovery.sh; do
+  for h in homelab-memory-recall.py auto-learn.py pre-compact-backup.sh post-compact-recovery.sh zsh-guard.py; do
     install -o "$user" -g "$user" -m 0755 "$src/$h" "$hooks_dst/$h"
   done
 
@@ -522,61 +586,116 @@ install_memory() {
   return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the whole reconcile
 }
 
-# Per-user agent skills, vendored from the in-repo snapshot ($WORKSTATION_DIR/claude-skills) — the
-# `npx skills` upstream drifted off this exact set, so we reproduce it offline + deterministically.
-# if-absent + ADDITIVE: copies a skill dir into ~/.agents/skills/<name> (owned by the user) and
-# symlinks ~/.claude/skills/<name> -> ../../.agents/skills/<name> (the layout `skills add -g`
-# produces; Claude Code reads ~/.claude/skills/). Scoped to SKILL_USERS. if-absent keys on the
-# user's OWN copy, so it heals a stale/cross-user ~/.claude/skills symlink but never clobbers a real
-# skill dir. Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
-install_skills() {
-  local user="$1" home
+# Shared agent rules -> every user's ~/.claude/rules/, re-copied when the source
+# changes. Before this, only the org claudeMd reached everyone: homelab.md was a
+# symlink in wizard's home (emo never had it) and execution.md/planning.md were
+# loose per-user files under no version control, so emo's had drifted months
+# behind. Adding a user now inherits the whole set with no hand-copy to go stale.
+#
+# 99-personal.md is created once and NEVER overwritten — it is the per-user slot
+# that keeps "mine" separable from "everyone's".
+# Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
+install_shared_rules() {
+  local user="$1" home rules src dst base personal
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n "$home" && -d "$home" ]] || return 0
-  case " $SKILL_USERS " in *" $user "*) ;; *) return 0 ;; esac
-  local src_root="$WORKSTATION_DIR/claude-skills"
-  [[ -d "$src_root" ]] || { log "WARN: $src_root missing -> skip skills for $user"; return 0; }
+  [[ -d "$SHARED_RULES_DIR" ]] || { log "WARN: $SHARED_RULES_DIR missing -> skip shared rules for $user"; return 0; }
+  rules="$home/.claude/rules"
+  run install -d -o "$user" -g "$user" -m 0755 "$rules" || return 0
 
-  if [[ "$DRY_RUN" == 1 ]]; then
-    local d names=""
-    for d in "$src_root"/*/; do [[ -d "$d" ]] && names+="$(basename "$d") "; done
-    echo "[dry-run] vendor skills if-absent -> $user: ${names}"
-    return 0
-  fi
-
-  local agents_dir="$home/.agents/skills" claude_dir="$home/.claude/skills"
-  # own the parent ~/.agents too (install -d leaves created intermediates root-owned)
-  install -d -o "$user" -g "$user" -m 0755 "$home/.agents" "$agents_dir" "$claude_dir"
-  chown "$user:$user" "$home/.agents" || true
-
-  local skill name dst link n=0
-  for skill in "$src_root"/*/; do
-    [[ -d "$skill" ]] || continue
-    name="$(basename "$skill")"
-    dst="$agents_dir/$name"
-    link="$claude_dir/$name"
-    # if-absent keys on the user's OWN copy (a real dir under ~/.agents/skills), NOT on any
-    # pre-existing ~/.claude/skills entry — so a stale or cross-user symlink gets healed.
-    if [[ ! -d "$dst" ]]; then
-      cp -a "$src_root/$name" "$dst" || { log "WARN: copy skill $name -> $user failed"; continue; }
-      chown -R "$user:$user" "$dst" || true
-      n=$((n+1))
-    fi
-    # point ~/.claude/skills/<name> at the user's own copy (replacing a stale/cross-user symlink);
-    # never clobber a real dir/file squatting that name.
-    if [[ -d "$link" && ! -L "$link" ]]; then
-      log "WARN: $claude_dir/$name is a real dir (left as-is) for $user"
-    elif [[ "$(readlink "$link" 2>/dev/null)" != "../../.agents/skills/$name" ]]; then
-      ln -sfn "../../.agents/skills/$name" "$link" && chown -h "$user:$user" "$link" || log "WARN: link skill $name -> $user failed"
-    fi
+  for src in "$SHARED_RULES_DIR"/*.md; do
+    [[ -r "$src" ]] || continue
+    base="$(basename "$src")"
+    [[ "$base" == "README.md" ]] && continue   # explains the layout; not a rule
+    dst="$rules/$base"
+    cmp -s "$src" "$dst" 2>/dev/null && continue
+    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] shared rule $base -> $user"; continue; fi
+    install -o "$user" -g "$user" -m 0644 "$src" "$dst" \
+      && log "shared rule $base -> $user (source changed)"
   done
-  if [[ "$n" -gt 0 ]]; then log "vendored/healed $n skill(s) -> $user"; fi
-  return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the reconcile
+
+  # Retire the pre-2026-08-15 layout once its replacement is in place, or the
+  # same rules load twice — and for emo the stale copy would load alongside the
+  # current one.
+  [[ -e "$rules/10-homelab.md" && -L "$rules/homelab.md" ]] && run rm -f "$rules/homelab.md"
+  [[ -e "$rules/20-execution.md" && -f "$rules/execution.md" ]] && run rm -f "$rules/execution.md"
+  [[ -e "$rules/30-planning.md"  && -f "$rules/planning.md"  ]] && run rm -f "$rules/planning.md"
+
+  personal="$rules/99-personal.md"
+  if [[ ! -e "$personal" && "$DRY_RUN" != 1 ]]; then
+    install -o "$user" -g "$user" -m 0644 /dev/stdin "$personal" <<'PERSONAL'
+# Personal rules — yours alone
+
+The provisioner never writes this file, so anything here survives every
+reconcile. Everything else in this directory is shared and WILL be overwritten
+from `docs/agents/shared/` — edit it there if the change should reach everyone.
+
+Use this for preferences that are genuinely yours: how you like output framed,
+tools you prefer, shortcuts that would not make sense for someone else.
+PERSONAL
+    log "created personal rules slot for $user"
+  fi
+  return 0
 }
 
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
+
+# 0a) run what is COMMITTED, not what happens to be in a working tree.
+#
+# $WORKSTATION_DIR is the admin's own checkout. refresh_user_clone runs only for
+# tier != admin and bails on any dirty tree, so a pushed change to the roster, to
+# this script, or to the engine reached this box only when someone synced the file
+# by hand. With membership driven from Authentik through a CI commit, that gap
+# would stop the chain with no error anywhere: CI reports success, the box keeps
+# the previous state, and a removed user stays provisioned.
+#
+# So fetch once, as the checkout's owner (their git credentials, not root's), and
+# materialise the three inputs from origin/master. EVERY failure path falls back
+# to the working-tree copy — today's behaviour — because a network blip must
+# degrade to "slightly stale" rather than to "no users at all". The re-exec flag
+# skips the fetch on the second pass, so a self-deploy costs one fetch, not two.
+STATEDIR="${STATEDIR:-/var/lib/t3-provision}"
+if [[ "$DRY_RUN" != 1 ]]; then install -d -m 0755 "$STATEDIR"; fi
+clone_root="$(cd "$WORKSTATION_DIR/../.." && pwd)"
+clone_owner="$(stat -c %U "$clone_root" 2>/dev/null || echo root)"
+gitc=(-c filter.git-crypt.smudge=cat -c filter.git-crypt.clean=cat -c filter.git-crypt.required=false)
+committed() {  # committed <repo-path> <dest>; 0 when dest now holds origin/master's copy
+  local src="$1" dst="$2"
+  runuser -u "$clone_owner" -- git -C "$clone_root" "${gitc[@]}" show "origin/master:$src" > "$dst.tmp" 2>/dev/null \
+    && [[ -s "$dst.tmp" ]] && mv "$dst.tmp" "$dst" && return 0
+  rm -f "$dst.tmp"; return 1
+}
+if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
+  if runuser -u "$clone_owner" -- env GIT_TERMINAL_PROMPT=0 git -C "$clone_root" "${gitc[@]}" \
+       fetch --quiet origin master 2>/dev/null; then
+    committed scripts/t3-provision-users.sh "$STATEDIR/t3-provision-users.committed.sh" || true
+    committed scripts/workstation/roster_engine.py "$STATEDIR/roster_engine.committed.py" || true
+    committed scripts/workstation/managed-settings.json "$STATEDIR/managed-settings.committed.json" || true
+    if committed scripts/workstation/roster.yaml "$STATEDIR/roster.committed.yaml" &&
+       python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; sys.exit(0 if d.get("users") else 1)' \
+         "$STATEDIR/roster.committed.yaml" 2>/dev/null; then
+      cmp -s "$STATEDIR/roster.committed.yaml" "$ROSTER" || log "roster: using origin/master (working tree differs)"
+    else
+      log "WARN: no usable roster from origin/master — falling back to $ROSTER"
+      rm -f "$STATEDIR/roster.committed.yaml"
+    fi
+  else
+    log "WARN: git fetch failed — running from the working tree at $WORKSTATION_DIR"
+  fi
+fi
+# Point the three inputs at whatever we managed to materialise; each falls back
+# independently, so a partial failure still runs with the rest committed.
+[[ -s "$STATEDIR/roster.committed.yaml" ]] && ROSTER="$STATEDIR/roster.committed.yaml"
+[[ -s "$STATEDIR/roster_engine.committed.py" ]] && ENGINE="$STATEDIR/roster_engine.committed.py"
+# The org-wide Claude config is an input like the others, and it was the one
+# still read from the working tree. On this box that tree carries other people's
+# in-flight edits and sits behind origin/master for days at a time, so a landed
+# rule or hook change reached the repo and stopped there — which is the same gap
+# step 0 closes for this script itself.
+MANAGED_SRC="$WORKSTATION_DIR/managed-settings.json"
+[[ -s "$STATEDIR/managed-settings.committed.json" ]] && MANAGED_SRC="$STATEDIR/managed-settings.committed.json"
 
 # 0) self-deploy: the repo is the authoring surface (like sync_managed_config /
 #    deploy_user_launcher below). Historically nothing else redeployed
@@ -587,6 +706,9 @@ for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" 
 #    re-exec flag (no loop), bash -n (never deploy a broken script), DRY_RUN (no
 #    mutation), cmp (no churn when unchanged).
 SELF_SRC="$WORKSTATION_DIR/../t3-provision-users.sh"
+# Prefer origin/master's copy (0a) so landing a change to this script is
+# enough to deploy it; the working tree remains the fallback.
+[[ -s "$STATEDIR/t3-provision-users.committed.sh" ]] && SELF_SRC="$STATEDIR/t3-provision-users.committed.sh"
 SELF_DST=/usr/local/bin/t3-provision-users
 if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" && -r "$SELF_SRC" ]] && ! cmp -s "$SELF_SRC" "$SELF_DST"; then
   if [[ "$DRY_RUN" == 1 ]]; then
@@ -613,9 +735,20 @@ fi
 #     checks; the version is stamped via -ldflags from cli/VERSION anyway.
 build_homelab_cli() {
   local src="$WORKSTATION_DIR/../../cli" dst=/usr/local/bin/homelab
-  local want have="" tmp
-  want="$(cat "$src/VERSION" 2>/dev/null || true)"
-  [[ -n "$want" ]] || { log "WARN: $src/VERSION unreadable -> skip homelab CLI rebuild"; return 0; }
+  local semver srchash want have="" tmp
+  semver="$(cat "$src/VERSION" 2>/dev/null || true)"
+  [[ -n "$semver" ]] || { log "WARN: $src/VERSION unreadable -> skip homelab CLI rebuild"; return 0; }
+  # The rebuild trigger is a HASH OF THE SOURCE, not the hand-written VERSION.
+  # Gating on VERSION alone meant a code change with an unbumped file silently
+  # never reached anyone's PATH -- master looked correct, tests passed, and the
+  # box kept running the old binary. That bit us three times on 2026-08-15
+  # alone, the last found only when a test agent ran a flag the machine did not
+  # have. A content hash cannot be forgotten, so VERSION goes back to being
+  # what it should be: a human-facing label, free to lag without breaking
+  # deployment.
+  srchash="$(cat "$src"/*.go "$src"/go.mod "$src"/go.sum 2>/dev/null | sha256sum | cut -c1-12)"
+  [[ -n "$srchash" ]] || { log "WARN: cannot hash $src -> skip homelab CLI rebuild"; return 0; }
+  want="${semver}+${srchash}"
   [[ -x "$dst" ]] && have="$("$dst" --version 2>/dev/null | awk '{print $2}')" || true
   [[ "$have" == "$want" ]] && return 0
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] rebuild homelab CLI (${have:-absent} -> $want)"; return 0; fi
@@ -625,7 +758,21 @@ build_homelab_cli() {
   fi
   tmp="$(mktemp /usr/local/bin/.homelab.XXXXXX)" || { log "WARN: mktemp failed -> skip homelab CLI rebuild"; return 0; }
   # build to a same-fs temp then rename: a mid-flight caller never sees a torn binary
-  if (cd "$src" && go build -buildvcs=false -ldflags "-X main.version=$want" -o "$tmp" .) \
+  # Build entirely off /tmp and off $HOME. Both bite here (found 2026-08-16):
+  #   * /tmp is a 2 GB tmpfs SHARED BY EVERY USER on this box, and it sat at 99%
+  #     full -- go writes its work tree there, so every rebuild died with
+  #     "no space left on device" while the root filesystem had 29 GB free. The
+  #     script swallows build output, so this surfaced only as the generic
+  #     "build failed" warning and the box quietly kept an old binary for a day.
+  #   * systemd runs this unit with HOME=[], so an unqualified `go build` cannot
+  #     resolve its module/build caches either (`go env GOCACHE` reports "off").
+  # Pinning all three to root-owned paths on disk makes the hourly run and a
+  # manual run build identically, and immune to whatever else fills /tmp.
+  mkdir -p /var/cache/homelab-go/{build,mod,tmp} 2>/dev/null || true
+  if (cd "$src" && HOME=/root TMPDIR=/var/cache/homelab-go/tmp \
+        GOCACHE=/var/cache/homelab-go/build \
+        GOMODCACHE=/var/cache/homelab-go/mod \
+        go build -buildvcs=false -ldflags "-X main.version=$want" -o "$tmp" .) \
       && chmod 0755 "$tmp" && mv -f "$tmp" "$dst"; then
     log "homelab CLI rebuilt (${have:-absent} -> $want)"
   else
@@ -684,7 +831,7 @@ sync_tmux_persist
 # 4) per-account: create-if-absent + ADDITIVE tier groups (never strip) + locked clone
 # NB: empty @tsv fields collapse under tab-IFS read (tab is IFS whitespace), so
 # the jq below emits "-" for empty groups/repos and we map it back here.
-while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv; do
+while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv claude_auth; do
   [[ "$groups_csv" == "-" ]] && groups_csv=""
   [[ "$repos_csv" == "-" ]] && repos_csv=""
   if ! id "$os_user" >/dev/null 2>&1; then
@@ -726,8 +873,8 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv; do
   fi
   refresh_codex_mirror "$os_user"            # all tiers — mirror of the managed claudeMd
   install_user_claude_native "$os_user"      # all tiers — per-user native claude (terminal + t3); no npm/npx
-  install_claude_auth_sync "$os_user"        # all tiers — own Claude identity + isolated Vault recovery
-done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end)] | @tsv' "$desired_file")
+  install_claude_auth_sync "$os_user" "$claude_auth"   # all tiers unless roster claude_auth: false
+done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring)] | @tsv' "$desired_file")
 
 # 5) per-user .env (sticky port) + enable t3-serve@
 while IFS=$'\t' read -r os_user port; do
@@ -736,6 +883,19 @@ while IFS=$'\t' read -r os_user port; do
   # Per-user Enterprise login is authoritative. A legacy shared setup-token has
   # higher credential precedence and would silently defeat user isolation.
   env_unset "$envf" CLAUDE_CODE_OAUTH_TOKEN
+  if [[ "$(jq -r --arg u "$os_user" '.accounts[$u].parked // false' "$desired_file")" == "true" ]]; then
+    # roster `parked: true` — the T3 Code server is the largest per-user daemon
+    # on this shared box; stop it (not just skip) so an already-running instance
+    # actually goes away. The .env, sticky port and state are left alone, so
+    # unparking restores the same instance on the same port.
+    run systemctl disable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
+    # `t3 serve` exits 130 (SIGINT) when stopped and the unit does not declare
+    # that as success, so a clean stop still lands the unit in `failed` and
+    # shows up red in `systemctl --failed`. Clear it; the stop was deliberate.
+    run systemctl reset-failed "t3-serve@$os_user.service" >/dev/null 2>&1 || true
+    log "t3-serve DISABLED for $os_user (roster parked: true)"
+    continue
+  fi
   id "$os_user" >/dev/null 2>&1 && run systemctl enable --now "t3-serve@$os_user.service" >/dev/null 2>&1 || true
 done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 
@@ -746,7 +906,7 @@ done < <(jq -r '.ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 while IFS=$'\t' read -r os_user pw_port; do
   id "$os_user" >/dev/null 2>&1 || continue
   env_set "$ENVDIR/playwright-$os_user.env" PLAYWRIGHT_PORT "$pw_port"
-  install_playwright "$os_user"
+  install_playwright "$os_user" "$(jq -r --arg u "$os_user" '.accounts[$u].parked // false' "$desired_file")"
 done < <(jq -r '.playwright_ports | to_entries[] | [.key, .value] | @tsv' "$desired_file")
 
 # 5d) per-user homelab-memory (ALL users): replace the claude-memory MCP/plugin with the
@@ -757,12 +917,23 @@ while IFS=$'\t' read -r os_user; do
   install_memory "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
 
-# 5e) per-user agent skills (SKILL_USERS allowlist only): vendored snapshot -> ~/.agents/skills
-#     + ~/.claude/skills symlinks. if-absent + additive; best-effort (never aborts the reconcile).
+# 5d-bis) shared agent rules -> every user's ~/.claude/rules/ (all users, no allowlist:
+#     these are the rules, not an opt-in extra). Personal slot created once, never rewritten.
 while IFS=$'\t' read -r os_user; do
   id "$os_user" >/dev/null 2>&1 || continue
-  install_skills "$os_user"
+  install_shared_rules "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
+
+# 5e) per-user agent skills: RETIRED 2026-08-19. The reconcile used to vendor a
+#     snapshot from scripts/workstation/claude-skills into ~/.agents/skills plus
+#     ~/.claude/skills symlinks, install-if-absent and allowlisted to one user via
+#     SKILL_USERS. That got a starter set onto the box reliably, and it did two
+#     things we now want differently: a copy never refreshed after its first
+#     install, and the set was chosen centrally rather than by each person.
+#     Distribution is now the lobby's Skills settings group (terminal-lobby
+#     ADR-0011, skills-api :7688), where each user sees every other user's skills
+#     and installs the ones they want. Existing copies on disk were left exactly
+#     as they were, so nobody lost a skill in the switch.
 
 # 5b) machine-wide (once, not per-user): keep the t3 gated nightly TRACKER timer enabled (it
 #     follows t3@nightly daily, gated; see t3-autoupdate.sh / docs/runbooks/t3-version-bump.md).
@@ -777,13 +948,73 @@ run systemctl enable t3-autoupdate.timer >/dev/null 2>&1 || true
 run systemctl enable --now tmux-persist-save.timer >/dev/null 2>&1 || true
 run systemctl enable tmux-persist-restore.service >/dev/null 2>&1 || true
 
-# 6) regenerate /etc/ttyd-user-map + dispatch.json from the desired state (SSoT:
-#    a roster entry removed here DISAPPEARS, which is what the offboarding cut relies on)
+# 6) regenerate /etc/ttyd-user-map + /etc/ttyd-admins + dispatch.json from the
+#    desired state (SSoT: a roster entry removed here DISAPPEARS, which is what
+#    the offboarding cut relies on — and a demotion from tier: admin drops that
+#    user out of $ADMINS on the next reconcile, within the hour)
 if [[ "$DRY_RUN" == 1 ]]; then
-  log "[dry-run] would regenerate $MAP + $ENVDIR/dispatch.json"
+  log "[dry-run] would regenerate $MAP + $ADMINS + $ENVDIR/dispatch.json"
 else
   jq -r '.ttyd_user_map' "$desired_file" > "$MAP.tmp" && install -m 0644 "$MAP.tmp" "$MAP" && rm -f "$MAP.tmp"
+  jq -r '.ttyd_admins' "$desired_file" > "$ADMINS.tmp" && install -m 0644 "$ADMINS.tmp" "$ADMINS" && rm -f "$ADMINS.tmp"
   jq -c '.dispatch' "$desired_file" > "$ENVDIR/dispatch.json.tmp" && install -m 0644 "$ENVDIR/dispatch.json.tmp" "$ENVDIR/dispatch.json" && rm -f "$ENVDIR/dispatch.json.tmp"
+fi
+
+# 7) the REVERSIBLE CUT for anyone who left the roster since the last reconcile.
+#
+# roster_engine.offboard_plan has computed these five actions since the feature
+# was designed and nothing has ever applied them, so a removal left half its
+# work — the map and dispatch dropped the user (step 6), while their daemons kept
+# running and their login stayed open, waiting for someone to remember the
+# runbook. This closes that.
+#
+# The diff is against a SNAPSHOT of the roster this script last applied, so each
+# cut fires exactly once, on the transition, rather than every hour forever. No
+# snapshot (first run after this shipped) means nothing to compare: record one and
+# do nothing, which is also what makes this safe to deploy while people are using
+# the box.
+#
+# unmap_dispatch is already done by step 6. remove_from_t3_group belongs to the
+# Authentik side, which is where the removal STARTS now, so there is nothing to
+# do here. revoke_cluster_rbac is deliberately not applied: T3 Users means devvm
+# access, and someone off this box may still legitimately own a namespace.
+# userdel_archive is never applied here, by design.
+applied_snapshot="$STATEDIR/roster.applied.yaml"
+if [[ -s "$applied_snapshot" ]]; then
+  # Through the engine's CLI, like validate/derive — never by importing this
+  # module from an inline heredoc: a module executed outside sys.modules cannot
+  # resolve its own dataclass annotations, and the first cut of this failed
+  # exactly that way. The failure is LOGGED rather than swallowed; a cut that
+  # cannot be computed must not read as "nobody left".
+  if ! cut_plan="$(python3 "$ENGINE" deprovision --old "$applied_snapshot" --new "$ROSTER")"; then
+    log "WARN: could not compute the offboard diff — no cut applied this run"
+    cut_plan=""
+  fi
+  for gone in $cut_plan; do
+    # Never cut an account that is not there, and never cut root by a typo.
+    id "$gone" >/dev/null 2>&1 || { log "cut: $gone has no account — nothing to do"; continue; }
+    [[ "$gone" != "root" ]] || continue
+    # Named in the log rather than left to `run`'s echo: every call below sends
+    # its output to /dev/null (systemctl is noisy about units that were never
+    # enabled), which would take the dry-run echo with it — and a dry run that
+    # cannot show what it would do is not worth having.
+    cut_units=("t3-serve@$gone.service" "playwright-mcp@$gone.service"
+               "playwright-snapshot-refresh@$gone.timer" "claude-auth-sync@$gone.timer"
+               "tl-t3-sync@$gone.service")
+    log "cut: $gone left the roster — disable ${cut_units[*]}; passwd -l $gone (data untouched)"
+    for unit in "${cut_units[@]}"; do
+      run systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    done
+    run passwd -l "$gone" >/dev/null 2>&1 || true
+    log "cut: $gone done — account, home, clones, ports and Vault backups all kept"
+  done
+fi
+# Record what this run applied, for the next run's diff. Written LAST so a failed
+# reconcile does not claim credit for a state it never reached.
+if [[ "$DRY_RUN" == 1 ]]; then
+  log "[dry-run] would snapshot the applied roster -> $applied_snapshot"
+else
+  install -m 0644 "$ROSTER" "$applied_snapshot"
 fi
 
 log "reconcile complete ($([[ "$DRY_RUN" == 1 ]] && echo DRY-RUN || echo applied))"
