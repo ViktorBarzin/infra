@@ -167,7 +167,10 @@ install_user_repo() {
 # propagates claudeMd/model edits to /etc — and thus every user's NEXT session —
 # within one reconcile cycle. No manual install step.
 sync_managed_config() {
-  local src="$WORKSTATION_DIR/managed-settings.json" dst=/etc/claude-code/managed-settings.json
+  # MANAGED_SRC is origin/master's copy when step 0a could fetch one, and the
+  # working tree otherwise — set there, defaulted here so this stays callable
+  # on its own.
+  local src="${MANAGED_SRC:-$WORKSTATION_DIR/managed-settings.json}" dst=/etc/claude-code/managed-settings.json
   [[ -r "$src" ]] || return 0
   python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$src" 2>/dev/null \
     || { log "WARN: $src is invalid JSON — managed-config sync skipped"; return 0; }
@@ -669,6 +672,7 @@ if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then
        fetch --quiet origin master 2>/dev/null; then
     committed scripts/t3-provision-users.sh "$STATEDIR/t3-provision-users.committed.sh" || true
     committed scripts/workstation/roster_engine.py "$STATEDIR/roster_engine.committed.py" || true
+    committed scripts/workstation/managed-settings.json "$STATEDIR/managed-settings.committed.json" || true
     if committed scripts/workstation/roster.yaml "$STATEDIR/roster.committed.yaml" &&
        python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; sys.exit(0 if d.get("users") else 1)' \
          "$STATEDIR/roster.committed.yaml" 2>/dev/null; then
@@ -685,6 +689,13 @@ fi
 # independently, so a partial failure still runs with the rest committed.
 [[ -s "$STATEDIR/roster.committed.yaml" ]] && ROSTER="$STATEDIR/roster.committed.yaml"
 [[ -s "$STATEDIR/roster_engine.committed.py" ]] && ENGINE="$STATEDIR/roster_engine.committed.py"
+# The org-wide Claude config is an input like the others, and it was the one
+# still read from the working tree. On this box that tree carries other people's
+# in-flight edits and sits behind origin/master for days at a time, so a landed
+# rule or hook change reached the repo and stopped there — which is the same gap
+# step 0 closes for this script itself.
+MANAGED_SRC="$WORKSTATION_DIR/managed-settings.json"
+[[ -s "$STATEDIR/managed-settings.committed.json" ]] && MANAGED_SRC="$STATEDIR/managed-settings.committed.json"
 
 # 0) self-deploy: the repo is the authoring surface (like sync_managed_config /
 #    deploy_user_launcher below). Historically nothing else redeployed
