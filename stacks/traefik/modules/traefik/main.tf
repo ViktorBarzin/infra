@@ -742,6 +742,27 @@ resource "kubernetes_deployment" "x402_gateway" {
             name  = "NOTIFY_WEBHOOK_URL"
             value = var.x402_notify_webhook_url
           }
+          # Local sources are never asked to pay. Our own browsing and our own
+          # automation present exactly the UAs BOT_UA_REGEX charges for
+          # (python-requests, scrapy, HeadlessChrome, ClaudeBot), so without
+          # this the local-browsing bypass would end at Anubis and every local
+          # script would get a 402 instead of the app. The gateway matches this
+          # against X-Real-Ip, which the real-ip plugin stamps with the
+          # unspoofable TCP peer earlier in the chain — a client cannot forge it.
+          #
+          # MIRRORS the canonical list in
+          # modules/kubernetes/anubis_instance/main.tf (var.trusted_local_cidrs).
+          # Two copies on purpose: CI fans a modules/ edit out to that module's
+          # consuming app stacks, and a stacks/traefik edit re-applies this
+          # platform stack — so each copy is applied where it is edited. A single
+          # shared definition would leave one side unapplied. CHANGE BOTH.
+          #
+          # Private + CGNAT only; our public egress IP (176.12.22.76) is
+          # deliberately absent, so the skip is unreachable from the internet.
+          env {
+            name  = "TRUSTED_CIDRS"
+            value = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7,fe80::/10"
+          }
           resources {
             requests = {
               cpu    = "10m"
