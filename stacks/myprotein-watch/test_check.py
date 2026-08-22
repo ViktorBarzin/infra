@@ -725,3 +725,101 @@ def test_slack_message_names_flavour_size_price_and_saving():
     assert "£55.00" in text
     assert "44%" in text          # 55.00 off an rrp of 97.49
     assert "£0.61" in text        # per serving
+
+
+# --- the daily heartbeat -----------------------------------------------------
+# A watcher that only speaks when a deal lands is indistinguishable from a dead
+# one: Viktor got zero messages in the week after it shipped and said he could
+# not tell whether it worked. The digest posts on a schedule whether or not
+# anything qualified, so silence stops being ambiguous. It is deliberately
+# read-only — it must never consume the dedup state the alerting run depends on.
+
+def test_digest_reports_scope_cheapest_and_threshold():
+    parsed = check.parse_variants(page(VANILLA_90, CRUMBLE_SHAKE_90))
+    line = check.digest_line(parsed, ALL, 28.0)
+    assert "2 variants in scope" in line
+    # £71.49/90 servings at 20g beats £97.49/90 at 23g — cheapest, not first
+    assert "£39.72/kg protein" in line
+    assert "£28.00" in line                 # the bar it is measured against
+
+
+def test_digest_is_a_single_line():
+    line = check.digest_line(check.parse_variants(page(VANILLA_90)), ALL, 28.0)
+    assert "\n" not in line
+
+
+def test_digest_says_nothing_qualifies_when_nothing_does():
+    line = check.digest_line(check.parse_variants(page(VANILLA_90)), ALL, 28.0)
+    assert "nothing" in line.lower()
+
+
+def test_digest_flags_a_live_deal_rather_than_claiming_all_clear():
+    """If a deal is running when the digest fires, the digest must not read as
+    'nothing to see' — that would contradict the alert sent hours earlier."""
+    cheap = variant(
+        "Impact Whey Protein Powder - 2.7kg - 90servings - Strawberry Cream",
+        "Strawberry Cream", "2.7kg - 90servings", "55.00", "97.49", 18000030,
+    )
+    line = check.digest_line(check.parse_variants(page(cheap)), ALL, 28.0)
+    assert "nothing" not in line.lower()
+    assert "£26.57/kg protein" in line
+
+
+def test_digest_survives_a_page_with_nothing_comparable():
+    """All-unverified page: still a heartbeat, no crash, no fake price."""
+    twix = variant(
+        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
+        "Twix®", "1.05kg - 30servings", "39.99", "39.99", 18000031,
+    )
+    line = check.digest_line(check.parse_variants(page(twix)), ALL, 28.0)
+    assert "\n" not in line
+    assert "/kg protein" not in line
+
+
+def test_digest_payload_is_slack_shaped():
+    payload = check.format_digest(
+        check.digest_line(check.parse_variants(page(VANILLA_90)), ALL, 28.0))
+    assert payload["unfurl_links"] is False
+    assert payload["text"].strip()
+
+
+# --- a variant with no pack weight -------------------------------------------
+# Seen live 2026-08-22: MyProtein listed a 120-serving Chocolate Milkshake whose
+# amount is the bare string "120servings", no weight at all — and it was the
+# CHEAPEST variant on the page, so it is what both the digest and any deal alert
+# would name. Servings and protein-per-serving are both known, so the price
+# maths is unaffected; only the human-readable size is.
+
+BARE_SERVINGS = variant(
+    "Impact Whey Protein Powder - 120servings - Chocolate (Milkshake)",
+    "Chocolate (Milkshake)", "120servings", "90.99", "122.99", 18300001,
+)
+
+
+def test_pack_size_is_absent_when_the_page_states_no_weight():
+    v = check.parse_variants(page(BARE_SERVINGS))[0]
+    assert v.pack_size is None
+    assert v.scoop_g is None
+
+
+def test_pack_size_is_the_weight_token_when_present():
+    assert check.parse_variants(page(VANILLA_90))[0].pack_size == "2.7kg"
+
+
+def test_a_weightless_variant_still_prices_correctly():
+    v = check.parse_variants(page(BARE_SERVINGS))[0]
+    assert v.protein_verified          # Milkshake publishes 20 g regardless
+    assert v.price_per_kg_protein == pytest.approx(37.91, abs=0.01)
+
+
+def test_a_weightless_variant_does_not_print_its_servings_twice():
+    v = check.parse_variants(page(BARE_SERVINGS))[0]
+    detail = check._detail(v)
+    assert "120 servings" in detail
+    assert "120servings" not in detail.replace("120 servings", "")
+
+
+def test_the_digest_names_a_weightless_variant_cleanly():
+    line = check.digest_line(check.parse_variants(page(BARE_SERVINGS)), ALL, 28.0)
+    assert "120 servings" in line
+    assert ", 120servings" not in line
