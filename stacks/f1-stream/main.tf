@@ -376,7 +376,7 @@ module "anubis" {
       # threw "Unexpected token '<', '<!doctype '" and the Replays refresh
       # "crashed". Only the `/replays` HTML *page* stays challenged (like /watch).
       - name: f1-data-routes
-        path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|replays/events|schedule|streams)(/|\?|$)
+        path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|schedule|streams)(/|\?|$)
         action: ALLOW
       # Allow non-GET methods unconditionally — AI scrapers GET the body,
       # they don't POST. Mutating XHRs and CORS preflight need to bypass.
