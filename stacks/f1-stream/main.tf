@@ -167,13 +167,27 @@ resource "kubernetes_deployment" "f1-stream" {
           # state near ~200Mi; this ceiling is deliberately above the historical
           # ~377MB peak so a regression still shows up as an OOM rather than
           # being absorbed silently.
+          #
+          # Raised 2026-08-23 for the server-side quality ladder. Our providers
+          # publish a single rendition (1280x720 at 50 fps, ~4.5 Mbps), so a
+          # client on a mobile connection has nothing smaller to ask for; the
+          # pod now re-encodes a 540p/360p ladder on demand. Measured on the
+          # real stream, 30s of video costs ~54s of CPU (~1.8 cores) and ~360MB
+          # RSS per encoder, and TRANSCODE_MAX_SESSIONS caps it at two at once.
+          # The CPU limit is that ceiling plus room for uvicorn and the
+          # Playwright driver; memory covers two encoders alongside the ~520MB
+          # those two processes already use.
+          #
+          # Nothing is spent unless a client asks for lower quality: the
+          # untouched source stays the default and starts no encoder.
           resources {
             limits = {
-              memory = "512Mi"
+              cpu    = "4"
+              memory = "2Gi"
             }
             requests = {
-              cpu    = "50m"
-              memory = "320Mi"
+              cpu    = "100m"
+              memory = "384Mi"
             }
           }
           port {
@@ -268,6 +282,19 @@ resource "kubernetes_deployment" "f1-stream" {
             mount_path = "/replay-cache"
             read_only  = true
           }
+          env {
+            name  = "TRANSCODE_DIR"
+            value = "/transcode"
+          }
+          # Two encoders at ~1.8 cores each is the most this pod may spend.
+          env {
+            name  = "TRANSCODE_MAX_SESSIONS"
+            value = "2"
+          }
+          volume_mount {
+            name       = "transcode"
+            mount_path = "/transcode"
+          }
         }
         volume {
           name = "data"
@@ -279,6 +306,17 @@ resource "kubernetes_deployment" "f1-stream" {
           name = "replay-cache"
           persistent_volume_claim {
             claim_name = module.nfs_replay_cache.claim_name
+          }
+        }
+        # Encoder scratch. Six segments per rung is only a few MB, and it is
+        # rewritten constantly — memory-backed keeps that churn off the shared
+        # HDD (see the recurring IO-storm work) and guarantees it is discarded
+        # with the pod. The size counts against the pod's memory limit.
+        volume {
+          name = "transcode"
+          empty_dir {
+            medium     = "Memory"
+            size_limit = "256Mi"
           }
         }
         # Pull the (private) Forgejo-registry image. Kyverno syncs
