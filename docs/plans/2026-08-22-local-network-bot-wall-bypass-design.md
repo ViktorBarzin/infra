@@ -13,6 +13,13 @@ the internet.
 The design rests on one property: the request carries a client address that a
 caller cannot choose. Everything else follows from that.
 
+```stats
+7 | Anubis-fronted sites
+6 | trusted CIDR ranges
+0 | public addresses trusted
+8 | verification checks passed
+```
+
 ## What it is like today
 
 Seven stacks front their site with Anubis: `blog` (the apex), `homepage`
@@ -115,19 +122,19 @@ thing across both layers.
 **Our public egress IP (176.12.22.76) is deliberately excluded.** Including it
 would cover devices that resolve through DoH and arrive via the public path, but
 it would also give the bypass an internet-reachable key that depends on the ISP
-keeping our lease — a reassignment would hand a stranger the bypass on eight
-sites, silently. Leaving it out means the bypass is unreachable from the internet
+keeping our lease — a reassignment would hand a stranger the bypass on all seven
+sites, with nothing to surface it. Leaving it out means the bypass is unreachable from the internet
 by construction, which is a property rather than a promise.
 
 **The module owns the policy's first line.** `modules/kubernetes/anubis_instance`
 renders the `bots:` key itself, then the trusted-networks rule, then the
 caller's rules. A new Anubis site inherits the bypass without doing anything,
 and an existing one cannot drift out of it. `f1-stream`, the only stack with a
-custom policy, would otherwise have been silently missed — its own copy of the
-rules is exactly the kind of drift this structure removes.
+custom policy, would otherwise have been missed with nothing to signal it — its
+own copy of the rules is the kind of drift this structure removes.
 
 **`policy_yaml` is renamed to `policy_rules_yaml`,** taking the rules list
-without the `bots:` key. The rename is the point: a caller still passing a whole
+without the `bots:` key. The rename matters for the failure mode: a caller still passing a whole
 document now fails at `terraform plan` with "Unsupported argument", rather than
 rendering a valid-looking policy whose first rule is not the bypass.
 
@@ -146,7 +153,8 @@ exact address already exists and already sits in the path, so the guarantee is
 architectural. We considered a recurring probe from the cluster VPN egress
 (a genuinely untrusted public IP, `89.37.175.169`) sending a forged
 `X-Real-Ip: 10.0.0.1` and asserting the challenge still appears. We did not add
-it: an invariant beats a monitored assumption. The residual is named under Risks.
+it: we preferred an invariant to a monitored assumption. The residual is named
+under Risks.
 
 **Authentication is untouched.** Logins stay gated. Telling Authentik who is
 calling is separate work with a service identity; an address is too weak a claim
@@ -163,8 +171,13 @@ evidence.
 
 ## Risks we accept
 
+> [!WARNING]
+> Putting the rule first is what makes local automation work, and it is also
+> what makes these four consequences unavoidable. They are accepted knowingly,
+> not overlooked.
+
 - **Local traffic also skips the AI and pathological denies.** A compromised
-  device on our own network can scrape these eight sites freely. This matches the
+  device on our own network can scrape these seven sites freely. This matches the
   existing posture rather than widening it — CrowdSec already declines to ban
   those same ranges — but it is a real consequence of putting the rule first,
   which the headless-browser DENY requires.
@@ -176,11 +189,14 @@ evidence.
 - **The invariant has one moving part.** If `real-ip` were ever detached from an
   Anubis ingress, `X-Real-Ip` would become client-controlled and the bypass would
   become forgeable. `ingress_factory` attaches it automatically for `anubis-*`
-  backends, which is what makes this unlikely rather than merely unlikely to be
-  noticed. If that automatic attachment is ever changed, this is the reason to
-  be careful.
+  backends, so a site cannot be wired without it. If that automatic attachment
+  is ever changed, this is the reason to be careful.
 
 ## Known limitation
+
+> [!NOTE]
+> The bypass follows our own DNS, not our own network. A device on the LAN that
+> asks someone else's resolver arrives as a stranger.
 
 A device that resolves through DoH or a hardcoded resolver skips Technitium,
 gets the Cloudflare address, and arrives on the public path with a public
@@ -230,8 +246,9 @@ genuinely untrusted public address rather than reasoned about.
 
 ## Two things that went wrong on the way in
 
-Both are worth recording, because each produced a green signal over an
-unapplied change.
+> [!IMPORTANT]
+> Both produced a green signal over a change that had not been applied. The
+> reliable check is the live resource, not the pipeline result.
 
 **A restarted pipeline applied nothing and reported success.** Woodpecker's
 cancel-on-new-push killed the original run mid-apply. Restarting it re-ran with
