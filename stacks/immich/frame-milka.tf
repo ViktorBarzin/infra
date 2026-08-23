@@ -52,6 +52,21 @@ resource "kubernetes_config_map" "frame_config_milka" {
         UnitSystem: metric
         WeatherLatLong: "43.6833,23.4667"
         Language: en
+        # How long ImmichFrame holds its cached copy of the ExcludedAlbums
+        # asset list, in hours. Only that list is cached — AllAssetsPool asks
+        # Immich for a fresh random batch on every frame and then filters it,
+        # so this interval is exactly how long a newly-excluded photo can keep
+        # appearing after frame_sync_milka.py adds it. The default of 12 means
+        # the weekly sync would not fully take effect until Sunday afternoon.
+        #
+        # Not 0: RefreshInterval() maps a non-positive value to a 1 ms TTL,
+        # which would re-fetch the whole exclusion list on every photo.
+        # Nothing else reads this cache but the AllAssetsPool asset-count
+        # statistic, so one extra call an hour is the entire cost.
+        #
+        # RenewImagesDuration is a different setting — days, and it governs the
+        # on-disk DownloadImages file cache. It does not affect exclusions.
+        RefreshAlbumPeopleInterval: 1
     Accounts:
         - ImmichServerUrl: http://immich.viktorbarzin.me
           ApiKey: ${data.vault_kv_secret_v2.emo_immich_frame_milka.data["key"]}
