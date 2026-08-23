@@ -48,10 +48,19 @@ resource "kubernetes_config_map" "frame_config_milka" {
         ShowProgressBar: false
         ClockFormat: "HH:mm"
         PhotoDateFormat: "dd/MM/yyyy"
+        # date-fns renders "eee, MMM d" as "нед, авг 23" under bg — Bulgarian
+        # words in English order. Day before month is the natural order here.
+        ClockDateFormat: "eee, d MMM"
         WeatherApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_weather_api_key"]}
         UnitSystem: metric
         WeatherLatLong: "43.6833,23.4667"
-        Language: en
+        # Milka reads Bulgarian. This is a locale code, not a UI translation:
+        # ImmichFrame ships no string catalogue, and passes this to date-fns for
+        # the clock date and to OpenWeatherMap as its `lang` (verified live:
+        # lang=bg returns "ясно небе" and the town as Вълчедръм). date-fns has
+        # no "en" export, so the previous value was silently falling back to
+        # enUS — "bg" is a real export and does resolve.
+        Language: bg
         # How long ImmichFrame holds its cached copy of the ExcludedAlbums
         # asset list, in hours. Only that list is cached — AllAssetsPool asks
         # Immich for a fresh random batch on every frame and then filters it,
