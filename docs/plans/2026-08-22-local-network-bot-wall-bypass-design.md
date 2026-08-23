@@ -210,17 +210,50 @@ as before.
 
 ## Verification
 
-Ran after the rollout:
+Run against the live cluster on 2026-08-23, after the apply:
 
-1. From the devvm — real application content, not the challenge page.
-2. Through the cluster VPN egress (public IP `89.37.175.169`) — still challenged.
-3. Same, plus a forged `X-Real-Ip: 10.0.0.1` — still challenged, confirming the
-   header cannot be claimed.
-4. A headless browser against the f1 SPA from a local address — loads.
-5. A `python-requests` user agent from a local address — 200, not 402.
-6. Local page loads watched for 429s from the rate limiter.
+| Check | Result |
+| --- | --- |
+| All 7 policies carry `trusted-local-networks` first, 6 CIDRs | pass |
+| From the devvm — apex, `f1`, `home` | real content, not the challenge |
+| From the cluster VPN egress (`89.37.175.169`), non-proxied `f1` | challenged |
+| Same, Cloudflare-proxied apex and `home` | challenged |
+| Same, plus forged `X-Real-Ip: 10.0.0.1` and `Cf-Connecting-Ip` | challenged — the header cannot be claimed |
+| Headless Playwright against the f1 SPA from the devvm | loads the real app (previously `Access Denied`) |
+| `python-requests`, `Scrapy`, `ClaudeBot`, `HeadlessChrome` UAs from the devvm | 200 with real content, no 402 |
+| 60 rapid local requests to the f1 SPA | 60 × 200, zero 429 |
+
+The rate-limit question is answered by that last row: no per-site override is
+needed. The forged-header row is the one that matters most, since the whole
+design rests on `X-Real-Ip` being unclaimable, and it was tested from a
+genuinely untrusted public address rather than reasoned about.
+
+## Two things that went wrong on the way in
+
+Both are worth recording, because each produced a green signal over an
+unapplied change.
+
+**A restarted pipeline applied nothing and reported success.** Woodpecker's
+cancel-on-new-push killed the original run mid-apply. Restarting it re-ran with
+no `CI_PREV_COMMIT_SHA`, so the pipeline fell back to `DIFF_BASE=HEAD~1` — and
+for a merge commit that is the *first* parent, the feature-branch side, so the
+diff showed only the other lineage's files and selected none of the changed
+stacks. The pipeline's own comments warn about this for pushes; the restart path
+reaches it too. A green pipeline is not evidence of an apply: check the live
+resource. Landing a non-merge, fast-forward commit avoids it.
+
+**`terraform validate` passed on a broken policy render.** The first version
+concatenated with `+`, which in HCL is arithmetic — every Anubis stack failed
+with `Invalid operand: a number is required`. Validating locally had not caught
+it, because `validate` does not evaluate locals that depend on variables, and
+because the pre-flight check was a Python imitation of the heredoc and YAML
+rather than Terraform itself. What does catch it, needing no backend or
+credentials: copy the module to a scratch directory, instantiate it once per
+caller shape, `terraform init -backend=false`, then `plan` and assert on the
+rendered resource via `terraform show -json`. That check was confirmed to fail
+on the broken form and pass on the fix before landing.
 
 ## Open question
 
-Whether the rate limiter needs per-site overrides for the Anubis-fronted SPAs is
-left to measurement rather than settled here.
+None outstanding. The rate-limit question that was open at design time was
+measured after rollout and needs no change.
