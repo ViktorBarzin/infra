@@ -142,7 +142,25 @@ variable "trusted_local_cidrs" {
     on the ISP keeping our lease. Matching is against X-Real-Ip, which the
     vendored Traefik real-ip plugin overwrites with the unspoofable TCP peer for
     any peer outside the pod CIDR, so a client cannot forge its way in.
+
+    The validation below enforces that "private only" rather than trusting the
+    comment: a public range added here would hand the bypass an
+    internet-reachable key, which is the one property the design cannot lose.
   EOT
+
+  # RFC1918 + CGNAT + IPv6 ULA/link-local, as an allowlist of prefixes. Terraform
+  # has no "is this CIDR inside that one" function, so this matches the textual
+  # form — enough to reject 0.0.0.0/0 and any public range at plan time, which
+  # is what matters. Anubis itself validates each entry parses as a CIDR.
+  validation {
+    condition = alltrue([
+      for c in var.trusted_local_cidrs : can(regex(
+        "^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.|[fF][cCdD]|[fF][eE]80:)",
+        c
+      ))
+    ])
+    error_message = "trusted_local_cidrs must contain only private (RFC1918), CGNAT (100.64/10) or IPv6 ULA/link-local ranges. A public range here would make the local bypass reachable from the internet."
+  }
 }
 
 variable "cpu_request" {
