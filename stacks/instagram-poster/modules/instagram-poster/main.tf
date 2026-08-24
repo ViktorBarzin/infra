@@ -35,6 +35,22 @@ resource "kubernetes_namespace" "instagram_poster" {
 #     - immich_tag_instagram      (optional — auto-resolved if missing)
 #     - immich_tag_posted         (optional — auto-resolved if missing)
 resource "kubernetes_manifest" "external_secret" {
+  # PARKED 2026-08-24 (count = 0), same mechanism as ig_ingest_stories below.
+  # The service is scaled to zero (replicas = 0, both crons suspended), and this
+  # ExternalSecret has never once synced: it asks for ig_graph_long_lived_token,
+  # ig_graph_app_id, ig_graph_app_secret and ig_business_account_id, none of
+  # which exist in Vault's secret/instagram-poster — that holds the older
+  # instagram_app_id / instagram_app_secret / facebook_* names instead. So it has
+  # sat in SecretSyncedError since it was created on 2026-06-22, retrying every
+  # 15m and showing red in every cluster health check, for a service that is off.
+  # Nothing is lost by parking it: refreshTime was null (never a successful
+  # sync), no instagram-poster-secrets Secret was ever created, and
+  # deletionPolicy is Retain regardless.
+  # To revive: drop this `count = 0`, and first seed the four ig_graph_* keys
+  # into Vault secret/instagram-poster (they come from the Meta developer
+  # console) or repoint the remoteRefs at the instagram_app_* names.
+  count = 0
+
   # The external-secrets controller takes server-side-apply ownership of
   # .spec.refreshInterval, so a plain TF apply conflicts. force_conflicts lets
   # TF win (values match, so it's stable) — same pattern as grafana/woodpecker/
