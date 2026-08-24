@@ -2172,6 +2172,56 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Vault backup CronJob has never completed successfully"
+          # 2026-08-23: the audit volume on the active leader filled and Vault
+          # failed closed — HTTP 500 on every audited path for ~28h, all 132
+          # ExternalSecrets stuck, while sys/health kept answering 200 because
+          # liveness endpoints are not audited. PVFillingUp DID fire (critical,
+          # 36h continuous) and was read as a capacity warning, so these three
+          # alerts exist to (a) fire earlier at 80% and (b) say what it actually
+          # means rather than leaving the reader to infer it.
+          # Runbook: docs/runbooks/vault-audit-device-full.md
+          - alert: VaultAuditVolumeFillingUp
+            expr: |
+              (kubelet_volume_stats_used_bytes{namespace="vault", persistentvolumeclaim=~"audit-vault-.+"}
+               / kubelet_volume_stats_capacity_bytes{namespace="vault", persistentvolumeclaim=~"audit-vault-.+"}) * 100 > 80
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "VAULT WILL FAIL CLOSED: audit volume {{ $labels.persistentvolumeclaim }} is {{ $value | printf \"%.0f\" }}% full"
+              description: "Vault's file audit device fails closed — when this volume fills, EVERY authenticated request returns HTTP 500 (logins, secret reads, ESO sync) while sys/health keeps returning 200, so the cluster looks healthy. This is not an ordinary disk-space warning. pvc-autoresizer will grow the volume only up to its storage_limit annotation (10Gi) and then stop. Fix: docs/runbooks/vault-audit-device-full.md"
+          # Keyed on kube-state-metrics, NOT on the job's own pushed heartbeat:
+          # if the CronJob never runs, a pushgateway metric is simply absent and
+          # an alert built on it stays silent forever — the exact blind spot this
+          # is meant to close. kube_cronjob_status_last_successful_time exists as
+          # soon as the CronJob object does. The job also exits non-zero when an
+          # archive fails to verify, so this covers failure as well as absence.
+          - alert: VaultAuditRotationStale
+            expr: |
+              (time() - kube_cronjob_status_last_successful_time{cronjob="vault-audit-rotate", namespace="vault"}) > 129600
+              and kube_cronjob_status_last_successful_time{cronjob="vault-audit-rotate", namespace="vault"} > 0
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Vault audit-log rotation last succeeded {{ $value | humanizeDuration }} ago (threshold: 36h)"
+              description: "The vault-audit-rotate CronJob runs daily and is what keeps the audit log bounded. While it is not running the log grows unchecked (~150 MiB/day on the active leader) toward the point where Vault fails closed. Runbook: docs/runbooks/vault-audit-device-full.md"
+          - alert: VaultAuditRotationNeverSucceeded
+            expr: kube_cronjob_status_last_successful_time{cronjob="vault-audit-rotate", namespace="vault"} == 0
+            for: 26h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Vault audit-log rotation CronJob has never completed successfully"
+              description: "Fires 26h after the CronJob is created (one full daily cycle plus margin) if it has still never succeeded — e.g. RBAC denied, the NFS archive volume will not mount, or the exec into the vault pods fails."
+          - alert: VaultAuditRotationFailing
+            expr: audit_rotate_failed > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Vault audit-log rotation failed to archive {{ $value | printf \"%.0f\" }} pod(s) — logs left intact, volume still growing"
+              description: "The rotation job verifies each gzip archive before truncating the live log, so a failure here means the archive could not be written or did not verify. No audit data was lost, but the volume is not being reclaimed."
           - alert: VaultRaftLeaderStuck
             expr: |
               (vault_core_active == 1)
@@ -3829,7 +3879,13 @@ serverFiles:
             expr: qbt_connected == 0
             for: 10m
             labels:
-              severity: critical
+              # Downgraded critical -> warning 2026-08-24. Only four distinct
+              # alertnames reached critical in the preceding 7 days, and this was
+              # one of them, sharing a channel and a badge with PVFillingUp on the
+              # Vault audit volume (a 28h secrets outage). A disconnected torrent
+              # client is not in that class; keeping it critical costs the badge
+              # its meaning. Still alerts, just at the severity it warrants.
+              severity: warning
             annotations:
               summary: "qBittorrent is disconnected from the network"
 

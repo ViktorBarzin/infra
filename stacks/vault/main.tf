@@ -419,6 +419,158 @@ resource "kubernetes_cron_job_v1" "vault_backup" {
   }
 }
 
+
+# --- Audit Log Rotation ---
+#
+# The file audit device appends to /vault/audit/vault-audit.log forever; Vault
+# never rotates it. When the volume fills, Vault FAILS CLOSED — every audited
+# request returns HTTP 500 while sys/health keeps answering 200, so the cluster
+# looks healthy while nothing works. That is the 2026-08-23 outage: the audit
+# volume on the active leader hit its pvc-autoresizer storage_limit of 10Gi and
+# all 132 ExternalSecrets stopped syncing for ~28h.
+# Runbook: docs/runbooks/vault-audit-device-full.md
+#
+# pvc-autoresizer is not the fix here — it grew audit-vault-1 4Gi -> 8Gi -> 10Gi
+# and then correctly stopped at its configured ceiling. Growing a volume only
+# chooses when unbounded growth hits the wall; rotation is what bounds it.
+#
+# audit-vault-N is RWO and already mounted by vault-N, so a job pod cannot mount
+# it. Rotation therefore goes through `kubectl exec`, which is why this needs a
+# ServiceAccount with pods/exec rather than a volume mount.
+#
+# The archive is verified with `gzip -t` BEFORE the live log is truncated. If the
+# stream is short (the exec is killed, the NFS write fails), the partial archive
+# is deleted and the log is left untouched — the job retries tomorrow rather than
+# destroying audit history it failed to copy.
+
+resource "kubernetes_service_account" "audit_rotate" {
+  metadata {
+    name      = "vault-audit-rotate"
+    namespace = kubernetes_namespace.vault.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "audit_rotate" {
+  metadata {
+    name      = "vault-audit-rotate"
+    namespace = kubernetes_namespace.vault.metadata[0].name
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get", "list"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/exec"]
+    verbs      = ["create"]
+  }
+}
+
+resource "kubernetes_role_binding" "audit_rotate" {
+  metadata {
+    name      = "vault-audit-rotate"
+    namespace = kubernetes_namespace.vault.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.audit_rotate.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.audit_rotate.metadata[0].name
+    namespace = kubernetes_namespace.vault.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "vault_audit_rotate" {
+  metadata {
+    name      = "vault-audit-rotate"
+    namespace = kubernetes_namespace.vault.metadata[0].name
+  }
+  spec {
+    # Daily, offset from the Sunday 02:00 raft snapshot so the two never share
+    # the same NFS target at the same moment.
+    schedule                      = "30 3 * * *"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 2
+        template {
+          metadata {}
+          spec {
+            service_account_name = kubernetes_service_account.audit_rotate.metadata[0].name
+            container {
+              name    = "rotate"
+              image   = "bitnami/kubectl:latest"
+              command = ["/bin/sh", "-c"]
+              args = [join("", [
+                "set -eu; ",
+                # 500 MiB. At the observed ~150 MiB/day on the active leader the
+                # live log stays well under 1 GiB between runs, and the 10Gi
+                # volume keeps ~15x headroom as a backstop.
+                "THRESHOLD=524288000; ",
+                "ARCHIVE=/backup/audit; ",
+                "mkdir -p \"$ARCHIVE\"; ",
+                "ROTATED=0; FAILED=0; SKIPPED=0; BYTES=0; ",
+                "for POD in vault-0 vault-1 vault-2; do ",
+                "  SIZE=$(kubectl exec -n vault \"$POD\" -c vault -- stat -c%s /vault/audit/vault-audit.log 2>/dev/null || echo 0); ",
+                "  if [ \"$SIZE\" -le \"$THRESHOLD\" ]; then ",
+                "    echo \"$POD: $SIZE bytes, under threshold, skipping\"; SKIPPED=$((SKIPPED+1)); continue; ",
+                "  fi; ",
+                "  TS=$(date +%Y%m%d-%H%M%S); ",
+                "  OUT=\"$ARCHIVE/vault-audit-$POD-$TS.log.gz\"; ",
+                "  echo \"$POD: $SIZE bytes, rotating -> $OUT\"; ",
+                # Verify the archive is complete and readable BEFORE truncating.
+                # A killed exec or a short NFS write leaves a truncated .gz that
+                # gzip -t rejects, and the live log is then left alone.
+                "  if kubectl exec -n vault \"$POD\" -c vault -- gzip -c /vault/audit/vault-audit.log > \"$OUT\" && gzip -t \"$OUT\"; then ",
+                "    kubectl exec -n vault \"$POD\" -c vault -- truncate -s 0 /vault/audit/vault-audit.log; ",
+                "    GZSIZE=$(stat -c%s \"$OUT\"); BYTES=$((BYTES+GZSIZE)); ROTATED=$((ROTATED+1)); ",
+                "    echo \"$POD: rotated ok, archive $GZSIZE bytes\"; ",
+                "  else ",
+                "    echo \"$POD: ARCHIVE FAILED verification, leaving log intact\"; rm -f \"$OUT\"; FAILED=$((FAILED+1)); ",
+                "  fi; ",
+                "done; ",
+                "find \"$ARCHIVE\" -name '*.log.gz' -mtime +30 -delete || true; ",
+                "KEPT=$(find \"$ARCHIVE\" -name '*.log.gz' | wc -l); ",
+                "echo \"=== rotated=$ROTATED failed=$FAILED skipped=$SKIPPED archives_kept=$KEPT ===\"; ",
+                # curl, not wget: bitnami/kubectl ships curl and has NO wget, so a
+                # wget push would silently no-op and the staleness alert below
+                # would never see a heartbeat. Verified against the live image.
+                "curl -sf --max-time 15 --data-binary \"audit_rotate_rotated $${ROTATED}\naudit_rotate_failed $${FAILED}\naudit_rotate_skipped $${SKIPPED}\naudit_rotate_archive_bytes $${BYTES}\naudit_rotate_archives_kept $${KEPT}\naudit_rotate_last_success_timestamp $(date +%s)\n\" ",
+                "\"http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/vault-audit-rotate\" || true; ",
+                # Surface a verification failure as a job failure so the CronJob
+                # shows up as failed rather than quietly succeeding.
+                "[ \"$FAILED\" -eq 0 ]"
+              ])]
+              volume_mount {
+                mount_path = "/backup"
+                name       = "backup-storage"
+              }
+            }
+            restart_policy = "OnFailure"
+            volume {
+              name = "backup-storage"
+              persistent_volume_claim {
+                claim_name = module.vault_backup_nfs_host.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 # =============================================================================
 # Kubernetes Auth Method
 # =============================================================================
