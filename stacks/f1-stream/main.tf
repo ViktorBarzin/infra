@@ -408,14 +408,19 @@ module "anubis" {
       # (carve-out per route via separate Ingress objects) is brittle and
       # because the data they expose (stream URLs, schedule metadata) is not
       # the AI-scraping target — the HTML/SPA is.
-      # NB: `replays/events` (the Replays page's data XHR) MUST be listed too.
+      # NB: `replays/events` (the Replays page's data XHR) MUST be listed too,
+      # and `replays/library` alongside it — that one reports which sessions have
+      # a converted, seekable copy, and is often the ONLY record that a session
+      # is on disk, since the original release is released once its copy is
+      # verified. Missing from this list, a cookie flap makes it answer with the
+      # PoW page and every converted session looks absent.
       # It was added after this rule; while missing, any request whose Anubis
       # cookie didn't validate (the IP-sensitive cookie flap) fell through to
       # catchall-challenge and got the PoW HTML back — so the SPA's res.json()
       # threw "Unexpected token '<', '<!doctype '" and the Replays refresh
       # "crashed". Only the `/replays` HTML *page* stays challenged (like /watch).
       - name: f1-data-routes
-        path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|schedule|streams)(/|\?|$)
+        path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|schedule|streams)(/|\?|$)
         action: ALLOW
       # Allow non-GET methods unconditionally — AI scrapers GET the body,
       # they don't POST. Mutating XHRs and CORS preflight need to bypass.
