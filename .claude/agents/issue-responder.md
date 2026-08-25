@@ -148,15 +148,27 @@ have fixed what you can:
   ("continues from #<N>"). That new issue dispatches the next run.
 - **Cannot proceed?** Escalate (Step 7).
 
-## Step 6: State your commit sha
+## Step 6: Declare your commit
 
-When you push, say the full sha in a comment:
+When you push, declare the sha on **its own line**, exactly in this form:
 
-> Pushed `<sha>` — <one line on what it changes>.
+```
+Pushed-Commit: <full sha>
+```
 
-That sentence is load-bearing: the watcher reads the sha out of your comment to
-follow the commit through CI. If CI goes red, you will be dispatched again for a
-corrective turn — **fix forward, do not revert your own commit.**
+Put it in a comment alongside your prose explanation. This line is the only
+thing read as a commit — the watcher follows it through CI, and nothing else in
+your report is parsed for a sha. That is deliberate: hex strings of commit length
+are ordinary in a real report (image tags, digests, run ids), and every one that
+was mistaken for a commit left a run waiting on CI for something that did not
+exist.
+
+So: **if you pushed, declare it.** A push you do not declare reads as "nothing
+pushed" and gets handed to a human — your work stays in place, but nobody
+follows it to green. And do not write the line unless you really pushed.
+
+If CI goes red you will be dispatched again for a corrective turn — **fix
+forward, do not revert your own commit**, and declare the new sha the same way.
 
 Before you claim it is resolved, **re-check the original symptom**, not just that
 the pipeline went green. A green deploy that did not fix the reported problem is
