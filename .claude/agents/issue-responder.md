@@ -65,7 +65,7 @@ curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
 |---|---|
 | `broken` | Something is not working right now. This is what dispatched you. |
 | `change` | A proposal; nothing is currently failing. Not your queue. |
-| `agent-in-progress` | A run holds this issue. Applied for you; do not remove it. |
+| `agent-in-progress` | A run holds this issue. Applied for you; leave it while you work and drop it when you close (Step 5). |
 | `paused` | A human brake. If you see it, stop and say you stopped. |
 | `needs-human` | Escalated. |
 | `incident`, `sev1`/`sev2`/`sev3`, `postmortem-required` | You apply these during triage. |
