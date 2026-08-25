@@ -1022,9 +1022,12 @@ resource "kubernetes_cron_job_v1" "fixer_tick" {
             restart_policy       = "Never"
             service_account_name = kubernetes_service_account.claude_agent.metadata[0].name
             container {
-              name    = "tick"
-              image   = "${local.image}:${local.image_tag}"
-              command = ["python3", "-m", "app.fixer.tick"]
+              name  = "tick"
+              image = "${local.image}:${local.image_tag}"
+              # The app is baked at /srv (the server runs uvicorn --app-dir /srv),
+              # so a bare `python3 -m app.fixer.tick` from / cannot import it.
+              working_dir = "/srv"
+              command     = ["python3", "-m", "app.fixer.tick"]
 
               # Every FIXER_*/AFK_* value and both secrets come from the same
               # places the service itself reads them, so the tick and the
