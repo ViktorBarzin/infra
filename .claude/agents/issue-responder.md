@@ -138,7 +138,10 @@ but do not change them. Escalate with the diagnosis attached.
 A partial fix that is silently left partial is the one outcome to avoid. When you
 have fixed what you can:
 
-- **Fully fixed?** Comment what you did with evidence, and close the issue.
+- **Fully fixed?** Comment what you did with evidence, remove the
+  `agent-in-progress` label, and close the issue. Dropping that label is part of
+  closing: a closed issue does not hold the per-repo lock, but leaving the label
+  on tells a reader a run is still going when it is not.
 - **Partly fixed?** File a NEW issue labelled `broken`, describing precisely what
   remains and what you already ruled out. Reference it in your comment
   ("continues in #<M>"), and reference the parent in the new issue
