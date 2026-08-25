@@ -110,6 +110,17 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
+          # Doorbell publish token. This ntfy is NTFY_AUTH_DEFAULT_ACCESS=deny-all,
+          # so an unauthenticated POST is a 403 and no escalation reaches anyone.
+          # The token belongs to a dedicated `fixer` user with WRITE-ONLY access to
+          # the single `fixer` topic — not the admin account.
+          secretKey = "FIXER_NTFY_TOKEN"
+          remoteRef = {
+            key      = "claude-agent-service"
+            property = "fixer_ntfy_token"
+          }
+        },
+        {
           # Long-lived OAuth token (1-year) from `claude setup-token`.
           # Preferred over the short-lived .credentials.json — CLI picks this up and
           # skips the refresh flow entirely. Rotate yearly; alert 30d before expiry.
