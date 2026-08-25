@@ -228,7 +228,6 @@ Woodpecker is **deploy + cluster-touching steps only**:
 | provision-user | `.woodpecker/provision-user.yml` | Add namespace-owner user from Vault spec |
 | registry-config-sync | `.woodpecker/registry-config-sync.yml` | SCP `modules/docker-registry/*` → `10.0.20.10` on change |
 | pve-nfs-exports-sync | `.woodpecker/pve-nfs-exports-sync.yml` | Sync `scripts/pve-nfs-exports` → `/etc/exports` on PVE |
-| issue-automation | `.woodpecker/issue-automation.yml` | Triage + respond to `ViktorBarzin/infra` GitHub issues |
 | postmortem-todos | `.woodpecker/postmortem-todos.yml` | Auto-resolve safe TODOs from new post-mortems |
 | k8s-portal | `.woodpecker/k8s-portal.yml` | Path-filtered deploy for the portal |
 | breakglass-infra-ci | `.woodpecker/breakglass-infra-ci.yml` | **Manual** ghcr pull-and-save of infra-ci to the registry VM |

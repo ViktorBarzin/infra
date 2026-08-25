@@ -174,7 +174,7 @@ stays DRY_RUN. Pull-through caches on `10.0.20.10` are unchanged. Runbook:
 **Woodpecker now runs only:** per-app `deploy.yml` (manual, `kubectl set
 image`), `default.yml` (terragrunt apply), `renew-tls.yml` (certbot),
 maintenance crons (drift-detection, provision-user, registry-config-sync,
-pve-nfs-exports-sync, issue-automation, postmortem-todos), and the
+pve-nfs-exports-sync, postmortem-todos), and the
 manual `breakglass-infra-ci.yml`. **No build/test pipeline on any repo — do not
 (re)introduce one.** (`.woodpecker/k8s-portal.yml`, the last in-cluster image
 build, was removed 2026-06-13 — k8s-portal now builds on GHA → ghcr, see

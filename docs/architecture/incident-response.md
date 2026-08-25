@@ -213,8 +213,8 @@ flowchart LR
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| GHA Workflow | `.github/workflows/issue-automation.yml` | Triggers on issue creation, checks collaborator, POSTs to Woodpecker |
-| Woodpecker Pipeline | `.woodpecker/issue-automation.yml` | Authenticates to Vault, SSHes to DevVM, runs Claude agent |
+| Forgejo webhook | `viktor/infra` -> `POST /hooks/forgejo` | Fires on the `broken` label; signature-verified, gated, dispatches a fixer run |
+| fixer-tick CronJob | `stacks/claude-agent-service` | Drains queued `broken` issues and follows pushed commits through CI |
 | Issue Responder | `.claude/agents/issue-responder.md` | Reads issue, classifies, investigates, fixes or escalates |
 | Post-Mortem Orchestrator | `.claude/agents/post-mortem.md` | 4-stage investigation pipeline |
 | SEV Triage | `.claude/agents/sev-triage.md` | Fast cluster scan + severity classification |

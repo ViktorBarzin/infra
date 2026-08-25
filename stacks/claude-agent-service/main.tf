@@ -88,6 +88,28 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
+          # The fixer's own Forgejo identity: the `infra-agent` bot account's PAT
+          # (write:repository + write:issue, minted 2026-08-25). Deliberately NOT
+          # viktor's PAT — every comment, label, commit and close the fixer makes
+          # is attributed to the bot, which is also what makes the webhook's loop
+          # guard a one-line author check.
+          secretKey = "FIXER_FORGEJO_TOKEN"
+          remoteRef = {
+            key      = "claude-agent-service"
+            property = "forgejo_agent_token"
+          }
+        },
+        {
+          # HMAC secret shared with the Forgejo webhook on viktor/infra. Without
+          # it the receiver refuses every delivery: an unsigned endpoint that
+          # dispatches a cluster-write agent is not a state worth having.
+          secretKey = "FIXER_WEBHOOK_SECRET"
+          remoteRef = {
+            key      = "claude-agent-service"
+            property = "fixer_webhook_secret"
+          }
+        },
+        {
           # Long-lived OAuth token (1-year) from `claude setup-token`.
           # Preferred over the short-lived .credentials.json — CLI picks this up and
           # skips the refresh flow entirely. Rotate yearly; alert 30d before expiry.
@@ -572,6 +594,82 @@ resource "kubernetes_deployment" "claude_agent" {
             value = "terraform-state"
           }
 
+          # ------------------------------------------------------------------ #
+          # The fixer — a `broken` issue on Forgejo repairs itself.
+          # docs: claude-agent-service/docs/2026-08-25-forgejo-fixer-design.md
+          #
+          # ARMED. Both gates are deliberate and independent (the loop ships
+          # disabled): AFK_KILL_SWITCH must be false AND AFK_ALLOWLIST must name
+          # the repo. Setting either back disables the fixer without touching
+          # code — that is the global brake. The per-issue brake is the `paused`
+          # label, which needs no deploy at all.
+          # ------------------------------------------------------------------ #
+          env {
+            name  = "AFK_KILL_SWITCH"
+            value = "false"
+          }
+          env {
+            name  = "AFK_ALLOWLIST"
+            value = "infra"
+          }
+          env {
+            name  = "AFK_READY_LABEL"
+            value = "broken"
+          }
+
+          # No budget or timeout ceiling on a fixer run (design decision 14): a
+          # hard diagnosis is never truncated, and burn rate is bounded by the
+          # per-repo lock — one run at a time — instead. Leaving
+          # FIXER_MAX_BUDGET_USD / FIXER_TIMEOUT_SECONDS unset is what expresses
+          # that; setting either puts a ceiling back.
+          env {
+            name  = "FIXER_FORGEJO_API"
+            value = "https://forgejo.viktorbarzin.me/api/v1"
+          }
+          env {
+            name  = "FIXER_FORGEJO_WEB"
+            value = "https://forgejo.viktorbarzin.me"
+          }
+          env {
+            name  = "FIXER_FORGEJO_OWNER"
+            value = "viktor"
+          }
+          env {
+            name  = "FIXER_BOT_ACTOR"
+            value = "infra-agent"
+          }
+          env {
+            name  = "FIXER_AGENT"
+            value = ".claude/agents/issue-responder"
+          }
+          env {
+            name  = "FIXER_NTFY_URL"
+            value = "https://ntfy.viktorbarzin.me"
+          }
+          env {
+            name  = "FIXER_NTFY_TOPIC"
+            value = "fixer"
+          }
+          # Woodpecker is the decisive CI stage for infra: .woodpecker/default.yml
+          # runs on push and is what applies the change.
+          env {
+            name  = "FIXER_WOODPECKER_URL"
+            value = "http://woodpecker-server.woodpecker.svc.cluster.local"
+          }
+          env {
+            name  = "FIXER_WOODPECKER_REPO_ID"
+            value = "1"
+          }
+          env {
+            name = "FIXER_WOODPECKER_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "claude-agent-secrets"
+                key  = "WOODPECKER_API_TOKEN"
+              }
+            }
+          }
+
           # NOTE on MCP: the HA MCP URL (secret — its path segment is the auth
           # token) arrives as env `HA_MCP_URL` via the claude-agent-secrets
           # ExternalSecret (env_from above), sourced from Vault
@@ -878,5 +976,135 @@ resource "kubernetes_cron_job_v1" "claude_oauth_expiry_monitor" {
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# -----------------------------------------------------------------------------
+# fixer-tick — the half of the fixer loop a webhook cannot do
+# -----------------------------------------------------------------------------
+# The webhook dispatches immediately when the repo is free. This tick covers the
+# two things it cannot: DRAINING a `broken` issue that arrived while a run held
+# the per-repo lock, and FOLLOWING a pushed commit through CI — turning a red
+# pipeline into a corrective turn (fix forward, never revert).
+#
+# It holds no state. What is in flight is the `agent-in-progress` label on the
+# issue, and where each run got to is a hidden footer on its own comment, so a
+# tick in a fresh pod resumes exactly where the last one stopped.
+#
+# Design: claude-agent-service/docs/2026-08-25-forgejo-fixer-design.md
+#
+# concurrency_policy Forbid: two ticks would race on the same lock and could
+# double-dispatch. A skipped tick costs at most one interval of latency.
+resource "kubernetes_cron_job_v1" "fixer_tick" {
+  metadata {
+    name      = "fixer-tick"
+    namespace = kubernetes_namespace.claude_agent.metadata[0].name
+    labels    = local.labels
+  }
+
+  spec {
+    schedule                      = "*/2 * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 60
+
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 0
+        ttl_seconds_after_finished = 600
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            restart_policy       = "Never"
+            service_account_name = kubernetes_service_account.claude_agent.metadata[0].name
+            container {
+              name    = "tick"
+              image   = "${local.image}:${local.image_tag}"
+              command = ["python3", "-m", "app.fixer.tick"]
+
+              # Every FIXER_*/AFK_* value and both secrets come from the same
+              # places the service itself reads them, so the tick and the
+              # webhook can never disagree about the trigger label, the bot
+              # identity, or whether the loop is armed.
+              env_from {
+                secret_ref {
+                  name = "claude-agent-secrets"
+                }
+              }
+              env {
+                name  = "FIXER_SERVICE_URL"
+                value = "http://claude-agent-service.${local.namespace}.svc.cluster.local:8080"
+              }
+              env {
+                name  = "AFK_KILL_SWITCH"
+                value = "false"
+              }
+              env {
+                name  = "AFK_ALLOWLIST"
+                value = "infra"
+              }
+              env {
+                name  = "AFK_READY_LABEL"
+                value = "broken"
+              }
+              env {
+                name  = "FIXER_FORGEJO_API"
+                value = "https://forgejo.viktorbarzin.me/api/v1"
+              }
+              env {
+                name  = "FIXER_FORGEJO_WEB"
+                value = "https://forgejo.viktorbarzin.me"
+              }
+              env {
+                name  = "FIXER_FORGEJO_OWNER"
+                value = "viktor"
+              }
+              env {
+                name  = "FIXER_BOT_ACTOR"
+                value = "infra-agent"
+              }
+              env {
+                name  = "FIXER_AGENT"
+                value = ".claude/agents/issue-responder"
+              }
+              env {
+                name  = "FIXER_NTFY_URL"
+                value = "https://ntfy.viktorbarzin.me"
+              }
+              env {
+                name  = "FIXER_NTFY_TOPIC"
+                value = "fixer"
+              }
+              env {
+                name  = "FIXER_WOODPECKER_URL"
+                value = "http://woodpecker-server.woodpecker.svc.cluster.local"
+              }
+              env {
+                name  = "FIXER_WOODPECKER_REPO_ID"
+                value = "1"
+              }
+              env {
+                name = "FIXER_WOODPECKER_TOKEN"
+                value_from {
+                  secret_key_ref {
+                    name = "claude-agent-secrets"
+                    key  = "WOODPECKER_API_TOKEN"
+                  }
+                }
+              }
+
+              resources {
+                requests = { cpu = "20m", memory = "64Mi" }
+                limits   = { memory = "192Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
