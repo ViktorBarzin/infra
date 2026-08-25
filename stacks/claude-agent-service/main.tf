@@ -640,7 +640,7 @@ resource "kubernetes_deployment" "claude_agent" {
           }
           env {
             name  = "FIXER_AGENT"
-            value = ".claude/agents/issue-responder"
+            value = "issue-responder"
           }
           env {
             name  = "FIXER_NTFY_URL"
@@ -1072,7 +1072,7 @@ resource "kubernetes_cron_job_v1" "fixer_tick" {
               }
               env {
                 name  = "FIXER_AGENT"
-                value = ".claude/agents/issue-responder"
+                value = "issue-responder"
               }
               env {
                 name  = "FIXER_NTFY_URL"
