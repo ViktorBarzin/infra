@@ -35,6 +35,22 @@ import tempfile
 
 MAX_FIRES_PER_SESSION = 2
 
+# The command must plausibly have ATTEMPTED privileged access. Output alone is
+# not enough: text that merely quotes a denial trips every pattern below. This
+# hook fired on `homelab memory list` because a stored memory quoted
+# "Error from server (Forbidden)" — the exact cry-wolf failure it is meant to
+# avoid, so the command is now part of the evidence.
+_ACCESS_ATTEMPT = re.compile(
+    r"\b(kubectl|helm|vault|sudo|terragrunt|terraform|gh|az|aws|docker|"
+    r"systemctl|forgejo|git\s+push)\b", re.IGNORECASE)
+
+# Reading or searching stored text is never an access attempt, whatever the text
+# happens to contain. Checked before the pattern above, since these commands can
+# legitimately mention kubectl in their output.
+_READS_STORED_TEXT = re.compile(
+    r"\bhomelab\s+(memory|logs|claude-usage|usage)\b|\b(grep|rg|ugrep|cat|less|"
+    r"head|tail)\b.*\.(jsonl|log|md)\b", re.IGNORECASE)
+
 # Signatures that mean "this account is not permitted", each specific enough that
 # a match is not a guess. Ordered roughly by how often they appear in practice.
 DENIAL_PATTERNS: tuple[tuple[str, str], ...] = (
@@ -101,6 +117,20 @@ def find_denial(text: str) -> str | None:
     return None
 
 
+def attempted_access(command: str) -> bool:
+    """Whether ``command`` plausibly tried to do something privileged.
+
+    A denial signature in output only means something when the command could
+    have been denied. Reading memory, logs or a transcript is never that, even
+    when the text it returns is full of past denials.
+    """
+    if not command:
+        return False
+    if _READS_STORED_TEXT.search(command):
+        return False
+    return bool(_ACCESS_ATTEMPT.search(command))
+
+
 def output_text(payload: dict) -> str:
     """Everything the command produced, as one string."""
     response = payload.get("tool_response")
@@ -122,6 +152,10 @@ def main() -> int:
         return 0
 
     if payload.get("tool_name") != "Bash":
+        return 0
+
+    command = str((payload.get("tool_input") or {}).get("command") or "")
+    if not attempted_access(command):
         return 0
 
     kind = find_denial(output_text(payload))

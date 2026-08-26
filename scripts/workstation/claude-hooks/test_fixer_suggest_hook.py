@@ -140,5 +140,64 @@ def test_malformed_input_exits_quietly(raw):
 
 def test_a_string_tool_response_is_handled():
     payload = {"tool_name": "Bash", "session_id": tempfile.mktemp(prefix="s-str"),
+               "tool_input": {"command": "kubectl get secret x"},
                "tool_response": "Error from server (Forbidden)"}
     assert run(payload) != ""
+
+
+def test_a_delivery_with_no_command_cannot_fire():
+    """No command means no evidence anything was attempted, whatever the output
+    says — the stricter contract that killed the false positive."""
+    payload = {"tool_name": "Bash", "session_id": tempfile.mktemp(prefix="s-nocmd"),
+               "tool_response": {"stderr": "Error from server (Forbidden)"}}
+    assert run(payload) == ""
+
+
+# --------------------------------------------------------------------------- #
+# The command is part of the evidence — output alone cries wolf.
+# --------------------------------------------------------------------------- #
+def test_reading_a_memory_that_quotes_a_denial_does_not_fire():
+    """Regression, caught firing on its author: `homelab memory list` returned a
+    stored memory quoting "Error from server (Forbidden)" and the hook fired."""
+    payload = {
+        "tool_name": "Bash",
+        "session_id": tempfile.mktemp(prefix="s-mem"),
+        "tool_input": {"command": "homelab memory list --tag fixer --limit 8"},
+        "tool_response": {"stdout": "#11603 ... Error from server (Forbidden) ..."},
+    }
+    assert run(payload) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "homelab logs query '{namespace=\"immich\"}' --since 1h",
+    "homelab claude-usage --since 7d",
+    "grep -r 'cannot get resource' /persistent/fixer-runs/x.jsonl",
+    "cat notes.md",
+    "echo 'Error from server (Forbidden)'",
+])
+def test_commands_that_only_read_text_never_fire(command):
+    payload = {"tool_name": "Bash", "session_id": tempfile.mktemp(prefix="s-r"),
+               "tool_input": {"command": command},
+               "tool_response": {"stdout": "Error from server (Forbidden)"}}
+    assert run(payload) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "kubectl -n immich get secret x",
+    "vault kv get secret/viktor",
+    "sudo systemctl restart thing",
+    "git push origin HEAD:master",
+    "helm upgrade x y",
+])
+def test_a_real_access_attempt_that_is_denied_still_fires(command):
+    payload = {"tool_name": "Bash", "session_id": tempfile.mktemp(prefix="s-a"),
+               "tool_input": {"command": command},
+               "tool_response": {"stderr": "Error from server (Forbidden)"}}
+    assert run(payload) != ""
+
+
+def test_an_access_attempt_that_succeeded_does_not_fire():
+    payload = {"tool_name": "Bash", "session_id": tempfile.mktemp(prefix="s-ok"),
+               "tool_input": {"command": "kubectl get pods"},
+               "tool_response": {"stdout": "pod-1  Running"}}
+    assert run(payload) == ""
