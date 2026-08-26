@@ -470,6 +470,20 @@ resource "kubernetes_deployment" "claude_agent" {
               git config --global url."https://$${FORGEJO_TOKEN}@forgejo.viktorbarzin.me/".insteadOf "https://forgejo.viktorbarzin.me/"
             fi
 
+            # The FIXER pushes as ITSELF, not as viktor. A longer prefix wins in
+            # git's insteadOf matching, so this narrows viktor/infra to the
+            # infra-agent bot while every other Forgejo repo keeps the rule
+            # above (the bot is a collaborator on viktor/infra only, so a
+            # blanket switch would break the other agents on this pod).
+            #
+            # Attribution is the point: the bot already authors every comment,
+            # label and close on an issue, and a commit pushed with someone
+            # else's credential makes the audit trail say something untrue.
+            # infra-agent is on master's push whitelist as of 2026-08-26.
+            if [ -n "$${FIXER_FORGEJO_TOKEN}" ]; then
+              git config --global url."https://infra-agent:$${FIXER_FORGEJO_TOKEN}@forgejo.viktorbarzin.me/viktor/infra".insteadOf "https://forgejo.viktorbarzin.me/viktor/infra"
+            fi
+
             # Clone or update repo
             if [ ! -d /workspace/infra/.git ]; then
               git clone https://$${GITHUB_TOKEN}@github.com/ViktorBarzin/infra.git /workspace/infra
