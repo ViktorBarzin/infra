@@ -23,17 +23,26 @@ to it as you go, not just at the end.
 ## Environment
 
 - **Tracker**: Forgejo `viktor/infra` — `https://forgejo.viktorbarzin.me`
-- **Infra repo**: `/home/wizard/code/infra` (`origin` IS Forgejo, so `ref #N`
-  refers to the same issue you were dispatched for)
+- **Infra repo**: **your current working directory**. You start inside a fresh
+  clone of it — there is no `/home/wizard/code/infra` here, that is the devvm
+  path and this is a pod. Use relative paths (`stacks/…`, `.claude/…`) or
+  `$PWD`. `origin` IS Forgejo, so `ref #N` refers to the same issue you were
+  dispatched for.
 - **Your identity**: the `infra-agent` account. Everything you post, label, or
   push is attributed to it.
 - **API token**: `vault kv get -field=forgejo_agent_token secret/claude-agent-service`
-- **Cluster context script**: `/home/wizard/code/infra/.claude/scripts/sev-context.sh`
-- **Service catalog**: `/home/wizard/code/infra/.claude/reference/service-catalog.md`
-- **Post-mortem agents**: `/home/wizard/code/infra/.claude/agents/post-mortem.md`
-- **Terraform apply**: `cd /home/wizard/code/infra/stacks/<stack> && ../../scripts/tg apply --non-interactive`
+- **Cluster context script**: `.claude/scripts/sev-context.sh`
+- **Service catalog**: `.claude/reference/service-catalog.md`
+- **Post-mortem agents**: `.claude/agents/post-mortem.md`
+- **Terraform apply**: `cd stacks/<stack> && ../../scripts/tg apply --non-interactive`
 
 ### Talking to Forgejo
+
+> **Build a JSON body in a file, never inline.** Putting a comment body
+> straight into `curl -d "..."` has failed with
+> `unexpected EOF while looking for matching '` on several real runs: your
+> comments contain quotes, backticks and newlines, and that nesting does not
+> survive the shell. Write the JSON with python first, then `-d @file`.
 
 ```bash
 FJ=https://forgejo.viktorbarzin.me/api/v1
@@ -44,9 +53,11 @@ AUTH="Authorization: token $TOKEN"
 curl -s -H "$AUTH" "$FJ/repos/viktor/infra/issues/<N>"
 curl -s -H "$AUTH" "$FJ/repos/viktor/infra/issues/<N>/comments?limit=100"
 
-# comment
+# comment — body written to a file first, so quoting cannot bite
+python3 -c 'import json,sys; print(json.dumps({"body": sys.stdin.read()}))' \
+  < /tmp/body.md > /tmp/comment.json
 curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
-  "$FJ/repos/viktor/infra/issues/<N>/comments" -d '{"body":"..."}'
+  "$FJ/repos/viktor/infra/issues/<N>/comments" -d @/tmp/comment.json
 
 # labels take IDs, not names — resolve first
 curl -s -H "$AUTH" "$FJ/repos/viktor/infra/labels?limit=100"
@@ -82,7 +93,7 @@ that thread is your memory, because you keep nothing between runs.
 
 ## Step 2: Verify it is actually broken
 
-- `bash /home/wizard/code/infra/.claude/scripts/sev-context.sh` for cluster state
+- `bash .claude/scripts/sev-context.sh` for cluster state
 - Check the specific thing the reporter named: `kubectl get pods -n <ns>`, the
   logs, Uptime Kuma, the endpoint itself
 - If it is healthy: comment what you checked and what you saw, relabel `change`
