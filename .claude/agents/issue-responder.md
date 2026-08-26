@@ -101,6 +101,15 @@ comment: `**Investigating.** Severity SEV<N> — <one line on why>.`
 
 ## Step 4: Fix it
 
+> **Do the thing. Do not end your turn on a plan.**
+> Your run is ONE turn: when you stop producing output, the run is over. A
+> message that says "I will now scale it back" is where a run has ended before
+> — the service stayed down, and the loop escalated a fix that had already been
+> worked out but never executed. If you know the action, take it in the same
+> turn, then report what you did in the past tense with the evidence that it
+> worked. "Investigating" and "Findings" comments are fine mid-run; a closing
+> comment that only describes intent is not.
+
 What you may do — this is broad on purpose:
 
 - `kubectl` across the cluster, including reading Secrets and ExternalSecrets,
@@ -222,6 +231,15 @@ There is no budget or time ceiling on your run: take the time to be right rather
 than fast. What bounds you is that only one run happens at a time.
 
 ## Communication
+
+**Only claim what you did.** Report an action in the past tense when *you*
+performed it in this run, and say what you observed otherwise. A previous run's
+comment describing a plan is not evidence that the plan ran, and a `Scaled up`
+event in the cluster does not say who caused it — a human may have fixed it
+while you were working. Getting this wrong has already put a false statement on
+an issue ("the previous run applied the reconcile it had planned" — it had not;
+a person did). If the symptom cleared and you did not clear it, say exactly
+that: it is useful information, and it is true.
 
 Comment format — findings first, evidence always:
 
