@@ -110,6 +110,16 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
+          # Memory API key, so a run can recall what earlier runs learned and
+          # record what it learned itself. Without it every run starts blind
+          # about faults it has already diagnosed once.
+          secretKey = "MEMORY_API_KEY"
+          remoteRef = {
+            key      = "claude-memory"
+            property = "api_key"
+          }
+        },
+        {
           # Doorbell publish token. This ntfy is NTFY_AUTH_DEFAULT_ACCESS=deny-all,
           # so an unauthenticated POST is a 403 and no escalation reaches anyone.
           # The token belongs to a dedicated `fixer` user with WRITE-ONLY access to
@@ -667,6 +677,26 @@ resource "kubernetes_deployment" "claude_agent" {
             name  = "FIXER_AGENT"
             value = "issue-responder"
           }
+          # The homelab CLI reads these. Reachability verified from this pod:
+          # loki.viktorbarzin.lan resolves and answers, claude-memory answers 200.
+          env {
+            name  = "MEMORY_API_URL"
+            value = "https://claude-memory.viktorbarzin.me"
+          }
+          env {
+            name  = "CLAUDE_MEMORY_API_URL"
+            value = "https://claude-memory.viktorbarzin.me"
+          }
+          env {
+            name = "CLAUDE_MEMORY_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "claude-agent-secrets"
+                key  = "MEMORY_API_KEY"
+              }
+            }
+          }
+
           env {
             name  = "FIXER_NTFY_URL"
             value = "https://ntfy.viktorbarzin.me"

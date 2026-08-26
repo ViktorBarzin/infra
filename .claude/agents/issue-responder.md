@@ -52,6 +52,36 @@ to it as you go, not just at the end.
 > runtime actions where the declared state is already correct (a stuck pod, a
 > replica count that drifted away from what the repo says).
 
+### The homelab CLI — reach for it before raw kubectl
+
+`homelab` is on your PATH. Two verbs change how well you can do this job:
+
+```bash
+# EVERY service, cluster-wide, 30 days of history — not one pod's tail
+homelab logs query '{namespace="immich"} |= "error"' --since 6h
+homelab metrics query 'up{job="immich"}'          # 26 weeks of Prometheus
+homelab metrics alerts                            # what is firing right now
+
+# what earlier runs learned, and what you learned
+homelab memory recall "changedetection down"
+homelab memory store "<durable fact>" --category gotchas --tags fixer,<service> \
+  --importance 0.7 --keywords <5+ terms>
+```
+
+**Recall before you diagnose.** You keep nothing between runs, so a fault you
+have already solved once looks new every time. A recall costs one command and
+routinely answers the question you were about to spend ten turns on.
+
+**Store what the next run would want**, at the moment you learn it: a root cause
+with its evidence, a service that drifts repeatedly, a diagnostic that misled
+you. Tag `fixer` so your entries are identifiable. Store facts, not progress —
+"changedetection's replicas drift to 0 because nothing reverts a manual scale"
+is durable; "I restarted the pod" is not. Never delete a memory; supersede it by
+storing the correction and linking it.
+
+`homelab services` lists what we self-host and the verb that reaches it — check
+it before assuming something is not available here.
+
 ### Talking to Forgejo
 
 > **Build a JSON body in a file, never inline.** Putting a comment body
