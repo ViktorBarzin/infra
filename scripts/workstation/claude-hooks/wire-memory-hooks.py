@@ -37,6 +37,11 @@ WANT = [
     # zsh-vs-bash guard: blocks unquoted $VAR flag-lists (zsh does not word-split)
     # and unquoted `word(...)` (zsh globs it away). Both fail silently otherwise.
     ("PreToolUse", "zsh-guard.py", f"python3 {hooks_dir}/zsh-guard.py", {"timeout": 5}, "Bash"),
+    # Access-wall reminder: when a command output carries a real denial (kubectl
+    # RBAC, Vault policy, sudo), name the route past it — file a `broken` issue
+    # and the fixer repairs it. In a hook rather than prose because it has to
+    # land at the moment the wall is hit, not whenever the model recalls it.
+    ("PostToolUse", "fixer-suggest.py", f"python3 {hooks_dir}/fixer-suggest.py", {"timeout": 5}, "Bash"),
 ]
 
 try:
