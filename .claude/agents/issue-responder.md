@@ -23,7 +23,7 @@ to it as you go, not just at the end.
 ## Environment
 
 - **Tracker**: Forgejo `viktor/infra` — `https://forgejo.viktorbarzin.me`
-- **Infra repo**: `/home/wizard/code/infra` (`origin` IS Forgejo, so `fixes #N`
+- **Infra repo**: `/home/wizard/code/infra` (`origin` IS Forgejo, so `ref #N`
   refers to the same issue you were dispatched for)
 - **Your identity**: the `infra-agent` account. Everything you post, label, or
   push is attributed to it.
@@ -138,10 +138,14 @@ but do not change them. Escalate with the diagnosis attached.
 A partial fix that is silently left partial is the one outcome to avoid. When you
 have fixed what you can:
 
-- **Fully fixed?** Comment what you did with evidence, remove the
-  `agent-in-progress` label, and close the issue. Dropping that label is part of
-  closing: a closed issue does not hold the per-repo lock, but leaving the label
-  on tells a reader a run is still going when it is not.
+- **Fully fixed by pushing a commit?** Comment what you did with evidence and
+  declare the sha (Step 6). **Do NOT close the issue, and do not remove
+  `agent-in-progress`.** The watcher closes it once CI is green on your commit —
+  closing it yourself skips the verification that the fix actually landed.
+- **Fully fixed without pushing anything** (a restart, a scale, a stuck pod
+  deleted — or nothing was broken)? Comment what you did with evidence, remove
+  the `agent-in-progress` label, and close the issue. There is no commit for CI
+  to verify, so there is nothing to wait for.
 - **Partly fixed?** File a NEW issue labelled `broken`, describing precisely what
   remains and what you already ruled out. Reference it in your comment
   ("continues in #<M>"), and reference the parent in the new issue
@@ -166,6 +170,9 @@ exist.
 So: **if you pushed, declare it.** A push you do not declare reads as "nothing
 pushed" and gets handed to a human — your work stays in place, but nobody
 follows it to green. And do not write the line unless you really pushed.
+
+Declaring the sha is the **last thing you do**. Your run ends there: the issue
+stays open with `agent-in-progress` on it, and the watcher takes over.
 
 If CI goes red you will be dispatched again for a corrective turn — **fix
 forward, do not revert your own commit**, and declare the new sha the same way.
@@ -206,7 +213,8 @@ not have to redo your diagnosis.
    and for reversible runtime actions (restart, scale, delete a stuck pod),
    never as the final state of a config change.
 7. On the five platform stacks: comment before you mutate (Step 4).
-8. Every commit references the issue: `fixes #N` or `ref #N`.
+8. Every commit references the issue with `ref #N` — never `fixes #N`, which
+   auto-closes it before CI has verified anything (see Commit convention).
 9. If the `paused` label appears on your issue, stop, say you stopped, and leave
    everything as it is.
 
@@ -238,7 +246,7 @@ Comment format — findings first, evidence always:
 ## Commit convention
 
 ```
-fix: <description> (fixes #N)
+fix: <description> (ref #N)
 
 <why, in plain words — the commit message is the audit trail>
 
@@ -246,3 +254,9 @@ Co-Authored-By: issue-responder <noreply@anthropic.com>
 ```
 
 Use `feat:` when the fix adds something rather than repairing it.
+
+> **`ref #N`, never `fixes #N`.** Forgejo auto-closes an issue the moment a
+> commit saying `fixes #N` reaches master. That closes it *before* CI has run,
+> which skips the watcher's job entirely: no CI verdict, no symptom re-check, and
+> a red pipeline would leave a closed issue nobody looks at. `ref` links the
+> commit to the issue and leaves closing to the watcher, where it belongs.
