@@ -6,8 +6,8 @@ Welcome! This doc explains how to report issues, request features, and what happ
 
 | What | Where |
 |------|-------|
-| Report an outage | [File an issue](https://github.com/ViktorBarzin/infra/issues/new?template=outage-report.yml) |
-| Request a feature | [File a request](https://github.com/ViktorBarzin/infra/issues/new?template=feature-request.yml) |
+| Report an outage | [File an issue](https://forgejo.viktorbarzin.me/viktor/infra/issues/new) — label it `broken` |
+| Request a feature | [File an issue](https://forgejo.viktorbarzin.me/viktor/infra/issues/new) — label it `change` |
 | Check service status | [status.viktorbarzin.me](https://status.viktorbarzin.me) |
 | View past incidents | [Post-mortems](https://viktorbarzin.github.io/infra/post-mortems/) |
 | Uptime dashboard | [uptime.viktorbarzin.me](https://uptime.viktorbarzin.me) |
@@ -17,9 +17,9 @@ Welcome! This doc explains how to report issues, request features, and what happ
 
 ## Reporting an Outage
 
-If something is broken, [file an outage report](https://github.com/ViktorBarzin/infra/issues/new?template=outage-report.yml). The form asks for:
+If something is broken, [file an issue on Forgejo](https://forgejo.viktorbarzin.me/viktor/infra/issues/new) and add the `broken` label — that is what dispatches the fixer. Include:
 
-- **Which service** is affected (dropdown)
+- **Which service** is affected
 - **What you see** (error message, behavior)
 - **What kind of error** (502, timeout, auth, slow, etc.)
 - **When it started**
@@ -41,11 +41,10 @@ If something is broken, [file an outage report](https://github.com/ViktorBarzin/
 
 ```mermaid
 flowchart TD
-    A["You file a GitHub Issue<br/>(outage-report template)"] --> B["GitHub Actions triggers<br/>(within seconds)"]
-    B --> C{Are you a<br/>collaborator?}
-    C -->|No| D["'Queued for review'<br/>comment added"]
-    D --> E["Viktor reviews manually"]
-    C -->|Yes| F["Automated agent<br/>starts investigating"]
+    A["You file a Forgejo Issue<br/>+ label it 'broken'"] --> B["Forgejo webhook fires<br/>POST /hooks/forgejo<br/>(within seconds)"]
+    B --> C{Is the issue<br/>labelled 'paused'?}
+    C -->|Yes| D["Fixer skips it<br/>Viktor handles manually"]
+    C -->|No| F["Fixer run<br/>starts investigating"]
     F --> G{Is the service<br/>actually down?}
     G -->|"Healthy"| H["Agent posts findings<br/>+ closes issue"]
     G -->|"Down"| I["Agent classifies severity<br/>(SEV1 / SEV2 / SEV3)"]
@@ -70,8 +69,8 @@ flowchart TD
 |----------|--------------|----------------|
 | Service is actually healthy | ~5 minutes | Automated agent checks and closes |
 | Simple fix (pod restart, config) | ~10 minutes | Automated agent fixes and reports |
-| Complex issue (data, architecture) | ~30 min to acknowledge | Agent investigates, escalates to Viktor |
-| Non-collaborator report | Hours | Queued for manual review |
+| Complex issue (data, architecture) | ~30 min to acknowledge | Fixer investigates, escalates to Viktor |
+| Issue labelled `paused` | Manual | Fixer skips it; Viktor handles it directly |
 
 ### After resolution
 
@@ -86,7 +85,7 @@ Post-mortems are published at [viktorbarzin.github.io/infra/post-mortems](https:
 
 ## Requesting a Feature
 
-Want a new service deployed, a config change, or a new monitor? [File a feature request](https://github.com/ViktorBarzin/infra/issues/new?template=feature-request.yml).
+Want a new service deployed, a config change, or a new monitor? [File an issue on Forgejo](https://forgejo.viktorbarzin.me/viktor/infra/issues/new) and add the `change` label — it is filed for review rather than dispatching the fixer.
 
 Just describe what you need — be specific.
 
@@ -94,16 +93,14 @@ Just describe what you need — be specific.
 
 ```mermaid
 flowchart TD
-    A["You file a GitHub Issue<br/>(feature-request template)"] --> B["GitHub Actions triggers"]
-    B --> C{Are you a<br/>collaborator?}
-    C -->|No| D["'Queued for review'<br/>comment added"]
-    C -->|Yes| E["Automated agent<br/>assesses the request"]
-    E --> F{Is it<br/>straightforward?}
-    F -->|"Yes"| G["Agent implements it<br/>(Terraform + apply)"]
-    G --> H["Agent comments<br/>what was done"]
+    A["You file a Forgejo Issue<br/>+ label it 'change'"] --> B["Filed for review<br/>(does not dispatch the fixer)"]
+    B --> C["Viktor triages it"]
+    C --> F{Is it<br/>straightforward?}
+    F -->|"Yes"| G["Implemented<br/>(Terraform + apply)"]
+    G --> H["Change commented<br/>on the issue"]
     H --> I["Issue closed"]
-    F -->|"No (complex)"| J["Agent posts assessment:<br/>what's needed, risks, effort"]
-    J --> K["Escalated to Viktor<br/>for review"]
+    F -->|"No (complex)"| J["Assessment posted:<br/>what's needed, risks, effort"]
+    J --> K["Scheduled / discussed<br/>with Viktor"]
 
     style A fill:#6366f1,color:#fff
     style G fill:#22c55e,color:#fff
@@ -162,7 +159,7 @@ see `stacks/cloudflared/.../worker.tf`), which show the raw Cloudflare error.
 
 (The previous GitHub-Pages implementation — Uptime-Kuma snapshots pushed every
 5 minutes by the status-page CronJob — was disabled 2026-05-26 and superseded
-by ADR-0020; its incident/user-report sections went with it. Incident history
+by ADR-0020; its incident and report-intake sections went with it. Incident history
 lives in the issue tracker and `docs/post-mortems/`.)
 
 ---
@@ -175,23 +172,19 @@ For contributors who want to understand how the automation works.
 
 ```mermaid
 flowchart LR
-    subgraph GitHub
-        A[Issue Created] --> B[GHA Workflow]
-        B --> C{Collaborator?}
-    end
-
-    subgraph "Kubernetes Cluster"
-        C -->|Yes| D[Woodpecker Pipeline]
-        D --> E[Vault Auth<br/>K8s SA JWT]
-        E --> F[Fetch API Token]
+    subgraph "Forgejo (viktor/infra)"
+        A["Issue labelled<br/>'broken'"] --> B[Webhook fires]
     end
 
     subgraph "claude-agent-service (K8s)"
-        F --> G[HTTP POST /execute]
+        B --> C["POST /hooks/forgejo<br/>HMAC-verified + gated"]
+        C -->|repo free| G[Dispatch fixer run]
+        C -->|repo busy| T["fixer-tick CronJob<br/>drains the queue"]
+        T --> G
         G --> H[issue-responder agent]
         H --> I[Investigate / Implement]
         I --> J[Comment on Issue]
-        I --> K[Terraform Apply]
+        I --> K[Terraform Apply / push + CI]
         I --> L[Post-Mortem Pipeline]
     end
 
@@ -204,7 +197,7 @@ flowchart LR
     end
 
     style B fill:#2088ff,color:#fff
-    style D fill:#4c9e47,color:#fff
+    style G fill:#4c9e47,color:#fff
     style H fill:#6366f1,color:#fff
     style Q fill:#6366f1,color:#fff
 ```
@@ -224,7 +217,7 @@ flowchart LR
 | Post-Mortem Skill | `.claude/skills/post-mortem/` | Manual `/post-mortem` command |
 | Cluster Health | `.claude/skills/cluster-health/` | Health check with auto-filing for SEV1/SEV2 |
 | Status Page CronJob | `stacks/status-page/main.tf` | RETIRED (disabled 2026-05-26) — status page is now gatus on mx2 (ADR-0020) |
-| Issue Templates | `.github/ISSUE_TEMPLATE/` | Structured forms for outage reports + feature requests |
+| paused label | `viktor/infra` issue label | Per-issue brake — the fixer will not pick up an issue while it carries `paused` |
 
 ### Safety Guardrails
 
@@ -234,20 +227,21 @@ The automated agent follows strict rules:
 - **`terraform plan` before every apply** — aborts if any resources would be destroyed
 - **Platform stacks are hands-off** — vault, dbaas, traefik, authentik, kyverno always escalate
 - **No data deletion** — never deletes PVCs, PVs, or user data
-- **Budget capped** — $10 max per issue, $5 per post-mortem run
+- **One run at a time** — a per-repo lock serialises fixer runs; burn rate is bounded by that lock rather than a per-run budget or timeout ceiling
 - **Complex = escalate** — if the agent isn't confident, it assigns to Viktor with findings
 
 ### Labels
 
 | Label | Purpose |
 |-------|---------|
-| `user-report` | Auto-applied to outage reports |
-| `feature-request` | Auto-applied to feature requests |
-| `incident` | Confirmed incident (appears on status page) |
+| `broken` | Something is not working right now — **dispatches the fixer** |
+| `change` | A proposal; nothing is currently failing — filed for review only |
+| `agent-in-progress` | A fixer run holds this issue |
+| `paused` | Human brake — the fixer will not pick this up |
+| `incident` | Confirmed incident (applied by the fixer) |
 | `sev1` / `sev2` / `sev3` | Severity classification |
-| `postmortem-required` | SEV needs a postmortem |
-| `postmortem-done` | Postmortem written and linked |
-| `needs-human` | Agent escalated — needs Viktor's attention |
+| `postmortem-required` | SEV1/SEV2 — the post-mortem pipeline owes a writeup |
+| `needs-human` | Escalated — handed back to a human |
 
 ### Commit Conventions
 
