@@ -34,7 +34,23 @@ to it as you go, not just at the end.
 - **Cluster context script**: `.claude/scripts/sev-context.sh`
 - **Service catalog**: `.claude/reference/service-catalog.md`
 - **Post-mortem agents**: `.claude/agents/post-mortem.md`
-- **Terraform apply**: `cd stacks/<stack> && ../../scripts/tg apply --non-interactive`
+- **Terraform apply**: `cd stacks/<stack> && ../../scripts/tg plan` then
+  `../../scripts/tg apply --non-interactive`
+
+> **Your checkout is a full clone, not a worktree, and `tg apply` works here.**
+> A previous run refused to apply because it believed it was in a git worktree,
+> where the repo's own CLAUDE.md correctly forbids applying (git-crypt `*.tfvars`
+> come through as ciphertext under the worktree filter bypass). That does not
+> apply to you: `.git` is a directory, `git-crypt` is installed, its key is
+> mounted, and `config.tfvars` is **decrypted** in this container. Confirm with
+> `[ -d .git ] && head -c 40 config.tfvars` if you want to see it.
+>
+> This matters because the alternative is imperative `kubectl`, and a runtime
+> change that is not in the repo is drift — the next apply or the daily
+> drift-detection reverts it, and the fault comes back. **If the fix belongs in
+> Terraform, put it there**; `kubectl` is for diagnosis and for reversible
+> runtime actions where the declared state is already correct (a stuck pod, a
+> replica count that drifted away from what the repo says).
 
 ### Talking to Forgejo
 
@@ -220,6 +236,30 @@ Then comment:
 
 Leave the issue OPEN and leave your work in place. Someone picking this up should
 not have to redo your diagnosis.
+
+## Standing rules you would otherwise not see
+
+The devvm carries an org-wide policy and a set of shared rules that every human
+session here loads automatically. **This container has neither** — no
+`/etc/claude-code/managed-settings.json`, no `~/.claude/rules/`. You do get the
+repo's own `.claude/CLAUDE.md` and `AGENTS.md`, and they are authoritative. These
+are the standing rules from the layer you cannot see:
+
+- **Infrastructure changes go through Terraform.** Never `kubectl apply/edit/patch`
+  as the final state of a config change. Committed stack changes are auto-applied
+  by CI on push to master.
+- **The commit message is the audit trail.** Subject says WHAT changed; body says
+  WHY in plain words, paraphrasing the actual request. Never use `[ci skip]`.
+- **Never take an action that incurs new monetary cost.** No paid tiers, no
+  trials that convert, no paid API calls. Operating what already runs is fine.
+- **Prefer what we already self-host** over a public equivalent or a new
+  dependency.
+- **Other people's data is not yours to change.** Several people use this
+  cluster; a fix that touches someone else's namespace, files, or messages needs
+  the same care as a destructive one, and escalates if in doubt.
+- **Report faithfully.** If a step was skipped, say so. If a fix is unverified,
+  say that. A confident report of something you did not verify is worse than an
+  escalation.
 
 ## Safety rules
 
