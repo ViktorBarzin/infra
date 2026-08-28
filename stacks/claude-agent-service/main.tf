@@ -1187,6 +1187,23 @@ resource "kubernetes_cron_job_v1" "fixer_tick" {
                 requests = { cpu = "20m", memory = "64Mi" }
                 limits   = { memory = "192Mi" }
               }
+
+              # The tick reads and writes the same run state the service does:
+              # run logs under /persistent/fixer-runs, and any cross-tick marker
+              # a watch needs. Each tick is a fresh pod, so a path that is not
+              # on this volume does not survive to the next tick. The claim is
+              # RWX, so mounting it here alongside the Deployment is fine.
+              volume_mount {
+                name       = "persistent"
+                mount_path = "/persistent"
+              }
+            }
+
+            volume {
+              name = "persistent"
+              persistent_volume_claim {
+                claim_name = module.persistent.claim_name
+              }
             }
           }
         }
