@@ -439,6 +439,49 @@ Health for the durable "who-talks-to-whom" trail (Calico Goldmane → `goldmane-
 
 The two layers are **complementary**: `AggregatorDown` ⇒ no new edges land in the DB; `DigestFailing` ⇒ edges still land but nobody is told. (`< 1` requires the metric series to exist — a fully-deleted Deployment is instead caught by cluster-health check #48 below as "deployment missing".) A freshness probe (#61b) was deliberately skipped — `AggregatorDown` is the agreed floor. **Cluster-health check #48** (`check_goldmane_aggregator` in `scripts/cluster_healthcheck.sh`) reads the Deployment's `Available` condition independently (human / `--quiet` / `--json`; JSON key `goldmane_aggregator`).
 
+#### Terminal-lobby transport — `TerminalUpgradesCollapsed`
+
+Detects "the terminal stops attaching for everyone" from a signal that already
+exists: ttyd logs one `WS   /ws - <ip>, clients: N` line per **successful**
+WebSocket upgrade, and devvm's journal ships it to Loki. Counting that line
+counts terminals that actually attached, rather than page loads or TCP
+connections. Group `Terminal Lobby` in `loki.tf`; runbook
+[runbooks/terminal-lobby-upgrades.md](../runbooks/terminal-lobby-upgrades.md).
+
+| Alert | Expr (abridged) | For | Severity |
+|---|---|---|---|
+| `TerminalUpgradesCollapsed` | `(sum(count_over_time({job="devvm-journal",unit="ttyd.service"} \|= "WS   /ws" [24h])) or vector(0)) < 50` | 2h | warning |
+
+Added 2026-08-28, after terminal mode failed to connect from any touch device
+for three days (25–28 Aug) while the collapse sat visible in this stream the
+whole time. Cause was a temporal-dead-zone `ReferenceError` in `term.html` that
+rejected the page's whole async IIFE before the `/token` fetch and
+`new WebSocket(...)`; a fine pointer skipped the offending block, so desktop
+was unaffected. Fixed by terminal-lobby `89b0ed7`.
+
+**The threshold is measured, not guessed.** Evaluating the expression at each
+day's 23:59Z gives 227 (22 Aug), 259, 73, 57, 1 (26 Aug), 11 — so `< 50` fires
+on the two dead days, stays quiet on the healthy baseline, and leaves roughly
+4x headroom for a genuinely quiet day. A 24h window rather than an hourly rate
+because terminals are driven by a person and an hourly threshold would
+false-fire every night.
+
+**It catches dead, not degraded.** 25 Aug sat at 57 because desktop was still
+connecting normally, so the alert would have fired on 26 Aug — two days earlier
+than the fault was actually found, but not on day one. Catching the partial
+case needs a baseline-ratio recording rule plus a trailing comparison; worth
+building if a partial regression recurs.
+
+**`or vector(0)` is load-bearing on any `<` threshold over `count_over_time`,
+and this is the first such rule here** — the other 41 rules in `loki.tf` are all
+`> N`, where an empty result correctly means "nothing happened". For an
+absence-detection rule the same emptiness is a blind spot: `sum()` returns *no
+series* when nothing matches, so a bare `... < 50` yields an empty result and
+the alert stays silent at exactly zero, the case it most needs to catch.
+Verified live 2026-08-28 against a filter matching no lines. The same guard also
+makes the rule cover the journal ceasing to ship at all, which reads as
+"terminals are dead" — acceptable at warning severity, since both want a look.
+
 #### Backup Alerts
 - **PostgreSQLBackupStale**: >36h since last backup
 - **MySQLBackupStale**: >36h since last backup
