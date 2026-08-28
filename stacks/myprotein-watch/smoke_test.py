@@ -88,12 +88,18 @@ DEEPER = "48.00"      # £23.19/kg — a new low AND >50% off
 
 STRAWBERRY = lambda price: variant(900001, "Strawberry Cream", "2.7kg - 90servings", price, FULL)
 COOKIES = lambda: variant(900002, "Cookies and Cream", "2.7kg - 90servings", FULL, FULL)
-# Never on the old four-flavour watchlist, and the cheapest thing on the page.
-# Under the all-flavours scope it is exactly what we now expect to hear about.
-OFFLIST = lambda: variant(900003, "Vanilla", "2.7kg - 90servings", "20.00", FULL)
+# Never on the old four-flavour watchlist. Under the all-flavours scope it is
+# exactly what we now expect to hear about. Priced REALISTICALLY (£27.54/kg, just
+# inside his £28 bar): it used to be £20.00 for a 2.7kg tub, a price MyProtein has
+# never charged, and once the low trigger started measuring against the best price
+# on the page that fake bargain set an unreachable bar and suppressed every other
+# variant's new low. A fixture that cannot occur produces failures that cannot either.
+OFFLIST = lambda: variant(900003, "Vanilla", "2.7kg - 90servings", "57.00", FULL)
 # A licensed collab: no published protein figure, so its £/kg is not something
 # we can assert. Priced to qualify on both counts if the guard were missing.
 UNVERIFIED = lambda: variant(900004, "Twix®", "1.05kg - 30servings", "16.00", FULL)
+# 250 g / 8 servings — structurally poor value per kg whatever it costs.
+TASTER = lambda price: variant(900005, "Chocolate Brownie", "250G - 8servings", price, "13.99")
 
 PROMO = page("promo.html", [STRAWBERRY(SALE), COOKIES(), OFFLIST()])
 DEEP = page("deep.html", [STRAWBERRY(DEEPER), COOKIES(), OFFLIST()])
@@ -259,6 +265,21 @@ r, posts = run(QUIET, "10. digest on a deal already announced days ago", digest=
 expect(len(posts) == 1, "the digest still speaks")
 expect("a deal is live" in posts[0]["text"],
        "and still reports the running offer that alerting has deduped away")
+
+# 11. A personal best that is not worth hearing -------------------------------
+# The 2026-08-28 alert Viktor actually received: a 250 g / 8-serving taster tub
+# beat its own record and announced £54.35/kg protein while £33.33/kg sat on the
+# same page. A record is worth keeping; it is not always worth saying.
+TASTER_HIGH = page("taster_high.html", [STRAWBERRY(SALE), TASTER("13.99")])
+TASTER_LOW = page("taster_low.html", [STRAWBERRY(SALE), TASTER("10.00")])
+
+r, posts = run(TASTER_HIGH, "11a. seed the taster tub's record", watch="Strawberry Cream")
+r, posts = run(TASTER_LOW, "11b. taster tub hits a personal best at a poor price")
+expect(r.returncode == 0, "run succeeds")
+expect(len(posts) == 0,
+       "SILENT — a new low 63% worse than the best price on the page is not news")
+expect(any(k.startswith("low:") for k in state()),
+       "but the price record is still kept")
 
 print("\n" + "=" * 70)
 if failures:
