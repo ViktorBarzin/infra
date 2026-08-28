@@ -1145,6 +1145,15 @@ resource "kubernetes_cron_job_v1" "fixer_tick" {
                 name  = "FIXER_WOODPECKER_REPO_ID"
                 value = "1"
               }
+              # TEMPORARY, for the fix-forward drill (2026-08-28). Makes the
+              # FIRST CI verdict for any commit come back red, so one corrective
+              # cycle runs; every later verdict for that commit is the real one.
+              # Remove once the drill has proven the branch — leaving it on would
+              # cost one extra fix-forward turn on every real fix.
+              env {
+                name  = "FIXER_CI_FORCE_RED_ONCE"
+                value = "1"
+              }
               env {
                 name = "FIXER_WOODPECKER_TOKEN"
                 value_from {
