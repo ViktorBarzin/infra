@@ -696,6 +696,54 @@ resource "kubernetes_manifest" "term_html_ingressroute" {
   }
 }
 
+# IngressRoute: /assets/ → clipboard-upload. The lobby's content-hashed build
+# output lives here: the SPA's JS/CSS chunks, and an immutable copy of the
+# terminal page (assets/term-<asset>.html).
+#
+# WHY: ttyd serves exactly one file, so anything the lobby splits out needs an
+# origin of its own, and clipboard-upload already serves static files from
+# /usr/local/share/ttyd. Every name under here is content-hashed, so
+# clipboard-upload answers with `immutable, max-age=31536000` and a client never
+# revalidates: a deploy changes the NAME rather than invalidating a path. That
+# also fixes the terminal page costing ~474 KB per attach on a real device
+# (measured via term.ready telemetry), where `no-cache` meant a conditional
+# round trip at best and a full refetch after every deploy.
+#
+# AUTHED, same posture as /term.html rather than the public fonts/icons
+# carve-out: these chunks ARE the application. Same-origin, so the session
+# cookie flows. NO strip — clipboard-upload maps the path into its asset dir and
+# validates the name (single flat directory, no separators, so no traversal).
+resource "kubernetes_manifest" "lobby_assets_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "terminal-lobby-assets"
+      namespace = kubernetes_namespace.terminal.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match = "Host(`terminal.viktorbarzin.me`) && PathPrefix(`/assets/`)"
+        kind  = "Rule"
+        middlewares = [
+          {
+            name      = "authentik-forward-auth"
+            namespace = "traefik"
+          }
+        ]
+        services = [{
+          name = "clipboard-upload"
+          port = 80
+        }]
+      }]
+      tls = {
+        secretName = var.tls_secret_name
+      }
+    }
+  }
+}
+
 # =============================================================================
 # Webterminal probe (added 2026-05-17 after a Traefik replica came up with a
 # partial routing table — only the IngressRoute CRDs registered; the
