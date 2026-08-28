@@ -823,3 +823,89 @@ def test_the_digest_names_a_weightless_variant_cleanly():
     line = check.digest_line(check.parse_variants(page(BARE_SERVINGS)), ALL, 28.0)
     assert "120 servings" in line
     assert ", 120servings" not in line
+
+
+# --- a new low has to be worth hearing --------------------------------------
+# 2026-08-28: a 250 g / 8-serving taster tub dropped to £10.00, hit its own
+# personal record and alerted at £54.35/kg protein — while £33.33/kg sat on the
+# same page. 4 of the 6 alert lines ever sent were worse than what was already
+# available, because £/kg tracks pack size and every size is its own SKU, so a
+# sitewide percentage sale makes all of them hit a personal best at once.
+# A record is still worth KEEPING; it is not always worth SAYING.
+
+def _shake(sku, servings, price, rrp="153.99", flavour="Banana"):
+    return variant(
+        f"Impact Whey Protein Powder - {servings}servings - {flavour} (Milkshake)",
+        f"{flavour} (Milkshake)", f"4350g - {servings}servings", price, rrp, sku,
+    )
+
+
+def _taster(sku, price, rrp="13.99"):
+    """250 g / 8 servings — structurally poor value per kg, whatever it costs."""
+    return variant(
+        "Impact Whey Protein Powder - 250G - 8servings - Chocolate Brownie",
+        "Chocolate Brownie", "250G - 8servings", price, rrp, sku,
+    )
+
+
+def test_a_new_low_on_the_best_price_still_alerts():
+    page_ = page(_shake(18400001, 150, "99.99"))
+    prior = {"low:18400001": 40.0}
+    alerts, _ = check.decide(check.parse_variants(page_), prior, ALL, 28.0)
+    assert [a.kind for a in alerts] == ["low"]
+
+
+def test_the_taster_tub_regression_does_not_alert():
+    """The exact 2026-08-28 shape: taster hits a personal low at £54.35/kg while
+    £33.33/kg is on the same page."""
+    parsed = check.parse_variants(page(_shake(18400002, 150, "99.99"),
+                                       _taster(18400003, "10.00")))
+    # Both already on record; only the taster is dropping.
+    prior = {"low:18400002": 33.33, "low:18400003": 60.0}
+    alerts, new_state = check.decide(parsed, prior, ALL, 28.0)
+    assert alerts == []
+    # The record still ratchets down — history is kept, only the shout is dropped.
+    assert new_state["low:18400003"] == pytest.approx(54.35, abs=0.01)
+
+
+def test_a_suppressed_low_is_recorded_so_it_cannot_alert_again_later():
+    parsed = check.parse_variants(page(_shake(18400004, 150, "99.99"),
+                                       _taster(18400005, "10.00")))
+    prior = {"low:18400004": 33.33, "low:18400005": 60.0}
+    _, state1 = check.decide(parsed, prior, ALL, 28.0)
+    alerts2, _ = check.decide(parsed, state1, ALL, 28.0)
+    assert alerts2 == []
+
+
+@pytest.mark.parametrize("taster_price,should_alert", [
+    ("6.15", True),    # ~£33.4/kg — level with the page best, genuinely news
+    ("10.00", False),  # £54.35/kg — today's case
+])
+def test_the_gate_is_about_price_not_pack_size(taster_price, should_alert):
+    """A small pack is not banned — it just has to be competitive to speak."""
+    parsed = check.parse_variants(page(_shake(18400006, 150, "99.99"),
+                                       _taster(18400007, taster_price)))
+    prior = {"low:18400006": 33.33, "low:18400007": 99.0}
+    alerts, _ = check.decide(parsed, prior, ALL, 28.0)
+    assert bool(alerts) is should_alert
+
+
+def test_a_deal_at_his_price_alerts_even_if_it_is_not_the_page_best():
+    """The relevance gate guards the LOW trigger only. Hitting his actual
+    buying price is news regardless of what else is on the page."""
+    parsed = check.parse_variants(page(_shake(18400008, 150, "60.00"),
+                                       _shake(18400009, 150, "83.00", flavour="Chocolate")))
+    alerts, _ = check.decide(parsed, {}, ALL, 28.0)
+    assert "deal" in [a.kind for a in alerts]
+
+
+def test_the_page_best_ignores_variants_we_cannot_price():
+    """An unverified flavour must not set the bar the gate measures against."""
+    twix = variant(
+        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
+        "Twix®", "1.05kg - 30servings", "5.00", "5.00", 18400010,
+    )
+    parsed = check.parse_variants(page(_shake(18400011, 150, "99.99"), twix))
+    prior = {"low:18400011": 40.0}
+    alerts, _ = check.decide(parsed, prior, ALL, 28.0)
+    assert [a.kind for a in alerts] == ["low"]

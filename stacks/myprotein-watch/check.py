@@ -32,6 +32,8 @@ Config (all via env):
                           telling (£28 = the dearest Viktor has actually paid)
   DEEP_DISCOUNT_PCT       displayed discount that counts as a big sale
   NEW_LOW_MARGIN          how much better than the record a new low must be
+  LOW_RELEVANCE_MARGIN    how close to the best price on the page a new low must
+                          be to be announced (the record is kept regardless)
   WATCH_FLAVOURS          optional comma-separated flavour substrings to narrow
                           to. Empty (the default) means every flavour.
   DIGEST                  "true" posts the one-line daily heartbeat instead of
@@ -109,6 +111,17 @@ DEEP_DISCOUNT_PCT = 40
 # How much better than the previous record a price must be before a new low is
 # worth saying out loud. Guards against announcing a rounding-level dip.
 NEW_LOW_MARGIN = 0.01
+
+# How close to the best price on the page a new low must be before it is worth
+# saying out loud. A record is always worth KEEPING; it is not always worth
+# SAYING. Added 2026-08-28 after a 250 g / 8-serving taster tub alerted at
+# £54.35/kg protein — its own personal best — while £33.33/kg sat on the same
+# page: 63% worse than what was already on the shelf, and nearly double the
+# threshold. £/kg tracks PACK SIZE, and every size is its own SKU, so a sitewide
+# percentage sale makes all six sizes hit a personal record simultaneously and
+# the small ones can never be a good buy. Gating on price rather than pack size
+# keeps a genuinely cheap small tub eligible.
+LOW_RELEVANCE_MARGIN = 0.10
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -373,7 +386,7 @@ def find_returns(variants: list[Variant]) -> list[Variant]:
 
 
 def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
-           low_margin=NEW_LOW_MARGIN):
+           low_margin=NEW_LOW_MARGIN, low_relevance=LOW_RELEVANCE_MARGIN):
     """Work out what is worth saying, given what we already said.
 
     Returns (alerts, new_state). Four triggers, each de-duplicated on its own
@@ -387,6 +400,11 @@ def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
     A deal or a discount re-announces only if it gets better; when it lapses its
     state is dropped so the next sale is announced afresh. A low is permanent —
     it only ever ratchets down.
+
+    The low trigger additionally has to be worth hearing: a new record is only
+    announced when its £/kg is within low_relevance of the best comparable price
+    on this run. The record is written either way — suppressing the sentence must
+    not suppress the history, or the same dip would alert again later.
     """
     new_state = dict(state)
     alerts: list[Alert] = []
@@ -404,15 +422,24 @@ def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
 
     # Cheapest-ever, on the comparable lines only. A first sighting seeds the
     # record silently — we have no history to call it a low against.
-    for v in comparable(variants, watch):
+    #
+    # The bar is drawn from comparable variants only: an unverified flavour we
+    # cannot honestly price must not set the standard everything else is judged
+    # against.
+    cmp_now = comparable(variants, watch)
+    page_best = min((v.price_per_kg_protein for v in cmp_now), default=None)
+    for v in cmp_now:
         key = f"low:{v.sku}"
         pps = v.price_per_kg_protein
         previous = new_state.get(key)
         if previous is None:
             new_state[key] = pps
         elif pps < float(previous):
-            if pps <= float(previous) * (1 - low_margin):
+            beats_own_record = pps <= float(previous) * (1 - low_margin)
+            competitive = page_best is not None and pps <= page_best * (1 + low_relevance)
+            if beats_own_record and competitive:
                 alerts.append(Alert("low", v))
+            # Unconditional: the record follows the price, not the alerting.
             new_state[key] = pps
 
     deep = {v.sku: v for v in find_deep_discounts(variants, watch, deep_pct)}
@@ -738,6 +765,7 @@ def main() -> int:
     threshold = float(os.environ.get("THRESHOLD_PER_KG_PROTEIN", "28"))
     deep_pct = int(os.environ.get("DEEP_DISCOUNT_PCT", str(DEEP_DISCOUNT_PCT)))
     low_margin = float(os.environ.get("NEW_LOW_MARGIN", str(NEW_LOW_MARGIN)))
+    low_relevance = float(os.environ.get("LOW_RELEVANCE_MARGIN", str(LOW_RELEVANCE_MARGIN)))
     # Empty by default: every flavour is in scope. Set it to narrow.
     watch = os.environ.get("WATCH_FLAVOURS", "").split(",")
     dry_run = os.environ.get("DRY_RUN", "").lower() == "true"
@@ -775,7 +803,8 @@ def main() -> int:
         return 0
 
     state = load_state(state_target, backend)
-    alerts, new_state = decide(variants, state, watch, threshold, deep_pct, low_margin)
+    alerts, new_state = decide(variants, state, watch, threshold, deep_pct, low_margin,
+                               low_relevance)
 
     if not alerts:
         print(f"nothing at or under £{threshold:.2f}/kg protein, no new low, "
