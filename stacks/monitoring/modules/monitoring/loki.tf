@@ -933,6 +933,85 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Terminal-lobby transport health (added 2026-08-28). ttyd logs one
+          # `WS   /ws - <ip>, clients: N` line per SUCCESSFUL WebSocket upgrade,
+          # so counting that line counts terminals that actually attached — not
+          # page loads, not TCP connections. devvm's journal already ships it;
+          # no exporter and no code needed.
+          #
+          # Why this exists: terminal mode did not connect from any touch device
+          # between 25 and 28 Aug 2026 (a temporal-dead-zone ReferenceError in
+          # term.html rejected the whole page IIFE before `/token` and
+          # `new WebSocket(...)` ever ran, so a phone loaded the lobby and never
+          # attached while a desktop was unaffected). The collapse was plainly
+          # visible in this exact stream the whole time and nothing was watching,
+          # which is what cost three days — the same shape as the Vault
+          # audit-volume incident the same week. Fixed by terminal-lobby 89b0ed7.
+          # Runbook: docs/runbooks/terminal-lobby-upgrades.md.
+          name = "Terminal Lobby"
+          rules = [
+            {
+              # Threshold measured against the real incident, not guessed
+              # (verified 2026-08-28 by evaluating this expr at each day's
+              # 23:59Z): 22 Aug 227, 23 Aug 259 — healthy; 24 Aug 73, 25 Aug 57
+              # — degrading; 26 Aug 1, 27 Aug 11 — dead. `< 50` fires on the two
+              # dead days, stays quiet on the healthy baseline, and leaves ~4x
+              # headroom for a genuinely quiet day.
+              #
+              # 24h window, NOT an hourly rate: terminals are driven by a person,
+              # so an hourly threshold false-fires every night. A 24h window
+              # spans a full usage cycle.
+              #
+              # Known limit — this catches DEAD, not DEGRADED. 25 Aug sat at 57
+              # and would not have fired, because desktop was still connecting
+              # normally; only when touch was effectively the only traffic left
+              # did the total collapse. Catching it on 26 Aug is still two days
+              # earlier than it was actually found. A baseline-ratio rule would
+              # also catch the partial regression, but needs a recording rule
+              # plus a trailing comparison — worth revisiting if a partial
+              # regression recurs, not worth the machinery today.
+              #
+              # severity=warning deliberately, per the severity hygiene settled
+              # this week (QBittorrentDisconnected critical -> warning):
+              # `critical` is for things that are down for everyone right now. A
+              # transport regression is serious and slow-burning, not a 3am page.
+              # Warnings still post to #alerts.
+              #
+              # `or vector(0)` is LOAD-BEARING, not defensive padding. A bare
+              # `sum(count_over_time(...))` returns NO SERIES when nothing
+              # matches, so `< 50` yields an empty result and the alert stays
+              # SILENT on a total outage — it would have fired on 26 Aug (1) and
+              # 27 Aug (11) but said nothing at 0, the worst case. Verified live
+              # 2026-08-28 against a filter matching no lines: bare expr empty,
+              # `or vector(0)` returns 0 and fires. It also covers the journal
+              # shipping stopping entirely (nonexistent unit → 0, verified the
+              # same way), which reads as "terminals are dead" — correct enough
+              # at warning severity, since both need someone to look.
+              alert  = "TerminalUpgradesCollapsed"
+              expr   = "(sum(count_over_time({job=\"devvm-journal\", unit=\"ttyd.service\"} |= \"WS   /ws\" [24h])) or vector(0)) < 50"
+              for    = "2h"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "Terminal upgrades have collapsed ({{ $value }} in 24h, baseline ~250)"
+                description = <<-EOT
+                  Almost nobody's terminal is attaching. ttyd logs one line per
+                  successful WebSocket upgrade and that count has fallen to
+                  {{ $value }} over 24h, against a ~227-259/day healthy baseline.
+                  Check ttyd FIRST, because the two branches need different fixes
+                  and the interesting one looks like nothing is wrong:
+                  `systemctl status ttyd` on the devvm. If ttyd is DOWN it is an
+                  ordinary service problem. If ttyd is UP and healthy — which it
+                  was throughout the 25-28 Aug outage — the page is failing before
+                  it ever opens a socket, so look at the frontend's own boot
+                  telemetry rather than the backend. The runbook carries both
+                  branches and the exact queries.
+                EOT
+                runbook     = "docs/runbooks/terminal-lobby-upgrades.md"
+              }
+            },
+          ]
+        },
+        {
           # Immich share-link analytics (recording rules → Prometheus
           # remote-write, 2026-07-06). Continuous per-slug counters that
           # OUTLIVE Loki's 30d log retention (Prometheus keeps 26w): a shared
