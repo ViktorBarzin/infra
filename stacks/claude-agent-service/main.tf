@@ -494,11 +494,30 @@ resource "kubernetes_deployment" "claude_agent" {
               git config --global url."https://infra-agent:$${FIXER_FORGEJO_TOKEN}@forgejo.viktorbarzin.me/viktor/infra".insteadOf "https://forgejo.viktorbarzin.me/viktor/infra"
             fi
 
-            # Clone or update repo
+            # Clone or update repo — from FORGEJO, which is canonical.
+            #
+            # This used to clone the GitHub MIRROR, and that silently threw away
+            # an agent's work: a fix pushed to the mirror is downstream of
+            # Forgejo, so the next Forgejo->GitHub sync force-overwrites it. The
+            # 2026-08-28 drill caught it — the run committed c526d61f, pushed it
+            # to github.com, reported success (the push really did exit 0), and
+            # the commit is now on no branch anywhere. `ref #N` was wrong for the
+            # same reason: it resolved against GitHub's issue numbers, not the
+            # tracker the run was dispatched from.
+            #
+            # The credential lives in the remote URL rather than an insteadOf
+            # rule, because git config set HERE belongs to the init container and
+            # never reaches the container the agent runs in. That is also why the
+            # rules above are inert for pushes; they are kept only for anything
+            # the init container itself does.
+            FORGEJO_ORIGIN="https://infra-agent:$${FIXER_FORGEJO_TOKEN}@forgejo.viktorbarzin.me/viktor/infra.git"
             if [ ! -d /workspace/infra/.git ]; then
-              git clone https://$${GITHUB_TOKEN}@github.com/ViktorBarzin/infra.git /workspace/infra
+              git clone "$${FORGEJO_ORIGIN}" /workspace/infra
             else
               cd /workspace/infra
+              # Repoint an existing clone, so a pod that survives this change
+              # stops pushing to the mirror.
+              git remote set-url origin "$${FORGEJO_ORIGIN}"
               git fetch origin
               git reset --hard origin/master
             fi
