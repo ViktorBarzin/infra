@@ -1,0 +1,68 @@
+# Tell the devvm to install the terminal-lobby package it has just published.
+#
+# Runners cannot route to the devvm and Woodpecker is deploy-only (ADR-0002), so
+# terminal-lobby's GitHub Actions release workflow ends by triggering this:
+#
+#   POST /api/repos/1/pipelines
+#   {"branch":"master","variables":{"PIPELINE":"terminal-lobby-deploy","VERSION":"x.y.z"}}
+#
+# This step carries the trigger and nothing else. It does not choose a version,
+# fetch a package, or run any command of its own on the box: the deploy key is
+# restricted to a forced command there, so opening the connection IS the whole
+# instruction. The box then installs whatever its apt source publishes as latest.
+#
+# VERSION is logged rather than acted on. The box tracks latest, so a rollback is
+# fix-forward (publish a higher version) — see terminal-lobby's
+# docs/adr/0013-the-box-installs-the-lobby-nobody-ships-it.md. Passing a version
+# here would create a second, quieter way to decide what runs.
+
+when:
+  - event: manual
+    evaluate: 'PIPELINE == "terminal-lobby-deploy"'
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      partial: false
+      depth: 1
+      attempts: 3
+
+steps:
+  - name: reconcile
+    image: alpine:3.20
+    environment:
+      DEVVM_SSH_KEY:
+        from_secret: devvm_ssh_key
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      - apk add --no-cache openssh-client curl
+      - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      - printf '%s\n' "$DEVVM_SSH_KEY" > ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      # CI's known_hosts is ephemeral, so the host key is pinned per run.
+      - ssh-keyscan -t ed25519 10.0.10.10 >> ~/.ssh/known_hosts 2>/dev/null
+      - echo "requested version $${VERSION:-<none>}; the box installs latest"
+      # No command argument: authorized_keys forces /usr/local/bin/tl-reconcile,
+      # and it ignores SSH_ORIGINAL_COMMAND. Anything written here would be
+      # discarded, so writing nothing is the honest form.
+      - |
+        if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=yes wizard@10.0.10.10 2>&1 | tee /tmp/reconcile.log; then
+          echo "reconcile FAILED"
+          if [ -n "$SLACK_WEBHOOK" ]; then
+            curl -sf -X POST -H 'Content-Type: application/json' \
+              -d "{\"text\":\"terminal-lobby deploy FAILED on the devvm:\n\`\`\`$(tail -20 /tmp/reconcile.log)\`\`\`\"}" \
+              "$SLACK_WEBHOOK" || true
+          fi
+          exit 1
+        fi
+      # tl-reconcile prints every unit's state; an inactive one is a failed
+      # deploy even when the install itself returned zero.
+      - |
+        if grep -q ': INACTIVE' /tmp/reconcile.log; then
+          echo "a unit is not active after the install"
+          grep ': INACTIVE' /tmp/reconcile.log
+          exit 1
+        fi
+      - echo '---done---'
