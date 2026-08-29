@@ -8,6 +8,13 @@
 #
 #   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml --check --diff
 #   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml
+#   new box : ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml \
+#               -e @extra.json
+#
+# Pass the admin SSH key through a JSON extra-vars FILE, not -e key=value: the
+# key contains spaces, and -e splits on them, so the module receives a truncated
+# key and fails with an unhelpful IndexError.
+#   {"devvm_target": "devvm_test", "devvm_admin_ssh_key": "ssh-ed25519 AAAA... comment"}
 #
 # WHAT THIS COVERS
 #   the apt toolset, node, the machine-wide PATH, the OIDC/secrets tooling, the
@@ -33,7 +40,9 @@
 #                      7 days. Parking it is a separate, reversible decision.
 
 - name: devvm workstation base
-  hosts: devvm
+  # Overridable so the same playbook can build a NEW machine without being
+  # edited: -e devvm_target=<group-or-host>. Defaults to the live box.
+  hosts: "{{ devvm_target | default('devvm') }}"
   become: true
   gather_facts: true
 
@@ -50,6 +59,9 @@
     devvm_user_memory_max: "{{ [24, (ansible_memtotal_mb / 1024 * 0.9) | round | int] | min }}G"
     devvm_pane_memory_max: "{{ [6, (ansible_memtotal_mb / 1024 * 0.2) | round | int] | min }}G"
     devvm_docker_memory_max: "{{ [8, (ansible_memtotal_mb / 1024 * 0.3) | round | int] | min }}G"
+    # The one account this playbook owns. Everyone else comes from the roster.
+    devvm_admin_user: wizard
+    devvm_admin_ssh_key: ""
 
   tasks:
     # ---- 1) the apt toolset -------------------------------------------------
@@ -181,6 +193,23 @@
         dest: /usr/local/bin/terragrunt
         mode: "0755"
 
+    # Ansible's copy and template do NOT create parent directories, and every one
+    # of these already existed on the live box -- so a check run there could never
+    # have caught this. A blank machine has none of them.
+    - name: Create the directories the configs land in
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /etc/claude-code
+        - /etc/apt/keyrings
+        - /etc/apt/sources.list.d
+        - /etc/systemd/system/user-.slice.d
+        - /etc/systemd/system/system.slice.d
+        - /etc/systemd/user/scope.d
+        - /usr/local/sbin
+
     # ---- 4) the enforced machine-wide Claude config -------------------------
     # Top of the settings precedence chain, and carries no secrets.
     - name: Deploy the managed Claude config
@@ -197,6 +226,36 @@
         src: "{{ workstation_dir }}/skel/"
         dest: /etc/skel/
         mode: preserve
+
+    # ---- 5b) the admin account ---------------------------------------------
+    # ttyd.service runs as this user, so a machine without it cannot serve the
+    # lobby at all -- found by installing the package on a blank VM, where ttyd
+    # was the one service that would not start.
+    #
+    # This is the ONLY account this playbook creates. Everyone else comes from
+    # the roster (infra#88). Strictly additive: groups are appended, an existing
+    # account is never re-shelled, re-homed or re-permissioned, so this is a
+    # no-op against the live box.
+    - name: Create the shared code group
+      ansible.builtin.group:
+        name: code-shared
+        state: present
+
+    - name: Create the admin account
+      ansible.builtin.user:
+        name: "{{ devvm_admin_user }}"
+        groups: [sudo, docker, code-shared]
+        append: true
+        shell: /bin/zsh
+        create_home: true
+        state: present
+
+    - name: Authorise the admin's key
+      ansible.posix.authorized_key:
+        user: "{{ devvm_admin_user }}"
+        key: "{{ devvm_admin_ssh_key }}"
+        state: present
+      when: devvm_admin_ssh_key | length > 0
 
     # ---- 6) the apt source that delivers terminal-lobby ---------------------
     # The package is built off-infra and published to Forgejo's Debian registry.
