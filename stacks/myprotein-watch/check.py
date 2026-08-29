@@ -59,9 +59,12 @@ SERVINGS_RE = re.compile(r"(\d+)\s*servings", re.I)
 LINE_SUFFIX_RE = re.compile(r"\s*\(([^)]+)\)\s*$")
 AMOUNT_G_RE = re.compile(r"([\d.]+)\s*(kg|g)\b", re.I)
 
-# Lines whose serving is ~23 g of whey. The +Collagen line is deliberately
-# absent: half of its 20 g "protein" is collagen peptides, so its £/serving is
-# not comparable and must not trip the same trigger.
+# The lines Viktor is actually shopping for. The +Collagen line is deliberately
+# absent, and as of 2026-08-29 it is absent from EVERY trigger, not just the
+# value ones. His reasoning, and it is right: that line labels 20 g of protein
+# per serving but only 10 g is whey, the rest being collagen peptides, which are
+# tryptophan-free and do not support muscle protein synthesis. It is a different
+# product wearing the same name, so no discount makes it the thing he wants.
 DEAL_LINES = ("Original", "Milkshake")
 
 # Grams of COMPLETE protein per serving, from the product page's own claims
@@ -364,15 +367,22 @@ def find_deals(variants: list[Variant], watch: list[str], threshold: float) -> l
 def find_deep_discounts(variants: list[Variant], watch: list[str], min_pct: int) -> list[Variant]:
     """Anything where MyProtein's own displayed discount is unusually deep.
 
-    This one deliberately covers EVERY line and every flavour — +Collagen and the
-    flavours whose protein figure we are unsure of included. The question it
-    answers is "is a big sale running", not "is this good value per gram of
-    whey", so it needs no protein figure to be true. The Collagen caveat is
-    carried in the message instead.
+    Covers every flavour on the lines Viktor buys, including the ones whose
+    protein figure we cannot stand behind: the question it answers is "is a big
+    sale running", not "is this good value per gram of whey", so it needs no
+    protein figure to be true.
+
+    It does NOT cover the +Collagen line. That is a product exclusion rather than
+    a pricing one, so no discount rescues it (Viktor, 2026-08-29). Note this is
+    the Collagen LINE only — Snickers, Mars and the other flavours we cannot price
+    are still reported here, because a sale on them is still a sale on whey.
     """
     return [
         v for v in variants
-        if v.in_stock and _watched(v, watch) and v.discount_pct >= min_pct
+        if v.in_stock
+        and v.line in DEAL_LINES
+        and _watched(v, watch)
+        and v.discount_pct >= min_pct
     ]
 
 
@@ -462,11 +472,6 @@ def decide(variants, state, watch, threshold, deep_pct=DEEP_DISCOUNT_PCT,
     return alerts, new_state
 
 
-COLLAGEN_CAVEAT = (
-    " _(+Collagen line — half its 20 g protein is collagen peptides, "
-    "so this is not comparable per gram of whey)_"
-)
-
 UNVERIFIED_CAVEAT = (
     " _(protein per serving is not published for this flavour, so this is a sale "
     "worth knowing about rather than a verified price per gram of protein)_"
@@ -543,11 +548,7 @@ def format_slack(alerts: list[Alert]) -> dict[str, Any]:
                     f"— cheapest recorded — {_detail(v)}"
                 )
             else:
-                caveat = ""
-                if v.line == "Collagen":
-                    caveat = COLLAGEN_CAVEAT
-                elif not v.protein_verified:
-                    caveat = UNVERIFIED_CAVEAT
+                caveat = "" if v.protein_verified else UNVERIFIED_CAVEAT
                 lines.append(
                     f":fire: *{flavours}* ({v.line}) — *{v.discount_pct}% off* "
                     f"— {_detail(v)}{caveat}"
@@ -598,6 +599,11 @@ def print_scope(variants: list[Variant], watch: list[str], out=None) -> None:
         say(f"{len(unverified)} flavour(s) held out of the value triggers — protein "
             f"per serving not published for them, big-sale trigger still covers "
             f"them: {', '.join(unverified)}")
+    collagen = sum(1 for v in variants if v.in_stock and v.line == "Collagen")
+    if collagen:
+        say(f"{collagen} +Collagen variant(s) out of scope entirely — that line swaps "
+            f"half its whey for collagen peptides, so no discount makes it the "
+            f"product Viktor wants")
 
 
 def digest_line(variants: list[Variant], watch: list[str], threshold: float) -> str:
