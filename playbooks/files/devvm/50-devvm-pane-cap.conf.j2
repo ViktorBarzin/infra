@@ -1,0 +1,40 @@
+# Per-pane memory cap for the shared devvm (setup-devvm.sh §10a-bis, 2026-08-16).
+#
+# WHY PER PANE. A pane's cgroup holds the shell, its claude, and everything that
+# claude spawns. At the cap the kernel OOM-kills the single highest-RSS task IN
+# THAT PANE (`memory.oom.group=0`, so one task — not the pane), which is the
+# spawned build/browser/test run, not the ~0.5 GiB claude above it. That is the
+# ordering we want, and it needs no process-name matching: comm is unreliable
+# here (the claude binary reports its version string `2.1.233`, t3-serve reports
+# `MainThread`), so any regex-based scheme mis-ranks exactly the processes that
+# matter. The kernel ranks by RSS and cannot be fooled that way.
+#
+# WHY 6G. Working panes measured 0.6-1.3 GB on 2026-08-16, so this is ~5x the
+# busiest observed and leaves ~4.7 GB above a typical claude for legitimate
+# builds, test suites and chrome. It bounds ONE pane, not the aggregate — nine
+# capped panes are still 54G of headroom on a 31.3 GiB box, which is why the
+# earlyoom net in 10b stays.
+#
+# MemoryMax ONLY, never MemoryHigh — with MemorySwapMax=0 inherited from the
+# user slice, a soft band livelocks instead of killing (see the 2026-07-02
+# post-mortem addendum). Cap-and-kill.
+#
+# Applies to every user scope, which includes the small `run-r*.scope` ttyd
+# attach wrappers; those hold a tmux client of a few MB, so the cap is inert
+# for them.
+[Scope]
+MemoryAccounting=yes
+MemoryMax={{ devvm_pane_memory_max }}
+
+# OOMPolicy=continue is LOAD-BEARING — without it this whole drop-in is
+# self-defeating. systemd defaults a scope to OOMPolicy=stop, so once the kernel
+# has correctly killed ONE task, systemd stops the entire unit and takes the
+# surviving claude down with it. `memory.oom.group=0` governs only the KERNEL's
+# choice to group-kill; it says nothing about systemd's reaction afterwards.
+# Proven end-to-end 2026-08-16: the kernel killed python3 (5.44 GiB) and left
+# claude (457 MB) running exactly as intended, then systemd logged
+# "Failed with result 'oom-kill'" and tore the pane down anyway. With
+# OOMPolicy=continue the same test leaves the pane at "A process of this unit
+# has been killed by the OOM killer" and the session keeps running.
+# Same lesson t3-serve@.service learned on 2026-06-10.
+OOMPolicy=continue

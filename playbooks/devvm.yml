@@ -44,6 +44,12 @@
     # and these are tools rather than build inputs.
     kubelogin_url: https://github.com/int128/kubelogin/releases/latest/download/kubelogin_linux_amd64.zip
     terragrunt_url: https://github.com/gruntwork-io/terragrunt/releases/latest/download/terragrunt_linux_amd64
+    # Containment caps. The absolute values are the ones tuned on the 31.3 GiB
+    # devvm and reasoned about in the files themselves; the min() only keeps a
+    # smaller machine sane, and reproduces 24/6/8 exactly on the real box.
+    devvm_user_memory_max: "{{ [24, (ansible_memtotal_mb / 1024 * 0.9) | round | int] | min }}G"
+    devvm_pane_memory_max: "{{ [6, (ansible_memtotal_mb / 1024 * 0.2) | round | int] | min }}G"
+    devvm_docker_memory_max: "{{ [8, (ansible_memtotal_mb / 1024 * 0.3) | round | int] | min }}G"
 
   tasks:
     # ---- 1) the apt toolset -------------------------------------------------
@@ -258,7 +264,104 @@
         - docker-disk-gc.timer
         - networkd-dhcp-watchdog.timer
 
+    # ---- 8) resource containment (setup-devvm.sh section 10) ---------------
+    # Added after 2026-06-22, when one user's runaway swap-thrashed the throttled
+    # virtual disk into an IO storm and the box had to be hard-killed. The files
+    # carry their own reasoning and are copied verbatim; only the caps are
+    # parameterised, so a smaller machine does not get a cap larger than its RAM.
+    #
+    # Cap-and-kill, never throttle-and-pray: MemoryMax with MemorySwapMax=0 and
+    # no MemoryHigh band, because with swap off a cgroup plateauing in a
+    # high..max band is unreclaimable and livelocks instead of dying.
+    - name: Cap every user slice
+      ansible.builtin.template:
+        src: files/devvm/50-devvm-resource.conf.j2
+        dest: /etc/systemd/system/user-.slice.d/50-devvm-resource.conf
+        mode: "0644"
+      notify: reload systemd
+
+    # tmux 3.4 puts every pane in its own transient scope, so one drop-in on the
+    # scope UNIT TYPE caps each pane for every user with no per-session wiring.
+    # This is the guard that should normally fire: the kernel then picks the
+    # victim from inside the pane by raw RSS, so a spawned build dies and the
+    # small claude that spawned it does not.
+    - name: Cap every tmux pane
+      ansible.builtin.template:
+        src: files/devvm/50-devvm-pane-cap.conf.j2
+        dest: /etc/systemd/user/scope.d/50-devvm-pane-cap.conf
+        mode: "0644"
+      notify: reload systemd
+
+    - name: Give system.slice a priority edge
+      ansible.builtin.copy:
+        src: files/devvm/50-devvm-priority.conf
+        dest: /etc/systemd/system/system.slice.d/50-devvm-priority.conf
+        mode: "0644"
+      notify: reload systemd
+
+    # earlyoom, not systemd-oomd: oomd only acts on cgroups doing active
+    # reclaim, and a no-swap anon workload never reclaims, so it is inert here.
+    - name: Configure the earlyoom backstop
+      ansible.builtin.copy:
+        src: files/devvm/earlyoom.default
+        dest: /etc/default/earlyoom
+        mode: "0644"
+      notify: restart earlyoom
+
+    - name: Enable earlyoom
+      ansible.builtin.systemd_service:
+        name: earlyoom
+        enabled: true
+        state: started
+
+    # ---- 9) docker containment ----------------------------------------------
+    - name: Create the capped docker slice
+      ansible.builtin.template:
+        src: files/devvm/docker.slice.j2
+        dest: /etc/systemd/system/docker.slice
+        mode: "0644"
+      notify: reload systemd
+
+    # A merge, not a rewrite: daemon.json also carries buildkit and the nvidia
+    # runtime, and clobbering those would be a worse outage than no cap.
+    - name: Read the current docker daemon config
+      ansible.builtin.slurp:
+        src: /etc/docker/daemon.json
+      register: docker_daemon_raw
+      failed_when: false
+      check_mode: false
+
+    - name: Parse the current docker daemon config
+      ansible.builtin.set_fact:
+        docker_daemon: >-
+          {{ (docker_daemon_raw.content | b64decode | from_json)
+             if (docker_daemon_raw.content is defined) else {} }}
+
+    # Guarded on the VALUE, not on the rendering. Writing the merged JSON
+    # unconditionally reformats a file that is already correct, and the handler
+    # would then restart dockerd -- interrupting every running container -- for a
+    # whitespace difference.
+    - name: Point dockerd at the capped slice
+      when: docker_daemon.get('cgroup-parent') != 'docker.slice'
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: "{{ docker_daemon | combine({'cgroup-parent': 'docker.slice'}) | to_nice_json }}\n"
+      notify: restart docker
+
   handlers:
     - name: reload systemd
       ansible.builtin.systemd_service:
         daemon_reload: true
+
+    - name: restart earlyoom
+      ansible.builtin.systemd_service:
+        name: earlyoom
+        state: restarted
+
+    # Restarting dockerd interrupts running containers, so it is a handler that
+    # only fires when daemon.json actually changed.
+    - name: restart docker
+      ansible.builtin.systemd_service:
+        name: docker
+        state: restarted
