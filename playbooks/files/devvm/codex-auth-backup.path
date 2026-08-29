@@ -1,0 +1,7 @@
+[Unit]
+Description=Watch shared codex auth.json; back up to Vault when it changes
+[Path]
+PathModified=/opt/codex-shared/auth.json
+Unit=codex-auth-backup.service
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+[Unit]
+Description=Back up shared codex OAuth login to Vault (on change)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/codex-auth-backup.sh
