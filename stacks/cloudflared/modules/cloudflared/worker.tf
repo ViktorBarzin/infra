@@ -88,9 +88,10 @@ resource "cloudflare_worker_script" "outage_failover" {
 # TO DELIBERATELY EXCLUDE one, leave it out and note it in the exclusion list.
 #
 # Deliberately NOT covered (and why):
-#   terminal, terminal-ro                ttyd web terminals — WebSocket + a
+#   terminal                             ttyd web terminal — WebSocket + a
 #                                        ~2.7s session/layout poll per open tab
-#                                        (terminal-dev retired 2026-08-16)
+#                                        (terminal-dev retired 2026-08-16,
+#                                        terminal-ro removed 2026-08-29)
 #   nextcloud                            DAV/sync clients; ~37-67k req/day
 #   authentik                            forward-auth checks for every gated
 #                                        request; a login host's outage page

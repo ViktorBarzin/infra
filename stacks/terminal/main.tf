@@ -104,42 +104,6 @@ resource "kubernetes_manifest" "terminal_compress" {
   }
 }
 
-# Read-only terminal session at terminal-ro.viktorbarzin.me
-resource "kubernetes_service" "terminal_ro" {
-  metadata {
-    name      = "terminal-ro"
-    namespace = kubernetes_namespace.terminal.metadata[0].name
-    labels = {
-      app = "terminal-ro"
-    }
-  }
-
-  spec {
-    port {
-      name        = "http"
-      port        = 80
-      target_port = 7682
-    }
-  }
-}
-
-resource "kubernetes_endpoints" "terminal_ro" {
-  metadata {
-    name      = "terminal-ro"
-    namespace = kubernetes_namespace.terminal.metadata[0].name
-  }
-
-  subset {
-    address {
-      ip = "10.0.10.10"
-    }
-    port {
-      name = "http"
-      port = 7682
-    }
-  }
-}
-
 # Clipboard image upload service (same-origin path routing)
 resource "kubernetes_service" "clipboard_upload" {
   metadata {
@@ -273,23 +237,6 @@ module "ingress_assets" {
   homepage_enabled = false # path carve-out, not its own dashboard tile
 }
 
-module "ingress_ro" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.terminal.metadata[0].name
-  name            = "terminal-ro"
-  tls_secret_name = var.tls_secret_name
-  auth            = "required"
-  extra_annotations = {
-    "gethomepage.dev/enabled"      = "true"
-    "gethomepage.dev/name"         = "Terminal (Read-Only)"
-    "gethomepage.dev/description"  = "Read-only web terminal (ttyd)"
-    "gethomepage.dev/icon"         = "mdi-console"
-    "gethomepage.dev/group"        = "Infrastructure"
-    "gethomepage.dev/pod-selector" = ""
-  }
-}
-
 # === Multi-session lobby on terminal.viktorbarzin.me ===
 #
 # Application code (frontend, tmux-api, clipboard-upload, DevVM
@@ -297,17 +244,16 @@ module "ingress_ro" {
 #   https://forgejo.viktorbarzin.me/viktor/terminal-lobby
 #
 # That repo's ./scripts/deploy.sh ships everything to wizard@10.0.10.10
-# and restarts ttyd / ttyd-ro / tmux-api / clipboard-upload. Deploy is
+# and restarts ttyd / tmux-api / clipboard-upload. Deploy is
 # MANUAL via that script — there is no CI pipeline (the lobby's
 # .woodpecker.yml was removed under ADR-0002, issue #31; it builds no
 # image, so it is not part of the GHA->ghcr fleet). This stack only owns
 # the Kubernetes side: Services, Endpoints pointing at
-# 10.0.10.10:{7681,7682,7683,7684}, the IngressRoutes, and the Traefik
+# 10.0.10.10:{7681,7683,7684}, the IngressRoutes, and the Traefik
 # middlewares that gate everything behind Authentik forward-auth.
 #
 # Service map (DevVM):
 #   ttyd               :7681  →  serves lobby + xterm WS
-#   ttyd-ro            :7682  →  read-only mirror at terminal-ro.viktorbarzin.me
 #   clipboard-upload   :7683  →  POST /upload, returns saved path
 #   tmux-api           :7684  →  GET /sessions, DELETE /sessions/<n>,
 #                                POST /sessions/<n>/rename, GET /whoami
