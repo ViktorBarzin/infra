@@ -308,9 +308,17 @@ resource "kubernetes_deployment" "dawarich" {
             value = "2"
           }
           # The hourly `bulk_stats_calculating_job` (schedule.yml, "0 */1 * * *")
-          # spikes on top of that plateau and blew through the old 1Gi limit
-          # every hour — ~5 KernelOOMKiller CRITICAL pages a day. Request stays
-          # at 768Mi so this does not add scheduling pressure (see
+          # enqueues Stats::CalculatingJob(user, year, month), which holds the
+          # CURRENT month's points in memory. Its peak therefore scales with
+          # points-in-that-month (~5-6 KiB/point above a ~250 MiB baseline), so
+          # this ceiling is a moving target rather than a fixed requirement:
+          #   2026-08-08  ~125k points/month -> 978 MiB peak; limit 1Gi -> 2Gi
+          #   2026-08-29   340,903 points/month -> 2Gi outgrown in ~3 weeks,
+          #                one OOM kill per hour, August stats frozen at Aug 27
+          # 4Gi covers August's ~2.4 GiB projection plus a heavier September.
+          # Expect the pattern to go quiet on the 1st of a month and return
+          # mid-month; re-measure rather than assume when it does. Request
+          # stays at 768Mi so this does not add scheduling pressure (see
           # ClusterCannotTolerateNonGpuNodeLoss); only the ceiling moves.
           resources {
             requests = {
@@ -318,7 +326,7 @@ resource "kubernetes_deployment" "dawarich" {
               memory = "768Mi"
             }
             limits = {
-              memory = "2Gi"
+              memory = "4Gi"
             }
           }
           liveness_probe {
