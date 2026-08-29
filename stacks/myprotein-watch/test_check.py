@@ -625,20 +625,36 @@ def test_deep_discount_does_not_fire_just_below_the_threshold():
     assert kinds(alerts, "discount") == []
 
 
-def test_deep_discount_covers_the_collagen_line():
+def test_the_collagen_line_never_reaches_the_big_sale_trigger():
+    """Viktor 2026-08-29: the +Collagen line swaps whey for collagen peptides,
+    which is not the product he wants at any discount. It was already out of the
+    value triggers; the sale trigger was the last way it could reach him."""
     v = check.parse_variants(page(variant(
         "Impact Whey Protein Powder - 2340g - 90servings - Cookies and Cream (+Collagen)",
         "Cookies and Cream (+Collagen)", "2340g - 90servings", "50.00", "100.00", 18000001)))
     alerts, _ = check.decide(v, {}, WATCH, 28.0)
+    assert alerts == []
+
+
+def test_no_collagen_variant_can_appear_in_any_message():
+    """Belt and braces on the formatter, not just the trigger: excluding an item
+    from a computation is not the same as keeping it out of what Viktor reads."""
+    v = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 2160g - 90servings - Strawberry Cream (+Collagen)",
+        "Strawberry Cream (+Collagen)", "2160g - 90servings", "10.00", "100.00", 18000002)))
+    alerts, _ = check.decide(v, {}, ALL, 28.0)
+    assert alerts == []
+    assert "Collagen" not in check.format_slack(alerts)["text"]
+
+
+def test_an_unverified_original_flavour_still_fires_the_big_sale_trigger():
+    """The exclusion is the Collagen LINE, not "anything we cannot price".
+    Snickers and friends stay covered."""
+    v = check.parse_variants(page(variant(
+        "Impact Whey Protein Powder - 1.05kg - 30servings - Twix®",
+        "Twix®", "1.05kg - 30servings", "20.00", "40.00", 18000003)))
+    alerts, _ = check.decide(v, {}, ALL, 28.0)
     assert len(kinds(alerts, "discount")) == 1
-
-
-def test_collagen_discount_message_carries_the_caveat():
-    v = check.parse_variants(page(variant(
-        "Impact Whey Protein Powder - 2340g - 90servings - Cookies and Cream (+Collagen)",
-        "Cookies and Cream (+Collagen)", "2340g - 90servings", "50.00", "100.00", 18000001)))
-    alerts, _ = check.decide(v, {}, WATCH, 28.0)
-    assert "half" in check.format_slack(alerts)["text"].lower()
 
 
 def test_deep_discount_is_not_re_alerted_at_the_same_price():
@@ -909,3 +925,14 @@ def test_the_page_best_ignores_variants_we_cannot_price():
     prior = {"low:18400011": 40.0}
     alerts, _ = check.decide(parsed, prior, ALL, 28.0)
     assert [a.kind for a in alerts] == ["low"]
+
+
+def test_the_run_log_states_the_collagen_line_is_out_of_scope():
+    """A whole product line dropping out should be visible in the run, not a
+    silent omission that leaves the parsed/comparable counts unexplained."""
+    col = variant(
+        "Impact Whey Protein Powder - 2160g - 90servings - Strawberry Cream (+Collagen)",
+        "Strawberry Cream (+Collagen)", "2160g - 90servings", "61.99", "83.49", 18000040)
+    lines = _scope_lines(check.parse_variants(page(VANILLA_90, col)))
+    joined = " ".join(lines)
+    assert "Collagen" in joined and "1" in joined
