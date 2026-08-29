@@ -22,6 +22,12 @@ MAP=/etc/ttyd-user-map
 # as another mapped user. Authentik groups cannot answer this — every devvm user
 # is in "Home Server Admins", which is what gets them to the lobby host at all.
 ADMINS=/etc/ttyd-admins
+# The grant letting the service user become each other mapped user. Derived here
+# since 2026-08-29; it was hand-maintained before, which meant it had no
+# offboarding — a removed roster row left the grant behind. It is also the file
+# that must never be installed unvalidated: a malformed one breaks sudo for
+# everybody, so it goes through visudo on a temp path first.
+TTYD_SUDOERS=/etc/sudoers.d/ttyd-users
 DRY_RUN="${DRY_RUN:-0}"
 # Public infra repo for the locked clone (no auth; the monorepo has no remote).
 INFRA_REMOTE="${INFRA_REMOTE:-https://github.com/ViktorBarzin/infra.git}"
@@ -948,15 +954,32 @@ run systemctl enable t3-autoupdate.timer >/dev/null 2>&1 || true
 run systemctl enable --now tmux-persist-save.timer >/dev/null 2>&1 || true
 run systemctl enable tmux-persist-restore.service >/dev/null 2>&1 || true
 
-# 6) regenerate /etc/ttyd-user-map + /etc/ttyd-admins + dispatch.json from the
+# 6) regenerate /etc/ttyd-user-map + /etc/ttyd-admins + the sudo grant +
+#    dispatch.json from the
 #    desired state (SSoT: a roster entry removed here DISAPPEARS, which is what
 #    the offboarding cut relies on — and a demotion from tier: admin drops that
 #    user out of $ADMINS on the next reconcile, within the hour)
 if [[ "$DRY_RUN" == 1 ]]; then
-  log "[dry-run] would regenerate $MAP + $ADMINS + $ENVDIR/dispatch.json"
+  log "[dry-run] would regenerate $MAP + $ADMINS + $TTYD_SUDOERS + $ENVDIR/dispatch.json"
 else
   jq -r '.ttyd_user_map' "$desired_file" > "$MAP.tmp" && install -m 0644 "$MAP.tmp" "$MAP" && rm -f "$MAP.tmp"
   jq -r '.ttyd_admins' "$desired_file" > "$ADMINS.tmp" && install -m 0644 "$ADMINS.tmp" "$ADMINS" && rm -f "$ADMINS.tmp"
+  # The sudo grant, validated before it is installed. visudo -cf on the temp
+  # file is the whole safety net: an invalid sudoers file is not a degraded
+  # feature, it locks every user out of every sudo call on the box, including
+  # the one needed to repair it.
+  jq -r '.ttyd_sudoers' "$desired_file" > "$TTYD_SUDOERS.tmp"
+  if visudo -cf "$TTYD_SUDOERS.tmp" >/dev/null 2>&1; then
+    if ! cmp -s "$TTYD_SUDOERS.tmp" "$TTYD_SUDOERS" 2>/dev/null; then
+      log "sudo grant changed; installing $TTYD_SUDOERS"
+      diff -u "$TTYD_SUDOERS" "$TTYD_SUDOERS.tmp" 2>/dev/null | grep -E '^[-+]wizard' || true
+    fi
+    install -m 0440 -o root -g root "$TTYD_SUDOERS.tmp" "$TTYD_SUDOERS"
+  else
+    log "ERROR: derived sudo grant is malformed; keeping the existing $TTYD_SUDOERS"
+    visudo -cf "$TTYD_SUDOERS.tmp" 2>&1 | sed 's/^/  /' || true
+  fi
+  rm -f "$TTYD_SUDOERS.tmp"
   jq -c '.dispatch' "$desired_file" > "$ENVDIR/dispatch.json.tmp" && install -m 0644 "$ENVDIR/dispatch.json.tmp" "$ENVDIR/dispatch.json" && rm -f "$ENVDIR/dispatch.json.tmp"
 fi
 

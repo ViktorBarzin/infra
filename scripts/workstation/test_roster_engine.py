@@ -794,3 +794,93 @@ def test_a_conflict_exits_non_zero_so_the_pipeline_surfaces_it(tmp_path, capsys)
         """)
     members = _write(tmp_path, "m.json", '["a.b", "a_b"]')
     assert eng._main(["membership", "--roster", roster, "--group-members-json", members]) == 1
+
+
+def _sudoers_body(ds):
+    return [
+        line
+        for line in ds.ttyd_sudoers.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+# The sudo grant was the one derived file on the box with no generator: the map,
+# the admin list and dispatch.json all came from here, while /etc/sudoers.d/
+# ttyd-users was hand-maintained. On 2026-08-29 a stale copy of it shipped in
+# terminal-lobby's package and revoked two users' terminals on install. Deriving
+# it from the same desired state gives it one writer, and offboarding already
+# works because a removed roster row simply stops producing a line.
+def test_derive_ttyd_sudoers_grants_every_non_service_user():
+    ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS)
+    body = _sudoers_body(ds)
+    targets = [l.split("(", 1)[1].split(")", 1)[0] for l in body]
+    # wizard runs the services, so it never appears as a TARGET; root does, for
+    # the three wrapper scripts that need it.
+    assert targets == ["ancamilea", "emo", "root"]
+    assert all(l.startswith("wizard ALL=(") for l in body)
+
+
+def test_derive_ttyd_sudoers_scopes_each_grant_to_named_binaries():
+    # Never (ALL). The grant is the security boundary between users on this box,
+    # so it names the binaries the service is allowed to run as someone else.
+    ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS)
+    for line in _sudoers_body(ds):
+        assert "NOPASSWD:" in line
+        assert "ALL\n" not in line
+        cmds = line.split("NOPASSWD:", 1)[1]
+        assert cmds.strip() != "ALL"
+        for c in cmds.split(","):
+            assert c.strip().startswith("/"), f"not an absolute path: {c!r}"
+
+
+def test_derive_ttyd_sudoers_keeps_the_root_grant_for_the_wrappers():
+    ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS)
+    root = [l for l in _sudoers_body(ds) if l.startswith("wizard ALL=(root)")]
+    assert len(root) == 1
+    for wrapper in (
+        "/usr/local/bin/tmux-restore-user",
+        "/usr/local/bin/tmux-user-setfacl",
+        "/usr/local/bin/tmux-persist-forget",
+    ):
+        assert wrapper in root[0]
+
+
+def test_derive_ttyd_sudoers_drops_a_removed_user():
+    # The offboarding property: a roster row that is gone produces no grant, so
+    # the next reconcile revokes it. This is the behaviour a hand-maintained
+    # file did not have.
+    roster = _roster(
+        """
+        users:
+          wizard: {authentik_user: vbarzin, k8s_user: wizard, tier: admin}
+          emo:    {authentik_user: emil.barzin, k8s_user: emo, tier: power-user}
+        """
+    )
+    ds = eng.derive_desired_state(roster, {"wizard": 3773, "emo": 3774})
+    targets = [l.split("(", 1)[1].split(")", 1)[0] for l in _sudoers_body(ds)]
+    assert "ancamilea" not in targets
+    assert targets == ["emo", "root"]
+
+
+def test_derive_ttyd_sudoers_is_only_the_root_grant_for_a_lone_service_user():
+    # A one-person box needs no cross-user grant at all — that is single-user
+    # mode, which never calls sudo. The root line stays for the wrappers.
+    roster = _roster(
+        """
+        users:
+          wizard: {authentik_user: vbarzin, k8s_user: wizard, tier: admin}
+        """
+    )
+    ds = eng.derive_desired_state(roster, {"wizard": 3773})
+    assert _sudoers_body(ds) == [
+        "wizard ALL=(root) NOPASSWD: /usr/local/bin/tmux-restore-user, "
+        "/usr/local/bin/tmux-user-setfacl, /usr/local/bin/tmux-persist-forget"
+    ]
+
+
+def test_derive_ttyd_sudoers_says_it_is_generated():
+    # Same header contract as the map and the admin list: anyone opening the
+    # live file learns not to edit it.
+    ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS)
+    assert "DO NOT EDIT BY HAND" in ds.ttyd_sudoers
+    assert "roster.yaml" in ds.ttyd_sudoers
