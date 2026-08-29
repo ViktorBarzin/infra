@@ -121,6 +121,9 @@ class DesiredState:
     # Defaulted so an older caller constructing DesiredState positionally keeps
     # working; derive_desired_state always fills it.
     ttyd_admins: str = ""
+    # /etc/sudoers.d/ttyd-users — the grant letting the service user become each
+    # other user. Defaulted for the same reason as ttyd_admins.
+    ttyd_sudoers: str = ""
 
 
 @dataclass(frozen=True)
@@ -295,6 +298,57 @@ _TTYD_ADMINS_HEADER = (
 )
 
 
+# The service user runs ttyd and the API services (User=wizard in every unit),
+# so it is the LEFT side of every grant and never a target of one.
+TTYD_SERVICE_USER = "wizard"
+
+# What the service may run AS another user. Named binaries, never ALL: this file
+# is the boundary between two people's accounts on one box.
+_TTYD_USER_COMMANDS = (
+    "/usr/bin/tmux",
+    "/usr/local/bin/tmux-user-attach",
+    "/usr/local/bin/tmux-user-dirlist",
+    "/usr/local/bin/file-api",
+    "/usr/local/bin/session-events",
+    "/usr/local/bin/skills-api",
+)
+
+# What it may run as root: the three wrappers that need privilege of their own.
+# Each validates its arguments against the user map, so the grant is narrow in
+# what it can be pointed at as well as in what it can run.
+_TTYD_ROOT_COMMANDS = (
+    "/usr/local/bin/tmux-restore-user",
+    "/usr/local/bin/tmux-user-setfacl",
+    "/usr/local/bin/tmux-persist-forget",
+)
+
+_TTYD_SUDOERS_HEADER = (
+    "# Generated from roster.yaml by roster_engine.py — DO NOT EDIT BY HAND.\n"
+    "# Install at /etc/sudoers.d/ttyd-users (mode 0440, owner root:root).\n"
+    "#\n"
+    "# Lets the user running ttyd and the API services become each OTHER mapped\n"
+    "# user, for a fixed set of binaries. Never (ALL): this is the boundary\n"
+    "# between two people's accounts on one machine.\n"
+    "#\n"
+    "# Derived rather than hand-maintained since 2026-08-29. A hand-maintained\n"
+    "# copy has no offboarding: a roster row removed here stops producing a line,\n"
+    "# so the next reconcile revokes the grant.\n"
+)
+
+
+def _ttyd_sudoers(os_users: list[str]) -> str:
+    """The sudo grant, one line per non-service user plus the root wrappers."""
+    lines = [
+        f"{TTYD_SERVICE_USER} ALL=({u}) NOPASSWD: " + ", ".join(_TTYD_USER_COMMANDS)
+        for u in sorted(os_users)
+        if u != TTYD_SERVICE_USER
+    ]
+    lines.append(
+        f"{TTYD_SERVICE_USER} ALL=(root) NOPASSWD: " + ", ".join(_TTYD_ROOT_COMMANDS)
+    )
+    return _TTYD_SUDOERS_HEADER + "".join(f"{l}\n" for l in lines)
+
+
 def derive_desired_state(
     roster: Roster,
     existing_ports: dict[str, int],
@@ -329,8 +383,15 @@ def derive_desired_state(
         )
         for u in roster.users.values()
     }
+    ttyd_sudoers = _ttyd_sudoers([u.os_user for u in ordered])
     return DesiredState(
-        accounts, ttyd_user_map, dispatch, ports, playwright_ports, ttyd_admins
+        accounts,
+        ttyd_user_map,
+        dispatch,
+        ports,
+        playwright_ports,
+        ttyd_admins,
+        ttyd_sudoers,
     )
 
 
@@ -573,6 +634,7 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
         },
         "ttyd_user_map": ds.ttyd_user_map,
         "ttyd_admins": ds.ttyd_admins,
+        "ttyd_sudoers": ds.ttyd_sudoers,
         "dispatch": ds.dispatch,
         "ports": ds.ports,
         "playwright_ports": ds.playwright_ports,
