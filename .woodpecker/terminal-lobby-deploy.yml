@@ -68,4 +68,11 @@ steps:
     commands:
       - apk add --no-cache curl
       - test -n "$SLACK_WEBHOOK" || exit 0
-      - curl -sf -X POST -H 'Content-Type: application/json' -d '{"text":"terminal-lobby deploy FAILED on the devvm — see the Woodpecker log"}' "$SLACK_WEBHOOK" || true
+      # Quoted as a whole: an unquoted `Content-Type: application/json` makes
+      # YAML read the command as a MAP, and Woodpecker rejects the config with
+      # "cannot unmarshal ... into a string value". Valid YAML, wrong type — a
+      # parse check alone does not catch it.
+      - >-
+        curl -sf -X POST -H 'Content-Type: application/json'
+        -d '{"text":"terminal-lobby deploy FAILED on the devvm - see the Woodpecker log"}'
+        "$SLACK_WEBHOOK" || true
