@@ -1,0 +1,24 @@
+#!/bin/bash
+# Periodic Docker GC for devvm.
+# Removes containers/images/build-cache older than 24h.
+# Running containers and the images they reference are never touched.
+set -euo pipefail
+
+KEEP_AGE="${KEEP_AGE:-24h}"
+
+avail_kb() { df --output=avail / | tail -1; }
+gib() { awk -vk="$1" 'BEGIN { printf "%.2f", k/1024/1024 }'; }
+
+echo "[$(date -Is)] docker-disk-gc start (keep_age=${KEEP_AGE})"
+before=$(avail_kb)
+echo "  before: $(df -h / | awk 'NR==2 {print $3" used, "$4" free, "$5}')"
+
+docker container prune -f --filter "until=${KEEP_AGE}" | sed 's/^/  /'
+docker image     prune -a -f --filter "until=${KEEP_AGE}" | sed 's/^/  /'
+docker builder   prune -f --filter "unused-for=${KEEP_AGE}" | sed 's/^/  /'
+
+after=$(avail_kb)
+freed=$(gib $((after - before)))
+echo "  after:  $(df -h / | awk 'NR==2 {print $3" used, "$4" free, "$5}')"
+echo "  freed:  ${freed} GiB"
+echo "[$(date -Is)] docker-disk-gc done"

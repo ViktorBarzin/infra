@@ -1,0 +1,264 @@
+# Build a blank Ubuntu VM into a devvm workstation.
+#
+# This is the declarative half of scripts/workstation/setup-devvm.sh, which is
+# correct but has only ever been run by hand — so a committed change to it could
+# sit undeployed, and a new machine could not be built without someone
+# remembering the steps. Everything here is idempotent and safe against the live
+# box; run it with --check --diff first.
+#
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml
+#
+# WHAT THIS COVERS
+#   the apt toolset, node, the machine-wide PATH, the OIDC/secrets tooling, the
+#   enforced Claude config, /etc/skel, the apt source that delivers
+#   terminal-lobby, and three units that existed only on the box.
+#
+# WHAT IT DOES NOT COVER YET, in the order worth doing next
+#   1. Resource containment (setup-devvm.sh section 10) — the per-user memory
+#      caps and earlyoom backstop added after the 2026-06-22 overload, when the
+#      box had to be hard-killed. A machine built without them repeats that.
+#   2. The t3 service layer (section 9) — t3-dispatch, t3-serve@, the timers.
+#   3. Per-user provisioning — accounts, groups, clones, kubeconfigs. That is
+#      ViktorBarzin/infra#88, deliberately last because it touches live access.
+#   Until those land, a machine built from this playbook serves the lobby but is
+#   not a full workstation.
+#
+# NOT ADOPTED, and why
+#   drone 1.7.0        Drone CLI; CI here is Woodpecker. Looks vestigial.
+#   immich-go 0.9.4    personal photo tooling, not workstation base.
+#   openclaw-task      a script belonging to the openclaw project, which should
+#                      ship it the way infra ships the homelab CLI.
+#   caddy              enabled and serving the stock page on :80, 0 requests in
+#                      7 days. Parking it is a separate, reversible decision.
+
+- name: devvm workstation base
+  hosts: devvm
+  become: true
+  gather_facts: true
+
+  vars:
+    workstation_dir: "{{ playbook_dir }}/../scripts/workstation"
+    node_major: 22
+    # Latest, not pinned: nothing else in this pipeline pins versions either,
+    # and these are tools rather than build inputs.
+    kubelogin_url: https://github.com/int128/kubelogin/releases/latest/download/kubelogin_linux_amd64.zip
+    terragrunt_url: https://github.com/gruntwork-io/terragrunt/releases/latest/download/terragrunt_linux_amd64
+
+  tasks:
+    # ---- 1) the apt toolset -------------------------------------------------
+    # packages.txt stays the single source of truth. Reading it here rather than
+    # restating the list is what stops the two drifting apart.
+    - name: Read the declared package manifest
+      ansible.builtin.set_fact:
+        devvm_packages: >-
+          {{ lookup('file', workstation_dir ~ '/packages.txt').splitlines()
+             | map('regex_replace', '\s+#.*$', '')
+             | map('trim')
+             | reject('match', '^#')
+             | reject('equalto', '')
+             | list }}
+
+    - name: Install the declared apt packages
+      ansible.builtin.apt:
+        name: "{{ devvm_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    # ---- 2) node ------------------------------------------------------------
+    # Needed for the t3 CLI. Deliberately NOT for claude-code: that is the
+    # per-user native install under ~/.local/bin, and a system-wide npm copy
+    # would shadow the per-user ones everyone auto-migrates to.
+    - name: Check the installed node major version
+      ansible.builtin.command: node --version
+      register: node_version
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Install NodeSource {{ node_major }}.x
+      # A version comparison rather than a capture-group regex: the escaping
+      # differs between a plain and a quoted YAML scalar, and getting it wrong
+      # here silently re-runs the NodeSource installer on a machine that is fine.
+      when: >-
+        node_version.rc != 0 or
+        (node_version.stdout | trim | regex_replace('^v', '')) is version('18.0.0', '<')
+      block:
+        - name: Fetch the NodeSource setup script
+          ansible.builtin.get_url:
+            url: "https://deb.nodesource.com/setup_{{ node_major }}.x"
+            dest: /tmp/nodesource-setup.sh
+            mode: "0755"
+        - name: Run it
+          ansible.builtin.command: /tmp/nodesource-setup.sh
+          changed_when: true
+        - name: Install nodejs
+          ansible.builtin.apt:
+            name: nodejs
+            state: present
+            update_cache: true
+
+    # ---- 2a) ~/.local/bin on PATH for every login shell ---------------------
+    - name: Put ~/.local/bin on PATH for login shells
+      ansible.builtin.copy:
+        dest: /etc/profile.d/10-local-bin.sh
+        mode: "0644"
+        content: |
+          # Native per-user installs (e.g. claude-code) live in ~/.local/bin — put it on PATH.
+          # Guarded so it never duplicates. Sourced by login shells (bash via /etc/profile; zsh
+          # login via /etc/zsh/zprofile -> /etc/profile).
+          case ":$PATH:" in
+            *":$HOME/.local/bin:"*) ;;
+            *) export PATH="$HOME/.local/bin:$PATH" ;;
+          esac
+
+    # ---- 3) tooling ---------------------------------------------------------
+    # kubelogin is the kubectl oidc-login plugin, NOT the apt package of the
+    # same name, which is an Azure tool.
+    - name: Look for the tooling already installed
+      ansible.builtin.stat:
+        path: "/usr/local/bin/{{ item }}"
+      loop: [kubelogin, sops, terragrunt]
+      register: tooling_stat
+      check_mode: false
+
+    - name: Note which tools are missing
+      ansible.builtin.set_fact:
+        missing_tools: "{{ tooling_stat.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+
+    # kubelogin is the kubectl oidc-login plugin, NOT the apt package of the same
+    # name, which is an Azure tool.
+    - name: Install kubelogin
+      when: "'kubelogin' in missing_tools"
+      block:
+        - name: Download kubelogin
+          ansible.builtin.get_url:
+            url: "{{ kubelogin_url }}"
+            dest: /tmp/kubelogin.zip
+            mode: "0644"
+        - name: Unpack it
+          ansible.builtin.unarchive:
+            src: /tmp/kubelogin.zip
+            dest: /usr/local/bin
+            remote_src: true
+            include: [kubelogin]
+            mode: "0755"
+
+    - name: Link kubelogin as the kubectl plugin
+      ansible.builtin.file:
+        src: /usr/local/bin/kubelogin
+        dest: /usr/local/bin/kubectl-oidc_login
+        state: link
+
+    # sops names its asset after the release tag, so "latest/download" alone
+    # cannot address it -- the tag has to be resolved first.
+    - name: Resolve the latest sops release
+      when: "'sops' in missing_tools"
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/getsops/sops/releases/latest
+        return_content: true
+      register: sops_release
+      check_mode: false
+
+    - name: Install sops
+      when: "'sops' in missing_tools"
+      ansible.builtin.get_url:
+        url: "https://github.com/getsops/sops/releases/download/{{ sops_release.json.tag_name }}/sops-{{ sops_release.json.tag_name }}.linux.amd64"
+        dest: /usr/local/bin/sops
+        mode: "0755"
+
+    - name: Install terragrunt
+      when: "'terragrunt' in missing_tools"
+      ansible.builtin.get_url:
+        url: "{{ terragrunt_url }}"
+        dest: /usr/local/bin/terragrunt
+        mode: "0755"
+
+    # ---- 4) the enforced machine-wide Claude config -------------------------
+    # Top of the settings precedence chain, and carries no secrets.
+    - name: Deploy the managed Claude config
+      ansible.builtin.copy:
+        src: "{{ workstation_dir }}/managed-settings.json"
+        dest: /etc/claude-code/managed-settings.json
+        mode: "0644"
+        owner: root
+        group: root
+
+    # ---- 5) /etc/skel for new accounts --------------------------------------
+    - name: Seed /etc/skel
+      ansible.builtin.copy:
+        src: "{{ workstation_dir }}/skel/"
+        dest: /etc/skel/
+        mode: preserve
+
+    # ---- 6) the apt source that delivers terminal-lobby ---------------------
+    # The package is built off-infra and published to Forgejo's Debian registry.
+    # Its credential is NOT here: this repo is publicly mirrored, and root on
+    # this box has no unattended Vault access, so the deploy pipeline installs
+    # /etc/apt/auth.conf.d/terminal-lobby.conf on every deploy.
+    # check_mode: false because get_url probes with HEAD during a dry run and
+    # Forgejo answers 405 there, which would fail every --check run. Fetching a
+    # public signing key is harmless, and doing it for real keeps dry runs honest.
+    - name: Fetch the Forgejo repository signing key
+      ansible.builtin.get_url:
+        url: https://forgejo.viktorbarzin.me/api/packages/viktor/debian/repository.key
+        dest: /etc/apt/keyrings/forgejo-viktor.asc
+        mode: "0644"
+      check_mode: false
+
+    - name: Add the terminal-lobby apt source
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/terminal-lobby.list
+        mode: "0644"
+        content: |
+          deb [signed-by=/etc/apt/keyrings/forgejo-viktor.asc] https://forgejo.viktorbarzin.me/api/packages/viktor/debian noble main
+
+    # ---- 7) units that existed only on the box ------------------------------
+    # Adopted 2026-08-29: these were in /etc/systemd/system and /usr/local/bin
+    # and in no repository, so nothing could rebuild them.
+    - name: Install the adopted helper scripts
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0755"
+        owner: root
+        group: root
+      loop:
+        - { src: codex-auth-backup.sh, dest: /usr/local/bin/codex-auth-backup.sh }
+        - { src: docker-disk-gc, dest: /usr/local/bin/docker-disk-gc }
+        - { src: networkd-dhcp-watchdog.sh, dest: /usr/local/sbin/networkd-dhcp-watchdog.sh }
+
+    - name: Install the adopted units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - codex-auth-backup.service
+        - codex-auth-backup.timer
+        - codex-auth-backup.path
+        - docker-disk-gc.service
+        - docker-disk-gc.timer
+        - networkd-dhcp-watchdog.service
+        - networkd-dhcp-watchdog.timer
+      notify: reload systemd
+
+    - name: Enable the adopted timers and paths
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop:
+        - codex-auth-backup.timer
+        - codex-auth-backup.path
+        - docker-disk-gc.timer
+        - networkd-dhcp-watchdog.timer
+
+  handlers:
+    - name: reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
