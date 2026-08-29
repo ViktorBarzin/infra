@@ -5,7 +5,13 @@
 # run MANUALLY after an infra-ci rebuild (or periodically). Pulls from ghcr
 # (public, no login). Recovery: docs/runbooks/forgejo-registry-breakglass.md.
 when:
+    # A bare `event: manual` matches EVERY manual pipeline, so a trigger meant
+    # for another workflow ran this one too — terminal-lobby fires one per
+    # release, which turned an occasional manual sync into a per-release one.
+    # Same fix provision-user.yml already carries. An undefined variable
+    # compares as empty, so a bare manual run (no variables) still enters here.
   - event: manual
+    evaluate: 'PIPELINE == "" || PIPELINE == "breakglass-infra-ci"'
 
 steps:
   - name: breakglass-tarball

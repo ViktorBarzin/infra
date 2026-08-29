@@ -47,22 +47,25 @@ steps:
       # No command argument: authorized_keys forces /usr/local/bin/tl-reconcile,
       # and it ignores SSH_ORIGINAL_COMMAND. Anything written here would be
       # discarded, so writing nothing is the honest form.
-      - |
-        if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=yes wizard@10.0.10.10 2>&1 | tee /tmp/reconcile.log; then
-          echo "reconcile FAILED"
-          if [ -n "$SLACK_WEBHOOK" ]; then
-            curl -sf -X POST -H 'Content-Type: application/json' \
-              -d "{\"text\":\"terminal-lobby deploy FAILED on the devvm:\n\`\`\`$(tail -20 /tmp/reconcile.log)\`\`\`\"}" \
-              "$SLACK_WEBHOOK" || true
-          fi
-          exit 1
-        fi
-      # tl-reconcile prints every unit's state; an inactive one is a failed
-      # deploy even when the install itself returned zero.
-      - |
-        if grep -q ': INACTIVE' /tmp/reconcile.log; then
-          echo "a unit is not active after the install"
-          grep ': INACTIVE' /tmp/reconcile.log
-          exit 1
-        fi
+      # One command, no inline error handling: the multi-line form with nested
+      # quotes tripped /bin/sh ("unterminated quoted string") while the deploy
+      # itself had already succeeded, so the pipeline reported a failure that
+      # had not happened. Failure notification is its own step below.
+      - ssh -o BatchMode=yes -o StrictHostKeyChecking=yes wizard@10.0.10.10 2>&1 | tee /tmp/reconcile.log
+      # tl-reconcile prints every unit's state, so an inactive one is a failed
+      # deploy even when the install returned zero. The leading ! inverts grep,
+      # so finding nothing is the success case.
+      - "! grep -q ': INACTIVE' /tmp/reconcile.log"
       - echo '---done---'
+
+  - name: notify
+    image: alpine:3.20
+    when:
+      - status: failure
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      - apk add --no-cache curl
+      - test -n "$SLACK_WEBHOOK" || exit 0
+      - curl -sf -X POST -H 'Content-Type: application/json' -d '{"text":"terminal-lobby deploy FAILED on the devvm — see the Woodpecker log"}' "$SLACK_WEBHOOK" || true
