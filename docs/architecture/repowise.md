@@ -226,13 +226,26 @@ homelab logs query '{node="<node>"} |~ "oom-kill|Killed process"' --since 24h
 
 On the 2026-08-15 kill that showed uvicorn itself at 2.67 GiB anon-rss with the
 nine python worker subprocesses at 8-54 MiB each — the parent is the memory, so
-lowering `REPOWISE_PARSE_WORKERS` does not address it. Working set runs
-2.2-2.4 GiB steady, because in workspace mode the API holds a SQLAlchemy engine,
-an FTS index and a vector store **per repo** for all 42, for the life of the
-process. That is a high baseline, not a leak: it sat in a flat 2.4-3.0 GiB band
-across 20 hours. Request is 2560Mi (the previous 768Mi misinformed the scheduler
-badly) and the limit 5Gi. If it ever climbs past 5Gi rather than plateauing,
-that would be a genuine leak and a different problem.
+lowering `REPOWISE_PARSE_WORKERS` does not address it. In workspace mode the API
+holds a SQLAlchemy engine, an FTS index and a vector store **per repo** for all
+42, for the life of the process.
+
+**The plateau is reached by accumulation, not at boot.** A fresh process starts
+around 126 MiB and climbs as each repo is first touched, because those per-repo
+handles are never released. This matters when reading any single measurement: a
+sample taken early in a process's life is not the steady state. The 2.2-2.4 GiB
+recorded here after the 2026-08-15 kill was most likely such an early sample.
+
+Measured 2026-08-29 over the week to that date: a flat 3,807-3,882 MiB band,
+peaking at 4,025 MiB. That is the steady state for 42 repos, and it sat at 93%
+of the then-4Gi ceiling, which left too little room for ordinary request
+handling — the API was OOMKilled at 12:53 (uvicorn 3,796 MiB anon-rss) and `mcp`
+at 03:44 against its own 1Gi limit (1,020 MiB), two kills in seven days.
+
+Current sizing: API requests **4Gi**, limit **6Gi**; `mcp` requests 256Mi, limit
+**2Gi**. If the API climbs past 6Gi rather than plateauing, that would be a
+genuine leak and a different problem. Expect the plateau to track repo count and
+index size, so re-measure when the Corpus grows rather than assuming it holds.
 
 **Before changing any memory number here, read the namespace ceilings:**
 
@@ -240,18 +253,30 @@ that would be a genuine leak and a different problem.
 kubectl -n repowise get limitrange,resourcequota -o yaml
 ```
 
-Two of them bind, and breaching either stops the pod being **created** (the
-ReplicaSet reports `FailedCreate`, replicas go to zero, the service is down) —
-it does not degrade gracefully. Both were hit while fixing this OOM:
+Breaching either stops the pod being **created** (the ReplicaSet reports
+`FailedCreate`, replicas go to zero, the service is down) — it does not degrade
+gracefully.
 
-- `tier-defaults` LimitRange — max **4Gi per container**. A 5Gi limit is refused.
-- `tier-quota` ResourceQuota — **3Gi `requests.memory` for the whole namespace**.
-  All four containers must fit: 2048 + 256 + 192 + 128 = 2624Mi.
+Until 2026-08-29 these were the Kyverno-generated tier-4-aux objects, and both
+bound hard: `tier-defaults` capped a container at **4Gi** (a 5Gi limit was
+refused), and `tier-quota` allowed **3Gi `requests.memory` namespace-wide**,
+which is why the API requested 2Gi while holding ~3.8 GiB — under-counting the
+pod to the scheduler by roughly 1.8 GiB.
 
-That is why the API requests 2Gi despite holding ~2.9 GiB — honest sizing does
-not fit the quota, so the limit is what protects against the OOM. Raising either
-ceiling is a tier change (`stacks/kyverno` resource-governance), not an edit in
-this stack.
+The namespace now opts out of both, via the `resource-governance/custom-limitrange`
+and `resource-governance/custom-quota` labels, and defines its own in
+`stacks/repowise/main.tf` — the same pattern `chrome-service` uses:
+
+- `repowise-defaults` LimitRange — same shape as the tier's, max **8Gi** per
+  container.
+- `repowise-quota` ResourceQuota — **10Gi `requests.memory`**, 24Gi
+  `limits.memory`, `count/pods` 10. Current request sum: 4096 + 256 + 192 + 128
+  = 4,672Mi.
+
+Both replacements live in this stack, so sizing is now an edit here rather than
+a tier change. Changing the tier defaults themselves is still a
+`stacks/kyverno` resource-governance change, and now affects other aux
+namespaces rather than this one.
 
 **Detection caveat:** `container_oom_events_total` stayed at **0** for that kill,
 so the cadvisor-based `ContainerOOMKilled` alert never fired. The Loki-based
