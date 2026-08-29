@@ -1,0 +1,17 @@
+# All docker containers live here (cgroup-parent in /etc/docker/daemon.json) so
+# they share one bounded budget and a runaway container is capped at MemoryMax
+# (cgroup-OOM'd locally) instead of escaping into the uncapped system.slice.
+# setup-devvm.sh §10, 2026-06-22; MemoryHigh dropped 2026-07-02 — a container
+# plateauing in the high..max band would throttle-livelock EVERY container in
+# the slice (see post-mortem addendum); MemoryMax OOM is the containment.
+[Unit]
+Description=Docker containers slice (capped)
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=infinity
+MemoryMax={{ devvm_docker_memory_max }}
+MemorySwapMax=0
+CPUAccounting=yes
+CPUWeight=100
+IOAccounting=yes
+IOWeight=100

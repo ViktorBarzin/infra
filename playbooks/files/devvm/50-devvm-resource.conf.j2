@@ -1,0 +1,16 @@
+# Per-user containment for the shared devvm (setup-devvm.sh §10, 2026-06-22;
+# MemoryHigh dropped 2026-07-02). Applies to EACH user-<uid>.slice = all of one
+# user's ssh/tmux work. Mirrors the t3-serve@.service caps so a user is bounded
+# in whichever surface they work in. MemoryHigh stays infinity: with swap=0 a
+# hog plateauing in a high..max band livelocks the entire slice (every ssh/tmux
+# session of that user) instead of dying — straight-to-OOM at MemoryMax is the
+# containment (see post-mortem addendum 2026-07-02).
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=infinity
+MemoryMax={{ devvm_user_memory_max }}
+MemorySwapMax=0
+CPUAccounting=yes
+CPUWeight=100
+IOAccounting=yes
+IOWeight=100

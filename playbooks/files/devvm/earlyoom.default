@@ -1,0 +1,42 @@
+# devvm aggregate OOM backstop (setup-devvm.sh §10, 2026-06-22). Watches FREE RAM
+# (MemAvailable%) and kills the biggest task before the box exhausts. Unlike
+# systemd-oomd it needs NO swap/reclaim, so it works with our swap=0 work cgroups.
+#   -m 5,3     SIGTERM the victim at MemAvailable<5%, SIGKILL at <3%
+#   -s 100,100 ignore swap in the decision (RAM-only; work cgroups are swap=0)
+#   --avoid    never the box's nervous system / your way back in
+#   --prefer   target the agent/browser/build hogs that actually exhaust RAM
+#   -r 3600    hourly memory report (the 60s default is log spam)
+#
+# `claude` was REMOVED from --prefer on 2026-08-16. --prefer adds 300 to a
+# victim's oom_score, and on this box that outweighs an enormous amount of RSS:
+# every tmux-hosted process inherits oom_score_adj=200 (systemd's
+# DefaultOOMScoreAdjust on the user manager), which puts the baseline near 800
+# and leaves RSS moving the score by only ~0.014/MB. Measured live: a 320 MB
+# claude scored 804 and a 605 MB one 808. So on 2026-08-16 six ~500 MB
+# conversations were killed at badness 1104-1168 while an 18,685 MiB process sat
+# at 1068 and survived the round — the +300 bounty beat 18 GB of memory.
+# Without it claude competes on raw score, and the biggest one goes first.
+# It is deliberately NOT moved to --avoid: a leaked claude has to stay killable,
+# or the box has no way out. The per-pane cap in 10a-bis is what should normally
+# fire; this stays the aggregate net for consumers with no pane scope
+# (t3-serve-hosted claudes in system-t3-serve.slice, docker, stray scripts).
+#
+# `[0-9]+\.[0-9]+\.[0-9]+` was ADDED the same day, and it is the pattern that
+# matches the actual balloon. Claude Code spawns its search tools through its own
+# binary, so the child keeps `exe=~/.local/share/claude/versions/<ver>` and the
+# kernel records comm as the VERSION STRING while argv is the real tool. `ugrep`
+# has been in this list since 2026-06-22 and never once matched, because the
+# process the kernel sees is called `2.1.232`. Resolved from t3-cgroup-snap:
+# across all rotations, every version-comm sample is a spawned search tool
+# (114x ugrep, 25x bfs, 3x rg) and none is a session — one grew 10.1 -> 11.5 GiB
+# in 33 s on 2026-08-14. This also identifies the unattributed `Comm='2.1.205'`
+# balloon left open in addendum 3 of the 2026-06-22 post-mortem.
+# A session started via the `claude` symlink reports comm `claude`, so the two
+# stay distinguishable — recheck that if Claude Code changes how it spawns.
+#
+# The dot is written `[.]`, not `\.`: systemd's EnvironmentFile parser strips
+# backslashes out of a double-quoted value, so `\.` reaches earlyoom as a bare
+# `.` — an any-character wildcard that would also prefer a comm like
+# `123a456b789`. Verified by reading the daemon's own /proc/<pid>/cmdline rather
+# than this file. A bracket expression needs no escaping and survives intact.
+EARLYOOM_ARGS="-m 5,3 -s 100,100 -r 3600 --avoid ^(systemd|systemd-.*|sshd|dockerd|containerd|init|t3-dispatch|tmux.*)$ --prefer ^(python3|node|chrome|chromium|ugrep|rg|go|[0-9]+[.][0-9]+[.][0-9]+)$"
