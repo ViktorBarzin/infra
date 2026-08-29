@@ -1,0 +1,93 @@
+---
+# playbooks/k8s-node-tuning.yml
+#
+# Machine-wide network sysctls for the Kubernetes nodes.
+#
+# WHY: Traefik terminates HTTP/3 on a single shared UDP socket per pod
+# (entryPoint websecure, :8443). quic-go sizes that socket's receive buffer with
+# SO_RCVBUF, but the kernel silently caps the request at net.core.rmem_max. On a
+# node left at the Ubuntu default of 212992 the socket lands at 425984 bytes
+# (the kernel doubles the value), which is not enough headroom for the incoming
+# ACK bursts of concurrent large downloads. Packets are then dropped at the
+# socket, quic-go loses ACKs, the congestion window collapses, and the transfer
+# stalls and dies part-way. Traefik has already written its 200 and
+# Content-Length by then, so the access log records a 200 with a short body and
+# the client saves a truncated file.
+#
+# Measured 2026-08-29, in the Traefik pod's own network namespace on k8s-node4
+# (reading /proc/net/snmp from the host namespace shows nothing, because the pod
+# runs with hostNetwork: false):
+#
+#   node4  rmem_max=212992    socket rb=425984     Udp RcvbufErrors=449
+#   node2  rmem_max=4194304   socket rb=8388608    Udp RcvbufErrors=0
+#
+# Over the preceding 7 days of Immich original-asset downloads, joining the
+# bytes Traefik logged against the true file size: HTTP/3 truncated 55 of 70
+# transfers (79%), HTTP/2 truncated 0 of 3. Every truncation came from the pod
+# on node4. HTTP/2 is unaffected because TCP gets a per-connection socket with
+# kernel autotuning rather than one shared UDP socket.
+#
+# 7500000 is the value quic-go's own documentation asks for. These are ceilings,
+# not defaults — net.core.rmem_default is untouched, so sockets still allocate
+# only what they use and the change does not reserve memory.
+#
+# Three of the six nodes were already at 4194304 and three at the 212992
+# default, but no node persisted the setting anywhere: not /etc/sysctl.conf, not
+# /etc/sysctl.d. The tuned values were runtime-only and would have reverted on
+# the next reboot, so the nodes that worked were working by accident. This
+# playbook is what makes the setting survive a reboot or a rebuild.
+#
+# Applying this does NOT fix a running Traefik pod: quic-go reads the limit once,
+# when it creates the socket. Roll the pods afterwards so they pick up the new
+# ceiling, then confirm with the verify step below.
+#
+# RUN (from repo root; claim presence first: scripts/presence claim stack:traefik):
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml
+#   then    : kubectl rollout restart deployment/traefik -n traefik
+#   verify  : PID=$(pgrep -x traefik | head -1)          # on the node
+#             sudo nsenter -t $PID -n ss -uanpm | grep -A1 ':8443'
+#             # expect rb=15000000 and a d0 (no drops) counter
+#
+# A --check run against converged nodes should be a no-op. Output that is not a
+# no-op means a node has drifted, or has been rebuilt without the setting.
+
+- name: Kubernetes node network tuning
+  hosts: "{{ k8s_nodes_target | default('k8s_nodes') }}"
+  gather_facts: false
+
+  vars:
+    # quic-go's documented recommendation. Ceiling only; see the header.
+    quic_socket_buffer_bytes: 7500000
+    sysctl_conf_file: /etc/sysctl.d/99-k8s-node-tuning.conf
+
+  tasks:
+    - name: UDP socket buffer ceilings for the HTTP/3 ingress path
+      ansible.posix.sysctl:
+        name: "{{ item }}"
+        value: "{{ quic_socket_buffer_bytes }}"
+        sysctl_file: "{{ sysctl_conf_file }}"
+        sysctl_set: true
+        state: present
+        reload: true
+      loop:
+        - net.core.rmem_max
+        - net.core.wmem_max
+
+    - name: Read back the live values
+      ansible.builtin.command: sysctl -n net.core.rmem_max net.core.wmem_max
+      register: quic_buffers_live
+      changed_when: false
+      check_mode: false
+
+    - name: Confirm both ceilings are in effect
+      ansible.builtin.assert:
+        that:
+          - quic_buffers_live.stdout_lines | map('int') | select('lt', quic_socket_buffer_bytes) | list | length == 0
+        success_msg: >-
+          rmem_max/wmem_max = {{ quic_buffers_live.stdout_lines | join('/') }}
+          (>= {{ quic_socket_buffer_bytes }})
+        fail_msg: >-
+          expected both >= {{ quic_socket_buffer_bytes }}, got
+          {{ quic_buffers_live.stdout_lines | join('/') }}
+      when: not ansible_check_mode
