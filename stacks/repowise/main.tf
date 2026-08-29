@@ -46,11 +46,70 @@ resource "kubernetes_namespace" "repowise" {
     labels = {
       tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
+      # Opt out of BOTH Kyverno tier-4-aux governance objects. The api container
+      # accumulates a per-repo SQLAlchemy engine, FTS index and vector store for
+      # all 42 repos and holds them for the life of the process, which lands it
+      # at a ~3.8 GiB plateau — 93% of the tier LimitRange's 4Gi per-container
+      # max, so it tipped over into KernelOOMKiller occasionally (2 kills in the
+      # week to 2026-08-29). Raising the ceiling is only possible by leaving the
+      # tier objects behind; both replacements live below and are sized for the
+      # measured plateau rather than the tier default.
+      "resource-governance/custom-limitrange" = "true"
+      "resource-governance/custom-quota"      = "true"
     }
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
     ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+  }
+}
+
+# Replaces the Kyverno-generated tier-4-aux `tier-defaults` LimitRange. Identical
+# in shape and defaults; the only change is max, raised 4Gi -> 8Gi so the api
+# container can carry a limit above its ~3.8 GiB plateau. Containers here all set
+# resources explicitly, so default/defaultRequest only guard against a future
+# container being added without them.
+resource "kubernetes_limit_range" "repowise" {
+  metadata {
+    name      = "repowise-defaults"
+    namespace = kubernetes_namespace.repowise.metadata[0].name
+  }
+  spec {
+    limit {
+      type = "Container"
+      default = {
+        memory = "256Mi"
+      }
+      default_request = {
+        cpu    = "50m"
+        memory = "64Mi"
+      }
+      max = {
+        memory = "8Gi"
+      }
+    }
+  }
+}
+
+# Replaces the Kyverno-generated tier-4-aux `tier-quota` ResourceQuota, whose 3Gi
+# requests.memory for the WHOLE namespace forced api's request down to 2Gi — a
+# figure the comment on that container flagged as knowingly below what the
+# process really holds, which under-counted the pod to the scheduler by ~1.8 GiB.
+# Sized for honest requests: api 4Gi + mcp 256Mi + sync 192Mi + web 128Mi =
+# 4,672Mi of requests and 10,752Mi of limits, with headroom for one rollout
+# running old and new pods side by side. count/pods is the runaway-create backstop.
+resource "kubernetes_resource_quota" "repowise" {
+  metadata {
+    name      = "repowise-quota"
+    namespace = kubernetes_namespace.repowise.metadata[0].name
+  }
+  spec {
+    hard = {
+      "requests.cpu"    = "2"
+      "requests.memory" = "10Gi"
+      "limits.memory"   = "24Gi"
+      "count/pods"      = "10"
+    }
   }
 }
 
@@ -422,26 +481,29 @@ resource "kubernetes_deployment" "repowise" {
             # top of that. The old 768Mi request was the real hazard — it told
             # the scheduler this pod needed a quarter of what it actually holds.
             #
-            # TWO namespace-level ceilings bound these numbers, and exceeding
-            # either stops the pod being CREATED at all (FailedCreate, no
-            # replicas) rather than degrading it — both learned the hard way
-            # while fixing this OOM:
-            #   * tier-defaults LimitRange: max 4Gi per container.
-            #   * tier-quota ResourceQuota: 3Gi requests.memory for the WHOLE
-            #     namespace, so all four containers plus this one must fit under
-            #     it. Current sum: 2048 + 256 + 192 + 128 = 2624Mi.
-            # Raising either is a tier change, not an edit here.
+            # 2026-08-29: 4Gi was not enough either. The plateau is reached by
+            # ACCUMULATION, not at boot — a fresh process starts at 126 MiB and
+            # climbs as each repo is first touched, because workspace mode never
+            # releases a repo's handles. Measured that day: 3,807-3,882 MiB for
+            # the week before the kill, peaking at 4,025 MiB against this 4Gi
+            # ceiling, then OOMKilled at 12:53 (uvicorn anon-rss 3,796 MiB).
+            # Two kills in seven days, each a KernelOOMKiller CRITICAL page.
             #
-            # So the request is 2Gi rather than the ~2.9 GiB the process really
-            # holds — honest sizing does not fit the quota. The limit is what
-            # actually prevents the OOM; the request is as close to truth as the
-            # quota allows. Re-measure with krr before trimming.
+            # The old note here recorded 2.2-2.4 GiB steady. That reading was
+            # almost certainly taken before every repo had been touched, so treat
+            # it as an early-accumulation sample rather than evidence of a leak.
+            #
+            # The namespace no longer inherits the tier-4-aux LimitRange/quota
+            # (see the opt-out labels and replacements next to the namespace), so
+            # the limit can now clear the plateau and the request can state what
+            # the process actually holds instead of the 2Gi the old 3Gi
+            # namespace quota forced. Re-measure with krr before trimming.
             requests = {
-              memory = "2Gi"
+              memory = "4Gi"
               cpu    = "50m"
             }
             limits = {
-              memory = "4Gi"
+              memory = "6Gi"
             }
           }
         }
@@ -601,12 +663,16 @@ resource "kubernetes_deployment" "repowise" {
           }
 
           resources {
+            # OOMKilled 2026-08-29 03:44 at 1,020 MiB anon-rss — a hair under
+            # this container's own 1Gi ceiling, the same failure as api but on a
+            # smaller scale: mcp also holds per-repo state for the workspace.
+            # Request stays at 256Mi so only the ceiling moves.
             requests = {
               memory = "256Mi"
               cpu    = "10m"
             }
             limits = {
-              memory = "1Gi"
+              memory = "2Gi"
             }
           }
         }
