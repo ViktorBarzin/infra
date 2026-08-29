@@ -182,8 +182,19 @@ resource "kubernetes_deployment" "f1-stream" {
           # untouched source stays the default and starts no encoder.
           resources {
             limits = {
-              cpu    = "4"
-              memory = "2Gi"
+              cpu = "4"
+              # One GPU, for NVENC. The live ladder encodes continuously for as
+              # long as anyone is watching a reduced quality, which measured at
+              # ~1.8 cores for two rungs; on the card that is close to free.
+              # Replay ladders stay on the CPU on purpose - they are built once
+              # and streamed many times, so their ~13% smaller output is worth
+              # the one-off encode time.
+              #
+              # This pins the pod to k8s-node1, the only node with a card, so
+              # f1-stream now shares node1's fate. Accepted: every video path
+              # on the hardware is worth more here than spreading the risk.
+              "nvidia.com/gpu" = "1"
+              memory           = "2Gi"
             }
             requests = {
               cpu    = "100m"
@@ -296,6 +307,15 @@ resource "kubernetes_deployment" "f1-stream" {
             mount_path = "/transcode"
           }
         }
+        # k8s-node1 carries nvidia.com/gpu=true:NoSchedule so only work that
+        # wants the card lands there. This pod now does.
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        }
+
         volume {
           name = "data"
           persistent_volume_claim {
