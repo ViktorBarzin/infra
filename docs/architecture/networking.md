@@ -336,6 +336,64 @@ the `ingress_factory` module then follows this Traefik chain:
 Additional middleware:
 - **HTTP/3 (QUIC)**: Enabled globally on Traefik.
 
+### HTTP/3 depends on a node sysctl (`net.core.rmem_max`)
+
+Traefik terminates HTTP/3 on **one shared UDP socket per pod** (`:8443`), not a
+socket per connection as TCP gets. quic-go asks that socket for a large receive
+buffer, and the kernel silently caps the request at the node's
+`net.core.rmem_max`. A node left at the Ubuntu default of `212992` yields a
+socket of `425984` bytes (the kernel stores double), which is not enough
+headroom for the incoming ACK bursts of concurrent large downloads.
+
+When it overflows, the failure is silent and looks like nothing at all:
+
+1. packets are dropped at the socket (`Udp RcvbufErrors` climbs)
+2. quic-go loses ACKs, the congestion window collapses
+3. the transfer stalls for ~30s and dies
+4. Traefik has already written its `200` and `Content-Length`, so the access log
+   records an ordinary success with a short body
+5. the client saves a truncated file
+
+Measured 2026-08-29 over 7 days of Immich original-asset downloads, comparing
+bytes delivered against each asset's true size: **HTTP/3 truncated 54 of 69
+transfers; HTTP/2 truncated 0.** Every truncation came from the pod on the one
+node still at the default. After the fix, HTTP/3 truncations went to zero.
+HTTP/2 is unaffected throughout because TCP gets a per-connection socket with
+kernel autotuning instead of one shared UDP socket.
+
+`playbooks/k8s-node-tuning.yml` declares `net.core.rmem_max` and
+`net.core.wmem_max` at `7500000` (the value quic-go's documentation asks for) on
+all six nodes via `/etc/sysctl.d/99-k8s-node-tuning.conf`. These are ceilings,
+not defaults, so sockets still allocate only what they use. Before that playbook
+existed **no node persisted the setting anywhere** — three sat at `4194304` and
+three at the default, but all of them runtime-only, so the working nodes were
+working by accident and would have reverted on their next reboot.
+
+Applying the sysctl does not fix a running pod: quic-go reads the limit once,
+when it creates the socket. Roll Traefik afterwards.
+
+```sh
+ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml --check --diff
+ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml
+kubectl rollout restart deployment/traefik -n traefik
+```
+
+**Reading the counter needs the pod's network namespace.** `/proc/net/snmp` is
+per-netns and Traefik runs `hostNetwork: false`, so the node-exporter DaemonSet
+(which runs `hostNetwork: true`) reads zero throughout — it sat at 0 for the
+whole incident while the Traefik pod's own counter was at 449. Checking by hand:
+
+```sh
+PID=$(pgrep -x traefik | head -1)          # on the node
+sudo nsenter -t $PID -n ss -uanpm | grep -A1 ':8443'   # expect rb=14680064, d0
+sudo nsenter -t $PID -n cat /proc/net/snmp | awk '/^Udp:/'
+```
+
+Continuously, the `quic-socket-metrics` sidecar in each Traefik pod (node-exporter,
+netstat collector only) exports it, and `TraefikQUICSocketDropping` alerts on any
+non-zero rate. Containers in a pod share a network namespace, which is what lets
+a sidecar see the right counters.
+
 ### Entrypoint Transport Timeouts
 
 The `websecure` entrypoint sets `respondingTimeouts` in `stacks/traefik/modules/traefik/main.tf`:
