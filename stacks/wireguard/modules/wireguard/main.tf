@@ -46,6 +46,12 @@ resource "kubernetes_config_map" "wg_0_conf" {
   #          link, so handshakes and pings worked while bulk transfers stalled.
   #   MSS  — setup-firewall.sh clamps TCP MSS to the path MTU for the same
   #          reason, covering clients that pick their own oversized MTU.
+  #   Keepalive — every peer carries PersistentKeepalive = 25. Roaming peers
+  #          sit behind carrier NAT that rebinds its mapping within a couple
+  #          of minutes of silence, after which replies land on a dead port.
+  #          This narrows that window; it does not close it, because the
+  #          server can only refresh a mapping that still exists. Clients
+  #          behind NAT still want their own keepalive.
   #
   # Peer AllowedIPs must also stay unique. Two peers claiming one address is
   # accepted silently and the last one loaded wins, which strands the other.
