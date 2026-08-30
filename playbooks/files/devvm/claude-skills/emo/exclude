@@ -1,2 +1,8 @@
 # Skills from the upstream promoted set that this user does not want installed.
-# One name per line. (Nothing excluded yet.)
+# One name per line.
+
+# Same call as wizard's, 2026-08-30: keep Claude Code's bundled /code-review.
+# emo never had matt's, so excluding it preserves what he already has rather
+# than shadowing the bundled reviewer with a skill he did not ask for. Delete
+# this line if he wants the two-axis Standards+Spec review instead.
+code-review
