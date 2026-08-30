@@ -447,6 +447,21 @@ resource "kubernetes_config_map" "headscale-config" {
     }
   }
 
+  # All three come from Vault (secret/platform), so their contents are not
+  # visible here. One arrangement in them is easy to undo by accident:
+  #
+  #   The home DERP region (999) is declared BY HAND in derp.yaml, with
+  #   automatically_add_embedded_derp_region set to false. DERP itself stays on
+  #   443 through Traefik, but the region's stunport points at coturn (3478),
+  #   not at headscale's own embedded STUN (3479). Measured 2026-08-30: the
+  #   embedded STUN answers nothing on any path — the LB IP, the pod IP from
+  #   two different nodes including its own, and the public IP via the WAN
+  #   hairpin all time out — while coturn answers correctly and, because it
+  #   sits on a dedicated LB IP with ETP=Local, reports the real client
+  #   address instead of a cluster node IP.
+  #
+  # Turning the auto-add flag back on would silently replace the hand-written
+  # region with one pointing back at 3479 and break NAT traversal again.
   data = {
     "config.yaml" = var.headscale_config
     "acl.yaml"    = var.headscale_acl
