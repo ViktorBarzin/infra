@@ -1,0 +1,8 @@
+# Skills from the upstream promoted set that this user does not want installed.
+# One name per line.
+
+# Viktor chose Claude Code's bundled /code-review (correctness bugs, --fix,
+# inline PR comments) over matt's two-axis Standards+Spec review, 2026-08-30.
+# A personal skill of the same name would shadow the bundled one, so it has to
+# stay uninstalled rather than merely unused.
+code-review
