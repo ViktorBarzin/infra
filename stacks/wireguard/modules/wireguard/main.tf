@@ -367,8 +367,15 @@ resource "kubernetes_service" "wireguard" {
     name      = "wireguard"
     namespace = kubernetes_namespace.wireguard.metadata[0].name
     annotations = {
-      "metallb.io/loadBalancerIPs" = "10.0.20.200"
-      "metallb.io/allow-shared-ip" = "shared"
+      # Dedicated IP with ETP=Local, mirroring traefik (.203) and coturn (.205).
+      # On the shared .200 the Service had to be ETP=Cluster, so kube-proxy
+      # SNATed every client packet at whichever node announced .200 (node3)
+      # while the pod ran elsewhere. The server then saw 10.0.20.103:<random
+      # port> instead of the peer, and each reply depended on a UDP conntrack
+      # entry on that other node. Idle longer than nf_conntrack_udp_timeout_
+      # stream (120s) and the entry went, replies hit a dead port, and the
+      # tunnel stalled until the client forced a new handshake.
+      "metallb.io/loadBalancerIPs" = "10.0.20.207"
     }
     labels = {
       "app" = "wireguard"
@@ -383,7 +390,7 @@ resource "kubernetes_service" "wireguard" {
   }
   spec {
     type                    = "LoadBalancer"
-    external_traffic_policy = "Cluster"
+    external_traffic_policy = "Local"
     selector = {
       app = "wireguard"
     }
