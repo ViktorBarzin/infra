@@ -36,6 +36,19 @@ resource "kubernetes_config_map" "wg_0_conf" {
     }
   }
 
+  # wg0.conf and setup-firewall.sh both come from Vault (secret/platform), so
+  # their contents are invisible here. Two constraints live in that blob and are
+  # easy to undo by accident:
+  #
+  #   MTU  — wg0 must stay at or below 1390. Calico runs VXLAN CrossSubnet, so
+  #          the pod eth0 is 1450, and WireGuard adds 60 bytes of its own. At
+  #          the old value of 1500 a full-size packet became 1560 on a 1450
+  #          link, so handshakes and pings worked while bulk transfers stalled.
+  #   MSS  — setup-firewall.sh clamps TCP MSS to the path MTU for the same
+  #          reason, covering clients that pick their own oversized MTU.
+  #
+  # Peer AllowedIPs must also stay unique. Two peers claiming one address is
+  # accepted silently and the last one loaded wins, which strands the other.
   data = {
     "setup-firewall.sh" = var.firewall_sh
     "wg0.conf"          = format("%s%s", var.wg_0_conf, file("${path.module}/extra/clients.conf"))
