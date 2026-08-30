@@ -69,6 +69,51 @@ resource "helm_release" "traefik" {
         "diun.enable"       = "true"
         "diun.include_tags" = "^v\\d+(?:\\.\\d+)?(?:\\.\\d+)?.*$"
       }
+      # QUIC socket telemetry. Traefik terminates HTTP/3 on ONE shared UDP
+      # socket per pod, and when that socket's receive buffer overflows the
+      # kernel drops packets, quic-go loses ACKs, and large downloads truncate
+      # while still reporting HTTP 200 — the 2026-08-29 grey-photo incident
+      # (see playbooks/k8s-node-tuning.yml for the buffer fix itself).
+      #
+      # WHY A SIDECAR AND NOT THE EXISTING node-exporter DAEMONSET: the counter
+      # that moves is Udp RcvbufErrors in the POD's network namespace. The
+      # DaemonSet runs hostNetwork=true, so it reads the HOST namespace, which
+      # sat at 0 for the entire incident while the Traefik pod's own counter was
+      # at 449. It is structurally blind to this and no amount of scraping it
+      # would help. Containers in a pod share a network namespace, so a sidecar
+      # reading its own /proc/net/snmp sees exactly the right counters.
+      #
+      # DO NOT REMOVE as "duplicate node-exporter" — it is not duplicate, it is
+      # a different namespace. Alert: TraefikQUICSocketDropping.
+      additionalContainers = [{
+        name  = "quic-socket-metrics"
+        image = "quay.io/prometheus/node-exporter:v1.7.0"
+        args = [
+          # netstat is the only collector we want; the defaults would export
+          # filesystem/cpu/etc for a namespace where they are meaningless.
+          # Its default field allowlist already includes Udp_(InDatagrams|
+          # OutDatagrams|NoPorts|RcvbufErrors|SndbufErrors), so no override.
+          "--collector.disable-defaults",
+          "--collector.netstat",
+          "--web.listen-address=:9101",
+        ]
+        ports = [{
+          name          = "quicmetrics"
+          containerPort = 9101
+        }]
+        securityContext = {
+          runAsNonRoot             = true
+          runAsUser                = 65534
+          allowPrivilegeEscalation = false
+          readOnlyRootFilesystem   = true
+          capabilities             = { drop = ["ALL"] }
+        }
+        # No CPU limit: the strip-cpu-limits Kyverno policy removes them anyway.
+        resources = {
+          requests = { cpu = "5m", memory = "16Mi" }
+          limits   = { memory = "64Mi" }
+        }
+      }]
       initContainers = [{
         name  = "download-plugins"
         image = "alpine:3"
@@ -1123,6 +1168,43 @@ resource "kubernetes_service" "auth_proxy" {
       name        = "http"
       port        = 9000
       target_port = 9000
+    }
+  }
+}
+
+# Scrape target for the quic-socket-metrics sidecar (see deployment.additionalContainers).
+#
+# The kubernetes-pods Prometheus job explicitly DROPS the traefik namespace, so
+# pod annotations would be ignored here. Service annotations are the working
+# path in this namespace — the x402-gateway Service above is scraped the same
+# way, via the kubernetes-service-endpoints job.
+#
+# TRAP: that job also applies a metric-NAME allowlist. `node_netstat_Udp_.*` was
+# added to it in prometheus_chart_values.tpl for this; without that entry the
+# target scrapes green and every series is silently dropped.
+resource "kubernetes_service" "traefik_quic_socket_metrics" {
+  metadata {
+    name      = "traefik-quic-socket-metrics"
+    namespace = kubernetes_namespace.traefik.metadata[0].name
+    labels    = { app = "traefik-quic-socket-metrics" }
+    annotations = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/path"   = "/metrics"
+      "prometheus.io/port"   = "9101"
+    }
+  }
+
+  spec {
+    # Selects the Traefik pods themselves; each replica becomes its own
+    # endpoint, so a single node's overflowing socket is still visible.
+    selector = {
+      "app.kubernetes.io/name"     = "traefik"
+      "app.kubernetes.io/instance" = "traefik-traefik"
+    }
+    port {
+      name        = "quicmetrics"
+      port        = 9101
+      target_port = 9101
     }
   }
 }

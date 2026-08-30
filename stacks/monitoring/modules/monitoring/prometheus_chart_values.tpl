@@ -716,7 +716,7 @@ serverFiles:
           # guard (stacks/k8s-version-upgrade) — removing it re-opens the sticky-latch
           # false-critical (the guard would evaluate against an empty series).
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|sablier_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*'
+            regex: 'memory_.+|tripit_.+|sablier_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -1315,6 +1315,56 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Immich search probe has not reported in {{ $value | printf \"%.0f\" }}s — immich-search-probe CronJob may be broken"
+          # Downloads that were left partial. Traefik writes its 200 and
+          # Content-Length before the body, so a transfer that dies part-way is
+          # logged as an ordinary success and the recipient is left with a
+          # truncated JPEG — correct on top, flat grey below the cut. That went
+          # unnoticed until someone reported the grey photo (2026-08-29).
+          #
+          # Deliberately NOT alerting on immich_original_downloads_cut: a cut
+          # response is routine on a mobile connection and HTTP range requests
+          # recover it. In the session that prompted this, 5 of 9 assets were
+          # cut and 4 resumed cleanly. `unrecovered` was the 1 that really was
+          # broken, which is the number worth a Slack line.
+          - alert: ImmichDownloadsLeftPartial
+            expr: immich_original_downloads_unrecovered{job="immich-download-truncation"} > 0
+            for: 30m
+            keep_firing_for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} Immich download(s) left partial in the last hour — recipient holds a truncated file (grey below the cut). Check the immich-download-truncation job log for the asset ids and client."
+          - alert: ImmichDownloadTruncationProbeStale
+            expr: immich_download_truncation_probe_success{job="immich-download-truncation"} == 0 or absent(immich_download_truncation_probe_success{job="immich-download-truncation"})
+            for: 3h
+            labels:
+              severity: warning
+            annotations:
+              summary: "immich-download-truncation probe failing or absent for 3h — nothing is watching for partial downloads (it needs both Loki and the immich DB)."
+      - name: Traefik QUIC socket
+        rules:
+          # Traefik terminates HTTP/3 on ONE shared UDP socket per pod, sized by
+          # the node's net.core.rmem_max. On a node left at the Ubuntu default
+          # the socket lands at 425984 bytes, overflows under ACK bursts, and
+          # quic-go loses ACKs until transfers stall and die — 55 of 70 large
+          # downloads truncated over 7 days (2026-08-29, fixed by
+          # playbooks/k8s-node-tuning.yml).
+          #
+          # This reads the counter from INSIDE the Traefik pod's network
+          # namespace, via the quic-socket-metrics sidecar. The node-exporter
+          # DaemonSet cannot see it: it runs hostNetwork=true and sat at 0 for
+          # the whole incident while the pod's own counter was at 449.
+          #
+          # Any non-zero rate is worth knowing about — these are packets the
+          # kernel threw away, and the failure they cause is silent.
+          - alert: TraefikQUICSocketDropping
+            expr: increase(node_netstat_Udp_RcvbufErrors{service="traefik-quic-socket-metrics"}[15m]) > 0
+            for: 5m
+            keep_firing_for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Traefik pod {{ $labels.instance }} dropped UDP packets on its QUIC socket ({{ $value | printf \"%.0f\" }} in 15m) — HTTP/3 downloads will truncate silently. Check net.core.rmem_max on its node against playbooks/k8s-node-tuning.yml."
       - name: Tailscale subnet router
         rules:
           # The pfSense subnet router (tailnet 100.64.0.9, tag:infra) is what
