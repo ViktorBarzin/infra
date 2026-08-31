@@ -10,9 +10,9 @@ import (
 func ciCommands() []Command {
 	return []Command{
 		{Path: []string{"ci", "status"}, Tier: TierRead,
-			Summary: "pipeline status for HEAD/a commit: ci status [commit]", Run: ciStatus},
+			Summary: "pipeline status for HEAD/a commit: ci status [commit] [--repo <owner/name>]", Run: ciStatus},
 		{Path: []string{"ci", "watch"}, Tier: TierRead,
-			Summary: "poll the pipeline for HEAD (or a commit) to terminal; non-zero on failure", Run: ciWatch},
+			Summary: "poll the pipeline to terminal; non-zero on failure: ci watch [commit] [--repo <owner/name>]", Run: ciWatch},
 	}
 }
 
@@ -37,12 +37,12 @@ func currentHEAD() string {
 }
 
 func ciStatus(args []string) error {
-	commit, _ := firstPositional(args)
+	commit := ciPositionalCommit(args)
 	c, err := newWPClient()
 	if err != nil {
 		return err
 	}
-	id, err := c.repoID()
+	id, err := c.repoID(flagValue(args, "--repo"))
 	if err != nil {
 		return err
 	}
@@ -55,18 +55,20 @@ func ciStatus(args []string) error {
 }
 
 func ciWatch(args []string) error {
-	commit, _ := firstPositional(args)
+	commit := ciPositionalCommit(args)
 	if commit == "" {
 		commit = currentHEAD()
 	}
-	if commit == "" {
-		return fmt.Errorf("no commit given and not in a git repo")
+	// With --repo naming another repo, "latest pipeline there" is the obvious
+	// intent and needs no local commit.
+	if commit == "" && flagValue(args, "--repo") == "" {
+		return fmt.Errorf("no commit given and not in a git repo (pass a commit, or --repo <owner/name> to watch another repo's latest)")
 	}
 	c, err := newWPClient()
 	if err != nil {
 		return err
 	}
-	id, err := c.repoID()
+	id, err := c.repoID(flagValue(args, "--repo"))
 	if err != nil {
 		return err
 	}
@@ -96,4 +98,23 @@ func ciWatch(args []string) error {
 		time.Sleep(15 * time.Second)
 	}
 	return fmt.Errorf("timed out after %s waiting for CI on %s", timeout, short(commit))
+}
+
+// ciPositionalCommit reads the commit argument while skipping flag VALUES.
+// firstPositional alone would read `ci status --repo infra` as commit "infra",
+// which then matches no pipeline and reports a confusing empty result.
+func ciPositionalCommit(args []string) string {
+	valueFlags := map[string]bool{"--repo": true}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if valueFlags[a] {
+			i++ // skip its value
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		return a
+	}
+	return ""
 }
