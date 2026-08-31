@@ -28,6 +28,25 @@ query window, not per client session. A resume that lands after the window
 closes reads as unrecovered once and then clears. Erring that way is
 deliberate — the opposite error hides real breakage.
 
+KNOWN LIMITATIONS, both observed live on 2026-08-31 and NOT yet fixed. They
+make this detector UNDER-report, which is the safer direction, but do not
+mistake a clean board for proof that nothing broke.
+
+1. Range bytes accumulate across download ATTEMPTS. A fresh 200 for the same
+   (asset, client) starts a new attempt, but `ranged` still carries the bytes
+   from the previous one, so an earlier successful resume can mask a later
+   partial. Seen at 11:36 and 11:37: real cuts produced no finding at all.
+   The fix is to reset `ranged` for a key when a 200 arrives, which also
+   requires sorting records by timestamp first, because query_loki() asks for
+   direction=backward and the fold here is sequential.
+
+2. Parallel segmented downloads read as failures. Chrome fetches a large asset
+   as three concurrent requests, one 200 plus two 206s, each roughly a third
+   and overlapping so the parts sum past 100%. The plain-200 leg is scored as
+   a `cut` every time even though the download succeeded. A usable rule:
+   three or more requests for one asset inside ~2 seconds whose parts sum to
+   >= 100% is ONE successful download, not N failures.
+
 Stdlib only, by house rule: no pip install at runtime.
 """
 
