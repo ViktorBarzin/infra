@@ -11,6 +11,15 @@ Scope: the T4 admission and recovery path, dawarich's host-memory OOM, and the
 Prometheus-side OOM blindness that let both go unreported. Three one-line fixes
 from the same health check ride along.
 
+```stats
+12,044 MiB | immich-ml arena at peak
+1,958 MiB | its footprint when fresh
+499 MiB | free VRAM at the worst point
+60 days | the guard ran in dry-run
+3 | services taken down with it
+2m23s | cost of one recycle
+```
+
 ## What happened
 
 At 15:01 UTC immich-machine-learning's onnxruntime BFC arena stepped from
@@ -33,6 +42,16 @@ Three services were affected:
 | frigate, camera `valchedrym-2` | `CUDA_ERROR_OUT_OF_MEMORY` on decoder creation, rising from 69 to 565 errors/hour; the camera stopped detecting |
 | llama-swap | `starting qwen3-8b failed`, `CUDA error: out of memory`, `cudaMemGetInfo failed` |
 | paperless-ai | HTTP 500 from llama-swap on `/v1/chat/completions` |
+
+```mermaid
+flowchart TD
+    A["one 1.94 GiB buffer request<br/>immich-ml, 15:01"] --> B["BFC arena grows<br/>5,922 → 12,044 MiB"]
+    B --> C["T4 at 14,861 of 15,360<br/>499 MiB free"]
+    C --> D["frigate: decoder alloc fails<br/>valchedrym-2 stops detecting"]
+    C --> E["llama-swap: qwen3-8b<br/>will not load"]
+    E --> F["paperless-ai: HTTP 500"]
+    C -.->|"guard saw all of it<br/>and was in DRY_RUN"| G["gpu-vram-watchdog<br/>logged the right call, did nothing"]
+```
 
 claude-memory calls llama-swap only for `GET /v1/models` and was unaffected:
 `memory_embed_write_total{status="ok"}=210`, `memory_embeddings_pending=0`.
@@ -64,6 +83,12 @@ still at 1,964 MiB twelve minutes after a recycle.
 This matters because the budget we set determines when the guard acts. Budgeting
 immich-ml at its plateau tolerates roughly 4 GB of retained arena on a card
 that has 15.
+
+> [!IMPORTANT]
+> Measure immich-ml's footprint on a freshly restarted pod. A reading taken
+> from a pod that has been up for days is its arena high-water mark, not its
+> working set, and budgeting from it hands several GB of the card to retained
+> memory. The same caution applies to any onnxruntime or glibc-arena workload.
 
 ### The guard was already built and already right
 
