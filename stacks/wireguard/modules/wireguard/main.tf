@@ -192,9 +192,16 @@ resource "kubernetes_deployment" "wireguard" {
         # keys (client-side keygen); the ExternalSecret renders them to
         # peers.txt ("<pubkey> <ip/32>" per line). This loop `wg set`s each
         # (add/update) and removes peers it previously managed but that are no
-        # longer desired (rotate/revoke). It ONLY ever touches pubkeys present
-        # in peers.txt, so the STATIC peers baked into wg0.conf are never
-        # removed. peers.txt absent (no registrations yet) → no-op.
+        # longer desired (rotate/revoke).
+        #
+        # It only ever REMOVES pubkeys it added itself, so a static peer in
+        # wg0.conf is never deleted. That invariant is about pubkeys and says
+        # nothing about ADDRESSES, which is how 2026-08-30 happened: `wg set
+        # <pk> allowed-ips <ip>` TRANSFERS a prefix off whoever holds it, rc=0
+        # and silent, and removing the thief afterwards frees the prefix rather
+        # than returning it. Two static peers were stripped that way, a month
+        # apart, and nothing reported either. The portal now allocates from its
+        # own 10.3.5.0/24, and the ownership check below is the backstop.
         container {
           name  = "wg-peer-sync"
           image = "sclevine/wg:latest"
@@ -202,19 +209,41 @@ resource "kubernetes_deployment" "wireguard" {
             set -u
             STATE=/run/wg-managed/managed.list
             DESIRED=/etc/wg-peers/peers.txt
-            mkdir -p /run/wg-managed; : > "$STATE"
+            # The emptyDir outlives a container restart, so keep what we
+            # managed. Truncating discarded it and orphaned any peer revoked
+            # while the container was down - it would never be removed.
+            mkdir -p /run/wg-managed; [ -f "$STATE" ] || : > "$STATE"
             while true; do
-              if wg show wg0 >/dev/null 2>&1 && [ -f "$DESIRED" ]; then
+              if wg show wg0 >/dev/null 2>&1; then
+                # Absent secret means "no portal peers", not "skip the loop".
+                # Gating removals on the file existing froze revocation.
+                [ -f "$DESIRED" ] || : > /tmp/empty-desired
+                src="$DESIRED"; [ -f "$DESIRED" ] || src=/tmp/empty-desired
                 while read -r pk ip; do
                   [ -z "$pk" ] && continue
-                  wg set wg0 peer "$pk" allowed-ips "$ip" || true
-                done < "$DESIRED"
-                desired=$(awk '{print $1}' "$DESIRED" | sort -u)
+                  # A blank address would wipe that peer's allowed-ips.
+                  [ -z "$ip" ] && echo "SKIP $pk: no address" && continue
+                  # Refuse to take a prefix from a peer we do not manage. wg
+                  # show puts every prefix of a peer on one line, so scan all
+                  # fields - today each peer has exactly one, and wg0.conf
+                  # already carries a commented-out second prefix waiting to
+                  # break a $2-only check.
+                  owner=$(wg show wg0 allowed-ips | awk -v a="$ip" '{for(i=2;i<=NF;i++) if($i==a) print $1}')
+                  if [ -n "$owner" ] && [ "$owner" != "$pk" ] && ! grep -qxF "$owner" "$STATE"; then
+                    echo "REFUSING $ip for $pk: held by unmanaged peer $owner"
+                    continue
+                  fi
+                  wg set wg0 peer "$pk" allowed-ips "$ip" || echo "wg set failed: $pk $ip"
+                done < "$src"
+                desired=$(awk '{print $1}' "$src" | sort -u)
                 while read -r ppk; do
                   [ -z "$ppk" ] && continue
-                  echo "$desired" | grep -qx "$ppk" || wg set wg0 peer "$ppk" remove || true
+                  if ! echo "$desired" | grep -qx "$ppk"; then
+                    echo "REMOVING $ppk (no longer desired)"
+                    wg set wg0 peer "$ppk" remove || echo "wg remove failed: $ppk"
+                  fi
                 done < "$STATE"
-                awk '{print $1}' "$DESIRED" | sort -u > "$STATE"
+                awk '{print $1}' "$src" | sort -u > "$STATE"
               fi
               sleep 30
             done
