@@ -1244,31 +1244,31 @@ resource "kubectl_manifest" "validate_gpumem_declared" {
               }
             ]
           }
-          # Only pods that actually ask for a GPU. Same shape as the priority
-          # policy above, which is proven against this cluster's pod specs.
-          preconditions = {
-            any = [
-              {
-                key      = "{{ request.object.spec.containers[].resources.requests.\"nvidia.com/gpu\" || '' }}"
-                operator = "NotEquals"
-                value    = ""
-              },
-              {
-                key      = "{{ request.object.spec.containers[].resources.limits.\"nvidia.com/gpu\" || '' }}"
-                operator = "NotEquals"
-                value    = ""
-              }
-            ]
-          }
+          # A `pattern` with conditional anchors, NOT a deny/preconditions pair
+          # using request.object (2026-08-31): background scanning has no
+          # AdmissionRequest, so a rule built on `request.object` is skipped
+          # during background evaluation and the policy reports nothing about
+          # pods that already exist — which is exactly what this needs to see.
+          # The first shipped version made that mistake and produced zero
+          # results against three known-seatless GPU pods.
+          #
+          # Reading the anchors: for any container where limits."nvidia.com/gpu"
+          # is set, limits."viktorbarzin.me/gpumem" must be present and
+          # non-empty ("?*"). Containers with no GPU request are not matched by
+          # the anchor and so are not constrained. Same "?*" idiom the tier
+          # label check uses.
           validate = {
             message = "Pod requests nvidia.com/gpu but declares no viktorbarzin.me/gpumem budget. The scheduler cannot count its VRAM and the gpu-vram-watchdog cannot hold it to a contract (ADR-0016). Add resources.limits.\"viktorbarzin.me/gpumem\" set from measured use, or record why it is deliberately seatless."
-            deny = {
-              conditions = {
-                all = [
+            pattern = {
+              spec = {
+                containers = [
                   {
-                    key      = "{{ request.object.spec.containers[].resources.limits.\"viktorbarzin.me/gpumem\" || '' }}"
-                    operator = "Equals"
-                    value    = ""
+                    "(resources)" = {
+                      "(limits)" = {
+                        "(nvidia.com/gpu)"       = "?*"
+                        "viktorbarzin.me/gpumem" = "?*"
+                      }
+                    }
                   }
                 ]
               }
