@@ -216,9 +216,27 @@ resource "helm_release" "traefik" {
             "traefik-compress@kubernetescrd",
           ]
         }
+        # HTTP/3 is OFF while we debug a QUIC failure reported 2026-08-31.
+        #
+        # Clients on a tunnel (our WireGuard, and Cloudflare WARP too) get
+        # ERR_QUIC_PROTOCOL_ERROR while plain HTTPS over TCP works on the same
+        # link. The tunnel clamps TCP to the path MTU
+        # ('TCPMSS --clamp-mss-to-pmtu', see stacks/wireguard), so TCP always
+        # fits; UDP carries no MSS option, so an oversized QUIC datagram is
+        # dropped with nothing to rescue it. Origin-direct hosts are the ones
+        # that bite here: immich.viktorbarzin.me is grey-cloud (A 176.12.22.76),
+        # so the alt-svc that sends a browser to QUIC is OURS, not Cloudflare's.
+        #
+        # Turning this off stops advertising alt-svc and closes the :443/UDP
+        # listener, so browsers fall back to HTTP/2 over TCP. The Cloudflare
+        # zone setting is off in the same change (stacks/cloudflared) — that
+        # covers orange-cloud hosts, whose QUIC leg ends at the CF edge and is
+        # untouched by this setting.
+        #
+        # RE-ENABLE once client MTU is settled (vpn-portal now ships MTU = 1280,
+        # but a config imported before that keeps its old value).
         http3 = {
-          enabled        = true
-          advertisedPort = 443
+          enabled = false
         }
         # Accept PROXY-v2 ONLY from the pfSense HAProxy IPv6 bridge (10.0.20.1)
         # so IPv6 clients (forwarded [2001:470:6e:43d::2] -> here) get their real
