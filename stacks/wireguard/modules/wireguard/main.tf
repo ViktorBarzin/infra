@@ -245,7 +245,9 @@ resource "kubernetes_deployment" "wireguard" {
                 done < "$STATE"
                 awk '{print $1}' "$src" | sort -u > "$STATE"
               fi
-              sleep 30
+              # 5s: half the pickup latency for a new device. The loop is a
+              # handful of wg calls over a few peers, so the cost is noise.
+              sleep 5
             done
           EOT
           ]
@@ -365,7 +367,14 @@ resource "kubernetes_manifest" "wg_peers_external_secret" {
       namespace = kubernetes_namespace.wireguard.metadata[0].name
     }
     spec = {
-      refreshInterval = "1m"
+      # 10s, not 1m. A newly registered device is unusable until its key
+      # reaches the interface, and the wait was the ExternalSecret poll plus a
+      # reconcile tick - up to 90 seconds during which the portal has handed
+      # out a config that cannot work and says nothing. People re-import,
+      # re-register, or edit a stale file instead of waiting. One Vault read
+      # every 10s for a secret with a handful of lines is not worth the
+      # confusion it buys. Worst case is now ~15s.
+      refreshInterval = "10s"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
