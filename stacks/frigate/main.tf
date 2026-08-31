@@ -117,9 +117,13 @@ resource "kubernetes_deployment" "frigate" {
             limits = {
               memory           = "10Gi"
               "nvidia.com/gpu" = "1"
-              # GPU VRAM budget (ADR-0016): detector + ffmpeg decode (~1.9 GiB),
-              # +~250 MiB NVDEC headroom for the vermont-garage camera (ADR-0017).
-              "viktorbarzin.me/gpumem" = "2300"
+              # GPU VRAM budget (ADR-0016): detector + ffmpeg decode across 12
+              # processes, +NVDEC headroom for the vermont-garage camera
+              # (ADR-0017). Raised 2300 -> 2800 on 2026-08-31: measured
+              # steady 2611 MiB / 7-day peak 2689, so the old figure put
+              # frigate permanently over contract and made it a legitimate
+              # recycle target once enforcement went live.
+              "viktorbarzin.me/gpumem" = "2800"
             }
           }
           env {

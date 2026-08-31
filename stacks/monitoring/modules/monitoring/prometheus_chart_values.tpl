@@ -716,7 +716,7 @@ serverFiles:
           # guard (stacks/k8s-version-upgrade) — removing it re-opens the sticky-latch
           # false-critical (the guard would evaluate against an empty series).
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|sablier_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
+            regex: 'memory_.+|tripit_.+|sablier_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -964,16 +964,21 @@ serverFiles:
       - name: GPU VRAM
         rules:
           - alert: GPUVRAMLow
-            # keep_firing_for: free VRAM crosses 1024 MiB as tenants load and
-            # unload models, producing 4 fire/resolve pairs of exactly 5m each in
-            # 7 days (measured 2026-08-10) for one oversubscription episode.
-            expr: (15360 * 1024 * 1024 - sum(gpu_pod_memory_used_bytes)) / 1024 / 1024 < 1024 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            # keep_firing_for: free VRAM crosses the threshold as tenants load
+            # and unload models, producing 4 fire/resolve pairs of exactly 5m
+            # each in 7 days (measured 2026-08-10) for one oversubscription
+            # episode.
+            # Threshold raised 1024 -> 2048 on 2026-08-31: it sat BELOW the
+            # watchdog's 1536 MiB emergency floor, so the notification arrived
+            # only after the guard had already intervened. Above the floor it is
+            # a warning that the card is filling, which is what it was for.
+            expr: (15360 * 1024 * 1024 - sum(gpu_pod_memory_used_bytes)) / 1024 / 1024 < 2048 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 10m
             keep_firing_for: 1h
             labels:
               severity: warning
             annotations:
-              summary: "GPU free VRAM {{ $value | printf \"%.0f\" }} MiB (<1024) — T4 oversubscribed; gpu-vram-watchdog recycles the biggest over-budget tenant. See ADR-0016."
+              summary: "GPU free VRAM {{ $value | printf \"%.0f\" }} MiB (<2048) — T4 filling up. The gpu-vram-watchdog recycles the biggest over-budget tenant once something is actually blocked (Pending on gpumem, or GpuCudaOom firing). See ADR-0016."
           - alert: GPUVRAMTelemetryDown
             expr: absent(gpu_pod_memory_used_bytes)
             for: 15m
@@ -1568,14 +1573,22 @@ serverFiles:
           # keep_firing_for: real load sits between p50 (262 W) and p90 (320 W),
           # so 10m excursions crossed and cleared 32 times in 7 days = 64 Slack
           # posts (fire + resolve). One post per episode now.
+          # Threshold raised 300W -> 380W on 2026-08-31. The measured load
+          # oscillates between ~165W and ~337W on a roughly 4-minute duty cycle,
+          # and the DAILY peak was 304-337W on each of the preceding 7 days
+          # (08-24 322, 08-25 315, 08-26 308, 08-27 304, 08-28 325, 08-29 328,
+          # 08-30 337). 300W therefore sat inside normal operation and the alert
+          # fired whenever the cycle happened to stay high for 10 consecutive
+          # minutes, which says nothing about the ATS. 380W is above the
+          # observed peak with margin, so a fire means the load genuinely grew.
           - alert: ATSOverload
-            expr: (automatic_transfer_switch_load_power_watts / 10) > 300
+            expr: (automatic_transfer_switch_load_power_watts / 10) > 380
             for: 10m
             keep_firing_for: 2h
             labels:
               severity: warning
             annotations:
-              summary: "ATS load: {{ $value | printf \"%.0f\" }}W (threshold: 300W)"
+              summary: "ATS load: {{ $value | printf \"%.0f\" }}W (threshold: 380W)"
           - alert: ATSInputVoltageAbnormal
             expr: automatic_transfer_switch_voltage_l1_volts < 200 or automatic_transfer_switch_voltage_l1_volts > 260
             for: 5m
@@ -1880,13 +1893,28 @@ serverFiles:
               severity: warning
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }}: stuck in CrashLoopBackOff"
+          # Rewritten 2026-08-31 (docs/plans/2026-08-31-gpu-vram-admission-and-oom-observability.md).
+          # Was: increase(container_oom_events_total{container!=""}[15m]) > 0.
+          # That counter lives in the container's cgroup and is recreated at ZERO
+          # when the container restarts, which happens about a second after an
+          # OOM kill of PID 1, so catching it needed a scrape inside that
+          # window. Measured 2026-08-31: 447 series carry container!="" and
+          # exactly one had ever been non-zero, against 152 kernel OOM kills on
+          # k8s-node5 over the same period — including four dawarich kills the
+          # rule never saw. kube_pod_container_status_last_terminated_reason
+          # persists past the restart, so it is observable on any scrape while
+          # the pod lives.
+          # keep_firing_for: the series clears when the pod is replaced (not
+          # merely restarted), so a repeating OOM loop reads as one alert.
           - alert: ContainerOOMKilled
-            expr: increase(container_oom_events_total{container!=""}[15m]) > 0 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
+            keep_firing_for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: {{ $value | printf \"%.0f\" }} OOM kill(s) in 15m"
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }}: last terminated OOMKilled"
+              description: "The container's most recent exit was an OOM kill. Check `kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}` for the restart count, and the container's memory limit against its working set. A Ruby/Python service plateauing just under its limit is usually glibc arena fragmentation — see stacks/dawarich/main.tf for the MALLOC_ARENA_MAX precedent."
           - alert: PodUnschedulable
             expr: kube_pod_status_conditions{condition="PodScheduled", status="false"} == 1
             for: 5m
@@ -2570,8 +2598,19 @@ serverFiles:
           #
           # Guarded on LAPI being up, because when LAPI is down the series goes
           # ABSENT rather than flat, and CrowdSecDown above already says so.
+          # Selector widened to bouncer=~"traefik.*" on 2026-08-31. Each traefik
+          # POD registers with LAPI under its own name — the plain "traefik"
+          # plus one "traefik@<pod-ip>" per replica — so an exact match pinned
+          # the alert to whichever registration existed when it was written.
+          # After a traefik roll that series stops incrementing while every
+          # current pod polls on schedule, and because the stale registration
+          # keeps the series present at rate 0 the alert could never resolve.
+          # Observed 2026-08-31: firing since 11:32 while cscli showed all three
+          # live pods pulling within the last 60 seconds. Stale registrations
+          # still accumulate (13 of them then); pruning those with
+          # `cscli bouncers delete` is housekeeping, not a fix for this.
           - alert: CrowdSecL7BouncerNotPolling
-            expr: ((sum(rate(cs_lapi_bouncer_requests_total{bouncer="traefik"}[15m])) or vector(0)) == 0) and on() (max(up{job="crowdsec"}) == 1)
+            expr: ((sum(rate(cs_lapi_bouncer_requests_total{bouncer=~"traefik.*"}[15m])) or vector(0)) == 0) and on() (max(up{job="crowdsec"}) == 1)
             for: 30m
             keep_firing_for: 30m
             labels:

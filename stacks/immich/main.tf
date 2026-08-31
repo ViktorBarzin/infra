@@ -371,10 +371,10 @@ resource "kubernetes_deployment" "immich_server" {
               # raising the scheduler reservation. docs/research/immich-front-cache.md
               memory           = "10Gi"
               "nvidia.com/gpu" = "1"
-              # GPU VRAM budget (ADR-0016): schedule-time reservation + the
-              # gpu-vram-watchdog recycle threshold. Bounds the onnxruntime
-              # OCR-arena runaway that starved llama-swap on 2026-06-02.
-              "viktorbarzin.me/gpumem" = "3000"
+              # GPU VRAM budget (ADR-0016): NVENC transcode footprint. 7-day
+              # measured peak 1251 MiB (2026-08-31), so 1500 carries ~20%
+              # margin. Was 3000, which reserved ~1.5 GiB this never used.
+              "viktorbarzin.me/gpumem" = "1500"
             }
           }
         }
@@ -1017,8 +1017,16 @@ resource "kubernetes_deployment" "immich-machine-learning" {
               # limit-only raise — request unchanged to avoid over-reserving.
               memory           = "4608Mi"
               "nvidia.com/gpu" = "1"
-              # GPU VRAM budget (ADR-0016): NVENC transcode footprint (~1.2 GiB).
-              "viktorbarzin.me/gpumem" = "1800"
+              # GPU VRAM budget (ADR-0016): schedule-time reservation + the
+              # gpu-vram-watchdog recycle threshold. Set from the FRESH
+              # footprint (1958 MiB with all four preloads resident, measured
+              # 2026-08-31), not the plateau: onnxruntime's BFC arena grows to
+              # serve each peak and never releases, so a pod days old reads
+              # 5900+ MiB and one 1.94 GiB allocation took it to 12044. Budget
+              # at fresh + margin and let the watchdog reclaim the ratchet under
+              # contention. Bounds the runaway that starved llama-swap on
+              # 2026-06-02 and again on 2026-08-31.
+              "viktorbarzin.me/gpumem" = "2500"
             }
           }
           liveness_probe {

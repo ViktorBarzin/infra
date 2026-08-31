@@ -234,7 +234,16 @@ def update(name: str, branch: str) -> bool:
     if upstream == before:
         return False
     log.info("%s: %s -> %s", name, (before or "?")[:8], upstream[:8])
-    run(["git", "fetch", "origin", branch, "--tags", "--prune"], cwd=repo_dir, timeout=1800)
+    # --force: a tag that MOVED upstream is rejected by a plain fetch with
+    # "would clobber existing tag" and git exits 1, which marked the whole
+    # reconcile pass failed even though the branch fetched cleanly. Observed
+    # 2026-08-31 on terminal-lobby (tags v-vanilla-final and v0.1.0 re-pointed):
+    # the pass reported "42 repos, 0 updated, 0 added; failed: terminal-lobby"
+    # every 5 minutes and the Uptime-Kuma push monitor stayed DOWN, while
+    # `* branch master -> FETCH_HEAD` succeeded on the same run. Forcing is the
+    # right call for the same reason the reset below is: this clone is a mirror
+    # of upstream, so upstream's tag placement wins, always.
+    run(["git", "fetch", "origin", branch, "--tags", "--prune", "--force"], cwd=repo_dir, timeout=1800)
     # reset --hard, not merge: the clone is a read-only mirror of upstream and
     # must never acquire local state that could make a later fetch conflict.
     run(["git", "reset", "--hard", f"origin/{branch}"], cwd=repo_dir, timeout=300)

@@ -41,12 +41,36 @@ variable "watchdog_floor_mib" {
 
 variable "watchdog_dry_run" {
   type        = bool
-  default     = true
-  description = "When true the watchdog logs the recycle it WOULD do but does not delete the pod. Ships true (observe-then-enforce); flip to false once a few cycles look right."
+  default     = false
+  description = "When true the watchdog logs the recycle it WOULD do but does not delete the pod. Shipped true for the observe-then-enforce period; flipped to false 2026-08-31 after 60 days of correct dry-run decisions (see docs/plans/2026-08-31-gpu-vram-admission-and-oom-observability.md)."
+}
+
+variable "watchdog_cuda_oom_alertname" {
+  type        = string
+  default     = "GpuCudaOom"
+  description = "Loki-ruler alert the watchdog reads from Alertmanager as its contention signal for SEATLESS tenants. llama-swap declares no gpumem by design and frigate fails inside a running pod, so neither ever appears as Pending; this is how their starvation becomes visible to the guard."
+}
+
+# Alertmanager's ClusterIP, for the same reason EXPORTER_URL is an IP: cluster
+# DNS does not resolve from the nvidia namespace (2026-07-06), so the watchdog
+# cannot reach prometheus-alertmanager.monitoring.svc by name. Read the live
+# Service rather than hardcoding, so a re-created Service is picked up on the
+# next apply.
+data "kubernetes_service" "alertmanager" {
+  metadata {
+    name      = "prometheus-alertmanager"
+    namespace = "monitoring"
+  }
 }
 
 locals {
   gpumem_json_pointer = "/status/capacity/${replace(var.gpumem_resource, "/", "~1")}"
+
+  alertmanager_alerts_url = format(
+    "http://%s:%s/api/v2/alerts",
+    data.kubernetes_service.alertmanager.spec[0].cluster_ip,
+    data.kubernetes_service.alertmanager.spec[0].port[0].port,
+  )
 }
 
 # --- 1a. Advertise the extended resource at apply time (immediate) ------------
@@ -268,6 +292,17 @@ resource "kubernetes_deployment" "gpu_vram_watchdog" {
             # scrape_used_mib() works (per-pod VRAM attribution) without resolution.
             name  = "EXPORTER_URL"
             value = "http://${kubernetes_service.gpu_pod_exporter.spec[0].cluster_ip}:80/metrics"
+          }
+          env {
+            # Contention signal for seatless tenants, by ClusterIP for the same
+            # DNS reason. A read failure here degrades the guard to the
+            # emergency floor rather than assuming the card is calm.
+            name  = "ALERTMANAGER_URL"
+            value = local.alertmanager_alerts_url
+          }
+          env {
+            name  = "CUDA_OOM_ALERTNAME"
+            value = var.watchdog_cuda_oom_alertname
           }
           volume_mount {
             name       = "script"
