@@ -60,3 +60,32 @@ python3-paho-mqtt    # MQTT — Home Assistant / ESPHome device traffic
 # Scraped by Prometheus job `devvm` (stacks/monitoring) — pressure/swap/load
 # history for t3 drop attribution (docs/runbooks/t3-drop-attribution.md).
 prometheus-node-exporter
+
+# Playwright WebKit's system dependencies. WebKit was already downloaded
+# (~/.cache/ms-playwright/webkit-2248) and would not launch: 26 missing shared
+# libraries, so every attempt to reproduce a Safari-reported bug fell back to
+# Chromium. The 2026-08-31 session study found iOS/Safari/PWA is where most
+# client-side defects in the corpus live and had NO instrument at all.
+#
+# WebKit on Linux is NOT Safari on iOS: no iOS UA, no iOS viewport quirks, a
+# different media stack. It narrows the gap; it does not close it. Treat a
+# WebKit repro as evidence and a WebKit pass as inconclusive for iOS.
+#
+# List taken from `playwright install-deps --dry-run webkit`, not hand-guessed.
+# Re-derive it after a playwright major bump rather than trusting this copy.
+gstreamer1.0-libav
+gstreamer1.0-plugins-bad
+gstreamer1.0-plugins-base
+gstreamer1.0-plugins-good
+libavif16
+libenchant-2-2
+libevent-2.1-7t64
+libgstreamer-gl1.0-0
+libgstreamer-plugins-bad1.0-0
+libgstreamer-plugins-base1.0-0
+libgtk-4-1
+libharfbuzz-icu0
+libhyphen0
+libmanette-0.2-0
+libsecret-1-0
+libwoff1
