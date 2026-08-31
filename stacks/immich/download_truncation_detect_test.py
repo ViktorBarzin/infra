@@ -27,6 +27,10 @@ def line(ip, aid, status, nbytes, proto="HTTP/2.0"):
     )
 
 
+FF = "Mozilla/5.0 (Android 16; Mobile; rv:154.0) Gecko/154.0 Firefox/154.0"
+CURL = "curl/8.5.0"
+SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_6 like Mac OS X) Safari/605.1.15"
+
 A = "ead39fa9-b377-48b8-9cf7-0a0f0ff41dd8"
 B = "56495350-c804-4b72-b240-a9df6021e018"
 IP1, IP2 = "185.139.138.221", "92.63.205.141"
@@ -35,7 +39,7 @@ IP1, IP2 = "185.139.138.221", "92.63.205.141"
 class TestParse(unittest.TestCase):
     def test_extracts_fields(self):
         got = parse_lines([line(IP1, A, 200, 4239182)])
-        self.assertEqual(got, [(IP1, A, 200, 4239182)])
+        self.assertEqual(got, [(IP1, A, 200, 4239182, FF)])
 
     def test_ignores_unrelated_lines(self):
         noise = [
@@ -51,16 +55,24 @@ class TestParse(unittest.TestCase):
         evil = line(IP1, A, 200, 100).replace(
             "Mozilla/5.0", f"/api/assets/{B}/original"
         )
-        self.assertEqual(parse_lines([evil]), [(IP1, A, 200, 100)])
+        got = parse_lines([evil])
+        self.assertEqual(len(got), 1)
+        ip, aid, status, nbytes, ua = got[0]
+        # The point: the asset id comes from the request line, so the crafted
+        # id in the User-Agent is never the one metrics get filed under.
+        self.assertEqual(aid, A)
+        self.assertNotEqual(aid, B)
+        self.assertEqual((ip, status, nbytes), (IP1, 200, 100))
+        self.assertIn(B, ua)  # it IS carried through, just not as the asset
 
     def test_http3_lines_parse_too(self):
         got = parse_lines([line(IP1, A, 200, 3360762, proto="HTTP/3.0")])
-        self.assertEqual(got, [(IP1, A, 200, 3360762)])
+        self.assertEqual(got, [(IP1, A, 200, 3360762, FF)])
 
 
 class TestAnalyse(unittest.TestCase):
     def test_single_complete_response(self):
-        r = analyse([(IP1, A, 200, 6544473)], {A: 6544473})
+        r = analyse([(IP1, A, 200, 6544473, FF)], {A: 6544473})
         self.assertEqual((r["complete"], r["cut"], r["unrecovered"]), (1, 0, 0))
 
     def test_cut_then_resumed_is_not_a_failure(self):
@@ -68,39 +80,39 @@ class TestAnalyse(unittest.TestCase):
         # a range request covering the rest. 1687552 + 6111519 == 7799071.
         size = 7799071
         r = analyse([
-            (IP1, A, 200, 1507328),
-            (IP1, A, 200, 2686976),
-            (IP2, A, 206, 6111519),
+            (IP1, A, 200, 1507328, FF),
+            (IP1, A, 200, 2686976, FF),
+            (IP2, A, 206, 6111519, FF),
         ], {A: size})
         self.assertEqual(r["cut"], 1)
         self.assertEqual(r["unrecovered"], 0, "resume covered the remainder")
 
     def test_cut_without_resume_is_the_failure(self):
         # IMG_20260824_141031.jpg: 8% delivered, never retried.
-        r = analyse([(IP1, A, 200, 622592)], {A: 7792308})
+        r = analyse([(IP1, A, 200, 622592, FF)], {A: 7792308})
         self.assertEqual(r["cut"], 1)
         self.assertEqual(r["unrecovered"], 1)
         self.assertEqual(r["unrecovered_assets"], [A])
         self.assertEqual(r["worst_client"], IP1)
 
     def test_partial_resume_still_counts_as_unrecovered(self):
-        r = analyse([(IP1, A, 200, 1000), (IP2, A, 206, 10)], {A: 7792308})
+        r = analyse([(IP1, A, 200, 1000, FF), (IP2, A, 206, 10, FF)], {A: 7792308})
         self.assertEqual(r["unrecovered"], 1)
 
     def test_unknown_asset_is_skipped_not_guessed(self):
-        r = analyse([(IP1, A, 200, 5)], {})
+        r = analyse([(IP1, A, 200, 5, FF)], {})
         self.assertEqual((r["assets"], r["cut"], r["unrecovered"]), (0, 0, 0))
 
     def test_range_only_traffic_is_not_truncation(self):
         # Video seeking produces 206s with no preceding 200. That is ordinary
         # behaviour and must not read as a cut.
-        r = analyse([(IP1, A, 206, 1000), (IP1, A, 206, 2000)], {A: 7792308})
+        r = analyse([(IP1, A, 206, 1000, FF), (IP1, A, 206, 2000, FF)], {A: 7792308})
         self.assertEqual((r["cut"], r["unrecovered"]), (0, 0))
 
     def test_assets_are_independent(self):
         r = analyse([
-            (IP1, A, 200, 6544473),          # complete
-            (IP1, B, 200, 622592),           # left partial
+            (IP1, A, 200, 6544473, FF),          # complete
+            (IP1, B, 200, 622592, FF),           # left partial
         ], {A: 6544473, B: 7792308})
         self.assertEqual((r["complete"], r["cut"], r["unrecovered"]), (1, 1, 1))
         self.assertEqual(r["unrecovered_assets"], [B])
@@ -108,8 +120,8 @@ class TestAnalyse(unittest.TestCase):
     def test_retry_that_succeeds_clears_the_asset(self):
         # A client that gives up and re-downloads from scratch is recovered.
         r = analyse([
-            (IP1, A, 200, 622592),
-            (IP1, A, 200, 6544473),
+            (IP1, A, 200, 622592, FF),
+            (IP1, A, 200, 6544473, FF),
         ], {A: 6544473})
         self.assertEqual((r["complete"], r["unrecovered"]), (1, 0))
 
@@ -117,6 +129,43 @@ class TestAnalyse(unittest.TestCase):
         r = analyse([], {A: 10})
         self.assertEqual((r["assets"], r["complete"], r["cut"], r["unrecovered"]),
                          (0, 0, 0, 0))
+
+
+class TestClientIsolation(unittest.TestCase):
+    """The 2026-08-31 regression: one client's success cleared another's partial."""
+
+    def test_another_clients_success_does_not_clear_a_partial(self):
+        # A phone got 8% and stopped. Separately, a diagnostic curl pulled the
+        # whole file. The phone is still holding a broken file.
+        r = analyse([
+            (IP1, A, 200, 622592, FF),
+            ("10.0.10.10", A, 200, 7792308, CURL),
+        ], {A: 7792308})
+        self.assertEqual(r["unrecovered"], 1,
+                         "a different client's full download must not clear this")
+        self.assertEqual(r["worst_client"], IP1)
+
+    def test_internal_ips_are_dropped_at_parse_time(self):
+        internal = [line(ip, A, 200, 7792308) for ip in
+                    ("10.0.10.10", "127.0.0.1", "192.168.1.5", "172.16.0.9")]
+        self.assertEqual(parse_lines(internal), [])
+
+    def test_same_client_resuming_from_a_new_ip_still_counts_as_recovered(self):
+        # The real mobile case: starts on one carrier address, resumes on
+        # another. Same user-agent, so it is one client and it did recover.
+        r = analyse([
+            (IP1, A, 200, 1507328, FF),
+            (IP2, A, 206, 6291743, FF),
+        ], {A: 7799071})
+        self.assertEqual(r["unrecovered"], 0)
+
+    def test_two_distinct_clients_are_tracked_separately(self):
+        r = analyse([
+            (IP1, A, 200, 100, FF),          # partial
+            ("1.2.3.4", A, 200, 7792308, SAFARI),  # complete
+        ], {A: 7792308})
+        self.assertEqual(r["cut"], 1)
+        self.assertEqual(r["unrecovered"], 1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# Keep each devvm user's mattpocock/skills set current, without losing the
+# local edits we make on top of them.
+#
+# Why this exists rather than a bare `npx skills update` in cron: measured
+# 2026-08-30 on the v1.1.0 -> v1.2.3 upgrade, the CLI's update
+#   * overwrites locally-edited skill files with upstream text, no warning;
+#   * reinstalls anything still in the lockfile even if the directory was
+#     deleted on purpose;
+#   * refuses to remove a skill that vanished upstream when it is not on a
+#     tty ("Skipping deletion in non-interactive mode"), so a rename such as
+#     writing-great-skills -> writing-for-agents leaves the dead skill behind
+#     and never installs the new one.
+# So the run is update, then reconcile against the promoted set, then re-apply
+# our patches, then report what moved.
+#
+# State this reads, all installed by playbooks/devvm.yml:
+#   /etc/default/claude-skills-update            CLAUDE_SKILLS_USERS, pinned CLI version
+#   /usr/local/share/claude-skills/<user>/exclude        never install these
+#   /usr/local/share/claude-skills/<user>/patches/*.patch  re-applied after update
+#
+# Backups land in /var/backups/claude-skills/<user>/<timestamp>/ (last 5 kept),
+# so any run is revertible by copying a snapshot back.
+set -uo pipefail
+export PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+CONF=/etc/default/claude-skills-update
+SHARE=/usr/local/share/claude-skills
+BACKUPS=/var/backups/claude-skills
+KEEP_BACKUPS=5
+PROMOTED_URL=https://raw.githubusercontent.com/mattpocock/skills/main/.claude-plugin/plugin.json
+VAULT_ADDR=https://vault.viktorbarzin.me
+WIZARD_VAULT_TOKEN=/home/wizard/.vault-token
+
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+CLAUDE_SKILLS_USERS="${CLAUDE_SKILLS_USERS:-}"
+# Pinned deliberately: this runs unattended as each user, so the version of a
+# third-party npm package it executes is a reviewed choice, not whatever
+# `@latest` resolved to overnight. Bump it in the playbook when you mean to.
+SKILLS_CLI="${SKILLS_CLI:-skills@1.5.23}"
+
+TS=$(date +%Y%m%dT%H%M%S)
+REPORT=""          # human-readable lines, one per thing that moved
+PROBLEMS=""        # things a human needs to look at
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+log() { printf '%s %s\n' "$(date -Is)" "$*"; }
+note() { REPORT="${REPORT}${1}"$'\n'; log "$1"; }
+problem() { PROBLEMS="${PROBLEMS}${1}"$'\n'; log "PROBLEM: $1" >&2; }
+
+# ---- the promoted set upstream ------------------------------------------
+# .claude-plugin/plugin.json is upstream's own list of which skills ship in the
+# plugin, so it is the authority on what "the current set" means. The repo also
+# carries in-progress/, misc/ and deprecated/ buckets we deliberately do not
+# install.
+fetch_promoted() {
+  local json="$TMP/plugin.json"
+  if ! curl -fsS --max-time 60 "$PROMOTED_URL" -o "$json"; then
+    problem "could not fetch the upstream promoted-skill list — skipping the whole run"
+    return 1
+  fi
+  jq -r '.skills[] | split("/") | last' "$json" | sort -u
+}
+
+# ---- per-user helpers ----------------------------------------------------
+user_home() { getent passwd "$1" | cut -d: -f6; }
+
+as_user() { runuser -l "$1" -c "$2"; }
+
+# Skills this user got from mattpocock, per their lockfile. Using the lockfile
+# rather than "everything in ~/.claude/skills" is what keeps a user's own
+# skills (cluster-health, file-issue, their bug-fix notes) out of reach.
+matt_skills() {
+  local lock="$1/.agents/.skill-lock.json"
+  [ -r "$lock" ] || return 0
+  jq -r '.skills | to_entries[] | select(.value.source=="mattpocock/skills") | .key' "$lock" 2>/dev/null | sort -u
+}
+
+# name<TAB>sha256 for every installed skill, so before/after can be compared.
+inventory() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
+  local d n
+  for d in "$dir"/*/; do
+    [ -e "$d/SKILL.md" ] || continue
+    n=$(basename "$d")
+    printf '%s\t%s\n' "$n" "$(sha256sum "$d/SKILL.md" | cut -d' ' -f1)"
+  done | sort
+}
+
+backup() {
+  local user="$1" home="$2"
+  local dest="$BACKUPS/$user/$TS"
+  mkdir -p "$dest"
+  # -L so a user still on the old symlink layout gets real files snapshotted.
+  cp -aL "$home/.claude/skills" "$dest/skills" 2>/dev/null || true
+  if [ -r "$home/.agents/.skill-lock.json" ]; then
+    cp -a "$home/.agents/.skill-lock.json" "$dest/"
+  fi
+  # Keep the last few, drop the rest.
+  local old
+  old=$(find "$BACKUPS/$user" -mindepth 1 -maxdepth 1 -type d | sort -r | tail -n +$((KEEP_BACKUPS + 1)))
+  [ -n "$old" ] && echo "$old" | xargs -r rm -rf
+  echo "$dest"
+}
+
+apply_patches() {
+  local user="$1" home="$2"
+  local pdir="$SHARE/$user/patches"
+  local p skill
+  [ -d "$pdir" ] || return 0
+  for p in "$pdir"/*.patch; do
+    [ -e "$p" ] || continue
+    skill=$(basename "$p" .patch)
+    local target="$home/.claude/skills/$skill"
+    if [ ! -d "$target" ]; then
+      problem "$user: patch for '$skill' has no skill to apply to (was it removed upstream?)"
+      continue
+    fi
+    # Already applied (the update left our text alone) -> nothing to do.
+    if patch -p1 -d "$target" --dry-run --reverse --force --silent < "$p" >/dev/null 2>&1; then
+      continue
+    fi
+    # -F3 tolerates upstream editing lines near ours; a real conflict still fails,
+    # which is the signal we want rather than a silently mangled skill.
+    if patch -p1 -d "$target" -F3 --forward --no-backup-if-mismatch --silent < "$p" >/dev/null 2>&1; then
+      chown -R "$user":"$(id -gn "$user")" "$target"
+      note "$user: re-applied local patch to '$skill'"
+    else
+      problem "$user: local patch for '$skill' NO LONGER APPLIES — the skill is on upstream text, your edit is not in it. Patch: $p"
+    fi
+  done
+}
+
+process_user() {
+  local user="$1" promoted="$2"
+  local home; home=$(user_home "$user")
+  if [ -z "$home" ] || [ ! -d "$home" ]; then
+    problem "$user: no home directory — skipped"; return
+  fi
+  if [ ! -d "$home/.claude/skills" ]; then
+    problem "$user: no ~/.claude/skills — skipped"; return
+  fi
+  # A user whose skills dir is a symlink into another user's home (breakglass
+  # points at wizard's) is updated when that user is; doing it twice would just
+  # race against ourselves.
+  if [ -L "$home/.claude/skills" ]; then
+    log "$user: ~/.claude/skills is a symlink to $(readlink -f "$home/.claude/skills") — covered by that user, skipping"
+    return
+  fi
+
+  local snapshot; snapshot=$(backup "$user" "$home")
+  log "$user: backed up to $snapshot"
+
+  local before; before=$(inventory "$home/.claude/skills")
+
+  # 1) update what is already installed
+  if ! as_user "$user" "npx --yes $SKILLS_CLI update -g -y" >"$TMP/$user.update" 2>&1; then
+    problem "$user: 'skills update' failed — $(tail -3 "$TMP/$user.update" | tr '\n' ' ')"
+  fi
+
+  # 2) reconcile against the promoted set
+  local installed_matt; installed_matt=$(matt_skills "$home")
+  local exclude="$SHARE/$user/exclude"
+  local excluded=""
+  [ -r "$exclude" ] && excluded=$(grep -vE '^\s*(#|$)' "$exclude" | sort -u)
+
+  local want; want=$(comm -23 <(echo "$promoted") <(echo "$excluded"))
+  local to_add; to_add=$(comm -13 <(echo "$installed_matt") <(echo "$want"))
+  # Only ever remove something we know came from mattpocock, that upstream no
+  # longer ships, and that we are not patching.
+  local patched=""
+  [ -d "$SHARE/$user/patches" ] && patched=$(find "$SHARE/$user/patches" -name '*.patch' -exec basename {} .patch \; | sort -u)
+  local gone; gone=$(comm -23 <(echo "$installed_matt") <(echo "$promoted"))
+  local to_remove; to_remove=$(comm -23 <(echo "$gone") <(echo "$patched"))
+  # An excluded skill that is installed is one we decided against; drop it.
+  local unwanted; unwanted=$(comm -12 <(echo "$installed_matt") <(echo "$excluded"))
+  to_remove=$(printf '%s\n%s\n' "$to_remove" "$unwanted" | grep -v '^$' | sort -u)
+
+  if [ -n "$to_add" ]; then
+    local args=""
+    while read -r s; do [ -n "$s" ] && args="$args -s $s"; done <<< "$to_add"
+    if as_user "$user" "npx --yes $SKILLS_CLI add mattpocock/skills$args -a claude-code -g -y" >"$TMP/$user.add" 2>&1; then
+      note "$user: installed $(echo "$to_add" | tr '\n' ' ')"
+    else
+      problem "$user: failed to install $(echo "$to_add" | tr '\n' ' ') — $(tail -3 "$TMP/$user.add" | tr '\n' ' ')"
+    fi
+  fi
+
+  if [ -n "$to_remove" ]; then
+    while read -r s; do
+      [ -n "$s" ] || continue
+      if as_user "$user" "npx --yes $SKILLS_CLI remove $s -g -y" >"$TMP/$user.rm" 2>&1; then
+        note "$user: removed '$s' (gone upstream or excluded)"
+      else
+        problem "$user: failed to remove '$s' — $(tail -3 "$TMP/$user.rm" | tr '\n' ' ')"
+      fi
+    done <<< "$to_remove"
+  fi
+
+  # 3) put our own edits back on top
+  apply_patches "$user" "$home"
+
+  # 4) say what actually moved
+  local after; after=$(inventory "$home/.claude/skills")
+  local changed
+  changed=$(join -t$'\t' <(echo "$before") <(echo "$after") 2>/dev/null \
+            | awk -F'\t' '$2 != $3 {print $1}' | tr '\n' ' ')
+  [ -n "${changed// /}" ] && note "$user: content changed in ${changed}"
+  [ "$before" = "$after" ] && log "$user: no change"
+}
+
+# ---- reporting -----------------------------------------------------------
+slack() {
+  local text="$1" hook
+  [ -r "$WIZARD_VAULT_TOKEN" ] || { log "no vault token — not posting to Slack"; return; }
+  hook=$(VAULT_ADDR="$VAULT_ADDR" VAULT_TOKEN="$(cat "$WIZARD_VAULT_TOKEN")" \
+         vault kv get -field=slack_webhook secret/ci/global 2>/dev/null) || {
+    log "could not read the slack webhook from Vault — not posting"; return; }
+  [ -n "$hook" ] || return
+  curl -sS --max-time 30 -X POST -H 'Content-type: application/json' \
+    --data "$(jq -n --arg t "$text" '{channel:"alerts", text:$t}')" "$hook" >/dev/null \
+    || log "slack post failed"
+}
+
+main() {
+  [ -n "$CLAUDE_SKILLS_USERS" ] || { log "CLAUDE_SKILLS_USERS is empty — nothing to do"; exit 0; }
+  local promoted
+  promoted=$(fetch_promoted) || { slack "devvm claude-skills-update FAILED: $PROBLEMS"; exit 1; }
+  log "upstream promoted set: $(echo "$promoted" | tr '\n' ' ')"
+
+  local u
+  for u in $CLAUDE_SKILLS_USERS; do
+    log "--- $u ---"
+    process_user "$u" "$promoted"
+  done
+
+  if [ -n "$PROBLEMS" ]; then
+    slack "$(printf 'devvm claude-skills-update needs a look\n%s%s' "$PROBLEMS" \
+            "${REPORT:+$(printf '\nalso changed:\n%s' "$REPORT")}")"
+    exit 1
+  elif [ -n "$REPORT" ]; then
+    slack "$(printf 'devvm mattpocock skills updated\n%s' "$REPORT")"
+  else
+    log "nothing changed anywhere — staying quiet"
+  fi
+}
+
+main "$@"

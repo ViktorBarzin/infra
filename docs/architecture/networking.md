@@ -414,16 +414,17 @@ MetalLB v0.15.3 allocates IPs from `10.0.20.200-10.0.20.220` (21 IPs) in **Layer
 
 | IP | ETP | Services (ns/name → ports) |
 |----|-----|----------------------------|
-| **10.0.20.200** (shared) | Cluster | dbaas/postgresql-lb→5432 · beads-server/dolt→3306 · headscale/headscale-server→41641/UDP, 3479/UDP · wireguard/wireguard→51820/UDP · servarr/qbittorrent-torrenting→50000 TCP+UDP · shadowsocks/shadowsocks→8388 TCP+UDP · tor-proxy/torrserver-bt→5665 TCP+UDP · xray/xray-reality→7443 |
+| **10.0.20.200** (shared) | Cluster | dbaas/postgresql-lb→5432 · beads-server/dolt→3306 · headscale/headscale-server→41641/UDP, 3479/UDP · servarr/qbittorrent-torrenting→50000 TCP+UDP · shadowsocks/shadowsocks→8388 TCP+UDP · tor-proxy/torrserver-bt→5665 TCP+UDP · xray/xray-reality→7443 |
 | **10.0.20.201** (dedicated) | Local | technitium/technitium-dns→53 UDP+TCP |
 | **10.0.20.202** (dedicated)¹ | Local | kms/windows-kms→1688 |
 | **10.0.20.203** (dedicated) | Local | traefik/traefik→80, 443, 443/UDP (HTTP/3), 10200 (piper), 10300 (whisper) |
 | **10.0.20.205** (dedicated) | Local | coturn/coturn→3478 TCP+UDP, 49152-49252/UDP |
 | **10.0.20.204** (dedicated) | Local | frigate/frigate-rtsp→8554 RTSP (TCP+UDP), 8555 WebRTC/go2rtc (TCP+UDP) |
+| **10.0.20.207** (dedicated) | Local | wireguard/wireguard→51820/UDP |
 
 **Mailserver does NOT use a LB IP** — inbound mail enters via pfSense HAProxy on `10.0.20.1:{25,465,587,993}` → NodePorts `30125-30128` (PROXY-v2; see "Mail Server" below). (Earlier revisions of this table wrongly listed mailserver on `.200` and KMS on `.200` — both corrected 2026-06-03.)
 
-**pfSense aliases** map to these IPs: `k8s_shared_lb`→.200, `technitium_dns`→.201, `k8s_kms_lb`→.202, `traefik_lb`→.203 (plus a legacy `nginx`→.200 duplicate — cruft). NAT rules reference aliases, so repointing an alias cascades to its paired filter rule.
+**pfSense aliases** map to these IPs: `k8s_shared_lb`→.200, `technitium_dns`→.201, `k8s_kms_lb`→.202, `traefik_lb`→.203, `k8s_wireguard_lb`→.207 (plus a legacy `nginx`→.200 duplicate — cruft). NAT rules reference aliases, so repointing an alias cascades to its paired filter rule.
 
 ¹ **windows-kms is publicly WAN-exposed.** pfSense forwards WAN TCP/1688 → `k8s_kms_lb` (.202) so any internet host can activate. The matching filter rule rate-limits per source (`max-src-conn 50`, `max-src-conn-rate 10/60`, `overload <virusprot>`). See `docs/runbooks/kms-public-exposure.md`.
 
@@ -435,7 +436,8 @@ These IPs are referenced by consumers that do **not** auto-follow when an IP mov
 - **`.201` Technitium:** assigner `stacks/technitium/modules/technitium/main.tf` · DNS records `config.tfvars` (ns1/ns2/`viktorbarzin.lan`, dnscrypt forwarder) · `modules/create-template-vm/cloud_init.yaml` FallbackDNS · `scripts/provision-k8s-worker` · pfSense NAT 53 (**literal `10.0.20.201`**, not the `technitium_dns` alias — known inconsistency).
 - **`.202` KMS:** assigner `stacks/kms/main.tf` · pfSense NAT 1688 → `k8s_kms_lb` · Cloudflare `vlmcs` public A → WAN → `.202`.
 - **`.204` Frigate go2rtc:** assigner `stacks/frigate/main.tf` · go2rtc WebRTC ICE candidate in Frigate `config.yml` (on the `frigate-config` PVC, OOB — `webrtc.candidates: [10.0.20.204:8555]`) · HA-sofia Frigate integration `rtsp_url_template` (OOB — `rtsp://10.0.20.204:8554/{{ name }}`). **No DNS indirection**: go2rtc inserts the literal into the ICE host candidate and won't resolve a hostname (verified in go2rtc source), so the Service annotation is the single source of truth for this IP.
-- **`.200` shared:** the 8 assigners above · PG state backend `scripts/tg` + `scripts/migrate-state-to-pg` (`@10.0.20.200:5432`) · pfSense NAT (wireguard/shadowsocks/headscale-STUN/qbittorrent/xray) → `k8s_shared_lb`, outbound-NAT self rule, CrowdSec syslog `remoteserver .200:30514`.
+- **`.200` shared:** the 8 assigners above · PG state backend `scripts/tg` + `scripts/migrate-state-to-pg` (`@10.0.20.200:5432`) · pfSense NAT (shadowsocks/headscale-STUN/qbittorrent/xray) → `k8s_shared_lb`, outbound-NAT self rule, CrowdSec syslog `remoteserver .200:30514`.
+- **`.207` WireGuard:** assigner `stacks/wireguard/modules/wireguard/main.tf` · pfSense NAT UDP 51820 → `k8s_wireguard_lb` · client configs use the `vpn.viktorbarzin.me` A record, so roaming peers follow DNS and need no reissue. Moved off the shared `.200` on 2026-08-30, same reasoning as coturn: ETP=Cluster SNATed every peer to the node announcing `.200`, so the server saw `10.0.20.103:<random port>` (kube-proxy masquerades `--random-fully`) rather than the client, and the return path hung on a UDP conntrack entry on that node. Once it aged out the tunnel passed traffic one way only. Note pfSense's site-to-site WireGuard on **51821** is unrelated and shares the same server public key — do not repoint it.
 - **`.205` coturn:** pfSense NAT (TURN signaling 3478 tcp/udp + relay range 49152-49252/udp) → `coturn_lb` · `stacks/technitium` internal `turn.viktorbarzin.me` A record · `stacks/chrome-service` + `stacks/proxy` `COTURN_BACKEND_URL` (and the proxy's gluetun `FIREWALL_OUTBOUND_SUBNETS`). Moved off the shared `.200` on 2026-08-11: ETP=Cluster's SNAT made coturn see a node IP instead of the real peer, so it handed internal addresses out as STUN-derived candidates and no relay-based ICE pair could complete — both neko browsers sat at ICE `checking`. Same reasoning as Traefik's `.203`.
 
 Critical services are scaled to **3 replicas**:

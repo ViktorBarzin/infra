@@ -160,6 +160,7 @@ deschedulerPolicy:
                 - "metallb-system"
                 - "monitoring"
                 - "authentik"
+                - "wireguard" # evicting it drops every VPN tunnel and resets peer state
         - name: "RemoveFailedPods"
           args:
             reasons:

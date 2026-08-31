@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily refresh of the mattpocock skill set
+
+[Timer]
+# 05:30 rather than 05:00, which is when t3 auto-updates.
+OnCalendar=*-*-* 05:30:00
+Persistent=true
+RandomizedDelaySec=20min
+
+[Install]
+WantedBy=timers.target

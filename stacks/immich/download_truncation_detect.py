@@ -46,8 +46,15 @@ import urllib.request
 LINE = re.compile(
     r'^(?P<ip>\S+) \S+ \S+ \[(?P<ts>[^\]]+)\] '
     r'"GET /api/assets/(?P<aid>[0-9a-f-]{36})/original\S* HTTP/[\d.]+" '
-    r'(?P<status>\d{3}) (?P<bytes>\d+) '
+    r'(?P<status>\d{3}) (?P<bytes>\d+) "[^"]*" "(?P<ua>[^"]*)"'
 )
+
+# Traffic from inside the cluster/LAN is diagnostics, probes and this repo's own
+# tooling, never a person whose download we care about. It must be excluded, not
+# merely ignored: a full-size fetch from here would otherwise mark somebody
+# else's partial download as recovered. That happened live on 2026-08-31 — a
+# curl from the devvm cleared a genuinely-truncated asset.
+INTERNAL = re.compile(r'^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)')
 
 
 def parse_lines(lines):
@@ -56,67 +63,89 @@ def parse_lines(lines):
     for line in lines:
         m = LINE.match(line)
         if m:
+            if INTERNAL.match(m.group("ip")):
+                continue
             out.append((
                 m.group("ip"),
                 m.group("aid"),
                 int(m.group("status")),
                 int(m.group("bytes")),
+                m.group("ua"),
             ))
     return out
 
 
 def analyse(records, sizes):
-    """Fold parsed records into per-asset outcomes.
+    """Fold parsed records into per-(asset, client) outcomes.
 
-    records: [(ip, asset_id, status, bytes)]
+    records: [(ip, asset_id, status, bytes, user_agent)]
     sizes:   {asset_id: true_size_bytes}
+
+    KEYED ON CLIENT, NOT JUST ASSET. Aggregating per asset alone is wrong:
+    one person's successful download silently marks a different person's
+    truncated copy as recovered. Observed live on 2026-08-31, when a diagnostic
+    curl from the devvm cleared an asset that was genuinely still partial on a
+    phone.
+
+    The client key is the USER-AGENT, not the IP. A mobile client legitimately
+    resumes from a different address than it started on — the same phone was
+    seen starting on 185.139.138.221 and resuming from 92.63.205.141 — so
+    keying on IP would report those recoveries as failures. The user-agent is
+    stable across that address change while still separating genuinely
+    different clients.
+
+    Residual limit, accepted: two different people running byte-identical
+    user-agent strings still merge into one client. That errs toward
+    under-reporting for a shared photo library, which is the safer direction
+    than the alternative of alerting on every mobile client that resumes.
 
     An asset with no known size is skipped rather than guessed at.
     """
-    best_200 = collections.defaultdict(int)   # asset -> largest full-body response
-    ranged = collections.defaultdict(int)     # asset -> total bytes served as 206
+    best_200 = collections.defaultdict(int)   # (asset, client) -> largest 200
+    ranged = collections.defaultdict(int)     # (asset, client) -> total 206 bytes
     seen = set()
     clients = collections.Counter()
+    ip_of = {}
 
-    for ip, aid, status, nbytes in records:
+    for ip, aid, status, nbytes, ua in records:
         if aid not in sizes:
             continue
-        seen.add(aid)
+        key = (aid, ua)
+        seen.add(key)
+        ip_of.setdefault(key, ip)
         if status == 200:
-            best_200[aid] = max(best_200[aid], nbytes)
+            best_200[key] = max(best_200[key], nbytes)
         elif status == 206:
-            ranged[aid] += nbytes
+            ranged[key] += nbytes
 
     cut, unrecovered, complete = [], [], []
-    for aid in seen:
+    for key in seen:
+        aid, _ua = key
         size = sizes[aid]
-        best = best_200.get(aid, 0)
+        best = best_200.get(key, 0)
         if best == size:
             complete.append(aid)
             continue
         if best == 0:
-            # No full-body attempt in the window, so there is nothing to have
-            # been cut short. Range-only traffic is ordinary: video seeking
-            # works this way, and so does a resume whose original response
-            # fell outside the window. Counting either as truncation would
-            # make the metric fire on healthy playback.
+            # No full-body attempt by this client in the window, so there is
+            # nothing to have been cut short. Range-only traffic is ordinary:
+            # video seeking works this way, and so does a resume whose original
+            # response fell outside the window. Counting either as truncation
+            # would make the metric fire on healthy playback.
             continue
         cut.append(aid)
-        # The remainder after the best full-body attempt. If the range requests
-        # in this window cover at least that much, the client got the file.
-        if ranged.get(aid, 0) < size - best:
+        # The remainder after this client's best full-body attempt. If ITS OWN
+        # range requests cover at least that much, it got the file.
+        if ranged.get(key, 0) < size - best:
             unrecovered.append(aid)
-
-    for ip, aid, status, nbytes in records:
-        if aid in unrecovered and status == 200:
-            clients[ip] += 1
+            clients[ip_of[key]] += 1
 
     return {
-        "assets": len(seen),
-        "complete": len(complete),
-        "cut": len(cut),
-        "unrecovered": len(unrecovered),
-        "unrecovered_assets": sorted(unrecovered),
+        "assets": len({a for a, _ in seen}),
+        "complete": len(set(complete)),
+        "cut": len(set(cut)),
+        "unrecovered": len(set(unrecovered)),
+        "unrecovered_assets": sorted(set(unrecovered)),
         "worst_client": clients.most_common(1)[0][0] if clients else "",
     }
 
