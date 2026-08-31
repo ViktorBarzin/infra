@@ -216,6 +216,31 @@ resource "helm_release" "traefik" {
             "traefik-compress@kubernetescrd",
           ]
         }
+        # DO NOT set enabled = false to "turn off QUIC". It takes the whole
+        # site down, and the reason is not obvious from this file.
+        #
+        # websecure/TCP:443 and websecure-http3/UDP:443 share a port NUMBER, and
+        # Kubernetes uses `port` as the strategic-merge key for
+        # Service.spec.ports. Two entries on 443 collide on that key, so a patch
+        # that removes the UDP entry removes the TCP one with it. Measured
+        # 2026-08-31: helm rendered websecure/TCP:443 correctly in the very
+        # revision that took every ingress down (`helm get manifest --revision
+        # 72` lists it), the live Service lost it anyway, and websecure's
+        # nodePort moved 31049 -> 30703, showing the entry was deleted and
+        # recreated rather than patched. Traefik stayed healthy on :8443 the
+        # whole time with nothing mapping 443 to it.
+        #
+        # The same collision means helm cannot heal the drift afterwards: with
+        # the port identical in the old and new manifests there is no diff to
+        # patch, so the missing entry was restored by hand with an additive JSON
+        # patch (`kubectl patch --type=json`), which bypasses merge keys.
+        #
+        # To disable HTTP/3 for real, do it at the Cloudflare edge for proxied
+        # hosts (stacks/cloudflared), and for origin-direct hosts strip the
+        # alt-svc response header with a middleware rather than touching this
+        # entrypoint. Verify any change here by rendering the Service first:
+        #   helm template traefik traefik/traefik --version 40.2.0 -f <values>
+        # and confirm websecure/TCP:443 is still in the output.
         http3 = {
           enabled        = true
           advertisedPort = 443
