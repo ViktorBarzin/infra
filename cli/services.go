@@ -23,26 +23,10 @@ type service struct {
 	Internal bool
 }
 
-// routingTable maps the operations agents actually perform to the verb that
-// performs them here. This is the part of `homelab services` that changes
-// behaviour — the inventory below it answers "what do we run?", this answers
-// "what should I reach for?". Hand-curated on purpose: a trigger is a
-// judgement, not something an annotation can express.
-func routingTable() [][2]string {
-	return [][2]string{
-		{"share a long log, config, or snippet", "homelab paste <file|->"},
-		{"hand someone a file", "homelab share <file>"},
-		{"publish a finished design doc", "homelab pages publish <doc.md>"},
-		{"remember something across sessions", "homelab memory store \"...\""},
-		{"read a secret", "homelab vault get / vault kv get <path>"},
-		{"query logs or metrics", "homelab logs query / metrics query"},
-		{"see how Claude is used here", "homelab claude-usage [--since 30d]"},
-		{"read one Claude conversation", "homelab claude-usage --session <id|name>"},
-		{"drive a browser through an anti-bot wall", "homelab browser run <script.js>"},
-		{"request must not come from our IP / another country", "HTTPS_PROXY=http://proxy-egress-uk.proxy.svc.cluster.local:8888"},
-		{"see what else we host", "homelab services [--search X]"},
-	}
-}
+// The task-keyed capability index that used to live here as routingTable() now
+// lives in capabilities.go, keyed by the task rather than the service, with the
+// built-in competitor named on every row that has one. routingTable() is still
+// the two-column contract formatCatalog renders; it derives from capabilities().
 
 // ingressList is the subset of `kubectl get ingress -A -o json` the catalog
 // reads. Anything not named here is ignored, so upstream shape changes
@@ -171,16 +155,31 @@ func parseServices(kubectlJSON string) ([]service, error) {
 }
 
 // filterServices keeps rows matching query (case-insensitive) in any of name,
-// host, or description. An empty query keeps everything.
+// host, or description, PLUS rows a matching capability points at.
+//
+// The second half is why `--search mobile|phone|touch|reproduce` finds the
+// Android emulator. Before the 2026-08-31 study, only `android|emulator`
+// matched, which requires already knowing the answer — the exact shape of the
+// miss the study measured. Task words now route through capabilities.go.
 func filterServices(svcs []service, query string) []service {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
 		return svcs
 	}
+	// Hosts and names named by any capability whose task words match the query.
+	pointed := map[string]bool{}
+	for _, c := range matchCapabilities(capabilities(), q) {
+		blob := strings.ToLower(c.Use + " " + strings.Join(c.Detail, " "))
+		for _, s := range svcs {
+			if s.Host != "" && strings.Contains(blob, strings.ToLower(s.Host)) {
+				pointed[s.Host] = true
+			}
+		}
+	}
 	var out []service
 	for _, s := range svcs {
 		hay := strings.ToLower(s.Name + " " + s.Host + " " + s.Description)
-		if strings.Contains(hay, q) {
+		if strings.Contains(hay, q) || pointed[s.Host] {
 			out = append(out, s)
 		}
 	}
