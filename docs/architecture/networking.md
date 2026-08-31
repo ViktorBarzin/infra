@@ -334,7 +334,30 @@ the `ingress_factory` module then follows this Traefik chain:
 4. **Retry**: 2 attempts with 100ms delay on transient failures (5xx errors, connection errors).
 
 Additional middleware:
-- **HTTP/3 (QUIC)**: Enabled globally on Traefik.
+- **HTTP/3 (QUIC)**: Enabled on Traefik, on the IPv4 path only (see IPv6 Ingress below).
+
+> **Setting `http3.enabled = false` takes the whole site down.** `websecure/TCP:443`
+> and `websecure-http3/UDP:443` share a port *number*, and Kubernetes uses `port` as
+> the strategic-merge key for `Service.spec.ports`. The two entries collide on that
+> key, so a patch that removes the UDP entry removes the TCP one with it and every
+> host behind the ingress stops answering. Measured 2026-08-31: Helm rendered
+> `websecure/TCP:443` correctly in the very revision that took the ingress down
+> (`helm get manifest traefik -n traefik --revision 72` lists it), the live Service
+> lost it anyway, and `websecure`'s nodePort moved `31049 -> 30703` — the fingerprint
+> of a delete-and-recreate rather than a patch. Traefik stayed healthy on `:8443`
+> throughout with nothing mapping 443 to it. The `expose`-block explanation that
+> circulated at the time is wrong: `helm template` with `http3.enabled = false`
+> renders `websecure` fine, and adding `expose = { default = true }` renders
+> identically.
+>
+> The same collision means Helm cannot heal the drift afterwards — with the port
+> identical in the old and new manifests there is no diff to patch, so the missing
+> UDP entry survived two further deploys and was restored by hand with an additive
+> JSON patch (`kubectl patch --type=json`), which bypasses merge keys. To disable
+> HTTP/3 for real, do it at the Cloudflare edge for proxied hosts, and for
+> origin-direct hosts strip the `Alt-Svc` response header rather than touching this
+> entrypoint. Verify any change here by rendering the Service with `helm template`
+> first and confirming `websecure/TCP:443` is still in the output.
 
 ### HTTP/3 depends on a node sysctl (`net.core.rmem_max`)
 
@@ -463,6 +486,19 @@ pfSense cannot NAT IPv6→IPv4, so ingress is bridged by a **standalone HAProxy*
 The web path works because Traefik trusts PROXY-v2 **only from `10.0.20.1`** (`entryPoints.web/websecure.proxyProtocol.trustedIPs` in `stacks/traefik/.../main.tf`) — real IPv4 clients arrive via ETP=Local with their own source IP (never `10.0.20.1`), so they are unaffected. Mail backends hit the mailserver's PROXY-aware alt-listeners (same pattern as the IPv4 mail HAProxy — see `mailserver.md`).
 
 **No QUIC over IPv6** — the bridge is TCP/h2 only; IPv4 carries QUIC/HTTP3.
+
+The origin nonetheless returns `alt-svc: h3=":443"; ma=2592000` on this path, because
+the header comes from the `websecure` entrypoint and the bridge is a transparent TCP
+proxy that cannot rewrite it (`mode tcp`; TLS terminates at Traefik). So an IPv6
+client is told to use QUIC that has no listener, spends one failed attempt, and falls
+back to h2 — which is why external HTTP/3 checkers report no HTTP/3 for
+origin-direct hosts even while IPv4 QUIC is healthy. Browsers mark the alternative
+service broken and stop probing, so the cost is a slower first connection rather than
+a failure. Measured 2026-08-31: genuine (non-crawler) IPv6 traffic is ~0.34% of
+requests and no HTTP/3 request has ever arrived over IPv6. Closing the gap needs
+either a second entrypoint without `http3` for the bridge to target, or a
+hostNetwork QUIC listener on a node with a global IPv6; the trade-offs and a full
+dual-stack assessment are in `docs/research/2026-08-31-cluster-dual-stack-ipv6.md`.
 
 The bridge's HAProxy uses `timeout client 1h` / `timeout server 1h`, which are **inactivity** timeouts (reset on every byte), *not* total-transfer caps — so steady large downloads/uploads over IPv6 are not limited by the bridge. The download-duration cap was solely Traefik's `writeTimeout` (see Entrypoint Transport Timeouts above), now `0`.
 
