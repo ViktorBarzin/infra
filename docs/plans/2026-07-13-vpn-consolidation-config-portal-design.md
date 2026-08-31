@@ -298,3 +298,46 @@ graph LR
 ## 11. Zero-cost confirmation
 
 All components are self-hosted or Oracle **Always-Free**. No new subscriptions, paid APIs, or paid cloud resources. The only path that would incur cost — a rotating in-region relay — is explicitly deferred behind a spend approval (§7).
+
+---
+
+## Amendment — 2026-08-31: the portal moves off 10.3.3.0/24
+
+**§0 (Site vs Roaming), §4 diagram, §5 flow, §8 and §9 designate `10.3.3.0/24`
+as the roaming range and plan to migrate the static peers onto it. That is
+reversed.** The portal now allocates from **`10.3.5.0/24`**, which it owns
+alone. The original decision is left as written; this amendment records what
+changed and why.
+
+**What went wrong.** The plan's §2 already noted the `10.3.2.x` overlap as
+"latent, not a live bug". The same hazard existed inside `10.3.3.0/24` and was
+not latent: `wg0.conf` hand-owned `.3`–`.13` there, while the portal's
+allocator built its taken-set from its own Vault store alone and could not see
+them. On 2026-08-30 it issued `10.3.3.3` to a device that already belonged to a
+static peer. `wg set … allowed-ips` transfers a colliding prefix off its
+current holder silently — rc=0, no output — and removing the thief frees the
+prefix rather than returning it. The same thing had happened a month earlier to
+the peer on `10.3.3.2`, which sat broken for 32 days and was then deleted as a
+duplicate, removing the victim rather than the cause.
+
+**Why a separate /24 rather than partitioning this one.** Partitioning by
+convention is what failed. The static side has its own allocator with a
+high-water marker (`extra/last_ip.txt`, at `10.3.3.15`) which was four clients
+away from colliding again from the other direction. The ranges are now
+disjoint: statics keep `10.3.2/3/4.0/24`, the portal has `10.3.5.0/24`, and
+`wg0` is `10.3.0.1/16` so the new /24 is already on-link and needed no route or
+firewall change.
+
+**§8's "reconcile addressing" is superseded, not merely deferred.** Moving the
+statics onto the portal's range would re-create the collision it was meant to
+remove. The peers were instead retired: of 18 standing credentials exactly one
+had completed a handshake in 26 weeks of metrics, so 17 were removed and the
+remaining users are directed to the portal or Tailscale.
+
+**Backstops added alongside**, because the allocator was only half the fault:
+`wg-peer-sync` now refuses to assign an address held by a peer it does not
+manage and logs every mutation (the loop was entirely silent, which is why two
+thefts went unnoticed); the portal validates public-key format and rejects keys
+belonging to static peers; and `/api/wg/{devices,revoke,rotate}` exist so a
+credential can be withdrawn at all — §5 shipped registration with no
+counterpart, so nothing could revoke a lost device.

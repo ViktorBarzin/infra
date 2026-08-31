@@ -96,7 +96,7 @@ graph TB
 | Traefik | Helm chart | K8s (3 replicas + PDB) | Ingress controller, HTTP/3 enabled |
 | CrowdSec | Helm chart | K8s (LAPI: 3 replicas) | IP reputation. Out-of-band enforcement: `cs-firewall-bouncer` DaemonSet (in-kernel nftables drop, direct hosts) + Cloudflare edge WAF rule (proxied hosts). Fail-open |
 | Authentik | Helm chart | K8s (3 replicas + PDB) | SSO, forward-auth middleware |
-| MetalLB | v0.15.3 Helm chart | K8s | LoadBalancer IPs (10.0.20.200-10.0.20.220), all services on 10.0.20.200 |
+| MetalLB | v0.15.3 Helm chart | K8s | LoadBalancer IPs (10.0.20.200-10.0.20.220); most services share 10.0.20.200, six hold dedicated IPs with `externalTrafficPolicy: Local` (see the LB table below) |
 | Registry Cache | Container | 10.0.20.10 | Pull-through for docker.io:5000, ghcr.io:5010 |
 
 ## WAN Bandwidth (measured 2026-08-09)

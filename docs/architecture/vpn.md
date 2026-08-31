@@ -218,13 +218,23 @@ everything. Full policy: `stacks/headscale/acl.hujson`.
 
 **Implementation**:
 - **AdGuard DNS**: Global recursive resolver, serves all VPN clients. Includes ad-blocking and malicious domain filtering.
-- **Technitium DNS**: Internal authoritative server for `.viktorbarzin.lan` domains.
+- **Technitium DNS**: Internal authoritative server for `.viktorbarzin.lan`, and a
+  split-horizon view of the public `viktorbarzin.me` zone that answers with internal
+  addresses (Traefik on `10.0.20.203`) instead of the public ones.
 
 **Resolution flow**:
 1. Client queries AdGuard for any domain.
 2. If domain ends in `.lan`, AdGuard forwards to Technitium (10.0.20.201).
 3. For all other domains, AdGuard resolves directly via upstream (Cloudflare 1.1.1.1).
 4. AdGuard caches responses, reducing load on Technitium and upstream.
+
+**Tailnet clients additionally split `viktorbarzin.me` to Technitium** (headscale
+`dns.nameservers.split`, added 2026-08-31). Without it a tailnet client resolves
+`.me` publicly, and public DNS answers every non-Cloudflare-proxied host with our
+own WAN address — so the client has to hairpin off `176.12.22.76`, which NAT
+loopback on the CPE in front of pfSense does not reliably do. The failure is
+partial and reads as flakiness: Cloudflare-proxied hosts keep working because
+their traffic genuinely leaves and returns, while directly-served ones hang.
 
 **Resilience**: Even if the tunnel to Sofia is down, clients can still resolve `google.com`, `github.com`, etc., because AdGuard talks directly to Cloudflare. Only `.lan` domains become unavailable.
 
