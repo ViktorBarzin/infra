@@ -1,14 +1,18 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 func workCommands() []Command {
 	return []Command{
+		{Path: []string{"work"}, Tier: TierRead,
+			Summary: "worktree lifecycle for a task: work start|land|clean (run `homelab work` for help)", Run: workHelp},
 		{Path: []string{"work", "start"}, Tier: TierWrite,
 			Summary: "create a worktree + branch for a task (enter it with EnterWorktree)", Run: workStart},
 		{Path: []string{"work", "land"}, Tier: TierWrite,
@@ -124,15 +128,52 @@ func runVerify(repoRoot, verifyCmd string, allowSkip bool) error {
 		fmt.Fprintf(os.Stderr, "homelab: verify: %s\n", verifyCmd)
 		return runStreamingIn(repoRoot, "sh", "-c", verifyCmd)
 	}
-	if isFile(filepath.Join(repoRoot, "go.mod")) {
-		fmt.Fprintln(os.Stderr, "homelab: verify: go test ./...")
-		return runStreamingIn(repoRoot, "go", "test", "./...")
+	// Auto-detection covered only Go, and none of the nine most-worked repos
+	// here has a root go.mod — so `work land` errored on the first attempt in
+	// almost every repo and the manual git path got used instead (2026-08-31
+	// session study, theme 6). Each entry below is checked for the marker file
+	// AND for the runner being present, so a detected-but-unrunnable toolchain
+	// falls through to the explicit-flag error rather than failing mid-land.
+	for _, d := range []struct {
+		marker string
+		runner string
+		args   []string
+	}{
+		{"go.mod", "go", []string{"test", "./..."}},
+		{"Cargo.toml", "cargo", []string{"test"}},
+		{"pyproject.toml", "pytest", []string{"-q"}},
+		{"pytest.ini", "pytest", []string{"-q"}},
+		{"tox.ini", "pytest", []string{"-q"}},
+		{"Makefile", "make", []string{"test"}},
+	} {
+		if !isFile(filepath.Join(repoRoot, d.marker)) {
+			continue
+		}
+		if _, err := exec.LookPath(d.runner); err != nil {
+			continue
+		}
+		// A Makefile without a `test` target would fail for the wrong reason.
+		if d.marker == "Makefile" && !makefileHasTarget(filepath.Join(repoRoot, "Makefile"), "test") {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "homelab: verify: %s %s (detected %s)\n",
+			d.runner, strings.Join(d.args, " "), d.marker)
+		return runStreamingIn(repoRoot, d.runner, d.args...)
+	}
+	// package.json is handled separately: the script name is what varies.
+	if pkg := filepath.Join(repoRoot, "package.json"); isFile(pkg) {
+		if _, err := exec.LookPath("npm"); err == nil {
+			if script := packageJSONScript(pkg, "test", "vitest", "jest"); script != "" {
+				fmt.Fprintf(os.Stderr, "homelab: verify: npm run %s (detected package.json)\n", script)
+				return runStreamingIn(repoRoot, "npm", "run", script)
+			}
+		}
 	}
 	if allowSkip {
 		fmt.Fprintln(os.Stderr, "homelab: WARNING: --no-verify set — landing without verification")
 		return nil
 	}
-	return fmt.Errorf("no verification configured for this repo — pass --verify-cmd \"...\" or --no-verify to land without verifying")
+	return fmt.Errorf("no verification detected for this repo (looked for go.mod, Cargo.toml, pyproject.toml/pytest.ini/tox.ini, a Makefile test target, and a package.json test script) — pass --verify-cmd \"...\" or --no-verify to land without verifying")
 }
 
 // pushWithRetry pushes HEAD:master, recovering from non-fast-forward rejections
@@ -209,4 +250,60 @@ func ensureWorktreesIgnored(repoRoot string) {
 	if _, err := f.WriteString("\n.worktrees/\n"); err == nil {
 		fmt.Fprintln(os.Stderr, "homelab: added .worktrees/ to .gitignore")
 	}
+}
+
+// makefileHasTarget reports whether a Makefile declares the named target, so a
+// Makefile that simply exists does not get treated as a test runner.
+func makefileHasTarget(path, target string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, target+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// packageJSONScript returns the first of the named scripts that package.json
+// actually declares. Guessing `npm test` on a project without a test script
+// fails for the wrong reason and reads as a broken verb.
+func packageJSONScript(path string, names ...string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(b, &pkg); err != nil {
+		return ""
+	}
+	for _, n := range names {
+		if v, ok := pkg.Scripts[n]; ok && strings.TrimSpace(v) != "" {
+			return n
+		}
+	}
+	return ""
+}
+
+// workHelp exists because `homelab work` and `homelab work --help` both printed
+// `unknown command: "work"`, which reads as the verb not existing — the same
+// class of mistake as bare `homelab tf`.
+func workHelp(args []string) error {
+	fmt.Println(`homelab work — one task, one worktree, one landing.
+
+  homelab work start <topic>     fetch, create .worktrees/<topic> on <user>/<topic>,
+                                 carry the git-crypt filter flags
+  homelab work land [flags]      merge master in, verify, push HEAD:master, watch CI
+                                 --verify-cmd "<cmd>"   what to run to verify
+                                 --no-verify            land without verifying (deliberate)
+  homelab work clean <topic>     remove the worktree and the branch
+
+Verification is auto-detected from go.mod, Cargo.toml, pyproject.toml/pytest.ini/
+tox.ini, a Makefile "test" target, or a package.json test script. Pass
+--verify-cmd when your repo does not match one of those.`)
+	return nil
 }
