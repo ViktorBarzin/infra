@@ -116,6 +116,7 @@ resource "kubernetes_cron_job_v1" "subnet_router_probe" {
                 ROUTER_UP=0
                 SOFIA=0
                 K8S=0
+                MGMT=0
 
                 if [ "$ENROLLED" = "1" ]; then
                   # Liveness of the subnet router itself over the tunnel.
@@ -135,6 +136,16 @@ resource "kubernetes_cron_job_v1" "subnet_router_probe" {
                   if wget -S -q -O /dev/null --timeout=20 http://10.0.20.203:80/ 2>&1 | grep -q 'HTTP/1'; then
                     K8S=1
                   fi
+                  # 10.0.10.0/24 is the mgmt VLAN, where the devvm lives. It was
+                  # advertised and approved all along but never probed, so a
+                  # roaming client that could not reach it still saw a green
+                  # alert. Target is the devvm's ttyd (Terminal Lobby, a systemd
+                  # unit shipped in its package); it answers 407, which is a
+                  # status line and therefore proof of path. Swap the port if
+                  # ttyd ever moves.
+                  if wget -S -q -O /dev/null --timeout=20 http://10.0.10.10:7681/ 2>&1 | grep -q 'HTTP/1'; then
+                    MGMT=1
+                  fi
                   tailscale logout >/dev/null 2>&1 || true
                 else
                   echo "NOT ENROLLED — reporting failure rather than a false green"
@@ -142,7 +153,7 @@ resource "kubernetes_cron_job_v1" "subnet_router_probe" {
                 fi
 
                 SUCCESS=0
-                if [ "$ENROLLED" = "1" ] && [ "$SOFIA" = "1" ] && [ "$K8S" = "1" ]; then
+                if [ "$ENROLLED" = "1" ] && [ "$SOFIA" = "1" ] && [ "$K8S" = "1" ] && [ "$MGMT" = "1" ]; then
                   SUCCESS=1
                 fi
 
@@ -157,7 +168,8 @@ resource "kubernetes_cron_job_v1" "subnet_router_probe" {
                   echo "# TYPE tailscale_subnet_route_reachable gauge"
                   echo "tailscale_subnet_route_reachable{route=\"192.168.1.0/24\",target=\"ha-sofia:8123\"} $SOFIA"
                   echo "tailscale_subnet_route_reachable{route=\"10.0.20.0/24\",target=\"traefik-lb:80\"} $K8S"
-                  echo "# HELP tailscale_subnet_router_probe_success 1 only if enrolled AND both routes carried traffic."
+                  echo "tailscale_subnet_route_reachable{route=\"10.0.10.0/24\",target=\"devvm-ttyd:7681\"} $MGMT"
+                  echo "# HELP tailscale_subnet_router_probe_success 1 only if enrolled AND all three routes carried traffic."
                   echo "# TYPE tailscale_subnet_router_probe_success gauge"
                   echo "tailscale_subnet_router_probe_success $SUCCESS"
                   echo "# HELP tailscale_subnet_router_probe_last_run_timestamp Unix time of the last completed probe."
@@ -165,7 +177,7 @@ resource "kubernetes_cron_job_v1" "subnet_router_probe" {
                   echo "tailscale_subnet_router_probe_last_run_timestamp $(date +%s)"
                 } > /shared/metrics.prom
 
-                echo "enrolled=$ENROLLED ip=$TS_IP router_up=$ROUTER_UP sofia=$SOFIA k8s=$K8S success=$SUCCESS"
+                echo "enrolled=$ENROLLED ip=$TS_IP router_up=$ROUTER_UP sofia=$SOFIA k8s=$K8S mgmt=$MGMT success=$SUCCESS"
                 # Exit 0 regardless: the metric carries the verdict, and a failed
                 # Job would also fire PodCrashLooping-class noise for what is
                 # already an alerted condition.

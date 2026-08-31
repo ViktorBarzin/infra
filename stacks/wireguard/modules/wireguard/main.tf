@@ -36,6 +36,25 @@ resource "kubernetes_config_map" "wg_0_conf" {
     }
   }
 
+  # wg0.conf and setup-firewall.sh both come from Vault (secret/platform), so
+  # their contents are invisible here. Two constraints live in that blob and are
+  # easy to undo by accident:
+  #
+  #   MTU  — wg0 must stay at or below 1390. Calico runs VXLAN CrossSubnet, so
+  #          the pod eth0 is 1450, and WireGuard adds 60 bytes of its own. At
+  #          the old value of 1500 a full-size packet became 1560 on a 1450
+  #          link, so handshakes and pings worked while bulk transfers stalled.
+  #   MSS  — setup-firewall.sh clamps TCP MSS to the path MTU for the same
+  #          reason, covering clients that pick their own oversized MTU.
+  #   Keepalive — every peer carries PersistentKeepalive = 25. Roaming peers
+  #          sit behind carrier NAT that rebinds its mapping within a couple
+  #          of minutes of silence, after which replies land on a dead port.
+  #          This narrows that window; it does not close it, because the
+  #          server can only refresh a mapping that still exists. Clients
+  #          behind NAT still want their own keepalive.
+  #
+  # Peer AllowedIPs must also stay unique. Two peers claiming one address is
+  # accepted silently and the last one loaded wins, which strands the other.
   data = {
     "setup-firewall.sh" = var.firewall_sh
     "wg0.conf"          = format("%s%s", var.wg_0_conf, file("${path.module}/extra/clients.conf"))
@@ -173,9 +192,16 @@ resource "kubernetes_deployment" "wireguard" {
         # keys (client-side keygen); the ExternalSecret renders them to
         # peers.txt ("<pubkey> <ip/32>" per line). This loop `wg set`s each
         # (add/update) and removes peers it previously managed but that are no
-        # longer desired (rotate/revoke). It ONLY ever touches pubkeys present
-        # in peers.txt, so the STATIC peers baked into wg0.conf are never
-        # removed. peers.txt absent (no registrations yet) → no-op.
+        # longer desired (rotate/revoke).
+        #
+        # It only ever REMOVES pubkeys it added itself, so a static peer in
+        # wg0.conf is never deleted. That invariant is about pubkeys and says
+        # nothing about ADDRESSES, which is how 2026-08-30 happened: `wg set
+        # <pk> allowed-ips <ip>` TRANSFERS a prefix off whoever holds it, rc=0
+        # and silent, and removing the thief afterwards frees the prefix rather
+        # than returning it. Two static peers were stripped that way, a month
+        # apart, and nothing reported either. The portal now allocates from its
+        # own 10.3.5.0/24, and the ownership check below is the backstop.
         container {
           name  = "wg-peer-sync"
           image = "sclevine/wg:latest"
@@ -183,21 +209,45 @@ resource "kubernetes_deployment" "wireguard" {
             set -u
             STATE=/run/wg-managed/managed.list
             DESIRED=/etc/wg-peers/peers.txt
-            mkdir -p /run/wg-managed; : > "$STATE"
+            # The emptyDir outlives a container restart, so keep what we
+            # managed. Truncating discarded it and orphaned any peer revoked
+            # while the container was down - it would never be removed.
+            mkdir -p /run/wg-managed; [ -f "$STATE" ] || : > "$STATE"
             while true; do
-              if wg show wg0 >/dev/null 2>&1 && [ -f "$DESIRED" ]; then
+              if wg show wg0 >/dev/null 2>&1; then
+                # Absent secret means "no portal peers", not "skip the loop".
+                # Gating removals on the file existing froze revocation.
+                [ -f "$DESIRED" ] || : > /tmp/empty-desired
+                src="$DESIRED"; [ -f "$DESIRED" ] || src=/tmp/empty-desired
                 while read -r pk ip; do
                   [ -z "$pk" ] && continue
-                  wg set wg0 peer "$pk" allowed-ips "$ip" || true
-                done < "$DESIRED"
-                desired=$(awk '{print $1}' "$DESIRED" | sort -u)
+                  # A blank address would wipe that peer's allowed-ips.
+                  [ -z "$ip" ] && echo "SKIP $pk: no address" && continue
+                  # Refuse to take a prefix from a peer we do not manage. wg
+                  # show puts every prefix of a peer on one line, so scan all
+                  # fields - today each peer has exactly one, and wg0.conf
+                  # already carries a commented-out second prefix waiting to
+                  # break a $2-only check.
+                  owner=$(wg show wg0 allowed-ips | awk -v a="$ip" '{for(i=2;i<=NF;i++) if($i==a) print $1}')
+                  if [ -n "$owner" ] && [ "$owner" != "$pk" ] && ! grep -qxF "$owner" "$STATE"; then
+                    echo "REFUSING $ip for $pk: held by unmanaged peer $owner"
+                    continue
+                  fi
+                  wg set wg0 peer "$pk" allowed-ips "$ip" || echo "wg set failed: $pk $ip"
+                done < "$src"
+                desired=$(awk '{print $1}' "$src" | sort -u)
                 while read -r ppk; do
                   [ -z "$ppk" ] && continue
-                  echo "$desired" | grep -qx "$ppk" || wg set wg0 peer "$ppk" remove || true
+                  if ! echo "$desired" | grep -qx "$ppk"; then
+                    echo "REMOVING $ppk (no longer desired)"
+                    wg set wg0 peer "$ppk" remove || echo "wg remove failed: $ppk"
+                  fi
                 done < "$STATE"
-                awk '{print $1}' "$DESIRED" | sort -u > "$STATE"
+                awk '{print $1}' "$src" | sort -u > "$STATE"
               fi
-              sleep 30
+              # 5s: half the pickup latency for a new device. The loop is a
+              # handful of wg calls over a few peers, so the cost is noise.
+              sleep 5
             done
           EOT
           ]
@@ -317,7 +367,14 @@ resource "kubernetes_manifest" "wg_peers_external_secret" {
       namespace = kubernetes_namespace.wireguard.metadata[0].name
     }
     spec = {
-      refreshInterval = "1m"
+      # 10s, not 1m. A newly registered device is unusable until its key
+      # reaches the interface, and the wait was the ExternalSecret poll plus a
+      # reconcile tick - up to 90 seconds during which the portal has handed
+      # out a config that cannot work and says nothing. People re-import,
+      # re-register, or edit a stale file instead of waiting. One Vault read
+      # every 10s for a secret with a handful of lines is not worth the
+      # confusion it buys. Worst case is now ~15s.
+      refreshInterval = "10s"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -348,8 +405,15 @@ resource "kubernetes_service" "wireguard" {
     name      = "wireguard"
     namespace = kubernetes_namespace.wireguard.metadata[0].name
     annotations = {
-      "metallb.io/loadBalancerIPs" = "10.0.20.200"
-      "metallb.io/allow-shared-ip" = "shared"
+      # Dedicated IP with ETP=Local, mirroring traefik (.203) and coturn (.205).
+      # On the shared .200 the Service had to be ETP=Cluster, so kube-proxy
+      # SNATed every client packet at whichever node announced .200 (node3)
+      # while the pod ran elsewhere. The server then saw 10.0.20.103:<random
+      # port> instead of the peer, and each reply depended on a UDP conntrack
+      # entry on that other node. Idle longer than nf_conntrack_udp_timeout_
+      # stream (120s) and the entry went, replies hit a dead port, and the
+      # tunnel stalled until the client forced a new handshake.
+      "metallb.io/loadBalancerIPs" = "10.0.20.207"
     }
     labels = {
       "app" = "wireguard"
@@ -364,7 +428,7 @@ resource "kubernetes_service" "wireguard" {
   }
   spec {
     type                    = "LoadBalancer"
-    external_traffic_policy = "Cluster"
+    external_traffic_policy = "Local"
     selector = {
       app = "wireguard"
     }

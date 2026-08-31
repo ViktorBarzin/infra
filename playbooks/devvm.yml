@@ -62,6 +62,15 @@
     # The one account this playbook owns. Everyone else comes from the roster.
     devvm_admin_user: wizard
     devvm_admin_ssh_key: ""
+    # Users whose mattpocock skill set the nightly timer keeps current. A user
+    # whose ~/.claude/skills is a symlink into someone else's home (breakglass
+    # points at wizard's) is updated with that user and must not be listed here.
+    devvm_skills_users:
+      - wizard
+      - emo
+    # Pinned on purpose: this npm package runs unattended as each user, so the
+    # version is a reviewed choice. Bump it when you mean to.
+    devvm_skills_cli: skills@1.5.23
 
   tasks:
     # ---- 1) the apt toolset -------------------------------------------------
@@ -322,6 +331,64 @@
         - codex-auth-backup.path
         - docker-disk-gc.timer
         - networkd-dhcp-watchdog.timer
+
+    # ---- 7b) nightly refresh of the mattpocock skill set --------------------
+    # Added 2026-08-30. The skills are a working dependency of how sessions run
+    # here, and upstream ships behaviour changes most weeks, so they drifted two
+    # minor versions behind before anyone noticed. The script carries the detail
+    # of why a bare `npx skills update` in cron is not enough; the short version
+    # is that it overwrites our local edits, resurrects deleted skills from the
+    # lockfile, and cannot follow a rename on its own.
+    - name: Install the skills updater
+      ansible.builtin.copy:
+        src: files/devvm/claude-skills-update
+        dest: /usr/local/bin/claude-skills-update
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Configure the skills updater
+      ansible.builtin.copy:
+        dest: /etc/default/claude-skills-update
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by playbooks/devvm.yml — edit there, not here.
+          CLAUDE_SKILLS_USERS="{{ devvm_skills_users | join(' ') }}"
+          SKILLS_CLI="{{ devvm_skills_cli }}"
+      notify: reload systemd
+
+    # Per-user policy: which promoted skills to hold back, and the local edits
+    # to put back on top after each update. Without these a rebuilt machine
+    # loses both, silently.
+    - name: Ship the per-user skill policy
+      ansible.builtin.copy:
+        src: files/devvm/claude-skills/
+        dest: /usr/local/share/claude-skills/
+        mode: "0644"
+        directory_mode: "0755"
+        owner: root
+        group: root
+
+    - name: Install the skills updater units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - claude-skills-update.service
+        - claude-skills-update.timer
+      notify: reload systemd
+
+    - name: Enable the skills updater timer
+      ansible.builtin.systemd_service:
+        name: claude-skills-update.timer
+        enabled: true
+        state: started
+        daemon_reload: true
 
     # ---- 8) resource containment (setup-devvm.sh section 10) ---------------
     # Added after 2026-06-22, when one user's runaway swap-thrashed the throttled

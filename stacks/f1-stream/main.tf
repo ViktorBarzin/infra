@@ -204,6 +204,17 @@ resource "kubernetes_deployment" "f1-stream" {
           port {
             container_port = 8000
           }
+          # Signs the admin session cookie. Unset, the app issues and accepts
+          # nothing rather than signing with a guessable key.
+          env {
+            name = "ADMIN_SESSION_KEY"
+            value_from {
+              secret_key_ref {
+                name = "f1-stream-secrets"
+                key  = "admin_session_key"
+              }
+            }
+          }
           env {
             name = "DISCORD_TOKEN"
             value_from {
@@ -439,8 +450,14 @@ module "anubis" {
       # catchall-challenge and got the PoW HTML back — so the SPA's res.json()
       # threw "Unexpected token '<', '<!doctype '" and the Replays refresh
       # "crashed". Only the `/replays` HTML *page* stays challenged (like /watch).
+      # `admin/whoami` is the SPA's own XHR asking whether this browser holds
+      # a session, and `admin/logout` ends one. Both must answer JSON: behind
+      # the PoW challenge the probe would come back as HTML, res.json() would
+      # throw, and a signed-in admin would render as an anonymous visitor.
+      # `admin/login` is deliberately NOT here -- it is a top-level navigation
+      # gated by Authentik on its own Ingress, and never reaches Anubis.
       - name: f1-data-routes
-        path_regex: ^/(embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|schedule|streams)(/|\?|$)
+        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|schedule|streams)(/|\?|$)
         action: ALLOW
       # Allow non-GET methods unconditionally — AI scrapers GET the body,
       # they don't POST. Mutating XHRs and CORS preflight need to bypass.
@@ -451,6 +468,37 @@ module "anubis" {
         path_regex: .*
         action: CHALLENGE
   EOT
+}
+
+# The single Authentik-gated path. Everything else on f1.viktorbarzin.me is
+# public and Anubis-fronted; this one route exists so a browser can prove who it
+# is once, by top-level navigation, which is the case forward-auth handles. The
+# app reads X-authentik-groups here and nowhere else, and exchanges it for a
+# cookie it signed itself.
+#
+# Same host as the public ingress, so a longer path prefix wins in Traefik and
+# the session cookie lands on the origin the SPA is already using. Points at the
+# app directly rather than through Anubis: a proof-of-work challenge in front of
+# a login redirect would only get in the way, and Authentik is the stronger gate.
+module "ingress_admin_login" {
+  source       = "../../modules/kubernetes/ingress_factory"
+  auth         = "required"
+  host         = "f1"
+  name         = "f1-admin-login"
+  ingress_path = ["/admin/login"]
+  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
+  service_name = kubernetes_service.f1-stream.metadata[0].name
+  port         = 80
+  # The public ingress owns the DNS record and the uptime monitor for this
+  # host; this is a path carve-out on the same name.
+  dns_type         = "none"
+  homepage_enabled = false
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false
+  # Members reach the login path. Home Server Admins and authentik Admins pass
+  # regardless under ADR-0023's break-glass rule, which is who we want anyway;
+  # the app checks the group again before issuing a session.
+  allowed_groups = ["Home Server Admins"]
 }
 
 module "ingress" {
