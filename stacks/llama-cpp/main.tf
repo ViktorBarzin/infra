@@ -448,13 +448,20 @@ resource "kubernetes_deployment" "llama_swap" {
               # DiskPressure (models live on the PVC; normal usage is <100Mi).
               "ephemeral-storage" = "10Gi"
               "nvidia.com/gpu"    = "1"
-              # GPU VRAM budget (ADR-0016): one model at a time. Real resident
-              # is ~7 GiB (qwen3-8b @16k measured ~6996 MiB; the old 4.35 GiB was
-              # weights-only cudaMalloc). Value left at 5000: the watchdog is
-              # DRY_RUN and the scheduler enforces sum(gpumem) <= 14000 (currently
-              # 13300), so raising this needs the ADR-0016 budget retune
-              # (rebalance immich-ml + llama-swap together) — a separate decision.
-              "viktorbarzin.me/gpumem" = "5000"
+              # NO gpumem seat, deliberately (2026-08-31 — this is the
+              # ADR-0016 budget retune the previous comment here deferred).
+              # qwen3-8b @16k needs ~6996 MiB when loaded (4.68 GiB Q4_K_M
+              # weights + ~2.25 GiB KV) and llama-swap is idle almost all the
+              # time, so a reserved 7000 seat would sit unused all day and would
+              # not fit alongside the other residents. It cannot be scaled to
+              # zero by Sablier either: no ingress, and paperless-ai reaches the
+              # ClusterIP directly, so Traefik middleware never sees the request.
+              # So it is an OPPORTUNISTIC tenant — it bursts into real slack,
+              # which exists now that immich-ml is budgeted at its fresh
+              # footprint instead of its arena plateau. The trade is visibility,
+              # not silence: a failed model load raises LlamaSwapModelLoadFailed
+              # and feeds the watchdog's CUDA-OOM contention signal, so a
+              # starved load recycles whoever is over budget.
             }
           }
         }

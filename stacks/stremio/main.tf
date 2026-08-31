@@ -7,9 +7,10 @@
 # /{infohash} torrent path (no open torrent gateway). Behind Traefik (TLS
 # terminated at the edge), the pod serves plain HTTP on 8080.
 #
-# GPU: one time-slice of the shared T4 + a reserved 1500 MiB gpumem seat (ADR-0016).
-# The seat fits under the 14000 advertised budget once portal-stt is decommissioned
-# (13600 - 1500 + 1500 = 13600). Torrenting stays enabled as a debrid backup
+# GPU: one time-slice of the shared T4, no reserved gpumem seat — it recorded
+# zero VRAM use over the 7 days to 2026-08-31, so the old 1500 MiB reservation
+# described capacity nobody used (changed 2026-08-31, ADR-0016 retune).
+# Torrenting stays enabled as a debrid backup
 # (Sofia egress; egress left open — no restrictive NetworkPolicy — for BitTorrent).
 #
 # Effectively stateless: addons/library live in the Stremio account (api.strem.io),
@@ -200,8 +201,19 @@ resource "kubernetes_deployment" "stremio" {
               memory              = "2Gi"
               "ephemeral-storage" = "20Gi" # bounds emptyDir + writable-layer cache growth
               "nvidia.com/gpu"    = "1"    # ONE time-slice (operator advertises 100), NOT the whole card
-              # GPU VRAM budget (ADR-0016): NVENC transcode sessions (~1.2-1.5 GiB).
-              "viktorbarzin.me/gpumem" = "1500"
+              # No gpumem seat (2026-08-31). stremio recorded ZERO VRAM across
+              # the 7 days to 2026-08-31 — the NVENC transcode path this 1500
+              # MiB was reserved for did not run once — so the seat described
+              # capacity nobody used while squeezing tenants that did. It keeps
+              # its time-slice and bursts into real slack if a transcode starts.
+              # Give it a seat again from measured NVENC use if that changes.
+              #
+              # Sablier was considered and NOT applied: this ingress has traffic
+              # in every hour of the last 72 (monitors and clients), so a
+              # scale-to-zero group would never park and would only add a
+              # middleware. Quieten the ingress traffic first if parking it is
+              # worth pursuing.
+
             }
           }
         }

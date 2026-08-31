@@ -147,7 +147,17 @@ resource "kubernetes_deployment" "android-emulator" {
             }
             limits = {
               memory           = "8Gi"
-              "nvidia.com/gpu" = "1" # T4 time-slice; ~0.5-1GiB VRAM while awake
+              "nvidia.com/gpu" = "1" # T4 time-slice
+              # GPU VRAM budget (ADR-0016), declared 2026-08-31. This pod ran
+              # with NO gpumem declaration, which made it invisible to the
+              # gpu-vram-watchdog: it could never be recycled no matter what it
+              # used, and its usage did not count against the seating chart.
+              # Measured 214 MiB peak / 180 MiB mean, active 12 of the 169 hours
+              # to 2026-08-31, so 300 covers it with margin. (The older
+              # "~0.5-1GiB while awake" note here was an estimate; this is the
+              # measurement.) It keeps its own android-emulator-gate rather than
+              # Sablier, which already works.
+              "viktorbarzin.me/gpumem" = "300"
             }
           }
 

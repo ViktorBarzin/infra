@@ -188,6 +188,76 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             {
+              # Contention signal for the gpu-vram-watchdog (ADR-0016,
+              # docs/plans/2026-08-31-gpu-vram-admission-and-oom-observability.md).
+              #
+              # The tenants most likely to be starved of VRAM carry no gpumem
+              # seat, so they never appear to the scheduler as Pending: llama-swap
+              # declares no budget by design and fails inside an already-running
+              # pod, and frigate's ffmpeg decoders fail the same way. Their only
+              # externally visible symptom is a CUDA allocation error in the log.
+              # The watchdog reads this alert from Alertmanager and treats an
+              # ACTIVE instance as "somebody wants the card", which is what lets
+              # it reclaim a ratcheted arena instead of waiting for free VRAM to
+              # hit the emergency floor.
+              #
+              # Both spellings are matched deliberately: llama.cpp/ggml emits
+              # "CUDA error: out of memory" while ffmpeg's CUDA hwcontext emits
+              # "CUDA_ERROR_OUT_OF_MEMORY".
+              #
+              # 5m window: long enough that a load failure is still visible on
+              # the watchdog's next tick, short enough that the signal clears
+              # once the starvation is resolved rather than pinning the guard on.
+              # It is a first estimate; tune from observed behaviour.
+              alert = "GpuCudaOom"
+              expr  = "sum by (namespace) (count_over_time({namespace=~\"llama-cpp|frigate|immich|tts|ytdlp|f1-stream|stremio|android-emulator\"} |~ \"CUDA_ERROR_OUT_OF_MEMORY|CUDA error: out of memory\" [5m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "CUDA out-of-memory reported by {{ $labels.namespace }} on the shared T4"
+                description = "A GPU tenant could not allocate VRAM. The gpu-vram-watchdog uses this as its contention signal and will recycle the biggest over-budget tenant, so this normally self-heals within a minute or two. If it persists, either every tenant is within its declared gpumem budget (in which case the card is genuinely oversubscribed and the budgets need retuning) or the watchdog is not running (see GPUVRAMWatchdogDown)."
+              }
+            },
+            {
+              # The guard's interventions should be visible, not inferred from a
+              # cold Immich search. The watchdog logs one line per recycle:
+              #   CONTENTION (<reason>): recycling <ns>/<pod> (used=...) 
+              # so this reports what it did and why. Expected cadence is low; a
+              # steady stream means a budget is set below a tenant's real
+              # working set and should be retuned rather than enforced harder.
+              alert = "GpuVramWatchdogRecycled"
+              expr  = "sum by (reason) (count_over_time({namespace=\"nvidia\", app=\"gpu-vram-watchdog\"} |~ \"CONTENTION\" != \"DRY_RUN\" | regexp \"CONTENTION \\\\((?P<reason>[^)]+)\\\\)\" [15m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "info"
+              }
+              annotations = {
+                summary     = "gpu-vram-watchdog reclaimed VRAM ({{ $labels.reason }})"
+                description = "The watchdog recycled an over-budget GPU tenant because something else needed the card. Immich smart search and face recognition are unavailable for roughly 2.5 minutes after an immich-ml recycle. Check the watchdog log for which pod and by how much it was over."
+              }
+            },
+            {
+              # llama-swap holds no gpumem seat by design, so a starved model
+              # load produces no Pending pod and no scheduler event. Without
+              # this, paperless-ai simply gets 500s and nothing says why.
+              # llama.cpp logs "starting <model> failed: upstream command exited
+              # prematurely" whichever way the load fails, so this covers VRAM
+              # starvation and non-VRAM causes (bad GGUF, OOM-killed process)
+              # alike; GpuCudaOom distinguishes the VRAM case.
+              alert = "LlamaSwapModelLoadFailed"
+              expr  = "sum by (namespace) (count_over_time({namespace=\"llama-cpp\"} |~ \"starting .* failed\" [15m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "llama-swap could not start a model"
+                description = "A model load failed, so consumers (paperless-ai, recruiter-responder, tripit) get HTTP 500 or fall back. If GpuCudaOom is also firing this is VRAM starvation and the watchdog should clear it; if not, look at the model files on the NFS-SSD PVC and the llama-swap log."
+              }
+            },
+            {
               alert = "KernelPanic"
               expr  = "sum by (node) (count_over_time({job=\"node-journal\"} |~ \"(?i)Kernel panic\" [5m])) > 0"
               for   = "0m"

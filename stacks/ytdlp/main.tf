@@ -217,6 +217,17 @@ resource "kubernetes_deployment" "yt_highlights" {
     labels = {
       app  = "yt-highlights"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022), added 2026-08-31. This is a
+      # request-driven FastAPI service that recorded ZERO VRAM use across the 7
+      # days to 2026-08-31 — 24h of its logs contained only /health probes —
+      # while holding a T4 time-slice the whole time. Parked at 0 replicas it
+      # holds nothing.
+      "sablier.enable" = "true"
+      "sablier.group"  = "yt-highlights"
+      # 180s: the liveness probe below already allows initial_delay_seconds=180
+      # because this container loads torch weights before it can serve, so the
+      # held request must wait at least as long or it lands on a cold pod.
+      "sablier.ready-after" = "180s"
     }
     annotations = {
       "diun.enable"                = "true"
@@ -311,6 +322,11 @@ resource "kubernetes_deployment" "yt_highlights" {
           }
           resources {
             limits = {
+              # No gpumem seat: Sablier parks this at 0 replicas when idle
+              # (2026-08-31), and a parked pod requests nothing. Awake it bursts
+              # into real slack. Give it a measured seat if it ever becomes
+              # always-on — ADR-0016's undeclared-tenant gap is otherwise what
+              # the Kyverno require-gpumem policy (audit mode) now reports on.
               "nvidia.com/gpu" = "1"
             }
           }
@@ -345,6 +361,7 @@ resource "kubernetes_deployment" "yt_highlights" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -371,7 +388,11 @@ resource "kubernetes_service" "yt_highlights" {
 }
 
 module "highlights_ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, then the group's idle park.
+  sablier = {
+    group = "yt-highlights"
+  }
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.ytdlp.metadata[0].name
   name            = "yt-highlights"

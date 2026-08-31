@@ -1185,3 +1185,97 @@ resource "kubectl_manifest" "mutate_strip_cpu_limits" {
 # exclusion live before the tts stack applies. No functional change in this commit.
 
 # (See stacks/tts/main.tf — same apply-trigger note, tripit#26.)
+
+# -----------------------------------------------------------------------------
+# Layer 6: GPU VRAM budget declaration (Kyverno Validate, AUDIT)
+# -----------------------------------------------------------------------------
+# Closes ADR-0016's deferred gap. The gpumem extended resource makes the
+# scheduler VRAM-aware, but only for pods that DECLARE a budget — a pod that
+# requests nvidia.com/gpu and nothing else is admitted free, is not counted
+# against the seating chart, and is invisible to the gpu-vram-watchdog, which
+# only ever considers declaring tenants. On 2026-08-31 four pods were in that
+# state (yt-highlights, android-emulator, f1-stream, gpu-pod-exporter).
+#
+# Ships in AUDIT so it reports rather than blocks: enforce would make any GPU
+# pod without a declaration unschedulable on its next restart, including
+# workloads created outside this repo (the proxy-browser pods carry their own
+# 384 MiB declaration but are not Terraform-managed here). Read the
+# PolicyReports first, then decide — see
+# docs/plans/2026-08-31-gpu-vram-admission-and-oom-observability.md.
+#
+#   kubectl get clusterpolicyreport -o wide | grep require-gpumem-declaration
+#
+# Known audit failures at ship time, both deliberate: stremio and yt-highlights
+# keep a T4 time-slice with no seat (measured zero VRAM over 7 days), and
+# llama-swap declares none by design because it is an opportunistic tenant.
+resource "kubectl_manifest" "validate_gpumem_declared" {
+  yaml_body = yamlencode({
+    apiVersion = "kyverno.io/v1"
+    kind       = "ClusterPolicy"
+    metadata = {
+      name = "require-gpumem-declaration"
+      annotations = {
+        "policies.kyverno.io/title"       = "Require GPU VRAM Budget Declaration"
+        "policies.kyverno.io/description" = "Pods requesting nvidia.com/gpu should also declare viktorbarzin.me/gpumem so the scheduler counts their VRAM and the gpu-vram-watchdog can hold them to a contract (ADR-0016). Audit mode."
+        "policies.kyverno.io/severity"    = "medium"
+      }
+    }
+    spec = {
+      validationFailureAction = "Audit"
+      background              = true
+      rules = [
+        {
+          name = "gpu-pods-declare-gpumem"
+          match = {
+            any = [
+              {
+                resources = {
+                  kinds = ["Pod"]
+                }
+              }
+            ]
+          }
+          exclude = {
+            any = [
+              {
+                resources = {
+                  namespaces = local.excluded_namespaces
+                }
+              }
+            ]
+          }
+          # Only pods that actually ask for a GPU. Same shape as the priority
+          # policy above, which is proven against this cluster's pod specs.
+          preconditions = {
+            any = [
+              {
+                key      = "{{ request.object.spec.containers[].resources.requests.\"nvidia.com/gpu\" || '' }}"
+                operator = "NotEquals"
+                value    = ""
+              },
+              {
+                key      = "{{ request.object.spec.containers[].resources.limits.\"nvidia.com/gpu\" || '' }}"
+                operator = "NotEquals"
+                value    = ""
+              }
+            ]
+          }
+          validate = {
+            message = "Pod requests nvidia.com/gpu but declares no viktorbarzin.me/gpumem budget. The scheduler cannot count its VRAM and the gpu-vram-watchdog cannot hold it to a contract (ADR-0016). Add resources.limits.\"viktorbarzin.me/gpumem\" set from measured use, or record why it is deliberately seatless."
+            deny = {
+              conditions = {
+                all = [
+                  {
+                    key      = "{{ request.object.spec.containers[].resources.limits.\"viktorbarzin.me/gpumem\" || '' }}"
+                    operator = "Equals"
+                    value    = ""
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  })
+}

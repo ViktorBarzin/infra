@@ -194,7 +194,22 @@ resource "kubernetes_deployment" "f1-stream" {
               # f1-stream now shares node1's fate. Accepted: every video path
               # on the hardware is worth more here than spreading the risk.
               "nvidia.com/gpu" = "1"
-              memory           = "2Gi"
+              # GPU VRAM budget (ADR-0016), declared 2026-08-31. This pod ran
+              # with NO gpumem declaration, so the gpu-vram-watchdog could never
+              # see or recycle it and its usage did not count against the
+              # seating chart. Measured 418 MiB while encoding, active 1 of the
+              # 169 hours to 2026-08-31 (race sessions), so 500 covers a live
+              # ladder with margin.
+              #
+              # Sablier scale-to-zero was considered and NOT applied: this
+              # ingress has traffic in 162 of the last 168 hours — a ~12/h floor
+              # of monitors and bots hitting the Anubis challenge, on top of
+              # race-day peaks of 339-1369/h — and the Sablier middleware would
+              # sit in FRONT of Anubis, so that floor alone would hold the group
+              # awake permanently. Parking it needs the bot floor addressed
+              # first.
+              "viktorbarzin.me/gpumem" = "500"
+              memory                   = "2Gi"
             }
             requests = {
               cpu    = "100m"

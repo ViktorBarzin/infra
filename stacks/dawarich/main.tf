@@ -168,6 +168,20 @@ resource "kubernetes_deployment" "dawarich" {
             name  = "RAILS_ENV"
             value = "production"
           }
+          # Same glibc arena behaviour already diagnosed and fixed on
+          # dawarich-sidekiq (2026-08-29, see its resources block below): one
+          # malloc arena per thread, up to 8x ncores, and Ruby never returns the
+          # freed-but-fragmented pages. Measured on the WEB container
+          # 2026-08-31 — two Puma cluster workers at 557900 KB and 275480 KB
+          # plus a 208504 KB master against a 896Mi ceiling, 439 cgroup reclaim
+          # events since its last restart, and four OOMKills that day. Capping
+          # arenas trades a little allocator contention for a far flatter
+          # profile; it is the same trade sidekiq took, and its restarts went to
+          # zero the next day.
+          env {
+            name  = "MALLOC_ARENA_MAX"
+            value = "2"
+          }
           env {
             name = "SECRET_KEY_BASE"
             value_from {
@@ -201,7 +215,14 @@ resource "kubernetes_deployment" "dawarich" {
               memory = "896Mi"
             }
             limits = {
-              memory = "896Mi"
+              # Limit decoupled from request 2026-08-31 (896Mi -> 2Gi). Puma
+              # runs two cluster workers plus a master; with MALLOC_ARENA_MAX=2
+              # the plateau should fall well under this, and the headroom means
+              # a transient spike no longer costs a restart. Request stays at
+              # 896Mi deliberately so the scheduler reservation on k8s-node5 is
+              # unchanged (see ClusterCannotTolerateNonGpuNodeLoss); only the
+              # ceiling moves. Re-measure the plateau before trimming it back.
+              memory = "2Gi"
             }
           }
         }
