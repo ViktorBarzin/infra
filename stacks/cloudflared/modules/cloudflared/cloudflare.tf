@@ -334,11 +334,18 @@ resource "cloudflare_record" "keyserver" {
 # (<1.7) rejects removed{} blocks even at the stack root, so declarative
 # forget wasn't available. valia-sites imported the live record by id.
 
-# Enable HTTP/3 (QUIC) for Cloudflare-proxied domains
+# HTTP/3 (QUIC) for Cloudflare-proxied domains — OFF while we debug a QUIC
+# failure reported 2026-08-31. A browser on a tunnel (our WireGuard, and WARP)
+# gets ERR_QUIC_PROTOCOL_ERROR while HTTPS over TCP works on the same link,
+# because the tunnel clamps TCP to the path MTU and UDP has no MSS to clamp.
+# For an orange-cloud host the QUIC leg runs browser -> CF edge and never
+# reaches our Traefik, so the entrypoint setting in stacks/traefik cannot
+# help there; this is the switch that does. Zone-wide, so it covers every
+# proxied host at once. Re-enable together with the Traefik one.
 resource "cloudflare_zone_settings_override" "http3" {
   zone_id = var.cloudflare_zone_id
 
   settings {
-    http3 = "on"
+    http3 = "off"
   }
 }
