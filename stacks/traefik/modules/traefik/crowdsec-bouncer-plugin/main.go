@@ -487,9 +487,13 @@ func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http
 	return b, nil
 }
 
-// stdoutLogf is the production sink. Traefik's own log and the CLF access log
-// already share this stream, so an extra unparsed line is business as usual for
-// the CrowdSec traefik-logs grok.
+// stdoutLogf is the production sink. Traefik's own log and the JSON access log
+// already share this stream, so an extra non-JSON line is business as usual:
+// the CrowdSec traefik-logs parser tries a CLF grok, then a JSON node, and
+// leaves anything matching neither unparsed. The Loki alerts that read these
+// lines (CrowdSecL7BouncerRefreshFailing, CrowdSecL7BlockBurst) match on the
+// "[crowdsec-bouncer] action=" prefix, not on the access-log format, so they
+// were unaffected by the 2026-09-01 CLF-to-JSON switch.
 func stdoutLogf(line string) {
 	fmt.Fprintln(os.Stdout, line)
 }

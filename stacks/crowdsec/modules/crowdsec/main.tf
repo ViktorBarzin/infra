@@ -74,12 +74,22 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
     YAML
     # ---------------------------------------------------------------------
     # Two hub scenarios re-declared LOCALLY to fix their groupby. Upstream both
-    # group by "evt.Meta.source_ip + '/' + evt.Parsed.target_fqdn", but the
-    # traefik CLF parser never creates target_fqdn — verified with `cscli explain`
-    # on a real access-log line: the field is absent from evt.Parsed entirely,
-    # while traefik_router_name is populated
-    # ("forgejo-forgejo-forgejo-viktorbarzin-me@kubernetes"). The same finding is
-    # why the nextcloud-webdav whitelist below is scoped by traefik_router_name.
+    # group by "evt.Meta.source_ip + '/' + evt.Parsed.target_fqdn", but NEITHER
+    # traefik parser path ever creates evt.PARSED.target_fqdn — verified with
+    # `cscli explain` on a real access-log line in both formats (CLF, and JSON
+    # since 2026-09-01): the field is absent from evt.Parsed in both, while
+    # traefik_router_name is populated
+    # ("forgejo-forgejo-forgejo-viktorbarzin-me@kubernetes"). The JSON node of
+    # crowdsecurity/traefik-logs does set target_fqdn, but as `meta:`, so it
+    # lands in evt.META.target_fqdn — a different map from the one upstream's
+    # groupby reads. The same finding is why the nextcloud-webdav whitelist
+    # below is scoped by traefik_router_name.
+    #
+    # Grouping by router rather than by host is kept deliberately now that
+    # evt.Meta.target_fqdn exists: a router is at least as specific as a host
+    # (several routers can share one host), so switching would loosen the key
+    # rather than tighten it, and it is not a change worth riding along with a
+    # log-format change.
     #
     # So the key collapses to "<ip>/" and every host shares ONE bucket per IP.
     # That is more aggressive than upstream intends, not less: 10 distinct 404
@@ -180,6 +190,16 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
       ---
       name: viktor/immich-asset-paths-whitelist
       description: "Don't penalise legit Immich timeline bursts (mobile scrub, web grid)"
+      # KNOWN INERT, pre-dates the 2026-09-01 JSON switch and unaffected by it:
+      # this expression reads evt.Parsed.target_fqdn, which no traefik parser
+      # path creates — the JSON node writes evt.Meta.target_fqdn, a different
+      # map, and CLF writes neither. Verified with `cscli explain` on an Immich
+      # 404 in both formats on 2026-09-01: this whitelist reported "unchanged"
+      # both times, so it has never suppressed anything. Fixing it means
+      # evt.Meta.target_fqdn (or evt.Parsed.traefik_router_name, as the
+      # nextcloud whitelist below does), which would START suppressing
+      # detections — a security-posture change, deliberately not bundled with a
+      # log-format change.
       whitelist:
         reason: "Immich asset endpoints are auth-gated; mobile scrub legitimately bursts"
         expression:
@@ -196,7 +216,7 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
       name: viktor/nextcloud-webdav-whitelist
       description: "Nextcloud WebDAV paths carry the account name 'admin' — not admin-panel probing"
       whitelist:
-        reason: "Nextcloud-iOS/desktop PROPFIND 404s on /remote.php/dav/files/admin/... are legit sync misses; crowdsecurity/http-admin-interface-probing matches 'admin' in the path and banned the client's shared egress IP (Viktor's London Hyperoptic line, 2026-07-19). Scoped by traefik_router_name (traefik CLF access logs do NOT populate target_fqdn) plus the Nextcloud-exclusive /remote.php/ prefix. Nextcloud's own auth (401/403) still gates it."
+        reason: "Nextcloud-iOS/desktop PROPFIND 404s on /remote.php/dav/files/admin/... are legit sync misses; crowdsecurity/http-admin-interface-probing matches 'admin' in the path and banned the client's shared egress IP (Viktor's London Hyperoptic line, 2026-07-19). Scoped by traefik_router_name (no traefik parser path populates evt.Parsed.target_fqdn — the JSON node sets it as evt.Meta.target_fqdn instead, re-verified 2026-09-01) plus the Nextcloud-exclusive /remote.php/ prefix. Nextcloud's own auth (401/403) still gates it."
         expression:
           - >
             evt.Parsed.traefik_router_name contains "nextcloud-viktorbarzin-me" &&

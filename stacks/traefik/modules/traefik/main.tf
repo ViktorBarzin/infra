@@ -385,28 +385,83 @@ resource "helm_release" "traefik" {
       }
     }
 
-    # Access logs. Headers default to DROP (log "-"); keep only User-Agent +
-    # Referer so visitor analytics can tell devices/browsers and preview bots
-    # apart (2026-07-06 — before this, share-link analytics were IP-only and
-    # bot detection needed reverse-DNS guesswork). CLF format prints them in
-    # the standard combined-log positions. Everything else (Authorization,
-    # Cookie, ...) stays dropped.
-    # ACCEPTED TRADE-OFF: traefik escapes embedded quotes in header values
-    # (`"` -> `\"`), which CrowdSec's traefik-logs grok (%%{NOTDQUOTE}) can't
-    # span — a deliberate quote-in-UA makes that line unparsed and invisible
-    # to the CrowdSec http-abuse scenarios (legit browsers never send quotes
-    # in UA). CrowdSec is one fail-open layer among several (rate-limit,
-    # Authentik, Anubis, CF); accepted 2026-07-06. Anything consuming these
-    # lines must NOT trust UA/Referer content — see the anchored-extraction
-    # guards on the share-link recording rules in stacks/monitoring.
+    # Access logs, JSON since 2026-09-01. Headers default to DROP; the four
+    # named below are kept.
+    #
+    # WHY JSON AND NOT CLF: CLF has fixed positions for Referer and User-Agent
+    # and nowhere to put anything else, so the authenticated principal — which
+    # forward-auth already puts on the request and every backend already sees —
+    # could not be logged at all. It is now a field. That is the recording half
+    # of docs/plans/2026-09-01-service-identity-and-request-attribution-design.md
+    # (step 5b); without it "which user made this request" is unanswerable for
+    # the ~90 forward-auth routers.
+    #
+    # X-Authentik-Username is stamped by the Authentik forward-auth middleware
+    # and cannot be set by a client (middleware.tf strips and replaces every
+    # X-authentik-* header). Verified against traefik:v3.7.1 on 2026-09-01: a
+    # header injected by forward-auth DOES reach the access log, because the
+    # accesslog handler holds the same http.Header map the middleware mutates.
+    #
+    # X-Auth-Fallback is logged here but will be EMPTY until the header is added
+    # to authResponseHeaders in middleware.tf (design step 1). The nginx auth
+    # fallback stamps it when the Authentik outpost 5xxs, but forward-auth only
+    # copies headers on that list, so today it never reaches the request. The
+    # field is declared now so the format does not have to change again.
+    #
+    # MEASURED COST (2026-09-01, 8,876 real access-log lines over five 10-minute
+    # windows): 402 bytes/line CLF -> 1,266 bytes/line JSON, a 3.15x raw growth.
+    # gzip'd, which is how Loki stores it, the growth is only 1.58x — JSON's
+    # repeated key names compress from 7.9x to 15.8x. At the measured 23.0 MB/h
+    # of access log that is 0.55 GB/day -> 1.7 GB/day raw, and roughly
+    # 70 MB/day -> 110 MB/day on disk.
+    #
+    # HEADER NAME CASING DOES NOT MATTER HERE, output casing is always
+    # canonical: the fields.headers.names lookup is case-insensitive, and the
+    # emitted keys are request_X-Authentik-Username / request_X-Auth-Fallback
+    # whatever case is written below (verified 2026-09-01).
+    #
+    # CONSUMERS — anything parsing these lines was ported in the same commit:
+    #   - CrowdSec: no change needed. crowdsecurity/traefik-logs already has a
+    #     JSON node alongside its CLF grok, verified with `cscli explain` on the
+    #     live agent: parser green, all five http-* scenarios still fire, and
+    #     evt.Parsed.status stringifies so the local http-403/429-abuse
+    #     overrides ('403' string compare) keep matching.
+    #     ONE BEHAVIOUR DIFFERENCE between the two parser paths, measured and
+    #     currently harmless: the CLF grok takes the first token of ClientHost
+    #     as the client IP, while the JSON node takes Split(ClientHost,',')[-1],
+    #     the RIGHTMOST entry. ClientHost is the whole X-Forwarded-For header
+    #     when one is present, so a multi-entry XFF would make the two disagree
+    #     about which address gets banned. Zero of 11,953 real access-log lines
+    #     sampled on 2026-09-01 carried a comma there — Cloudflare and the
+    #     pfSense HAProxy path both send a single entry — so source_ip is the
+    #     real client either way (spot-checked: `cscli explain` on a JSON line
+    #     resolved evt.Meta.source_ip correctly). If a multi-entry XFF ever
+    #     appears, the JSON path picks the nearest proxy rather than the client:
+    #     safer against spoofing, wrong for attribution. Watch for it if an
+    #     upstream proxy is ever chained in front of Cloudflare.
+    #   - Immich share-link recording rules + share-link-geo CronJob
+    #     (stacks/monitoring) and the download-truncation CronJob
+    #     (stacks/immich): re-anchored from CLF byte positions to the JSON key
+    #     names.
+    # The old CLF quote-escaping trade-off is GONE: the CrowdSec grok that
+    # %%{NOTDQUOTE} could not span is no longer on the JSON path, so a
+    # quote-bearing User-Agent no longer makes a line unparsed.
+    #
+    # Anything consuming these lines still must NOT trust UA/Referer content.
+    # JSON makes that easier, not harder — a header value cannot contain a bare
+    # `"`, so an extraction anchored to a `"FieldName":"` prefix cannot be
+    # reached from a header value. See the guards in stacks/monitoring/loki.tf.
     logs = {
       access = {
         enabled = true
+        format  = "json"
         fields = {
           headers = {
             names = {
-              "User-Agent" = "keep"
-              "Referer"    = "keep"
+              "User-Agent"           = "keep"
+              "Referer"              = "keep"
+              "X-Authentik-Username" = "keep"
+              "X-Auth-Fallback"      = "keep"
             }
           }
         }

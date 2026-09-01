@@ -97,7 +97,17 @@ CrowdSec operates in a hub-and-agent model:
 - Version pinned to prevent breaking changes
 
 **Agent**:
-- Parses Traefik access logs
+- Parses Traefik access logs. **Format-independent since 2026-09-01**: the
+  access log moved from CLF to JSON, and `crowdsecurity/traefik-logs` already
+  carries a JSON node alongside its CLF grok. Verified with `cscli explain` on
+  the live agent against the same Immich 404 in both formats — identical
+  parsers green, identical enrichers, identical scenarios firing, and
+  `evt.Parsed.status` stringifies so the local `http-403-abuse` /
+  `http-429-abuse` overrides (which compare against `'403'`) keep matching.
+  One behaviour difference worth knowing: the JSON node populates
+  `evt.Meta.target_fqdn`, which CLF never did. Nothing here reads it —
+  `viktor/immich-asset-paths-whitelist` reads `evt.Parsed.target_fqdn`, a
+  different map, and has therefore never matched in either format.
 - Detects attack scenarios (SQL injection, directory traversal, brute force)
 - Reports malicious IPs to LAPI
 - Shares threat intel with CrowdSec community (anonymized)
