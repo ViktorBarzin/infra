@@ -223,11 +223,12 @@ module "tls_secret" {
 
 # NFS Volumes - Calibre (prefixed with ebooks- to avoid PV name clash with old stacks)
 module "nfs_calibre_library_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-library-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/calibre-library"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-calibre-library-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/calibre-library"
+  storage_class_name = "nfs-pve"
 }
 
 # iSCSI volume for config (SQLite DBs) - enables WAL mode for concurrent reads/writes
@@ -260,44 +261,49 @@ resource "kubernetes_persistent_volume_claim" "calibre_config_iscsi" {
 }
 
 module "nfs_calibre_ingest_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-ingest-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-calibre-ingest-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_mam_farming_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-mam-farming-host"
-  namespace  = "ebooks"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/servarr/mam-farming"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-mam-farming-host"
+  namespace          = "ebooks"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/servarr/mam-farming"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_calibre_stacks_config_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-stacks-config-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/stacks"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-calibre-stacks-config-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/stacks"
+  storage_class_name = "nfs-pve"
 }
 
 # NFS Volumes - Audiobookshelf (prefixed with ebooks- to avoid PV name clash)
 module "nfs_audiobookshelf_audiobooks_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-audiobooks-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/audiobooks"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-abs-audiobooks-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/audiobooks"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_audiobookshelf_podcasts_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-podcasts-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/podcasts"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-abs-podcasts-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/podcasts"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_persistent_volume_claim" "abs_config_proxmox" {
@@ -330,11 +336,12 @@ resource "kubernetes_persistent_volume_claim" "abs_config_proxmox" {
 }
 
 module "nfs_audiobookshelf_metadata_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-metadata-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/metadata"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-abs-metadata-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/metadata"
+  storage_class_name = "nfs-pve"
 }
 
 # Calibre-Web-Automated Deployment

@@ -411,7 +411,7 @@ Beads epic: `code-8ywc`. **Status: partially live as of 2026-05-18.**
 | W1.2 Vault `file` audit device | **LIVE** — `vault_audit.file` in `stacks/vault/main.tf:287`, writing to `/vault/audit/vault-audit.log` on `proxmox-lvm-encrypted` PVC |
 | W1.2 Vault `x_forwarded_for_authorized_addrs = 10.10.0.0/16` | **LIVE** — applied via `tg apply -target=helm_release.vault` on 2026-05-18; all 3 vault pods restarted cleanly |
 | W1.2 Vault audit log shipping to Loki | **LIVE** — `audit-tail` sidecar in vault pods + Alloy DaemonSet ships to Loki with `container="audit-tail"`. Verified via `{namespace="vault",container="audit-tail"}` LogQL query. |
-| W1.1 K8s API audit policy + shipping | **LIVE** — kube-apiserver audit policy was already configured (Metadata level, `/var/log/kubernetes/audit.log`, 7d retention). Alloy DaemonSet now tolerates control-plane taint, scrapes the audit log file, ships to Loki with `job=kubernetes-audit`. K2-K9 alert rules in Loki ruler. |
+| W1.1 K8s API audit policy + shipping | **LIVE** — kube-apiserver audit policy configured at Metadata level, writing `/var/log/kubernetes/audit/audit.log`. Alloy DaemonSet tolerates the control-plane taint, tails that file, ships to Loki with `job=kubernetes-audit`. K2-K9 alert rules in Loki ruler. **Retention corrected 2026-09-01:** `--audit-log-maxage=30 --audit-log-maxbackup=10 --audit-log-maxsize=100`, and at ~415 MB/day the size cap rotates every 6-7 h, so on-node history is **~2.8 days**, not 7 and not 30. Loki holds 30 days. |
 | W1.3 Source-IP anomaly rules (K9, V7, S1) | **LIVE** (K9, V7, S1). **S1 activated 2026-06-10** — promtail on the PVE host now ships the journal to Loki (`scripts/pve-promtail.yaml`); sshd auth lands as `job=sshd-pve` (the S1 data source). The same shipper carries snoopy `execve()` command audit as `{job="pve-journal", identifier="snoopy"}` (forensic, not alerting). Deployed because emo's agent was given root SSH to the host (shared key) — see `docs/architecture/monitoring.md` → "External host: pve". |
 | W1.4 Kyverno security policies → Enforce | **LIVE** — 3 policies in Enforce mode with 35-namespace exclude list. |
 | W1.5 Kyverno trusted-registries → Enforce | **LIVE** — explicit allowlist (15 registries + 6 DockerHub library bare names + 56 DockerHub user repos). Verified by admission dry-run: `evilcorp.example/malware:v1` BLOCKED, `alpine:3.20` and `docker.io/library/alpine:3.20` ALLOWED. |
@@ -426,7 +426,7 @@ Response model: **(I) Slack-only, daily skim.** All security alerts post to **`#
 
 | Source | Mechanism | Ships via | Loki job label |
 |---|---|---|---|
-| K8s API audit log | Custom audit policy on kube-apiserver: drop `get`/`list`/`watch` at `None` for most resources, log writes at `Metadata`, secret reads at `Metadata`, `exec`/`portforward` at `RequestResponse`, exclude kubelet+controller-manager noise. Codified in `stacks/infra` kubeadm config templating. | Alloy DaemonSet tails `/var/log/kubernetes/audit/*.log` | `job=kube-audit` |
+| K8s API audit log | Custom audit policy on kube-apiserver, **corrected against live state 2026-09-01**: `get`/`list`/`watch` are dropped at `None` for **everything**, so there are no secret-read and no `exec`/`portforward` audit events; high-churn resources and probe URLs are dropped; every remaining create/update/patch/delete is logged at `Metadata` with `omitStages: [RequestReceived]`. Source of truth is the hand-deployed `scripts/k8s-apiserver-audit-policy.yaml` (**not** `stacks/infra` templating, which carries no audit config; the policy `stacks/rbac` writes is inert, see below). Measured volume: 74,060 events / 6 h, of which 0 reads, against 366,219 read requests served. | Alloy DaemonSet tails `/var/log/kubernetes/audit/audit.log` | `job=kubernetes-audit` |
 | Vault audit log | `file` audit device on existing Vault PVC. Vault listener config sets `x_forwarded_for_authorized_addrs` trusting Traefik pod CIDR so `remote_addr` is the real client IP, not Traefik's. | Alloy tails audit log file | `job=vault-audit` |
 | PVE sshd auth log | journald (`_SYSTEMD_UNIT=ssh.service`, `SYSLOG_IDENTIFIER=sshd-session`); promtail relabels `identifier=~"sshd.*"` → `job=sshd-pve` | promtail systemd unit on Proxmox host (192.168.1.127), `scripts/pve-promtail.yaml` — **LIVE 2026-06-10** | `job=sshd-pve` |
 | Calico flow log | `flowLogsFileEnabled: true` in Calico Felix config | Alloy (cluster-wide) | `job=calico-flow` (W1.6 only) |
@@ -496,6 +496,42 @@ Viktor opted out. Gap covered indirectly by K7 (new `*,*` ClusterRole created), 
 #### IOPS / disk-wear
 
 Custom audit policy reduces volume ~80-90% vs default Metadata-everywhere. Loki tuned for fewer larger chunks: `chunk_target_size: 1.5MB`, `chunk_idle_period: 30m`, snappy compression. Retention 90d for security streams (matches Technitium DNS query log precedent). Net estimate: ~1-2 GB/day additional disk writes after tuning.
+
+### Who reached the Kubernetes API (design step 4, 2026-09-01)
+
+Terraform-owned and inert until a human performs the control-plane step. Runbook:
+`docs/runbooks/apiserver-oidc-agent-identity.md`; design:
+`docs/plans/2026-09-01-service-identity-and-request-attribution-design.md`.
+
+Starting point, measured: the apiserver already carries
+`--authentication-config=/etc/kubernetes/pki/auth-config.yaml` with two OIDC
+issuers (`kubernetes` for kubelogin, `k8s-dashboard`), Terraform-managed in
+`stacks/rbac/modules/rbac/apiserver-oidc.tf` and byte-identical to the node. In
+24 hours there were **zero** OIDC-authenticated audit events, while the shared
+kubeadm admin certificate produced 116 mutating events in a 1-hour sample. Every
+human, agent session and cron job on the devvm shares that certificate, so all
+of them record the same `credential-id X509SHA256=7a03b1f4…0616` and the audit
+log cannot tell them apart.
+
+What landed:
+
+| Piece | Where | State |
+| --- | --- | --- |
+| `kubernetes-agent` Authentik app + public PKCE provider | `stacks/rbac/authentik-kubernetes.tf` | created on apply. No issuer list names it, so its tokens are rejected until the flag below is set |
+| A third apiserver issuer mapping username and groups under the `agent:` prefix | `apiserver-oidc.tf`, `var.agent_oidc_enabled` | **default false.** With it off the rendered config is byte-identical to the live file (sha256 `bdefc260…97e16`), so the SSH provisioner's trigger does not move and an apply leaves the control plane alone |
+| Group-keyed ClusterRoleBindings for `kubernetes-*` and `agent:kubernetes-*` | `oidc-group-bindings.tf` | created on apply; granted nobody anything new on the day they landed |
+| The live `kubernetes` OIDC app described in Terraform with `import` blocks | `authentik-kubernetes.tf`, `var.manage_kubernetes_oidc_app` | **default false.** Adoption plans `2 to import, 0 to change` (verified 2026-09-01) |
+
+Why a separate issuer rather than a second client: the audit event records
+`user.username` and `user.groups` and not the issuer, so two clients on one
+issuer both mint the same email and stay indistinguishable. The per-issuer
+prefix is what lands the distinction in the log, and it also means an agent
+session matches only `agent:*` bindings, so it inherits no human's access. Agent
+rows are bound read-only (`oidc-power-user-readonly`: cluster-wide
+get/list/watch, no Secrets, no `pods/exec`).
+
+The shared cluster-admin certificate stays as documented break-glass, since it
+authenticates via `--client-ca-file` and so survives an Authentik outage.
 
 ### NetworkPolicy Default-Deny Egress (Wave 1 — observe-then-enforce, tier 3+4)
 

@@ -37,27 +37,30 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 }
 
 module "nfs_downloads_host" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-qbittorrent-downloads-host"
-  namespace  = "servarr"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/servarr/downloads"
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "servarr-qbittorrent-downloads-host"
+  namespace          = "servarr"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/servarr/downloads"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_audiobooks_host" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-qbittorrent-audiobooks-host"
-  namespace  = "servarr"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/audiobooks"
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "servarr-qbittorrent-audiobooks-host"
+  namespace          = "servarr"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/audiobooks"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_calibre_ingest_host" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-qbittorrent-calibre-ingest-host"
-  namespace  = "servarr"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "servarr-qbittorrent-calibre-ingest-host"
+  namespace          = "servarr"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "qbittorrent" {

@@ -307,11 +307,12 @@ resource "kubernetes_config_map" "openclaw_exporter" {
 }
 
 module "nfs_tools_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openclaw-tools-host"
-  namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/openclaw/tools"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "openclaw-tools-host"
+  namespace          = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/openclaw/tools"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_persistent_volume_claim" "home_proxmox" {
@@ -344,11 +345,12 @@ resource "kubernetes_persistent_volume_claim" "home_proxmox" {
 }
 
 module "nfs_workspace_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openclaw-workspace-host"
-  namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/openclaw/workspace"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "openclaw-workspace-host"
+  namespace          = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/openclaw/workspace"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {

@@ -19,23 +19,23 @@ data "vault_kv_secret_v2" "viktor" {
 }
 
 module "monitoring" {
-  source                        = "./modules/monitoring"
-  tls_secret_name               = var.tls_secret_name
-  nfs_server                    = var.nfs_server
-  mysql_host                    = var.mysql_host
-  postgresql_host               = var.postgresql_host
-  dbaas_root_password           = data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]
-  alertmanager_account_password = data.vault_kv_secret_v2.secrets.data["alertmanager_account_password"]
-  idrac_username                = var.monitoring_idrac_username
-  idrac_password                = data.vault_kv_secret_v2.secrets.data["monitoring_idrac_password"]
-  alertmanager_slack_api_url    = data.vault_kv_secret_v2.secrets.data["alertmanager_slack_api_url"]
-  tiny_tuya_service_secret      = data.vault_kv_secret_v2.secrets.data["tiny_tuya_service_secret"]
-  haos_api_token                = data.vault_kv_secret_v2.secrets.data["haos_api_token"]
-  pve_password                  = data.vault_kv_secret_v2.secrets.data["pve_password"]
-  grafana_admin_password        = data.vault_kv_secret_v2.secrets.data["grafana_admin_password"]
-  kube_config_path              = var.kube_config_path
-  registry_user                 = data.vault_kv_secret_v2.viktor.data["registry_user"]
-  registry_password             = data.vault_kv_secret_v2.viktor.data["registry_password"]
+  source                         = "./modules/monitoring"
+  tls_secret_name                = var.tls_secret_name
+  nfs_server                     = var.nfs_server
+  mysql_host                     = var.mysql_host
+  postgresql_host                = var.postgresql_host
+  dbaas_postgresql_root_password = data.vault_kv_secret_v2.secrets.data["dbaas_postgresql_root_password"]
+  alertmanager_account_password  = data.vault_kv_secret_v2.secrets.data["alertmanager_account_password"]
+  idrac_username                 = var.monitoring_idrac_username
+  idrac_password                 = data.vault_kv_secret_v2.secrets.data["monitoring_idrac_password"]
+  alertmanager_slack_api_url     = data.vault_kv_secret_v2.secrets.data["alertmanager_slack_api_url"]
+  tiny_tuya_service_secret       = data.vault_kv_secret_v2.secrets.data["tiny_tuya_service_secret"]
+  haos_api_token                 = data.vault_kv_secret_v2.secrets.data["haos_api_token"]
+  pve_password                   = data.vault_kv_secret_v2.secrets.data["pve_password"]
+  grafana_admin_password         = data.vault_kv_secret_v2.secrets.data["grafana_admin_password"]
+  kube_config_path               = var.kube_config_path
+  registry_user                  = data.vault_kv_secret_v2.viktor.data["registry_user"]
+  registry_password              = data.vault_kv_secret_v2.viktor.data["registry_password"]
   # try() so apply succeeds before the Vault key is populated during Phase 0
   # bootstrap (see docs/runbooks/forgejo-registry-setup.md). Empty token =
   # probe will report an auth failure and fire RegistryCatalogInaccessible —

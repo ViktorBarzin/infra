@@ -176,11 +176,12 @@ resource "kubernetes_persistent_volume_claim" "profile_encrypted" {
 
 # --- NFS backup target ---
 module "nfs_chrome_service_backup_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "chrome-service-backup-host"
-  namespace  = kubernetes_namespace.chrome_service.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/chrome-service-backup"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "chrome-service-backup-host"
+  namespace          = kubernetes_namespace.chrome_service.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/chrome-service-backup"
+  storage_class_name = "nfs-pve"
 }
 
 # --- Deployment ---

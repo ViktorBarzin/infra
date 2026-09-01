@@ -1,6 +1,36 @@
 # Deploy audit policy to k8s-master and configure kube-apiserver to use it.
-# Audit logs are written to /var/log/kubernetes/audit.log on the master node.
-# Alloy (log collector DaemonSet) will pick them up and ship to Loki.
+#
+# ############################################################################
+# THIS RESOURCE IS INERT. The apiserver does not read the policy it writes.
+# Measured on the live cluster 2026-09-01:
+#
+#   apiserver flag      --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+#   written here        /etc/kubernetes/policies/audit-policy.yaml
+#
+#   apiserver flag      --audit-log-path=/var/log/kubernetes/audit/audit.log
+#   written here        /var/log/kubernetes/audit.log
+#
+#   apiserver flags     --audit-log-maxage=30 --audit-log-maxbackup=10
+#   written here        maxage=7  maxbackup=3
+#
+# The policy the apiserver actually uses is the hand-deployed
+# scripts/k8s-apiserver-audit-policy.yaml (docs/runbooks/apiserver-audit-logging.md),
+# which DROPS get/list/watch entirely for write-volume reasons — the reason no
+# Kubernetes read is recorded anywhere. The rules below would have logged reads
+# at Metadata level, and never took effect. So there are two policies with two
+# paths and only one of them is live.
+#
+# NOT FIXED HERE, deliberately. Both `triggers` values below are content
+# hashes: change them and this null_resource re-runs, which rewrites the
+# apiserver static-pod manifest and restarts the API on the single control-plane
+# node. CI applies this stack with no ssh_private_key, so a re-run would fail
+# there rather than reach the node at all. Reconciling the two policies is a
+# deliberate control-plane change, sized and sequenced in
+# docs/runbooks/apiserver-oidc-agent-identity.md -> "The audit read gap".
+# ############################################################################
+#
+# Alloy (log collector DaemonSet) tails the path the apiserver actually writes
+# and ships it to Loki as {job="kubernetes-audit"}.
 
 resource "null_resource" "audit_policy" {
   connection {

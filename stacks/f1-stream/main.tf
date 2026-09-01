@@ -95,13 +95,14 @@ resource "kubernetes_manifest" "chrome_service_client_secret" {
 }
 
 module "nfs_data_host" {
-  source       = "../../modules/kubernetes/nfs_volume"
-  name         = "f1-stream-data-host"
-  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
-  nfs_server   = var.nfs_server
-  nfs_path     = "/srv/nfs/f1-stream"
-  storage      = "1Gi"
-  access_modes = ["ReadWriteOnce"]
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "f1-stream-data-host"
+  namespace          = kubernetes_namespace.f1-stream.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/f1-stream"
+  storage            = "1Gi"
+  access_modes       = ["ReadWriteOnce"]
+  storage_class_name = "nfs-pve"
 }
 
 # Replay torrent cache. Shares the servarr qBittorrent downloads export so the
@@ -110,13 +111,14 @@ module "nfs_data_host" {
 # a second copy of the data. Subdirectory of the export, so F1 replays stay
 # separate from everything else servarr downloads.
 module "nfs_replay_cache" {
-  source       = "../../modules/kubernetes/nfs_volume"
-  name         = "f1-stream-replay-cache"
-  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
-  nfs_server   = var.nfs_server
-  nfs_path     = "/srv/nfs/servarr/downloads/f1-replays"
-  storage      = "200Gi"
-  access_modes = ["ReadWriteMany"]
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "f1-stream-replay-cache"
+  namespace          = kubernetes_namespace.f1-stream.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/servarr/downloads/f1-replays"
+  storage            = "200Gi"
+  access_modes       = ["ReadWriteMany"]
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "f1-stream" {
