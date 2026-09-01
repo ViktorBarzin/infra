@@ -16,6 +16,14 @@ killed nothing on the box in the last 7 days, so the old failure — earlyoom
 picking off every `claude` process box-wide — is no longer what is happening.
 What remains is narrower and quieter, and it has no alerting at all.
 
+```stats
+0 | earlyoom kills, last 7d
+3 | panes that hit the 6G cap, last 7d
+2 | of those that killed a claude
+5 | alerts now watching for it
+30s | detection resolution
+```
+
 ## What is actually happening, measured 2026-09-01
 
 | observation | measurement |
@@ -37,6 +45,12 @@ everything else in its own pane, the same mechanism takes the conversation.
 `CONSTRAINT_MEMCG` matters here. A pane can reach its own 6G ceiling while the
 box has 20 GiB free, so box-level memory pressure does not predict this class at
 all. The two need separate signals.
+
+> [!NOTE]
+> Three things in this design were corrected after being drilled against the live
+> box rather than reasoned about: which file records a deliberate kill, where
+> liveness can be read from, and which memory figure means "near the cap". Each
+> section below marks what was measured.
 
 ## Two shapes of loss, and which one lobby sessions take
 
@@ -357,7 +371,10 @@ gets checked, not the configuration.
 
 ## A finding from the drills: /tmp is RAM, and it is charged to the pane
 
-Not addressed by this work, and worth its own decision.
+> [!WARNING]
+> Not addressed by this work, and worth its own decision. `/tmp` on the devvm is
+> an 8 GB RAM-backed tmpfs. It was measured 95% full, with 7.0 GB of that being
+> Claude session scratch directories.
 
 `/tmp` on the devvm is an 8 GB RAM-backed tmpfs, measured 95% full on
 2026-09-01, and **7.0 GB of that is `/tmp/claude-1000`** across 124 Claude
