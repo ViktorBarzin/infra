@@ -5,8 +5,9 @@
 variable "tls_secret_name" { type = string }
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
-# Supplied globally by config.tfvars. Consumed by the Goldmane edge-trail
-# Grafana datasource (modules/monitoring/goldmane_edges_datasource.tf).
+# Supplied globally by config.tfvars. Two consumers inside the module: the
+# stray-workload reconciler (stray_workload.tf) and the Goldmane edge-trail
+# Grafana datasource (goldmane_edges_datasource.tf). Declared once for both.
 variable "postgresql_host" { type = string }
 variable "monitoring_idrac_username" { type = string }
 
@@ -26,6 +27,7 @@ module "monitoring" {
   nfs_server                    = var.nfs_server
   mysql_host                    = var.mysql_host
   postgresql_host               = var.postgresql_host
+  dbaas_root_password           = data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]
   alertmanager_account_password = data.vault_kv_secret_v2.secrets.data["alertmanager_account_password"]
   idrac_username                = var.monitoring_idrac_username
   idrac_password                = data.vault_kv_secret_v2.secrets.data["monitoring_idrac_password"]

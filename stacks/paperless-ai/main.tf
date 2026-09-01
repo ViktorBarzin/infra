@@ -261,34 +261,36 @@ resource "kubernetes_deployment" "paperless_ai" {
             initial_delay_seconds = 10
             period_seconds        = 15
           }
-          liveness_probe {
-            tcp_socket {
-              port = 3000
-            }
-            initial_delay_seconds = 60
-            period_seconds        = 30
-          }
-          # The container runs TWO processes: the Node app on 3000 and a Python
-          # RAG service on 8000, started as its CHILD. Only 3000 was probed, so
-          # when the RAG child died on 2026-08-23 04:30:15 (mid-index, last line
-          # "Loading documents from ./data/documents.json", nothing after) the
-          # pod stayed Ready and nothing noticed for 9 days. The visible symptom
-          # was the daily rag-index-refresh CronJob failing with curl exit 22 —
-          # /api/rag/index returns 500 because the Node app proxies to
-          # http://localhost:8000/indexing/start and gets ECONNREFUSED.
+          # ONE liveness probe covering BOTH processes in this container: the
+          # Node app on 3000 and the Python RAG service on 8000, which is
+          # started as its child. A container may only have one liveness_probe,
+          # so this is an exec that checks both listeners rather than two
+          # tcp_socket blocks (the first attempt at this failed
+          # `terraform validate` with "Too many liveness_probe blocks").
           #
-          # A tcp_socket probe on 8000 only asks whether anything is listening,
-          # so a slow index does not trip it, and restarting the container
-          # respawns the child. failure_threshold 4 x 30s tolerates two minutes
-          # of absence before acting; initial_delay 180s covers the Python
-          # service's start, which took ~4s after the Node app on the last cold
-          # start but is given room for a loaded host.
+          # Why 8000 needs covering: only 3000 was probed, so when the RAG child
+          # died on 2026-08-23 04:30:15 mid-index — last log line "Loading
+          # documents from ./data/documents.json", nothing after — the pod
+          # stayed Ready and nothing noticed for nine days. The visible symptom
+          # was the daily rag-index-refresh CronJob failing with curl exit 22,
+          # because /api/rag/index proxies to http://localhost:8000/indexing/start
+          # and got ECONNREFUSED.
+          #
+          # python3 is present in the image (it runs the RAG service) and the
+          # command was tested in the live pod before shipping: it reports 3000
+          # open and 8000 refused, which is exactly the broken state. A
+          # connect-only check means a slow index does not trip it. 180s initial
+          # delay against a measured ~4s RAG start, then 4 x 30s before acting.
           liveness_probe {
-            tcp_socket {
-              port = 8000
+            exec {
+              command = [
+                "python3", "-c",
+                "import socket; [socket.create_connection(('127.0.0.1', p), 2).close() for p in (3000, 8000)]",
+              ]
             }
             initial_delay_seconds = 180
             period_seconds        = 30
+            timeout_seconds       = 5
             failure_threshold     = 4
           }
         }
