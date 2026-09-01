@@ -270,6 +270,7 @@ module "nfs_models" {
   nfs_server = "192.168.1.127"
   nfs_path   = "/srv/nfs-ssd/chatterbox"
   storage    = "20Gi" # multilingual weights + HF cache + voices headroom
+  storage_class_name = "nfs-pve"
 }
 
 # One-shot bootstrap: /srv/nfs-ssd is exported whole-tree, but the chatterbox

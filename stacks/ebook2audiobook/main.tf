@@ -33,6 +33,7 @@ module "nfs_data_host" {
   namespace  = kubernetes_namespace.ebook2audiobook.metadata[0].name
   nfs_server = "192.168.1.127"
   nfs_path   = "/srv/nfs/ebook2audiobook"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_audiblez_data_host" {
@@ -41,6 +42,7 @@ module "nfs_audiblez_data_host" {
   namespace  = kubernetes_namespace.ebook2audiobook.metadata[0].name
   nfs_server = "192.168.1.127"
   nfs_path   = "/srv/nfs/audiblez"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "ebook2audiobook" {
