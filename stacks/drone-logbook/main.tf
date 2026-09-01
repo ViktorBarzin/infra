@@ -98,6 +98,7 @@ module "nfs_sync_logs" {
   nfs_server = var.nfs_server
   nfs_path   = "/srv/nfs/drone-logbook/sync-logs"
   storage    = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "drone_logbook" {
@@ -257,6 +258,7 @@ module "nfs_backup" {
   namespace  = kubernetes_namespace.drone_logbook.metadata[0].name
   nfs_server = var.nfs_server
   nfs_path   = "/srv/nfs/drone-logbook-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_cron_job_v1" "backup" {

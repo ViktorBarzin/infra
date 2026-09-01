@@ -72,6 +72,7 @@ module "nfs_tandoor" {
   nfs_server = var.nfs_server
   nfs_path   = "/srv/nfs/tandoor"
   storage    = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "tandoor" {

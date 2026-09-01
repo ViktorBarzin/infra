@@ -32,6 +32,7 @@ module "nfs_data_host" {
   namespace  = kubernetes_namespace.poison_fountain.metadata[0].name
   nfs_server = "192.168.1.127"
   nfs_path   = "/srv/nfs/poison-fountain"
+  storage_class_name = "nfs-pve"
 }
 
 # ConfigMap for the Python service code

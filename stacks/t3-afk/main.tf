@@ -128,6 +128,7 @@ module "data" {
   nfs_server = "192.168.1.127"
   nfs_path   = "/srv/nfs-ssd/t3-afk-data"
   storage    = "30Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # --- Deployment ---

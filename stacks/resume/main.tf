@@ -202,6 +202,7 @@ module "nfs_data_host" {
   nfs_path     = "/srv/nfs/resume"
   storage      = "1Gi"
   access_modes = ["ReadWriteOnce"]
+  storage_class_name = "nfs-pve"
 }
 
 # Reactive Resume app
