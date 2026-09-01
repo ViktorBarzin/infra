@@ -1534,3 +1534,168 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
 #   tls_secret_name = var.tls_secret_name
 #   auth = "required"
 # }
+
+# =============================================================================
+# immich-ml arena recycle — nightly bound on the onnxruntime VRAM ratchet
+# =============================================================================
+# immich-machine-learning's resident VRAM only ever ratchets upward while the
+# process lives, and the driver is OCR (investigated 2026-09-01, see
+# docs/plans/2026-08-31-gpu-vram-admission-and-oom-observability.md):
+#
+#   * The four MACHINE_LEARNING_PRELOAD__* models (CLIP textual + visual,
+#     buffalo_l detection + recognition) pin ~1,960 MiB and never unload. That
+#     is the intended keep-smart-search-warm cost and it does NOT grow.
+#   * PP-OCRv5_mobile is loaded ON DEMAND and unloaded by model_ttl (600s). Its
+#     weights are genuinely freed — resident VRAM visibly drops on unload — but
+#     onnxruntime's BFC arena keeps the workspace chunks it extended, so the
+#     FLOOR rises a little each cycle. Measured overnight 2026-08-31/09-01:
+#       19:05-22:05 1964 MiB -> 22:22 OCR 4790 -> 23:05 unload 3426
+#                            -> 02:59 OCR 4302 -> 03:35 unload 3548
+#   * The peaks come from OCR detection's resize, which scales the SHORT edge to
+#     maxResolution (736) and leaves the long edge unbounded, so tall scrolling
+#     screenshots and panoramas are fed at up to 5.9 Mpx against 0.7 Mpx for a
+#     normal photo. Of 181,980 assets, 70 exceed 2 Mpx and 8 exceed 4 Mpx — 8
+#     images set the floor for the whole service. One of them produced a single
+#     1.94 GiB Conv workspace request that took the pod to 12,044 MiB and filled
+#     the T4, stopping frigate detection and llama-swap model loads.
+#
+# Reported upstream on immich-app/immich#23462 (open, no maintainer fix yet);
+# we deliberately do NOT carry a local patch. maxResolution stays at 736 so OCR
+# accuracy is unchanged — this CronJob bounds the consequence instead of
+# degrading text recognition for 182k assets to tame a tail of 8.
+#
+# The gpu-vram-watchdog (ADR-0016) already recycles this pod under contention,
+# but only under contention. This is the unconditional floor: whatever arrives
+# in the library, the arena resets once a day.
+#
+# 04:45 avoids the 00:00 postgresql-backup, the 04:00 nightly drift-detection
+# and the 05:30 claude-skills-update. Cost is ~2m23s with no smart search or
+# face recognition (measured 2026-08-31: pod create -> "Application startup"
+# 2m23s, immich-server logs "Machine learning server became healthy" ~30s
+# later). The */5 immich-search-probe re-warms the PG clip_index afterwards.
+resource "kubernetes_service_account" "immich_ml_recycle" {
+  metadata {
+    name      = "immich-ml-recycle"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "immich_ml_recycle" {
+  metadata {
+    name      = "immich-ml-recycle"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+  # get+patch is what `rollout restart` itself needs (it patches the restartedAt
+  # annotation), but `rollout status` additionally LISTs and WATCHes the
+  # deployment — without those it loops on "failed to list *unstructured.
+  # Unstructured: deployments.apps is forbidden" until the job deadline and the
+  # job reports failure even though the restart succeeded (observed 2026-09-01
+  # on the first live run). Namespaced Role, not ClusterRole: this may only ever
+  # touch immich.
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments"]
+    verbs      = ["get", "list", "watch", "patch"]
+  }
+  # rollout status watches the ReplicaSet/pods to confirm the roll finished.
+  rule {
+    api_groups = ["apps"]
+    resources  = ["replicasets"]
+    verbs      = ["get", "list", "watch"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get", "list", "watch"]
+  }
+}
+
+resource "kubernetes_role_binding" "immich_ml_recycle" {
+  metadata {
+    name      = "immich-ml-recycle"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.immich_ml_recycle.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.immich_ml_recycle.metadata[0].name
+    namespace = kubernetes_namespace.immich.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "immich_ml_recycle" {
+  metadata {
+    name      = "immich-ml-arena-recycle"
+    namespace = kubernetes_namespace.immich.metadata[0].name
+    labels    = { tier = local.tiers.aux }
+  }
+  spec {
+    schedule                      = "45 4 * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {}
+      spec {
+        # Generous: the roll itself takes ~2.5 min and `rollout status` waits.
+        active_deadline_seconds = 600
+        backoff_limit           = 1
+        template {
+          metadata {}
+          spec {
+            service_account_name = kubernetes_service_account.immich_ml_recycle.metadata[0].name
+            restart_policy       = "Never"
+            container {
+              name  = "recycle"
+              image = "bitnami/kubectl:latest"
+              command = ["/bin/bash", "-c", <<-EOF
+                set -euo pipefail
+                DEPLOY=immich-machine-learning
+                NS=immich
+
+                # Age guard: the arena resets on ANY restart, so if the pod is
+                # already young (the gpu-vram-watchdog recycled it under
+                # contention, a node drained, an image rolled) there is nothing
+                # to reclaim and a needless 2.5 min of cold smart search is not
+                # worth spending. 6h is comfortably shorter than the daily
+                # cadence, so a genuine day's growth is never skipped.
+                START=$(kubectl -n "$NS" get pods -l app=$DEPLOY \
+                          -o jsonpath='{.items[0].status.startTime}' 2>/dev/null || true)
+                if [ -n "$START" ]; then
+                  AGE=$(( $(date +%s) - $(date -d "$START" +%s) ))
+                  echo "current immich-ml pod age: $${AGE}s (started $START)"
+                  if [ "$AGE" -lt 21600 ]; then
+                    echo "younger than 6h — arena is already near baseline, skipping recycle"
+                    exit 0
+                  fi
+                else
+                  echo "could not read pod start time; proceeding with the recycle"
+                fi
+
+                echo "recycling $NS/$DEPLOY to reset the onnxruntime arena"
+                kubectl -n "$NS" rollout restart deployment "$DEPLOY"
+                # Recreate strategy: the old pod goes before the new one starts,
+                # so this genuinely waits for the replacement to be Ready.
+                kubectl -n "$NS" rollout status deployment "$DEPLOY" --timeout=8m
+                echo "done at $(date -u +%FT%TZ)"
+              EOF
+              ]
+              resources {
+                requests = { cpu = "10m", memory = "32Mi" }
+                limits   = { memory = "128Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
