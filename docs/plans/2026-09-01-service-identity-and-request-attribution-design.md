@@ -99,7 +99,7 @@ already run.
 | Web apps | Proxy and forward auth | Live, 6 providers, 92 gated ingresses |
 | Kubernetes | apiserver `--oidc-*` | Not wired. No `--oidc-*` flags on the apiserver today |
 | Postgres | LDAP provider and PG `ldap` auth | No LDAP outpost |
-| SSH, RDP, VNC | RAC provider, free and open source since Authentik 2025.2 | No RAC outpost |
+| SSH, RDP, VNC | RAC provider, free and open source since Authentik 2025.2 | No RAC outpost. Endpoints also need a provider bump, see below |
 | NFS, DNS | None short of Kerberos | Out of reach |
 
 Teleport Community Edition was the alternative, free for personal use. It would
@@ -122,7 +122,10 @@ port the two CLF anchored recording rules in the same change.
 
 **Agents may impersonate any user, with a recorded reason.** Authentik has
 impersonation built in, switched on globally, with `impersonation_require_reason`
-defaulting to true. An earlier finding still holds: it needs an authenticated
+defaulting to true. Measured on the live instance, which runs 2026.8.0 rather
+than the 2026.2.4 this doc first claimed: it advertises `can_impersonate`
+alongside `can_asn` and `can_geo_ip`, so no enterprise licence is needed for
+impersonation, LDAP or RAC. An earlier finding still holds: it needs an authenticated
 admin session rather than a bearer token. Both identities travel on an
 impersonated request, the impersonated user so the app behaves correctly and the
 acting agent so the audit trail keeps who really acted.
@@ -132,6 +135,18 @@ nginx fallback stamps `X-authentik-username: admin` from a static htpasswd, and
 `X-Auth-Fallback` is not in `authResponseHeaders`. Backends and logs cannot tell
 that principal from a real SSO admin. Adding the header to `authResponseHeaders`
 fixes it, and the whole design rests on that header meaning something.
+
+There is a second half to that, found while implementing and verified live. The
+`strip-auth-headers` middleware blanks exactly the five `X-authentik-*` request
+headers and not `X-Auth-Fallback`. Seven routes use it: `health/health-api`,
+`tripit/tripit`, `tripit/tripit-api`, `tripit/tripit-app-api` and
+`vpn-portal/vpn-portal-sub`, where it is the only anti spoof control, plus
+`reverse-proxy/gw` and `reverse-proxy/idrac`, where it runs after forward auth.
+So a client can send `X-Auth-Fallback` to the first five today and it arrives
+untouched, while adding it to the strip list would delete the genuine marker on
+the last two. Nothing reads the header yet, which is why this is a decision
+rather than an incident, and it has to be settled before the header starts being
+recorded.
 
 **Flow coverage is Goldmane widened, plus netflow.** Persist workload, port,
 destination service and endpoint type, all already on the wire. Stop deleting the
@@ -215,9 +230,24 @@ Then a new ADR for per principal identity, which ADR-0014 never contemplated.
 
 ## Open questions
 
-- Whether Authentik impersonation needs an enterprise licence on 2026.2.4. The
-  docs found do not say, and our own instance settles it.
-- Whether JSON access log volume is acceptable. Measure an hour before
-  committing.
 - What "unusual" should mean beyond first seen edges, once the widened table has
   a week of data.
+- Whether `X-Auth-Fallback` should also be blanked by `strip-auth-headers`,
+  closing spoofing on five routes at the cost of deleting the genuine marker on
+  two others.
+- RAC endpoints cannot be declared with the Authentik Terraform provider this
+  repo pins. The 2026.8.0 API requires `auth_mode` on endpoint creation and
+  provider 2024.12.1 has no such attribute, so the first SSH or RDP endpoint is
+  either made by hand or waits on a provider bump.
+
+Two questions this doc opened are now answered by measurement.
+
+- Impersonation, LDAP and RAC need no enterprise licence. The live instance is
+  2026.8.0 and advertises `can_impersonate`.
+- JSON access log volume is not a constraint. Measured at 402 to 1,266 bytes a
+  line raw, 3.15x the CLF line, 1.58x once compressed, so roughly 70 to 110 MB a
+  day against a Loki volume sitting at 11.86 of 48.91 GiB.
+
+One half of step 5 is still unbuilt. The JSON access log exists; the per session
+Vault credential does not, and it wants scheduling rather than assuming it rode
+along.
