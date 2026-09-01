@@ -1047,6 +1047,30 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Memory recall is raising ({{ $value | printf \"%.2f\" }}/s). This counter had never incremented before, so any value is new."
+          - alert: MemoryEmbeddingsPending
+            # A memory stored without an embedding is invisible to dense recall FOREVER —
+            # nothing retries it, so the row silently stays lexical-only. embed-on-write is
+            # async, so a brief non-zero reading is normal; an hour of it is not.
+            #
+            # This gauge is what verified the 2026-09-01 backfill (10,892 of 10,892, gauge
+            # back to 0). It had no alert then, which is the same gap that let a 6.5%
+            # recall-loss rate run for seven weeks: the metric existed and nothing read it.
+            expr: memory_embeddings_pending > 0
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} memories have no embedding and are invisible to dense recall. Nothing retries them; re-embed with scripts/reembed.py (dense leg off for the duration) or find why embed-on-write is failing."
+          - alert: MemoryEmbedWriteFailing
+            # The direct signal behind the gauge above: embed-on-write raised. recall.py
+            # deliberately swallows these so a failed embed never breaks a store, which is
+            # right for the write path and means the only trace is this counter.
+            expr: sum(rate(memory_embed_write_total{status="failed"}[15m])) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Memory embed-on-write is failing ({{ $value | printf \"%.3f\" }}/s). Stores still succeed, but those memories get no embedding and stay lexical-only."
           - alert: MemoryRecallTelemetryDown
             # The failure this whole group exists to prevent: losing sight of recall.
             expr: absent(memory_recall_seconds_count)
