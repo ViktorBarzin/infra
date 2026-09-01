@@ -30,6 +30,7 @@ func buildRegistry() []Command {
 	reg = append(reg, vaultCommands()...)
 	reg = append(reg, inviteCommands()...)
 	reg = append(reg, servicesCommands()...)
+	reg = append(reg, reflectCommands()...)
 	reg = append(reg, shareCommands()...)
 	reg = append(reg, pasteCommands()...)
 	reg = append(reg, crowdsecCommands()...)
