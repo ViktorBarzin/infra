@@ -2,8 +2,11 @@
 //
 // Reads /shared/stuck.tsv (id, ownerId, type, originalPath) and decides, per
 // asset, whether a thumbnail could still be produced from the original. Writes
-// /shared/repair.tsv (ownerId, id) for the ones worth re-enqueuing, and appends
-// the counts to /shared/metrics.prom.
+// /shared/repair.tsv (ownerId, id) for the ones worth re-enqueuing, and its own
+// counts to /shared/metrics.20-classify.prom, which the push step concatenates
+// with the other steps'. One file per step, never a shared one: the steps run as
+// three different uids and the second writer to a file another created gets
+// EPERM.
 //
 // WHY IT ACTUALLY DECODES THE FILE
 //
@@ -28,7 +31,7 @@ const sharp = require('/usr/src/app/server/node_modules/sharp');
 
 const STUCK = '/shared/stuck.tsv';
 const REPAIR = '/shared/repair.tsv';
-const METRICS = '/shared/metrics.prom';
+const METRICS = '/shared/metrics.20-classify.prom';
 
 // Owners whose API key is mounted. POST /api/assets/jobs enforces asset.update
 // per asset and admin does not inherit it across users, so anything outside this
@@ -151,7 +154,7 @@ const main = async () => {
     `immich_thumbnail_classify_skipped ${skipped}`,
     '',
   ].join('\n');
-  fs.appendFileSync(METRICS, metrics);
+  fs.writeFileSync(METRICS, metrics);
 
   process.stdout.write(
     `classified=${decoded} repairable=${repairable} damaged=${damaged} unowned=${unowned} skipped=${skipped}\n`,
