@@ -86,6 +86,42 @@
              | reject('equalto', '')
              | list }}
 
+    # Caddy was installed by hand at some point and left running: the stock
+    # welcome page on :80, zero handled requests in 30 days, nothing depending
+    # on it (apt-cache rdepends is empty). Its apt repo was undeclared machine
+    # state, and its Cloudsmith signing key EXPIRED — which failed
+    # `apt-get update` and therefore ABORTED the task below, so nothing on this
+    # box could be apt-installed at all (found 2026-09-01 while installing the
+    # Playwright WebKit dependencies). An unused web server with no update path
+    # is worse than either fixing or removing it, so it goes.
+    #
+    # Runs BEFORE the install task on purpose: while the repo is present with an
+    # expired key, `update_cache: true` fails and the install never happens.
+    - name: Remove the hand-installed caddy and its apt repo
+      block:
+        - name: Stop and disable caddy
+          ansible.builtin.systemd_service:
+            name: caddy
+            state: stopped
+            enabled: false
+          failed_when: false
+
+        - name: Remove the caddy package
+          ansible.builtin.apt:
+            name: caddy
+            state: absent
+            purge: true
+            update_cache: false
+
+        - name: Remove the caddy apt source and its expired keyring
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/apt/sources.list.d/caddy-stable.list
+            - /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+          register: caddy_repo_removed
+
     - name: Install the declared apt packages
       ansible.builtin.apt:
         name: "{{ devvm_packages }}"
