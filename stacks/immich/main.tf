@@ -41,51 +41,57 @@ module "tls_secret" {
 # NFS volumes on Proxmox host (migrated from TrueNAS 2026-04-13)
 
 module "nfs_backups_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-backups-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs/immich/backups"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-backups-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs/immich/backups"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_encoded_video_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-encoded-video-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs/immich/encoded-video"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-encoded-video-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs/immich/encoded-video"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_library_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-library-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs/immich/library"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-library-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs/immich/library"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_profile_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-profile-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs/immich/profile"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-profile-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs/immich/profile"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_thumbs_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-thumbs-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs-ssd/immich/thumbs"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-thumbs-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs-ssd/immich/thumbs"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_upload_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-upload-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs/immich/upload"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-upload-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs/immich/upload"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_postgresql_host" {
@@ -128,11 +134,12 @@ resource "kubernetes_persistent_volume_claim" "immich_postgresql_encrypted" {
 }
 
 module "nfs_ml_cache_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-ml-cache-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs-ssd/immich/machine-learning"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-ml-cache-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs-ssd/immich/machine-learning"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_namespace" "immich" {

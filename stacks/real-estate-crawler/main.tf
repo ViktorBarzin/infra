@@ -223,11 +223,12 @@ module "tls_secret" {
 }
 
 module "nfs_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "real-estate-crawler-data-host"
-  namespace  = kubernetes_namespace.realestate-crawler.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/real-estate-crawler"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "real-estate-crawler-data-host"
+  namespace          = kubernetes_namespace.realestate-crawler.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/real-estate-crawler"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "realestate-crawler-ui" {

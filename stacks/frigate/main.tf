@@ -58,11 +58,12 @@ resource "kubernetes_persistent_volume_claim" "config_encrypted" {
 }
 
 module "nfs_media_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "frigate-media-host"
-  namespace  = kubernetes_namespace.frigate.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/frigate/media"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "frigate-media-host"
+  namespace          = kubernetes_namespace.frigate.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/frigate/media"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "frigate" {

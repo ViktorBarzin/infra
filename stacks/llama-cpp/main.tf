@@ -175,12 +175,13 @@ resource "kubernetes_namespace" "llama_cpp" {
 # ~2s vs ~10s on HDD NFS). Page-cache is warmed by the download Job so
 # first inference reads from warm cache.
 module "nfs_models" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "llama-cpp-models"
-  namespace  = kubernetes_namespace.llama_cpp.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs-ssd/llamacpp"
-  storage    = "30Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "llama-cpp-models"
+  namespace          = kubernetes_namespace.llama_cpp.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs-ssd/llamacpp"
+  storage            = "30Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # Download Job. Pulls Q4_K_M GGUF + mmproj for every model in locals.models
