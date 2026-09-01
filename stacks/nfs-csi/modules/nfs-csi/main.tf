@@ -5,7 +5,7 @@ resource "kubernetes_namespace" "nfs_csi" {
   metadata {
     name = "nfs-csi"
     labels = {
-      tier = var.tier
+      tier               = var.tier
       "keel.sh/enrolled" = "true"
     }
   }
@@ -120,11 +120,20 @@ resource "helm_release" "nfs_csi_driver" {
   })]
 }
 
-# Historical name retained for PV compatibility — 48 bound PVs reference
-# storageClassName: nfs-truenas. The actual backend is the Proxmox host NFS
-# (var.nfs_server = 192.168.1.127) since TrueNAS was decommissioned
-# 2026-04-13. SC names are immutable on PVs, so renaming would require
-# migrating every PV. Not worth the churn for a cosmetic change.
+# Legacy name, now being migrated away from (Viktor, 2026-09-01 — this reverses
+# the "not worth the churn" call recorded here previously). The backend is the
+# Proxmox host NFS (var.nfs_server = 192.168.1.127); TrueNAS was decommissioned
+# 2026-04-13, so this name points at a product that no longer exists here. The
+# count has grown from 48 bound PVs to 74, which is the argument for doing it
+# now rather than later: the cost only rises.
+#
+# It is NOT renamed in place. storageClassName is immutable on both PV and PVC,
+# so a change recreates the pair, and pvc-protection blocks that until no pod
+# mounts the claim — a stack has to be scaled to zero for its own migration.
+# So nfs-pve is added ALONGSIDE and stacks move over one at a time by passing
+# storage_class_name to modules/kubernetes/nfs_volume. This object stays until
+# the last PV referencing it is gone. Note that a bound pair does not consult
+# the StorageClass object at all, so nothing breaks while both exist.
 resource "kubernetes_storage_class" "nfs_truenas" {
   metadata {
     name = "nfs-truenas"
@@ -145,4 +154,65 @@ resource "kubernetes_storage_class" "nfs_truenas" {
     server = var.nfs_server
     share  = "/srv/nfs"
   }
+}
+
+# The same Proxmox-host export as nfs-truenas above, under a name that says
+# what it actually is. New volumes should use this; existing ones migrate
+# per stack. Identical parameters and mount options on purpose — this is a
+# renaming, not a behaviour change.
+resource "kubernetes_storage_class" "nfs_pve" {
+  metadata {
+    name = "nfs-pve"
+  }
+  storage_provisioner = "nfs.csi.k8s.io"
+  reclaim_policy      = "Retain"
+  volume_binding_mode = "Immediate"
+
+  mount_options = [
+    "nfsvers=4",
+    "soft",
+    "timeo=30",
+    "retrans=3",
+    "actimeo=5",
+  ]
+
+  parameters = {
+    server = var.nfs_server
+    share  = "/srv/nfs"
+  }
+}
+
+# The Synology (192.168.1.13), a different machine entirely. Exactly one volume
+# lives here today — navidrome-music on /volume1/music — and until 2026-09-01 it
+# was labelled nfs-truenas like everything else, because the module hardcoded
+# that name regardless of which server the caller passed. That is how a 5.76 TB
+# Synology share came to be reported as a 10Gi PVC "91.1% full" by the health
+# check. Its free space is watched by OffsiteDestinationFillingUp / AlmostFull,
+# not by PVC thresholds.
+resource "kubernetes_storage_class" "nfs_synology" {
+  metadata {
+    name = "nfs-synology"
+  }
+  storage_provisioner = "nfs.csi.k8s.io"
+  reclaim_policy      = "Retain"
+  volume_binding_mode = "Immediate"
+
+  mount_options = [
+    "nfsvers=4",
+    "soft",
+    "timeo=30",
+    "retrans=3",
+    "actimeo=5",
+  ]
+
+  parameters = {
+    server = var.synology_nfs_server
+    share  = "/volume1"
+  }
+}
+
+variable "synology_nfs_server" {
+  description = "Synology NFS server. Distinct from var.nfs_server (the Proxmox host); only navidrome-music uses it today."
+  type        = string
+  default     = "192.168.1.13"
 }

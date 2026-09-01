@@ -500,6 +500,46 @@ check_pvcs() {
     space_result=$($KUBECTL exec -n monitoring deploy/prometheus-server -- \
         wget -qO- 'http://localhost:9090/api/v1/query?query=100*(1-kubelet_volume_stats_available_bytes/kubelet_volume_stats_capacity_bytes)' 2>/dev/null || true)
 
+    # PVCs backed by the Synology (192.168.1.13) are excluded from the fullness
+    # thresholds below, because that filesystem already has its own dedicated
+    # alerts and this check can only mislabel it.
+    #
+    # These are static NFS shares whose PVC request is nominal, so kubelet
+    # reports the BACKING FILESYSTEM rather than the claim. navidrome-music
+    # requests 10Gi but its PV points at server 192.168.1.13 share
+    # /volume1/music, so on 2026-09-01 it reported "91.1% full" for a 5.76 TB
+    # volume with 0.51 TB free. Nothing about that is a PVC problem, and the
+    # autoresizer can never act on it.
+    #
+    # /volume1 IS covered, independently and correctly, by
+    # OffsiteDestinationFillingUp (<10% free) and OffsiteDestinationAlmostFull
+    # (<4%) reading the offsite_dest_* gauges offsite-sync-backup pushes. Those
+    # exist because the same volume hit 99% on 2026-08-06 and surfaced only
+    # through this PVC by accident; the accident has since been replaced by
+    # real coverage, so the accident can go.
+    #
+    # Keyed on the backing SERVER, not on volume size: a size threshold would
+    # also silence the 61 PVCs on the shared TrueNAS export at 192.168.1.127,
+    # which have no equivalent capacity alert and must keep this one.
+    # Deliberately NOT removed from the monitored/unmonitored counts: the
+    # telemetry exists, it is simply not judged by a threshold that cannot apply.
+    local synology_pvcs
+    synology_pvcs=$($KUBECTL get pv -o json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for p in d.get("items", []):
+    spec = p.get("spec", {})
+    csi = spec.get("csi") or {}
+    srv = (csi.get("volumeAttributes") or {}).get("server") or (spec.get("nfs") or {}).get("server")
+    ref = spec.get("claimRef") or {}
+    if srv == "192.168.1.13" and ref.get("namespace") and ref.get("name"):
+        print(ref["namespace"] + "/" + ref["name"])
+' 2>/dev/null || true)
+    export SYNOLOGY_PVCS="$synology_pvcs"
+
     local space_status="PASS" space_detail="" full_list=""
     if [[ -z "$space_result" ]]; then
         space_status="WARN"
@@ -509,16 +549,19 @@ check_pvcs() {
         # a managed PVC should already have grown, so still being here means it is
         # unmanaged or has hit its ceiling), FAIL >=97% (imminent ENOSPC).
         full_list=$(echo "$space_result" | python3 -c '
-import json, sys
+import json, os, sys
 try:
     data = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
+skip = set(x for x in (os.environ.get("SYNOLOGY_PVCS") or "").split() if x)
 rows = []
 for r in data.get("data", {}).get("result", []):
     m = r.get("metric", {})
     ns = m.get("namespace", "?")
     pvc = m.get("persistentvolumeclaim", "?")
+    if ns + "/" + pvc in skip:
+        continue
     try:
         pct = float(r["value"][1])
     except (KeyError, IndexError, ValueError):
