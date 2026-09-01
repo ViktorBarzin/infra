@@ -40,10 +40,13 @@ graph TB
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| Authentik Server | 2026.2.2 | `stacks/authentik/` | Core IdP application servers (3 replicas) |
-| Authentik Worker | 2026.2.2 | `stacks/authentik/` | Background task processors (2 replicas) |
+| Authentik Server | 2026.8.0 | `stacks/authentik/` | Core IdP application servers (3 replicas) |
+| Authentik Worker | 2026.8.0 | `stacks/authentik/` | Background task processors (2 replicas) |
 | PgBouncer | Latest | `stacks/authentik/` | PostgreSQL connection pooler (3 replicas) |
 | Embedded Outpost | - | Standalone deployment, managed by Authentik | Forward auth endpoint for Traefik (2 replicas, PG-backed sessions) |
+| Public Outpost | - | `stacks/authentik/guest.tf` | Anonymous-binding outpost backing `auth = "public"` (1 replica) |
+| LDAP Outpost | - | `stacks/authentik/postgres-ldap.tf` | Prepared for Postgres `ldap` auth. **0 replicas, inert** |
+| RAC Outpost | - | `stacks/authentik/rac.tf` | Prepared for SSH/RDP/VNC. **0 replicas, inert** |
 | Traefik ForwardAuth | - | `modules/kubernetes/ingress_factory/` | Middleware attached when `auth = "required"` or `"public"` |
 | Vault OIDC Method | - | `stacks/vault/` | Human SSO authentication to Vault |
 | Vault K8s Auth | - | `stacks/vault/` | Service account JWT authentication |
@@ -172,6 +175,45 @@ Authentik provides OIDC for 10 applications:
 | Kubernetes Dashboard | OIDC (confidential) | Built for dashboard SSO — currently **idle** (apiserver OIDC blocked; dashboard uses forward-auth + token-paste) |
 | Linkwarden | OIDC | Bookmark manager SSO |
 | Wrongmove | OIDC | Real estate app SSO |
+
+### LDAP and RAC providers — prepared, not enabled (2026-09-01)
+
+Step 7 of the service-identity design extends identity to the two protocols
+authentik reaches natively rather than through its HTTP-only proxy provider.
+Both are declared in Terraform with their outposts at **0 replicas**, so nothing
+listens and no existing service changes behaviour.
+
+| Surface | Mechanism | Where | Reachable at |
+|---------|-----------|-------|--------------|
+| Postgres | LDAP provider + outpost, PostgreSQL `ldap` auth method | `stacks/authentik/postgres-ldap.tf` | `ak-outpost-postgres-ldap.authentik.svc.cluster.local:389` / `:636` when enabled |
+| SSH, RDP, VNC | RAC provider + outpost | `stacks/authentik/rac.tf` | `authentik.viktorbarzin.me/application/rac/...` on the existing ingress |
+
+Neither needs an ingress. The LDAP outpost's Kubernetes controller adds no
+ingress reconciler (only the proxy controller does), and the RAC controller
+declares no ports and removes the Service reconciler entirely, dialling the
+authentik server outbound over a websocket instead. So the `auth` tier
+conventions have no router to apply to; access control for both is the
+application's policy binding, each bound to a group created empty.
+
+The LDAP half uses a dedicated `ldap-bind` flow rather than
+`default-authentication-flow`, because that flow carries
+`default-authentication-mfa-validation` with `webauthn` in its `device_classes`
+and `not_configured_action = configure`. An LDAP bind has no browser, so a
+passkey challenge cannot be answered and a device-setup diversion cannot be
+completed.
+
+**Neither feature needs an enterprise licence**, read from this instance rather
+than the docs: the licence summary reports `unlicensed`, and both live at OSS app
+labels (`authentik.providers.rac`, `authentik.providers.ldap`) with plain
+`ModelViewSet`s. `EnterpriseRequiredMixin` appears only under
+`authentik.enterprise.*`. Impersonation is in the same position: no licence
+check, gated instead by the brand `impersonation` flag (on), the
+`authentik_core.impersonate` permission, and `impersonation_require_reason` (on).
+It is session-based, so it still cannot be started with an API bearer token.
+
+Enabling either half, and the Postgres `pg_hba` and role changes that are
+deliberately **not** in the Terraform, are in
+`docs/runbooks/authentik-ldap-rac-outposts.md`.
 
 ### Kubernetes API authentication (OIDC) — CURRENTLY NON-FUNCTIONAL
 
@@ -399,3 +441,4 @@ kubectl oidc-login setup --oidc-issuer-url=https://authentik.viktorbarzin.me/app
 - [Networking](./networking.md) - Ingress, DNS, load balancing
 - [Vault Runbook](../runbooks/vault.md) - Vault operations and troubleshooting
 - [Kubernetes Access Runbook](../runbooks/k8s-access.md) - Setting up kubectl with OIDC
+- [Authentik LDAP and RAC Outposts](../runbooks/authentik-ldap-rac-outposts.md) - Enabling the prepared LDAP and RAC halves, and the Postgres-side change
