@@ -436,4 +436,4 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 - **Home Assistant**: ha-london (default), ha-sofia. "ha"/"HA" = ha-london
 - **Frontend**: Svelte for all new web apps
 - **Tools**: Docker containers only — never `brew install` locally
-- **Pod monitoring**: Never use `sleep` — spawn background subagent with `kubectl get pods -w`
+- **Pod monitoring / waiting**: Never use `sleep` — and `kubectl get pods -w` is a watch-and-guess, not a check. Wait on the CONDITION: `homelab deploy wait <ns>/<deploy>` for a rollout, `homelab ci watch [commit] [--repo <owner/name>]` for a pipeline, `homelab k8s rollout-status <app>` for a resource, or the `Monitor` tool with an until-loop for anything else. Measured over 175 sessions: 1,789 bare `sleep N` calls against 2 uses of `deploy wait`. Full rule + why a fixed sleep is not a check: execution.md §4.
