@@ -520,7 +520,7 @@
       "id": 11,
       "type": "barchart",
       "title": "Busiest source workloads",
-      "description": "Cumulative flow count per source workload. Top 12 — the ns/workload labels need the room.",
+      "description": "Cumulative flow count per source workload. A source with no namespace is labelled the way the sankey labels it, by endpoint type and name ('host k8s-node1', 'networkset cloudflare-edge'), with 'pub' reading as 'internet'. Top 12 because the labels need the room.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "goldmane-edges-pg"
@@ -580,7 +580,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT src_ns || '/' || src_workload AS workload, SUM(flow_count) AS flows FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1 ORDER BY flows DESC LIMIT 12"
+          "rawSql": "SELECT CASE WHEN src_ns <> '-' THEN src_ns || '/' || src_workload WHEN src_workload = 'pub' THEN 'internet' ELSE src_type || ' ' || src_workload END AS workload, SUM(flow_count) AS flows FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1 ORDER BY flows DESC LIMIT 12"
         }
       ]
     },
