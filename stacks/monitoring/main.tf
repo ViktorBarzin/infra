@@ -5,6 +5,7 @@
 variable "tls_secret_name" { type = string }
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
+variable "postgresql_host" { type = string }
 variable "monitoring_idrac_username" { type = string }
 
 data "vault_kv_secret_v2" "secrets" {
@@ -22,6 +23,8 @@ module "monitoring" {
   tls_secret_name               = var.tls_secret_name
   nfs_server                    = var.nfs_server
   mysql_host                    = var.mysql_host
+  postgresql_host               = var.postgresql_host
+  dbaas_root_password           = data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]
   alertmanager_account_password = data.vault_kv_secret_v2.secrets.data["alertmanager_account_password"]
   idrac_username                = var.monitoring_idrac_username
   idrac_password                = data.vault_kv_secret_v2.secrets.data["monitoring_idrac_password"]
