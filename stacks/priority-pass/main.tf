@@ -39,12 +39,13 @@ module "tls_secret" {
 # boarding-pass images, no embedded DB; drops LUKS-at-rest (low-sensitivity, accepted).
 # See docs/plans/2026-06-05-block-storage-harden-nfs-design.md
 module "nfs_priority_pass" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "priority-pass-uploads-nfs"
-  namespace  = kubernetes_namespace.priority-pass.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/priority-pass"
-  storage    = "10Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "priority-pass-uploads-nfs"
+  namespace          = kubernetes_namespace.priority-pass.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/priority-pass"
+  storage            = "10Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "priority-pass" {
@@ -179,7 +180,7 @@ module "ingress" {
   max_body_size   = "10m"
   extra_annotations = {
     "gethomepage.dev/description" = "Boarding pass and lounge tracker"
-    "gethomepage.dev/icon" = "mdi-airplane"
+    "gethomepage.dev/icon"        = "mdi-airplane"
   }
 }
 

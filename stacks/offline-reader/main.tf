@@ -33,12 +33,13 @@ resource "kubernetes_namespace" "offline_reader" {
 
 # --- NFS RWX PVC (HDD): captured Pages + manifests + SQLite. Also mounted by capture Jobs. ---
 module "nfs_pages" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "offline-reader-pages"
-  namespace  = kubernetes_namespace.offline_reader.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/offline-reader"
-  storage    = "50Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "offline-reader-pages"
+  namespace          = kubernetes_namespace.offline_reader.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/offline-reader"
+  storage            = "50Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # --- Job RBAC (ADR-0002): the app creates one single-file-cli capture Job per Capture. ---
@@ -238,14 +239,14 @@ resource "kubernetes_manifest" "offline_reader_secrets" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  auth              = "required" # owner-only Authentik forward-auth; app trusts X-Authentik-Username
-  allowed_groups    = ["Home Server Admins"]
-  dns_type          = "proxied"
-  namespace         = kubernetes_namespace.offline_reader.metadata[0].name
-  name              = "offline-reader"
-  port              = 8000
-  tls_secret_name   = var.tls_secret_name
+  source          = "../../modules/kubernetes/ingress_factory"
+  auth            = "required" # owner-only Authentik forward-auth; app trusts X-Authentik-Username
+  allowed_groups  = ["Home Server Admins"]
+  dns_type        = "proxied"
+  namespace       = kubernetes_namespace.offline_reader.metadata[0].name
+  name            = "offline-reader"
+  port            = 8000
+  tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/icon"        = "mdi-book-arrow-down"
     "gethomepage.dev/description" = "Saved articles for offline reading"

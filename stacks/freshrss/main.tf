@@ -98,12 +98,13 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 # (node6 LUN-cap relief, beads code-dfjn). FreshRSS extensions are static
 # plugin files (no embedded DB; the app DB is external MySQL), so NFS is safe.
 module "nfs_extensions" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "freshrss-extensions"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/freshrss/extensions"
-  storage    = "1Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "freshrss-extensions"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/freshrss/extensions"
+  storage            = "1Gi"
+  storage_class_name = "nfs-pve"
 }
 
 
