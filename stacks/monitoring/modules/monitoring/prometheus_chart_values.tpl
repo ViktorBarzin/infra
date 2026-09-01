@@ -4379,6 +4379,68 @@ serverFiles:
               severity: warning
             annotations:
               summary: "image-flipflop-detect hasn't reported in {{ $value | humanizeDuration }} — the image-ownership signal is stale, check the CronJob in monitoring"
+      - name: Stray Workloads
+        # Metrics pushed by the stray-workload-detect CronJob (stray_workload.tf,
+        # daily 07:05). It subtracts what Terraform declares from what is
+        # actually running and reports the difference. Declarations come from the
+        # Tier-1 state database on CNPG plus the committed Tier-0 projection;
+        # accounted-for means matched by name, belonging to a declared
+        # helm_release, carrying an ownerReference, stamped by a known in-cluster
+        # reconciler, or written down in exempt.json with a reason.
+        rules:
+          - alert: StrayWorkloadDetected
+            # Kyverno admission cannot answer this: it decides whether a pod is
+            # ALLOWED (trusted registry, not privileged, no host namespaces) and
+            # says nothing about whether anything declares it. A workload that
+            # was admitted correctly and later dropped out of Terraform passes
+            # every admission rule forever, and if nothing talks to it the flow
+            # trail never sees it either — servarr/qbittorrent-exporter ran that
+            # way from 2026-03-25, keel-updated, in no state file and no commit.
+            #
+            # `for: 30m` only guards against reading a half-written push. The
+            # gauge is already a daily whole-cluster comparison, so this does not
+            # fire on transient state.
+            expr: stray_workload_count > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} running workload(s)/pod(s) that no Terraform declaration accounts for — check the `stray_workload` series for kind/namespace/name and the `reason` label. reason=undeclared usually means a resource was deleted from .tf without a destroy (adopt it with an `import {}` block, or delete the live object); reason=orphan-pod is a bare pod left behind by hand; reason=helm-release-undeclared is a hand-run `helm install`. If the name belongs to a Tier-0 stack (infra/platform/cnpg/vault/dbaas/external-secrets), regenerate the committed projection instead: `python3 scripts/gen-tier0-workload-inventory.py`"
+          - alert: StrayWorkloadInventoryBroken
+            # THE HELM-UNSTICK LESSON, made loud. The dangerous failure is not
+            # missing a stray workload, it is the declared inventory coming back
+            # short and every workload in the cluster reading as stray. The job
+            # refuses to report below MIN_DECLARED declarations or above
+            # MAX_FINDING_RATIO of the live set, pushes this gauge as 0 and exits
+            # non-zero. Without this alert that refusal would look like a quiet,
+            # healthy run with a stale count.
+            expr: stray_workload_inventory_ok == 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "stray-workload-detect refused to report: the declared inventory does not describe this cluster (see `stray_workload_declared_total` vs `stray_workload_live_total`, and the Job's logs for which guard tripped). Usually the Tier-1 state extraction failed part-way or the Tier-0 projection is stale — NOT that the cluster is full of stray workloads."
+          - alert: StrayWorkloadDetectorStale
+            # The job runs daily; 50h means at least two runs were missed. Without
+            # this the count above silently freezes at its last value and a NEW
+            # stray workload would never be reported — the same failure mode as a
+            # probe that stops running while its last result still reads healthy.
+            #
+            # The absent_over_time branch covers the case the timestamp
+            # comparison CANNOT see: a job that has never pushed at all, which is
+            # what a broken first apply or a wiped Pushgateway looks like. A `>`
+            # comparison against a series with no samples yields an empty result
+            # and never fires (see the `or vector(0)` note in .claude/CLAUDE.md
+            # for the same trap on the Loki side). 26h means at least one
+            # scheduled run has been missed, so it does not fire between deploying
+            # this and the first 07:05 run; the prometheus-uptime guard stops a
+            # freshly-restored Prometheus with an empty TSDB from false-firing.
+            expr: (time() - stray_workload_last_run_timestamp > 50 * 3600) or (absent_over_time(stray_workload_last_run_timestamp[26h]) and on() (time() - process_start_time_seconds{job="prometheus"}) > 26 * 3600)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "stray-workload-detect hasn't reported in {{ $value | humanizeDuration }} — the declared-versus-running signal is stale, check the CronJob in monitoring (a failed init container means the Tier-1 state extraction could not complete, which is deliberately fatal rather than a short inventory)"
       - name: Infrastructure Drift
         # Metrics pushed by .woodpecker/drift-detection.yml after each cron run.
         # See Wave 7 of the state-drift consolidation plan.
