@@ -175,6 +175,19 @@ alertmanager:
           - alertname = ImmichThumbnailReconcileStale
         target_matchers:
           - alertname =~ "ImmichThumbnailRepairNotTaking|ImmichThumbnailRepairUnowned"
+      # The generic ratio alerts and the Immich-specific rate alerts describe the
+      # same errors two ways. If the ratio one has already escalated to critical,
+      # the warning that saw it first adds nothing — keep the louder one.
+      - source_matchers:
+          - alertname = IngressErrorRate5xxHigh
+        target_matchers:
+          - alertname = ImmichHTTP5xxElevated
+        equal: [service]
+      - source_matchers:
+          - alertname = HighService4xxRate
+        target_matchers:
+          - alertname = ImmichHTTP4xxElevated
+        equal: [service]
       # Power outage makes on-battery alert redundant
       - source_matchers:
           - alertname = PowerOutage
@@ -1406,6 +1419,67 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Immich thumbnail reconciler has not reported in {{ $value | printf \"%.0f\" }}s (>48h) — the self-heal for dropped thumbnail jobs is not running"
+          # Immich HTTP error volume — ABSOLUTE RATES, not ratios (added 2026-09-01).
+          #
+          # Immich is already covered by HighService4xxRate (>30%),
+          # HighServiceErrorRate (>10%) and IngressErrorRate5xxHigh (>5%), and it
+          # is excluded from none of them. Over the 7 days around the 2026-08-31
+          # missing-thumbnail incident all three only ever reached `pending` and
+          # none fired, so the event that put 1,139 thumbnail 404s in the access
+          # log was invisible to alerting.
+          #
+          # A ratio does not work for this service. Immich's traffic is bursty and
+          # mostly idle (about 5 req/min overnight), so a handful of 404s from
+          # someone scrolling past the 110 known-dead photos takes the 4xx ratio to
+          # 93% on a 5m window and still 76% on 30m. Raising the traffic floor does
+          # not fix it: the ratio is meaningless whenever the denominator is small,
+          # which here is most of the day. Absolute rate asks the question actually
+          # worth asking — "are errors happening at a rate a person would notice?"
+          #
+          # 499 is EXCLUDED from the 4xx rule, and that exclusion is what makes the
+          # threshold usable. Traefik logs a browser cancelling an in-flight image
+          # as 499, which is ordinary behaviour when scrolling a photo grid (718 of
+          # them in one day here, and every routine "burst" over 7 days turned out
+          # to be scroll-cancels). Counting them made ordinary browsing look like
+          # an incident.
+          #
+          # Thresholds from 7 days of measurement (15m windows):
+          #   real 4xx  median 0/min, p95 0.08, p99 0.74, max 63.8
+          #             above 5/min in exactly 4 windows, all of them the incident
+          #   5xx       median 0/min, p95 0, max 1.17, only one window above 1/min
+          # So both fire on the incident and on nothing else in that week.
+          #
+          # Known permanent contributors, deliberately left inside the numbers
+          # because they are small and their absence would be its own signal: the
+          # 110 photos with destroyed originals (see the reconciler alerts above),
+          # the /share/<key>/photos/<id> deep-link 404 (upstream immich #27786),
+          # and about 900/day of `GET /api/map/markers?...&fileCreatedBefore=` 400s
+          # from the web UI sending an empty date. Together those are ~0.6/min,
+          # well under the 5/min floor.
+          - alert: ImmichHTTP4xxElevated
+            expr: |
+              sum by (service) (
+                rate(traefik_service_requests_total{service=~"immich-immich-server-.*",code=~"4..",code!="499"}[15m])
+              ) * 60 > 5
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich 4xx at {{ $value | printf \"%.1f\" }}/min (threshold 5/min, excludes 499 scroll-cancels) — baseline is 0"
+              description: "Sustained client errors on immich-server. Find the shape with: homelab logs query '{namespace=\"traefik\"} |= \"immich-immich-immich-viktorbarzin-me@kubernetes\" |~ \"HTTP/[0-9.]+\\\" 4[0-9][0-9] \"' --since 1h — then group by path. A wall of /api/assets/<id>/thumbnail 404s means the generation pipeline dropped work; check immich_thumbnail_stuck_assets and the immich-thumbnail-reconcile CronJob."
+          - alert: ImmichHTTP5xxElevated
+            expr: |
+              sum by (service) (
+                rate(traefik_service_requests_total{service=~"immich-immich-server-.*",code=~"5.."}[15m])
+              ) * 60 > 1
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich 5xx at {{ $value | printf \"%.1f\" }}/min (threshold 1/min) — baseline is zero"
+              description: "Server-side errors on immich-server, which normally emits none. Fires well below IngressErrorRate5xxHigh's 5% ratio, so treat it as the early warning. Check `kubectl -n immich get pods` and the immich-api logs; a Keel minor-version roll can produce a brief 502 burst, which should clear inside the 10m hold."
           # Downloads that were left partial. Traefik writes its 200 and
           # Content-Length before the body, so a transfer that dies part-way is
           # logged as an ordinary success and the recipient is left with a
