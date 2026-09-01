@@ -267,9 +267,11 @@ resource "kubernetes_deployment" "aggregate" {
     }
   }
   spec {
-    # 1 replica: the edge set is a global upsert keyed on (src_ns, dst_ns,
-    # action); a second replica only doubles writes for no benefit (Goldmane
-    # streams per-flow). Stateless (no PVC) so RollingUpdate is fine.
+    # 1 replica: the edge set is a global upsert keyed on the edge identity
+    # (source/destination workload, namespace and endpoint type, destination
+    # service and port, action); a second replica only doubles writes for no
+    # benefit (Goldmane streams per-flow). Stateless (no PVC) so RollingUpdate
+    # is fine.
     replicas = 1
     selector {
       match_labels = {

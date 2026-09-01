@@ -511,7 +511,9 @@ The durable **east-west flow trail** (below) is now the preferred data source fo
 the *internal* (namespace-to-namespace) half of each Wave-1 egress allowlist —
 faster and identity-stamped vs the original iptables-`LOG`→journald→Loki path
 (ADR-0014: "Enforcement gains a better data source"). The unique observed
-namespace pairs live in CNPG DB `goldmane_edges`, table `edge`. To derive the
+namespace pairs live in CNPG DB `goldmane_edges`, table `edge` (which since
+2026-09-01 also carries workload, endpoint type, destination Service and port). To
+derive the
 namespaces a source is observed talking to (the `allow` set that seeds its
 NetworkPolicy):
 
@@ -545,10 +547,21 @@ refined by a `service-identity` label in the few multi-Service namespaces
    **not** a trail (lost on Goldmane restart). Enabled via operator CRs in
    `stacks/calico/main.tf`; reversible toggle (Goldmane is OSS tech-preview).
 2. **`goldmane-edge-aggregator`** (`stacks/goldmane-edge-aggregator`) — streams
-   Goldmane's gRPC `Flows.Stream` over **mTLS** and upserts the low-cardinality
-   namespace-pair edge set (`edge(src_ns,dst_ns,action,first_seen,last_seen,
-   flow_count)`) into CNPG DB `goldmane_edges`. Self-edges and empty-namespace
-   (public-internet) flows are dropped — in-cluster relationships only. The mTLS
+   Goldmane's gRPC `Flows.Stream` over **mTLS** and upserts the per-workload edge
+   set into CNPG DB `goldmane_edges`: source and destination workload, their
+   namespaces and endpoint types, the destination Service and port, and the action
+   (**widened 2026-09-01**; before that it was namespace pairs alone). Dropped, and
+   counted by reason: flows where both ends are workloads in the **same namespace**,
+   and flows where an end carries no identity at all. **Node, network-set and
+   internet flows are kept** — the drop test is on endpoint type, not on string
+   equality of the two namespaces, which also matched (and deleted) any flow with
+   a non-workload end at BOTH ends, since Goldmane labels such an end `-`.
+   Measured 2026-09-01: that deleted class is currently empty (0 of 2,168 live
+   flows, because no HostEndpoints are defined), so the type test guards a class
+   that appears once they are. The immediate gain is the other half — 1,116 of
+   those 2,168 flows (51%) touch an external address and now carry a port, a
+   workload and an endpoint type where they carried a bare namespace pair. Aggregation is per workload, not per
+   pod: pod names churn on every restart, and Whisker serves live per-pod detail. The mTLS
    client cert **reuses the operator's Tigera-CA-signed `whisker-backend-key-pair`**
    (Goldmane verifies CA-chain only, not identity) rather than copying the CA
    private key into TF state — **re-apply the stack if the operator rotates that
