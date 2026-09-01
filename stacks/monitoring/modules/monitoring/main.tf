@@ -37,7 +37,7 @@ variable "postgresql_host" {
   type        = string
   description = "CNPG primary. The stray-workload reconciler reads Tier-1 Terraform state from the terraform_state database here."
 }
-variable "dbaas_root_password" {
+variable "dbaas_postgresql_root_password" {
   type        = string
   sensitive   = true
   description = "CNPG superuser, used only by the stray-workload-detect-db-init Job to create its read-only reader role."
