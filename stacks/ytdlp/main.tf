@@ -60,19 +60,21 @@ module "tls_secret" {
 }
 
 module "nfs_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ytdlp-data-host"
-  namespace  = kubernetes_namespace.ytdlp.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/ytdlp"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ytdlp-data-host"
+  namespace          = kubernetes_namespace.ytdlp.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/ytdlp"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_highlights_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ytdlp-highlights-data-host"
-  namespace  = kubernetes_namespace.ytdlp.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/ytdlp-highlights"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ytdlp-highlights-data-host"
+  namespace          = kubernetes_namespace.ytdlp.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/ytdlp-highlights"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "ytdlp" {

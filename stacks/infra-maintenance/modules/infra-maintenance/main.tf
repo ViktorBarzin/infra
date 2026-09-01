@@ -67,11 +67,12 @@ variable "nfs_server" { type = string }
 # }
 
 module "nfs_etcd_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "infra-etcd-backup-host"
-  namespace  = "default"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/etcd-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "infra-etcd-backup-host"
+  namespace          = "default"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/etcd-backup"
+  storage_class_name = "nfs-pve"
 }
 
 # # backup etcd
