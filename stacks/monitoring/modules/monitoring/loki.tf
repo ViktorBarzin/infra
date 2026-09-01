@@ -609,6 +609,12 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # the cap: when a build or a test run is the largest, the cap eating
               # it is the mechanism working correctly and not worth a message.
               #
+              # The watcher compares UNRECLAIMABLE memory (anon + shmem), not
+              # memory.current. current rides up to the cap in any pane doing file
+              # I/O because the cap reclaims cache instead of killing: one pane
+              # measured 6143 MB of a 6144 MB cap with memory.events max=45450 and
+              # oom_kill=0, while holding only 628 MB that could not be reclaimed.
+              #
               # 30s detection, deliberately not a Prometheus rule. The devvm is
               # scraped every 2 minutes and the house floor for `for:` is 3, so a
               # metric rule cannot react to a pane that crosses and dies inside one
