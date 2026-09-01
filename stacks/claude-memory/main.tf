@@ -266,21 +266,30 @@ resource "kubernetes_deployment" "claude-memory" {
             # runbook Phase 5). Read live by embeddings_enabled(); rollback =
             # set to "0" and re-apply (instant lexical-only, schema untouched).
             name  = "MEMORY_EMBEDDINGS_ENABLED"
-            value = "0"
+            value = "1"
           }
           env {
             # Model swap, 2026-09-01: BAAI/bge-large-en-v1.5 -> Qwen/Qwen3-Embedding-0.6B,
             # served by onnxruntime from a graph baked into the image. Native 1024-d, so
             # the halfvec(1024) column and the HNSW index are untouched and the migration
             # is a re-embed rather than a schema change. It is also multilingual, which
-            # bge-large is not: 9.2% of a 400-memory sample carries Bulgarian that the
-            # English-only model has no representation for.
+            # bge-large is not: 6.1% of the corpus (663 of 10,914, counted in full rather
+            # than sampled) carries Cyrillic the English-only model cannot represent, and
+            # 16.5% of the 400 most recent do.
             #
-            # MEMORY_EMBEDDINGS_ENABLED is 0 above ONLY for the cutover. The re-embed
-            # (scripts/reembed.py) rewrites the embedding column in place, so until it
-            # finishes the index holds a mix of bge and Qwen vectors; recall serves
-            # lexical-only for the duration rather than ranking against both. Flip back
-            # to "1" once the backfill completes and the eval gate passes.
+            # CUTOVER DONE 2026-09-01. All 10,892 non-sensitive memories were re-embedded
+            # on the T4 in 22.8 min at 8.0/s, coverage verified at 10,892 of 10,892 with
+            # memory_embeddings_pending back to 0 and zero sensitive rows embedded
+            # (ADR-0003). Rows at both ends of the id range reproduce a fresh Qwen embed
+            # at cosine 1.00000.
+            #
+            # The eval gate passed on the preserved 119-query harness: a paired bootstrap
+            # against the stored bge baseline puts EVERY metric's 95% CI across zero in
+            # every stratum, i.e. statistical parity on English retrieval, no regression.
+            # The swap is justified by latency (21ms on CUDA against 250-900ms for
+            # bge-large on CPU) and by multilingual coverage, NOT by English quality --
+            # and the multilingual gain remains unmeasured, because that eval set contains
+            # no Cyrillic queries.
             #
             # Rolling back the model is this flag, not a vector restore: an in-place
             # re-embed leaves no bge vectors behind, and api/recall.py documents
