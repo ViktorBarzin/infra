@@ -316,11 +316,12 @@ resource "kubernetes_persistent_volume_claim" "nextcloud_data_encrypted" {
 }
 
 module "nfs_nextcloud_backup_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "nextcloud-backup-host"
-  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/nextcloud-backup"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "nextcloud-backup-host"
+  namespace          = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/nextcloud-backup"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_pve_root_host" {

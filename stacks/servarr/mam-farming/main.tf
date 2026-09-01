@@ -24,12 +24,13 @@ locals {
 # and bp-spender can co-schedule on any node. See docs/architecture/storage.md
 # "Per-VM SCSI-LUN cap" lever #1.
 module "mam_data_nfs" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-mam-farming-data"
-  namespace  = var.namespace
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/servarr/mam-farming"
-  storage    = "1Gi"
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "servarr-mam-farming-data"
+  namespace          = var.namespace
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/servarr/mam-farming"
+  storage            = "1Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # --------------------------- Grabber ---------------------------------

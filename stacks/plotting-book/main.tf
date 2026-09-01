@@ -244,11 +244,12 @@ module "ingress" {
 # -----------------------------------------------------------------------------
 
 module "nfs_plotting_book_backup_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "plotting-book-backup-host"
-  namespace  = kubernetes_namespace.plotting-book.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/plotting-book-backup"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "plotting-book-backup-host"
+  namespace          = kubernetes_namespace.plotting-book.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/plotting-book-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_cron_job_v1" "plotting_book_backup" {

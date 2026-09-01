@@ -178,11 +178,12 @@ resource "kubernetes_service" "redis_master" {
 }
 
 module "nfs_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "redis-backup-host"
-  namespace  = kubernetes_namespace.redis.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/redis-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "redis-backup-host"
+  namespace          = kubernetes_namespace.redis.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/redis-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_stateful_set_v1" "redis_v2" {
