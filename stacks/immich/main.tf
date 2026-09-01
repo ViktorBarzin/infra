@@ -1634,6 +1634,16 @@ resource "kubernetes_cron_job_v1" "immich_ml_recycle" {
     labels    = { tier = local.tiers.aux }
   }
   spec {
+    # SUSPENDED 2026-09-01: superseded by the descheduler's immich-ml-restart
+    # PodLifeTime profile (stacks/descheduler/values.yaml). Suspended rather
+    # than deleted for the verification window — the descheduler is the design
+    # we want, but an earlier attempt to switch was reverted on the strength of
+    # a dry-run harness that turned out to produce false negatives (it raced the
+    # informer cache and enumerated no pods at all, in any namespace). Once the
+    # profile is observed actually evicting immich-ml, delete this CronJob and
+    # its ServiceAccount, Role and RoleBinding. If it is not, flip this back to
+    # false and we have the bound again in one field.
+    suspend                       = true
     schedule                      = "45 4 * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
