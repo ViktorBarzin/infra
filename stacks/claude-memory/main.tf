@@ -393,19 +393,21 @@ resource "kubernetes_deployment" "claude-memory" {
               # ONE time-slice of the T4 (the operator advertises 100), plus the VRAM
               # contract the scheduler counts and the gpu-vram-watchdog enforces.
               #
-              # 1200 -> 2000 MiB (2026-09-01). The first attempt baked an int8 graph at
-              # ~600 MiB of weights; int8 was then rejected because it produced vectors
-              # scoring cosine 0.16-0.37 against the reference model, so the image now
-              # carries an fp16 graph at ~1.2 GiB. 2000 = ~1200 weights + ~300 CUDA
-              # context + arena and margin.
+              # 1200 -> 3200 MiB (2026-09-01), following the precision the graph ended up
+              # at. int8 (~600 MiB) was rejected because it produced vectors scoring
+              # cosine 0.16-0.37 against the reference model. fp16 (~1.2 GiB) could not be
+              # produced at all: onnxconverter_common cannot serialise a graph this size
+              # with shape inference on, and emits a type-inconsistent graph with it off.
+              # So the image carries the fp32 graph the fidelity gate accepted at cosine
+              # 1.00000, at ~2.4 GiB of weights. 3200 = ~2400 weights + ~300 CUDA context
+              # + arena and margin.
               #
-              # Still a first estimate, to be tightened from gpu_pod_memory_used_bytes
-              # once it has run, exactly as ADR-0016 asks. It fits without a capacity
-              # change: after the 2026-08-31 re-basing of every tenant to measured
-              # footprints, declared totals are 7,684 of the 14,000 advertised, so this
-              # takes headroom from 6,316 to 4,316.
+              # Deliberately generous while unmeasured, and to be tightened from
+              # gpu_pod_memory_used_bytes once it has actually run, as ADR-0016 asks. It
+              # still fits without a capacity change: declared totals go to 10,884 of the
+              # 14,000 advertised, leaving 3,116 MiB of headroom.
               "nvidia.com/gpu"         = "1"
-              "viktorbarzin.me/gpumem" = "2000"
+              "viktorbarzin.me/gpumem" = "3200"
             }
           }
         }
