@@ -17,9 +17,15 @@ been on (see post-incident note below).
 - **kube-apiserver static-pod manifest** (`/etc/kubernetes/manifests/kube-apiserver.yaml`):
   `--audit-policy-file=/etc/kubernetes/audit-policy.yaml`,
   `--audit-log-path=/var/log/kubernetes/audit/audit.log`,
-  `--audit-log-maxage=30 --audit-log-maxbackup=10 --audit-log-maxsize=100`
-  (≤1 GB on disk, 30-day rotation), plus the `audit-policy` (File, RO) and
-  `audit-logs` (DirectoryOrCreate) hostPath volumes/mounts.
+  `--audit-log-maxage=30 --audit-log-maxbackup=10 --audit-log-maxsize=100`,
+  plus the `audit-policy` (File, RO) and `audit-logs` (DirectoryOrCreate)
+  hostPath volumes/mounts.
+  **On-disk history is ~2.8 days, not 30.** Measured 2026-09-01: at ~415 MB/day
+  the size cap rotates a 100 MB file every 6-7 hours (9 rotations in 55 h), so
+  `maxbackup=10` is reached long before `maxage=30` matters. The 1 GB ceiling
+  holds. Loki keeps 30 days, so the trail survives there; the on-node grep
+  fallback below covers roughly three days. `--audit-log-maxbackup` is the knob
+  if more on-node history is wanted (k8s-master `/` had 33 GB free of 59 GB).
 - **Persistence across `kubeadm upgrade`:** the same flags + volumes are in the
   `kubeadm-config` ConfigMap (`kube-system`), `ClusterConfiguration.apiServer.{extraArgs,extraVolumes}`
   (v1beta4). Without this, a control-plane upgrade regenerates the manifest and
@@ -30,6 +36,39 @@ been on (see post-incident note below).
   `/var/log/kubernetes/audit/audit.log` (it schedules on the control-plane node
   and mounts host `/var/log`). Query in Loki/Grafana with
   `{job="kubernetes-audit"}`.
+
+## Two policy files, and only one is live
+
+`stacks/rbac/modules/rbac/audit-policy.tf` writes a *different* audit policy to
+a *different* path, and the apiserver never reads it. Measured 2026-09-01:
+
+| | Path | Read by the apiserver? |
+| --- | --- | --- |
+| this runbook's policy | `/etc/kubernetes/audit-policy.yaml` | yes, `--audit-policy-file` points at it |
+| the Terraform resource | `/etc/kubernetes/policies/audit-policy.yaml` | no |
+
+The Terraform version also disagrees on the log path
+(`/var/log/kubernetes/audit.log`) and the rotation flags (`maxage=7`,
+`maxbackup=3`), and its rules *would* have logged `get`/`list` at Metadata level.
+It has a `# THIS RESOURCE IS INERT` header as of 2026-09-01 and was deliberately
+left alone: its `triggers` are content hashes, so changing them re-runs an SSH
+provisioner that rewrites the apiserver manifest and restarts the API on the
+single control-plane node, and CI applies that stack with no SSH key.
+
+## Reads are not audited, and what that costs to change
+
+Rule 1 of the live policy is `level: None` on `get, list, watch`, so **no
+Kubernetes read is recorded anywhere**. Over 6 hours on 2026-09-01 the audit log
+held 74,060 events (40,353 update, 21,368 create, 10,082 delete, 2,257 patch)
+and zero reads, while the apiserver served 366,219 read requests. "Who read this
+Secret" has no answer today.
+
+Auditing Secret reads would cost about +147 MB/day (+36% on audit volume, +4.2%
+on Loki's 3.54 GB/day cluster-wide ingest) and would shorten on-node history from
+~2.8 to ~2.1 days. It lands on the master's local disk and in Loki, never in
+etcd. Full sizing, the narrower `get`-only variant, and why Metadata level
+answers less than it sounds like:
+`docs/runbooks/apiserver-oidc-agent-identity.md` → "The audit read gap".
 
 ## How to attribute a change ("who deleted X, when")
 

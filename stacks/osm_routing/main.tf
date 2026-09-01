@@ -47,11 +47,12 @@ resource "kubernetes_resource_quota_v1" "osm_routing" {
 }
 
 module "nfs_osrm_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "osm-routing-osrm-data-host"
-  namespace  = kubernetes_namespace.osm-routing.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/osm-routing/osrm"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "osm-routing-osrm-data-host"
+  namespace          = kubernetes_namespace.osm-routing.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/osm-routing/osrm"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_otp_data_host" {

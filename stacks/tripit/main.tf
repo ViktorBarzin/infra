@@ -372,13 +372,14 @@ resource "kubernetes_manifest" "db_external_secret" {
 # same document store, hence RWX). Lives under /srv/nfs on the Proxmox host,
 # so the daily-backup pipeline auto-discovers and versions it.
 module "documents_nfs" {
-  source       = "../../modules/kubernetes/nfs_volume"
-  name         = "tripit-documents-host"
-  namespace    = kubernetes_namespace.tripit.metadata[0].name
-  nfs_server   = var.nfs_server
-  nfs_path     = "/srv/nfs/tripit-documents"
-  storage      = "5Gi"
-  access_modes = ["ReadWriteMany"]
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "tripit-documents-host"
+  namespace          = kubernetes_namespace.tripit.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/tripit-documents"
+  storage            = "5Gi"
+  access_modes       = ["ReadWriteMany"]
+  storage_class_name = "nfs-pve"
 }
 
 # RWO encrypted PVC for the PERSONAL document vault (passports, IDs). Separate
