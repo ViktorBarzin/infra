@@ -167,6 +167,14 @@ alertmanager:
           - alertname = ImmichSearchProbeStale
         target_matchers:
           - alertname =~ "ImmichSmartSearchSlow|ImmichClipIndexColdCache"
+      # Same shape for the thumbnail reconciler: its gauges live in the
+      # Pushgateway, which keeps serving the last value forever. If the CronJob
+      # stops running, "N photos still need repair" is frozen history rather than
+      # a current fact, so let the staleness alert speak for them.
+      - source_matchers:
+          - alertname = ImmichThumbnailReconcileStale
+        target_matchers:
+          - alertname =~ "ImmichThumbnailRepairNotTaking|ImmichThumbnailRepairUnowned"
       # Power outage makes on-battery alert redundant
       - source_matchers:
           - alertname = PowerOutage
@@ -993,6 +1001,47 @@ serverFiles:
               severity: warning
             annotations:
               summary: "gpu-vram-watchdog has no available replica for 15m — runtime VRAM enforcement (over-budget recycle) is OFF. Budget still scheduler-enforced."
+      # Memory recall. Nothing watched this path until 2026-09-01, which is how a
+      # 6.5% silent-loss rate ran for seven weeks: the server never errored, the
+      # per-turn hook gave up at 6s, and the only record was a log file on one
+      # workstation. The histogram had existed since 2026-07-11 with no rule reading it.
+      - name: Memory recall
+        rules:
+          - alert: MemoryRecallSlow
+            # p90 target from the GPU-embedding plan. Generous against an expected
+            # ~20ms GPU embed and a ~350ms CPU fallback, so this fires on a real
+            # regression rather than on normal variation between the two.
+            expr: histogram_quantile(0.9, sum by (le) (rate(memory_recall_seconds_bucket[30m]))) > 0.5
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Memory recall p90 {{ $value | printf \"%.2f\" }}s (>0.5s) — the per-turn recall hook gives up at 6s, so sustained slowness costs sessions their memories silently."
+          - alert: MemoryEmbedCpuFallback
+            # A non-zero rate means the GPU path is degraded and the CPU provider is
+            # carrying query embedding. Recall still works, which is the point of the
+            # fallback, but nothing else would say the T4 stopped serving.
+            expr: sum(rate(memory_embed_fallbacks_total[15m])) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Memory query embedding is falling back to CPU — the CUDA provider is failing at inference. Recall is degraded, not down. Check the claude-memory pod and GPU VRAM."
+          - alert: MemoryRecallErrors
+            expr: sum(rate(memory_recall_errors_total[15m])) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Memory recall is raising ({{ $value | printf \"%.2f\" }}/s). This counter had never incremented before, so any value is new."
+          - alert: MemoryRecallTelemetryDown
+            # The failure this whole group exists to prevent: losing sight of recall.
+            expr: absent(memory_recall_seconds_count)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "claude-memory recall telemetry absent 30m — the p90 and fallback alerts above are blind."
       # chrome-service browser pool (broker + FleetView + worker pods). The
       # broker exposes browser_* gauges (job=kubernetes-pods). A CPU-wedged worker
       # is the 6.5h-swiftshader class — the CPU limit caps it at 4 cores and the
@@ -1320,6 +1369,43 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Immich search probe has not reported in {{ $value | printf \"%.0f\" }}s — immich-search-probe CronJob may be broken"
+          # Photos the job pipeline dropped. Immich chains metadataExtraction ->
+          # thumbnailGeneration through BullMQ; a job that exhausts its retries or
+          # was never enqueued (server died between saving the asset and queueing)
+          # is never looked at again, and the photo shows a grey tile forever. The
+          # immich-thumbnail-reconcile CronJob (immich ns, 04:40) re-enqueues those
+          # nightly, so these alerts fire only when it CANNOT fix something.
+          #
+          # Repairable = readable original, so a sustained non-zero means the
+          # reconciler ran and the repair did not take. Damaged originals are
+          # excluded by design (immich_thumbnail_unrepairable_assets tracks those
+          # separately and is deliberately NOT alerted — 110 assets lost their
+          # bytes in the NFS-migration era and no retry brings them back).
+          - alert: ImmichThumbnailRepairNotTaking
+            expr: immich_thumbnail_repairable_assets{job="immich-thumbnail-reconcile"} > 0
+            for: 26h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} Immich photos still have no thumbnail after a reconcile run — readable originals, so regenerate-thumbnail is failing; check the immich-thumbnail-reconcile Job logs"
+          # An owner we hold no API key for. POST /api/assets/jobs enforces
+          # asset.update per asset and admin does not cross users, so the
+          # reconciler can only repair owners whose key is in Vault secret/immich
+          # (viktor_api_key, anca_api_key). Add one to fix.
+          - alert: ImmichThumbnailRepairUnowned
+            expr: immich_thumbnail_repair_unowned{job="immich-thumbnail-reconcile"} > 0
+            for: 26h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} repairable Immich photos belong to a user with no API key in Vault — add <user>_api_key to secret/immich so the reconciler can reach them"
+          - alert: ImmichThumbnailReconcileStale
+            expr: time() - immich_thumbnail_reconcile_last_run_timestamp{job="immich-thumbnail-reconcile"} > 172800
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich thumbnail reconciler has not reported in {{ $value | printf \"%.0f\" }}s (>48h) — the self-heal for dropped thumbnail jobs is not running"
           # Downloads that were left partial. Traefik writes its 200 and
           # Content-Length before the body, so a transfer that dies part-way is
           # logged as an ordinary success and the recipient is left with a
@@ -1906,8 +1992,19 @@ serverFiles:
           # the pod lives.
           # keep_firing_for: the series clears when the pod is replaced (not
           # merely restarted), so a repeating OOM loop reads as one alert.
+          # The recency guard (added 2026-09-01, a day after this rule was
+          # rewritten) matters as much as the metric choice.
+          # last_terminated_reason describes the CURRENT pod's most recent exit
+          # and persists for the life of that pod, so on its own the rule fires
+          # forever for a container that OOMed once and has been healthy since:
+          # on first deployment it immediately reported goflow2 (last OOM
+          # 2026-08-09) and paperless-ai (2026-08-21), both of which had been
+          # running fine for weeks. That is the mirror image of the counter-based
+          # rule it replaced — one could never fire, this one could never stop.
+          # Pairing it with a restart in the last hour gives "OOMed AND came back
+          # recently", which is the condition worth waking up for.
           - alert: ContainerOOMKilled
-            expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1 and on(namespace, pod, container) increase(kube_pod_container_status_restarts_total[1h]) > 0 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
             keep_firing_for: 30m
             labels:
@@ -1940,11 +2037,23 @@ serverFiles:
           # cron iterations of a typical 5-min/15-min/1h job before paging —
           # transient single-run failures (network blip, upstream timeout)
           # are recovered by the next iteration without alerting.
+          #
+          # The recency window was widened 3600 -> 21600 on 2026-09-01, because
+          # with a 1h window this rule could NEVER FIRE: it required the failure
+          # to persist for 2h while the recency clause went false at 1h and reset
+          # the `for` timer, so it sat permanently in "pending". That is why
+          # paperless-ai's daily rag-index-refresh failed every night for nine
+          # days with no notification — the job was failing and the metric was
+          # correct, but the rule could not reach firing. Widening the window
+          # rather than shortening `for` keeps the intent above intact: still two
+          # hours of persistence before anyone is told, now with six hours of
+          # room for that to elapse. Verified against live data at the time of
+          # the change: the expression matches paperless-ai/rag-index-refresh.
           - alert: JobFailed
             expr: |
               kube_job_status_failed > 0
               and on(namespace, job_name)
-              (time() - kube_job_status_start_time) < 3600
+              (time() - kube_job_status_start_time) < 21600
             for: 2h
             labels:
               severity: warning
@@ -2538,13 +2647,24 @@ serverFiles:
               severity: warning
             annotations:
               summary: "NFS local mirror last run failed (status={{ $value }})"
+          # Threshold raised 180000s (50h) -> 691200s (8d) on 2026-09-01.
+          # vzdump-vms.timer is WEEKLY, not daily: measured on the PVE host,
+          # LastTrigger Sun 2026-08-30 01:00:43 and NextElapse Sun 2026-09-06
+          # 01:01:08. A 50h threshold described as "2 daily cycles" therefore
+          # fired roughly 5 days out of every 7 while the backup was perfectly
+          # healthy — the run it was complaining about had finished with
+          # "=== vzdump-vms complete (status=0, 81G) ===". 8 days allows one
+          # weekly run to be missed entirely plus margin, so a fire now means a
+          # genuinely skipped or failed backup. The other four backup timers on
+          # that host (daily-backup, offsite-sync-backup, devvm-home-backup,
+          # dpkg-db-backup) really are daily and are covered by their own rules.
           - alert: VzdumpBackupStale
-            expr: (time() - vzdump_last_success_timestamp{job="vzdump-backup"}) > 180000
+            expr: (time() - vzdump_last_success_timestamp{job="vzdump-backup"}) > 691200
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "vzdump VM image backup is {{ $value | humanizeDuration }} old (threshold: ~50h / 2 daily cycles)"
+              summary: "vzdump VM image backup is {{ $value | humanizeDuration }} old (threshold: 8d — the timer is weekly)"
               description: "vzdump-vms.timer on 192.168.1.127 hasn't produced a fresh devvm image. Check: ssh root@192.168.1.127 systemctl status vzdump-vms. Runbook: docs/architecture/backup-dr.md (VM Image Backups)."
           - alert: VzdumpBackupNeverRun
             expr: absent(vzdump_last_run_timestamp{job="vzdump-backup"})

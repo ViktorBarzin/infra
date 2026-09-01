@@ -75,10 +75,54 @@ starved both times.
 | After a recycle | 1,964 MiB |
 
 The fresh figure matches ADR-0016's June measurement of ~2.1 GiB. The higher
-numbers are accumulated high-water mark rather than a change in the workload:
-the BFC arena grows to serve each peak and holds the pages until the process
-exits. Growth is driven by the size of the work, not by uptime; the arena was
-still at 1,964 MiB twelve minutes after a recycle.
+numbers are accumulated high-water mark rather than a change in the workload.
+Growth is driven by the size of the work, not by uptime; the arena was still at
+1,964 MiB twelve minutes after a recycle.
+
+**What grows, established 2026-09-01.** The four `MACHINE_LEARNING_PRELOAD__*`
+models (CLIP textual and visual, buffalo_l detection and recognition) pin the
+~1,960 MiB baseline and never unload. That is the keep-smart-search-warm design
+working as intended, and it is not the thing that grows.
+
+The growth comes from OCR. `PP-OCRv5_mobile` is not preloaded: it loads on
+demand, works, and is unloaded by `model_ttl` after 600s. Its weights genuinely
+are freed — resident VRAM visibly drops on unload — but onnxruntime's BFC arena
+keeps the workspace chunks it extended, so the floor ratchets while the peaks
+fall back:
+
+```
+19:05-22:05  1964 MiB   fresh, four preloaded models
+22:22        OCR loads   -> 4790
+23:05        TTL unload  -> 3426     (not back to 1964)
+02:59        OCR loads   -> 4302
+03:35        TTL unload  -> 3548
+```
+
+An earlier version of this document said the arena "holds the pages until the
+process exits". That is not right: unloading a model does return its weights.
+What persists is the arena's cached workspace, and only the floor moves.
+
+**Why the peaks are so large.** `immich_ml/models/ocr/detection.py::_transform`
+scales the *shorter* edge to `maxResolution` (736) and leaves the longer edge
+unbounded, with the ratio clamped to at most 1.0 — so an image whose short edge
+is already below 736 is not downscaled at all:
+
+| asset | short edge | fed to detection |
+|---|---|---|
+| 4000x3000, a normal photo | 3000 | 981x736 = 0.7 Mpx |
+| 7500x736 panorama | 736 | 7500x736 = 5.5 Mpx |
+| 700x8464 scrolling screenshot | 700 | unchanged = 5.9 Mpx |
+
+Of 181,980 assets, 70 exceed 2 Mpx after this transform and 8 exceed 4 Mpx.
+Eight images — 0.004% of the library — set the VRAM floor for the whole
+service, because the arena keeps whatever high-water mark they cause. One of
+them produced the 1.94 GiB Conv request above.
+
+The usual remedy does not apply here: Immich already creates the CUDA provider
+with `arena_extend_strategy: kSameAsRequested`, so there is no power-of-two
+doubling to switch off, and it exposes no setting for `cudnn_conv_algo_search`
+or a CUDA memory cap. The available knobs are `model_ttl`, `model_arena` (CPU
+only), `max_batch_size` and `preload`.
 
 This matters because the budget we set determines when the guard acts. Budgeting
 immich-ml at its plateau tolerates roughly 4 GB of retained arena on a card
@@ -155,6 +199,32 @@ Two independent gaps, both on the Prometheus side:
 
 The Loki ruler's `KernelOOMKiller` rule reads node journals and did fire. It is
 currently the only working OOM detector, and it is how these incidents surfaced.
+
+### Bounding the OCR ratchet (2026-09-01)
+
+Three choices, taken after the investigation above:
+
+- **Report upstream, carry no local patch.** The mechanism is a comment on
+  [immich-app/immich#23462](https://github.com/immich-app/immich/issues/23462),
+  which was already open with no maintainer response and no identified cause
+  (#24024 is closed as its duplicate). Neither report had the mechanism. We do
+  not patch `detection.py` locally, so the image stays unmodified.
+- **Leave `maxResolution` at 736.** Lowering it to 512 would cut the worst case
+  from 5.9 to 3.2 Mpx, but it degrades text recognition across all 181,980
+  assets to tame a tail of 8, and screenshots are exactly the assets most likely
+  to contain text worth reading.
+- **Bound it operationally instead**, with a nightly `immich-ml-arena-recycle`
+  CronJob at 04:45 that resets the arena to its ~1,960 MiB baseline. The
+  gpu-vram-watchdog already recycles this pod, but only under contention; this
+  is the unconditional floor, so growth is bounded whatever arrives in the
+  library. An age guard skips the run when the pod is already under 6h old,
+  since any restart resets the arena.
+
+immich-ml keeps its 2,500 MiB seat rather than being raised to fit the plateau.
+That means it reads as over-contract for much of the day, which is the intended
+contract under ADR-0016: it is the designated sacrificial tenant, a recycle
+costs ~2m23s, and the card cannot hold its plateau alongside qwen3-8b in any
+case.
 
 ### dawarich's web container has the problem its sibling already fixed
 
@@ -382,9 +452,11 @@ new ordering constraint is introduced here.
 - Whether the Kyverno rule moves from audit to enforce depends on what the
   audit reports, including any GPU workload created outside this repo such as
   the proxy-browser pods.
-- immich-ml's ratchet is bounded by recycling rather than prevented. Preload
-  trimming and onnxruntime arena tuning were both considered and deliberately
-  not taken, so the arena will still grow between recycles.
+- immich-ml's ratchet is bounded by recycling rather than prevented, and the
+  arena still grows between recycles. Answered 2026-09-01: the driver is OCR
+  detection's resize, reported upstream, with a nightly recycle as the bound —
+  see "Bounding the OCR ratchet" above. Preload trimming and arena tuning remain
+  not taken; the preloads are the fixed baseline, not the growth.
 - Sablier in front of f1-stream stacks with the Anubis gate already there. We
   expect them to compose; this is verified during rollout rather than assumed.
 
