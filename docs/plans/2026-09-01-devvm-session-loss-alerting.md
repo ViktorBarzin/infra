@@ -1,6 +1,6 @@
 # Telling Viktor when a devvm Claude session dies
 
-**Status:** approved, in execution
+**Status:** done
 **Date:** 2026-09-01
 **Owner:** wizard
 **Predecessor:** [2026-08-16-devvm-pane-memory-cap.md](2026-08-16-devvm-pane-memory-cap.md)
@@ -15,6 +15,14 @@ The containment work from 2026-08-16 did what it set out to do. earlyoom has
 killed nothing on the box in the last 7 days, so the old failure — earlyoom
 picking off every `claude` process box-wide — is no longer what is happening.
 What remains is narrower and quieter, and it has no alerting at all.
+
+```stats
+0 | earlyoom kills, last 7d
+3 | panes that hit the 6G cap, last 7d
+2 | of those that killed a claude
+5 | alerts now watching for it
+30s | detection resolution
+```
 
 ## What is actually happening, measured 2026-09-01
 
@@ -37,6 +45,12 @@ everything else in its own pane, the same mechanism takes the conversation.
 `CONSTRAINT_MEMCG` matters here. A pane can reach its own 6G ceiling while the
 box has 20 GiB free, so box-level memory pressure does not predict this class at
 all. The two need separate signals.
+
+> [!NOTE]
+> Three things in this design were corrected after being drilled against the live
+> box rather than reasoned about: which file records a deliberate kill, where
+> liveness can be read from, and which memory figure means "near the cap". Each
+> section below marks what was measured.
 
 ## Two shapes of loss, and which one lobby sessions take
 
@@ -100,44 +114,64 @@ for. A kill through the lobby calls `sudo tmux-persist-forget <user> <name>`
 (`tmux-api/main.go:825`) so that Restore cannot resurrect a session someone
 deliberately ended. A death cannot make that call.
 
-**A session that leaves tmux while its manifest row is still present is a
-death.** Gone from both is a deliberate kill. This holds whoever did the
-killing, because the forget is the act that carries the intent.
+**Which file records that is the part worth getting right.** The first shipped
+version tested for an orphaned manifest row — a session gone from tmux whose row
+in `/var/lib/tmux-persist/<user>.tsv` was still present. That was wrong, and
+wrong in the worst direction: it called every intentional kill a death. Two of
+Viktor's own sessions were reported as died at 18:52 on 2026-09-01 after being
+closed on purpose.
 
-Verified 2026-09-01: 19 live sessions, 18 manifest rows, the sole difference
-being the prewarm pool slot, and zero orphaned rows.
+`forget` does not remove the manifest row. Reading the implementation:
 
-The manifest is written by a 5-minute timer, which is coarser than we want for
-detection. So the two questions go to different sources:
+```sh
+f="$(tombstones_path "$u")"
+printf '%s\t%s\n' "$sess" "$(now_epoch)" >> "$f"
+```
+
+It appends a **tombstone** to `/var/lib/tmux-persist/<user>.forgotten.tsv` and
+leaves the row alone until the next 5-minute save. So for up to five minutes
+after any deliberate kill, the row is still there, which is exactly the signal
+the first version read as "nobody ended this on purpose".
+
+The tombstone is the real intent record, and it is better than what it replaced
+because it carries a timestamp:
+
+**A session that leaves tmux with a tombstone written in the last 90 seconds is a
+deliberate kill. Anything else is a death.**
+
+The age bound is load-bearing. The tombstone file is append-only and never
+pruned, so a name killed weeks ago still has a row; without the bound, a session
+that reused that name and then genuinely died would be written off as
+intentional. 90 seconds is three ticks.
+
+The manifest is no longer read at all, which makes this a simplification as well
+as a fix — reboot restore-gap counting never used it. So the two questions go to
+different sources:
 
 - **Was it alive a moment ago?** `tl-session-watch`'s own 30-second snapshot.
-- **Was ending it deliberate?** The manifest row.
+- **Was ending it deliberate?** A fresh tombstone.
 
-Each source answers only what it is authoritative about, and the 5-minute lag
-stops affecting detection latency.
+Drilled on the live box in both directions, with the fix running:
+
+| what was done | what the watcher said |
+|---|---|
+| `tmux kill-session` + `tmux-persist-forget` | `event=session_killed` — no rule selects it |
+| `kill -9` on the claude, no forget | `event=session_died` |
 
 ## How the signals travel
 
 ```mermaid
-flowchart LR
-  subgraph box["devvm"]
-    K["kernel<br/>oom-kill lines"]
-    T["tmux<br/>sessions + @claude_state"]
-    M["tmux-persist manifest<br/>root 0600"]
-    C["cgroup memory.current<br/>+ fattest process"]
-    W["tl-session-watch<br/>every 30s"]
-    T --> W
-    M --> W
-    C --> W
-    W -->|"journal lines"| J["journald"]
-    K --> J
-    W -->|"textfile .prom"| NE["node_exporter"]
-  end
-  J -->|promtail| L["Loki ruler"]
+flowchart TD
+  W["tl-session-watch, every 30s<br/>reads tmux stamps, tombstones,<br/>cgroup anon + shmem"]
+  K["kernel<br/>oom-kill lines"]
+  W -->|"journal lines"| J["journald"]
+  K --> J
+  W -->|"textfile .prom"| NE["node_exporter"]
+  J -->|"promtail"| L["Loki ruler"]
   NE -->|"2m scrape"| P["Prometheus"]
   L --> AM["Alertmanager"]
   P --> AM
-  AM -->|"warning, per user,<br/>notify once"| S["Slack #alerts"]
+  AM -->|"warning, per user,<br/>notify once"| SL["Slack #alerts"]
 ```
 
 Detection speed is deliberately decoupled from the scrape interval. Prometheus
@@ -153,7 +187,7 @@ threshold once there is a week of it.
 |---|---|---|---|
 | `ClaudeOOMKilled` | `oom-kill:` with `task=claude` | kernel, via Loki | after the fact |
 | `ClaudeSessionDied` | gone from tmux with its manifest row intact, or a live session holding a stamp with no claude alive | `tl-session-watch`, via Loki | 30s |
-| `PaneNearMemoryCap` | pane above 3G **and** claude is the fattest process in it | `tl-session-watch`, via Loki | 30s |
+| `PaneNearMemoryCap` | pane's unreclaimable memory (`anon + shmem`) above 3G **and** claude is the fattest process in it | `tl-session-watch`, via Loki | 30s |
 | `DevvmMemoryPressure` | `MemAvailable < 8%` for 10m | node_exporter, via Prometheus | ~5 min |
 | `SessionWatchSilent` | no watcher heartbeat for 30m | `tl-session-watch`, via Loki | 30m |
 
@@ -170,13 +204,42 @@ command in the description.
 
 ### Thresholds and why they sit there
 
-**Pane at 3G, gated on claude being the fattest process.** The gate is what
-makes the low threshold safe. A working claude measures around 0.5 GB and the
-busiest pane observed is 1.5 GB, so a claude at 3G is roughly 6x its normal
-size and nothing routine looks like that. Half the cap remains, which is the
-runway to act in. The gate also keeps the alert quiet for the case where the cap
-eats a test run, which is the mechanism working correctly — 1 of the 3 kills in
-the last 7 days was `node (vitest)`.
+**Pane at 3G of UNRECLAIMABLE memory, gated on claude being the fattest
+process.** Which number gets compared turned out to matter more than where the
+threshold sits.
+
+`memory.current` is the wrong one. It rides up to the cap in any pane doing file
+I/O, because reaching the cap makes the kernel reclaim page cache rather than
+kill anything. Measured on the box at 19:10, the `issues` pane read 6143 MB of a
+6144 MB cap while holding 624 MB `anon` and 3 MB `shmem`; 5131 MB of the
+remainder was cold `inactive_file`. Its `memory.events` read `max=45450` with
+`oom_kill=0` — the cap had been reached forty-five thousand times and had never
+killed anything.
+
+So the comparison is against `anon + shmem`, the memory a cap cannot reclaim.
+The user slice sets `memory.swap.max=0` and cgroup limits are hierarchical, so
+neither can be paged out. `anon_thp` is not added, being already inside `anon`.
+
+The same pane at two moments is why:
+
+| | `memory.current` | unreclaimable | verdict |
+|---|---|---|---|
+| 18:30, /tmp 95% full | 4627 MB | 4424 MB | warns, correctly |
+| 19:10, after /tmp drained | 6143 MB | 628 MB | quiet, correctly |
+
+Under the `memory.current` comparison the second row would have warned
+continuously and the alert would have been muted within a day.
+
+The gate on claude being the fattest process is what makes 3 GB safe as a
+number: a working claude measures around 0.5 GB, so 3 GB of unreclaimable memory
+in its pane is roughly 6x normal and nothing routine looks like that. It also
+keeps the alert quiet when the cap eats a test run, which is the mechanism
+working correctly — 1 of the 3 kills in the 7 days before this was `node
+(vitest)`.
+
+Both numbers are exported and both ride in the journal line, because the split is
+what says which action helps: delete scratch files when `shmem` dominates, close
+a session when `anon` does.
 
 **Box at 8% available.** Between the p1 of the last 30 days (11.8%) and
 earlyoom's trigger (5%), so it marks an unusual moment with room left before
@@ -268,11 +331,11 @@ than reading it:
   30 seconds is the floor without a substantially hotter loop, and we have no
   history yet on how fast panes actually grow. The exported metric is what will
   answer that.
-- **A false positive from a CLI kill was reproduced during the drills.** A
-  scratch session ended with a plain `tmux kill-session`, while its row was still
-  in a manifest snapshot, was reported as `session_died` exactly as the rules
-  say it should be. The behaviour is correct and the report is wrong, which is
-  the shape this gap will always take.
+- **`tmux kill-session` typed at a CLI without a matching `tmux-persist-forget`
+  still reads as a death**, because nothing tombstones the name. Agents and
+  scripts on this box do sometimes end sessions that way. The fix is for those
+  paths to call the forget wrapper, which is also what keeps Restore from
+  resurrecting them.
 - **A manifest that disagrees with reality is not watched.** This shape was seen
   once, on 2026-08-21, and its cause was found and fixed. It stays out of scope
   until there is evidence it came back.
@@ -297,6 +360,46 @@ purpose:
 Both follow the method the 2026-08-16 pane cap used, where a run whose kernel
 log looked like a complete success had still lost a session. The outcome is what
 gets checked, not the configuration.
+
+## A finding from the drills: /tmp is RAM, and it is charged to the pane
+
+> [!WARNING]
+> Not addressed by this work, and worth its own decision. `/tmp` on the devvm is
+> an 8 GB RAM-backed tmpfs. It was measured 95% full, with 7.0 GB of that being
+> Claude session scratch directories.
+
+`/tmp` on the devvm is an 8 GB RAM-backed tmpfs, measured 95% full on
+2026-09-01, and **7.0 GB of that is `/tmp/claude-1000`** across 124 Claude
+session scratch directories (`-home-wizard-code` alone is 5.7 GB).
+
+That memory is charged to whichever pane cgroup wrote it, as `shmem`. The
+`issues` pane reads:
+
+| field | value |
+|---|---|
+| `memory.current` | 4627 MB |
+| `memory.max` | 6144 MB |
+| `anon` | 783 MB |
+| `file` (of which `shmem` 3641 MB) | 3784 MB |
+
+The user slice sets `memory.swap.max=0`, and cgroup limits are hierarchical, so
+those tmpfs pages can be neither swapped nor dropped. They count fully against
+the 6 GB cap.
+
+`PaneNearMemoryCap` fires on this correctly and selectively, because tmpfs pages
+land in `shmem` and count as unreclaimable. But the action the alert suggests is
+the wrong one for this shape. If the cap bites here the kernel kills the
+highest-RSS task, which is a 448 MB claude, and the 3.6 GB of tmpfs stays exactly
+where it was. Closing a session does not help; deleting the scratch files does,
+and the alert description now says so.
+
+The /tmp figure moves fast. It was 7.6 GB of 8 GB at 18:30 and 4.1 GB at 19:10,
+without anyone intervening.
+
+Worth deciding separately: whether Claude scratch directories should live on disk
+rather than in RAM, whether they should be pruned on session end, or whether
+`/tmp` should simply be smaller so the failure surfaces as ENOSPC rather than as
+memory pressure.
 
 ## Open questions
 

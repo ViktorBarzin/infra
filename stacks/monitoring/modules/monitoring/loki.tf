@@ -581,14 +581,18 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             {
               # The effect, from the watcher rather than the kernel, so it covers
               # every cause and not just OOM. session_died = the session left tmux
-              # with its tmux-persist manifest row intact, which means no
-              # tmux-persist-forget ran and nobody ended it on purpose.
-              # claude_died = the session survived and the conversation in it did
-              # not.
+              # with no tmux-persist TOMBSTONE written in the last 90s, which means
+              # nobody ended it on purpose. claude_died = the session survived and
+              # the conversation in it did not.
               #
-              # Known false positive: `tmux kill-session` typed at a CLI without a
-              # matching `tmux-persist-forget` leaves the row and reads as a death.
-              # Reproduced deliberately during the 2026-09-01 drills.
+              # The tombstone, not the manifest row: tmux-persist-forget appends to
+              # <user>.forgotten.tsv and leaves the manifest row alone until the
+              # next 5-minute save. The first version of this read an orphaned row
+              # and so called every deliberate kill a death for up to five minutes.
+              #
+              # Remaining false positive: `tmux kill-session` typed at a CLI
+              # without a matching `tmux-persist-forget` tombstones nothing and
+              # reads as a death.
               alert  = "ClaudeSessionDied"
               expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"tl-session-watch\"} |~ \"event=(session_died|claude_died)\" | logfmt [2h])) > 0"
               for    = "0m"
@@ -605,6 +609,12 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # the cap: when a build or a test run is the largest, the cap eating
               # it is the mechanism working correctly and not worth a message.
               #
+              # The watcher compares UNRECLAIMABLE memory (anon + shmem), not
+              # memory.current. current rides up to the cap in any pane doing file
+              # I/O because the cap reclaims cache instead of killing: one pane
+              # measured 6143 MB of a 6144 MB cap with memory.events max=45450 and
+              # oom_kill=0, while holding only 628 MB that could not be reclaimed.
+              #
               # 30s detection, deliberately not a Prometheus rule. The devvm is
               # scraped every 2 minutes and the house floor for `for:` is 3, so a
               # metric rule cannot react to a pane that crosses and dies inside one
@@ -616,7 +626,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               labels = { severity = "warning" }
               annotations = {
                 summary     = "{{ $labels.user }} has a pane approaching its 6G cap with claude as the largest process"
-                description = "The next cap kill in this pane takes the conversation, not a build. Normal claude is ~0.5 GB and the busiest pane measured is 1.5 GB, so 3 GB is already ~6x. WHICH SESSION: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |= \"event=pane_near_cap\"' --since 30m. Panes can SHARE a cgroup — four of emo's claudes sat in one run-r*.scope on 2026-09-01 — so several sessions may cross together and all of them are genuinely at risk."
+                description = "The next cap kill in this pane takes the conversation, not a build. Normal claude is ~0.5 GB and the busiest pane measured is 1.5 GB, so 3 GB is already ~6x. WHICH SESSION: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |= \"event=pane_near_cap\"' --since 30m. CHECK WHAT KIND OF MEMORY IT IS FIRST: cat /sys/fs/cgroup/<scope>/memory.stat. If shmem dominates, the pane is holding RAM-backed /tmp files (8G tmpfs, 7.0G of it /tmp/claude-1000 on 2026-09-01) and closing the session will NOT help — the kernel would kill the ~0.5 GB claude and leave the tmpfs behind. Delete the scratch files instead. If anon dominates, closing a session does help (~659 MB each). Panes can also SHARE a cgroup — four of emo's claudes sat in one run-r*.scope — so several sessions may cross together and all are genuinely at risk."
               }
             },
             {
