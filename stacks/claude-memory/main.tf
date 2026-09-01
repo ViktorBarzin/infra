@@ -383,12 +383,19 @@ resource "kubernetes_deployment" "claude-memory" {
               cpu    = "1000m"
             }
             limits = {
-              # 2560Mi -> 3Gi with the ONNX backend (2026-09-01). torch is gone, but
-              # onnxruntime's CUDA provider adds a host-side allocation for the CUDA
-              # context on top of the ~600MiB int8 graph. The limit does not affect
-              # scheduling (only the request does, and that is unchanged), so raising it
-              # costs nothing and avoids an OOM-kill on a path that is hard to attribute.
-              memory = "3Gi"
+              # 2560Mi -> 6Gi with the ONNX backend (2026-09-01), in two steps. 3Gi was
+              # sized for the int8 graph (~600 MiB); int8 was then rejected on vector
+              # fidelity and fp16 could not be produced, so the image carries the fp32
+              # graph at ~2.4 GiB of weights. onnxruntime reads external tensor data into
+              # host memory before handing it to a device, so 3Gi OOM-killed the process
+              # (exit 137) the first time an embed loaded the model — on the CPU provider
+              # in a verification run, which is the same load path the GPU takes.
+              #
+              # 6Gi is headroom over ~2.4 GiB weights plus the runtime and arena, not a
+              # measurement; tighten it from container_memory_working_set_bytes once this
+              # has served traffic. The limit does not affect scheduling (only the
+              # request does, and that is unchanged at 512Mi).
+              memory = "6Gi"
 
               # ONE time-slice of the T4 (the operator advertises 100), plus the VRAM
               # contract the scheduler counts and the gpu-vram-watchdog enforces.
