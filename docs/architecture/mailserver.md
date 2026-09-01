@@ -314,8 +314,8 @@ drain, so `EmailRoundtripFailing` can mean "delayed via backup MX", not lost.
 | `mailserver-data-encrypted` | 2Gi (auto-resize 5Gi) | `proxmox-lvm-encrypted` (LUKS2) | Maildir + Postfix queue + state + logs |
 | `roundcubemail-html-encrypted` | 1Gi | `proxmox-lvm-encrypted` | Roundcube PHP code + user session data |
 | `roundcubemail-enigma-encrypted` | 1Gi | `proxmox-lvm-encrypted` | Roundcube Enigma (PGP) user keys |
-| `mailserver-backup-host` (RWX) | 10Gi | `nfs-truenas` (historical SC name, Proxmox host NFS) | `mailserver-backup` CronJob destination (`/srv/nfs/mailserver-backup/<YYYY-WW>/`) |
-| `roundcube-backup-host` (RWX) | 10Gi | `nfs-truenas` (historical SC name, Proxmox host NFS) | `roundcube-backup` CronJob destination |
+| `mailserver-backup-host` (RWX) | 10Gi | `nfs-truenas` (historical SC name, Proxmox host NFS) — still to move to `nfs-pve`; held back because the share is ~51G | `mailserver-backup` CronJob destination (`/srv/nfs/mailserver-backup/<YYYY-WW>/`) |
+| `roundcube-backup-host` (RWX) | 10Gi | `nfs-pve` (Proxmox host NFS; moved from `nfs-truenas` on 2026-09-01) | `roundcube-backup` CronJob destination |
 
 **Backup**: daily `mailserver-backup` + `roundcube-backup` CronJobs rsync data PVCs to NFS. NFS directory is picked up by the PVE host's inotify-driven `/usr/local/bin/offsite-sync-backup` which pushes to Synology (weekly). See [Storage & Backup Architecture](storage.md) for the 3-2-1 flow.
 
