@@ -99,10 +99,15 @@ small no matter how much traffic flows.
   `NULLIF(dst_service, '-')`.
 - **Rows written before the widening are excluded, not deleted.** They are NULL
   in all seven added columns, so every panel filters on `NOT pre_widening` (the
-  contract `0002_widen_edge.sql` states). `homelab edges` still rolls them up at
-  namespace level, which is where their history stays readable. Leaving them in
-  would swamp the totals: on a scratch replica of the live shape, 4 legacy rows
-  carry 366M accumulated flows against 22M observed since the widening.
+  contract `0002_widen_edge.sql` states). Read off the live table on 2026-09-01,
+  that is all 710 rows in it, carrying 389,663,018 accumulated flows back to
+  2026-06-24 — so the panels start empty on the day the migration lands and fill
+  as each edge is re-observed under the wider identity. Leaving the rows in would
+  dominate every total indefinitely, because a wider identity means they are
+  never updated again. `homelab edges` neither filters nor aggregates them (its
+  query is a bare `SELECT` of the namespace-pair columns), so after the migration
+  it lists a legacy row beside each widened row for the same pair; reading
+  pre-widening history means asking for it, with `WHERE src_type IS NULL`.
 - Panels: all traffic as a filterable table (namespace / workload / destination
   port / action template variables, matching either end of the edge), a
   namespace-to-namespace sankey, busiest ports and workloads, denied edges, the

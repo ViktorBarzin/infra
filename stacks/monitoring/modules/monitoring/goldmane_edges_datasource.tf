@@ -59,12 +59,22 @@
 # rows written before the migration read NULL rather than a sentinel — a
 # sentinel would be indistinguishable from a real observation ('-' is a real
 # unset service, 'unknown' a real endpoint type, 0 a real unrecorded port).
-# Nothing is deleted, and `homelab edges` still rolls those rows up at namespace
-# level. They cannot be plotted on these axes, so the migration's stated
-# dashboard contract is to filter on `NOT pre_widening`, and all 17 SQL
-# statements in dashboards/east-west-traffic.json do. Measured on the scratch
-# replica of the live shape: 4 legacy rows carry 366M accumulated flows against
-# 22M observed since the widening, so an unfiltered total reads 17x high.
+# Nothing is deleted. They cannot be plotted on these axes, so the migration's
+# stated dashboard contract is to filter on `NOT pre_widening`, and all 17 SQL
+# statements in dashboards/east-west-traffic.json do.
+#
+# The scale of what that predicate excludes, read off the live table on
+# 2026-09-01: ALL 710 rows currently in it are pre-widening, and they carry
+# 389,663,018 accumulated flows going back to 2026-06-24. The moment the
+# migration lands, every panel here is therefore empty, and it fills as the
+# aggregator re-observes each edge under the wider identity. An unfiltered total
+# would be dominated by those rows indefinitely, because a wider identity means
+# they are never updated again.
+#
+# `homelab edges` does not filter them and does not aggregate — its query is a
+# bare SELECT of the namespace-pair columns — so after the migration it lists a
+# legacy row alongside each widened row for the same pair. Reading pre-widening
+# history there means asking for it explicitly (`WHERE src_type IS NULL`).
 #
 # The aggregator owns that DDL; this comment is the dashboard's side of the
 # contract. If the column names ever move again, the fix is confined to
