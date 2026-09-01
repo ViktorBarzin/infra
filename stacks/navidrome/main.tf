@@ -95,28 +95,37 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
 }
 
+# On the SYNOLOGY (192.168.1.13), not the Proxmox host like everything else
+# here. Until 2026-09-01 this was labelled nfs-truenas anyway, because the
+# module hardcoded that name whatever server the caller passed — which is how a
+# 5.76 TB Synology share got reported by the health check as a 10Gi PVC "91.1%
+# full". Its free space is watched by OffsiteDestinationFillingUp/AlmostFull,
+# not by PVC thresholds.
 module "nfs_music" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "navidrome-music"
-  namespace  = kubernetes_namespace.navidrome.metadata[0].name
-  nfs_server = "192.168.1.13"
-  nfs_path   = "/volume1/music"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "navidrome-music"
+  namespace          = kubernetes_namespace.navidrome.metadata[0].name
+  nfs_server         = "192.168.1.13"
+  nfs_path           = "/volume1/music"
+  storage_class_name = "nfs-synology"
 }
 
 module "nfs_lidarr_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "navidrome-lidarr-host"
-  namespace  = kubernetes_namespace.navidrome.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/servarr/lidarr"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "navidrome-lidarr-host"
+  namespace          = kubernetes_namespace.navidrome.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/servarr/lidarr"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_freedify_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "navidrome-freedify-host"
-  namespace  = kubernetes_namespace.navidrome.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/freedify-music"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "navidrome-freedify-host"
+  namespace          = kubernetes_namespace.navidrome.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/freedify-music"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "navidrome" {
