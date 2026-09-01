@@ -1086,10 +1086,67 @@ resource "kubernetes_cron_job_v1" "chrome_service_backup" {
               image = "docker.io/library/alpine:3.20"
               command = ["/bin/sh", "-c", <<-EOT
                 set -euxo pipefail
+                apk add --no-cache rsync
                 ts=$(date +"%Y_%m_%d_%H")
-                tar -czf /backup/$${ts}.tar.gz -C /profile .
+
+                # Generations are plain directories, not tarballs, so rsync
+                # --link-dest can hardlink the unchanged majority against the
+                # previous run. A gzip blob cannot dedupe at all: every tarball
+                # is fresh bytes even when the profile has barely moved, which
+                # is how 4 runs a day for 30 days reached 51G.
+                #
+                # Names sort lexically, so the newest generation is the tail.
+                # [0-9][0-9]* not [0-9]+ — BusyBox find uses POSIX BRE, where +
+                # is a literal (the same trap fixed in mailserver on 2026-09-01).
+                gens='.*/[0-9][0-9]*_[0-9][0-9]*_[0-9][0-9]*_[0-9][0-9]*$'
+                prev=$(find /backup -maxdepth 1 -mindepth 1 -type d -regex "$gens" | sort | tail -1)
+                link_dest_arg=""
+                [ -n "$prev" ] && link_dest_arg="--link-dest=$prev"
+
+                # Excluded paths are regenerable: browser and build caches, and
+                # component/model stores Chrome re-downloads on demand. Measured
+                # 2026-09-01, they were 82.8% of every tarball (655.5 MiB of
+                # 792). What stays is the state that cannot be recreated —
+                # Cookies, Login Data, Web Data, Preferences, Local State,
+                # History, Local Storage, IndexedDB and Extensions.
+                rsync -aH --delete $link_dest_arg \
+                  --exclude='/.npm/' \
+                  --exclude='/.cache/' \
+                  --exclude='/lost+found/' \
+                  --exclude='/chromium-data/Default/Cache/' \
+                  --exclude='/chromium-data/Default/Code Cache/' \
+                  --exclude='/chromium-data/Default/Service Worker/' \
+                  --exclude='/chromium-data/Default/GPUCache/' \
+                  --exclude='/chromium-data/Default/DawnCache/' \
+                  --exclude='/chromium-data/Default/DawnGraphiteCache/' \
+                  --exclude='/chromium-data/Default/GrShaderCache/' \
+                  --exclude='/chromium-data/Default/ShaderCache/' \
+                  --exclude='/chromium-data/GrShaderCache/' \
+                  --exclude='/chromium-data/ShaderCache/' \
+                  --exclude='/chromium-data/GraphiteDawnCache/' \
+                  --exclude='/chromium-data/optimization_guide_model_store/' \
+                  --exclude='/chromium-data/component_crx_cache/' \
+                  --exclude='/chromium-data/extensions_crx_cache/' \
+                  --exclude='/chromium-data/WidevineCdm/' \
+                  --exclude='/chromium-data/WasmTtsEngine/' \
+                  --exclude='/chromium-data/OnDeviceHeadSuggestModel/' \
+                  --exclude='/chromium-data/SafeBrowsing/' \
+                  --exclude='/chromium-data/Safe Browsing*' \
+                  --exclude='BrowserMetrics*' \
+                  /profile/ "/backup/$${ts}/"
+
+                # Keep 120 generations = 30 days at 4 runs a day, matching the
+                # window the old -mtime +30 tarball rule kept. Count-based
+                # rather than -mtime because rsync -a stamps a generation
+                # directory with the SOURCE mtime, so -mtime would not measure
+                # when the backup was taken.
+                find /backup -maxdepth 1 -mindepth 1 -type d -regex "$gens" | sort | head -n -120 | xargs -r rm -rf
+
+                # Legacy tarballs from before 2026-09-01 age out on their
+                # original 30-day rule; nothing is deleted early.
                 find /backup -maxdepth 1 -type f -name '*.tar.gz' -mtime +30 -delete
-                echo "Backup complete: $${ts}.tar.gz"
+
+                echo "Backup complete: $${ts} ($(du -sh /backup | cut -f1) total across $(find /backup -maxdepth 1 -mindepth 1 -type d -regex "$gens" | wc -l) generations)"
               EOT
               ]
               volume_mount {

@@ -33,6 +33,15 @@ variable "kube_config_path" {
 }
 variable "tier" { type = string }
 variable "mysql_host" { type = string }
+variable "postgresql_host" {
+  type        = string
+  description = "CNPG primary. The stray-workload reconciler reads Tier-1 Terraform state from the terraform_state database here."
+}
+variable "dbaas_root_password" {
+  type        = string
+  sensitive   = true
+  description = "CNPG superuser, used only by the stray-workload-detect-db-init Job to create its read-only reader role."
+}
 variable "registry_user" {
   type      = string
   sensitive = true
