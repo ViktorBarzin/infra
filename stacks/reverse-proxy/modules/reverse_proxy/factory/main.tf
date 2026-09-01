@@ -220,7 +220,10 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.skip_global_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
-        var.strip_auth_headers ? "traefik-strip-auth-headers@kubernetescrd" : null,
+        # keep-fallback variant on purpose: forward-auth runs on the line above,
+        # so X-Auth-Fallback on this request came from our auth layer, not the
+        # client, and blanking it would delete the break-glass marker.
+        var.strip_auth_headers ? "traefik-strip-auth-headers-keep-fallback@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
       ], var.extra_middlewares)))
       "traefik.ingress.kubernetes.io/router.entrypoints"       = "websecure"

@@ -290,9 +290,50 @@ resource "kubernetes_manifest" "middleware_strip_auth_headers" {
           "X-authentik-email"    = ""
           "X-authentik-name"     = ""
           "X-authentik-groups"   = ""
+          # Blanked here too, and this is the SAFE DEFAULT. Where this
+          # middleware is a route's only anti-spoof control (health/health-api,
+          # tripit x3, vpn-portal/vpn-portal-sub) a client could otherwise send
+          # X-Auth-Fallback itself and have it reach the backend untouched,
+          # which would let it claim the break-glass principal that the nginx
+          # auth fallback stamps. Routes where strip runs AFTER forward-auth
+          # must keep the genuine marker instead, so they use
+          # strip-auth-headers-keep-fallback below.
+          "X-Auth-Fallback" = ""
         }
       }
     }
+  }
+
+  # Same strip, but LEAVES X-Auth-Fallback intact. For routes where this runs
+  # after traefik-authentik-forward-auth, so the header on the request was stamped
+  # by our own auth layer rather than sent by the client. Used by the reverse-proxy
+  # factory (gw, idrac), whose middleware chain puts forward-auth first.
+  resource "kubernetes_manifest" "middleware_strip_auth_headers_keep_fallback" {
+    manifest = {
+      apiVersion = "traefik.io/v1alpha1"
+      kind       = "Middleware"
+      metadata = {
+        name      = "strip-auth-headers-keep-fallback"
+        namespace = kubernetes_namespace.traefik.metadata[0].name
+      }
+      spec = {
+        headers = {
+          customRequestHeaders = {
+            "X-authentik-username" = ""
+            "X-authentik-uid"      = ""
+            "X-authentik-email"    = ""
+            "X-authentik-name"     = ""
+            "X-authentik-groups"   = ""
+          }
+        }
+      }
+    }
+
+    field_manager {
+      force_conflicts = true
+    }
+
+    depends_on = [helm_release.traefik]
   }
 
   depends_on = [helm_release.traefik]
