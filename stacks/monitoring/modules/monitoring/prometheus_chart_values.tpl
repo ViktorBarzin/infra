@@ -1018,18 +1018,28 @@ serverFiles:
       # 6.5% silent-loss rate ran for seven weeks: the server never errored, the
       # per-turn hook gave up at 6s, and the only record was a log file on one
       # workstation. The histogram had existed since 2026-07-11 with no rule reading it.
+      # claude-memory recall. ALL memory alerts live in this one group on purpose:
+      # they were split across here and the catch-all group below until 2026-09-01,
+      # which is how a duplicate MemoryRecallErrors and MemoryEmbedWriteFailing got
+      # added without anyone noticing the originals.
+      #
+      # Traffic is ~4 recalls/hour, so every latency rule here needs a long window
+      # AND a volume guard. A 10m window contains 0-1 requests and its p95 is
+      # whatever that one request did.
       - name: Memory recall
         rules:
-          - alert: MemoryRecallSlow
-            # p90 target from the GPU-embedding plan. Generous against an expected
-            # ~20ms GPU embed and a ~350ms CPU fallback, so this fires on a real
-            # regression rather than on normal variation between the two.
-            expr: histogram_quantile(0.9, sum by (le) (rate(memory_recall_seconds_bucket[30m]))) > 0.5
+          - alert: MemoryRecallLatencyHigh
+            # The recall hook aborts at 6s; sustained slowness silently drops
+            # injected memories from prompts. p90 over 6h, guarded on >=20 samples
+            # so a quiet night cannot produce a quantile out of two data points.
+            # Measured 2026-09-01 after the GPU migration: p90/6h = 1.05s, of which
+            # ~30ms is the embed and ~210ms the lexical OR-broaden.
+            expr: histogram_quantile(0.9, sum by (le) (rate(memory_recall_seconds_bucket[6h]))) > 2.5 and on() sum(increase(memory_recall_seconds_count[6h])) >= 20
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "Memory recall p90 {{ $value | printf \"%.2f\" }}s (>0.5s) — the per-turn recall hook gives up at 6s, so sustained slowness costs sessions their memories silently."
+              summary: "claude-memory recall p90 {{ $value | printf \"%.2f\" }}s over 6h (>2.5s) — approaching the 6s hook timeout, past which sessions lose their memories silently."
           - alert: MemoryEmbedCpuFallback
             # A non-zero rate means the GPU path is degraded and the CPU provider is
             # carrying query embedding. Recall still works, which is the point of the
@@ -1041,36 +1051,36 @@ serverFiles:
             annotations:
               summary: "Memory query embedding is falling back to CPU — the CUDA provider is failing at inference. Recall is degraded, not down. Check the claude-memory pod and GPU VRAM."
           - alert: MemoryRecallErrors
-            expr: sum(rate(memory_recall_errors_total[15m])) > 0
-            for: 10m
+            # The audit's silent-failure class: recall handlers raising (was the
+            # tsquery-500 that cost ~11%% of prompts their memories, unnoticed).
+            expr: increase(memory_recall_errors_total[15m]) > 0
+            for: 5m
             labels:
               severity: warning
             annotations:
-              summary: "Memory recall is raising ({{ $value | printf \"%.2f\" }}/s). This counter had never incremented before, so any value is new."
+              summary: "claude-memory recall handlers are raising (see surface label) — sessions silently losing recall"
+          - alert: MemoryEmbedWriteFailing
+            expr: increase(memory_embed_write_total{status="failed"}[30m]) > 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "claude-memory embed-on-write failing repeatedly — new memories invisible to the dense leg"
           - alert: MemoryEmbeddingsPending
             # A memory stored without an embedding is invisible to dense recall FOREVER —
-            # nothing retries it, so the row silently stays lexical-only. embed-on-write is
-            # async, so a brief non-zero reading is normal; an hour of it is not.
+            # nothing retries it, so the row silently stays lexical-only. That is why the
+            # threshold is >0 rather than the >100 this rule carried until 2026-09-01: a
+            # permanent hole of 20 memories is the same failure as one of 200, and the
+            # 6h/>100 form could not see it.
             #
-            # This gauge is what verified the 2026-09-01 backfill (10,892 of 10,892, gauge
-            # back to 0). It had no alert then, which is the same gap that let a 6.5%
-            # recall-loss rate run for seven weeks: the metric existed and nothing read it.
+            # embed-on-write is async, so a brief non-zero reading is normal; 2h is not.
+            # This gauge is what verified the 2026-09-01 backfill (10,892 of 10,892).
             expr: memory_embeddings_pending > 0
-            for: 1h
+            for: 2h
             labels:
               severity: warning
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} memories have no embedding and are invisible to dense recall. Nothing retries them; re-embed with scripts/reembed.py (dense leg off for the duration) or find why embed-on-write is failing."
-          - alert: MemoryEmbedWriteFailing
-            # The direct signal behind the gauge above: embed-on-write raised. recall.py
-            # deliberately swallows these so a failed embed never breaks a store, which is
-            # right for the write path and means the only trace is this counter.
-            expr: sum(rate(memory_embed_write_total{status="failed"}[15m])) > 0
-            for: 15m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Memory embed-on-write is failing ({{ $value | printf \"%.3f\" }}/s). Stores still succeed, but those memories get no embedding and stay lexical-only."
           - alert: MemoryRecallTelemetryDown
             # The failure this whole group exists to prevent: losing sight of recall.
             expr: absent(memory_recall_seconds_count)
@@ -1078,7 +1088,7 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "claude-memory recall telemetry absent 30m — the p90 and fallback alerts above are blind."
+              summary: "claude-memory recall telemetry absent 30m — the latency and fallback alerts above are blind."
       # chrome-service browser pool (broker + FleetView + worker pods). The
       # broker exposes browser_* gauges (job=kubernetes-pods). A CPU-wedged worker
       # is the 6.5h-swiftshader class — the CPU limit caps it at 4 cores and the
@@ -3890,40 +3900,6 @@ serverFiles:
               severity: warning
             annotations:
               summary: "share-link-geo CronJob (monitoring ns) hasn't succeeded in >49h — geo/unique-IP share-link gauges are stale"
-          - alert: MemoryRecallErrors
-            # The audit's silent-failure class: recall handlers raising (was the
-            # tsquery-500 that cost ~11%% of prompts their memories, unnoticed).
-            expr: increase(memory_recall_errors_total[15m]) > 0
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: "claude-memory recall handlers are raising (see surface label) — sessions silently losing recall"
-          - alert: MemoryEmbedWriteFailing
-            expr: increase(memory_embed_write_total{status="failed"}[30m]) > 3
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: "claude-memory embed-on-write failing repeatedly — new memories invisible to the dense leg"
-          - alert: MemoryEmbedBacklog
-            # Steady state is ~0 (embed-on-write keeps up). A growing backlog
-            # means the background embed task is stalled or the model broke.
-            expr: memory_embeddings_pending > 100
-            for: 6h
-            labels:
-              severity: warning
-            annotations:
-              summary: "claude-memory embeddings backlog >100 for 6h — dense recall coverage degrading"
-          - alert: MemoryRecallLatencyHigh
-            # The recall hook aborts at 6s; p95 near that silently drops
-            # injected memories from prompts.
-            expr: histogram_quantile(0.95, sum(rate(memory_recall_seconds_bucket[10m])) by (le)) > 2.5
-            for: 30m
-            labels:
-              severity: warning
-            annotations:
-              summary: "claude-memory recall p95 >2.5s for 30m — approaching the 6s hook timeout"
           - alert: T3ProbeLegDown
             expr: t3probe_connected{job="t3-probe"} == 0
             for: 5m
