@@ -411,22 +411,27 @@ resource "kubernetes_deployment" "claude-memory" {
               # 1.00000, at ~2.4 GiB of weights. 3200 = ~2400 weights + ~300 CUDA context
               # + arena and margin.
               #
-              # 3200 -> 4000 after MEASURING it (2026-09-01). With the fp32 graph resident
-              # on the T4 the pod reads 3,260 MiB of gpu_pod_memory_used_bytes, so the
-              # estimate was 60 MiB UNDER actual — it would have left claude-memory
-              # permanently over its declared budget and therefore the watchdog's first
-              # candidate to recycle whenever the card came under contention. 4000 is
-              # ~23% margin over the measurement, matching how the other tenants were
-              # sized from measured footprints on 2026-08-31.
+              # 3200 -> 4000 -> 5000, each step from a measurement (2026-09-01).
               #
-              # Sampling note: the pod reads ~100 MiB (CUDA context only) until the model
-              # actually loads, so a measurement taken before the first embed reads far
-              # too low. Load the model, then sample.
+              # A single model load reads 3,260 MiB, which is what 4000 was sized for. But
+              # onnxruntime's CUDA arena GROWS under sustained use: during the 14/s
+              # re-embed backfill the pod reached 4,236 MiB and the watchdog logged
+              # "over budget (used=4236MiB > 4000MiB) but nothing is blocked". That is the
+              # same arena-growth pattern ADR-0016 documents for immich-ml, so a
+              # declaration taken from one load is structurally too low. 5000 covers the
+              # observed sustained peak with margin.
+              #
+              # Two sampling notes for whoever re-tunes this. The pod reads ~100 MiB, the
+              # CUDA context alone, until the model actually loads — sample after the
+              # first embed, never before. And the backfill is the heaviest load this
+              # workload ever sees (thousands of document embeds back to back); steady
+              # recall is one query embed per request, so 5000 is deliberately sized for
+              # the worst case rather than the common one.
               #
               # Still fits without a capacity change: declared totals go to 11,684 of the
               # 14,000 advertised, leaving 2,316 MiB of headroom.
               "nvidia.com/gpu"         = "1"
-              "viktorbarzin.me/gpumem" = "4000"
+              "viktorbarzin.me/gpumem" = "5000"
             }
           }
         }
