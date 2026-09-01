@@ -9,6 +9,12 @@ data "vault_kv_secret_v2" "secrets" {
 
 locals {
   homepage_credentials = jsondecode(data.vault_kv_secret_v2.secrets.data["homepage_credentials"])
+
+  # Immich owner ids. Used by the thumbnail reconciler, which has to route each
+  # repair to its owner's API key: POST /api/assets/jobs checks asset.update per
+  # asset and admin does not inherit that across users.
+  immich_owner_viktor = "2a2ab475-dc9b-48d5-9f47-9f60931a8bcf"
+  immich_owner_anca   = "c10358bf-1412-4358-94f6-e5950f259912"
 }
 
 
