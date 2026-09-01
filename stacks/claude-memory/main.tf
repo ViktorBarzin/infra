@@ -391,11 +391,13 @@ resource "kubernetes_deployment" "claude-memory" {
               # (exit 137) the first time an embed loaded the model — on the CPU provider
               # in a verification run, which is the same load path the GPU takes.
               #
-              # 6Gi is headroom over ~2.4 GiB weights plus the runtime and arena, not a
-              # measurement; tighten it from container_memory_working_set_bytes once this
-              # has served traffic. The limit does not affect scheduling (only the
-              # request does, and that is unchanged at 512Mi).
-              memory = "6Gi"
+              # 4Gi is the CEILING the tier-4-aux LimitRange allows per container. 6Gi was
+              # tried first and made every pod unschedulable ("maximum memory usage per
+              # Container is 4Gi, but limit is 6Gi") — the service was down until it came
+              # back to 4Gi. Raising the ceiling means a namespace-scoped LimitRange
+              # override, not a bigger number here. The limit does not affect scheduling
+              # (only the request does, unchanged at 512Mi).
+              memory = "4Gi"
 
               # ONE time-slice of the T4 (the operator advertises 100), plus the VRAM
               # contract the scheduler counts and the gpu-vram-watchdog enforces.
