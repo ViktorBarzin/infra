@@ -70,6 +70,39 @@ small no matter how much traffic flows.
     is created idempotently by the aggregator at startup (canonical DDL also in
     the repo at `migrations/0001_edge.sql`).
 
+### Grafana — the *East-West Traffic* dashboard
+
+- `https://grafana.viktorbarzin.me/d/east-west-traffic`, folder **Networking**.
+  Source: `dashboards/east-west-traffic.json` in
+  `stacks/monitoring/modules/monitoring/`.
+- Datasource **Goldmane Edges** (uid `goldmane-edges-pg`), provisioned by
+  `stacks/monitoring/modules/monitoring/goldmane_edges_datasource.tf`. It reads
+  the `goldmane_edges` DB as the `goldmane_edges` role, using the same
+  Vault-rotated static credential the aggregator uses
+  (`static-creds/pg-goldmane-edges`), mirrored into `monitoring` by an
+  ExternalSecret and injected via Grafana's `envFromSecrets` +
+  `$__env{GOLDMANE_EDGES_PG_PASSWORD}`. Reloader restarts Grafana on each
+  7-day rotation.
+- **The dashboard needs the widened `edge` schema and is empty (panels error)
+  until that migration runs.** Its panels read `src_name`, `src_type`,
+  `dst_name`, `dst_type`, `dst_port` and `dst_svc_name`, which the table above
+  does not carry yet. The datasource itself works either way. The full column
+  contract, and which fields the dashboard deliberately avoids, is the header
+  comment of `goldmane_edges_datasource.tf`.
+- Panels: all traffic as a filterable table (namespace / workload / destination
+  port / action template variables, matching either end of the edge), a
+  namespace-to-namespace sankey, busiest ports and workloads, denied edges, the
+  host-and-internet class, and **Unusual connections** — a first-seen edge, a
+  workload using a destination port it has never used, or a namespace reaching
+  the internet for the first time, over its own window variable rather than the
+  time picker.
+- Honest limits, stated on the dashboard itself: the table keeps first/last-seen
+  plus a cumulative `flow_count`, so **there is no time series and no rate**;
+  the time picker filters on `last_seen`. No protocol is stored, so a port
+  cannot separate TCP from UDP. And immediately after the widening migration
+  every row looks new for one window, because the rows are re-keyed — the
+  unusual panel needs a burn-in period before its findings are meaningful.
+
 ### Slack `#alerts` — daily digest
 
 > **Channel note (2026-06-25):** posts to **`#alerts`**. The dedicated `#security` channel was abandoned — the shared `alertmanager_slack_api_url` incoming webhook's Slack app is not a member of it, so a channel override there returns HTTP `404 channel_not_found`. Everything now posts to `#alerts` (this digest plus alertmanager's `slack-security` receiver, which keeps its `[SECURITY]` styling so security-lane alerts still stand out there).

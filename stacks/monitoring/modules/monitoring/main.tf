@@ -33,6 +33,9 @@ variable "kube_config_path" {
 }
 variable "tier" { type = string }
 variable "mysql_host" { type = string }
+# CNPG primary, for the Goldmane edge-trail Grafana datasource
+# (goldmane_edges_datasource.tf).
+variable "postgresql_host" { type = string }
 variable "registry_user" {
   type      = string
   sensitive = true

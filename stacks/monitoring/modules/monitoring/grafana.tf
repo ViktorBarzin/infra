@@ -126,6 +126,9 @@ locals {
     "technitium-dns.json"  = "Networking"
     "nginx_ingress.json"   = "Networking"
     "network_traffic.json" = "Networking"
+    # Goldmane east-west edge trail (ADR-0014). MUST be listed: the fallback
+    # folder is "General", which aborts the whole provisioning walk.
+    "east-west-traffic.json" = "Networking"
 
     # Hardware & Host
     "node_exporter_full.json"    = "Hardware"
