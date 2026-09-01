@@ -268,6 +268,29 @@ resource "kubernetes_deployment" "paperless_ai" {
             initial_delay_seconds = 60
             period_seconds        = 30
           }
+          # The container runs TWO processes: the Node app on 3000 and a Python
+          # RAG service on 8000, started as its CHILD. Only 3000 was probed, so
+          # when the RAG child died on 2026-08-23 04:30:15 (mid-index, last line
+          # "Loading documents from ./data/documents.json", nothing after) the
+          # pod stayed Ready and nothing noticed for 9 days. The visible symptom
+          # was the daily rag-index-refresh CronJob failing with curl exit 22 —
+          # /api/rag/index returns 500 because the Node app proxies to
+          # http://localhost:8000/indexing/start and gets ECONNREFUSED.
+          #
+          # A tcp_socket probe on 8000 only asks whether anything is listening,
+          # so a slow index does not trip it, and restarting the container
+          # respawns the child. failure_threshold 4 x 30s tolerates two minutes
+          # of absence before acting; initial_delay 180s covers the Python
+          # service's start, which took ~4s after the Node app on the last cold
+          # start but is given room for a loaded host.
+          liveness_probe {
+            tcp_socket {
+              port = 8000
+            }
+            initial_delay_seconds = 180
+            period_seconds        = 30
+            failure_threshold     = 4
+          }
         }
         volume {
           name = "data"
