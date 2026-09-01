@@ -1001,6 +1001,47 @@ serverFiles:
               severity: warning
             annotations:
               summary: "gpu-vram-watchdog has no available replica for 15m — runtime VRAM enforcement (over-budget recycle) is OFF. Budget still scheduler-enforced."
+      # Memory recall. Nothing watched this path until 2026-09-01, which is how a
+      # 6.5% silent-loss rate ran for seven weeks: the server never errored, the
+      # per-turn hook gave up at 6s, and the only record was a log file on one
+      # workstation. The histogram had existed since 2026-07-11 with no rule reading it.
+      - name: Memory recall
+        rules:
+          - alert: MemoryRecallSlow
+            # p90 target from the GPU-embedding plan. Generous against an expected
+            # ~20ms GPU embed and a ~350ms CPU fallback, so this fires on a real
+            # regression rather than on normal variation between the two.
+            expr: histogram_quantile(0.9, sum by (le) (rate(memory_recall_seconds_bucket[30m]))) > 0.5
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Memory recall p90 {{ $value | printf \"%.2f\" }}s (>0.5s) — the per-turn recall hook gives up at 6s, so sustained slowness costs sessions their memories silently."
+          - alert: MemoryEmbedCpuFallback
+            # A non-zero rate means the GPU path is degraded and the CPU provider is
+            # carrying query embedding. Recall still works, which is the point of the
+            # fallback, but nothing else would say the T4 stopped serving.
+            expr: sum(rate(memory_embed_fallbacks_total[15m])) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Memory query embedding is falling back to CPU — the CUDA provider is failing at inference. Recall is degraded, not down. Check the claude-memory pod and GPU VRAM."
+          - alert: MemoryRecallErrors
+            expr: sum(rate(memory_recall_errors_total[15m])) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Memory recall is raising ({{ $value | printf \"%.2f\" }}/s). This counter had never incremented before, so any value is new."
+          - alert: MemoryRecallTelemetryDown
+            # The failure this whole group exists to prevent: losing sight of recall.
+            expr: absent(memory_recall_seconds_count)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "claude-memory recall telemetry absent 30m — the p90 and fallback alerts above are blind."
       # chrome-service browser pool (broker + FleetView + worker pods). The
       # broker exposes browser_* gauges (job=kubernetes-pods). A CPU-wedged worker
       # is the 6.5h-swiftshader class — the CPU limit caps it at 4 cores and the
