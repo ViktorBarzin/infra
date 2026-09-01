@@ -46,6 +46,15 @@ resource "kubernetes_manifest" "middleware_authentik_forward_auth" {
           "X-authentik-email",
           "X-authentik-name",
           "X-authentik-groups",
+          # Break-glass marker. When the embedded outpost 5xxs, the auth-proxy
+          # nginx @fallback_auth block serves the static htpasswd and stamps
+          # `X-authentik-username: admin` plus `X-Auth-Fallback: true`. Without
+          # the header listed here Traefik drops it, so backends and logs see a
+          # basic-auth break-glass principal as an indistinguishable SSO admin.
+          # Listing it also makes it unforgeable: Traefik deletes each listed
+          # header from the client request before copying the auth server's
+          # value, so a client-supplied X-Auth-Fallback never reaches a backend.
+          "X-Auth-Fallback",
           "Set-Cookie",
         ]
       }
@@ -86,6 +95,14 @@ resource "kubernetes_manifest" "middleware_authentik_forward_auth_public" {
           "X-authentik-email",
           "X-authentik-name",
           "X-authentik-groups",
+          # Same break-glass marker as the standard middleware. This tier talks
+          # to the dedicated public outpost directly, so the auth-proxy nginx
+          # fallback cannot fire on it and the header should never be set here.
+          # Listed regardless: Traefik deletes every listed header from the
+          # client request, so this is what stops a client from spoofing
+          # X-Auth-Fallback into a public-tier backend, and it keeps the two
+          # lists identical so a future header addition is not missed on one.
+          "X-Auth-Fallback",
           "Set-Cookie",
         ]
       }
