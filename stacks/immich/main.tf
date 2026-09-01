@@ -1579,13 +1579,17 @@ resource "kubernetes_role" "immich_ml_recycle" {
     name      = "immich-ml-recycle"
     namespace = kubernetes_namespace.immich.metadata[0].name
   }
-  # get+patch on deployments is the whole of `rollout restart` (it patches the
-  # restartedAt annotation). Namespaced Role, not ClusterRole: this may only
-  # ever touch immich.
+  # get+patch is what `rollout restart` itself needs (it patches the restartedAt
+  # annotation), but `rollout status` additionally LISTs and WATCHes the
+  # deployment — without those it loops on "failed to list *unstructured.
+  # Unstructured: deployments.apps is forbidden" until the job deadline and the
+  # job reports failure even though the restart succeeded (observed 2026-09-01
+  # on the first live run). Namespaced Role, not ClusterRole: this may only ever
+  # touch immich.
   rule {
     api_groups = ["apps"]
     resources  = ["deployments"]
-    verbs      = ["get", "patch"]
+    verbs      = ["get", "list", "watch", "patch"]
   }
   # rollout status watches the ReplicaSet/pods to confirm the roll finished.
   rule {
