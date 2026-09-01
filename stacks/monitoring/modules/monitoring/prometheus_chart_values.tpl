@@ -167,6 +167,14 @@ alertmanager:
           - alertname = ImmichSearchProbeStale
         target_matchers:
           - alertname =~ "ImmichSmartSearchSlow|ImmichClipIndexColdCache"
+      # Same shape for the thumbnail reconciler: its gauges live in the
+      # Pushgateway, which keeps serving the last value forever. If the CronJob
+      # stops running, "N photos still need repair" is frozen history rather than
+      # a current fact, so let the staleness alert speak for them.
+      - source_matchers:
+          - alertname = ImmichThumbnailReconcileStale
+        target_matchers:
+          - alertname =~ "ImmichThumbnailRepairNotTaking|ImmichThumbnailRepairUnowned"
       # Power outage makes on-battery alert redundant
       - source_matchers:
           - alertname = PowerOutage
@@ -1320,6 +1328,43 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Immich search probe has not reported in {{ $value | printf \"%.0f\" }}s — immich-search-probe CronJob may be broken"
+          # Photos the job pipeline dropped. Immich chains metadataExtraction ->
+          # thumbnailGeneration through BullMQ; a job that exhausts its retries or
+          # was never enqueued (server died between saving the asset and queueing)
+          # is never looked at again, and the photo shows a grey tile forever. The
+          # immich-thumbnail-reconcile CronJob (immich ns, 04:40) re-enqueues those
+          # nightly, so these alerts fire only when it CANNOT fix something.
+          #
+          # Repairable = readable original, so a sustained non-zero means the
+          # reconciler ran and the repair did not take. Damaged originals are
+          # excluded by design (immich_thumbnail_unrepairable_assets tracks those
+          # separately and is deliberately NOT alerted — 110 assets lost their
+          # bytes in the NFS-migration era and no retry brings them back).
+          - alert: ImmichThumbnailRepairNotTaking
+            expr: immich_thumbnail_repairable_assets{job="immich-thumbnail-reconcile"} > 0
+            for: 26h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} Immich photos still have no thumbnail after a reconcile run — readable originals, so regenerate-thumbnail is failing; check the immich-thumbnail-reconcile Job logs"
+          # An owner we hold no API key for. POST /api/assets/jobs enforces
+          # asset.update per asset and admin does not cross users, so the
+          # reconciler can only repair owners whose key is in Vault secret/immich
+          # (viktor_api_key, anca_api_key). Add one to fix.
+          - alert: ImmichThumbnailRepairUnowned
+            expr: immich_thumbnail_repair_unowned{job="immich-thumbnail-reconcile"} > 0
+            for: 26h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} repairable Immich photos belong to a user with no API key in Vault — add <user>_api_key to secret/immich so the reconciler can reach them"
+          - alert: ImmichThumbnailReconcileStale
+            expr: time() - immich_thumbnail_reconcile_last_run_timestamp{job="immich-thumbnail-reconcile"} > 172800
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich thumbnail reconciler has not reported in {{ $value | printf \"%.0f\" }}s (>48h) — the self-heal for dropped thumbnail jobs is not running"
           # Downloads that were left partial. Traefik writes its 200 and
           # Content-Length before the body, so a transfer that dies part-way is
           # logged as an ordinary success and the recipient is left with a
