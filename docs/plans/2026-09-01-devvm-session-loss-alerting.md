@@ -100,21 +100,49 @@ for. A kill through the lobby calls `sudo tmux-persist-forget <user> <name>`
 (`tmux-api/main.go:825`) so that Restore cannot resurrect a session someone
 deliberately ended. A death cannot make that call.
 
-**A session that leaves tmux while its manifest row is still present is a
-death.** Gone from both is a deliberate kill. This holds whoever did the
-killing, because the forget is the act that carries the intent.
+**Which file records that is the part worth getting right.** The first shipped
+version tested for an orphaned manifest row — a session gone from tmux whose row
+in `/var/lib/tmux-persist/<user>.tsv` was still present. That was wrong, and
+wrong in the worst direction: it called every intentional kill a death. Two of
+Viktor's own sessions were reported as died at 18:52 on 2026-09-01 after being
+closed on purpose.
 
-Verified 2026-09-01: 19 live sessions, 18 manifest rows, the sole difference
-being the prewarm pool slot, and zero orphaned rows.
+`forget` does not remove the manifest row. Reading the implementation:
 
-The manifest is written by a 5-minute timer, which is coarser than we want for
-detection. So the two questions go to different sources:
+```sh
+f="$(tombstones_path "$u")"
+printf '%s\t%s\n' "$sess" "$(now_epoch)" >> "$f"
+```
+
+It appends a **tombstone** to `/var/lib/tmux-persist/<user>.forgotten.tsv` and
+leaves the row alone until the next 5-minute save. So for up to five minutes
+after any deliberate kill, the row is still there, which is exactly the signal
+the first version read as "nobody ended this on purpose".
+
+The tombstone is the real intent record, and it is better than what it replaced
+because it carries a timestamp:
+
+**A session that leaves tmux with a tombstone written in the last 90 seconds is a
+deliberate kill. Anything else is a death.**
+
+The age bound is load-bearing. The tombstone file is append-only and never
+pruned, so a name killed weeks ago still has a row; without the bound, a session
+that reused that name and then genuinely died would be written off as
+intentional. 90 seconds is three ticks.
+
+The manifest is no longer read at all, which makes this a simplification as well
+as a fix — reboot restore-gap counting never used it. So the two questions go to
+different sources:
 
 - **Was it alive a moment ago?** `tl-session-watch`'s own 30-second snapshot.
-- **Was ending it deliberate?** The manifest row.
+- **Was ending it deliberate?** A fresh tombstone.
 
-Each source answers only what it is authoritative about, and the 5-minute lag
-stops affecting detection latency.
+Drilled on the live box in both directions, with the fix running:
+
+| what was done | what the watcher said |
+|---|---|
+| `tmux kill-session` + `tmux-persist-forget` | `event=session_killed` — no rule selects it |
+| `kill -9` on the claude, no forget | `event=session_died` |
 
 ## How the signals travel
 
@@ -268,11 +296,11 @@ than reading it:
   30 seconds is the floor without a substantially hotter loop, and we have no
   history yet on how fast panes actually grow. The exported metric is what will
   answer that.
-- **A false positive from a CLI kill was reproduced during the drills.** A
-  scratch session ended with a plain `tmux kill-session`, while its row was still
-  in a manifest snapshot, was reported as `session_died` exactly as the rules
-  say it should be. The behaviour is correct and the report is wrong, which is
-  the shape this gap will always take.
+- **`tmux kill-session` typed at a CLI without a matching `tmux-persist-forget`
+  still reads as a death**, because nothing tombstones the name. Agents and
+  scripts on this box do sometimes end sessions that way. The fix is for those
+  paths to call the forget wrapper, which is also what keeps Restore from
+  resurrecting them.
 - **A manifest that disagrees with reality is not watched.** This shape was seen
   once, on 2026-08-21, and its cause was found and fixed. It stays out of scope
   until there is evidence it came back.
@@ -297,6 +325,39 @@ purpose:
 Both follow the method the 2026-08-16 pane cap used, where a run whose kernel
 log looked like a complete success had still lost a session. The outcome is what
 gets checked, not the configuration.
+
+## A finding from the drills: /tmp is RAM, and it is charged to the pane
+
+Not addressed by this work, and worth its own decision.
+
+`/tmp` on the devvm is an 8 GB RAM-backed tmpfs, measured 95% full on
+2026-09-01, and **7.0 GB of that is `/tmp/claude-1000`** across 124 Claude
+session scratch directories (`-home-wizard-code` alone is 5.7 GB).
+
+That memory is charged to whichever pane cgroup wrote it, as `shmem`. The
+`issues` pane reads:
+
+| field | value |
+|---|---|
+| `memory.current` | 4627 MB |
+| `memory.max` | 6144 MB |
+| `anon` | 783 MB |
+| `file` (of which `shmem` 3641 MB) | 3784 MB |
+
+The user slice sets `memory.swap.max=0`, and cgroup limits are hierarchical, so
+those tmpfs pages can be neither swapped nor dropped. They count fully against
+the 6 GB cap.
+
+`PaneNearMemoryCap` fires on this correctly, and selectively — 1 of 43 panes was
+past the 3 GB threshold when measured. But the action the alert suggests is the
+wrong one for this shape. If the cap bites here the kernel kills the highest-RSS
+task, which is a 448 MB claude, and the 3.6 GB of tmpfs stays exactly where it
+was. Closing a session does not help; deleting the scratch files does.
+
+Worth deciding separately: whether Claude scratch directories should live on disk
+rather than in RAM, whether they should be pruned on session end, or whether
+`/tmp` should simply be smaller so the failure surfaces as ENOSPC rather than as
+memory pressure.
 
 ## Open questions
 
