@@ -181,7 +181,7 @@ threshold once there is a week of it.
 |---|---|---|---|
 | `ClaudeOOMKilled` | `oom-kill:` with `task=claude` | kernel, via Loki | after the fact |
 | `ClaudeSessionDied` | gone from tmux with its manifest row intact, or a live session holding a stamp with no claude alive | `tl-session-watch`, via Loki | 30s |
-| `PaneNearMemoryCap` | pane above 3G **and** claude is the fattest process in it | `tl-session-watch`, via Loki | 30s |
+| `PaneNearMemoryCap` | pane's unreclaimable memory (`anon + shmem`) above 3G **and** claude is the fattest process in it | `tl-session-watch`, via Loki | 30s |
 | `DevvmMemoryPressure` | `MemAvailable < 8%` for 10m | node_exporter, via Prometheus | ~5 min |
 | `SessionWatchSilent` | no watcher heartbeat for 30m | `tl-session-watch`, via Loki | 30m |
 
@@ -198,13 +198,42 @@ command in the description.
 
 ### Thresholds and why they sit there
 
-**Pane at 3G, gated on claude being the fattest process.** The gate is what
-makes the low threshold safe. A working claude measures around 0.5 GB and the
-busiest pane observed is 1.5 GB, so a claude at 3G is roughly 6x its normal
-size and nothing routine looks like that. Half the cap remains, which is the
-runway to act in. The gate also keeps the alert quiet for the case where the cap
-eats a test run, which is the mechanism working correctly — 1 of the 3 kills in
-the last 7 days was `node (vitest)`.
+**Pane at 3G of UNRECLAIMABLE memory, gated on claude being the fattest
+process.** Which number gets compared turned out to matter more than where the
+threshold sits.
+
+`memory.current` is the wrong one. It rides up to the cap in any pane doing file
+I/O, because reaching the cap makes the kernel reclaim page cache rather than
+kill anything. Measured on the box at 19:10, the `issues` pane read 6143 MB of a
+6144 MB cap while holding 624 MB `anon` and 3 MB `shmem`; 5131 MB of the
+remainder was cold `inactive_file`. Its `memory.events` read `max=45450` with
+`oom_kill=0` — the cap had been reached forty-five thousand times and had never
+killed anything.
+
+So the comparison is against `anon + shmem`, the memory a cap cannot reclaim.
+The user slice sets `memory.swap.max=0` and cgroup limits are hierarchical, so
+neither can be paged out. `anon_thp` is not added, being already inside `anon`.
+
+The same pane at two moments is why:
+
+| | `memory.current` | unreclaimable | verdict |
+|---|---|---|---|
+| 18:30, /tmp 95% full | 4627 MB | 4424 MB | warns, correctly |
+| 19:10, after /tmp drained | 6143 MB | 628 MB | quiet, correctly |
+
+Under the `memory.current` comparison the second row would have warned
+continuously and the alert would have been muted within a day.
+
+The gate on claude being the fattest process is what makes 3 GB safe as a
+number: a working claude measures around 0.5 GB, so 3 GB of unreclaimable memory
+in its pane is roughly 6x normal and nothing routine looks like that. It also
+keeps the alert quiet when the cap eats a test run, which is the mechanism
+working correctly — 1 of the 3 kills in the 7 days before this was `node
+(vitest)`.
+
+Both numbers are exported and both ride in the journal line, because the split is
+what says which action helps: delete scratch files when `shmem` dominates, close
+a session when `anon` does.
 
 **Box at 8% available.** Between the p1 of the last 30 days (11.8%) and
 earlyoom's trigger (5%), so it marks an unusual moment with room left before
@@ -348,11 +377,15 @@ The user slice sets `memory.swap.max=0`, and cgroup limits are hierarchical, so
 those tmpfs pages can be neither swapped nor dropped. They count fully against
 the 6 GB cap.
 
-`PaneNearMemoryCap` fires on this correctly, and selectively — 1 of 43 panes was
-past the 3 GB threshold when measured. But the action the alert suggests is the
-wrong one for this shape. If the cap bites here the kernel kills the highest-RSS
-task, which is a 448 MB claude, and the 3.6 GB of tmpfs stays exactly where it
-was. Closing a session does not help; deleting the scratch files does.
+`PaneNearMemoryCap` fires on this correctly and selectively, because tmpfs pages
+land in `shmem` and count as unreclaimable. But the action the alert suggests is
+the wrong one for this shape. If the cap bites here the kernel kills the
+highest-RSS task, which is a 448 MB claude, and the 3.6 GB of tmpfs stays exactly
+where it was. Closing a session does not help; deleting the scratch files does,
+and the alert description now says so.
+
+The /tmp figure moves fast. It was 7.6 GB of 8 GB at 18:30 and 4.1 GB at 19:10,
+without anyone intervening.
 
 Worth deciding separately: whether Claude scratch directories should live on disk
 rather than in RAM, whether they should be pruned on session end, or whether
