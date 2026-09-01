@@ -476,6 +476,71 @@
         enabled: true
         state: started
 
+    # ---- 8a-bis) the log shipper ---------------------------------------------
+    # scripts/devvm-promtail.yaml has described itself as the source of truth
+    # since it was written, but nothing applied it: /etc/promtail/config.yml was
+    # hand-deployed and dated 2026-07-09. The two were byte-identical when checked
+    # on 2026-09-01, so this task takes ownership without changing behaviour --
+    # and a committed change to the shipper now reaches the box instead of waiting
+    # for someone to remember.
+    #
+    # The identifier allowlist in that file is what gives Loki rules a label to
+    # select on. A rule keyed to an identifier missing from the allowlist matches
+    # nothing and reports no error, so the two files have to move together.
+    - name: Deploy the promtail config
+      ansible.builtin.copy:
+        src: ../scripts/devvm-promtail.yaml
+        dest: /etc/promtail/config.yml
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart promtail
+
+    - name: Enable promtail
+      ansible.builtin.systemd_service:
+        name: promtail
+        enabled: true
+        state: started
+
+    # ---- 8b) node_exporter textfile collector -------------------------------
+    # tl-session-watch (terminal-lobby package) writes per-session pane memory
+    # here every 30s, which is what gives us a history to move the 3G pane
+    # threshold on evidence rather than a guess. The collector is off by default
+    # (ARGS=""), and turning it on needs no new scrape target: the `devvm`
+    # Prometheus job already scrapes 10.0.10.10:9100 and applies no metric
+    # keep-list, so tl_pane_* is ingested as soon as it appears.
+    #
+    # Design: docs/plans/2026-09-01-devvm-session-loss-alerting.md
+    - name: Create the node_exporter textfile directory
+      ansible.builtin.file:
+        path: /var/lib/node_exporter/textfile
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Point node_exporter at the textfile directory
+      ansible.builtin.copy:
+        dest: /etc/default/prometheus-node-exporter
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml -- edit there, not here.
+          #
+          # The textfile collector is what carries tl_pane_memory_bytes,
+          # tl_pane_memory_max_bytes and tl_pane_top_is_claude from
+          # tl-session-watch into Prometheus. Those are history for tuning the
+          # pane threshold; the alerts themselves come from the journal, because
+          # a 2-minute scrape cannot see a pane cross its cap and die inside one
+          # interval.
+          ARGS="--collector.textfile.directory=/var/lib/node_exporter/textfile"
+      notify: restart node-exporter
+
+    - name: Enable node_exporter
+      ansible.builtin.systemd_service:
+        name: prometheus-node-exporter
+        enabled: true
+        state: started
+
     # ---- 9) docker containment ----------------------------------------------
     - name: Create the capped docker slice
       ansible.builtin.template:
@@ -519,6 +584,16 @@
     - name: restart earlyoom
       ansible.builtin.systemd_service:
         name: earlyoom
+        state: restarted
+
+    - name: restart node-exporter
+      ansible.builtin.systemd_service:
+        name: prometheus-node-exporter
+        state: restarted
+
+    - name: restart promtail
+      ansible.builtin.systemd_service:
+        name: promtail
         state: restarted
 
     # Restarting dockerd interrupts running containers, so it is a handler that

@@ -1320,6 +1320,35 @@ serverFiles:
               severity: warning
             annotations:
               summary: "rpi-sofia SoC temp: {{ $value | printf \"%.0f\" }}°C (threshold: 75°C)"
+      # The shared workstation VM. Session-loss alerting otherwise lives in the
+      # Loki ruler ("Claude Session Loss (devvm)"), because a pane can hit its own
+      # 6G cap while the box has 20 GiB free and 30s detection is not reachable
+      # from a 2-minute scrape. This group carries the one condition that IS
+      # box-wide and IS worth predicting.
+      # Design: docs/plans/2026-09-01-devvm-session-loss-alerting.md
+      - name: DevVM
+        rules:
+          - alert: DevvmMemoryPressure
+            # earlyoom SIGTERMs at 5% available and SIGKILLs at 3% (-m 5,3), and
+            # when it fires on this box it takes claude processes: the 2026-08-16
+            # event killed 14 of wizard's and 7 of emo's in two minutes. 8% is the
+            # band between "unusual" and "earlyoom acts": measured over the 30 days
+            # to 2026-09-01, MemAvailable p1 was 11.8%, p10 15.9%, p50 27.0%, so
+            # this is below the 1st percentile and should be rare rather than
+            # standing.
+            #
+            # It does NOT predict a per-pane cap kill, which is the more common
+            # loss and is independent of box memory — PaneNearMemoryCap in the Loki
+            # ruler covers that one.
+            #
+            # for: 10m is 5 samples at the global 2m scrape interval.
+            expr: (node_memory_MemAvailable_bytes{instance="devvm"} / node_memory_MemTotal_bytes{instance="devvm"}) < 0.08
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "devvm has {{ $value | humanizePercentage }} memory available — earlyoom kills claude processes at 5%"
+              description: "Close a few sessions or stop a heavy build while there is still room. Each Claude session costs ~659 MB all-in (467 MB the process plus ~192 MB of per-session MCP servers), so three bought back ~2 GB when measured 2026-08-24. Largest panes right now: homelab metrics query 'topk(5, tl_pane_memory_bytes)'. If sessions have already been lost, ClaudeSessionDied and ClaudeOOMKilled will have fired alongside this."
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp

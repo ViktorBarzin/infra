@@ -538,6 +538,111 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Claude session loss on the devvm. Until this group existed, a session
+          # dying was found by looking at the sidebar and counting — which is how
+          # the 2026-09-01 05:55 kill was noticed, hours later.
+          #
+          # Two producers. The kernel writes the oom-kill line itself; everything
+          # else comes from tl-session-watch, which ships in the terminal-lobby
+          # package and logs logfmt under SyslogIdentifier=tl-session-watch. That
+          # identifier MUST stay in the allowlist in scripts/devvm-promtail.yaml:
+          # the label is what these selectors match, and without it they match
+          # nothing and say nothing about it.
+          #
+          # All four group by USER over a wide window, so a burst reads as one
+          # continuous alert rather than one Slack post per kill. Replaying the
+          # 2026-08-16 event (~21 kills in two minutes) gives one message per
+          # affected user. severity=warning means notify once, no re-ping while
+          # firing, with the daily digest carrying standing state.
+          #
+          # Design: docs/plans/2026-09-01-devvm-session-loss-alerting.md
+          name = "Claude Session Loss (devvm)"
+          rules = [
+            {
+              # The cap doing its job, on the wrong victim. constraint=MEMCG means
+              # the PANE hit its own 6G ceiling, which is independent of box
+              # memory: this fires with 20 GiB free on the box, and
+              # DevvmMemoryPressure does not fire with it. Measured over the 7
+              # days before this rule: 3 panes hit the cap, 2 of them killing a
+              # claude.
+              #
+              # Grouped by uid because that is what the kernel line carries
+              # (1000=wizard, 1002=emo); tl-session-watch's own lines carry the
+              # username.
+              alert  = "ClaudeOOMKilled"
+              expr   = "sum by (uid) (count_over_time({job=\"devvm-journal\", identifier=\"kernel\"} |= \"oom-kill:\" |= \"task=claude\" | regexp \"uid=(?P<uid>[0-9]+)\" [2h])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "A claude was OOM-killed on the devvm (uid={{ $labels.uid }})"
+                description = "The kernel killed a claude process to satisfy a memory limit. constraint=CONSTRAINT_MEMCG means the pane hit its own 6G cap, not that the box ran out. Which pane and which victim: homelab logs query '{job=\"devvm-journal\", identifier=\"kernel\"} |= \"oom-kill:\" |= \"task=claude\"' --since 2h. uid 1000=wizard, 1002=emo. Cap design: docs/plans/2026-08-16-devvm-pane-memory-cap.md."
+              }
+            },
+            {
+              # The effect, from the watcher rather than the kernel, so it covers
+              # every cause and not just OOM. session_died = the session left tmux
+              # with its tmux-persist manifest row intact, which means no
+              # tmux-persist-forget ran and nobody ended it on purpose.
+              # claude_died = the session survived and the conversation in it did
+              # not.
+              #
+              # Known false positive: `tmux kill-session` typed at a CLI without a
+              # matching `tmux-persist-forget` leaves the row and reads as a death.
+              # Reproduced deliberately during the 2026-09-01 drills.
+              alert  = "ClaudeSessionDied"
+              expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"tl-session-watch\"} |~ \"event=(session_died|claude_died)\" | logfmt [2h])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "{{ $value }} of {{ $labels.user }}'s Claude sessions died in the last 2h"
+                description = "A session disappeared without being deliberately killed, or its claude died inside a pane that survived. WHICH ONES: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |~ \"event=(session_died|claude_died)\"' --since 2h. Correlate with ClaudeOOMKilled for the memory cause; a death with no OOM line beside it was something else. A CLI `tmux kill-session` that skipped tmux-persist-forget also lands here."
+              }
+            },
+            {
+              # The pre-warning, and the only signal that arrives while the
+              # conversation can still be saved. Gated on claude being the largest
+              # process in the pane, which is the same ranking the kernel uses at
+              # the cap: when a build or a test run is the largest, the cap eating
+              # it is the mechanism working correctly and not worth a message.
+              #
+              # 30s detection, deliberately not a Prometheus rule. The devvm is
+              # scraped every 2 minutes and the house floor for `for:` is 3, so a
+              # metric rule cannot react to a pane that crosses and dies inside one
+              # interval. tl_pane_memory_bytes exists for history and threshold
+              # tuning, not for this.
+              alert  = "PaneNearMemoryCap"
+              expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"tl-session-watch\"} |= \"event=pane_near_cap\" | logfmt [30m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "{{ $labels.user }} has a pane approaching its 6G cap with claude as the largest process"
+                description = "The next cap kill in this pane takes the conversation, not a build. Normal claude is ~0.5 GB and the busiest pane measured is 1.5 GB, so 3 GB is already ~6x. WHICH SESSION: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |= \"event=pane_near_cap\"' --since 30m. Panes can SHARE a cgroup — four of emo's claudes sat in one run-r*.scope on 2026-09-01 — so several sessions may cross together and all of them are genuinely at risk."
+              }
+            },
+            {
+              # DEAD-MAN switch for the watcher, mirroring DevvmJournalSilent one
+              # level down: that one catches the pipeline dying, this one catches
+              # the producer dying. It exists because DevvmJournalSilent was itself
+              # added only after a t3-watchdog drill's alert never arrived, and a
+              # watcher whose whole job is preventing silent failure is the worst
+              # possible thing to lose silently.
+              #
+              # The watcher heartbeats every 30s whether or not it found anything,
+              # so 30m of absence is unambiguous. Its /health on 127.0.0.1:7689
+              # reports stale rather than up once ticks stop, which covers the
+              # running-but-wedged case at release time.
+              alert  = "SessionWatchSilent"
+              expr   = "absent_over_time({job=\"devvm-journal\", identifier=\"tl-session-watch\"}[30m]) == 1"
+              for    = "10m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "tl-session-watch has gone quiet — nothing is reporting lost Claude sessions"
+                description = "No heartbeat for >40m, so ClaudeSessionDied and PaneNearMemoryCap are blind. On the devvm: systemctl status tl-session-watch; curl -s 127.0.0.1:7689/health; journalctl -u tl-session-watch -n 50. If the journal pipeline is the problem instead, DevvmJournalSilent fires alongside this."
+              }
+            },
+          ]
+        },
+        {
           # Wave 1 security alerts (beads code-8ywc). Routed via Loki ruler →
           # prometheus-alertmanager → #security Slack receiver. Allowlist CIDRs:
           # 10.0.20.0/22, 192.168.1.0/24, K8s pod CIDR 10.10.0.0/16, K8s service
