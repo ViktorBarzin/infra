@@ -22,7 +22,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "### What this shows, and what it cannot\n\nEvery row is one **durable edge** the `goldmane-edge-aggregator` has observed:\na source workload talking to a destination workload on a destination port, with\nthe policy action Calico applied. Source: the `edge` table in the\n`goldmane_edges` CNPG database.\n\n**Honest limits, worth knowing before you read a number:**\n\n- **There is no time series.** The table keeps `first_seen`, `last_seen` and a\n  cumulative `flow_count` per edge, not per-interval counts. So the time picker\n  filters on `last_seen` — *\"edges last observed inside this window\"* — and\n  `flows` is a running total since the edge was first seen, never a rate.\n- **A port carries no protocol.** `dst_port` alone cannot tell TCP/53 from\n  UDP/53.\n- **Traffic is per workload, not per pod.** Pod names churn on every restart;\n  [Whisker](https://whisker.viktorbarzin.me) is the live per-pod view.\n- **No peer addresses.** Goldmane's wire format has no IP field, so an internet\n  edge is `pub`, never a destination address.\n- **Rows written before the widening migration are not shown.** Those rows are\n  NULL in every widened column (no workload, no endpoint type, no port), so\n  every panel here filters on `NOT pre_widening`. They are not deleted and the\n  `homelab edges` CLI still rolls them up at namespace level — they just cannot\n  be plotted on these axes. On the live table that is 4 rows holding 366M\n  accumulated flows against 22M observed since, so including them would swamp\n  every total.\n- **Everything looks new for one window after the migration.** The identity\n  tuple is wider, so the first observation of a namespace pair INSERTs a fresh\n  row rather than updating the legacy one, and the *Unusual connections* panel\n  will be full for the first day. Give it a burn-in before trusting it."
+        "content": "### What this shows, and what it cannot\n\nEvery row is one **durable edge** the `goldmane-edge-aggregator` has observed:\na source workload talking to a destination workload on a destination port, with\nthe policy action Calico applied. Source: the `edge` table in the\n`goldmane_edges` CNPG database.\n\n**Honest limits, worth knowing before you read a number:**\n\n- **There is no time series.** The table keeps `first_seen`, `last_seen` and a\n  cumulative `flow_count` per edge, not per-interval counts. So the time picker\n  filters on `last_seen` — *\"edges last observed inside this window\"* — and\n  `flows` is a running total since the edge was first seen, never a rate.\n- **A port carries no protocol.** `dst_port` alone cannot tell TCP/53 from\n  UDP/53.\n- **Port `0` is not a port.** It means *not recorded*, and it is one of the\n  larger buckets rather than an edge case: for a destination the cluster does\n  not own — the internet, or an address in a NetworkSet, unless one of our own\n  Services named it — the port on the wire is the remote peer's, drawn from the\n  whole ephemeral range. Recording it would mint a row per peer socket, so the\n  aggregator stores `0` there deliberately. Read `0` in *Destination ports* and\n  *Busiest destination ports* as \"outbound to a peer we do not own\", never as a\n  service listening on port zero.\n- **Traffic is per workload, not per pod.** Pod names churn on every restart;\n  [Whisker](https://whisker.viktorbarzin.me) is the live per-pod view.\n- **No peer addresses.** Goldmane's wire format has no IP field, so an internet\n  edge is `pub`, never a destination address.\n- **Rows written before the widening migration are not shown.** Those rows are\n  NULL in every widened column (no workload, no endpoint type, no port), so\n  every panel here filters on `NOT pre_widening`. They are not deleted — they\n  just cannot be plotted on these axes. Read off the live table on 2026-09-01,\n  that is **all 710 rows** in it, holding **389,663,018** accumulated flows back\n  to 2026-06-24. So on the day the migration lands these panels start **empty**\n  and fill as each edge is re-observed under the wider identity, and any total\n  that included those rows would stay dominated by them, because a wider\n  identity means they are never updated again. `homelab edges` neither filters\n  nor aggregates them, so it lists a legacy row beside each widened row for the\n  same namespace pair; pre-widening history is readable there by asking for it\n  (`WHERE src_type IS NULL`).\n- **Everything looks new for one window after the migration.** The identity\n  tuple is wider, so the first observation of a namespace pair INSERTs a fresh\n  row rather than updating the legacy one, and the *Unusual connections* panel\n  will be full for the first day. Give it a burn-in before trusting it."
       }
     },
     {
@@ -249,7 +249,7 @@
       "id": 6,
       "type": "stat",
       "title": "Internet-bound",
-      "description": "Edges leaving the cluster. Goldmane names the far end 'pub' and carries no address.",
+      "description": "Edges whose destination is the PUBLIC internet: Goldmane names that far end 'pub' and carries no address. Narrower than everything leaving the cluster — private off-cluster addresses ('pvt'), network sets and host endpoints are not counted here; the 'Ends with no workload' table holds all of them.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "goldmane-edges-pg"
@@ -304,7 +304,7 @@
       "id": 7,
       "type": "stat",
       "title": "First seen in $unusual_window",
-      "description": "Edges whose first_seen falls inside the Unusual window. Not time-picker scoped.",
+      "description": "Edges whose first_seen falls inside the Unusual window. Not time-picker scoped, and unlike the stats beside it this one ignores the destination-port filter, so a newly-seen edge is not hidden by a port selection.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "goldmane-edges-pg"
@@ -588,7 +588,7 @@
       "id": 12,
       "type": "table",
       "title": "Unusual connections",
-      "description": "Three classes, most specific reason first: a namespace reaching the internet for the first time, a workload using a destination port it has never used, and any edge first seen inside the window. Every row is at least a new edge, so 'why' can name more than one class. The Port filter is deliberately NOT applied here, or a leftover port selection would hide the new ports this panel exists to surface. Window is the 'Unusual window' variable, independent of the time picker. Every row is a new edge; 'why' names the most specific class that applies.",
+      "description": "Three classes, most specific reason first: a namespace reaching the internet for the first time, a workload using a destination port it has never used, and any edge first seen inside the window. Every row is at least a new edge, so 'why' can name more than one class. The Port filter is deliberately NOT applied here, or a leftover port selection would hide the new ports this panel exists to surface. Window is the 'Unusual window' variable, independent of the time picker. Every row is a new edge; 'why' names the most specific class that applies. Capped at 500 rows.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "goldmane-edges-pg"
@@ -668,7 +668,7 @@
       "id": 13,
       "type": "table",
       "title": "Denied edges",
-      "description": "Edges Calico denied, most recently seen first. Ignores the Action filter on purpose.",
+      "description": "Edges Calico denied, most recently seen first. Ignores the Action filter on purpose. Capped at 200 rows.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "goldmane-edges-pg"
@@ -723,7 +723,7 @@
       "id": 14,
       "type": "table",
       "title": "Ends with no workload (host and internet traffic)",
-      "description": "Edges where neither end is typed as a pod: a host endpoint, a network set, the public internet, or an end whose type Goldmane never sent ('unknown'). These carry namespace '-'. Before the widening the endpoint type was not stored at all, so this class could not be separated out; host-to-host rows were also dropped by the old same-namespace test, which matched two ends that both reported '-'.",
+      "description": "Edges where AT LEAST ONE end is typed as something other than a pod: a host endpoint, a network set, the public internet, or an end whose type Goldmane never sent ('unknown'). The other end is usually an ordinary pod in a real namespace, so most rows here are a workload talking to a non-workload, which is the class the panel exists to surface. Only an end with no namespace of its own carries '-'; the pod end keeps its namespace. Before the widening the endpoint type was not stored at all, so this class could not be separated out; host-to-host rows were also dropped by the old same-namespace test, which matched two ends that both reported '-'. Ordered by flow count and capped at 200 rows, so a quiet unexpected edge can sit below the cut — narrow the filters to bring it into view.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "goldmane-edges-pg"
