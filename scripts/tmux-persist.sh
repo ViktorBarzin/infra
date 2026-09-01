@@ -37,6 +37,8 @@
 #   snapshots   — list a user's snapshots (ts, session count) for the picker.
 #   snapshot    — resolve ONE snapshot against what's live now: per row, what
 #                 restoring it would do and whether it should start ticked.
+#   picker      — the two above plus the live session count, in ONE process:
+#                 everything the lobby's restore picker needs to open.
 #   restore-selection <user> <ts> <name>... — restore chosen rows of one
 #                 snapshot. Backs the lobby picker.
 #   restore-one <user> <name|uuid> — recreate ONE session found in any
@@ -65,10 +67,49 @@ log() { echo "[tmux-persist] $*"; }
 # <authentik_user>=<os_user>[:<cwd>], plus comment lines. Comments used to fall
 # through as bogus "users" (harmless while every consumer re-checked `id -u`,
 # but they now reach path-building code), so they are filtered here instead.
-users() {
+#
+# Parsed with builtins rather than the old sed|cut|sed|grep|sort pipeline: every
+# verb starts by checking its user, so that pipeline was five processes before
+# any work began, on a box where the picker is opened precisely when forks are
+# expensive (see test_no_fork_hot_paths.sh).
+MAP_USER_RE='^[a-z_][a-z0-9_-]{0,31}$'
+
+# Fills MAP_USERS with the os users named in the map, in file order, deduped.
+# No subprocesses: `users` and `is_user` both read it.
+declare -a MAP_USERS=()
+read_user_map() {
+  local line u
+  local -A seen=()
+  MAP_USERS=()
   [[ -r "$MAP" ]] || return 0
-  sed -e 's/#.*//' "$MAP" | cut -d= -f2- | sed -e 's/:.*//' -e 's/[[:space:]]//g' \
-    | grep -xE '[a-z_][a-z0-9_-]{0,31}' | sort -u
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    [[ "$line" == *=* ]] || continue
+    u="${line#*=}"; u="${u%%:*}"; u="${u//[[:space:]]/}"
+    [[ "$u" =~ $MAP_USER_RE ]] || continue
+    [[ -n "${seen[$u]+x}" ]] && continue
+    seen["$u"]=1
+    MAP_USERS+=("$u")
+  done < "$MAP"
+}
+
+users() {
+  local -a MAP_USERS=()
+  read_user_map
+  (( ${#MAP_USERS[@]} )) || return 0
+  printf '%s\n' "${MAP_USERS[@]}" | sort
+}
+
+# Membership test, fork-free — what `users | grep -qxF "$u"` used to cost seven
+# processes to answer.
+is_user() {
+  local -a MAP_USERS=()
+  local u
+  read_user_map
+  for u in ${MAP_USERS[@]+"${MAP_USERS[@]}"}; do
+    [[ "$u" == "$1" ]] && return 0
+  done
+  return 1
 }
 
 # Production runuser's into the target user (the manifests are root-owned 0600).
@@ -94,12 +135,46 @@ snapshots_dir() { echo "$STATE_DIR/snapshots/$1"; }
 pointer_path()  { echo "$STATE_DIR/$1.tsv"; }
 tombstones_path() { echo "$STATE_DIR/$1.forgotten.tsv"; }
 
-# Snapshot filenames are timestamps, so a lexical sort is a chronological one.
-snapshot_files() { ls -1 "$(snapshots_dir "$1")"/*.tsv 2>/dev/null | sort || true; }
-newest_snapshot() { snapshot_files "$1" | tail -1; }
+# Snapshot filenames are timestamps, so a lexical sort is a chronological one —
+# which is the order a glob already produces, for no processes at all. Callers
+# on the picker's path fill an array with snapshot_files_into and never pay the
+# `ls | sort` subshell; snapshot_files keeps the stdout contract for the rest.
+declare -a SNAPSHOT_FILES=()
+snapshot_files_into() {
+  SNAPSHOT_FILES=("$STATE_DIR/snapshots/$1"/*.tsv)
+  # An unmatched glob stays literal (nullglob is off, and turning it on would
+  # change every other glob in the script), so probe the first entry.
+  [[ -e "${SNAPSHOT_FILES[0]}" ]] || SNAPSHOT_FILES=()
+}
+snapshot_files() {
+  local -a SNAPSHOT_FILES=()
+  snapshot_files_into "$1"
+  (( ${#SNAPSHOT_FILES[@]} )) && printf '%s\n' "${SNAPSHOT_FILES[@]}"
+  return 0
+}
+newest_snapshot() {
+  local -a SNAPSHOT_FILES=()
+  snapshot_files_into "$1"
+  (( ${#SNAPSHOT_FILES[@]} )) && printf '%s\n' "${SNAPSHOT_FILES[-1]}"
+  return 0
+}
 snapshot_path() { echo "$(snapshots_dir "$1")/$2.tsv"; }
 
-home_of() { [[ -n "$HOME_ROOT" ]] && { printf '%s\n' "$HOME_ROOT"; return 0; }; getent passwd "$1" | cut -d: -f6; }
+# Sets HOME_OF to the user's home. Answered into a variable and memoised
+# because uuid_of_claude asks once per pane, and `getent | cut` inside a command
+# substitution was three processes a row on the restore picker's hot path.
+declare -A HOME_CACHE=()
+HOME_OF=""
+home_of() {
+  if [[ -n "$HOME_ROOT" ]]; then HOME_OF="$HOME_ROOT"; return 0; fi
+  if [[ -z "${HOME_CACHE[$1]+x}" ]]; then
+    local ent h=""
+    ent="$(getent passwd "$1" || true)"
+    IFS=: read -r _ _ _ _ _ h _ <<< "$ent" || true
+    HOME_CACHE["$1"]="$h"
+  fi
+  HOME_OF="${HOME_CACHE[$1]}"
+}
 
 # Every path that takes a session name from a client — the lobby, ttyd's ?arg=,
 # tmux-attach.sh, tmux-api — validates it against this pattern. A name it
@@ -126,6 +201,9 @@ addressable() { [[ "$1" =~ $LOBBY_NAME_RE ]]; }
 # openat against 679 processes. That was ~2.2 s of the restore picker's ~2.9 s
 # open time, and it grew with how busy the box was rather than with the work.
 #
+# The answer lands in CLAUDE_PID rather than on stdout: a `$(...)` around this
+# forks a subshell per row, which is what the whole rewrite was avoiding.
+#
 # Children come from `/proc/<pid>/task/<tid>/children` (CONFIG_PROC_CHILDREN),
 # unioned over the process's threads because each task lists only the children
 # IT forked. Deliberately NOT a prebuilt ppid map: callers invoke this inside a
@@ -138,10 +216,11 @@ addressable() { [[ "$1" =~ $LOBBY_NAME_RE ]]; }
 # shell would otherwise report on the stderr in force at that point.
 claude_pid_under() {
   local q=("$1") pid comm t kids kid
+  CLAUDE_PID=""
   while ((${#q[@]})); do
     pid="${q[0]}"; q=("${q[@]:1}")
     read -r comm 2>/dev/null < "/proc/$pid/comm" || continue
-    [[ "$comm" == claude ]] && { echo "$pid"; return 0; }
+    [[ "$comm" == claude ]] && { CLAUDE_PID="$pid"; return 0; }
     for t in /proc/"$pid"/task/*/children; do
       # `children` is space-separated with NO trailing newline, so `read` hits
       # EOF and returns non-zero even though it filled the variable — the
@@ -186,7 +265,8 @@ claude_pid_under() {
 # Always returns 0; empty output means "no conversation" (restored as a shell).
 uuid_of_claude() {
   local uuid slug dir start f sess="${4:-}" stamp="${5:-}" p t root
-  root="$(home_of "$2")/.claude/projects"
+  UUID_ANSWER=""
+  home_of "$2"; root="$HOME_OF/.claude/projects"
   # 0. the stamp. Written by the session's own user, so it is untrusted input:
   #    only an existing <uuid>.jsonl inside that user's own projects root is
   #    accepted, and a path with a `..` component is refused rather than
@@ -195,13 +275,13 @@ uuid_of_claude() {
         && "$stamp" == "$root"/*/*.jsonl && -f "$stamp" ]]; then
     f="${stamp##*/}"; f="${f%.jsonl}"
     if [[ "$f" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-      printf '0\t%s\n' "$f"; return 0
+      UUID_ANSWER="0"$'\t'"$f"; return 0
     fi
   fi
   uuid="$(tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null \
           | grep -A1 -xE -- '--session-id|--resume' | tail -1 \
           | grep -oE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || true)"
-  [[ -n "$uuid" ]] && { printf '1\t%s\n' "$uuid"; return 0; }
+  [[ -n "$uuid" ]] && { UUID_ANSWER="1"$'\t'"$uuid"; return 0; }
   slug="${3//\//-}"; slug="${slug//./-}"
   dir="$root/$slug"
   [[ -d "$dir" ]] || return 0
@@ -209,9 +289,20 @@ uuid_of_claude() {
   # 2. name-aware: newest transcript (touched since start) whose own name == $sess.
   if [[ -n "$sess" ]]; then
     while read -r _ p; do
+      # `|| true` because of pipefail: grep exits 1 on a transcript with no
+      # name in it, which is the common case, and `set -e` would end the whole
+      # run on it now that this is not inside a command substitution.
       t="$(grep -m1 -oE '"(customTitle|agentName)":"[^"]*"' "$p" 2>/dev/null \
-           | head -1 | sed -E 's/.*:"(.*)"$/\1/')"
-      [[ "$t" == "$sess" ]] && { f="${p##*/}"; printf '2\t%s\n' "${f%.jsonl}"; return 0; }
+           | head -1 | sed -E 's/.*:"(.*)"$/\1/' || true)"
+      # An `if` rather than `[[ … ]] && { … }`: this is the last command in the
+      # loop body, so a non-match would leave the loop — and the enclosing `if`
+      # — at status 1, and `set -e` ends the script there. Harmless while this
+      # ran inside a command substitution; fatal now that it runs in the
+      # caller's shell (it stopped a save halfway, so the rest of the panes
+      # kept whatever the previous snapshot said).
+      if [[ "$t" == "$sess" ]]; then
+        f="${p##*/}"; UUID_ANSWER="2"$'\t'"${f%.jsonl}"; return 0
+      fi
     done < <(find "$dir" -maxdepth 1 -name '*.jsonl' -newermt "@$start" -printf '%T@ %p\n' 2>/dev/null | sort -rn)
   fi
   # 3. last resort: newest by mtime — and only when it is the ONLY candidate.
@@ -228,14 +319,14 @@ uuid_of_claude() {
                           -printf '%T@ %f\n' 2>/dev/null | sort -rn | head -2)
   (( ${#recent[@]} == 1 )) || return 0
   f="${recent[0]#* }"
-  [[ -n "$f" ]] && printf '3\t%s\n' "${f%.jsonl}"
+  [[ -n "$f" ]] && UUID_ANSWER="3"$'\t'"${f%.jsonl}"
   return 0
 }
 
 # uuid_of_claude without the certainty column, for callers that only need to know
-# WHICH conversation. Pure parameter expansion: resolve_row calls this per row of
-# the restore picker, and that path is kept fork-free (test_no_fork_hot_paths).
-uuid_only() { local a; a="$(uuid_of_claude "$@")"; printf '%s\n' "${a#*$'\t'}"; }
+# WHICH conversation. Answers in UUID_VALUE, so resolve_row can ask per row of
+# the restore picker without forking (test_no_fork_hot_paths).
+uuid_only() { uuid_of_claude "$@"; UUID_VALUE="${UUID_ANSWER#*$'\t'}"; }
 
 # --- save ---------------------------------------------------------------------
 
@@ -254,7 +345,7 @@ uuid_only() { local a; a="$(uuid_of_claude "$@")"; printf '%s\n' "${a#*$'\t'}"; 
 # only written when it DIFFERS from the newest one, so a reordering would read as
 # a change on every tick.
 capture_live() {   # $1 user -> TSV rows on stdout
-  local u="$1" sess pane_pid pane_cwd stamp cpid answer uuid
+  local u="$1" sess pane_pid pane_cwd stamp answer uuid
   local -a rows=() order=()
   local -A cwd_of=() owner=() saved=()
   # Pass 1: ask every pane which conversation it is running, and how sure it is.
@@ -264,8 +355,9 @@ capture_live() {   # $1 user -> TSV rows on stdout
     # enters a snapshot in the first place and no later reader has to know.
     addressable "$sess" || continue
     answer=""
-    if cpid="$(claude_pid_under "$pane_pid")"; then
-      answer="$(uuid_of_claude "$cpid" "$u" "$pane_cwd" "$sess" "$stamp")"
+    if claude_pid_under "$pane_pid"; then
+      uuid_of_claude "$CLAUDE_PID" "$u" "$pane_cwd" "$sess" "$stamp"
+      answer="$UUID_ANSWER"
     fi
     order+=("$sess"); cwd_of["$sess"]="$pane_cwd"
     # "<certainty>\t<uuid>\t<session>"; certainty 9 is "no answer at all", which
@@ -359,7 +451,7 @@ save() {
 
 forget() {
   local u="$1" sess="$2" f
-  users | grep -qxF "$u" || { echo "[tmux-persist] forget: '$u' is not a known terminal user" >&2; return 2; }
+  is_user "$u" || { echo "[tmux-persist] forget: '$u' is not a known terminal user" >&2; return 2; }
   [[ "$sess" =~ ^[a-zA-Z0-9_-]{1,32}$ ]] || { echo "[tmux-persist] forget: invalid session name" >&2; return 2; }
   f="$(tombstones_path "$u")"
   printf '%s\t%s\n' "$sess" "$(now_epoch)" >> "$f"
@@ -414,7 +506,7 @@ is_shell() { case "$1" in bash|zsh|sh|fish|dash|ksh) return 0 ;; *) return 1 ;; 
 #   live, no claude, shell pane  -> in_place
 resolve_row() {
   local u="$1" ts="$2" sess="$3" cwd="$4" uuid="$5"
-  local state action target def note live_uuid cpid k snap_epoch
+  local state action target def note live_uuid k snap_epoch
   note="-"; def="on"; target="$sess"
   [[ "$uuid" == "-" ]] && uuid=""
 
@@ -429,8 +521,9 @@ resolve_row() {
     fi
   else
     live_uuid=""
-    if cpid="$(claude_pid_under "${LIVE_PID[$sess]}")"; then
-      live_uuid="$(uuid_only "$cpid" "$u" "$cwd" "$sess" "${LIVE_STAMP[$sess]:-}")"
+    if claude_pid_under "${LIVE_PID[$sess]}"; then
+      uuid_only "$CLAUDE_PID" "$u" "$cwd" "$sess" "${LIVE_STAMP[$sess]:-}"
+      live_uuid="$UUID_VALUE"
     fi
     if [[ -n "$live_uuid" && "$live_uuid" == "$uuid" ]]; then
       state="live_same"; action="skip"; def="off"
@@ -452,43 +545,103 @@ resolve_row() {
     "$sess" "${cwd:--}" "${uuid:--}" "$state" "$action" "$target" "$def" "$note"
 }
 
-snapshot_view() {
+# The rows of one snapshot, resolved. Assumes the caller has already checked the
+# user and called load_live — `picker` resolves a snapshot in the same process
+# that listed the series, and neither of those should be paid for twice.
+snapshot_rows() {
   local u="$1" ts="$2" f sess cwd uuid
-  users | grep -qxF "$u" || { echo "[tmux-persist] snapshot: '$u' is not a known terminal user" >&2; return 2; }
-  migrate_manifest "$u"
-  f="$(snapshot_path "$u" "$ts")"
+  f="$STATE_DIR/snapshots/$u/$ts.tsv"
   [[ -s "$f" ]] || { echo "[tmux-persist] no snapshot '$ts' for $u" >&2; return 1; }
-  load_live "$u"
   while IFS=$'\t' read -r sess cwd uuid; do
     [[ -n "$sess" ]] || continue
     resolve_row "$u" "$ts" "$sess" "$cwd" "$uuid"
   done < "$f"
 }
 
+snapshot_view() {
+  local u="$1" ts="$2"
+  is_user "$u" || { echo "[tmux-persist] snapshot: '$u' is not a known terminal user" >&2; return 2; }
+  migrate_manifest "$u"
+  load_live "$u"
+  snapshot_rows "$u" "$ts"
+}
+
 # ts <TAB> session-count <TAB> is-newest, newest first.
 #
-# Fork-free per row: this runs over every snapshot a user has ever had (94 for
-# wizard, 200 for emo on 2026-08-16, and the series only grows), and the old
-# `basename` + `grep -c` + `$(...)` trio cost three processes each — ~0.6 s of
-# the restore picker's open time. Parameter expansion and a builtin read do the
-# same work for nothing.
-snapshots_list() {
-  local u="$1" f ts n newest mark line
-  users | grep -qxF "$u" || { echo "[tmux-persist] snapshots: '$u' is not a known terminal user" >&2; return 2; }
-  migrate_manifest "$u"
-  newest="$(newest_snapshot "$u")"
-  while read -r f; do
-    [[ -n "$f" ]] || continue
+# One process for the counts, none per row: this runs over every snapshot a
+# user has (the retention cap is 200) and the original `basename` + `grep -c` +
+# `$(...)` trio cost three processes EACH — ~0.6 s of the restore picker's open
+# time. Counting them in a builtin read loop instead took 55 ms of the 165 ms
+# the listing cost on 2026-09-01; one `grep -c` over the whole set does the same
+# work in 30 ms, and the `/dev/null` argument keeps the `file:count` prefix on
+# when the set happens to hold a single file.
+snapshot_counts() {   # -> fills COUNT_OF[path]
+  local line
+  COUNT_OF=()
+  (( $# )) || return 0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    COUNT_OF["${line%:*}"]="${line##*:}"
+  done < <(LC_ALL=C grep -c . -- "$@" /dev/null 2>/dev/null || true)
+}
+
+# The series, assuming the caller has checked the user.
+snapshots_rows() {
+  local u="$1" f ts mark i
+  local -a SNAPSHOT_FILES=()
+  local -A COUNT_OF=()
+  snapshot_files_into "$u"
+  (( ${#SNAPSHOT_FILES[@]} )) || return 0
+  snapshot_counts "${SNAPSHOT_FILES[@]}"
+  # Newest first — the glob is oldest first, so walk it backwards.
+  for (( i = ${#SNAPSHOT_FILES[@]} - 1; i >= 0; i-- )); do
+    f="${SNAPSHOT_FILES[i]}"
     ts="${f##*/}"; ts="${ts%.tsv}"
-    # Count non-empty lines, matching what `grep -c .` reported. The trailing
-    # `|| [[ -n "$line" ]]` keeps a final line with no newline counted.
-    n=0
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      [[ -n "$line" ]] && n=$((n + 1))
-    done < "$f"
-    if [[ "$f" == "$newest" ]]; then mark=newest; else mark=-; fi
-    printf '%s\t%s\t%s\n' "$ts" "$n" "$mark"
-  done < <(snapshot_files "$u" | sort -r)
+    if (( i == ${#SNAPSHOT_FILES[@]} - 1 )); then mark=newest; else mark=-; fi
+    printf '%s\t%s\t%s\n' "$ts" "${COUNT_OF[$f]:-0}" "$mark"
+  done
+}
+
+snapshots_list() {
+  local u="$1"
+  is_user "$u" || { echo "[tmux-persist] snapshots: '$u' is not a known terminal user" >&2; return 2; }
+  migrate_manifest "$u"
+  snapshots_rows "$u"
+}
+
+# Everything the lobby's restore picker needs to OPEN, in one process.
+#
+# The picker used to ask twice, sequentially: GET /snapshots for the series,
+# then GET /snapshots/{ts} for the newest snapshot resolved against live state.
+# Each call paid its own sudo, bash, user-map parse, manifest migration and tmux
+# round trip, and the second could not start until the first came back — 345 ms
+# of server work in two round trips on an idle box on 2026-09-01, and 1.9-48 s
+# when the box was short of memory, which is exactly when someone opens it.
+#
+# Three sections, each keeping the row format of the verb it replaces, so the
+# server parses them with the parsers it already had. A section header starts
+# with '#', which no timestamp and no addressable session name can.
+picker() {
+  local u="$1" newest ts sess live=0
+  is_user "$u" || { echo "[tmux-persist] picker: '$u' is not a known terminal user" >&2; return 2; }
+  migrate_manifest "$u"
+  load_live "$u"
+  # What is running now, counted the way the lobby counts it: names it could
+  # not address (pre-warmed pool slots) are not in the snapshots either, so
+  # counting them here would make every delta read one too high.
+  if (( ${#LIVE_PID[@]} )); then
+    for sess in "${!LIVE_PID[@]}"; do
+      addressable "$sess" && live=$((live + 1))
+    done
+  fi
+  printf '#live\t%s\n' "$live"
+  printf '#snapshots\n'
+  snapshots_rows "$u"
+  newest="$(newest_snapshot "$u")"
+  [[ -n "$newest" ]] || return 0
+  ts="${newest##*/}"; ts="${ts%.tsv}"
+  printf '#rows\t%s\n' "$ts"
+  snapshot_rows "$u" "$ts"
 }
 
 # --- restore ------------------------------------------------------------------
@@ -519,7 +672,7 @@ restore_cmd() {   # $1 sess, $2 uuid ("" -> plain shell)
 
 spawn_session() {   # $1 user, $2 target name, $3 cwd, $4 uuid
   local u="$1" target="$2" cwd="$3" uuid="$4"
-  [[ -d "$cwd" ]] || cwd="$(home_of "$u")"
+  [[ -d "$cwd" ]] || { home_of "$u"; cwd="$HOME_OF"; }
   tmux_as "$u" new-session -d -s "$target" -c "$cwd" "$(restore_cmd "$target" "$uuid")"
 }
 
@@ -555,7 +708,7 @@ apply_row() {   # a resolved row on stdin args: user + the 8 fields
 # button. Rows the picker would leave unticked are skipped here too.
 restore() {
   local only="${1:-}" u f ts row
-  if [[ -n "$only" ]] && ! users | grep -qxF "$only"; then
+  if [[ -n "$only" ]] && ! is_user "$only"; then
     echo "[tmux-persist] restore: '$only' is not a known terminal user" >&2
     return 2
   fi
@@ -581,7 +734,7 @@ restore() {
 restore_selection() {
   local u="$1" ts="$2"; shift 2
   local wanted=("$@") view name found row
-  users | grep -qxF "$u" || { echo "[tmux-persist] restore-selection: '$u' is not a known terminal user" >&2; return 2; }
+  is_user "$u" || { echo "[tmux-persist] restore-selection: '$u' is not a known terminal user" >&2; return 2; }
   (( ${#wanted[@]} )) || { echo "[tmux-persist] restore-selection: no sessions given" >&2; return 2; }
   view="$(snapshot_view "$u" "$ts")" || return 1
   # Refuse the whole request if any name is not in that snapshot, rather than
@@ -647,7 +800,7 @@ history_list() {
 # when asked for "100". Passing the name via -v stops injection but not this.
 restore_one() {
   local u="$1" sel="$2" f line sess cwd uuid ts
-  users | grep -qxF "$u" || { echo "[tmux-persist] restore-one: '$u' is not a known terminal user" >&2; return 2; }
+  is_user "$u" || { echo "[tmux-persist] restore-one: '$u' is not a known terminal user" >&2; return 2; }
   migrate_manifest "$u"
   while read -r f; do
     [[ -n "$f" ]] || continue
@@ -670,6 +823,7 @@ usage: tmux-persist save
        tmux-persist restore [user]
        tmux-persist snapshots <user>
        tmux-persist snapshot <user> <ts>
+       tmux-persist picker <user>
        tmux-persist restore-selection <user> <ts> <name>...
        tmux-persist restore-one <user> <name|uuid>
        tmux-persist history [user]
@@ -683,6 +837,7 @@ case "$MODE" in
   restore)  restore "${2:-}" ;;
   snapshots) snapshots_list "${2:?usage: snapshots <user>}" ;;
   snapshot) snapshot_view "${2:?usage: snapshot <user> <ts>}" "${3:?usage: snapshot <user> <ts>}" ;;
+  picker)   picker "${2:?usage: picker <user>}" ;;
   restore-selection)
             u="${2:?usage: restore-selection <user> <ts> <name>...}"
             ts="${3:?usage: restore-selection <user> <ts> <name>...}"

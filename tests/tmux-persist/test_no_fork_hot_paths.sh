@@ -26,7 +26,7 @@ FORKLOG="$TEST_TMP/forks.log"; : > "$FORKLOG"
 # Shims RECORD and then exec the real tool, so behaviour is unchanged and only
 # the fork is observed. Real paths are resolved before PATH is shadowed.
 SHIMS="$TEST_TMP/shims"; mkdir -p "$SHIMS"
-for c in ps pgrep basename; do
+for c in ps pgrep basename ls sed cut getent; do
   real="$(command -v "$c" || true)"
   [[ -n "$real" ]] || continue
   printf '#!/usr/bin/env bash\necho %s >> %q\nexec %q "$@"\n' "$c" "$FORKLOG" "$real" > "$SHIMS/$c"
@@ -93,5 +93,23 @@ assert_contains "$deepview" "live_same" "the walk finds a nested claude and read
 assert_contains "$deepview" "skip"      "and resolves it as already-live"
 assert_eq "$(forks_of ps)" "0"    "the deep walk still forks no ps"
 assert_eq "$(forks_of pgrep)" "0" "the deep walk still forks no pgrep"
+
+# --- the picker's one call — the whole open, and the same budget ---------------
+# `picker` is what the lobby actually calls: the series, the live count and the
+# newest snapshot resolved, in one process. It must not reintroduce the costs
+# the two verbs above shed, and the home lookup must be asked ONCE rather than
+# once per row (it sits inside uuid_of_claude, which runs per pane).
+: > "$FORKLOG"
+open="$(tp picker "$TEST_USER")"
+assert_contains "$open" "#snapshots" "the picker answers with a series section"
+assert_contains "$open" "#rows"      "and with the newest snapshot resolved"
+assert_eq "$(forks_of ls)"       "0" "opening the picker forks no ls"
+assert_eq "$(forks_of sed)"      "0" "opening the picker forks no sed"
+assert_eq "$(forks_of cut)"      "0" "opening the picker forks no cut"
+assert_eq "$(forks_of basename)" "0" "opening the picker forks no basename"
+assert_eq "$(forks_of ps)"       "0" "opening the picker forks no ps"
+assert_eq "$(forks_of pgrep)"    "0" "opening the picker forks no pgrep"
+(( $(forks_of getent) <= 1 ))
+assert_eq "$?" "0" "the home directory is looked up once, not once per row"
 
 finish
