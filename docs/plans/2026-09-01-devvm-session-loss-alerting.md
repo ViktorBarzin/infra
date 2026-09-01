@@ -1,6 +1,6 @@
 # Telling Viktor when a devvm Claude session dies
 
-**Status:** approved, in execution
+**Status:** done
 **Date:** 2026-09-01
 **Owner:** wizard
 **Predecessor:** [2026-08-16-devvm-pane-memory-cap.md](2026-08-16-devvm-pane-memory-cap.md)
@@ -161,25 +161,17 @@ Drilled on the live box in both directions, with the fix running:
 ## How the signals travel
 
 ```mermaid
-flowchart LR
-  subgraph box["devvm"]
-    K["kernel<br/>oom-kill lines"]
-    T["tmux<br/>sessions + @claude_state"]
-    M["tmux-persist manifest<br/>root 0600"]
-    C["cgroup memory.current<br/>+ fattest process"]
-    W["tl-session-watch<br/>every 30s"]
-    T --> W
-    M --> W
-    C --> W
-    W -->|"journal lines"| J["journald"]
-    K --> J
-    W -->|"textfile .prom"| NE["node_exporter"]
-  end
-  J -->|promtail| L["Loki ruler"]
+flowchart TD
+  W["tl-session-watch, every 30s<br/>reads tmux stamps, tombstones,<br/>cgroup anon + shmem"]
+  K["kernel<br/>oom-kill lines"]
+  W -->|"journal lines"| J["journald"]
+  K --> J
+  W -->|"textfile .prom"| NE["node_exporter"]
+  J -->|"promtail"| L["Loki ruler"]
   NE -->|"2m scrape"| P["Prometheus"]
   L --> AM["Alertmanager"]
   P --> AM
-  AM -->|"warning, per user,<br/>notify once"| S["Slack #alerts"]
+  AM -->|"warning, per user,<br/>notify once"| SL["Slack #alerts"]
 ```
 
 Detection speed is deliberately decoupled from the scrape interval. Prometheus
