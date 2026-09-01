@@ -1,0 +1,81 @@
+{
+  "generated_at": "2026-09-01T05:44:32Z",
+  "generated_by": "scripts/gen-tier0-workload-inventory.py",
+  "why": "Tier-0 stacks keep local state in the repo, which the stray-workload reconciler CronJob cannot read. Regenerate after changing a workload or helm_release in one of these stacks.",
+  "stacks": [
+    "infra",
+    "platform",
+    "cnpg",
+    "vault",
+    "dbaas",
+    "external-secrets"
+  ],
+  "declarations": [
+    [
+      "CronJob",
+      "dbaas",
+      "mysql-backup",
+      "dbaas"
+    ],
+    [
+      "CronJob",
+      "dbaas",
+      "mysql-backup-per-db",
+      "dbaas"
+    ],
+    [
+      "CronJob",
+      "dbaas",
+      "postgresql-backup",
+      "dbaas"
+    ],
+    [
+      "CronJob",
+      "dbaas",
+      "postgresql-backup-per-db",
+      "dbaas"
+    ],
+    [
+      "CronJob",
+      "vault",
+      "vault-raft-backup",
+      "vault"
+    ],
+    [
+      "Deployment",
+      "dbaas",
+      "pgadmin",
+      "dbaas"
+    ],
+    [
+      "Deployment",
+      "dbaas",
+      "phpmyadmin",
+      "dbaas"
+    ],
+    [
+      "HelmRelease",
+      "cnpg-system",
+      "cnpg",
+      "cnpg"
+    ],
+    [
+      "HelmRelease",
+      "external-secrets",
+      "external-secrets",
+      "external-secrets"
+    ],
+    [
+      "HelmRelease",
+      "vault",
+      "vault",
+      "vault"
+    ],
+    [
+      "StatefulSet",
+      "dbaas",
+      "mysql-standalone",
+      "dbaas"
+    ]
+  ]
+}

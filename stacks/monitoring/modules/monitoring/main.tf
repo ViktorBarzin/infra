@@ -33,9 +33,18 @@ variable "kube_config_path" {
 }
 variable "tier" { type = string }
 variable "mysql_host" { type = string }
-# CNPG primary, for the Goldmane edge-trail Grafana datasource
-# (goldmane_edges_datasource.tf).
-variable "postgresql_host" { type = string }
+# One declaration, two consumers. Both features that arrived on this stack in
+# September 2026 need the CNPG primary, and declaring it twice is a Terraform
+# error that stops the whole stack initialising, so neither may add its own.
+variable "postgresql_host" {
+  type        = string
+  description = "CNPG primary. The stray-workload reconciler (stray_workload.tf) reads Tier-1 Terraform state from the terraform_state database here; the Goldmane edge-trail Grafana datasource (goldmane_edges_datasource.tf) reads the goldmane_edges database."
+}
+variable "dbaas_root_password" {
+  type        = string
+  sensitive   = true
+  description = "CNPG superuser, used only by the stray-workload-detect-db-init Job to create its read-only reader role."
+}
 variable "registry_user" {
   type      = string
   sensitive = true
