@@ -146,7 +146,7 @@ locals {
     "openlobster", "pages", "paperless-ai", "pb",
     "pdf", "pfsense", "pgadmin", "phpipam",
     "pi", "plans", "plotting-book", "pma",
-    "postiz", "priority-pass", "prometheus", "prowlarr",
+    "priority-pass", "prometheus", "prowlarr",
     "proxy", "qbittorrent", "recruiter-responder", "repowise",
     "resume", "rss", "send", "shlink",
     "speedtest", "stacks", "stirling-pdf", "stremio",

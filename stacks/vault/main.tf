@@ -896,7 +896,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-terraform-state", "pg-payslip-ingest", "pg-job-hunter",
     "pg-lesson-harvester",
     "pg-wealthfolio-sync", "pg-fire-planner",
-    "pg-postiz", "pg-instagram-poster",
+    "pg-instagram-poster",
     "pg-recruiter-responder", "pg-tripit",
     "pg-nextcloud-todos",
     "pg-technitium",
@@ -1034,17 +1034,6 @@ resource "vault_database_secret_backend_static_role" "pg_terraform_state" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-terraform-state"
   username        = "terraform_state"
-  rotation_period = 604800
-}
-
-# Postiz uses three databases (postiz, temporal, temporal_visibility) all owned
-# by the `postiz` PG role. One static role covers all three. Migrated from the
-# bundled bitnami PG StatefulSet to CNPG on 2026-05-09.
-resource "vault_database_secret_backend_static_role" "pg_postiz" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-postiz"
-  username        = "postiz"
   rotation_period = 604800
 }
 
