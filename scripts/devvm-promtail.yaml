@@ -62,7 +62,11 @@ scrape_configs:
       # of the historic 1M ingester_error drops). level is dropped entirely —
       # nothing queries it; grep the line text instead.
       - source_labels: ['__journal_syslog_identifier']
-        regex: '(t3-.*|claude-auth-sync|sshd.*|sudo|kernel|earlyoom|promtail)'
+        # tl-session-watch added 2026-09-01: the session-loss rules in
+        # stacks/monitoring/.../loki.tf select on identifier="tl-session-watch",
+        # so without it here they match nothing and stay silent about it.
+        # One identifier, so one or two extra streams against the global cap.
+        regex: '(t3-.*|claude-auth-sync|sshd.*|sudo|kernel|earlyoom|promtail|tl-session-watch)'
         target_label: identifier
       # sshd auth lines -> job=sshd-devvm (parity with the pve shipper's sshd-pve).
       - source_labels: ['__journal_syslog_identifier']
