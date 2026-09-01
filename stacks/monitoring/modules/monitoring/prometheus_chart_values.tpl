@@ -1992,8 +1992,19 @@ serverFiles:
           # the pod lives.
           # keep_firing_for: the series clears when the pod is replaced (not
           # merely restarted), so a repeating OOM loop reads as one alert.
+          # The recency guard (added 2026-09-01, a day after this rule was
+          # rewritten) matters as much as the metric choice.
+          # last_terminated_reason describes the CURRENT pod's most recent exit
+          # and persists for the life of that pod, so on its own the rule fires
+          # forever for a container that OOMed once and has been healthy since:
+          # on first deployment it immediately reported goflow2 (last OOM
+          # 2026-08-09) and paperless-ai (2026-08-21), both of which had been
+          # running fine for weeks. That is the mirror image of the counter-based
+          # rule it replaced — one could never fire, this one could never stop.
+          # Pairing it with a restart in the last hour gives "OOMed AND came back
+          # recently", which is the condition worth waking up for.
           - alert: ContainerOOMKilled
-            expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1 and on(namespace, pod, container) increase(kube_pod_container_status_restarts_total[1h]) > 0 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
             keep_firing_for: 30m
             labels:
@@ -2624,13 +2635,24 @@ serverFiles:
               severity: warning
             annotations:
               summary: "NFS local mirror last run failed (status={{ $value }})"
+          # Threshold raised 180000s (50h) -> 691200s (8d) on 2026-09-01.
+          # vzdump-vms.timer is WEEKLY, not daily: measured on the PVE host,
+          # LastTrigger Sun 2026-08-30 01:00:43 and NextElapse Sun 2026-09-06
+          # 01:01:08. A 50h threshold described as "2 daily cycles" therefore
+          # fired roughly 5 days out of every 7 while the backup was perfectly
+          # healthy — the run it was complaining about had finished with
+          # "=== vzdump-vms complete (status=0, 81G) ===". 8 days allows one
+          # weekly run to be missed entirely plus margin, so a fire now means a
+          # genuinely skipped or failed backup. The other four backup timers on
+          # that host (daily-backup, offsite-sync-backup, devvm-home-backup,
+          # dpkg-db-backup) really are daily and are covered by their own rules.
           - alert: VzdumpBackupStale
-            expr: (time() - vzdump_last_success_timestamp{job="vzdump-backup"}) > 180000
+            expr: (time() - vzdump_last_success_timestamp{job="vzdump-backup"}) > 691200
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "vzdump VM image backup is {{ $value | humanizeDuration }} old (threshold: ~50h / 2 daily cycles)"
+              summary: "vzdump VM image backup is {{ $value | humanizeDuration }} old (threshold: 8d — the timer is weekly)"
               description: "vzdump-vms.timer on 192.168.1.127 hasn't produced a fresh devvm image. Check: ssh root@192.168.1.127 systemctl status vzdump-vms. Runbook: docs/architecture/backup-dr.md (VM Image Backups)."
           - alert: VzdumpBackupNeverRun
             expr: absent(vzdump_last_run_timestamp{job="vzdump-backup"})
