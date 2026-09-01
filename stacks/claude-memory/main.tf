@@ -392,14 +392,20 @@ resource "kubernetes_deployment" "claude-memory" {
 
               # ONE time-slice of the T4 (the operator advertises 100), plus the VRAM
               # contract the scheduler counts and the gpu-vram-watchdog enforces.
-              # 1200 MiB = ~600 int8 weights + ~300 CUDA context + arena and margin. It
-              # is a first estimate to be tightened from gpu_pod_memory_used_bytes once
-              # this has run, exactly as ADR-0016 asks. It fits the current seating
-              # chart without a capacity change: after the 2026-08-31 re-basing of every
-              # tenant to measured footprints, declared totals are 7,684 of the 14,000
-              # advertised, so this takes headroom from 6,316 to 5,116.
+              #
+              # 1200 -> 2000 MiB (2026-09-01). The first attempt baked an int8 graph at
+              # ~600 MiB of weights; int8 was then rejected because it produced vectors
+              # scoring cosine 0.16-0.37 against the reference model, so the image now
+              # carries an fp16 graph at ~1.2 GiB. 2000 = ~1200 weights + ~300 CUDA
+              # context + arena and margin.
+              #
+              # Still a first estimate, to be tightened from gpu_pod_memory_used_bytes
+              # once it has run, exactly as ADR-0016 asks. It fits without a capacity
+              # change: after the 2026-08-31 re-basing of every tenant to measured
+              # footprints, declared totals are 7,684 of the 14,000 advertised, so this
+              # takes headroom from 6,316 to 4,316.
               "nvidia.com/gpu"         = "1"
-              "viktorbarzin.me/gpumem" = "1200"
+              "viktorbarzin.me/gpumem" = "2000"
             }
           }
         }
