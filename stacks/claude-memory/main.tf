@@ -170,6 +170,18 @@ resource "kubernetes_deployment" "claude-memory" {
     # (accepted). PDB below flipped to max_unavailable=1 accordingly —
     # min_available=1 with a single replica would BLOCK kured node drains.
     replicas = 1
+
+    # Recreate, not the default RollingUpdate (2026-09-01). Once this pod requests a
+    # GPU it can only run on k8s-node1, and the pod anti-affinity below forbids two
+    # claude-memory pods sharing a node. A rolling update therefore has nowhere to put
+    # the new pod while the old one holds node1, and the rollout deadlocks with
+    # FailedScheduling ("didn't match pod anti-affinity rules") — observed on the first
+    # deploy after the GPU move. Recreate stops the old pod first, which costs the same
+    # brief recall/store blip already accepted above for a single replica.
+    strategy {
+      type = "Recreate"
+    }
+
     selector {
       match_labels = {
         app = "claude-memory"
