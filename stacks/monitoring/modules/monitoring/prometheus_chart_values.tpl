@@ -2037,11 +2037,23 @@ serverFiles:
           # cron iterations of a typical 5-min/15-min/1h job before paging —
           # transient single-run failures (network blip, upstream timeout)
           # are recovered by the next iteration without alerting.
+          #
+          # The recency window was widened 3600 -> 21600 on 2026-09-01, because
+          # with a 1h window this rule could NEVER FIRE: it required the failure
+          # to persist for 2h while the recency clause went false at 1h and reset
+          # the `for` timer, so it sat permanently in "pending". That is why
+          # paperless-ai's daily rag-index-refresh failed every night for nine
+          # days with no notification — the job was failing and the metric was
+          # correct, but the rule could not reach firing. Widening the window
+          # rather than shortening `for` keeps the intent above intact: still two
+          # hours of persistence before anyone is told, now with six hours of
+          # room for that to elapse. Verified against live data at the time of
+          # the change: the expression matches paperless-ai/rag-index-refresh.
           - alert: JobFailed
             expr: |
               kube_job_status_failed > 0
               and on(namespace, job_name)
-              (time() - kube_job_status_start_time) < 3600
+              (time() - kube_job_status_start_time) < 21600
             for: 2h
             labels:
               severity: warning
