@@ -67,25 +67,41 @@ EXCLUDE_CIDRS = [
 
 # LogQL: keep in sync with the recording rules in loki.tf ("immich-immich" is
 # the main Immich router token; immich-frame kiosk routers don't match it).
-# GUARDS (load-bearing, mirror loki.tf): slug/ip extraction is ANCHORED to
-# the CLF request-line position because log lines carry attacker-controlled
-# User-Agent/Referer since 2026-07-06 — an unanchored regexp would let any
-# client mint arbitrary slug label values via a crafted header. Status
-# 2xx/304 required: Immich 404s unknown /s/<slug> and 401s bad ?slug= API
-# calls, so junk-slug probes don't count.
+#
+# GUARDS (load-bearing, mirror loki.tf): slug and ip extraction is ANCHORED to
+# the JSON key name, not to a position in the line, because log lines carry
+# attacker-controlled User-Agent and Referer values and an unanchored regexp
+# would let any client mint arbitrary slug label values via a crafted header.
+# The access log became JSON on 2026-09-01; the anchor moved with it and got
+# stronger. Traefik escapes `"` as `\"` inside every string value, so the
+# literal sequence `"RequestPath":"` cannot occur inside a header value, and
+# `[^"]*` can never cross out of one field into another. Status 2xx/304 is
+# still required: Immich 404s unknown /s/<slug> and 401s bad ?slug= API calls,
+# so junk-slug probes don't count.
+#
+# `&` reaches Loki HTML-escaped as `\u0026` (Traefik's JSON encoder), so the
+# requests query must accept both separators — matching a bare `&` alone
+# silently returns nothing.
 SLUG_RE = r"(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})"
-CLF_STATUS = r' | regexp `^\S+ - \S+ \[[^\]]*\] "[^"]*" (?P<status>[0-9]{3}) ` | status =~ "2..|304"'
+IP_RE = r'"ClientHost":"(?P<ip>[0-9a-fA-F.:]+)"'
+JSON_STATUS = r' | json status="DownstreamStatus" | status =~ "2..|304"'
+# container="traefik" keeps the nginx auth-proxy / bot-block-proxy streams —
+# same namespace, still CLF — out of the scan.
+STREAM = r'{namespace="traefik", container="traefik"}'
 Q_REQUESTS = (
-    r'sum by (slug, ip) (count_over_time({namespace="traefik"} |= "immich-immich"'
+    r'sum by (slug, ip) (count_over_time(' + STREAM + r' |= "immich-immich"'
     r' |= "slug="'
-    r' | regexp `^(?P<ip>[0-9a-fA-F.:]+) - \S+ \[[^\]]*\] "[A-Z]+ [^" ]*[?&]slug=' + SLUG_RE + r'`'
-    r' | slug != "" | ip != ""' + CLF_STATUS + r' [%dh]))' % CHUNK_HOURS
+    r' | regexp `"RequestPath":"[^"]*(?:[?&]|\\u0026)slug=' + SLUG_RE + r'`'
+    r' | regexp `' + IP_RE + r'`'
+    r' | slug != "" | ip != ""' + JSON_STATUS + r' [%dh]))' % CHUNK_HOURS
 )
 Q_OPENS = (
-    r'sum by (slug, ip) (count_over_time({namespace="traefik"} |= "immich-immich"'
-    r' |~ `"(GET|HEAD) /s/`'
-    r' | regexp `^(?P<ip>[0-9a-fA-F.:]+) - \S+ \[[^\]]*\] "(?:GET|HEAD) /s/' + SLUG_RE + r'[ ?/]`'
-    r' | slug != "" | ip != ""' + CLF_STATUS + r' [%dh]))' % CHUNK_HOURS
+    r'sum by (slug, ip) (count_over_time(' + STREAM + r' |= "immich-immich"'
+    r' |~ `"RequestMethod":"(GET|HEAD)"`'
+    r' |~ `"RequestPath":"/s/`'
+    r' | regexp `"RequestPath":"/s/' + SLUG_RE + r'[?/"]`'
+    r' | regexp `' + IP_RE + r'`'
+    r' | slug != "" | ip != ""' + JSON_STATUS + r' [%dh]))' % CHUNK_HOURS
 )
 
 

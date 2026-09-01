@@ -1088,18 +1088,34 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           # album link lives up to a year, so ad-hoc log sweeps can't answer
           # "total visits" after week 4. Query totals with e.g.
           # sum_over_time(immich:share_link_opens:count1m{slug="x"}[90d]).
-          # CARDINALITY / INJECTION GUARDS — all three are load-bearing:
-          # (1) slug extraction is ANCHORED to the CLF request-line position
-          #     (`^ip - user [ts] "METHOD path"`), because since 2026-07-06
-          #     the line also carries attacker-controlled User-Agent/Referer —
-          #     an unanchored regexp would let any client mint arbitrary slug
-          #     label values via a crafted header (Prometheus cardinality
-          #     bomb); (2) status 2xx/304 required — Immich 404s unknown
-          #     /s/<slug> and 401s API calls with a bad ?slug=, so junk-slug
-          #     probes don't mint series; (3) the slug charset regex bounds
-          #     label values. `|= "immich-immich"` (main immich router token;
+          # CARDINALITY / INJECTION GUARDS — all four are load-bearing:
+          # (1) slug extraction is ANCHORED to the JSON key `"RequestPath":"`,
+          #     because the line also carries attacker-controlled User-Agent and
+          #     Referer values — an unanchored regexp would let any client mint
+          #     arbitrary slug label values via a crafted header (Prometheus
+          #     cardinality bomb). This anchor is STRONGER than the CLF byte
+          #     position it replaced (2026-09-01, when the access log became
+          #     JSON): Traefik escapes `"` as `\"` inside every string value, so
+          #     the literal sequence `"RequestPath":"` cannot appear inside a
+          #     header value at all, and `[^"]*` can never cross out of one
+          #     field into another. Verified on traefik:v3.7.1 by sending
+          #     `User-Agent: x","RequestPath":"/s/EVILSLUG",...` — the log line
+          #     carries it as `x\",\"RequestPath\":\"/s/EVILSLUG` and neither
+          #     rule matches it.
+          # (2) status 2xx/304 required — Immich 404s unknown /s/<slug> and 401s
+          #     API calls with a bad ?slug=, so junk-slug probes don't mint
+          #     series. Read from the DownstreamStatus field, not a position.
+          # (3) the slug charset regex bounds label values.
+          # (4) `container="traefik"` keeps the nginx auth-proxy and
+          #     bot-block-proxy streams — still CLF, same namespace — out of the
+          #     scan entirely. `|= "immich-immich"` (main immich router token;
           #     kiosk immich-frame routers don't match) is only a scan
           #     prefilter — false positives are dropped by the anchors.
+          # NOTE ON `\\u0026`: Traefik's JSON encoder HTML-escapes `&` inside
+          # values, so a query string reaches Loki as `?size=preview\u0026slug=`.
+          # The requests rule must accept both separators; matching a bare `&`
+          # alone silently returns zero. Found by capturing a real line rather
+          # than reasoning about it.
           # Complemented by the daily share-link-geo CronJob
           # (share_link_analytics.tf) for unique-IP + per-country gauges
           # (exact distincts need IP-level data that doesn't belong in
@@ -1110,14 +1126,14 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             {
               # Page opens: successful GET/HEAD of the share page /s/<slug>.
               record = "immich:share_link_opens:count1m"
-              expr   = "sum by (slug) (count_over_time({namespace=\"traefik\"} |= \"immich-immich\" |~ `\"(GET|HEAD) /s/` | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"(?:GET|HEAD) /s/(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})[ ?/]` | slug != \"\" | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"[^\"]*\" (?P<status>[0-9]{3}) ` | status =~ \"2..|304\" [1m]))"
+              expr   = "sum by (slug) (count_over_time({namespace=\"traefik\", container=\"traefik\"} |= \"immich-immich\" |~ `\"RequestMethod\":\"(GET|HEAD)\"` |~ `\"RequestPath\":\"/s/` | regexp `\"RequestPath\":\"/s/(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})[?/\"]` | slug != \"\" | json status=\"DownstreamStatus\" | status =~ \"2..|304\" [1m]))"
               labels = { source = "loki-ruler" }
             },
             {
               # Browsing volume: successful API/asset requests carrying
               # ?slug=<slug> in the request path (thumbnails, originals, video).
               record = "immich:share_link_requests:count1m"
-              expr   = "sum by (slug) (count_over_time({namespace=\"traefik\"} |= \"immich-immich\" |= \"slug=\" | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"[A-Z]+ [^\" ]*[?&]slug=(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})` | slug != \"\" | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"[^\"]*\" (?P<status>[0-9]{3}) ` | status =~ \"2..|304\" [1m]))"
+              expr   = "sum by (slug) (count_over_time({namespace=\"traefik\", container=\"traefik\"} |= \"immich-immich\" |= \"slug=\" | regexp `\"RequestPath\":\"[^\"]*(?:[?&]|\\\\u0026)slug=(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})` | slug != \"\" | json status=\"DownstreamStatus\" | status =~ \"2..|304\" [1m]))"
               labels = { source = "loki-ruler" }
             },
           ]
