@@ -83,12 +83,26 @@ small no matter how much traffic flows.
   ExternalSecret and injected via Grafana's `envFromSecrets` +
   `$__env{GOLDMANE_EDGES_PG_PASSWORD}`. Reloader restarts Grafana on each
   7-day rotation.
-- **The dashboard needs the widened `edge` schema and is empty (panels error)
-  until that migration runs.** Its panels read `src_name`, `src_type`,
-  `dst_name`, `dst_type`, `dst_port` and `dst_svc_name`, which the table above
-  does not carry yet. The datasource itself works either way. The full column
-  contract, and which fields the dashboard deliberately avoids, is the header
-  comment of `goldmane_edges_datasource.tf`.
+- **The dashboard needs the widened `edge` schema; its panels error until that
+  migration runs.** They read `src_workload`, `src_type`, `dst_workload`,
+  `dst_type`, `dst_service`, `dst_port` and the generated `pre_widening` flag,
+  all added by `migrations/0002_widen_edge.sql`. The datasource works either way.
+  The full column contract is the header comment of
+  `goldmane_edges_datasource.tf`.
+- **Endpoint types are stored lowercase** — `workload`, `host`, `networkset`,
+  `network`, `unknown` — because the aggregator normalises Goldmane's
+  `EndpointType` enum onto its own constants (`internal/edge/edge.go`). A query
+  comparing against the enum spelling (`WorkloadEndpoint`, `Network`) matches
+  nothing and fails silently: a `dst_type = 'Network'` filter reads 0, and a
+  `src_type <> 'WorkloadEndpoint'` filter matches every row. Likewise the unset
+  sentinel is `-`, never the empty string, so blank a service with
+  `NULLIF(dst_service, '-')`.
+- **Rows written before the widening are excluded, not deleted.** They are NULL
+  in all seven added columns, so every panel filters on `NOT pre_widening` (the
+  contract `0002_widen_edge.sql` states). `homelab edges` still rolls them up at
+  namespace level, which is where their history stays readable. Leaving them in
+  would swamp the totals: on a scratch replica of the live shape, 4 legacy rows
+  carry 366M accumulated flows against 22M observed since the widening.
 - Panels: all traffic as a filterable table (namespace / workload / destination
   port / action template variables, matching either end of the edge), a
   namespace-to-namespace sankey, busiest ports and workloads, denied edges, the

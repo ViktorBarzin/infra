@@ -22,7 +22,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "### What this shows, and what it cannot\n\nEvery row is one **durable edge** the `goldmane-edge-aggregator` has observed:\na source workload talking to a destination workload on a destination port, with\nthe policy action Calico applied. Source: the `edge` table in the\n`goldmane_edges` CNPG database.\n\n**Honest limits, worth knowing before you read a number:**\n\n- **There is no time series.** The table keeps `first_seen`, `last_seen` and a\n  cumulative `flow_count` per edge, not per-interval counts. So the time picker\n  filters on `last_seen` \u2014 *\"edges last observed inside this window\"* \u2014 and\n  `flows` is a running total since the edge was first seen, never a rate.\n- **A port carries no protocol.** `dst_port` alone cannot tell TCP/53 from\n  UDP/53.\n- **Traffic is per workload, not per pod.** Pod names churn on every restart;\n  [Whisker](https://whisker.viktorbarzin.me) is the live per-pod view.\n- **No peer addresses.** Goldmane's wire format has no IP field, so an internet\n  edge is `pub`, never a destination address.\n- **After the widening migration lands, everything looks new for one window.**\n  Rows are re-keyed, so `first_seen` resets and the *Unusual connections* panel\n  will be full for the first day. Give it a burn-in before trusting it."
+        "content": "### What this shows, and what it cannot\n\nEvery row is one **durable edge** the `goldmane-edge-aggregator` has observed:\na source workload talking to a destination workload on a destination port, with\nthe policy action Calico applied. Source: the `edge` table in the\n`goldmane_edges` CNPG database.\n\n**Honest limits, worth knowing before you read a number:**\n\n- **There is no time series.** The table keeps `first_seen`, `last_seen` and a\n  cumulative `flow_count` per edge, not per-interval counts. So the time picker\n  filters on `last_seen` — *\"edges last observed inside this window\"* — and\n  `flows` is a running total since the edge was first seen, never a rate.\n- **A port carries no protocol.** `dst_port` alone cannot tell TCP/53 from\n  UDP/53.\n- **Traffic is per workload, not per pod.** Pod names churn on every restart;\n  [Whisker](https://whisker.viktorbarzin.me) is the live per-pod view.\n- **No peer addresses.** Goldmane's wire format has no IP field, so an internet\n  edge is `pub`, never a destination address.\n- **Rows written before the widening migration are not shown.** Those rows are\n  NULL in every widened column (no workload, no endpoint type, no port), so\n  every panel here filters on `NOT pre_widening`. They are not deleted and the\n  `homelab edges` CLI still rolls them up at namespace level — they just cannot\n  be plotted on these axes. On the live table that is 4 rows holding 366M\n  accumulated flows against 22M observed since, so including them would swamp\n  every total.\n- **Everything looks new for one window after the migration.** The identity\n  tuple is wider, so the first observation of a namespace pair INSERTs a fresh\n  row rather than updating the legacy one, and the *Unusual connections* panel\n  will be full for the first day. Give it a burn-in before trusting it."
       }
     },
     {
@@ -76,7 +76,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT count(*) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
+          "rawSql": "SELECT count(*) AS value FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
         }
       ]
     },
@@ -131,7 +131,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT count(*) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = 'deny'"
+          "rawSql": "SELECT count(*) AS value FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = 'deny'"
         }
       ]
     },
@@ -186,7 +186,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT count(DISTINCT src_name) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
+          "rawSql": "SELECT count(DISTINCT src_workload) AS value FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
         }
       ]
     },
@@ -241,7 +241,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT count(DISTINCT dst_port) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
+          "rawSql": "SELECT count(DISTINCT dst_port) AS value FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
         }
       ]
     },
@@ -296,7 +296,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT count(*) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) AND dst_type = 'Network' AND dst_name = 'pub'"
+          "rawSql": "SELECT count(*) AS value FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) AND dst_type = 'network' AND dst_workload = 'pub'"
         }
       ]
     },
@@ -351,7 +351,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT count(*) AS value FROM edge WHERE first_seen >= now() - interval '${unusual_window}' AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
+          "rawSql": "SELECT count(*) AS value FROM edge WHERE NOT pre_widening AND first_seen >= now() - interval '${unusual_window}' AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
         }
       ]
     },
@@ -406,7 +406,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT src_ns AS \"src ns\", src_name AS \"src workload\", src_type AS \"src type\", dst_ns AS \"dst ns\", dst_name AS \"dst workload\", dst_type AS \"dst type\", dst_port AS \"port\", NULLIF(dst_svc_name, '') AS \"dst service\", action, flow_count AS \"flows\", first_seen AS \"first seen\", last_seen AS \"last seen\" FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) ORDER BY flow_count DESC LIMIT 2000"
+          "rawSql": "SELECT src_ns AS \"src ns\", src_workload AS \"src workload\", src_type AS \"src type\", dst_ns AS \"dst ns\", dst_workload AS \"dst workload\", dst_type AS \"dst type\", dst_port AS \"port\", NULLIF(dst_service, '-') AS \"dst service\", action, flow_count AS \"flows\", first_seen AS \"first seen\", last_seen AS \"last seen\" FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) ORDER BY flow_count DESC LIMIT 2000"
         }
       ]
     },
@@ -414,7 +414,7 @@
       "id": 9,
       "type": "netsage-sankey-panel",
       "title": "Namespace to namespace",
-      "description": "Flow volume between namespaces. Destination nodes carry a '-> ' prefix so a pair that talks both ways does not form a cycle the diagram cannot draw. Host ends (Goldmane reports namespace '-') show as 'host <name>'; the public internet shows as 'internet'. Top 60 pairs.",
+      "description": "Flow volume between namespaces. Destination nodes carry a '-> ' prefix so a pair that talks both ways does not form a cycle the diagram cannot draw. An end with no namespace is labelled by its endpoint type and name ('host k8s-node1', 'networkset cloudflare-edge'); 'pub' reads as 'internet'. Top 60 pairs.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "goldmane-edges-pg"
@@ -444,7 +444,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT CASE WHEN src_ns = '-' THEN 'host ' || src_name ELSE src_ns END AS source, '-> ' || CASE WHEN dst_ns = '-' THEN (CASE WHEN dst_name = 'pub' THEN 'internet' ELSE 'host ' || dst_name END) ELSE dst_ns END AS target, SUM(flow_count) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1, 2 HAVING SUM(flow_count) > 0 ORDER BY value DESC LIMIT 60"
+          "rawSql": "SELECT CASE WHEN src_ns <> '-' THEN src_ns WHEN src_workload = 'pub' THEN 'internet' ELSE src_type || ' ' || src_workload END AS source, '-> ' || CASE WHEN dst_ns <> '-' THEN dst_ns WHEN dst_workload = 'pub' THEN 'internet' ELSE dst_type || ' ' || dst_workload END AS target, SUM(flow_count) AS value FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1, 2 HAVING SUM(flow_count) > 0 ORDER BY value DESC LIMIT 60"
         }
       ]
     },
@@ -512,7 +512,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT dst_port::text AS port, SUM(flow_count) AS flows FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1 ORDER BY flows DESC LIMIT 15"
+          "rawSql": "SELECT dst_port::text AS port, SUM(flow_count) AS flows FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1 ORDER BY flows DESC LIMIT 15"
         }
       ]
     },
@@ -520,7 +520,7 @@
       "id": 11,
       "type": "barchart",
       "title": "Busiest source workloads",
-      "description": "Cumulative flow count per source workload. Top 12 \u2014 the ns/workload labels need the room.",
+      "description": "Cumulative flow count per source workload. Top 12 — the ns/workload labels need the room.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "goldmane-edges-pg"
@@ -580,7 +580,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT src_ns || '/' || src_name AS workload, SUM(flow_count) AS flows FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1 ORDER BY flows DESC LIMIT 12"
+          "rawSql": "SELECT src_ns || '/' || src_workload AS workload, SUM(flow_count) AS flows FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1 ORDER BY flows DESC LIMIT 12"
         }
       ]
     },
@@ -660,7 +660,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH win AS (\n  SELECT (now() - interval '${unusual_window}') AS since\n), fresh AS (\n  SELECT e.* FROM edge e CROSS JOIN win w\n  WHERE e.first_seen >= w.since\n    AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]))\n    AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[]))\n    AND action = ANY(ARRAY[${action:sqlstring}]::text[])\n)\nSELECT\n  f.first_seen AS \"first seen\",\n  -- Most specific reason wins. Every row here is a new edge by construction\n  -- (first_seen inside the window), so naming that as well on rows with a\n  -- sharper reason just makes the column unreadable.\n  COALESCE(\n    CASE WHEN f.dst_type = 'Network' AND f.dst_name = 'pub' AND NOT EXISTS (\n           SELECT 1 FROM edge p CROSS JOIN win w\n           WHERE p.src_ns = f.src_ns AND p.dst_type = 'Network' AND p.dst_name = 'pub'\n             AND p.first_seen < w.since)\n         THEN 'first internet egress for this namespace' END,\n    CASE WHEN EXISTS (\n           SELECT 1 FROM edge p CROSS JOIN win w\n           WHERE p.src_ns = f.src_ns AND p.src_name = f.src_name AND p.first_seen < w.since)\n         AND NOT EXISTS (\n           SELECT 1 FROM edge p CROSS JOIN win w\n           WHERE p.src_ns = f.src_ns AND p.src_name = f.src_name AND p.dst_port = f.dst_port\n             AND p.first_seen < w.since)\n         THEN 'port new to this workload' END,\n    'new edge') AS \"why\",\n  f.src_ns AS \"src ns\", f.src_name AS \"src workload\",\n  f.dst_ns AS \"dst ns\", f.dst_name AS \"dst workload\", f.dst_type AS \"dst type\",\n  f.dst_port AS \"port\", NULLIF(f.dst_svc_name, '') AS \"dst service\",\n  f.action, f.flow_count AS \"flows\"\nFROM fresh f\nORDER BY f.first_seen DESC\nLIMIT 500"
+          "rawSql": "WITH win AS (\n  SELECT (now() - interval '${unusual_window}') AS since\n), fresh AS (\n  SELECT e.* FROM edge e CROSS JOIN win w\n  WHERE NOT e.pre_widening\n    AND e.first_seen >= w.since\n    AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]))\n    AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[]))\n    AND action = ANY(ARRAY[${action:sqlstring}]::text[])\n)\nSELECT\n  f.first_seen AS \"first seen\",\n  -- Most specific reason wins. Every row here is a new edge by construction\n  -- (first_seen inside the window), so naming that as well on rows with a\n  -- sharper reason just makes the column unreadable.\n  COALESCE(\n    CASE WHEN f.dst_type = 'network' AND f.dst_workload = 'pub' AND NOT EXISTS (\n           SELECT 1 FROM edge p CROSS JOIN win w\n           WHERE NOT p.pre_widening AND p.src_ns = f.src_ns AND p.dst_type = 'network' AND p.dst_workload = 'pub'\n             AND p.first_seen < w.since)\n         THEN 'first internet egress for this namespace' END,\n    CASE WHEN EXISTS (\n           SELECT 1 FROM edge p CROSS JOIN win w\n           WHERE NOT p.pre_widening AND p.src_ns = f.src_ns AND p.src_workload = f.src_workload AND p.first_seen < w.since)\n         AND NOT EXISTS (\n           SELECT 1 FROM edge p CROSS JOIN win w\n           WHERE NOT p.pre_widening AND p.src_ns = f.src_ns AND p.src_workload = f.src_workload AND p.dst_port = f.dst_port\n             AND p.first_seen < w.since)\n         THEN 'port new to this workload' END,\n    'new edge') AS \"why\",\n  f.src_ns AS \"src ns\", f.src_workload AS \"src workload\",\n  f.dst_ns AS \"dst ns\", f.dst_workload AS \"dst workload\", f.dst_type AS \"dst type\",\n  f.dst_port AS \"port\", NULLIF(f.dst_service, '-') AS \"dst service\",\n  f.action, f.flow_count AS \"flows\"\nFROM fresh f\nORDER BY f.first_seen DESC\nLIMIT 500"
         }
       ]
     },
@@ -715,7 +715,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT src_ns AS \"src ns\", src_name AS \"src workload\", src_type AS \"src type\", dst_ns AS \"dst ns\", dst_name AS \"dst workload\", dst_type AS \"dst type\", dst_port AS \"port\", NULLIF(dst_svc_name, '') AS \"dst service\", action, flow_count AS \"flows\", first_seen AS \"first seen\", last_seen AS \"last seen\" FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = 'deny' ORDER BY last_seen DESC LIMIT 200"
+          "rawSql": "SELECT src_ns AS \"src ns\", src_workload AS \"src workload\", src_type AS \"src type\", dst_ns AS \"dst ns\", dst_workload AS \"dst workload\", dst_type AS \"dst type\", dst_port AS \"port\", NULLIF(dst_service, '-') AS \"dst service\", action, flow_count AS \"flows\", first_seen AS \"first seen\", last_seen AS \"last seen\" FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = 'deny' ORDER BY last_seen DESC LIMIT 200"
         }
       ]
     },
@@ -723,7 +723,7 @@
       "id": 14,
       "type": "table",
       "title": "Ends with no workload (host and internet traffic)",
-      "description": "Edges where at least one end is not a pod: a host endpoint, a network set, or the public internet. Goldmane reports namespace '-' for these, and the aggregator used to delete the host-to-host and host-to-internet rows outright, so this panel is empty until the widening migration lands.",
+      "description": "Edges where neither end is typed as a pod: a host endpoint, a network set, the public internet, or an end whose type Goldmane never sent ('unknown'). These carry namespace '-'. Before the widening the endpoint type was not stored at all, so this class could not be separated out; host-to-host rows were also dropped by the old same-namespace test, which matched two ends that both reported '-'.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "goldmane-edges-pg"
@@ -770,7 +770,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT src_ns AS \"src ns\", src_name AS \"src workload\", src_type AS \"src type\", dst_ns AS \"dst ns\", dst_name AS \"dst workload\", dst_type AS \"dst type\", dst_port AS \"port\", NULLIF(dst_svc_name, '') AS \"dst service\", action, flow_count AS \"flows\", first_seen AS \"first seen\", last_seen AS \"last seen\" FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) AND (src_type <> 'WorkloadEndpoint' OR dst_type <> 'WorkloadEndpoint') ORDER BY flow_count DESC LIMIT 200"
+          "rawSql": "SELECT src_ns AS \"src ns\", src_workload AS \"src workload\", src_type AS \"src type\", dst_ns AS \"dst ns\", dst_workload AS \"dst workload\", dst_type AS \"dst type\", dst_port AS \"port\", NULLIF(dst_service, '-') AS \"dst service\", action, flow_count AS \"flows\", first_seen AS \"first seen\", last_seen AS \"last seen\" FROM edge WHERE NOT pre_widening AND $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_workload = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_workload = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) AND (src_type <> 'workload' OR dst_type <> 'workload') ORDER BY flow_count DESC LIMIT 200"
         }
       ]
     }
@@ -793,8 +793,8 @@
           "type": "grafana-postgresql-datasource",
           "uid": "goldmane-edges-pg"
         },
-        "definition": "SELECT DISTINCT src_ns FROM edge UNION SELECT DISTINCT dst_ns FROM edge ORDER BY 1",
-        "query": "SELECT DISTINCT src_ns FROM edge UNION SELECT DISTINCT dst_ns FROM edge ORDER BY 1",
+        "definition": "SELECT DISTINCT src_ns FROM edge WHERE NOT pre_widening UNION SELECT DISTINCT dst_ns FROM edge WHERE NOT pre_widening ORDER BY 1",
+        "query": "SELECT DISTINCT src_ns FROM edge WHERE NOT pre_widening UNION SELECT DISTINCT dst_ns FROM edge WHERE NOT pre_widening ORDER BY 1",
         "current": {
           "selected": true,
           "text": [
@@ -821,8 +821,8 @@
           "type": "grafana-postgresql-datasource",
           "uid": "goldmane-edges-pg"
         },
-        "definition": "SELECT DISTINCT src_name FROM edge WHERE src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) UNION SELECT DISTINCT dst_name FROM edge WHERE dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) ORDER BY 1",
-        "query": "SELECT DISTINCT src_name FROM edge WHERE src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) UNION SELECT DISTINCT dst_name FROM edge WHERE dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) ORDER BY 1",
+        "definition": "SELECT DISTINCT src_workload FROM edge WHERE NOT pre_widening AND src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) UNION SELECT DISTINCT dst_workload FROM edge WHERE NOT pre_widening AND dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) ORDER BY 1",
+        "query": "SELECT DISTINCT src_workload FROM edge WHERE NOT pre_widening AND src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) UNION SELECT DISTINCT dst_workload FROM edge WHERE NOT pre_widening AND dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) ORDER BY 1",
         "current": {
           "selected": true,
           "text": [
@@ -849,8 +849,8 @@
           "type": "grafana-postgresql-datasource",
           "uid": "goldmane-edges-pg"
         },
-        "definition": "SELECT dst_port::text FROM (SELECT DISTINCT dst_port FROM edge ORDER BY dst_port) t",
-        "query": "SELECT dst_port::text FROM (SELECT DISTINCT dst_port FROM edge ORDER BY dst_port) t",
+        "definition": "SELECT dst_port::text FROM (SELECT DISTINCT dst_port FROM edge WHERE NOT pre_widening ORDER BY dst_port) t",
+        "query": "SELECT dst_port::text FROM (SELECT DISTINCT dst_port FROM edge WHERE NOT pre_widening ORDER BY dst_port) t",
         "current": {
           "selected": true,
           "text": [
@@ -877,8 +877,8 @@
           "type": "grafana-postgresql-datasource",
           "uid": "goldmane-edges-pg"
         },
-        "definition": "SELECT DISTINCT action FROM edge ORDER BY 1",
-        "query": "SELECT DISTINCT action FROM edge ORDER BY 1",
+        "definition": "SELECT DISTINCT action FROM edge WHERE NOT pre_widening ORDER BY 1",
+        "query": "SELECT DISTINCT action FROM edge WHERE NOT pre_widening ORDER BY 1",
         "current": {
           "selected": true,
           "text": [

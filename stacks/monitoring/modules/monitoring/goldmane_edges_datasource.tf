@@ -17,40 +17,64 @@
 # stacks/vault; left as a hardening follow-up rather than diverging from the
 # established pattern here.
 #
-# SCHEMA CONTRACT — this datasource is useful, but the DASHBOARD is not, until
-# the aggregator's widening migration (design step 2) has run. Every panel query
-# reads columns that do not exist yet. The dashboard expects table `public.edge`
-# in database `goldmane_edges` to carry:
+# SCHEMA CONTRACT — the DASHBOARD needs the aggregator's widening migration
+# (design step 2, `migrations/0002_widen_edge.sql` in the aggregator repo). The
+# datasource works either way; the panels read the columns that migration adds.
+# Table `public.edge` in database `goldmane_edges`, as the migration actually
+# creates it (seven nullable columns plus the generated pre_widening flag):
 #
-#   src_ns       text         (exists today)
-#   src_name     text         FlowKey.SourceName      — the workload, i.e. the
-#                                                       set of pods sharing a
-#                                                       generateName; for a
-#                                                       non-pod end it is the
-#                                                       host endpoint / network
-#                                                       set name, or 'pub'/'pvt'
-#   src_type     text         FlowKey.SourceType      — WorkloadEndpoint |
-#                                                       HostEndpoint |
-#                                                       NetworkSet | Network
-#   dst_ns       text         (exists today)
-#   dst_name     text         FlowKey.DestName
-#   dst_type     text         FlowKey.DestType
-#   dst_port     integer      FlowKey.DestPort
-#   dst_svc_name text         FlowKey.DestServiceName ('' when absent)
-#   action       text         (exists today)
-#   first_seen   timestamptz  (exists today)
-#   last_seen    timestamptz  (exists today)
-#   flow_count   bigint       (exists today)
+#   src_ns         text NOT NULL   (from 0001)
+#   dst_ns         text NOT NULL   (from 0001)
+#   action         text NOT NULL   (from 0001) allow | deny | pass | unspecified
+#   first_seen     timestamptz     (from 0001)
+#   last_seen      timestamptz     (from 0001)
+#   flow_count     bigint          (from 0001) cumulative, never a rate
+#   src_workload   text NULL       the workload, i.e. the set of pods sharing a
+#                                  generateName with the generated part removed
+#                                  (edge.NormalizeWorkload); for a non-pod end
+#                                  the node / network-set name, or 'pub'/'pvt'
+#   src_type       text NULL       workload | host | networkset | network |
+#                                  unknown — LOWERCASE. These are the
+#                                  aggregator's own constants
+#                                  (internal/edge/edge.go), not Goldmane's
+#                                  EndpointType enum spelling, which is
+#                                  WorkloadEndpoint / HostEndpoint / NetworkSet
+#                                  / Network. Comparing against the enum
+#                                  spelling matches nothing.
+#   dst_workload   text NULL
+#   dst_type       text NULL
+#   dst_service    text NULL       the Service the flow was addressed to, '-'
+#                                  when it did not go through one. '-' is the
+#                                  unset sentinel throughout (edge.Unset), never
+#                                  the empty string, so the panels blank it with
+#                                  NULLIF(dst_service, '-').
+#   dst_service_ns text NULL
+#   dst_port       bigint NULL     0 means not recorded, which deliberately
+#                                  covers every bare external destination — the
+#                                  port there belongs to the remote peer and is
+#                                  unbounded (see edge.portIsOurs)
+#   pre_widening   boolean         GENERATED ALWAYS AS (src_type IS NULL) STORED
+#
+# PRE-WIDENING ROWS. The seven added columns are nullable with no default, so
+# rows written before the migration read NULL rather than a sentinel — a
+# sentinel would be indistinguishable from a real observation ('-' is a real
+# unset service, 'unknown' a real endpoint type, 0 a real unrecorded port).
+# Nothing is deleted, and `homelab edges` still rolls those rows up at namespace
+# level. They cannot be plotted on these axes, so the migration's stated
+# dashboard contract is to filter on `NOT pre_widening`, and all 17 SQL
+# statements in dashboards/east-west-traffic.json do. Measured on the scratch
+# replica of the live shape: 4 legacy rows carry 366M accumulated flows against
+# 22M observed since the widening, so an unfiltered total reads 17x high.
 #
 # The aggregator owns that DDL; this comment is the dashboard's side of the
-# contract. If step 2 lands different names, the fix is a rename inside the one
-# file dashboards/east-west-traffic.json — nothing else here depends on them.
+# contract. If the column names ever move again, the fix is confined to
+# dashboards/east-west-traffic.json — nothing else here depends on them.
 #
-# Two columns the dashboard deliberately does NOT use, so it cannot break on
-# them: FlowKey.DestServiceNamespace (near-always equal to dst_ns) and
-# FlowKey.Proto. Proto's absence is a real gap, not an oversight — without it a
-# port cannot distinguish TCP/53 from UDP/53, and the panels say so rather than
-# implying a protocol we do not store.
+# Two columns on Goldmane's wire the dashboard does NOT use, so it cannot break
+# on them: FlowKey.Proto, which we do not store at all, and dst_service_ns,
+# which is near-always equal to dst_ns. Proto's absence is a real gap — without
+# it a port cannot distinguish TCP/53 from UDP/53, and the panels say so rather
+# than implying a protocol we do not store.
 # -----------------------------------------------------------------------------
 
 # ExternalSecret mirroring the rotating goldmane_edges DB password into
