@@ -9,7 +9,7 @@ import (
 func servicesCommands() []Command {
 	return []Command{
 		{Path: []string{"services"}, Tier: TierRead,
-			Summary: "what we self-host + which verb to reach for: services [--search X]", Run: servicesList},
+			Summary: "what we self-host + which verb to reach for: services [--search X] [--json]", Run: servicesList},
 		{Path: []string{"how"}, Tier: TierRead,
 			Summary: "which capability does this task: how \"<what you are trying to do>\"", Run: howTo},
 	}
@@ -35,6 +35,8 @@ func howTo(args []string) error {
 // servicesList prints the routing table and the live service inventory. The
 // inventory is read from ingress annotations at call time rather than a stored
 // list, so it cannot drift from what is actually deployed.
+//
+// --json prints the inventory alone, as a JSON array, for a script to consume.
 func servicesList(args []string) error {
 	out, err := exec.Command("kubectl", "get", "ingress", "-A", "-o", "json").Output()
 	if err != nil {
@@ -55,6 +57,15 @@ func servicesList(args []string) error {
 		}
 	}
 	query := parseServicesQuery(args)
-	fmt.Print(formatCatalog(filterServices(svcs, query), query))
+	svcs = filterServices(svcs, query)
+	if containsArg(args, "--json") {
+		out, err := catalogJSON(svcs)
+		if err != nil {
+			return err
+		}
+		fmt.Println(out)
+		return nil
+	}
+	fmt.Print(formatCatalog(svcs, query))
 	return nil
 }
