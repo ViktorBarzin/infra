@@ -115,9 +115,9 @@ source workload, destination workload, destination service, port and action.
     identity tuple is wider, so the first observation of a namespace pair after
     the upgrade inserts a new row; a "new edge" is one whose `first_seen` is in
     the window, so the whole re-observed graph reports once. The 710 pre-widening
-    rows are kept, with the sentinel defaults reading as "recorded before the
-    widening" (verified against a copy of the live table: 710 rows and
-    388,404,965 flows intact).
+    rows are kept and read NULL in the added columns, which is what the generated
+    `pre_widening` flag reports (verified against a copy of the live table: 710
+    rows and 388,404,965 flows intact).
 
 ### Slack `#alerts` — daily digest
 
@@ -255,19 +255,31 @@ FROM edge GROUP BY src_ns, dst_ns, action ORDER BY src_ns, dst_ns;
 SELECT src_ns, src_workload, dst_port, count(*) AS peers, sum(flow_count) AS flows
 FROM edge GROUP BY src_ns, src_workload, dst_port ORDER BY flows DESC;
 
--- Egress to the internet, which the trail deleted before 2026-09-01
+-- Egress to the internet. Recorded before 2026-09-01 too, but only as a bare
+-- namespace pair: the port, workload and endpoint type are what the widening added.
 SELECT src_ns, src_workload, src_type, dst_workload, dst_port, flow_count, last_seen
-FROM edge WHERE dst_type = 'network' ORDER BY flow_count DESC;
+FROM edge WHERE dst_type = 'network' AND NOT pre_widening ORDER BY flow_count DESC;
 
--- Node-level traffic (host endpoints), likewise previously deleted
+-- Node-level traffic (host endpoints). This is the class the old same-namespace
+-- test did delete, and it is empty until Calico HostEndpoints are defined.
 SELECT src_workload, dst_workload, dst_type, dst_port, flow_count
 FROM edge WHERE src_type = 'host' OR dst_type = 'host' ORDER BY flow_count DESC;
 ```
 
-Rows written before 2026-09-01 carry `-` for the workload and service columns,
-`unknown` for the types and `0` for the port, so a query on those columns sees
-only post-widening observations. Filter them out with `src_type <> 'unknown'`
-when that matters.
+Rows written before 2026-09-01 read **NULL** in all seven added columns, not a
+sentinel. `0002_widen_edge.sql` made them nullable with no default on purpose:
+every sentinel available is also a legitimate live value (`-` is a real unset
+service, `unknown` a real endpoint type, `0` a real unrecorded port), so a
+sentinel would make a legacy row indistinguishable from an observation. Filter
+them with the generated flag, `WHERE NOT pre_widening` — that is the contract
+the migration states and the one every East-West Traffic panel uses.
+
+`src_type <> 'unknown'` is not a substitute. It excludes legacy rows only as a
+side effect of NULL comparison, and it also drops real observations whose source
+type Goldmane never sent, which the aggregator keeps whenever the end carries a
+namespace or a name (`edge.identifiable`). Measured on a scratch Postgres 16.15
+seeded to the live shape: `NOT pre_widening` keeps 28 rows, `src_type <>
+'unknown'` keeps 27, silently losing one.
 
 For the **live** (sub-hour) view with **per-pod** detail, use the Whisker UI. The
 `edge` table aggregates pods up to their workload on purpose, so a pod name is
