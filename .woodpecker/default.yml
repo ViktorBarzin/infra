@@ -351,21 +351,55 @@ steps:
         fi
 
       # ── Commit and push state changes ──
+      #
+      # Push to the FORGEJO CANONICAL repo, NOT the GitHub mirror.
+      #
+      # This step used to `git remote set-url origin
+      # git@github.com:ViktorBarzin/infra.git` and push there over the deploy
+      # key. Forgejo is canonical and push-mirrors TO GitHub, so every commit
+      # this step made was orphaned by the next mirror sync. Measured on
+      # 2026-09-01 for infra#41: Loki shows 63 `[master <sha>]` lines from this
+      # step in 30 days, and the three sampled shas (9c629f9a, 6f0a6b62,
+      # ecf9d2a2) exist on GitHub only — absent from Forgejo master and from
+      # every local clone, `compare` reads "diverged". Because the step stages
+      # `state/` as well as `stacks/`, Terraform state writebacks were going the
+      # same way, which is the same class of drift that bit the TLS cert twice
+      # (a4360bdf, e20d6cb4). renew-tls.yml and t3-membership-sync.yml were
+      # ported to Forgejo already; this was the third and last pipeline.
+      #
+      # The credential comes from Vault, matching those two: repo 1 has no
+      # Forgejo secret wired, and the `ci` policy already grants read on
+      # secret/data/* (stacks/vault/main.tf). Use forgejo_repo_token, NOT
+      # forgejo_push_token — the latter is the container-package token and has
+      # no permissions on viktor/infra (403). The token never enters the remote
+      # URL, so it cannot land in a log line.
       - |
-        mkdir -p ~/.ssh && ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
-        chmod 400 secrets/deploy_key
         git add stacks/ state/ .woodpecker/ 2>/dev/null || true
-        git remote set-url origin git@github.com:ViktorBarzin/infra.git
         git diff --cached --quiet && echo "No changes to commit" && exit 0
-        git commit -m "Woodpecker CI deploy [CI SKIP]"
-        GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git fetch origin master
-        if ! GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git rebase origin/master; then
-          echo "ERROR: Git rebase failed — state commits could not be pushed"
-          echo "Manual intervention required: pull, resolve conflicts, push"
-          GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git rebase --abort || true
+        CIG=$(curl -s -H "X-Vault-Token: $(cat "$HOME/.vault-token")" \
+          "$VAULT_ADDR/v1/secret/data/ci/global")
+        FJ_USER=$(echo "$CIG" | jq -r .data.data.forgejo_user)
+        FJ_TOKEN=$(echo "$CIG" | jq -r .data.data.forgejo_repo_token)
+        if [ -z "$FJ_TOKEN" ] || [ "$FJ_TOKEN" = "null" ]; then
+          echo "ERROR: secret/ci/global has no forgejo_repo_token — state NOT recorded"
           exit 1
         fi
-        GIT_SSH_COMMAND='ssh -i ./secrets/deploy_key -o IdentitiesOnly=yes' git push origin master
+        umask 077
+        printf 'https://%s:%s@forgejo.viktorbarzin.me\n' "$FJ_USER" "$FJ_TOKEN" > /tmp/.gitcreds
+        git config credential.helper 'store --file=/tmp/.gitcreds'
+        git remote set-url origin https://forgejo.viktorbarzin.me/viktor/infra.git
+        git -c user.email=ci@viktorbarzin.me -c user.name='Woodpecker CI' \
+          commit -m "Woodpecker CI deploy [CI SKIP]"
+        git fetch origin master
+        if ! git rebase origin/master; then
+          echo "ERROR: Git rebase failed — state commits could not be pushed"
+          echo "Manual intervention required: pull, resolve conflicts, push"
+          git rebase --abort || true
+          rm -f /tmp/.gitcreds
+          exit 1
+        fi
+        git push origin HEAD:master
+        rm -f /tmp/.gitcreds
 
       # (No Slack post on success — Viktor 2026-07-02: CI notifies on FAILED
       # runs only; the notify-failure step below covers those.)
