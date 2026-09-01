@@ -186,6 +186,55 @@ deschedulerPolicy:
             - RemovePodsViolatingInterPodAntiAffinity
             - PodLifeTime
             - RemoveFailedPods
+    # Bounds immich-machine-learning's onnxruntime VRAM ratchet by capping the
+    # pod's lifetime at 24h (investigated 2026-09-01, see
+    # docs/plans/2026-08-31-gpu-vram-admission-and-oom-observability.md).
+    #
+    # The four preloaded models (CLIP textual + visual, buffalo_l detection +
+    # recognition) pin ~1,960 MiB and never unload — that is the intended
+    # keep-smart-search-warm cost and it does not grow. The growth is OCR:
+    # PP-OCRv5_mobile loads on demand and model_ttl unloads it after 600s, its
+    # weights are freed, but the BFC arena keeps the workspace chunks it
+    # extended, so the FLOOR ratchets while the peaks fall back:
+    #   1964 fresh -> OCR 4790 -> unload 3426 -> OCR 4302 -> unload 3548
+    # The peaks are large because OCR detection scales the SHORT edge to
+    # maxResolution and leaves the long edge unbounded, so a 700x8464 scrolling
+    # screenshot is fed whole at 5.9 Mpx against 0.7 for a normal photo. Eight
+    # assets of 181,980 set the floor for the service. Reported upstream on
+    # immich-app/immich#23462; no local patch is carried and maxResolution stays
+    # at 736, so OCR accuracy is untouched.
+    #
+    # ignorePvcPods MUST be false here, unlike every other profile: immich-ml
+    # mounts a PVC for its model cache, and the default true would make
+    # DefaultEvictor skip it so this profile would silently do nothing. The
+    # label selector and namespace confine that relaxation to this one
+    # Deployment.
+    #
+    # The gpu-vram-watchdog (ADR-0016) already recycles this pod, but only under
+    # contention. This is the unconditional floor. maxPodLifeTimeSeconds doubles
+    # as the age guard: a pod restarted for any other reason is not evicted
+    # again until it is 24h old. Cost is ~2m23s with no smart search or face
+    # recognition, and the time of day drifts by up to an hour per eviction —
+    # accepted in exchange for not maintaining a bespoke CronJob for this.
+    - name: immich-ml-restart
+      pluginConfig:
+        - name: DefaultEvictor
+          args:
+            ignorePvcPods: false
+            evictLocalStoragePods: true
+        - name: PodLifeTime
+          args:
+            maxPodLifeTimeSeconds: 86400
+            namespaces:
+              include:
+                - "immich"
+            labelSelector:
+              matchLabels:
+                app: immich-machine-learning
+      plugins:
+        deschedule:
+          enabled:
+            - PodLifeTime
     - name: idrac-restart
       pluginConfig:
         - name: DefaultEvictor
