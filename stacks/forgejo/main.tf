@@ -235,6 +235,37 @@ resource "kubernetes_deployment" "forgejo" {
             name  = "FORGEJO__git_0X2E_config__gc_0X2E_auto"
             value = "1000"
           }
+          # --- MySQL connection-pool cap (2026-09-01 incident, infra#83).
+          # Forgejo shares `mysql.dbaas` (max_connections=80) with 7 other apps
+          # (nextcloud, grafana, phpipam, shlink, codimd, speedtest, wrongmove).
+          # Forgejo's app.ini set NO MAX_OPEN_CONNS, and forgejo's default is 0
+          # (unlimited). A distributed AI-crawler storm on /commit/<sha> +
+          # /src/commit/<sha> links opened enough connections to exhaust all 80,
+          # so EVERY DB-touching route 500'd cluster-wide with
+          # `Error 1040 (08004): Too many connections` at context.RepoAssignment
+          # (repo.go:487) — not a commit-render bug, a shared-pool exhaustion
+          # that also broke the other seven apps. The same storm OOMKilled the
+          # pod at 07:02Z, and while it was down Woodpecker lost a real
+          # terraform apply (could not read the pipeline definition).
+          # Capping forgejo at 25 open / 10 idle means forgejo can never
+          # monopolise the pool: under a future storm its requests QUEUE for a
+          # free connection (Go database/sql blocks up to the request context
+          # deadline) instead of erroring 1040, and >=55 connections stay
+          # reserved for the other apps. Raise together if forgejo's steady-state
+          # concurrency grows, but keep the sum of all mysql.dbaas apps' caps
+          # comfortably under 80.
+          env {
+            name  = "FORGEJO__database__MAX_OPEN_CONNS"
+            value = "25"
+          }
+          env {
+            name  = "FORGEJO__database__MAX_IDLE_CONNS"
+            value = "10"
+          }
+          env {
+            name  = "FORGEJO__database__CONN_MAX_LIFETIME"
+            value = "3600s"
+          }
           # --- Open-signup bot prevention + mailer (appended so the diff vs the
           # pre-signup deployment stays purely additive). ---
           # Cloudflare Turnstile captcha on the registration form (widget
