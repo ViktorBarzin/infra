@@ -2,13 +2,17 @@
 # AuthenticationConfiguration file (apiserver.config.k8s.io/v1, GA on k8s 1.30+).
 #
 # WHY structured config instead of the legacy --oidc-* flags: the apiserver can
-# only carry ONE legacy issuer, but we need TWO — the `kubernetes` app (kubectl
-# / kubelogin CLI) AND the `k8s-dashboard` app (oauth2-proxy in front of the
-# Kubernetes Dashboard). Structured config supports multiple JWT issuers.
+# only carry ONE legacy issuer, but we need more than one — the `kubernetes` app
+# (kubectl / kubelogin CLI), the `k8s-dashboard` app (oauth2-proxy in front of
+# the Kubernetes Dashboard), and optionally `kubernetes-agent` (agent sessions,
+# design step 4, off by default). Structured config supports multiple JWT
+# issuers.
 #
-# Both issuers map username<-email and groups<-groups with EMPTY prefixes, to
-# match the existing RBAC subjects (kind: User, name: <raw email>; group names
-# verbatim). Do NOT add a prefix or existing bindings break.
+# The two live issuers map username<-email and groups<-groups with EMPTY
+# prefixes, to match the existing RBAC subjects (kind: User, name: <raw email>;
+# group names verbatim). Do NOT add a prefix to those two or existing bindings
+# break. The agent issuer deliberately does the opposite — see
+# `agent_issuer_yaml` below.
 #
 # DRIFT WARNING (and how it's now handled): apiserver auth lives in THREE places
 # that must stay in sync, because a `kubeadm upgrade` REGENERATES the static-pod
@@ -64,8 +68,59 @@ variable "k8s_dashboard_audience" {
   default = "k8s-dashboard"
 }
 
+# --- Agent issuer (design step 4). OFF by default; see the runbook. ----------
+
+variable "agent_oidc_enabled" {
+  type        = bool
+  default     = false
+  description = <<-DESC
+    Add the `kubernetes-agent` issuer to the apiserver's
+    AuthenticationConfiguration, so agent sessions authenticate as themselves
+    instead of sharing the kubeadm cluster-admin certificate.
+
+    Default false, and flipping it is NOT a push-and-let-CI-apply change. It
+    moves the null_resource trigger, which re-runs the SSH provisioner against
+    the single control-plane node — and CI applies this stack with no
+    ssh_private_key, so a CI run would fail there rather than reach the node.
+    Apply it locally first, then push. Full procedure, verification and
+    rollback: docs/runbooks/apiserver-oidc-agent-identity.md.
+  DESC
+}
+
+variable "agent_oidc_issuer_url" {
+  type    = string
+  default = "https://authentik.viktorbarzin.me/application/o/kubernetes-agent/"
+
+  description = <<-DESC
+    Issuer URL of the agent client. Must equal the `kubernetes-agent`
+    application's issuer in stacks/rbac/authentik-kubernetes.tf (the slug is
+    the path), trailing slash included — the apiserver compares the `iss`
+    claim as an exact string.
+  DESC
+}
+
+variable "agent_oidc_client_id" {
+  type        = string
+  default     = "kubernetes-agent"
+  description = "Audience the apiserver accepts for agent tokens; the agent client's client_id."
+}
+
+variable "agent_oidc_principal_prefix" {
+  type        = string
+  default     = "agent:"
+  description = <<-DESC
+    Prefixed onto both the username and the groups of an agent session. This is
+    what puts "an agent acted" in the audit log and what keeps agent sessions
+    out of human RBAC bindings, so the RBAC subjects in oidc-group-bindings.tf
+    have to change with it.
+  DESC
+}
+
 locals {
-  apiserver_auth_config_yaml = <<-YAML
+  # The two live issuers. Byte-for-byte the file on k8s-master today
+  # (/etc/kubernetes/pki/auth-config.yaml, sha256 bdefc260...) — verified
+  # 2026-09-01 by rendering this local and diffing the hash against the node.
+  apiserver_auth_config_base = <<-YAML
     apiVersion: apiserver.config.k8s.io/v1
     kind: AuthenticationConfiguration
     jwt:
@@ -92,6 +147,48 @@ locals {
             claim: groups
             prefix: ""
   YAML
+
+  # A THIRD issuer for agent sessions, appended only when var.agent_oidc_enabled
+  # is true.
+  #
+  # The prefixes are the point. `username.prefix` and `groups.prefix` are
+  # per-issuer in AuthenticationConfiguration, so the same Authentik user
+  # reaching the apiserver through the agent client arrives as
+  # `agent:vbarzin@gmail.com` in group `agent:kubernetes-admins`, and:
+  #   * every audit event says in `user.username` that an agent acted;
+  #   * no human RBAC binding can match an agent session, because the group
+  #     names differ. An agent gets exactly the `agent:*` bindings in
+  #     oidc-group-bindings.tf and nothing else, so enabling this flag grants
+  #     no access on its own.
+  # Kubernetes forbids a `system:` prefix and requires the field to be present
+  # when `claim` is set; `agent:` is a legal, non-reserved prefix.
+  #
+  # A plain (non-indented) heredoc, because the two-space list indent has to
+  # survive verbatim and `<<-` strips the common leading whitespace.
+  agent_issuer_yaml = <<YAML
+  - issuer:
+      url: "${var.agent_oidc_issuer_url}"
+      audiences:
+        - "${var.agent_oidc_client_id}"
+    claimMappings:
+      username:
+        claim: email
+        prefix: "${var.agent_oidc_principal_prefix}"
+      groups:
+        claim: groups
+        prefix: "${var.agent_oidc_principal_prefix}"
+YAML
+
+  # WHAT THE APISERVER GETS. With the flag off this is `apiserver_auth_config_base`
+  # unchanged, so `sha256(local.apiserver_auth_config_yaml)` — the null_resource
+  # trigger below — does not move, the SSH provisioner stays a no-op, and a CI
+  # apply (which has no ssh_private_key and would fail if it had to re-run)
+  # leaves the control plane alone.
+  apiserver_auth_config_yaml = (
+    var.agent_oidc_enabled
+    ? "${local.apiserver_auth_config_base}${local.agent_issuer_yaml}"
+    : local.apiserver_auth_config_base
+  )
 
   # Indentation-safe manifest editor: appends the --authentication-config flag
   # using the exact leading whitespace of the --authorization-mode line.
