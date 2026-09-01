@@ -88,6 +88,8 @@ envFromSecrets:
     optional: true
   - name: grafana-fire-planner-pg-creds
     optional: true
+  - name: grafana-goldmane-edges-pg-creds
+    optional: true
 env:
   GF_SERVER_ROOT_URL: https://grafana.viktorbarzin.me
 

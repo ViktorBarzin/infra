@@ -1,0 +1,943 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Who talks to whom, from the durable Goldmane edge trail (ADR-0014). Filterable by workload, namespace and port, with an unusual-connections panel over first-seen edges.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "How to read this",
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "### What this shows, and what it cannot\n\nEvery row is one **durable edge** the `goldmane-edge-aggregator` has observed:\na source workload talking to a destination workload on a destination port, with\nthe policy action Calico applied. Source: the `edge` table in the\n`goldmane_edges` CNPG database.\n\n**Honest limits, worth knowing before you read a number:**\n\n- **There is no time series.** The table keeps `first_seen`, `last_seen` and a\n  cumulative `flow_count` per edge, not per-interval counts. So the time picker\n  filters on `last_seen` \u2014 *\"edges last observed inside this window\"* \u2014 and\n  `flows` is a running total since the edge was first seen, never a rate.\n- **A port carries no protocol.** `dst_port` alone cannot tell TCP/53 from\n  UDP/53.\n- **Traffic is per workload, not per pod.** Pod names churn on every restart;\n  [Whisker](https://whisker.viktorbarzin.me) is the live per-pod view.\n- **No peer addresses.** Goldmane's wire format has no IP field, so an internet\n  edge is `pub`, never a destination address.\n- **After the widening migration lands, everything looks new for one window.**\n  Rows are re-keyed, so `first_seen` resets and the *Unusual connections* panel\n  will be full for the first day. Give it a burn-in before trusting it."
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Edges in view",
+      "description": "Edges matching every filter whose last_seen falls in the dashboard time range.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Denied",
+      "description": "Edges Calico denied. Ignores the Action filter on purpose.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = 'deny'"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Source workloads",
+      "description": "Distinct source workload names in view.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(DISTINCT src_name) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Destination ports",
+      "description": "Distinct destination ports in view.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(DISTINCT dst_port) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Internet-bound",
+      "description": "Edges leaving the cluster. Goldmane names the far end 'pub' and carries no address.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) AND dst_type = 'Network' AND dst_name = 'pub'"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "First seen in $unusual_window",
+      "description": "Edges whose first_seen falls inside the Unusual window. Not time-picker scoped.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(*) AS value FROM edge WHERE first_seen >= now() - interval '${unusual_window}' AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND action = ANY(ARRAY[${action:sqlstring}]::text[])"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "All traffic",
+      "description": "Every edge matching the filters, busiest first. Capped at 2000 rows. Column headers are filterable.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT src_ns AS \"src ns\", src_name AS \"src workload\", src_type AS \"src type\", dst_ns AS \"dst ns\", dst_name AS \"dst workload\", dst_type AS \"dst type\", dst_port AS \"port\", NULLIF(dst_svc_name, '') AS \"dst service\", action, flow_count AS \"flows\", first_seen AS \"first seen\", last_seen AS \"last seen\" FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) ORDER BY flow_count DESC LIMIT 2000"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "netsage-sankey-panel",
+      "title": "Namespace to namespace",
+      "description": "Flow volume between namespaces. Destination nodes carry a '-> ' prefix so a pair that talks both ways does not form a cycle the diagram cannot draw. Host ends (Goldmane reports namespace '-') show as 'host <name>'; the public internet shows as 'internet'. Top 60 pairs.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 18,
+        "w": 14,
+        "x": 0,
+        "y": 26
+      },
+      "options": {
+        "monochrome": false,
+        "monochromeColor": "#7294d4",
+        "showHeader": true,
+        "displayValues": "show",
+        "valueFormat": "short",
+        "nodeWidth": 20,
+        "nodePadding": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT CASE WHEN src_ns = '-' THEN 'host ' || src_name ELSE src_ns END AS source, '-> ' || CASE WHEN dst_ns = '-' THEN (CASE WHEN dst_name = 'pub' THEN 'internet' ELSE 'host ' || dst_name END) ELSE dst_ns END AS target, SUM(flow_count) AS value FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1, 2 HAVING SUM(flow_count) > 0 ORDER BY value DESC LIMIT 60"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "barchart",
+      "title": "Busiest destination ports",
+      "description": "Cumulative flow count per destination port. No protocol is recorded, so TCP and UDP on the same port are one bar. Top 15.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 10,
+        "x": 14,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": []
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.85,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "displayMode": "hidden",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT dst_port::text AS port, SUM(flow_count) AS flows FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1 ORDER BY flows DESC LIMIT 15"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "barchart",
+      "title": "Busiest source workloads",
+      "description": "Cumulative flow count per source workload. Top 12 \u2014 the ns/workload labels need the room.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 10,
+        "x": 14,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": []
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.85,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "displayMode": "hidden",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT src_ns || '/' || src_name AS workload, SUM(flow_count) AS flows FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) GROUP BY 1 ORDER BY flows DESC LIMIT 12"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Unusual connections",
+      "description": "Three classes, most specific reason first: a namespace reaching the internet for the first time, a workload using a destination port it has never used, and any edge first seen inside the window. Every row is at least a new edge, so 'why' can name more than one class. The Port filter is deliberately NOT applied here, or a leftover port selection would hide the new ports this panel exists to surface. Window is the 'Unusual window' variable, independent of the time picker. Every row is a new edge; 'why' names the most specific class that applies.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "why"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 300
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "first seen"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 185
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH win AS (\n  SELECT (now() - interval '${unusual_window}') AS since\n), fresh AS (\n  SELECT e.* FROM edge e CROSS JOIN win w\n  WHERE e.first_seen >= w.since\n    AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]))\n    AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[]))\n    AND action = ANY(ARRAY[${action:sqlstring}]::text[])\n)\nSELECT\n  f.first_seen AS \"first seen\",\n  -- Most specific reason wins. Every row here is a new edge by construction\n  -- (first_seen inside the window), so naming that as well on rows with a\n  -- sharper reason just makes the column unreadable.\n  COALESCE(\n    CASE WHEN f.dst_type = 'Network' AND f.dst_name = 'pub' AND NOT EXISTS (\n           SELECT 1 FROM edge p CROSS JOIN win w\n           WHERE p.src_ns = f.src_ns AND p.dst_type = 'Network' AND p.dst_name = 'pub'\n             AND p.first_seen < w.since)\n         THEN 'first internet egress for this namespace' END,\n    CASE WHEN EXISTS (\n           SELECT 1 FROM edge p CROSS JOIN win w\n           WHERE p.src_ns = f.src_ns AND p.src_name = f.src_name AND p.first_seen < w.since)\n         AND NOT EXISTS (\n           SELECT 1 FROM edge p CROSS JOIN win w\n           WHERE p.src_ns = f.src_ns AND p.src_name = f.src_name AND p.dst_port = f.dst_port\n             AND p.first_seen < w.since)\n         THEN 'port new to this workload' END,\n    'new edge') AS \"why\",\n  f.src_ns AS \"src ns\", f.src_name AS \"src workload\",\n  f.dst_ns AS \"dst ns\", f.dst_name AS \"dst workload\", f.dst_type AS \"dst type\",\n  f.dst_port AS \"port\", NULLIF(f.dst_svc_name, '') AS \"dst service\",\n  f.action, f.flow_count AS \"flows\"\nFROM fresh f\nORDER BY f.first_seen DESC\nLIMIT 500"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Denied edges",
+      "description": "Edges Calico denied, most recently seen first. Ignores the Action filter on purpose.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT src_ns AS \"src ns\", src_name AS \"src workload\", src_type AS \"src type\", dst_ns AS \"dst ns\", dst_name AS \"dst workload\", dst_type AS \"dst type\", dst_port AS \"port\", NULLIF(dst_svc_name, '') AS \"dst service\", action, flow_count AS \"flows\", first_seen AS \"first seen\", last_seen AS \"last seen\" FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = 'deny' ORDER BY last_seen DESC LIMIT 200"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Ends with no workload (host and internet traffic)",
+      "description": "Edges where at least one end is not a pod: a host endpoint, a network set, or the public internet. Goldmane reports namespace '-' for these, and the aggregator used to delete the host-to-host and host-to-internet rows outright, so this panel is empty until the widening migration lands.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "goldmane-edges-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "goldmane-edges-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT src_ns AS \"src ns\", src_name AS \"src workload\", src_type AS \"src type\", dst_ns AS \"dst ns\", dst_name AS \"dst workload\", dst_type AS \"dst type\", dst_port AS \"port\", NULLIF(dst_svc_name, '') AS \"dst service\", action, flow_count AS \"flows\", first_seen AS \"first seen\", last_seen AS \"last seen\" FROM edge WHERE $__timeFilter(last_seen) AND (src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) OR dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[])) AND (src_name = ANY(ARRAY[${workload:sqlstring}]::text[]) OR dst_name = ANY(ARRAY[${workload:sqlstring}]::text[])) AND dst_port::text = ANY(ARRAY[${port:sqlstring}]::text[]) AND action = ANY(ARRAY[${action:sqlstring}]::text[]) AND (src_type <> 'WorkloadEndpoint' OR dst_type <> 'WorkloadEndpoint') ORDER BY flow_count DESC LIMIT 200"
+        }
+      ]
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": [
+    "networking",
+    "security",
+    "goldmane"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "description": "Matches either end of the edge. '-' is Goldmane's marker for an end with no namespace (a host endpoint, a network set, or the internet).",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "goldmane-edges-pg"
+        },
+        "definition": "SELECT DISTINCT src_ns FROM edge UNION SELECT DISTINCT dst_ns FROM edge ORDER BY 1",
+        "query": "SELECT DISTINCT src_ns FROM edge UNION SELECT DISTINCT dst_ns FROM edge ORDER BY 1",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "refresh": 1,
+        "regex": "",
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "hide": 0
+      },
+      {
+        "name": "workload",
+        "label": "Workload",
+        "description": "Matches either end. Scoped to the selected namespaces.",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "goldmane-edges-pg"
+        },
+        "definition": "SELECT DISTINCT src_name FROM edge WHERE src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) UNION SELECT DISTINCT dst_name FROM edge WHERE dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) ORDER BY 1",
+        "query": "SELECT DISTINCT src_name FROM edge WHERE src_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) UNION SELECT DISTINCT dst_name FROM edge WHERE dst_ns = ANY(ARRAY[${namespace:sqlstring}]::text[]) ORDER BY 1",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "refresh": 1,
+        "regex": "",
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "hide": 0
+      },
+      {
+        "name": "port",
+        "label": "Destination port",
+        "description": "Destination port. No protocol is recorded, so one entry covers TCP and UDP.",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "goldmane-edges-pg"
+        },
+        "definition": "SELECT dst_port::text FROM (SELECT DISTINCT dst_port FROM edge ORDER BY dst_port) t",
+        "query": "SELECT dst_port::text FROM (SELECT DISTINCT dst_port FROM edge ORDER BY dst_port) t",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "refresh": 1,
+        "regex": "",
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "hide": 0
+      },
+      {
+        "name": "action",
+        "label": "Action",
+        "description": "The policy action Calico applied: allow, deny, pass or unspecified.",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "goldmane-edges-pg"
+        },
+        "definition": "SELECT DISTINCT action FROM edge ORDER BY 1",
+        "query": "SELECT DISTINCT action FROM edge ORDER BY 1",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "refresh": 1,
+        "regex": "",
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "hide": 0
+      },
+      {
+        "name": "unusual_window",
+        "label": "Unusual window",
+        "type": "custom",
+        "description": "How far back the Unusual connections panel counts an edge as new. Independent of the time picker.",
+        "query": "24 hours,7 days,30 days",
+        "current": {
+          "selected": true,
+          "text": "24 hours",
+          "value": "24 hours"
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "24 hours",
+            "value": "24 hours"
+          },
+          {
+            "selected": false,
+            "text": "7 days",
+            "value": "7 days"
+          },
+          {
+            "selected": false,
+            "text": "30 days",
+            "value": "30 days"
+          }
+        ],
+        "includeAll": false,
+        "multi": false,
+        "hide": 0
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "East-West Traffic",
+  "uid": "east-west-traffic",
+  "version": 1,
+  "weekStart": ""
+}
