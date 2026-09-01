@@ -1338,11 +1338,12 @@ resource "kubernetes_cron_job_v1" "mailserver-backup" {
 #   - writes to /srv/nfs/roundcube-backup/<YYYY-WW>/{html,enigma}/
 # =============================================================================
 module "nfs_roundcube_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "roundcube-backup-host"
-  namespace  = kubernetes_namespace.mailserver.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/roundcube-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "roundcube-backup-host"
+  namespace          = kubernetes_namespace.mailserver.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/roundcube-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_cron_job_v1" "roundcube-backup" {

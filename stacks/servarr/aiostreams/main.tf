@@ -363,12 +363,13 @@ sys.exit(0 if success else 1)
 }
 
 module "nfs_backup" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "aiostreams-backup"
-  namespace  = kubernetes_namespace.aiostreams.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/aiostreams-backup"
-  storage    = "1Gi"
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "aiostreams-backup"
+  namespace          = kubernetes_namespace.aiostreams.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/aiostreams-backup"
+  storage            = "1Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_cron_job_v1" "config_backup" {
