@@ -147,7 +147,7 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_reconcile" {
                   echo "# HELP immich_thumbnail_reconcile_scan_success 1 if the scan query succeeded."
                   echo "# TYPE immich_thumbnail_reconcile_scan_success gauge"
                   echo "immich_thumbnail_reconcile_scan_success $success"
-                } > /shared/metrics.prom
+                } > /shared/metrics.10-scan.prom
 
                 echo "stuck=$stuck success=$success"
                 exit 0
@@ -282,7 +282,7 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_reconcile" {
                   echo "# HELP immich_thumbnail_reconcile_last_run_timestamp Unix time of the last reconcile run."
                   echo "# TYPE immich_thumbnail_reconcile_last_run_timestamp gauge"
                   echo "immich_thumbnail_reconcile_last_run_timestamp $(date +%s)"
-                } >> /shared/metrics.prom
+                } > /shared/metrics.30-repair.prom
                 echo "queued=$queued"
                 exit 0
               EOT
@@ -334,12 +334,32 @@ resource "kubernetes_cron_job_v1" "immich_thumbnail_reconcile" {
               }
             }
 
+            # Each step writes its OWN metrics file and this concatenates them.
+            # A single shared file does not work: the three steps run as three
+            # different uids (postgres, root, curl_user), and the second writer to
+            # open a file the first one created gets EPERM. That failed silently
+            # on the first run — the job still exited 0 and pushed a partial set,
+            # losing immich_thumbnail_reconcile_last_run_timestamp, which is
+            # exactly the gauge ImmichThumbnailReconcileStale needs to notice the
+            # job has stopped. Creating a new file each is allowed, because the
+            # emptyDir root is 0777.
             container {
               name  = "push"
               image = "docker.io/curlimages/curl:8.11.1"
-              command = [
-                "curl", "-sf", "-m", "20", "--data-binary", "@/shared/metrics.prom",
-                "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-thumbnail-reconcile",
+              command = ["/bin/sh", "-c", <<-EOT
+                set -eu
+                cat /shared/metrics.*.prom > /tmp/all.prom
+                # Fail loudly if a step did not report: a partial push is worse
+                # than none, because it leaves stale gauges looking current.
+                for m in immich_thumbnail_stuck_assets \
+                         immich_thumbnail_repairable_assets \
+                         immich_thumbnail_repair_queued \
+                         immich_thumbnail_reconcile_last_run_timestamp; do
+                  grep -q "^$m " /tmp/all.prom || { echo "missing metric: $m" >&2; exit 1; }
+                done
+                curl -sf -m 20 --data-binary @/tmp/all.prom \
+                  http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-thumbnail-reconcile
+              EOT
               ]
               volume_mount {
                 name       = "shared"
