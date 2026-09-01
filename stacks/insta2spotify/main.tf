@@ -53,12 +53,13 @@ resource "kubernetes_manifest" "external_secret" {
 # insta2spotify is config-only, no embedded DB. See
 # docs/plans/2026-06-05-block-storage-harden-nfs-design.md
 module "nfs_insta2spotify" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "insta2spotify-data-nfs"
-  namespace  = kubernetes_namespace.insta2spotify.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/insta2spotify"
-  storage    = "5Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "insta2spotify-data-nfs"
+  namespace          = kubernetes_namespace.insta2spotify.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/insta2spotify"
+  storage            = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "insta2spotify" {

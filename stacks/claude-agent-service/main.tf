@@ -357,12 +357,13 @@ resource "kubernetes_cluster_role_binding" "claude_agent_exec" {
 # per-job *workspaces* are isolated (own clone under /workspace/jobs/<id>),
 # but /persistent is shared.
 module "persistent" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "claude-agent-persistent"
-  namespace  = kubernetes_namespace.claude_agent.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/claude-agent-persistent"
-  storage    = "5Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "claude-agent-persistent"
+  namespace          = kubernetes_namespace.claude_agent.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/claude-agent-persistent"
+  storage            = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # --- Deployment ---

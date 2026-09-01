@@ -70,12 +70,13 @@ module "tls_secret" {
 # changedetection uses a file-based JSON datastore (no embedded DB), NFS-safe.
 # See docs/plans/2026-06-05-block-storage-harden-nfs-design.md
 module "nfs_changedetection" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "changedetection-data-nfs"
-  namespace  = kubernetes_namespace.changedetection.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/changedetection"
-  storage    = "8Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "changedetection-data-nfs"
+  namespace          = kubernetes_namespace.changedetection.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/changedetection"
+  storage            = "8Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "changedetection" {
