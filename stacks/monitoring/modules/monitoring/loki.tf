@@ -304,6 +304,132 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Image pull & GC (added 2026-09-02, Phase 0 of
+          # docs/plans/2026-09-02-node1-large-image-handling.md).
+          #
+          # On 2026-09-01 kubelet on k8s-node1 discarded 130 images and
+          # 56.8567 GiB of warm image cache in one 4m38s pass, and nothing
+          # alerted. That cache wipe is what turns the next reschedule of a
+          # 3 GB GPU image into a 6m24s cold pull instead of a 405 ms warm one.
+          # There was no alert on an image-GC pass anywhere in this repo before
+          # this group.
+          #
+          # These are Loki-ruler rules because the signal is a journal line, not
+          # a metric: kubelet exposes no counter for "images discarded". They
+          # read the node-runtime-journal job that alloy.yaml ships (see the
+          # long comment there) — NOT job="node-journal", which drops these
+          # lines because they are journal priority 6.
+          #
+          # Message strings verified against the running binary rather than
+          # remembered: `strings /usr/bin/kubelet` on k8s-node1 (v1.35.7,
+          # 2026-09-02) contains "Removing image to free bytes",
+          # "Disk usage on image filesystem is over the high threshold",
+          # "Attempting to delete unused images" and "Eviction manager:
+          # attempting to reclaim" (capital E, a space, no underscore — the
+          # underscore form some notes use is the eviction_manager.go source
+          # filename klog prints, not the message). The (?i) guards the casing
+          # either way.
+          #
+          # Why 30m windows and for=0m: these fire per EVENT, and the known pass
+          # emitted its 131 lines inside 4m38s. A 5m window would have gone
+          # firing -> resolved -> firing across one incident. Same reasoning as
+          # KernelOOMKiller's 2h window above.
+          name = "Image pull & GC"
+          rules = [
+            {
+              # The threshold crossing itself, one line per pass. This is the
+              # line the plan wanted and could not read, because it states the
+              # observed usage against imageGCHighThresholdPercent — the
+              # 2026-09-01 crossing is still INFERRED (the sampled trough was
+              # 83.57%, 3.86 GB short of the 85% threshold) purely because this
+              # line had already rotated out of node1's volatile journal.
+              #
+              # Emitted only by the threshold path in image_gc_manager.go, so it
+              # stays correct after Phase 3 gives imageMaximumGCAge a finite
+              # value and age-based collection starts running routinely.
+              alert = "NodeImageGCThresholdCrossed"
+              expr  = "sum by (node) (count_over_time({job=\"node-runtime-journal\", unit=\"kubelet.service\"} |= \"Disk usage on image filesystem is over the high threshold\" [30m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "kubelet crossed the image-GC disk threshold on {{ $labels.node }} — warm image cache is being discarded"
+                description = "Live imageGCHighThresholdPercent is 85 on all six nodes and imagefs shares the root filesystem, so this fires at the same instant as evictionHard imagefs.available 15%. The line itself carries the observed usage and the amount kubelet intends to free: homelab logs query '{job=\"node-runtime-journal\", unit=\"kubelet.service\"} |= \"high threshold\"' --since 1h. Headroom per node: kubectl get --raw /api/v1/nodes/<node>/proxy/stats/summary | jq '.node.fs.availableBytes - .node.fs.capacityBytes*0.15'. As of 2026-09-02 k8s-node5 had 4.07 GB of headroom and k8s-node2 12.53 GB, against 9.2-12.3 GB written by a single cold pull of a 3 GB image."
+              }
+            },
+            {
+              # Volume signal: how much cache actually went. 130 lines in the
+              # 2026-09-01 pass. Threshold 20 in 30m, so this stays quiet for
+              # the handful of images a routine age-based sweep will remove once
+              # Phase 3 sets a finite imageMaximumGCAge, and still catches a
+              # mass eviction. Phase 3's FIRST sweep is expected to clear
+              # 100-170 GiB on node2/node5 and will legitimately fire this once
+              # — that is the alert working, not a false positive.
+              alert = "NodeImageCacheMassEviction"
+              expr  = "sum by (node) (count_over_time({job=\"node-runtime-journal\", unit=\"kubelet.service\"} |= \"Removing image to free bytes\" [30m])) > 20"
+              for   = "0m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "{{ $value }} cached images discarded on {{ $labels.node }} in 30m"
+                description = "Every image removed here is a future cold pull. The 2026-09-01 pass on k8s-node1 removed 130 images / 56.8567 GiB in 4m38s and left the node with 52 unique digests, the fewest of any worker. WHICH images: homelab logs query '{job=\"node-runtime-journal\", unit=\"kubelet.service\"} |= \"Removing image to free bytes\"' --since 1h. Pull cost that will be paid back later: kubelet_image_pull_duration_seconds_sum by image_size_in_bytes (restored to Prometheus in the same phase)."
+              }
+            },
+            {
+              # The eviction manager's own reclaim attempt. Broader than the two
+              # above — it also covers memory and nodefs pressure, so it is the
+              # earlier and less specific signal. One line appeared in the
+              # 2026-09-01 pass, ahead of the 130 removals.
+              alert = "NodeEvictionManagerReclaiming"
+              expr  = "sum by (node) (count_over_time({job=\"node-runtime-journal\", unit=\"kubelet.service\"} |~ `(?i)Eviction manager: attempting to reclaim` [30m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "kubelet eviction manager is reclaiming node resources on {{ $labels.node }}"
+                description = "Which resource is in the line's resourceName field (ephemeral-storage / memory / imagefs): homelab logs query '{job=\"node-runtime-journal\", unit=\"kubelet.service\"} |~ `(?i)attempting to reclaim`' --since 1h. This precedes pod eviction; on 2026-09-01 it preceded 130 image removals on k8s-node1 instead, and DiskPressure flipped 5m later when evictionPressureTransitionPeriod expired."
+              }
+            },
+            {
+              # Liveness guard for the three rules above. Without it they read
+              # as green when alloy stops shipping the runtime journals, which
+              # is the exact failure mode this phase exists to close — the
+              # 2026-09-01 event was invisible because these lines reached
+              # nothing, not because nothing happened.
+              #
+              # `or vector(0)` is load-bearing: when the streams disappear
+              # entirely, sum(count_over_time(...)) returns NO series and a
+              # bare `< 1` never evaluates, so the alert goes silent in exactly
+              # the case it exists to catch. Same shape as DevvmJournalSilent.
+              #
+              # Threshold: cluster-wide, measured 2026-09-02 at 23,674 lines/hr
+              # from these two units (kubelet 2,793 + containerd 20,881), with
+              # the quietest single node at ~20 lines/hr. `< 1` over 1h means
+              # total silence, not a quiet node. A per-node version would need
+              # its own calibration, because k8s-master's kubelet emits 2
+              # lines/hr and would trip a naive threshold.
+              #
+              # for=30m covers the alloy DaemonSet rollout: the rules ConfigMap
+              # and the DS apply in the same terragrunt run and the DS has a
+              # 900s helm timeout, so the ruler can start evaluating before the
+              # first line arrives.
+              alert = "RuntimeJournalSilent"
+              expr  = "(sum(count_over_time({job=\"node-runtime-journal\"}[1h])) or vector(0)) < 1"
+              for   = "30m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "No kubelet/containerd journal lines in Loki for >1h — NodeImageGCThresholdCrossed and its two siblings are blind"
+                description = "Check the alloy DaemonSet: kubectl get ds -n monitoring alloy; kubectl logs -n monitoring ds/alloy | grep -i journal. The two loki.source.journal blocks named kubelet_journal and containerd_journal in stacks/monitoring/modules/monitoring/alloy.yaml are the source of truth. Also check Loki-side stream limits: a 429 means the global 5000 active-stream cap is saturated. Expected steady state is ~23,674 lines/hr cluster-wide as measured 2026-09-02."
+              }
+            },
+          ]
+        },
+        {
           # Egress / pfSense (added 2026-06-28 after the 2026-06-27 WAN/egress
           # incident). Cloudflared edge-connection failures are the log canary
           # that fired FIRST + most reliably — the cloudflared *deployment*
