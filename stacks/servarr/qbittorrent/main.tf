@@ -570,7 +570,16 @@ module "ingress" {
 # stack carried f28e026b's pending nfs-truenas -> nfs-pve move, storageClassName
 # is immutable, so the plan wanted to destroy and recreate five in-use -host
 # PVCs and the pvc-protection finalizer refused. Resolved by scaling the three
-# consumers to zero, letting the PVCs clear, and re-applying. Landing it took three pushes, which is worth recording
+# consumers to zero, letting the PVCs clear, and re-applying.
+#
+# The re-apply (#1397) recreated the five claims but still failed: Terraform had
+# already flipped the retained PVs to nfs-pve, and a Retain PV keeps the
+# claimRef of the claim it was bound to, so each new PVC was refused with
+# "volume already bound to a different claim" against a stale UID. Reusing a
+# retained PV needs spec.claimRef cleared so it returns to Available; after
+# that the five bound in 21 seconds and the three deployments came back with
+# their data intact (/downloads 349M, /audiobooks 10G). Worth knowing before
+# the other 27 mounted nfs-truenas claims are migrated — see bead code-yizt. Landing it took three pushes, which is worth recording
 # because the failure mode is invisible: infra CI applies only the stacks a
 # push changed, and Woodpecker cancels a running pipeline when the next push
 # arrives. Pipeline #1386 (the adoption) and #1388 (the first retry) were both
