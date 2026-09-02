@@ -13,7 +13,9 @@
 # Someone recovering is on a new device anyway, so enrolling a fresh
 # authenticator is the natural act rather than an extra step.
 #
-#   recovery-identification -> recovery-email -> passkey setup -> login
+#   recovery-identification
+#     -> [deny stage, included only for superusers]
+#     -> recovery-email -> passkey setup -> login
 #
 # SUPERUSERS ARE DENIED, and that is load-bearing rather than tidiness. akadmin
 # is a superuser in kubernetes-admins + Home Server Admins whose address
@@ -97,6 +99,7 @@ resource "authentik_flow" "recovery" {
     authentik_stage_identification.recovery_identification,
     authentik_stage_email.recovery_email,
     authentik_stage_authenticator_webauthn.recovery_passkey,
+    authentik_stage_deny.recovery_deny_superuser,
     data.authentik_stage.default_authentication_login,
   ]
 
@@ -150,29 +153,60 @@ data "authentik_stage" "default_authentication_login" {
 
 # Refuse recovery for a superuser. See the header for why this is the control
 # that makes the flow safe to publish at all.
-resource "authentik_policy_expression" "deny_superuser_recovery" {
-  name = "deny-superuser-recovery"
-  # get_pending_user() is the account the identification stage resolved. It
-  # falls back to the request user, so the is_authenticated guard stops an
-  # anonymous request being judged on a user that was never identified.
+#
+# THE LOGIC IS INVERTED ON PURPOSE, and getting that wrong is what made the
+# first attempt useless. Two facts force the shape:
+#
+#   1. A policy bound to the FLOW is evaluated when the flow is ENTERED, before
+#      any stage runs — so `pending_user` is not set yet and the policy cannot
+#      see who is recovering. Measured 2026-09-02: bound to the flow, this
+#      policy returned passing=true for akadmin, i.e. it never fired.
+#   2. A policy bound to a STAGE decides whether that stage is INCLUDED, not
+#      whether the flow is denied. So attaching a "deny superusers" policy to
+#      the email stage would SKIP email verification for them — turning the
+#      control into the very bypass it exists to prevent.
+#
+# Hence a Deny stage that is included only WHEN the user is a superuser. The
+# policy returns True for exactly the people who must be stopped.
+resource "authentik_stage_deny" "recovery_deny_superuser" {
+  name         = "recovery-deny-superuser"
+  deny_message = "Account recovery is not available for administrator accounts. Please ask the administrator directly."
+}
+
+resource "authentik_policy_expression" "target_is_superuser" {
+  name = "recovery-target-is-superuser"
+  # pending_user is the account the identification stage resolved. Absent means
+  # nobody has been identified yet, so there is nobody to stop — the email stage
+  # cannot do anything without a user either way.
   expression = <<-EOT
     user = request.context.get("pending_user")
     if user is None:
-      return True
-    if not getattr(user, "is_authenticated", False):
-      return True
-    if getattr(user, "is_superuser", False):
-      ak_message("Account recovery is not available for this account. Ask the administrator.")
       return False
-    return True
+    if not getattr(user, "is_authenticated", False):
+      return False
+    return bool(getattr(user, "is_superuser", False))
   EOT
 }
 
-resource "authentik_policy_binding" "deny_superuser_on_recovery" {
+resource "authentik_flow_stage_binding" "recovery_deny_superuser" {
   target = authentik_flow.recovery.uuid
-  policy = authentik_policy_expression.deny_superuser_recovery.id
+  stage  = authentik_stage_deny.recovery_deny_superuser.id
+  order  = 15
+  # evaluate_on_plan MUST be false. At plan time pending_user does not exist, so
+  # the policy would return False and the stage would be dropped from the plan
+  # entirely — and re-evaluation cannot add back a stage that was never planned.
+  # False keeps it in the plan unconditionally; re_evaluate_policies then judges
+  # it at execution, once identification has resolved the user.
+  evaluate_on_plan     = false
+  re_evaluate_policies = true
+}
+
+resource "authentik_policy_binding" "superuser_on_deny_stage" {
+  target = authentik_flow_stage_binding.recovery_deny_superuser.id
+  policy = authentik_policy_expression.target_is_superuser.id
   order  = 0
-  # A policy failure denies the flow rather than being treated as a pass.
-  failure_result = false
+  # An erroring policy must not silently let a superuser through, so a failure
+  # counts as "include the deny stage".
+  failure_result = true
   enabled        = true
 }
