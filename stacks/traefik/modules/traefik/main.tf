@@ -1009,7 +1009,27 @@ resource "kubernetes_config_map" "auth_proxy_config" {
   data = {
     "default.conf" = <<-EOT
       upstream authentik {
-          server ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000;
+          # The INLINE embedded outpost inside the goauthentik-server pods, via
+          # the helm-managed Service (port 80 -> targetPort 9000). Verified
+          # answering 302 on /outpost.goauthentik.io/auth/traefik.
+          #
+          # NOT ak-outpost-authentik-embedded-outpost. nginx OSS resolves an
+          # upstream server name ONCE at startup and caches the IP forever, and
+          # authentik's outpost controller RECREATES that Service on upgrades,
+          # handing it a new ClusterIP. nginx then dials a dead address, the 3s
+          # connect timeout trips, and error_page sends every forward-auth host
+          # to @fallback_auth = Emergency Access basic-auth. That is the
+          # 2026-08-19 outage, and it recurred on 2026-09-02.
+          #
+          # This Service is created by the helm release, not by the outpost
+          # controller, so nothing recreates it behind us: same ClusterIP since
+          # 2025-12-28. It also means forward-auth now runs at the SERVER
+          # version rather than on a standalone outpost that drifted four minor
+          # lines behind, which from 2026.8 cannot be upgraded at all -- an
+          # outpost marked embedded reaches the core over a unix socket that
+          # only exists inside the server pod (src/outpost/event.rs). Bead
+          # code-osvg carries the retirement of that standalone Deployment.
+          server goauthentik-server.authentik.svc.cluster.local:80;
           # Reuse connections to the outpost. Without this every forward-auth
           # subrequest (= every request to every auth="required" ingress) opens
           # a fresh TCP connection. Requires HTTP/1.1 + cleared Connection
