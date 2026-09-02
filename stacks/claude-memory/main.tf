@@ -437,8 +437,27 @@ resource "kubernetes_deployment" "claude-memory" {
               # recall is one query embed per request, so 5000 is deliberately sized for
               # the worst case rather than the common one.
               #
-              # Still fits without a capacity change: declared totals go to 11,684 of the
-              # 14,000 advertised, leaving 2,316 MiB of headroom.
+              # Still fits without a capacity change: declared totals are 12,600 of the
+              # 14,000 advertised, leaving 1,400 MiB of headroom. (Was written as
+              # 11,684/2,316 — stale once other tenants were re-seated. bead code-n3xl.)
+              #
+              # 2026-09-02: this seat looked badly under-declared for a day. Resident
+              # VRAM held 3,218 MiB for eighteen hours, stepped to 7,314 in one hour
+              # and stayed flat there for six more without a restart, so the pod sat
+              # 2,314 MiB over this budget with only 1,400 MiB of node headroom to
+              # raise it into. The cause was not the workload: onnxruntime's CUDA BFC
+              # arena defaults to arena_extend_strategy=kNextPowerOfTwo, so it DOUBLES
+              # on demand and never gives memory back — +4,096 exactly, and a flat line
+              # rather than a climbing one. Fixed in claude-memory-mcp 62271e36 by
+              # pinning kSameAsRequested, as immich's ML container already does.
+              # Measured after: 2,466 MiB under ten minutes of active recall, growing
+              # in tens rather than doubling.
+              #
+              # 5000 is now generous, deliberately. It is kept because the burst this
+              # was sized for (thousands of back-to-back document embeds) has not been
+              # re-measured since the arena change, and an under-seated tenant is worse
+              # than an over-seated one — the watchdog recycles offenders. Worth
+              # lowering once a re-embed run has been observed under the new strategy.
               "nvidia.com/gpu"         = "1"
               "viktorbarzin.me/gpumem" = "5000"
             }
