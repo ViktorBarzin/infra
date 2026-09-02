@@ -1,18 +1,104 @@
 ---
 # playbooks/k8s-node-tuning.yml
 #
-# Machine-wide network sysctls for the Kubernetes nodes.
+# Host-level settings on the Kubernetes nodes that nothing else reconciles:
+# machine-wide kernel sysctls, the kubelet configuration keys kubeadm does not
+# carry, containerd's layer-retention flag, and the decompression helper
+# containerd shells out to.
 #
-# WHY: Traefik terminates HTTP/3 on a single shared UDP socket per pod
-# (entryPoint websecure, :8443). quic-go sizes that socket's receive buffer with
-# SO_RCVBUF, but the kernel silently caps the request at net.core.rmem_max. On a
-# node left at the Ubuntu default of 212992 the socket lands at 425984 bytes
-# (the kernel doubles the value), which is not enough headroom for the incoming
-# ACK bursts of concurrent large downloads. Packets are then dropped at the
-# socket, quic-go loses ACKs, the congestion window collapses, and the transfer
-# stalls and dies part-way. Traefik has already written its 200 and
-# Content-Length by then, so the access log records a 200 with a short body and
-# the client saves a truncated file.
+# SCOPE, and why it widened (2026-09-02)
+# --------------------------------------
+# This file used to say "keep this group to host-level kernel settings rather
+# than cluster state". That line is now too narrow, and the reason is a
+# documented failure rather than a preference.
+#
+# `modules/create-template-vm/k8s-node-post-join-tune.sh` applied the homelab's
+# kubelet settings exactly ONCE, as a cloud-init runcmd right after `kubeadm
+# join`, and nothing reconciled them afterwards. `kubeadm upgrade node` rewrites
+# /var/lib/kubelet/config.yaml from the cluster-wide `kube-system/kubelet-config`
+# ConfigMap, which does not carry those keys — so the v1.35.7 upgrade on
+# 2026-07-26/27 removed the whole tune from all six nodes. Nothing alerted. The
+# first visible symptom arrived weeks later looking unrelated: the proxy VPN
+# gateway could not start because `net.ipv4.ip_forward` had left
+# `allowedUnsafeSysctls`, and a remote browser spent four days reconnecting to a
+# Service with no endpoints.
+#
+# `.claude/CLAUDE.md` (the "A Kubernetes upgrade erases the kubelet post-join
+# tune on every node" entry) records the durable fix as one of two things:
+# putting these keys into the `kubelet-config` ConfigMap that kubeadm writes node
+# config from, or re-running the tune from the `k8s-version-upgrade` pipeline
+# after each node upgrade. Neither is built. A playbook that reconciles on every
+# run is a third option, and it is the one taken here — chosen because it is the
+# only one of the three that also catches a node rebuilt rather than upgraded,
+# and because it needs nothing from the upgrade pipeline.
+#
+# What it does NOT do is make the settings survive the next `kubeadm upgrade
+# node` on its own. They will be erased again, and the playbook has to be re-run
+# (`scripts/check-node-kubelet-tune` is what reports that drift). A stronger fix
+# exists and is measured but deliberately not taken here: kubelet 1.35.7 on these
+# nodes supports `--config-dir`, whose drop-ins are merged over
+# /var/lib/kubelet/config.yaml and are therefore untouched by kubeadm rewriting
+# it. Verified live 2026-09-02 on k8s-node1 — the flag is present in
+# `kubelet --help`, is not deprecated, needs no feature gate, and
+# /etc/default/kubelet already exists carrying an empty `KUBELET_EXTRA_ARGS=`.
+# Adopting it means adding a kubelet command-line flag to six nodes, where a
+# mistake is discovered at the node's own reboot with console-only recovery, so
+# it belongs in its own change with its own window rather than riding along here.
+#
+# Superseded in the same commit that widened this scope:
+# `modules/create-template-vm/k8s-node-post-join-tune.sh` is deleted. It was not
+# dead code — its *application* was erased, not its intent — so its settings are
+# absorbed below rather than dropped, with the exceptions named in the play's own
+# comments. A node built from the template now gets its tune from this playbook
+# instead of from cloud-init, which means a NEW node needs a playbook run as part
+# of bringing it up; cloud_init.yaml says so at the point where the runcmd used
+# to be.
+#
+# HAZARD, read before applying
+# ----------------------------
+#   * An invalid COMBINATION of kubelet keys stops kubelet from starting. Kubelet
+#     validates its config at startup and exits; there is no partial start and no
+#     `kubectl exec` on a node whose kubelet is down, so recovery is the Proxmox
+#     console (or `qm guest exec` from the PVE host). Every combination this
+#     playbook writes was checked against kubelet 1.35's own validation source
+#     and against the live feature gates on all six nodes — see the comments on
+#     each key. If you add a key, do the same check first.
+#   * The kubelet config write takes a timestamped `backup:` copy next to the
+#     file, so console recovery is a `cp` of the backup plus
+#     `systemctl restart kubelet`.
+#   * NOTHING here restarts kubelet or containerd. The files are written and the
+#     next reboot (kured, or a deliberate one) activates them. So after an apply,
+#     `--check` reads clean while the LIVE kubelet still lags until that reboot.
+#     `scripts/check-node-kubelet-tune` reads live `/configz`, which is what makes
+#     it the right verification instrument and also why it keeps reporting drift
+#     until the node has actually rebooted.
+#   * k8s-node1 may not be in kured's rotation at all. If it is not, its config
+#     sits written and inactive indefinitely. Confirm before treating this as
+#     applied there.
+#
+# ROLL ONE NODE AT A TIME
+# -----------------------
+# The node-config play is `serial: 1` with `any_errors_fatal: true`, so even an
+# unlimited run stops at the first node that fails instead of writing the same
+# bad config to the remaining five. Prefer `--limit` on top of that anyway, so
+# each node gets its own reboot and its own verification:
+#
+#   ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml \
+#     --tags kubelet,containerd,pigz --limit 10.0.20.104 --check --diff
+#
+# Tags: `sysctl` (the original play), `kubelet`, `containerd`, `pigz`.
+#
+# WHY: the sysctl half
+# --------------------
+# Traefik terminates HTTP/3 on a single shared UDP socket per pod (entryPoint
+# websecure, :8443). quic-go sizes that socket's receive buffer with SO_RCVBUF,
+# but the kernel silently caps the request at net.core.rmem_max. On a node left
+# at the Ubuntu default of 212992 the socket lands at 425984 bytes (the kernel
+# doubles the value), which is not enough headroom for the incoming ACK bursts of
+# concurrent large downloads. Packets are then dropped at the socket, quic-go
+# loses ACKs, the congestion window collapses, and the transfer stalls and dies
+# part-way. Traefik has already written its 200 and Content-Length by then, so the
+# access log records a 200 with a short body and the client saves a truncated file.
 #
 # Measured 2026-08-29, in the Traefik pod's own network namespace on k8s-node4
 # (reading /proc/net/snmp from the host namespace shows nothing, because the pod
@@ -37,17 +123,25 @@
 # the next reboot, so the nodes that worked were working by accident. This
 # playbook is what makes the setting survive a reboot or a rebuild.
 #
-# Applying this does NOT fix a running Traefik pod: quic-go reads the limit once,
-# when it creates the socket. Roll the pods afterwards so they pick up the new
-# ceiling, then confirm with the verify step below.
+# Applying the sysctl half does NOT fix a running Traefik pod: quic-go reads the
+# limit once, when it creates the socket. Roll the pods afterwards so they pick
+# up the new ceiling, then confirm with the verify step below.
 #
 # RUN (from repo root; claim presence first: scripts/presence claim stack:traefik):
 #   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml --check --diff
 #   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml
-#   then    : kubectl rollout restart deployment/traefik -n traefik
+#   sysctl only, then roll Traefik:
+#             ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml --tags sysctl
+#             kubectl rollout restart deployment/traefik -n traefik
 #   verify  : PID=$(pgrep -x traefik | head -1)          # on the node
 #             sudo nsenter -t $PID -n ss -uanpm | grep -A1 ':8443'
 #             # expect rb=15000000 and a d0 (no drops) counter
+#   node config, one node, then its reboot:
+#             ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml \
+#               --tags kubelet,containerd,pigz --limit 10.0.20.104
+#             # after the node has rebooted:
+#             scripts/check-node-kubelet-tune
+#             ssh wizard@10.0.20.104 'command -v unpigz; sudo containerd config dump | grep discard_unpacked'
 #
 # A --check run against converged nodes should be a no-op. Output that is not a
 # no-op means a node has drifted, or has been rebuilt without the setting.
@@ -55,6 +149,7 @@
 - name: Kubernetes node network tuning
   hosts: "{{ k8s_nodes_target | default('k8s_nodes') }}"
   gather_facts: false
+  tags: sysctl
 
   vars:
     # quic-go's documented recommendation. Ceiling only; see the header.
@@ -91,3 +186,421 @@
           expected both >= {{ quic_socket_buffer_bytes }}, got
           {{ quic_buffers_live.stdout_lines | join('/') }}
       when: not ansible_check_mode
+
+
+# ---------------------------------------------------------------------------
+# Node runtime configuration: the erased kubelet tune, plus the image-handling
+# settings from docs/plans/2026-09-02-node1-large-image-handling.md Phase 3.
+#
+# serial: 1 + any_errors_fatal, so a bad write on one node never reaches the next.
+# ---------------------------------------------------------------------------
+- name: Kubernetes node runtime configuration
+  hosts: "{{ k8s_nodes_target | default('k8s_nodes') }}"
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+
+  vars:
+    kubelet_config_path: /var/lib/kubelet/config.yaml
+    containerd_config_path: /etc/containerd/config.toml
+
+    # Age after which kubelet collects an image no pod is using, regardless of
+    # disk pressure. Live value is `0s`, which DISABLES age-based collection —
+    # confirmed genuine on live /configz, unlike imageMinimumGCAge, whose on-disk
+    # `0s` resolves to the 2m default. With it disabled, unreferenced tags
+    # accumulate until the 85% imageGCHighThresholdPercent discards them all at
+    # once: 130 images and 56.8567 GiB in a single 4m38s pass on k8s-node1 on
+    # 2026-09-01, which is the event this plan exists to stop repeating.
+    #
+    # 168h = 7 days. Deliberately not lower: measured 2026-09-02, 78% of node2's
+    # and 85% of node5's content-store bytes are already older than 14 days, so a
+    # week has plenty to bite on, and kubelet never evicts an image a pod is
+    # using at any age.
+    #
+    # Kubelet 1.35 validation requires imageMaximumGCAge > imageMinimumGCAge
+    # (live 2m0s after defaulting, 0s on disk) and requires the ImageMaximumGCAge
+    # feature gate. Verified enabled on all six nodes:
+    #   kubernetes_feature_enabled{name="ImageMaximumGCAge",stage=""} 1
+    # stage="" means GA and locked on. GA gates are hidden from `kubelet --help`,
+    # so reading --help alone shows the gate as missing — that is a trap, the
+    # metric is the instrument.
+    kubelet_image_maximum_gc_age: 168h
+
+    # Verbatim from k8s-node-post-join-tune.sh lines 81-90, which this replaces.
+    # Its own comment, kept because the numbers are drill output rather than
+    # guesses: per-tier grace CORRECTED from a live drill (2026-07-20). A
+    # full-node graceful drill measured a 9-min uncapped drain: kubelet does NOT
+    # short-circuit when a whole node drains -- it consumes close to each tier's
+    # full grace in sequence, so the tier caps ARE the drain time (the earlier
+    # per-pod delete tests, 4-26s, were misleading). The host VM down= (180s) is
+    # the binding ceiling, so the goal is to reach the DATABASE tier FAST and
+    # give it maximal grace within 180s:
+    #   apps (0/200k) 10s, edge/gpu (400k/600k) 15s -> DB tier reached at ~50s
+    #   DB tier (800k) 90s                           -> DBs drain 50-140s (<180) OK
+    #   core (1M, traefik ~26s) 30s                  -> 140-170s (<180) OK
+    #   gpu-workload + system/node 15s               -> tail; force-killed at 180s
+    # Apps tolerate SIGKILL; databases do not -- this deliberately favours DBs.
+    #
+    # This is the half tied to P1 bead code-xgcg, "no working graceful shutdown
+    # on power loss". Live /configz on every node reads shutdownGracePeriod: 0s
+    # with shutdownGracePeriodByPodPriority ABSENT, so today there is no
+    # priority-ordered shutdown at all. Update code-xgcg with what lands.
+    kubelet_shutdown_ladder:
+      - priority: 0
+        shutdownGracePeriodSeconds: 10
+      - priority: 200000
+        shutdownGracePeriodSeconds: 10
+      - priority: 400000
+        shutdownGracePeriodSeconds: 15
+      - priority: 600000
+        shutdownGracePeriodSeconds: 15
+      - priority: 800000
+        shutdownGracePeriodSeconds: 90
+      - priority: 1000000
+        shutdownGracePeriodSeconds: 30
+      - priority: 1200000
+        shutdownGracePeriodSeconds: 15
+      - priority: 2000000000
+        shutdownGracePeriodSeconds: 15
+      - priority: 2000001000
+        shutdownGracePeriodSeconds: 15
+
+    # Unioned with whatever the node already has, never replaced — the same shape
+    # as the deleted script's `sorted(set(existing) | {'net.ipv4.ip_forward'})`.
+    #
+    # Carried over deliberately, and it is the one addition here that is not in
+    # the plan's Phase 3 list. The script that declared it is deleted in this
+    # commit, and its absence is the erasure that caused a visible outage:
+    # SysctlForbidden on the proxy per-country NordVPN gateway and the Headscale
+    # exit nodes, which FORWARD foreign-origin traffic onto gluetun's tun0 and
+    # cannot do so without ip_forward=1 in the pod netns (the runtime mounts
+    # /proc/sys read-only, so a pod cannot set it even with NET_ADMIN).
+    # Viktor-approved 2026-07-25, infra#81. Live: present on node2-5, ABSENT on
+    # master and node1, which were never live-rolled. It costs no capacity, the
+    # sysctl is network-namespaced so it affects only the pod that opts in, and
+    # Kyverno still blocks privileged / host-namespace pods. Deleting the script
+    # without carrying this would lose it on the next node rebuild.
+    # docs/architecture/security.md points here for it.
+    kubelet_allowed_unsafe_sysctls:
+      - net.ipv4.ip_forward
+
+    # The keys merged over whatever kubeadm last wrote. Shallow merge: each key
+    # here replaces the node's value wholesale, which is what we want for all of
+    # them. allowedUnsafeSysctls is unioned separately, below.
+    kubelet_declared:
+      # Pins the value all six nodes already run, so the file matches reality and
+      # future drift shows up as a diff instead of as silence. This deliberately
+      # OVERRIDES the deleted script, which asked for `false` with
+      # maxParallelImagePulls: 50.
+      #
+      # `maxParallelImagePulls` is NOT declared, and should not be re-added. 50 is
+      # wrong for this storage, and the measured gain is under 1.5x at any value:
+      # 28-29 MB/s is an AGGREGATE ceiling, not per-stream (1 stream 19.5-27.7
+      # MB/s, 4 streams 28.5 MB/s), and containerd already runs 5 concurrent layer
+      # downloads inside a single image pull, so it reaches that ceiling on its
+      # own. `imagePullSessionsCount` was 1 on all five real pulls measured, so
+      # serialisation contributed no queue wait to begin with.
+      serializeImagePulls: true
+
+      imageMaximumGCAge: "{{ kubelet_image_maximum_gc_age }}"
+
+      # Restored from the erased set. Honest note: this is a no-op on behaviour
+      # today. `swapon --show` is empty and `free` reports 0 swap on these nodes,
+      # because cloud-init runs `swapoff -a` and comments the fstab entry. It is
+      # declared because it was in the tune, costs nothing, and is what makes a
+      # future swapfile safe rather than a kubelet that refuses to start — the
+      # 2026-05-26 node6 failure was a swapfile added WITHOUT this key.
+      #
+      # Kubelet 1.35 validation: memorySwap may only be set when the NodeSwap gate
+      # is on, and swapBehavior must be "", LimitedSwap or NoSwap. Verified on all
+      # six nodes: kubernetes_feature_enabled{name="NodeSwap",stage=""} 1. There is
+      # NO failSwapOn/memorySwap cross-check in 1.35, so failSwapOn: true (what
+      # every node has) does not conflict with LimitedSwap.
+      memorySwap:
+        swapBehavior: LimitedSwap
+
+      # Pinned to zero, not merely left alone. Kubelet 1.35 validation rejects the
+      # config outright when shutdownGracePeriodByPodPriority is set AND either of
+      # these is above zero:
+      #   "Cannot specify both shutdownGracePeriodByPodPriority and
+      #    shutdownGracePeriod at the same time"
+      # Both read 0s live, so the ladder is safe today. Pinning them means a future
+      # kubeadm ConfigMap that sets one cannot turn this playbook into a kubelet
+      # that will not start. The ladder supersedes them either way: with
+      # GracefulNodeShutdownBasedOnPodPriority on (verified BETA=1 on all six
+      # nodes) kubelet derives the total grace from the ladder.
+      shutdownGracePeriod: "0s"
+      shutdownGracePeriodCriticalPods: "0s"
+      shutdownGracePeriodByPodPriority: "{{ kubelet_shutdown_ladder }}"
+
+    # DELIBERATELY NOT DECLARED — bead code-eu6l.
+    #
+    #   systemReserved:  {memory: 512Mi, cpu: 200m}
+    #   kubeReserved:    {memory: 512Mi, cpu: 200m}
+    #   evictionSoft:    {memory.available 1Gi, nodefs.available 20%, imagefs.available 25%}
+    #   evictionSoftGracePeriod: {...}
+    #
+    # These were in the erased tune and are the reason it is only half restored
+    # here. Together they carve roughly 1,424 MiB out of every node's allocatable
+    # memory. k8s-node2 has about 1,455 MiB of schedulable headroom today
+    # (33,544,638,464 B allocatable against 32,019,316,736 B of running requests),
+    # so applying them takes node2 to roughly zero: nothing is evicted, but
+    # nothing can land there on the next reschedule either, and PodStuckPending
+    # follows. That is a capacity exercise with its own headroom audit across all
+    # six nodes, not a line in an image-size plan. Tracked as bead code-eu6l with
+    # the arithmetic. Note evictionSoftGracePeriod cannot be declared without
+    # evictionSoft anyway — kubelet requires a matching soft threshold for every
+    # grace period.
+    #
+    # ALSO NOT DECLARED, and why, so nothing is lost silently:
+    #   evictionHard {memory.available 500Mi, nodefs.available 15%, imagefs.available 20%}
+    #     The script's values are MORE aggressive than the kubelet defaults the
+    #     nodes run today (100Mi / 10% / 15%). k8s-node5 has 4.07 GB of headroom
+    #     to its imageGC threshold; moving imagefs.available to 20% would make it
+    #     evict sooner, which is the opposite of this plan's goal.
+    #     `.claude/CLAUDE.md` records evictionHard as having "survived" the
+    #     upgrade. Live /configz shows the kubelet DEFAULT set, not the script's,
+    #     and scripts/check-node-kubelet-tune reads it as present only because it
+    #     tests for any truthy memory.available — so that is a false pass worth
+    #     correcting separately.
+    #   containerLogMaxFiles: 3   (live is the default 5). A small disk saving,
+    #     not part of Phase 3. containerLogMaxSize is already 10Mi live, which is
+    #     both the script's value and the kubelet default, so there is nothing to
+    #     restore there.
+    #   imageGCHighThresholdPercent / imageGCLowThresholdPercent. A repo-wide grep
+    #     outside docs/ returns zero matches, so nothing here has ever set them and
+    #     live 85/80 is the upstream kubelet default rather than a third erasure.
+    #     Lowering them would be a new behaviour change, and the plan's own
+    #     analysis argues imageMaximumGCAge is the knob that matches the cause.
+
+  tasks:
+    # ---- pre-flight: the feature gates the declared keys depend on ---------
+    # `memorySwap.swapBehavior` and a non-zero `imageMaximumGCAge` are BOTH gated
+    # in kubelet's startup validation (pkg/kubelet/apis/config/validation):
+    #   "memorySwap.swapBehavior cannot be set when NodeSwap feature flag is disabled"
+    #   "ImageMaximumGCAge feature gate is required for Kubelet configuration
+    #    option imageMaximumGCAge"
+    # and the shutdown ladder is gated on GracefulNodeShutdownBasedOnPodPriority:
+    #   "Specifying shutdownGracePeriodByPodPriority requires feature gate
+    #    GracefulNodeShutdownBasedOnPodPriority"
+    # A validation failure means kubelet EXITS at boot, and a node with no
+    # kubelet has no `kubectl exec` to fix it — recovery is the Proxmox console.
+    # So read the gates off each node's OWN kubelet first and refuse the node if
+    # any of the three is off, rather than writing a config that bricks it at the
+    # next reboot.
+    #
+    # Read through the apiserver proxy, from the controller, because the two
+    # obvious routes both mislead:
+    #   * `kubelet --help` HIDES GA gates — KnownFeatures() skips PreRelease GA
+    #     and Deprecated — so --help lists neither NodeSwap nor ImageMaximumGCAge
+    #     among its 141 gates, which reads as "gate missing" when both are in
+    #     fact GA and locked on.
+    #   * `homelab metrics query` finds nothing either, because this cluster's
+    #     scrape config names kubernetes_feature_enabled in a drop regex in
+    #     stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl. Its
+    #     absence from Prometheus is a scrape decision, not a gate being off.
+    # Measured 2026-09-02: all three read 1 on all six nodes, NodeSwap and
+    # ImageMaximumGCAge with stage="" (GA), the shutdown gate with stage="BETA".
+    #
+    # Needs kubectl and a kubeconfig on the controller, which the operator has —
+    # `scripts/check-node-kubelet-tune` needs the same. Fails closed. Override
+    # with `-e kubelet_require_gate_check=false` only after establishing the gates
+    # some other way; there is deliberately no silent skip.
+    - name: Read the live kubelet feature gates for this node
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - get
+          - --raw
+          - /api/v1/nodes/{{ k8s_node_name }}/proxy/metrics
+      delegate_to: localhost
+      become: false
+      register: kubelet_gate_metrics
+      changed_when: false
+      check_mode: false
+      when: kubelet_require_gate_check | default(true) | bool
+      tags: kubelet
+
+    - name: Collect the gates this kubelet reports as enabled
+      ansible.builtin.set_fact:
+        kubelet_gates_on: >-
+          {{ kubelet_gate_metrics.stdout_lines
+             | select('match', '^kubernetes_feature_enabled')
+             | select('search', ' 1$')
+             | map('regex_replace', '^.*name="([^"]+)".*$', '\1')
+             | list }}
+      when: kubelet_require_gate_check | default(true) | bool
+      tags: kubelet
+
+    - name: Refuse to declare a gated key on a node whose gate is off
+      ansible.builtin.assert:
+        that:
+          - "'NodeSwap' in kubelet_gates_on"
+          - "'ImageMaximumGCAge' in kubelet_gates_on"
+          - "'GracefulNodeShutdownBasedOnPodPriority' in kubelet_gates_on"
+        success_msg: >-
+          {{ k8s_node_name }}: NodeSwap, ImageMaximumGCAge and
+          GracefulNodeShutdownBasedOnPodPriority all enabled
+        fail_msg: >-
+          {{ k8s_node_name }} does not report all three required feature gates as
+          enabled (NodeSwap, ImageMaximumGCAge,
+          GracefulNodeShutdownBasedOnPodPriority). Writing the declared keys would
+          make kubelet fail its own config validation and refuse to start at the
+          next reboot, with console-only recovery. Refusing.
+      when: kubelet_require_gate_check | default(true) | bool
+      tags: kubelet
+
+    # ---- kubelet ----------------------------------------------------------
+    - name: Read the kubelet configuration kubeadm last wrote
+      ansible.builtin.slurp:
+        src: "{{ kubelet_config_path }}"
+      register: kubelet_config_raw
+      # Read-only, so it must also run under --check. Without this the merge below
+      # has nothing to diff against and --check reports a false no-op.
+      check_mode: false
+      tags: kubelet
+
+    - name: Parse it
+      ansible.builtin.set_fact:
+        kubelet_config_current: "{{ kubelet_config_raw.content | b64decode | from_yaml }}"
+      tags: kubelet
+
+    - name: Refuse to write anything that is not a KubeletConfiguration
+      ansible.builtin.assert:
+        that:
+          - kubelet_config_current.kind | default('') == 'KubeletConfiguration'
+          - kubelet_config_current.apiVersion | default('') is search('kubelet.config.k8s.io')
+        fail_msg: >-
+          {{ kubelet_config_path }} does not look like a KubeletConfiguration
+          (kind={{ kubelet_config_current.kind | default('<absent>') }}).
+          Refusing to rewrite it.
+        success_msg: "{{ kubelet_config_path }} is a KubeletConfiguration"
+      tags: kubelet
+
+    - name: Refuse an imageMaximumGCAge kubelet would reject
+      ansible.builtin.assert:
+        that:
+          # kubelet: "imageMaximumGCAge %v must be greater than imageMinimumGCAge %v".
+          # 168h beats any seconds-or-minutes minimum. Live on disk is 0s; live
+          # after kubelet defaulting is 2m0s. If a node ever carries an
+          # imageMinimumGCAge expressed in hours, this stops the run rather than
+          # writing a config that kubelet would refuse at its next boot.
+          - kubelet_image_maximum_gc_age is match('^[0-9]+h$')
+          - (kubelet_image_maximum_gc_age[:-1] | int) >= 1
+          - kubelet_config_current.imageMinimumGCAge | default('0s') is match('^[0-9]+(s|m([0-9]+s)?)$')
+        fail_msg: >-
+          imageMaximumGCAge={{ kubelet_image_maximum_gc_age }} against
+          imageMinimumGCAge={{ kubelet_config_current.imageMinimumGCAge | default('0s') }}
+          is not provably valid. kubelet would refuse to start.
+      tags: kubelet
+
+    - name: Merge the declared keys over it
+      ansible.builtin.set_fact:
+        kubelet_config_merged: >-
+          {{ kubelet_config_current
+             | combine(kubelet_declared)
+             | combine({'allowedUnsafeSysctls':
+                 ((kubelet_config_current.allowedUnsafeSysctls | default([]))
+                  + kubelet_allowed_unsafe_sysctls) | unique | sort}) }}
+      tags: kubelet
+
+    # The `when` guard compares PARSED configs, not bytes. That matters: this task
+    # rewrites the file through to_nice_yaml, so the first apply on a node
+    # reformats kubeadm's output (key order and quoting change; no value does).
+    # Comparing parsed dicts means a re-run is a real no-op, and a node whose file
+    # kubeadm rewrote in a different but equivalent format is not churned.
+    #
+    # Deliberately NO handler and no restart. The file is written and the next
+    # reboot activates it, so a mistake surfaces at a reboot someone is watching
+    # rather than immediately on the only GPU node, which also holds the active
+    # Vault. `validate` re-parses the candidate before it is moved into place, so
+    # a truncated or corrupt write cannot land at all.
+    - name: Write the kubelet configuration back
+      ansible.builtin.copy:
+        dest: "{{ kubelet_config_path }}"
+        content: "{{ kubelet_config_merged | to_nice_yaml(indent=2, width=200) }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        validate: python3 -c "import yaml,sys;c=yaml.safe_load(open(sys.argv[1]));sys.exit(0 if c.get('kind')=='KubeletConfiguration' else 1)" %s
+      when: kubelet_config_merged != kubelet_config_current
+      tags: kubelet
+
+    # ---- containerd -------------------------------------------------------
+    # discard_unpacked_layers deletes the compressed layer blob once it has been
+    # unpacked into the snapshotter. It is NOT a latency lever: an earlier claim
+    # that it caused 3.2x pull writes was disproved, and pull-time writes are
+    # unchanged. Its value is steady-state space, roughly 23 GB on k8s-node1,
+    # whose content store is 23 GB against 50 GB of overlayfs snapshots.
+    #
+    # One `replace` converges all six nodes even though their configs differ,
+    # because the key appears exactly once per node in every case (verified
+    # 2026-09-02, `grep -c` = 1 on all six) and the regexp matches the value line
+    # rather than the table it sits in:
+    #   master/node1/node2/node3  root version = 2, [plugins."io.containerd.grpc.v1.cri".containerd]
+    #   node4/node5               root version = 3, [plugins.'io.containerd.cri.v1.images']  (single quotes)
+    # A conf.d drop-in was the other option and is worse here: the directory
+    # exists on node1 only, and containerd 2.3.4 refuses a drop-in whose version
+    # exceeds the root config's, which is a live hazard in the containerd upgrade
+    # that follows this phase.
+    #
+    # `validate` runs the real containerd binary over the candidate file, so a
+    # config the runtime cannot parse never reaches /etc. Verified read-only on
+    # node1 and node5: `containerd -c <copy> config dump` exits 0 on the current
+    # file.
+    - name: containerd discards the compressed blob once a layer is unpacked
+      ansible.builtin.replace:
+        path: "{{ containerd_config_path }}"
+        regexp: '^(\s*)discard_unpacked_layers\s*=\s*false\s*$'
+        replace: '\1discard_unpacked_layers = true'
+        backup: true
+        validate: containerd -c %s config dump
+      tags: containerd
+
+    # ---- pigz -------------------------------------------------------------
+    # containerd shells out to `unpigz` when it finds one on PATH and falls back
+    # to Go's compress/gzip otherwise. Measured on a real 789.685 MB layer, one
+    # core: unpigz 67.0 MB/s, GNU gunzip 59.2 MB/s, Go compress/gzip 33.1 MB/s.
+    # Roughly 28-33 seconds off a 341-second cold pull.
+    #
+    # Missing on k8s-node1, k8s-node4 and k8s-node5 as of 2026-09-02; present as
+    # 2.8-1build1 / 2.8-1 on master, node2 and node3. Declared for the whole group
+    # so "every node has pigz" is the invariant rather than a list of IPs.
+    #
+    # Detection happens once at containerd init, so it takes effect at the node's
+    # reboot, not at apply time.
+    #
+    # update_cache is off on purpose. An `apt-get update` here would change the
+    # candidate set away from the one that was simulated, and on k8s-node1 apt
+    # resolves against 26.04 suites while the node deliberately boots a 24.04
+    # kernel with /etc/os-release replaced by a regular file carrying Noble
+    # content. A `base-files` upgrade there restores the symlink, NFD relabels the
+    # node 26.04, the GPU operator computes a driver tag that does not exist on
+    # nvcr.io, and nvidia.com/gpu goes 100 -> 0 with seven GPU tenants Pending on
+    # the node that also holds the active Vault. Simulated 2026-09-02 with
+    # `apt-get -s install pigz` on all three nodes; node1 reports "0 upgraded,
+    # 1 newly installed, 0 to remove" and base-files is not in the transaction.
+    # Keep it that way — `state: present` on one named package, never an upgrade,
+    # never `full-upgrade`. Background:
+    # docs/post-mortems/2026-05-17-gpu-driver-ubuntu2604-mismatch.md, bead code-8vr0.
+    - name: pigz, so containerd decompresses layers with unpigz
+      ansible.builtin.apt:
+        name: pigz
+        state: present
+        install_recommends: false
+        update_cache: false
+      tags: pigz
+
+    # ---- what the operator still has to do --------------------------------
+    - name: Say plainly that nothing is live yet
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: files written, nothing restarted. The live
+          kubelet and containerd still run the OLD configuration until this node
+          reboots (kured, or a deliberate reboot). Verify AFTER the reboot with
+          `scripts/check-node-kubelet-tune`, which reads live /configz rather than
+          the file, and with `sudo containerd config dump | grep
+          discard_unpacked_layers`. Confirm k8s-node1 is actually in kured's
+          rotation before treating this as applied there.
+      tags: [kubelet, containerd, pigz]
