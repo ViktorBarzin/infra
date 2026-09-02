@@ -81,6 +81,19 @@ resource "kubernetes_manifest" "external_secret" {
           secretKey = "SLACK_WEBHOOK"
           remoteRef = { key = "ci/global", property = "slack_webhook" }
         },
+        {
+          # Mirror-drift guard (infra#43). Reads repo + push_mirror inventory
+          # from Forgejo; needs no write scope.
+          secretKey = "FORGEJO_TOKEN"
+          remoteRef = { key = "ci/global", property = "forgejo_repo_token" }
+        },
+        {
+          # Forward-auth authorization assertion (infra#53, story 18). Only
+          # reads groups and POSTs to the policy-test endpoint, which evaluates
+          # without changing anything.
+          secretKey = "AUTHENTIK_TOKEN"
+          remoteRef = { key = "authentik", property = "tf_api_token" }
+        },
       ]
     }
   }
