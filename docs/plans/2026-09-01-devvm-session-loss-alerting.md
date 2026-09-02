@@ -1,6 +1,6 @@
 # Telling Viktor when a devvm Claude session dies
 
-**Status:** done
+**Status:** done (swap follow-up 2026-09-02)
 **Date:** 2026-09-01
 **Owner:** wizard
 **Predecessor:** [2026-08-16-devvm-pane-memory-cap.md](2026-08-16-devvm-pane-memory-cap.md)
@@ -382,9 +382,22 @@ That memory is charged to whichever pane cgroup wrote it, as `shmem`. The
 | `anon` | 783 MB |
 | `file` (of which `shmem` 3641 MB) | 3784 MB |
 
-The user slice sets `memory.swap.max=0`, and cgroup limits are hierarchical, so
-those tmpfs pages can be neither swapped nor dropped. They count fully against
-the 6 GB cap.
+The user slice set `memory.swap.max=0` when this was measured, and cgroup limits
+are hierarchical, so those tmpfs pages could be neither swapped nor dropped and
+counted fully against the 6 GB cap.
+
+> [!NOTE]
+> **Changed 2026-09-02.** The user slices now allow a bounded 4G of swap each, so
+> tmpfs pages charged to a pane can page out rather than sitting on RAM until the
+> cap kills something. Swap also grew 14 → 24 GiB (`/swapfile` 14 plus a new
+> `/swapfile2` 10, additive because `swapoff` reads pages back into RAM rather
+> than handing them to another device). The bound, rather than lifting the ban
+> outright, keeps the lesson of 2026-06-22, when a user runaway swap-thrashed the
+> throttled virtual disk into an I/O storm and the box was hard-killed with swap
+> at 15 GB. `DevvmSwapThrashing` was added in the same change, because neither
+> earlyoom nor systemd-oomd can see per-cgroup thrash. The `/tmp` sizing question
+> below still stands: paging tmpfs to a seek-bound shared spindle is better than
+> being killed for it, and worse than not holding 7 GB of scratch in RAM.
 
 `PaneNearMemoryCap` fires on this correctly and selectively, because tmpfs pages
 land in `shmem` and count as unreclaimable. But the action the alert suggests is

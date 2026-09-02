@@ -15,16 +15,13 @@
 # capped panes are still 54G of headroom on a 31.3 GiB box, which is why the
 # earlyoom net in 10b stays.
 #
-# MemoryMax ONLY, never MemoryHigh — with MemorySwapMax=0 inherited from the
-# user slice, a soft band livelocks instead of killing (see the 2026-07-02
-# post-mortem addendum). Cap-and-kill.
-#
-# Applies to every user scope, which includes the small `run-r*.scope` ttyd
-# attach wrappers; those hold a tmux client of a few MB, so the cap is inert
-# for them.
-[Scope]
-MemoryAccounting=yes
-MemoryMax={{ devvm_pane_memory_max }}
+# MemoryMax ONLY, never MemoryHigh. The original reason was that MemorySwapMax=0
+# was inherited from the user slice, so a soft band had nothing to reclaim into
+# and livelocked instead of killing (2026-07-02 post-mortem addendum). Since
+# 2026-09-02 the user slice allows a bounded 4G of swap, which softens that but
+# does not remove it: a pane past the user's swap ceiling is unreclaimable again,
+# and the ceiling is shared across all that user's panes, so the first pane to
+# fill it puts every other one back in the original position. Cap-and-kill.
 
 # OOMPolicy=continue is LOAD-BEARING — without it this whole drop-in is
 # self-defeating. systemd defaults a scope to OOMPolicy=stop, so once the kernel

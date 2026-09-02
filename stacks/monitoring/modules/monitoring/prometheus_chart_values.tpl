@@ -1349,6 +1349,32 @@ serverFiles:
             annotations:
               summary: "devvm has {{ $value | humanizePercentage }} memory available — earlyoom kills claude processes at 5%"
               description: "Close a few sessions or stop a heavy build while there is still room. Each Claude session costs ~659 MB all-in (467 MB the process plus ~192 MB of per-session MCP servers), so three bought back ~2 GB when measured 2026-08-24. Largest panes right now: homelab metrics query 'topk(5, tl_pane_memory_bytes)'. If sessions have already been lost, ClaudeSessionDied and ClaudeOOMKilled will have fired alongside this."
+          - alert: DevvmSwapThrashing
+            # Added 2026-09-02 with the change that made this reachable: the user
+            # slices went from MemorySwapMax=0 to a bounded 4G, so a session can
+            # page out instead of being killed. The failure that setting guarded
+            # against is thrash — on 2026-06-22 a user runaway swap-thrashed the
+            # throttled virtual disk into an I/O storm and the box was hard-killed.
+            #
+            # Nothing else catches it. earlyoom watches global MemAvailable and
+            # ignores swap by design (-s 100,100); systemd-oomd is inert for
+            # cgroups holding anon memory. Per-cgroup thrash with healthy global
+            # RAM is invisible to both.
+            #
+            # Both directions summed, because pages coming back IN is what
+            # separates thrash from a one-off page-out. The threshold sits above
+            # the measured ceiling: over the 30 days to 2026-09-02 page-out ran
+            # p50 0.0, p95 0.0, p99 85, peak 1392 pages/s, and page-in peaked at
+            # 722. 2000 pages/s is ~8 MB/s, which matters more than it sounds —
+            # devvm's disk is seek-bound on a shared 7200rpm spindle and has been
+            # measured 95% busy at 0.19 MB/s of writes (bead code-oflt, open).
+            expr: (rate(node_vmstat_pswpin{instance="devvm"}[5m]) + rate(node_vmstat_pswpout{instance="devvm"}[5m])) > 2000
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "devvm is swap-thrashing at {{ $value | printf \"%.0f\" }} pages/s — the 2026-06-22 hard-kill shape"
+              description: "Sustained paging in both directions; normal on this box is 0. Find the source: for d in /sys/fs/cgroup/user.slice/user-*.slice; do echo $d $(cat $d/memory.swap.current); done. A user sitting at their 4G MemorySwapMax ceiling is the likely one. To stop it while investigating, systemctl set-property user-<uid>.slice MemorySwapMax=0 puts that user back to cap-and-kill. The reason paging hurts here at all is the shared seek-bound spindle; bead code-oflt moves devvm's disk to SSD and is still open."
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp
