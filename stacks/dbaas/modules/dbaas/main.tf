@@ -1188,9 +1188,9 @@ resource "null_resource" "pg_cluster" {
     image          = var.pg_cluster_image
     storage_size   = "20Gi"
     storage_class  = "proxmox-lvm-encrypted"
-    memory_limit   = "3Gi"
-    memory_request = "2560Mi" # req < limit (Burstable); bumping this trigger forces the null_resource re-apply, 2026-07-26
-    pg_params      = "v6-shared1024-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500-prewarm"
+    memory_limit   = "4Gi"
+    memory_request = "2816Mi" # req < limit (Burstable); bumping this trigger forces the null_resource re-apply, 2026-07-26
+    pg_params      = "v7-shared2048-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500-prewarm"
     affinity       = "required-hostname-v1"
   }
 
@@ -1259,8 +1259,25 @@ resource "null_resource" "pg_cluster" {
             # sort/hash op, not per connection, so 16MB * 200 isn't the
             # worst case.
             max_connections: "200"
-            shared_buffers: "1024MB"
-            effective_cache_size: "2560MB"
+            # 1024MB -> 2048MB, 2026-09-02 (infra#86). The pool was fully
+            # subscribed and one tenant owned nearly all of it: dawarich held
+            # 127,029 of 131,072 buffers (992 MB) with ZERO free, against
+            # claude_memory's 2,290. dawarich's `points` table is 3.5 GB with
+            # 4.7 billion buffer hits at a 96.6% hit rate, so that is a real
+            # working set, not a runaway query.
+            #
+            # The effect on a smaller tenant is total: prewarming
+            # claude-memory's 4,456-page HNSW index left only 1,095 pages (24%)
+            # resident by the time pg_prewarm returned, and 0 within 60 s.
+            # Every novel query then re-read its graph path off sdc.
+            #
+            # NOTE this raises the odds rather than guaranteeing anything —
+            # dawarich's working set exceeds 2 GB too, so it can take the extra
+            # gigabyte as well. Re-measure residency before assuming it helped.
+            shared_buffers: "2048MB"
+            # Planner hint for shared_buffers + OS page cache, sized to the new
+            # 4Gi container limit.
+            effective_cache_size: "3072MB"
             work_mem: "16MB"
             wal_compression: "zstd"
             random_page_cost: "4"
@@ -1302,11 +1319,19 @@ resource "null_resource" "pg_cluster" {
           requests:
             cpu: "50m"
             # Request lowered 3Gi->2560Mi 2026-07-26 (Burstable) to free N-1 scheduler
-            # headroom on node4 (ClusterCannotTolerateNonGpuNodeLoss). 2560Mi stays above
-            # every member's 14d peak (~2.4Gi); limit unchanged at 3Gi (node-OOM safe).
-            memory: "2560Mi"
+            # headroom on node4 (ClusterCannotTolerateNonGpuNodeLoss). 2560Mi stayed above
+            # every member's 14d peak (~2.4Gi).
+            #
+            # 2026-09-02: shared_buffers went 1->2 GB, which is shared memory and
+            # therefore resident, moving expected steady state to ~2.6 GB. The request
+            # rises only to 2816Mi rather than back to 3Gi+ — enough to cover the new
+            # floor while keeping most of the headroom that 2026-07-26 bought, because
+            # node2/node3 sit at 2.2-2.7 GiB of free REQUESTS while their actual usage
+            # is ~40%. Limit 3Gi->4Gi leaves room above shared_buffers for backends,
+            # sorts and autovacuum.
+            memory: "2816Mi"
           limits:
-            memory: "3Gi"
+            memory: "4Gi"
       EOF
     EOT
   }
