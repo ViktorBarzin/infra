@@ -560,10 +560,15 @@ module "ingress" {
 
 # qBittorrent Prometheus exporter.
 #
-# Applied 2026-09-02. The adoption commit's own pipeline (#1386) was cancelled
-# by a later push before it ran, and infra CI applies only the stacks a push
-# changed, so the declaration sat committed-but-unapplied; this touches the
-# stack again so the changed-stack detection picks servarr up.
+# Declared 2026-09-02. Landing it took three pushes, which is worth recording
+# because the failure mode is invisible: infra CI applies only the stacks a
+# push changed, and Woodpecker cancels a running pipeline when the next push
+# arrives. Pipeline #1386 (the adoption) and #1388 (the first retry) were both
+# cancelled by traefik pushes, and the pipelines that did run diffed only
+# traefik, so servarr was skipped and the declaration sat in master unapplied
+# while CI looked green. Checking that a pipeline containing the commit passed
+# is not enough here; the check is whether a pipeline that DIFFED THIS STACK
+# passed.
 #
 # Adopted into Terraform on 2026-09-02. It was created by hand on 2026-03-25
 # and had been running ever since in no state file and no commit, which is what
