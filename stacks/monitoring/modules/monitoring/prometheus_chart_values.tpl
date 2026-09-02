@@ -4666,6 +4666,17 @@ serverFiles:
       # queue is empty in normal operation. Runbook: docs/runbooks/backup-mx.md.
       - name: Backup MX
         rules:
+          - alert: VpnTransportDown
+            # Per-transport, so the alert names which one. 10m rides out an
+            # xray rollout; the probe interval is 2m so that is 5 samples.
+            expr: probe_success{job="vpn-transports"} == 0
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: vpn
+            annotations:
+              summary: "VPN transport {{ $labels.transport }} ({{ $labels.pop }}) not answering for >10m"
+              description: "blackbox tcp_connect to {{ $labels.instance }} has failed for >10m, so the {{ $labels.transport }} transport is listed on vpn.viktorbarzin.me and handed out by the subscription while not accepting connections. home/cloudflare targets are in-cluster origins — check `kubectl -n xray get pods` and the shadowsocks LB. oci targets are on mx2 (92.5.132.215) — check the VM and the OCI security list. Portal runbook: ~/code/vpn-portal/DEPLOY.md."
           - alert: BackupMxDown
             # In-cluster blackbox TCP-connect to the reserved public IP:25.
             expr: max(probe_success{job="backup-mx-smtp"}) == 0
@@ -4916,6 +4927,74 @@ extraScrapeConfigs: |
   # homelab WAN /32 in the OCI security list, so this scrape (egressing as
   # 176.12.22.76) is the only thing that can reach it. Alerts: BackupMxDown /
   # BackupMxQueueStuck (alerting_rules.yml, group "Backup MX").
+  # --- VPN transports (infra#49) ---------------------------------------------
+  # Until 2026-09-02 the ONLY probe covering vpn-portal was /sub/uptime-probe,
+  # which proves the portal serves configs and says nothing about whether the
+  # transports in those configs still answer. A dead transport was silent: the
+  # page kept listing it and the subscription kept handing it out, so it would
+  # be discovered by a client failing abroad.
+  #
+  # These probe ORIGINS, not the published endpoints, deliberately. xray-ws and
+  # xray-grpc are Cloudflare-proxied on :443, so a TCP connect to the public
+  # name proves Cloudflare is up and nothing about xray. Internally those names
+  # resolve to the Traefik LB via split-horizon DNS, and the backing Services
+  # are reachable directly — so the probe tests the thing that can actually
+  # break. The two OCI targets have no such indirection and are probed over the
+  # WAN, the same way backup-mx-smtp is.
+  #
+  # Endpoint map (secret/vpn-portal -> config.estate):
+  #   reality      176.12.22.76:8080          -> xray-reality LB :7443
+  #   ws           xray-ws.viktorbarzin.me    -> xray svc :8443 (port "websocket")
+  #   xhttp        xray-grpc.viktorbarzin.me  -> xray svc :9443 (port "grpc")
+  #   shadowsocks  176.12.22.76:8388          -> shadowsocks LB :8388
+  #   reality_oci  92.5.132.215:8443          -> probed as published
+  #   ss_oci       92.5.132.215:8388          -> probed as published
+  #
+  # Alert: VpnTransportDown (alerting_rules.yml).
+  - job_name: 'vpn-transports'
+    scrape_interval: 2m
+    scrape_timeout: 15s
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets: ["xray-reality.xray.svc.cluster.local:7443"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'reality'
+          pop: 'home'
+      - targets: ["xray.xray.svc.cluster.local:8443"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'ws'
+          pop: 'cloudflare'
+      - targets: ["xray.xray.svc.cluster.local:9443"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'xhttp'
+          pop: 'cloudflare'
+      - targets: ["shadowsocks.shadowsocks.svc.cluster.local:8388"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'shadowsocks'
+          pop: 'home'
+      - targets: ["92.5.132.215:8443"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'reality_oci'
+          pop: 'oci'
+      - targets: ["92.5.132.215:8388"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'ss_oci'
+          pop: 'oci'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
   - job_name: 'backup-mx-smtp'
     scrape_interval: 2m
     scrape_timeout: 15s
