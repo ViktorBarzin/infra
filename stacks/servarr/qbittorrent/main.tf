@@ -557,3 +557,144 @@ module "ingress" {
     "gethomepage.dev/widget.password" = var.homepage_credentials["qbittorrent"]["password"]
   }
 }
+
+# qBittorrent Prometheus exporter.
+#
+# Declared 2026-09-02. Landing it took three pushes, which is worth recording
+# because the failure mode is invisible: infra CI applies only the stacks a
+# push changed, and Woodpecker cancels a running pipeline when the next push
+# arrives. Pipeline #1386 (the adoption) and #1388 (the first retry) were both
+# cancelled by traefik pushes, and the pipelines that did run diffed only
+# traefik, so servarr was skipped and the declaration sat in master unapplied
+# while CI looked green. Checking that a pipeline containing the commit passed
+# is not enough here; the check is whether a pipeline that DIFFED THIS STACK
+# passed.
+#
+# Adopted into Terraform on 2026-09-02. It was created by hand on 2026-03-25
+# and had been running ever since in no state file and no commit, which is what
+# StrayWorkloadDetected flagged; the stray-workload job names it as the case it
+# exists for. Nothing about the workload was wrong, it was simply never written
+# down, so this declares what is already live rather than changing it.
+#
+# The prometheus.io annotations on the Service are the one addition. Without
+# them the exporter was serving 179 metric lines that nothing collected: there
+# was no `up` series for it and no qbittorrent_* metric in Prometheus, because
+# the kubernetes-service-endpoints job selects on the SERVICE annotation and the
+# hand-made Service carried none. Adopting it as-is would have put a pod that
+# does nothing under management, so the scrape is wired up here.
+resource "kubernetes_deployment" "qbittorrent_exporter" {
+  metadata {
+    name      = "qbittorrent-exporter"
+    namespace = "servarr"
+    labels = {
+      app  = "qbittorrent-exporter"
+      tier = var.tier
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "qbittorrent-exporter"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "qbittorrent-exporter"
+        }
+      }
+      spec {
+        container {
+          image = "esanchezm/prometheus-qbittorrent-exporter:v1.7.0"
+          name  = "qbittorrent-exporter"
+
+          port {
+            container_port = 8000
+          }
+          env {
+            name  = "QBITTORRENT_HOST"
+            value = "qbittorrent.servarr.svc.cluster.local"
+          }
+          env {
+            name  = "QBITTORRENT_PORT"
+            value = "80"
+          }
+          env {
+            name  = "EXPORTER_LOG_LEVEL"
+            value = "INFO"
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "64Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # Same guard as kubernetes_deployment.qbittorrent above, and it is the
+    # reason this adoption does not start a fight. servarr carries
+    # keel.sh/enrolled=true, so Kyverno injects the keel.sh/* annotations and
+    # Keel stamps keel.sh/update-time on the pod template and bumps the image
+    # tag on its own schedule. Declaring the image in Terraform without
+    # ignoring it here would give the Keel-vs-Terraform flip-flop that churned
+    # prometheus-server: Keel bumps, the next apply reverts, repeat hourly. Keel
+    # owns the tag; the pinned value above is the adoption baseline only.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      metadata[0].annotations["kubernetes.io/change-cause"],
+      metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    ]
+  }
+}
+
+resource "kubernetes_service" "qbittorrent_exporter" {
+  metadata {
+    name      = "qbittorrent-exporter"
+    namespace = "servarr"
+    labels = {
+      app = "qbittorrent-exporter"
+    }
+    annotations = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/port"   = "8000"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "qbittorrent-exporter"
+    }
+    port {
+      name        = "metrics"
+      port        = 8000
+      target_port = 8000
+    }
+  }
+}
+
+# Adoption of the two resources above. Both objects already exist in the
+# cluster, so a plain apply would fail on "already exists"; these hand the
+# existing objects to Terraform instead of creating them. Once CI has applied
+# once, the blocks are a no-op and can be removed on any later pass.
+import {
+  to = kubernetes_deployment.qbittorrent_exporter
+  id = "servarr/qbittorrent-exporter"
+}
+
+import {
+  to = kubernetes_service.qbittorrent_exporter
+  id = "servarr/qbittorrent-exporter"
+}
