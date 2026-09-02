@@ -506,7 +506,20 @@ resource "kubernetes_cron_job_v1" "fire_planner_fire_targets" {
         ttl_seconds_after_finished = 86400
         # The full country sweep is CPU-bound (binary search × ~22 cities ×
         # 3 cases). Give it room rather than letting it run forever.
-        active_deadline_seconds = 3600
+        #
+        # 3600 -> 10800 on 2026-09-02. The work has not grown; the disk under it
+        # has. The 2026-08-02 run wrote all 88 rows inside the hour with sdc at
+        # 3.8% utilisation. The 2026-09-02 run hit the deadline, retried once and
+        # failed again with sdc at 70% — the shared-spindle contention tracked in
+        # bead code-oflt. The wealth dashboard reads fire_target directly over
+        # Postgres, so a failed run leaves it showing month-old FIRE numbers.
+        #
+        # If it fails again at 10800, do NOT just raise this further. The loop
+        # already logs one line per solved target and the failed run emitted
+        # none, so it completed zero of 88 in a full hour rather than nearly
+        # finishing. That would mean the per-solve DB round-trips are the wall
+        # and the fix belongs in the storage or the solver, not in this number.
+        active_deadline_seconds = 10800
         template {
           metadata {
             labels = local.labels
