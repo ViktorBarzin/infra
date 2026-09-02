@@ -134,3 +134,25 @@ module "aiostreams" {
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
 # CI retrigger v2 2026-05-16T13:46:35+00:00
+
+# Adopt the qbittorrent-exporter objects declared in ./qbittorrent.
+#
+# These live in the ROOT module deliberately. The same two blocks were first
+# written inside qbittorrent/main.tf beside the resources, where Terraform
+# ignored them without an error and apply #1400 fell through to creating
+# objects that already existed. import is only honoured in the root module, so
+# the address has to be the fully qualified module path from here.
+#
+# Both objects were made by hand in March 2026 and rebuilt by hand on
+# 2026-09-02 with the spec below plus the prometheus.io annotations, so these
+# hand them to Terraform rather than recreating them. Safe to delete once an
+# apply has run and the state has them.
+import {
+  to = module.qbittorrent.kubernetes_deployment.qbittorrent_exporter
+  id = "servarr/qbittorrent-exporter"
+}
+
+import {
+  to = module.qbittorrent.kubernetes_service.qbittorrent_exporter
+  id = "servarr/qbittorrent-exporter"
+}
