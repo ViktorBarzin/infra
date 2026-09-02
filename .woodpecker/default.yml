@@ -157,6 +157,19 @@ steps:
         # and silently skips the stacks this push actually changed
         # (bit ci-pipeline-health on 2026-06-12, pipeline 128).
         DIFF_BASE="HEAD~1"
+        # ...and for a MERGE commit HEAD~1 is a parent, so use the merge-base of
+        # both parents instead: it is the union of the two lineages, which
+        # OVER-applies rather than under-applies. Do NOT pick a parent by index
+        # — the ordering is not stable. dc2813dd had ^1 = the feature tip because
+        # the merge ran from the branch, while a merge run on master puts master
+        # at ^1 (infra#84). Matters most for stacks/dbaas, which cannot be
+        # applied from a workstation at all (it resolves vault-active.vault.svc,
+        # in-cluster only), so for that stack CI is the only path and a silent
+        # miss would be invisible.
+        if git rev-parse --verify -q HEAD^2 >/dev/null 2>&1; then
+          MB=$(git merge-base "HEAD^1" "HEAD^2" 2>/dev/null || true)
+          [ -n "$MB" ] && DIFF_BASE="$MB"
+        fi
         if [ -n "${CI_PREV_COMMIT_SHA:-}" ] && [ "$CI_PREV_COMMIT_SHA" != "$CI_COMMIT_SHA" ]; then
           git cat-file -e "$CI_PREV_COMMIT_SHA^{commit}" 2>/dev/null || git fetch --depth=50 origin master 2>/dev/null || true
           # Restarted pipelines after master moved produce REVERSE diffs
@@ -174,6 +187,7 @@ steps:
         if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
           echo "Cannot determine changed files — applying ALL platform stacks"
           echo "$PLATFORM_STACKS" | tr ' ' '\n' > .platform_apply
+          > .needs_human_apply
           > .app_apply
         else
           # Check if global files changed (triggers full platform apply)
@@ -276,7 +290,16 @@ steps:
             # apply always 403s and fails the pipeline. Kept in PLATFORM_STACKS
             # (so the app-stack detector still excludes it) but skipped here.
             # (2026-06-27 — see docs/architecture/ci-cd.md)
-            if [ "$stack" = "vault" ]; then echo "[vault] SKIPPED (Tier-0, human-applied via OIDC)"; continue; fi
+            # The skip is correct (Tier-0, human-applied), but it used to be
+            # ONLY a log line, so a push touching stacks/vault reported green
+            # having applied nothing. That is how three vault changes on
+            # 2026-09-02 were each missed and needed an out-of-band apply
+            # afterwards (infra#84). Record it as an outcome, not a message.
+            if [ "$stack" = "vault" ]; then
+              echo "[vault] SKIPPED (Tier-0, human-applied via OIDC) — NOT APPLIED, needs a human run"
+              echo "$stack" >> .needs_human_apply
+              continue
+            fi
             echo "[$stack] Starting apply..."
             ATTEMPT=0
             while :; do
@@ -344,6 +367,29 @@ steps:
         # reflects reality — the service-upgrade agent and CI alert cascade
         # both rely on this (see bd code-e1x). Lock-skipped stacks are NOT
         # counted as failures.
+        # A stack deliberately skipped is NOT a failure — the run stays green,
+        # because turning ~4 of 32 runs red for doing the right thing trains
+        # people to ignore red (Viktor, 2026-09-02, infra#84). It is instead
+        # made loud: a Slack post nobody can miss, and a Pushgateway gauge so a
+        # missed Slack post still surfaces via CIStackPendingHumanApply.
+        if [ -s .needs_human_apply ]; then
+          PENDING=$(tr '\n' ' ' < .needs_human_apply | sed 's/ *$//')
+          echo "=== NEEDS A HUMAN APPLY: [$PENDING] ==="
+          curl -s -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\":warning: infra CI: *$PENDING* changed but was NOT applied (Tier-0, human-applied via OIDC).\nCommit: $CI_COMMIT_SHA\nPipeline: $CI_PIPELINE_URL\nApply it: \`cd stacks/vault && ../../scripts/tg apply\`\"}" \
+            "$SLACK_WEBHOOK" >/dev/null || echo "(slack unavailable, the gauge below still records it)"
+          {
+            printf 'ci_stack_pending_human_apply %s\n' "$(wc -l < .needs_human_apply | tr -d ' ')"
+            printf 'ci_stack_pending_human_apply_timestamp %s\n' "$(date +%s)"
+          } | curl -s --data-binary @- \
+            http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/infra-apply \
+            || echo "(pushgateway unavailable, metrics lost for this run)"
+        else
+          printf 'ci_stack_pending_human_apply 0\n' | curl -s --data-binary @- \
+            http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/infra-apply \
+            || true
+        fi
+
         FAILED_PLATFORM=$(cat .platform_failed 2>/dev/null | tr -d ' ')
         if [ -n "$FAILED_PLATFORM" ] || [ -n "$FAILED_APP_STACKS" ]; then
           echo "=== FAILED STACKS: platform=[$FAILED_PLATFORM ] apps=[$FAILED_APP_STACKS ] ==="
