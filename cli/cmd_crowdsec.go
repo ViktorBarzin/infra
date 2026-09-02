@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -115,24 +115,73 @@ func parseBanDuration(s string) (time.Duration, error) {
 	return d, nil
 }
 
+// parseBanTarget validates the target as a literal IP or CIDR and returns the
+// cscli flag that carries it. cscli keeps the two scopes on separate flags —
+// --ip for a single address, --range for a CIDR — and rejects a CIDR handed to
+// --ip ("2a03:2880::/32 is not a valid ip"), so the flag has to follow the
+// shape of the target. Both scopes cover v4 and v6 alike.
+//
+// Only the flag is chosen by looking for a "/"; the target itself is parsed,
+// so a hostname, a truncated address or an out-of-range prefix is refused
+// rather than passed on to cscli. The value is returned as typed, since that
+// is also what `unban` and `cscli decisions list` will match on.
+func parseBanTarget(target string) (flag, value string, err error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", "", fmt.Errorf("an IP or CIDR to ban is required")
+	}
+	if strings.Contains(target, "/") {
+		if _, err := netip.ParsePrefix(target); err != nil {
+			return "", "", fmt.Errorf("%q is not a valid CIDR (want something like 192.0.2.0/24 or 2a03:2880::/32)", target)
+		}
+		return "--range", target, nil
+	}
+	addr, err := netip.ParseAddr(target)
+	if err != nil || addr.Zone() != "" {
+		return "", "", fmt.Errorf("%q is not a valid IP address (hostnames are not bannable — resolve it first, and check the address is not our own egress)", target)
+	}
+	return "--ip", target, nil
+}
+
 // validateBanRequest checks the ban target is a literal IP or CIDR and that a
 // reason was given.
 func validateBanRequest(target, reason string) error {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return fmt.Errorf("an IP or CIDR to ban is required")
-	}
-	if strings.Contains(target, "/") {
-		if _, _, err := net.ParseCIDR(target); err != nil {
-			return fmt.Errorf("%q is not a valid CIDR", target)
-		}
-	} else if net.ParseIP(target) == nil {
-		return fmt.Errorf("%q is not a valid IP address (hostnames are not bannable — resolve it first, and check the address is not our own egress)", target)
+	if _, _, err := parseBanTarget(target); err != nil {
+		return err
 	}
 	if strings.TrimSpace(reason) == "" {
 		return fmt.Errorf("--reason is required: a ban with no stated reason cannot be reviewed or safely undone later")
 	}
 	return nil
+}
+
+// cscliAddArgs builds the `cscli decisions add` argv, applying every guardrail
+// on the way: a literal address, a stated reason and a duration inside the cap.
+func cscliAddArgs(target string, d time.Duration, reason string) ([]string, error) {
+	if err := validateBanRequest(target, reason); err != nil {
+		return nil, err
+	}
+	if d <= 0 {
+		return nil, fmt.Errorf("duration %v must be positive", d)
+	}
+	if d > crowdsecMaxBan {
+		return nil, fmt.Errorf("duration %s exceeds the %s cap for a manual ban", humanDuration(d), humanDuration(crowdsecMaxBan))
+	}
+	flag, value, err := parseBanTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"cscli", "decisions", "add", flag, value,
+		"--duration", humanDuration(d), "--reason", strings.TrimSpace(reason)}, nil
+}
+
+// cscliDeleteArgs builds the `cscli decisions delete` argv for one address.
+func cscliDeleteArgs(target string) ([]string, error) {
+	flag, value, err := parseBanTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"cscli", "decisions", "delete", flag, value}, nil
 }
 
 // parseCrowdsecBanArgs pulls the target, --reason and --duration out of argv.
@@ -192,12 +241,15 @@ func crowdsecBan(args []string) error {
 	if err != nil {
 		return err
 	}
+	cscli, err := cscliAddArgs(target, d, reason)
+	if err != nil {
+		return err
+	}
 	pod, err := crowdsecLapiPod()
 	if err != nil {
 		return err
 	}
-	if err := kubectlStream(crowdsecNamespace, "exec", pod, "--",
-		"cscli", "decisions", "add", "--ip", target, "--duration", humanDuration(d), "--reason", reason); err != nil {
+	if err := kubectlStream(crowdsecNamespace, append([]string{"exec", pod, "--"}, cscli...)...); err != nil {
 		return fmt.Errorf("cscli decisions add failed: %w", err)
 	}
 	fmt.Printf("banned %s for %s — expires on its own; `homelab crowdsec unban %s` to lift it sooner\n", target, humanDuration(d), target)
@@ -210,15 +262,15 @@ func crowdsecUnban(args []string) error {
 		return fmt.Errorf("usage: homelab crowdsec unban <ip|cidr>")
 	}
 	target := strings.TrimSpace(args[0])
-	if err := validateBanRequest(target, "unban needs no reason"); err != nil {
+	cscli, err := cscliDeleteArgs(target)
+	if err != nil {
 		return err
 	}
 	pod, err := crowdsecLapiPod()
 	if err != nil {
 		return err
 	}
-	if err := kubectlStream(crowdsecNamespace, "exec", pod, "--",
-		"cscli", "decisions", "delete", "--ip", target); err != nil {
+	if err := kubectlStream(crowdsecNamespace, append([]string{"exec", pod, "--"}, cscli...)...); err != nil {
 		return fmt.Errorf("cscli decisions delete failed: %w", err)
 	}
 	fmt.Printf("removed local decisions for %s\n", target)
