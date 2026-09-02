@@ -1009,27 +1009,39 @@ resource "kubernetes_config_map" "auth_proxy_config" {
   data = {
     "default.conf" = <<-EOT
       upstream authentik {
-          # The INLINE embedded outpost inside the goauthentik-server pods, via
-          # the helm-managed Service (port 80 -> targetPort 9000). Verified
-          # answering 302 on /outpost.goauthentik.io/auth/traefik.
+          # Forward-auth MUST be answered by the SAME outpost that answers the
+          # OAuth callback, and the callback is the standalone Deployment:
+          # authentik.viktorbarzin.me/outpost.goauthentik.io is routed to
+          # ak-outpost-authentik-embedded-outpost by BOTH the authentik-outpost
+          # Ingress (ours) and the ak-outpost-... Ingress (the outpost
+          # controller's, which we do not own and cannot durably repoint).
           #
-          # NOT ak-outpost-authentik-embedded-outpost. nginx OSS resolves an
-          # upstream server name ONCE at startup and caches the IP forever, and
-          # authentik's outpost controller RECREATES that Service on upgrades,
-          # handing it a new ClusterIP. nginx then dials a dead address, the 3s
-          # connect timeout trips, and error_page sends every forward-auth host
-          # to @fallback_auth = Emergency Access basic-auth. That is the
-          # 2026-08-19 outage, and it recurred on 2026-09-02.
+          # Do NOT point this at goauthentik-server (the inline outpost inside
+          # the server pods). The two implementations issue the SAME cookie
+          # name on the SAME domain in mutually unreadable formats:
           #
-          # This Service is created by the helm release, not by the outpost
-          # controller, so nothing recreates it behind us: same ClusterIP since
-          # 2025-12-28. It also means forward-auth now runs at the SERVER
-          # version rather than on a standalone outpost that drifted four minor
-          # lines behind, which from 2026.8 cannot be upgraded at all -- an
-          # outpost marked embedded reaches the core over a unix socket that
-          # only exists inside the server pod (src/outpost/event.rs). Bead
-          # code-osvg carries the retirement of that standalone Deployment.
-          server goauthentik-server.authentik.svc.cluster.local:80;
+          #   inline (Rust)      authentik_proxy_34f8da53=<b64 hmac>=<uuid>
+          #   standalone (Go)    authentik_proxy_34f8da53=<base32 session id>
+          #
+          # Split across the two, a logged-in user loops forever: forward-auth
+          # (inline) cannot read the cookie the callback (standalone) just set,
+          # so it 302s to login, the callback re-issues a Go cookie, and round
+          # it goes. Nothing reaches the backend -- OriginStatus 0 on every
+          # request, XHR included, which is what took terminal.viktorbarzin.me
+          # and every other auth="required" host down on 2026-09-02 10:52.
+          # An anonymous probe cannot see this: 302-to-login is the CORRECT
+          # answer for a request with no session, so the whole estate looked
+          # healthy while every signed-in request was in a loop.
+          #
+          # STILL OPEN: nginx OSS resolves this name ONCE at startup and caches
+          # the IP for the life of the process, while the outpost controller
+          # RECREATES this Service on upgrades with a fresh ClusterIP. nginx
+          # then dials a dead address, the 3s connect timeout trips, and
+          # error_page hands every forward-auth host to @fallback_auth =
+          # Emergency Access basic-auth (the 2026-08-19 outage). The fix is a
+          # target the controller never recreates -- a Terraform-owned Service
+          # selecting the same pods -- NOT a different outpost.
+          server ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000;
           # Reuse connections to the outpost. Without this every forward-auth
           # subrequest (= every request to every auth="required" ingress) opens
           # a fresh TCP connection. Requires HTTP/1.1 + cleared Connection
