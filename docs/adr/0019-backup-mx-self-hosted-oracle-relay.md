@@ -27,7 +27,7 @@ prevent), queues up to **30 days** (bounce lifetime 1 day — the VM can never
 deliver a DSN, its only egress is the drain), and drains to the primary over
 **port 2526** — one scripted pfSense WAN NAT rule onto the existing HAProxy
 frontend — because Oracle blocks egress TCP 25 tenancy-wide. Management is
-tailnet-only (headscale preauth key, `tag:backup-mx`; OCI console as
+tailnet-only (headscale preauth key, untagged; OCI console as
 mid-outage break-glass since headscale itself lives in the cluster); TLS via
 certbot HTTP-01 (port 80 permanently open — LE validation is
 multi-perspective and unscopeable); the VM is a cattle-rebuild from a new
