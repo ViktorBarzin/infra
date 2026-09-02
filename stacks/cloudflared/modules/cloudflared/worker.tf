@@ -112,7 +112,7 @@ resource "cloudflare_worker_script" "outage_failover" {
 #   tuya-bridge, owntracks, echo,
 #   poison, chrome-fleet, flaresolverr,
 #   claude-memory, k8s, docker,
-#   headscale, kms, executor
+#   headscale, kms
 locals {
   # Hosts that get the outage page. This list was seeded from the live ingress
   # inventory (`kubectl get ingress,ingressroute -A`) minus the exclusions above;
