@@ -560,7 +560,7 @@ module "ingress" {
 
 # qBittorrent Prometheus exporter.
 #
-# Declared 2026-09-02. Landing it took three pushes, which is worth recording
+# Declared and applied 2026-09-02. Landing it took three pushes, which is worth recording
 # because the failure mode is invisible: infra CI applies only the stacks a
 # push changed, and Woodpecker cancels a running pipeline when the next push
 # arrives. Pipeline #1386 (the adoption) and #1388 (the first retry) were both
