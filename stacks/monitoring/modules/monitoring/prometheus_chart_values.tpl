@@ -1369,30 +1369,39 @@ serverFiles:
             # cgroups holding anon memory. Per-cgroup thrash with healthy global
             # RAM is invisible to both.
             #
-            # Both directions summed, because pages coming back IN is what
-            # separates thrash from a one-off page-out.
+            # BOTH directions, each above 500, sustained 15m — not their sum.
+            # This took three passes to get right and the first two are worth
+            # recording, because each was wrong in a different way.
             #
-            # 800 pages/s (~3 MB/s), and the number was picked the second way
-            # round. It started at 2000, reasoning "above the 30-day peak of
-            # 1392" — but that is backwards for a threshold whose job is to fire.
-            # This disk cannot reach 2000: asking a user slice to reclaim 512 MB
-            # on 2026-09-02 took over 120 seconds, about 1100 pages/s, and the
-            # 30-day peak of 1392 is the same order. A sustained thrash plateaus
-            # at what the spindle can do, so a 2000 trigger would have sat there
-            # unfirable while the box wedged. The disk is seek-bound and shared,
-            # measured 95% busy at 0.19 MB/s of writes (bead code-oflt, open).
+            # It began at "sum > 2000", reasoning above the 30-day peak of 1392.
+            # That is the right question for a noise floor and the wrong one for a
+            # trigger: this disk cannot reach 2000. Asking a user slice to reclaim
+            # 512 MB on 2026-09-02 took over 120 seconds, about 1100 pages/s. A
+            # sustained thrash plateaus at whatever the spindle can do, so the
+            # alert would have sat unfirable while the box wedged.
             #
-            # 800 stays far clear of quiet: page-out over the same 30 days ran
-            # p50 0.0, p95 0.0, p99 85 pages/s, so this is ~9x the p99 and the
-            # box is normally at zero. Sustained for 5m, so a one-off reclaim
-            # like that test does not page anyone.
-            expr: (rate(node_vmstat_pswpin{instance="devvm"}[5m]) + rate(node_vmstat_pswpout{instance="devvm"}[5m])) > 800
-            for: 5m
+            # Lowering it to "sum > 800" then fired on healthy behaviour. Right
+            # after the user slices gained swap, the kernel began parking cold
+            # session pages it had previously been forbidden to touch: measured
+            # page-out 1001/s against page-in 49/s, a ratio of 0.05, while
+            # MemAvailable ROSE from 7.0 to 7.6 GiB and io stall sat at 24%,
+            # below its 29% p95. That is a one-way migration and exactly what the
+            # change was for, and it would have paged someone for hours.
+            #
+            # So the signal is page-IN, gated on page-out. Eviction alone is
+            # progress; needing back what you just evicted is thrash. Requiring
+            # both above 500 for 15m clears a migration (out-only), clears a
+            # session waking up after being paged out (a brief in-spike), and
+            # still sits ~6x the 30-day page-out p99 of 85 on a box that is
+            # normally at zero. The disk is seek-bound and shared, measured 95%
+            # busy at 0.19 MB/s of writes (bead code-oflt, open).
+            expr: rate(node_vmstat_pswpin{instance="devvm"}[5m]) > 500 and rate(node_vmstat_pswpout{instance="devvm"}[5m]) > 500
+            for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "devvm is swap-thrashing at {{ $value | printf \"%.0f\" }} pages/s — the 2026-06-22 hard-kill shape (disk tops out near 1100)"
-              description: "Sustained paging in both directions; normal on this box is 0. Find the source: for d in /sys/fs/cgroup/user.slice/user-*.slice; do echo $d $(cat $d/memory.swap.current); done. A user sitting at their 4G MemorySwapMax ceiling is the likely one. To stop it while investigating, systemctl set-property user-<uid>.slice MemorySwapMax=0 puts that user back to cap-and-kill. The reason paging hurts here at all is the shared seek-bound spindle; bead code-oflt moves devvm's disk to SSD and is still open."
+              summary: "devvm is swap-thrashing — paging {{ $value | printf \"%.0f\" }} pages/s back IN while still evicting, the 2026-06-22 hard-kill shape"
+              description: "Pages are coming back in as fast as they leave, which is churn rather than the one-way eviction that freeing RAM looks like. Normal on this box is 0. Find the source: for d in /sys/fs/cgroup/user.slice/user-*.slice; do echo $d $(cat $d/memory.swap.current); done. A user sitting at their 4G MemorySwapMax ceiling is the likely one. To stop it while investigating, systemctl set-property user-<uid>.slice MemorySwapMax=0 puts that user back to cap-and-kill. The reason paging hurts here at all is the shared seek-bound spindle; bead code-oflt moves devvm's disk to SSD and is still open."
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp
