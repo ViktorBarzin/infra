@@ -1,0 +1,20 @@
+# /etc/cron.d/registry-cache
+# Managed by playbooks/registry-cache.yml -- edit there, not here.
+#
+# ONE entry, on purpose. Every step (cleanup-tags -> garbage-collect ->
+# fix-broken-blobs -> container restart) runs inside
+# /opt/registry/registry-maintenance.sh, so the ordering is a property of the
+# script rather than of how long each step happens to take.
+#
+# This REPLACES the eight root-crontab lines that used to do the same work at
+# five different clock times, with garbage-collect on Sunday only. The playbook
+# refuses to run while those are still installed, because both schedules
+# together would GC twice and restart the containers twice.
+#
+# 02:00 local is the quietest window for cluster pulls, which matters: registry
+# garbage-collect races the proxy's own blob writes. See the script's header.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=""
+
+0 2 * * *  root  /opt/registry/registry-maintenance.sh
