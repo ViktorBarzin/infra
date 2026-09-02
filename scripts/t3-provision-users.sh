@@ -618,7 +618,7 @@ install_memory() {
   # (1) (re)install the hook scripts, owned by the user (refreshed each reconcile so fixes land)
   install -d -o "$user" -g "$user" -m 0755 "$hooks_dst"
   local h
-  for h in homelab-memory-recall.py auto-learn.py pre-compact-backup.sh post-compact-recovery.sh zsh-guard.py fixer-suggest.py; do
+  for h in homelab-memory-recall.py auto-learn.py pre-compact-backup.sh post-compact-recovery.sh zsh-guard.py fixer-suggest.py unslop-check.py; do
     install -o "$user" -g "$user" -m 0755 "$src/$h" "$hooks_dst/$h"
   done
 
