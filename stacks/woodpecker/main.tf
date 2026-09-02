@@ -405,3 +405,123 @@ module "ingress" {
 # CI retrigger v2 2026-05-16T13:46:35+00:00
 
 # CI retrigger v3 2026-05-16T14:06:39Z
+
+# ── Rotation-window force-sync (infra#45) ────────────────────────────────────
+#
+# The problem this solves. Vault rotates the `woodpecker` Postgres password on a
+# schedule; the old password dies instantly; woodpecker-server reads its
+# datasource once at boot and exits on a store-setup failure. So the pod
+# crash-loops with a dead credential until External Secrets happens to poll
+# Vault, writes the new value, and Reloader restarts it. Measured over four
+# consecutive rotations, that was 4-7 minutes of CI down every Friday, and the
+# WoodpeckerDown alert (for: 15m) never fired on a blip that short, which is why
+# it went unnoticed for two months.
+#
+# Why not just poll faster. ESO has no push path for the Vault provider — the
+# only trigger is the force-sync annotation, and refreshInterval is otherwise the
+# single knob. Dropping it to 1m would shrink the window but spend 1,440 reads a
+# day to cover the one minute a week that matters.
+#
+# What this does instead. The static role is now pinned to `0 9 * * FRI`
+# (stacks/vault/main.tf), so the rotation hour is known. This CronJob wakes once
+# in that hour and force-syncs the ExternalSecret every 45s for 25 minutes,
+# which covers the whole observed spread (09:15:57 to 09:17:07 across four
+# ticks) without assuming Vault is punctual to the minute — rotation_window
+# explicitly allows it to land later. ~33 annotations a week against 1,440 reads
+# a day.
+#
+# It is an optimisation, not a dependency: refreshInterval stays at 15m, so if
+# this CronJob is broken, suspended or misaligned, the old behaviour is exactly
+# what happens. Fails safe by construction.
+resource "kubernetes_service_account" "rotation_sync" {
+  metadata {
+    name      = "woodpecker-rotation-sync"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "rotation_sync" {
+  metadata {
+    name      = "woodpecker-rotation-sync"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  rule {
+    api_groups     = ["external-secrets.io"]
+    resources      = ["externalsecrets"]
+    resource_names = ["woodpecker-db-creds"]
+    verbs          = ["get", "patch"]
+  }
+}
+
+resource "kubernetes_role_binding" "rotation_sync" {
+  metadata {
+    name      = "woodpecker-rotation-sync"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.rotation_sync.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.rotation_sync.metadata[0].name
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "rotation_sync" {
+  metadata {
+    name      = "woodpecker-rotation-sync"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  spec {
+    # One run, in the hour the static role rotates. Deliberately not */2 — a
+    # single pod that loops is cheaper than 30 pod starts.
+    schedule                      = "0 9 * * FRI"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 300
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 2
+        template {
+          metadata {}
+          spec {
+            service_account_name = kubernetes_service_account.rotation_sync.metadata[0].name
+            restart_policy       = "OnFailure"
+            container {
+              name    = "force-sync"
+              image   = "bitnami/kubectl:latest"
+              command = ["/bin/sh", "-c"]
+              args = [<<-EOT
+                set -eu
+                # 25 minutes at 45s covers the observed rotation spread with room
+                # for rotation_window landing the change later than the cron.
+                for i in $(seq 1 33); do
+                  kubectl annotate externalsecret woodpecker-db-creds \
+                    -n woodpecker force-sync="$(date +%s)" --overwrite >/dev/null
+                  sleep 45
+                done
+                echo "rotation window covered: 33 force-syncs over ~25m"
+              EOT
+              ]
+              resources {
+                requests = {
+                  cpu    = "10m"
+                  memory = "32Mi"
+                }
+                limits = {
+                  cpu    = "100m"
+                  memory = "128Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
