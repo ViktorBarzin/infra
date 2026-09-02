@@ -191,9 +191,14 @@ resource "authentik_stage_authenticator_webauthn" "signup_passkey" {
 # Order 3 needs no renumbering, so gpe_login and the
 # assign_invite_group_on_login binding that depends on its id are untouched.
 resource "authentik_flow_stage_binding" "gpe_passkey" {
-  target               = authentik_flow.google_proxy_enrollment.uuid
-  stage                = authentik_stage_authenticator_webauthn.signup_passkey.id
-  order                = 3
-  evaluate_on_plan     = false
+  target = authentik_flow.google_proxy_enrollment.uuid
+  stage  = authentik_stage_authenticator_webauthn.signup_passkey.id
+  order  = 3
+  # Authentik rejects a binding with both evaluation modes off:
+  # "Either evaluation on plan or evaluation on run must be enabled" (400 on
+  # POST /flows/bindings/). No policies are bound here, so both settings are
+  # a no-op either way — plan-time evaluation is on so the passkey prompt is
+  # part of the plan from the start, matching gpe_write above.
+  evaluate_on_plan     = true
   re_evaluate_policies = false
 }
