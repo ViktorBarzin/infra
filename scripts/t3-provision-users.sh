@@ -549,6 +549,63 @@ retire_legacy_playwright_units() {
 # Reuses the user's existing key — does NOT mint one (per-user isolation stays
 # deferred, design 2026-06-08). The homelab CLI (/usr/local/bin/homelab) hits the
 # same remote HTTP API the MCP used. Hook scripts: $WORKSTATION_DIR/claude-hooks.
+# --- shared beads task DB (all users) ---------------------------------------
+# `bd` in a user's ~/code needs .beads/metadata.json pointing at the SHARED
+# Dolt server, carrying the shared project's identity. Left to itself, `bd`
+# self-initialises a NEW project on a local port, and that config can never
+# reach the team's issues.
+#
+# Found on emo 2026-09-02 (infra#31, PRD task 2.3): his metadata read
+# host=127.0.0.1 port=23209 database="in" with its own project_id, so `bd list`
+# died with "Dolt server unreachable ... auto-start is suppressed". Repointing
+# it at the shared server then failed a second, better check — PROJECT IDENTITY
+# MISMATCH — because a locally-initialised project_id cannot open a database
+# belonging to another project. Both have to match, which is why this writes
+# the identity too and not just the address.
+#
+# The shared facts are read from the ADMIN's metadata rather than hardcoded, so
+# a future server move or re-init needs no edit here. If the admin's file is
+# missing this is skipped with a warning rather than guessing.
+install_beads() {
+  local user="$1" home admin_meta user_meta
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home/code" ]] || return 0
+  admin_meta="/home/wizard/code/.beads/metadata.json"
+  user_meta="$home/code/.beads/metadata.json"
+  [[ -r "$admin_meta" ]] || { log "WARN: no admin beads metadata -> skip beads for $user"; return 0; }
+  [[ "$user" == "wizard" ]] && return 0
+  [[ -f "$user_meta" ]] || return 0   # no .beads in their workspace: nothing to point
+
+  if [[ "$DRY_RUN" == 1 ]]; then
+    echo "[dry-run] point $user's beads at the shared Dolt server + project identity"
+    return 0
+  fi
+
+  # Rewrite only the server + identity keys; everything else in their metadata
+  # is theirs to keep. Idempotent: a correct file is left byte-identical.
+  python3 - "$admin_meta" "$user_meta" <<'PYEOF' || { log "WARN: beads metadata rewrite failed for $user"; return 0; }
+import json, sys
+admin, target = sys.argv[1], sys.argv[2]
+a = json.load(open(admin))
+t = json.load(open(target))
+keys = ("dolt_mode", "dolt_server_host", "dolt_server_port",
+        "dolt_server_user", "dolt_database", "project_id")
+before = {k: t.get(k) for k in keys}
+for k in keys:
+    if k in a:
+        t[k] = a[k]
+if {k: t.get(k) for k in keys} != before:
+    json.dump(t, open(target, "w"), indent=2)
+    print("changed")
+PYEOF
+  chown "$user":"$user" "$user_meta" 2>/dev/null || true
+  chmod 700 "$home/code/.beads" 2>/dev/null || true
+  # bd refuses to write without a role. contributor, not maintainer: a
+  # non-admin should not be closing other people's issues by default.
+  runuser -u "$user" -- bash -lc 'cd ~/code 2>/dev/null && git config beads.role >/dev/null 2>&1 || git config beads.role contributor' 2>/dev/null || true
+  log "beads pointed at the shared Dolt server -> $user"
+}
+
 install_memory() {
   local user="$1" home
   home="$(getent passwd "$user" | cut -d: -f6)"
@@ -921,6 +978,7 @@ done < <(jq -r '.playwright_ports | to_entries[] | [.key, .value] | @tsv' "$desi
 while IFS=$'\t' read -r os_user; do
   id "$os_user" >/dev/null 2>&1 || continue
   install_memory "$os_user"
+  install_beads "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
 
 # 5d-bis) shared agent rules -> every user's ~/.claude/rules/ (all users, no allowlist:

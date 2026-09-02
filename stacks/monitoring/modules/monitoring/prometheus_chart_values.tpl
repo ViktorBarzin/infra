@@ -630,7 +630,7 @@ serverFiles:
           insecure_skip_verify: true
         metric_relabel_configs:
           - source_labels: [__name__]
-            regex: '(storage_operation_duration_seconds|csi_operations_seconds|volume_operation_total_seconds|kubelet_image_pull_duration_seconds|kubelet_http_requests_duration_seconds|rest_client_rate_limiter_duration_seconds|rest_client_request_duration_seconds|rest_client_request_size_bytes|rest_client_response_size_bytes|kubelet_pod_worker_duration_seconds|kubelet_volume_metric_collection_duration_seconds|kubelet_cgroup_manager_duration_seconds)_bucket'
+            regex: '(storage_operation_duration_seconds|csi_operations_seconds|volume_operation_total_seconds|kubelet_http_requests_duration_seconds|rest_client_rate_limiter_duration_seconds|rest_client_request_duration_seconds|rest_client_request_size_bytes|rest_client_response_size_bytes|kubelet_pod_worker_duration_seconds|kubelet_volume_metric_collection_duration_seconds|kubelet_cgroup_manager_duration_seconds)_bucket'
             action: drop
           - source_labels: [__name__]
             regex: 'kubernetes_feature_enabled|kubelet_container_log_filesystem_used_bytes'
@@ -641,8 +641,29 @@ serverFiles:
           # any PVC missing even one. Without inodes_free + inodes the
           # autoresizer's GetMetrics returns empty for every PVC and the
           # reconcile is a no-op cluster-wide.
+          #
+          # kubelet_image_pull_duration_seconds_(bucket|sum|count) added
+          # 2026-09-02 (Phase 0 of docs/plans/2026-09-02-node1-large-image-handling.md).
+          # It was excluded twice: named in the _bucket drop rule above AND
+          # absent from this list, so sum and count went too and no percentile
+          # or per-size-class breakdown of image pulls existed. The plan's own
+          # anchor number (node1 spending 2,898 s on 1-5 GB pulls over 36.9
+          # days) had to be read off the live kubelet by hand because
+          # Prometheus held none of it.
+          #
+          # Cardinality, measured 2026-09-02 rather than estimated: the metric
+          # exposes 21 series per image_size_in_bytes class (19 le buckets +
+          # sum + count). Live today that is 105 series on each of the five
+          # workers (5 classes) and 21 on k8s-master (1 class) = 546 series,
+          # against a 98,926-series head, so +0.55%. The label is
+          # image_size_in_bytes with bucketed STRING values ("1GB-5GB",
+          # "100MB-500MB"), not image_size_in_gb, and kubelet defines 7 classes
+          # in total, so the ceiling as nodes see bigger images is 7 x 21 x 6 =
+          # 882 series. Anchored, not open-ended — this stays a whitelist.
+          # Regex note: `keep` is fully anchored, so the bare metric name would
+          # NOT match the _bucket/_sum/_count children; the group is required.
           - source_labels: [__name__]
-            regex: 'kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_used_bytes|kubelet_volume_stats_available_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free|kubelet_running_containers|kubelet_runtime_operations_errors_total|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|go_memstats_alloc_bytes|up'
+            regex: 'kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_used_bytes|kubelet_volume_stats_available_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free|kubelet_running_containers|kubelet_runtime_operations_errors_total|kubelet_image_pull_duration_seconds_(bucket|sum|count)|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|go_memstats_alloc_bytes|up'
             action: keep
       - job_name: kubernetes-nodes-cadvisor
         scheme: https
@@ -745,7 +766,7 @@ serverFiles:
           # guard (stacks/k8s-version-upgrade) — removing it re-opens the sticky-latch
           # false-critical (the guard would evaluate against an empty series).
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|sablier_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
+            regex: 'memory_.+|tripit_.+|sablier_.+|qbittorrent_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true

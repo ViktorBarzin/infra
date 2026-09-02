@@ -222,6 +222,81 @@ alloy:
         forward_to = [loki.write.default.receiver]
       }
 
+      // Container-runtime journals: kubelet.service and containerd.service,
+      // shipped in FULL including INFO (2026-09-02, Phase 0 of
+      // docs/plans/2026-09-02-node1-large-image-handling.md).
+      //
+      // Why a separate job rather than an exemption in the node-journal drop
+      // rule below: measured 2026-09-02, every line these two units emit is
+      // journal PRIORITY=6 (info) — 37,055 of 37,055 containerd lines on
+      // k8s-node3 over 24h, and 0 warning-or-worse lines from either unit on
+      // any of the six nodes over 3h. containerd's own `level=warning` /
+      // `level=error` is text inside the message, not a journal priority. So
+      // loki.process.journal's "drop info unless kernel transport" stage was
+      // discarding 100% of both units, and `{job="node-journal",
+      // unit="containerd.service"}` returns 0 lines over 7 days. Exempting the
+      // units there would instead have started feeding that selector, and the
+      // existing ContainerdDown rule matches it on `(?i)(dead|failed|
+      // deactivating)` — which the routine INFO line `cleaning up dead shim`
+      // satisfies 809 times/24h on node3 and 1,204 times/24h on node5, so a
+      // severity=critical alert would have fired continuously. Carving a
+      // distinct job off the same journal keeps every existing node-journal
+      // rule's input byte-identical; it is also the pattern the devvm and pve
+      // shippers already use for sshd-devvm / sshd-pve.
+      //
+      // matches is AND-only (no `+` for OR), so one source per unit.
+      //
+      // What this buys: image pull, unpack and image-GC events are all INFO on
+      // these two units, so the 130-image / 56.8567 GiB image-GC pass on
+      // k8s-node1 on 2026-09-01 left no trace anywhere queryable — node1's
+      // journald is Storage=volatile and its local copy had already rotated.
+      //
+      // Volume, measured over a 3h window on 2026-09-02:
+      //   kubelet    lines/hr: master 2, node1 5, node2 200, node3 196,
+      //                        node4 49, node5 2,340  => 2,793/hr cluster-wide
+      //   containerd lines/hr: master 18, node1 57, node2 517, node3 1,170,
+      //                        node4 355, node5 18,764 => 20,881/hr cluster-wide
+      // +23,674 lines/hr = +6.6 lines/s against a measured Loki intake of
+      // 123.9 lines/s, so +5.3%. node5 is 80% of it on its own, because the
+      // Calico CNI plugin writes its IPAM lock chatter to containerd's stdout.
+      // If that needs trimming, add a targeted stage.drop below rather than
+      // reinstating a level filter, which would take the image lines with it.
+      //
+      // New Loki streams: 12 (6 nodes x 2 units), against the 5,000
+      // active-stream cap. Query with:
+      //   {job="node-runtime-journal", unit="kubelet.service"}
+      loki.source.journal "kubelet_journal" {
+        forward_to    = [loki.process.runtime_journal.receiver]
+        relabel_rules = loki.relabel.journal.rules
+        labels = {
+          job = "node-runtime-journal",
+        }
+        matches = "_SYSTEMD_UNIT=kubelet.service"
+        max_age = "12h"
+      }
+
+      loki.source.journal "containerd_journal" {
+        forward_to    = [loki.process.runtime_journal.receiver]
+        relabel_rules = loki.relabel.journal.rules
+        labels = {
+          job = "node-runtime-journal",
+        }
+        matches = "_SYSTEMD_UNIT=containerd.service"
+        max_age = "12h"
+      }
+
+      // No level filter here — that is the whole point of the job. Only the
+      // cluster label is added, matching loki.process.journal.
+      loki.process "runtime_journal" {
+        stage.static_labels {
+          values = {
+            cluster = "default",
+          }
+        }
+
+        forward_to = [loki.write.default.receiver]
+      }
+
       // Kubernetes audit log collection from /var/log/kubernetes/audit/audit.log
       // (kube-apiserver --audit-log-path on k8s-master; rotated siblings stay in
       // the audit/ subdir). Requires alloy.mounts.varlog=true to mount /var/log
