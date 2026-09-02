@@ -468,11 +468,19 @@ server:
       - name: prometheus-backup
         persistentVolumeClaim:
           claimName: monitoring-prometheus-backup-host
+      # infra#80: the HA scrape credential, mounted rather than inlined into
+      # the rendered ConfigMap (which every power-user can read).
+      - name: haos-scrape-token
+        secret:
+          secretName: haos-scrape-token
   extraVolumeMounts:
     - name: prometheus-wal-tmpfs
       mountPath: /data/wal
     - name: prometheus-backup
       mountPath: /backup
+    - name: haos-scrape-token
+      mountPath: /etc/secrets/haos
+      readOnly: true
   sidecarContainers:
     prometheus-backup:
       image: docker.io/library/alpine:3.21
@@ -5288,7 +5296,9 @@ extraScrapeConfigs: |
         - targets:
           - "ha-sofia.viktorbarzin.lan.:8123"
     metrics_path: '/api/prometheus'
-    bearer_token: "${haos_api_token}"
+    # infra#80: read from a mounted Secret, never inlined here — this file is
+    # rendered into a ConfigMap that oidc-power-user-readonly can read.
+    bearer_token_file: /etc/secrets/haos/token
   - job_name: 'nvidia'
     static_configs:
         - targets:
