@@ -1,6 +1,6 @@
 # Infra
 
-Terragrunt-managed homelab declaring a 7-node Kubernetes cluster (1 control plane + 6 workers) on a single Proxmox host. Vault is the secrets source of truth; everything else flows from this repo via `scripts/tg apply`.
+Terragrunt-managed homelab declaring a 6-node Kubernetes cluster (1 control plane + 5 workers) on a single Proxmox host. Vault is the secrets source of truth; everything else flows from this repo via `scripts/tg apply`.
 
 ## Language
 
@@ -37,7 +37,7 @@ _Avoid_: "workspace" (collides with **Workstation** and with `~/code` as a works
 ### Cluster
 
 **Node**:
-A K8s cluster VM — `k8s-master` (control plane) plus `k8s-node1..6` (workers). Default reading of the bare word "node" in this repo.
+A K8s cluster VM — `k8s-master` (control plane) plus `k8s-node1..5` (workers); `k8s-node6` was decommissioned 2026-07-01. Default reading of the bare word "node" in this repo.
 _Avoid_: "k8s node" (redundant), "host" (ambiguous).
 
 **PVE node** / **PVE host**:
@@ -252,6 +252,22 @@ _Avoid_: adding a Forgejo remote "for consistency"; treating one as a **Canonica
 **Forgejo registry**:
 Forgejo's built-in container registry — since ADR-0002 a frozen archive holding one last-known-good tag per **Service**, not a build target; owned images live on ghcr.io.
 _Avoid_: "private registry" (collides with the registry VM's pull-through caches); pushing new images to it.
+
+**Pull-through cache**:
+The caching mirror tier on the registry VM that **Node**s pull upstream images through, wired per-registry in each node's `/etc/containerd/certs.d`, with the upstream registry listed as a fallback host so a cache failure degrades rather than blocks. Its nginx layer is there for **request collapsing** — concurrent requests for one blob are folded into a single upstream fetch — which is a separate job from caching, and `proxy_cache_min_uses 2` means a low hit ratio is the configured behaviour rather than a sign the tier is idle.
+_Avoid_: "private registry" (that was decommissioned 2026-05-07); judging the nginx tier by hit ratio; treating a 200 from `/v2/` as a health signal — that path is a static version probe that never touches storage, so it answers 200 while every content request fails on a full disk.
+
+**Cold pull** / **Warm pull**:
+A **Cold pull** fetches layers absent from the node's containerd store over the network; a **Warm pull** finds them already there. The gap is three orders of magnitude — 6m24.561s against 405 ms for the same 3,216.9 MB image on the same node — and the store lives on the node's persistent root filesystem, so a reboot is a Warm pull.
+_Avoid_: "boot time" and "image pull" unqualified — say which, because the answer to "large images are slow to start" depends entirely on it, and reasoning about reboots as though they were Cold pulls has led to work aimed at the wrong stage.
+
+**Cache-busting commit**:
+A commit whose layer ordering gives a large, otherwise-unchanged layer a new digest, so it re-ships in full. BuildKit re-executes every layer above a cache miss, and re-executing a `COPY` re-tars its content with a fresh mtime, so placing a source-dependent layer above a fat one is enough — the fat layer's own inputs need not change. Measured at 3,023.8 MB of 3,067 MB re-shipping per commit on one owned image.
+_Avoid_: reading a changed `diff_id` as proof the content changed (it hashes the tar, and tar headers carry mtime); assuming a `CACHED` producer stage means its output layer held.
+
+**Image GC cliff**:
+Mass image eviction when kubelet crosses `imageGCHighThresholdPercent`, reclaiming in one pass rather than draining gradually. Distinct from age-based collection, which `imageMaximumGCAge: 0s` disables, so unreferenced tags accumulate until the threshold discards them together — 130 images and 56.8567 GiB in a single 4m38s pass on the GPU node on 2026-09-01, which is what turns each later reschedule into a **Cold pull**.
+_Avoid_: conflating it with pod eviction (no pod was evicted); reading a recovered `DiskPressure` condition as evidence nothing happened.
 
 **Keel**:
 The **poll-driven** rollout orchestrator — watches registries for new image tags and rolls the matching Deployments automatically. The actor behind "auto-upgrade" for upstream images, and a redundant net for owned apps (already rolled on push by **Woodpecker deploy**).
