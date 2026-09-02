@@ -560,7 +560,17 @@ module "ingress" {
 
 # qBittorrent Prometheus exporter.
 #
-# Declared and applied 2026-09-02. Landing it took three pushes, which is worth recording
+# Declared 2026-09-02, applied on the fourth pipeline. Landing it took that
+# many because infra CI applies only the stacks a push changed and Woodpecker
+# cancels a running pipeline when the next push lands, so #1386, #1388 and
+# #1390 were all killed by unrelated work while CI still reported green. The
+# check that matters here is whether a pipeline which DIFFED THIS STACK passed.
+#
+# #1395 then failed for a reason that had nothing to do with the exporter: this
+# stack carried f28e026b's pending nfs-truenas -> nfs-pve move, storageClassName
+# is immutable, so the plan wanted to destroy and recreate five in-use -host
+# PVCs and the pvc-protection finalizer refused. Resolved by scaling the three
+# consumers to zero, letting the PVCs clear, and re-applying. Landing it took three pushes, which is worth recording
 # because the failure mode is invisible: infra CI applies only the stacks a
 # push changed, and Woodpecker cancels a running pipeline when the next push
 # arrives. Pipeline #1386 (the adoption) and #1388 (the first retry) were both
