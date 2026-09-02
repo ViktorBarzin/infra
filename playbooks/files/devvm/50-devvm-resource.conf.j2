@@ -1,15 +1,29 @@
 # Per-user containment for the shared devvm (setup-devvm.sh §10, 2026-06-22;
-# MemoryHigh dropped 2026-07-02). Applies to EACH user-<uid>.slice = all of one
-# user's ssh/tmux work. Mirrors the t3-serve@.service caps so a user is bounded
-# in whichever surface they work in. MemoryHigh stays infinity: with swap=0 a
-# hog plateauing in a high..max band livelocks the entire slice (every ssh/tmux
-# session of that user) instead of dying — straight-to-OOM at MemoryMax is the
-# containment (see post-mortem addendum 2026-07-02).
+# MemoryHigh dropped 2026-07-02; swap bounded rather than off 2026-09-02).
+# Applies to EACH user-<uid>.slice = all of one user's ssh/tmux work. Mirrors
+# the t3-serve@.service caps so a user is bounded in whichever surface they
+# work in.
+#
+# MemorySwapMax was 0 from 2026-06-22, because a user runaway had
+# swap-thrashed the throttled virtual disk into an I/O storm and the box was
+# hard-killed. It is now a CEILING instead of a ban, for a reason the earlier
+# setting could not accommodate: a session's memory is otherwise entirely
+# unswappable, so the kernel's only move at the cap is to kill the
+# conversation, and pages from the RAM-backed /tmp charged to a pane cannot be
+# paged out at all. A bound keeps the original lesson — the 2026-06-22 storm
+# ran swap to 15 GB, and no single user can now approach that — while giving
+# the kernel somewhere to put a session instead of killing it.
+#
+# MemoryHigh stays infinity even now. A hog plateauing in a high..max band
+# livelocks the entire slice (every ssh/tmux session of that user) instead of
+# dying, and a 4G swap ceiling does not change that: past the ceiling the band
+# is unreclaimable again. Straight-to-OOM at MemoryMax remains the containment
+# (see post-mortem addendum 2026-07-02).
 [Slice]
 MemoryAccounting=yes
 MemoryHigh=infinity
 MemoryMax={{ devvm_user_memory_max }}
-MemorySwapMax=0
+MemorySwapMax={{ devvm_user_swap_max }}
 CPUAccounting=yes
 CPUWeight=100
 IOAccounting=yes

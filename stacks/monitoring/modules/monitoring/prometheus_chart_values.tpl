@@ -468,11 +468,19 @@ server:
       - name: prometheus-backup
         persistentVolumeClaim:
           claimName: monitoring-prometheus-backup-host
+      # infra#80: the HA scrape credential, mounted rather than inlined into
+      # the rendered ConfigMap (which every power-user can read).
+      - name: haos-scrape-token
+        secret:
+          secretName: haos-scrape-token
   extraVolumeMounts:
     - name: prometheus-wal-tmpfs
       mountPath: /data/wal
     - name: prometheus-backup
       mountPath: /backup
+    - name: haos-scrape-token
+      mountPath: /etc/secrets/haos
+      readOnly: true
   sidecarContainers:
     prometheus-backup:
       image: docker.io/library/alpine:3.21
@@ -1349,6 +1357,51 @@ serverFiles:
             annotations:
               summary: "devvm has {{ $value | humanizePercentage }} memory available — earlyoom kills claude processes at 5%"
               description: "Close a few sessions or stop a heavy build while there is still room. Each Claude session costs ~659 MB all-in (467 MB the process plus ~192 MB of per-session MCP servers), so three bought back ~2 GB when measured 2026-08-24. Largest panes right now: homelab metrics query 'topk(5, tl_pane_memory_bytes)'. If sessions have already been lost, ClaudeSessionDied and ClaudeOOMKilled will have fired alongside this."
+          - alert: DevvmSwapThrashing
+            # Added 2026-09-02 with the change that made this reachable: the user
+            # slices went from MemorySwapMax=0 to a bounded 4G, so a session can
+            # page out instead of being killed. The failure that setting guarded
+            # against is thrash — on 2026-06-22 a user runaway swap-thrashed the
+            # throttled virtual disk into an I/O storm and the box was hard-killed.
+            #
+            # Nothing else catches it. earlyoom watches global MemAvailable and
+            # ignores swap by design (-s 100,100); systemd-oomd is inert for
+            # cgroups holding anon memory. Per-cgroup thrash with healthy global
+            # RAM is invisible to both.
+            #
+            # BOTH directions, each above 500, sustained 15m — not their sum.
+            # This took three passes to get right and the first two are worth
+            # recording, because each was wrong in a different way.
+            #
+            # It began at "sum > 2000", reasoning above the 30-day peak of 1392.
+            # That is the right question for a noise floor and the wrong one for a
+            # trigger: this disk cannot reach 2000. Asking a user slice to reclaim
+            # 512 MB on 2026-09-02 took over 120 seconds, about 1100 pages/s. A
+            # sustained thrash plateaus at whatever the spindle can do, so the
+            # alert would have sat unfirable while the box wedged.
+            #
+            # Lowering it to "sum > 800" then fired on healthy behaviour. Right
+            # after the user slices gained swap, the kernel began parking cold
+            # session pages it had previously been forbidden to touch: measured
+            # page-out 1001/s against page-in 49/s, a ratio of 0.05, while
+            # MemAvailable ROSE from 7.0 to 7.6 GiB and io stall sat at 24%,
+            # below its 29% p95. That is a one-way migration and exactly what the
+            # change was for, and it would have paged someone for hours.
+            #
+            # So the signal is page-IN, gated on page-out. Eviction alone is
+            # progress; needing back what you just evicted is thrash. Requiring
+            # both above 500 for 15m clears a migration (out-only), clears a
+            # session waking up after being paged out (a brief in-spike), and
+            # still sits ~6x the 30-day page-out p99 of 85 on a box that is
+            # normally at zero. The disk is seek-bound and shared, measured 95%
+            # busy at 0.19 MB/s of writes (bead code-oflt, open).
+            expr: rate(node_vmstat_pswpin{instance="devvm"}[5m]) > 500 and rate(node_vmstat_pswpout{instance="devvm"}[5m]) > 500
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "devvm is swap-thrashing — paging {{ $value | printf \"%.0f\" }} pages/s back IN while still evicting, the 2026-06-22 hard-kill shape"
+              description: "Pages are coming back in as fast as they leave, which is churn rather than the one-way eviction that freeing RAM looks like. Normal on this box is 0. Find the source: for d in /sys/fs/cgroup/user.slice/user-*.slice; do echo $d $(cat $d/memory.swap.current); done. A user sitting at their 4G MemorySwapMax ceiling is the likely one. To stop it while investigating, systemctl set-property user-<uid>.slice MemorySwapMax=0 puts that user back to cap-and-kill. The reason paging hurts here at all is the shared seek-bound spindle; bead code-oflt moves devvm's disk to SSD and is still open."
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp
@@ -5288,7 +5341,9 @@ extraScrapeConfigs: |
         - targets:
           - "ha-sofia.viktorbarzin.lan.:8123"
     metrics_path: '/api/prometheus'
-    bearer_token: "${haos_api_token}"
+    # infra#80: read from a mounted Secret, never inlined here — this file is
+    # rendered into a ConfigMap that oidc-power-user-readonly can read.
+    bearer_token_file: /etc/secrets/haos/token
   - job_name: 'nvidia'
     static_configs:
         - targets:
