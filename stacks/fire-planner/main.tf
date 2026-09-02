@@ -519,6 +519,7 @@ resource "kubernetes_cron_job_v1" "fire_planner_fire_targets" {
         # none, so it completed zero of 88 in a full hour rather than nearly
         # finishing. That would mean the per-solve DB round-trips are the wall
         # and the fix belongs in the storage or the solver, not in this number.
+        # Applied 2026-09-02 (pipeline #1406 was cancelled first).
         active_deadline_seconds = 10800
         template {
           metadata {
