@@ -260,10 +260,6 @@ resource "authentik_stage_identification" "default_identification" {
   # (infra#51, stories 1 and 2). Pinned here rather than left UI-managed
   # because it is now load-bearing for signup.
   enrollment_flow = authentik_flow.signup_start.uuid
-  # The "Forgot access?" link. Was null until 2026-09-02, so the login page
-  # offered no way back and every lost credential was a manual fix (infra#87).
-  # Pinned here rather than left UI-managed because it is now load-bearing.
-  recovery_flow = authentik_flow.recovery.uuid
   lifecycle {
     # Pin only password_stage; everything else stays UI-managed (same pattern
     # as authentik_stage_user_login.default_login above).
@@ -280,8 +276,12 @@ resource "authentik_stage_identification" "default_identification" {
       show_matched_user,
       show_source_labels,
       sources,
-      # enrollment_flow and recovery_flow are NO LONGER ignored — both are set
-      # above, deliberately.
+      # enrollment_flow is NO LONGER ignored — it is set above, deliberately.
+      # recovery_flow IS still ignored, on purpose: the "Forgot access?" link is
+      # wired in a separate commit once the complete flow has been verified
+      # live. Publishing the entry point in the same apply that builds the flow
+      # is how a partial failure went live on 2026-09-02.
+      recovery_flow,
       passwordless_flow,
       pretend_user_exists,
       captcha_stage,
