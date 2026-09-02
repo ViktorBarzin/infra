@@ -1370,18 +1370,28 @@ serverFiles:
             # RAM is invisible to both.
             #
             # Both directions summed, because pages coming back IN is what
-            # separates thrash from a one-off page-out. The threshold sits above
-            # the measured ceiling: over the 30 days to 2026-09-02 page-out ran
-            # p50 0.0, p95 0.0, p99 85, peak 1392 pages/s, and page-in peaked at
-            # 722. 2000 pages/s is ~8 MB/s, which matters more than it sounds —
-            # devvm's disk is seek-bound on a shared 7200rpm spindle and has been
+            # separates thrash from a one-off page-out.
+            #
+            # 800 pages/s (~3 MB/s), and the number was picked the second way
+            # round. It started at 2000, reasoning "above the 30-day peak of
+            # 1392" — but that is backwards for a threshold whose job is to fire.
+            # This disk cannot reach 2000: asking a user slice to reclaim 512 MB
+            # on 2026-09-02 took over 120 seconds, about 1100 pages/s, and the
+            # 30-day peak of 1392 is the same order. A sustained thrash plateaus
+            # at what the spindle can do, so a 2000 trigger would have sat there
+            # unfirable while the box wedged. The disk is seek-bound and shared,
             # measured 95% busy at 0.19 MB/s of writes (bead code-oflt, open).
-            expr: (rate(node_vmstat_pswpin{instance="devvm"}[5m]) + rate(node_vmstat_pswpout{instance="devvm"}[5m])) > 2000
+            #
+            # 800 stays far clear of quiet: page-out over the same 30 days ran
+            # p50 0.0, p95 0.0, p99 85 pages/s, so this is ~9x the p99 and the
+            # box is normally at zero. Sustained for 5m, so a one-off reclaim
+            # like that test does not page anyone.
+            expr: (rate(node_vmstat_pswpin{instance="devvm"}[5m]) + rate(node_vmstat_pswpout{instance="devvm"}[5m])) > 800
             for: 5m
             labels:
               severity: warning
             annotations:
-              summary: "devvm is swap-thrashing at {{ $value | printf \"%.0f\" }} pages/s — the 2026-06-22 hard-kill shape"
+              summary: "devvm is swap-thrashing at {{ $value | printf \"%.0f\" }} pages/s — the 2026-06-22 hard-kill shape (disk tops out near 1100)"
               description: "Sustained paging in both directions; normal on this box is 0. Find the source: for d in /sys/fs/cgroup/user.slice/user-*.slice; do echo $d $(cat $d/memory.swap.current); done. A user sitting at their 4G MemorySwapMax ceiling is the likely one. To stop it while investigating, systemctl set-property user-<uid>.slice MemorySwapMax=0 puts that user back to cap-and-kill. The reason paging hurts here at all is the shared seek-bound spindle; bead code-oflt moves devvm's disk to SSD and is still open."
       - name: Nvidia Tesla T4 GPU
         rules:
