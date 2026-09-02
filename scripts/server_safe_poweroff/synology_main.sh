@@ -25,3 +25,34 @@ done < "./logs/powercheck-armv8.INFO"
 
 # Cleanup logs
 find ./logs -type f -mtime +7 -exec rm {} \;
+
+# Cleanup DSM Task Scheduler run output
+#
+# The DSM task that runs this script has "save output results" pointed at a
+# folder on the Backup share. Task Scheduler writes one directory per
+# execution there (output.log + script.log, a few hundred bytes each) and
+# never rotates them. At the 5-minute cadence that is ~288 directories a day:
+# measured 2026-08-24, task 1 held 90,008 run directories going back to
+# 2023-12-15, and a retired task 6 still held 46,061 from before Jan 2022 —
+# roughly 272,000 tiny files in total.
+#
+# The space is negligible; the cost is inode count. It slows anything that
+# walks the share: `du` over /volume1/Backup no longer finishes on this DS218,
+# and the weekly Storage Analyzer run reported 3,819 seconds of work.
+#
+# Same 7-day spirit as the ./logs cleanup above, with a longer window since
+# these are the only record of a past run. Work is capped per invocation so a
+# large first pass cannot overrun the 5-minute schedule — at 500 per run the
+# existing backlog drains in about a day, then it stays flat. Pruning by mtime
+# also retires the leftovers of tasks that no longer exist.
+SCHEDULER_OUTPUT="${SCHEDULER_OUTPUT:-/volume1/Backup/synoscheduler}"
+SCHEDULER_RETAIN_DAYS="${SCHEDULER_RETAIN_DAYS:-30}"
+SCHEDULER_PRUNE_MAX="${SCHEDULER_PRUNE_MAX:-500}"
+if [ -d "$SCHEDULER_OUTPUT" ]; then
+    find "$SCHEDULER_OUTPUT" -mindepth 2 -maxdepth 2 -type d \
+        -mtime +"$SCHEDULER_RETAIN_DAYS" 2>/dev/null \
+        | head -n "$SCHEDULER_PRUNE_MAX" \
+        | while IFS= read -r run_dir; do
+            rm -rf "$run_dir"
+        done
+fi
