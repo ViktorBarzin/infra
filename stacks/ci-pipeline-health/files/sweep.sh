@@ -224,6 +224,59 @@ else
   echo "forward-auth assertion unavailable (no AUTHENTIK_TOKEN)" >>"$NOTES"
 fi
 
+# --- Application default-deny audit (infra#51) ------------------------------
+#
+# Authentik's `core_default_app_access` defaults to TRUE, so an application with
+# ZERO policy bindings is reachable by any authenticated user — including a
+# confined Proxy Users guest. There is no warning in the UI and nothing in a
+# Terraform plan says so; the app simply works for everyone, which reads as
+# success. Found on 2026-09-02: `kubernetes-agent` had been live with zero
+# bindings (now 4).
+#
+# The whitelist is for applications that are deliberately open. Adding a slug
+# here is a decision to make it reachable by every authenticated user, so it
+# wants a reason next to it.
+#
+# The app-count assertion is the same lesson as the forward-auth GRANT rows
+# below: if the token loses scope and the list comes back empty, "no unbound
+# applications" is what a broken check prints too.
+if [ -n "${AUTHENTIK_TOKEN:-}" ]; then
+  AK_API="${AK_API:-https://authentik.viktorbarzin.me/api/v3}"
+  # slug | why it is deliberately open
+  #   public — the unauthenticated landing app; gating it would break anon access
+  AK_OPEN_APPS="public"
+
+  ak_apps=$(curl -sf -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+    "$AK_API/core/applications/?page_size=200" 2>/dev/null |
+    jq -r '.results[] | "\(.slug)\t\(.pk)"')
+  ak_app_count=$(printf '%s' "$ak_apps" | grep -c . || true)
+
+  if [ "$ak_app_count" -lt 5 ]; then
+    echo "application default-deny audit INCONCLUSIVE: API returned $ak_app_count applications (expected >=5; token scope?)" >>"$ISSUES"
+  else
+    unbound=0
+    while IFS="$(printf '\t')" read -r slug pk; do
+      [ -z "$slug" ] && continue
+      case " $AK_OPEN_APPS " in *" $slug "*) continue ;; esac
+      n=$(curl -sf -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+        "$AK_API/policies/bindings/?target=$pk" 2>/dev/null | jq -r '.pagination.count // "err"')
+      if [ "$n" = "0" ]; then
+        echo "authentik application '$slug' has ZERO policy bindings — reachable by every authenticated user (core_default_app_access defaults true). Bind a group, or add it to AK_OPEN_APPS with a reason." >>"$ISSUES"
+        unbound=$((unbound + 1))
+      elif [ "$n" = "err" ]; then
+        echo "application default-deny audit: could not read bindings for '$slug'" >>"$NOTES"
+      fi
+    done <<EOF
+$ak_apps
+EOF
+    if [ "$unbound" = "0" ]; then
+      echo "app default-deny: $ak_app_count apps checked, none unbound" >>"$NOTES"
+    fi
+  fi
+else
+  echo "application default-deny audit unavailable (no AUTHENTIK_TOKEN)" >>"$NOTES"
+fi
+
 # --- Report ---
 issue_count=$(grep -c . "$ISSUES" || true)
 summary="ci-pipeline-health: checked ${gha_checked} GHA runs + ${wp_checked} Woodpecker pipelines (24h). $(tr '\n' '; ' <"$NOTES")"

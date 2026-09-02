@@ -142,3 +142,58 @@ resource "authentik_policy_binding" "assign_invite_group_on_login" {
   policy = authentik_policy_expression.assign_invite_group.id
   order  = 0
 }
+
+# --- Passkey registration for new signups (infra#51, stories 3 and 18) -------
+#
+# A SEPARATE stage from the built-in default-authenticator-webauthn-setup
+# (pk 870b2a6a). That one is the configuration_stages target of the `webauthn`
+# validate stage, which is itself the conf_stage of
+# default-authentication-mfa-validation — so editing it to `required` would
+# change forced-MFA enrollment for every password user too.
+#
+# required + required is what guarantees a DISCOVERABLE credential, which the
+# already-live passwordless login flow (`webauthn`, 0b60c2a5, wired as
+# default-authentication-identification.passwordless_flow) depends on to resolve
+# the user with no username typed. So the login half of passkeys already exists;
+# enrollment was the only missing piece.
+#
+# configure_flow deliberately unset: pointing it at the built-in setup flow
+# would add a second "Passkey" row beside "WebAuthn device" in every user's
+# settings page.
+resource "authentik_stage_authenticator_webauthn" "signup_passkey" {
+  name                     = "signup-passkey-setup"
+  friendly_name            = "Passkey"
+  user_verification        = "required"
+  resident_key_requirement = "required"
+}
+
+# Order 3: AFTER gpe_write (order 1) and AFTER gpe_login (order 2).
+#
+# AFTER WRITE IS MANDATORY, read from the running 2026.8.1 source rather than
+# guessed. AuthenticatorWebAuthnStageView.challenge_valid does
+# WebAuthnDevice.objects.create(user=self.get_pending_user()) — an FK insert,
+# which Django rejects for an unsaved User. And get_challenge passes
+# user_id=user.uid, where User.uid is sha256(f"{self.id}-{unique}")
+# (core/models.py:607), so an unsaved user (id=None) yields the SAME WebAuthn
+# user handle for every signup and a discoverable credential would overwrite the
+# previous user's on the same authenticator. user_write/stage.py puts an UNSAVED
+# User in PLAN_CONTEXT_PENDING_USER at :92 and only saves it at :221.
+#
+# AFTER LOGIN IS A CHOICE, and it is the safer one. assign-invite-group runs on
+# the login stage, so a cancelled Face ID prompt here leaves a fully
+# provisioned, logged-in account that can add a passkey later from settings.
+# Placed BEFORE login, a cancel would leave a user row with no group and no
+# session — and a retry through Google then finds the existing source link and
+# LOGS IN rather than re-running enrollment, so they would never get either.
+# UserLoginStage does not pop PLAN_CONTEXT_PENDING_USER (user_login/stage.py:176),
+# so get_pending_user() still resolves the saved user at this point.
+#
+# Order 3 needs no renumbering, so gpe_login and the
+# assign_invite_group_on_login binding that depends on its id are untouched.
+resource "authentik_flow_stage_binding" "gpe_passkey" {
+  target               = authentik_flow.google_proxy_enrollment.uuid
+  stage                = authentik_stage_authenticator_webauthn.signup_passkey.id
+  order                = 3
+  evaluate_on_plan     = false
+  re_evaluate_policies = false
+}
