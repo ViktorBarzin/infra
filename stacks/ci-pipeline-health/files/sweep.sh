@@ -159,6 +159,71 @@ else
   echo "mirror check unavailable (no FORGEJO_TOKEN)" >>"$NOTES"
 fi
 
+# --- Forward-auth authorization assertion (infra#53, story 18) -------------
+#
+# ADR-0023 replaced a hardcoded admin-host list with a GENERATED default-deny
+# host->groups table inside one expression policy. Generated from ingress
+# annotations at apply time, which is the right design and also means a bad
+# generation, an empty table or an accidental early `return True` would grant
+# everyone and look exactly like a normal apply. Until now the only check was
+# somebody running the policy-test API by hand.
+#
+# THE TRAP THIS CHECK EXISTS TO AVOID, learned the hard way on 2026-09-02: the
+# policy reads `request.context.get("host", "")`, NOT
+# `context.http_request.host`. Send the host under the wrong key and it reads
+# empty, the OAuth-authorize clause returns True, and EVERY assertion passes
+# for the wrong reason. A first attempt at this matrix reported a confined user
+# reaching grafana, prometheus and t3 — which looked like a live hole and was
+# actually a bad payload. Hence the exact shape below, and hence the two
+# must-GRANT rows: a check that only asserts denials passes just as happily
+# when the policy denies everything.
+if [ -n "${AUTHENTIK_TOKEN:-}" ]; then
+  AK_API="https://authentik.viktorbarzin.me/api/v3"
+  ak_group_member() {  # $1 = group name -> first member pk, or empty
+    curl -sf -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+      "$AK_API/core/groups/?page_size=100" 2>/dev/null |
+      jq -r --arg g "$1" '.results[] | select(.name==$g) | .users_obj[0].pk // empty' | head -1
+  }
+  ak_policy_pk=$(curl -sf -H "Authorization: Bearer $AUTHENTIK_TOKEN" \
+    "$AK_API/policies/all/?page_size=100" 2>/dev/null |
+    jq -r '.results[] | select(.name=="admin-services-restriction") | .pk' | head -1)
+  ak_confined=$(ak_group_member "Proxy Users")
+  ak_admin=$(ak_group_member "Home Server Admins")
+
+  if [ -z "$ak_policy_pk" ] || [ -z "$ak_confined" ] || [ -z "$ak_admin" ]; then
+    echo "forward-auth assertion skipped (policy or a test identity not resolvable)" >>"$NOTES"
+  else
+    ak_test() {  # $1 = user pk, $2 = host -> "true"/"false"
+      curl -sf -X POST -H "Authorization: Bearer $AUTHENTIK_TOKEN" -H "Content-Type: application/json" \
+        -d "{\"user\":$1,\"context\":{\"host\":\"$2\"}}" \
+        "$AK_API/policies/all/$ak_policy_pk/test/" 2>/dev/null | jq -r '.passing'
+    }
+    authz_failed=0
+    # host | user | expected. The GRANT rows are load-bearing: without them a
+    # deny-everything policy would satisfy this check.
+    for row in \
+      "grafana.viktorbarzin.me|$ak_confined|false" \
+      "prometheus.viktorbarzin.me|$ak_confined|false" \
+      "t3.viktorbarzin.me|$ak_confined|false" \
+      "nosuchhost.viktorbarzin.me|$ak_confined|false" \
+      "proxy.viktorbarzin.me|$ak_confined|true" \
+      "grafana.viktorbarzin.me|$ak_admin|true"
+    do
+      h=$(echo "$row" | cut -d'|' -f1); u=$(echo "$row" | cut -d'|' -f2); want=$(echo "$row" | cut -d'|' -f3)
+      got=$(ak_test "$u" "$h")
+      if [ "$got" != "$want" ]; then
+        echo "forward-auth authorization WRONG for user $u on $h: expected passing=$want, got $got (ADR-0023 default-deny table)" >>"$ISSUES"
+        authz_failed=$((authz_failed + 1))
+      fi
+    done
+    if [ "$authz_failed" = "0" ]; then
+      echo "forward-auth authz: 6 assertions pass" >>"$NOTES"
+    fi
+  fi
+else
+  echo "forward-auth assertion unavailable (no AUTHENTIK_TOKEN)" >>"$NOTES"
+fi
+
 # --- Report ---
 issue_count=$(grep -c . "$ISSUES" || true)
 summary="ci-pipeline-health: checked ${gha_checked} GHA runs + ${wp_checked} Woodpecker pipelines (24h). $(tr '\n' '; ' <"$NOTES")"
