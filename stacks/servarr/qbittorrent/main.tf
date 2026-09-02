@@ -560,7 +560,32 @@ module "ingress" {
 
 # qBittorrent Prometheus exporter.
 #
-# Declared and applied 2026-09-02. Landing it took three pushes, which is worth recording
+# Declared 2026-09-02, applied on the fourth pipeline. Landing it took that
+# many because infra CI applies only the stacks a push changed and Woodpecker
+# cancels a running pipeline when the next push lands, so #1386, #1388 and
+# #1390 were all killed by unrelated work while CI still reported green. The
+# check that matters here is whether a pipeline which DIFFED THIS STACK passed.
+#
+# #1395 then failed for a reason that had nothing to do with the exporter: this
+# stack carried f28e026b's pending nfs-truenas -> nfs-pve move, storageClassName
+# is immutable, so the plan wanted to destroy and recreate five in-use -host
+# PVCs and the pvc-protection finalizer refused. Resolved by scaling the three
+# consumers to zero, letting the PVCs clear, and re-applying.
+#
+# The re-apply (#1397) recreated the five claims but still failed: Terraform had
+# already flipped the retained PVs to nfs-pve, and a Retain PV keeps the
+# claimRef of the claim it was bound to, so each new PVC was refused with
+# "volume already bound to a different claim" against a stale UID. Reusing a
+# retained PV needs spec.claimRef cleared so it returns to Available; after
+# that the five bound in 21 seconds and the three deployments came back with
+# their data intact (/downloads 349M, /audiobooks 10G). Worth knowing before
+# the other 27 mounted nfs-truenas claims are migrated — see bead code-yizt.
+#
+# Sequencing that actually lands it, after four cancelled pipelines: scale the
+# consumers to 0 and clear every PV's claimRef BEFORE pushing. The claims then
+# bind the moment Terraform creates them instead of the apply sitting on
+# pvc-protection finalizers, which cuts the apply from minutes to about one and
+# stops it losing the race against the next unrelated push. Landing it took three pushes, which is worth recording
 # because the failure mode is invisible: infra CI applies only the stacks a
 # push changed, and Woodpecker cancels a running pipeline when the next push
 # arrives. Pipeline #1386 (the adoption) and #1388 (the first retry) were both
@@ -685,16 +710,10 @@ resource "kubernetes_service" "qbittorrent_exporter" {
   }
 }
 
-# Adoption of the two resources above. Both objects already exist in the
-# cluster, so a plain apply would fail on "already exists"; these hand the
-# existing objects to Terraform instead of creating them. Once CI has applied
-# once, the blocks are a no-op and can be removed on any later pass.
-import {
-  to = kubernetes_deployment.qbittorrent_exporter
-  id = "servarr/qbittorrent-exporter"
-}
-
-import {
-  to = kubernetes_service.qbittorrent_exporter
-  id = "servarr/qbittorrent-exporter"
-}
+# Adopted by delete-and-recreate rather than an import block. import blocks are
+# only honoured in the ROOT module and these resources live in a child one, so
+# the pair declared here was silently ignored and apply #1400 fell through to
+# creating them: 'deployments.apps "qbittorrent-exporter" already exists'. The
+# exporter carries no volumes and nothing was scraping it, so removing the
+# hand-made objects and letting Terraform create them costs nothing and leaves
+# a cleaner result than a root-module import of a resource declared here.

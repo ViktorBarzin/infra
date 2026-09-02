@@ -1,6 +1,6 @@
 # Large-image handling on k8s-node1
 
-**Status:** approved, not yet executing
+**Status:** Phase 1 landed and verified 2026-09-02 (`d949a91`); Phases 0, 2, 2b, 3, 4 outstanding
 **Date:** 2026-09-02
 **Owner:** Viktor Barzin
 **Origin:** "improve the boot time of images that have big image size, mostly GPU ones on node1"
@@ -141,7 +141,7 @@ account. §9 names the experiment.
 | Observability | First. Full `kubelet_image_pull_duration_seconds` buckets, kubelet + containerd journals to Loki, alert on the GC pass |
 | Dockerfile | Reorder both stages so source-dependent layers sit last; keep the exporter split for CI wall time; `touch -d @0` the export; CI guard failing past ~200 MB on a source-only commit |
 | Cache VM | Keep nginx for request collapsing. Prune ~20 GB by explicit list, re-sequence garbage-collect to daily, healthcheck a real blob, add node-exporter, declare it in Ansible. Plus measure node2 and node5, which are nearer the GC cliff than node1 |
-| node config | Absorb the erased post-join tune **except** `systemReserved`/`kubeReserved`/`evictionSoft` (they zero node2's headroom), plus `pigz`, `serializeImagePulls: true`, a finite `imageMaximumGCAge` and `discard_unpacked_layers = true`. One node at a time, applied by the next kured reboot |
+| node config | Absorb the erased post-join tune **except** `systemReserved`/`kubeReserved`/`evictionSoft` (they zero node2's headroom), plus `pigz`, `serializeImagePulls: true`, a finite `imageMaximumGCAge` and `discard_unpacked_layers = true`. One node at a time, each with a deliberate restart, because kured reboots nothing (`code-yr2i`) |
 | Playbook | Extend `k8s-node-tuning.yml` and widen its stated scope. Add the cache VM to inventory; config in git, secrets from Vault |
 | GPU memory | Unchanged. claude-memory's 5,000 MiB is a measured declaration, not slack (§7) |
 | containerd | Converge on 2.3.4 LTS. node4, node5, then node2, node3, then master, then node1 |
@@ -351,23 +351,22 @@ kernel sysctls, and widen that stated scope. It declares:
 - **`discard_unpacked_layers = true`** in containerd, worth ~23 GB of steady-state space on node1. Not a latency lever (§8), but the restart is already being spent and disk is what this plan targets.
 - **`pigz` on node1, node4, node5.** containerd shells out to `unpigz` when it finds it and falls back to Go's decoder otherwise. Measured on a real 789.685 MB layer, one core: unpigz 67.0 MB/s, GNU gunzip 59.2, Go `compress/gzip` 33.1. node1's containerd PATH includes `/usr/bin`, and detection happens once at init, so it takes effect at the batched restart. Roughly 28-33 seconds off a 341-second cold pull.
 
-Nothing here restarts kubelet or containerd. The config is written and the next
-kured reboot applies it, so `--check` is a no-op afterwards while the live
-kubelet lags until that cycle.
+Nothing here restarts kubelet or containerd. The config is written; something
+else has to restart the kubelet for it to take effect.
 
-Two mechanics follow from that:
+**That something is not kured, and this is a correction to an earlier draft of
+this plan.** kured has rebooted no node in the whole retained window, for two
+independent reasons, both measured 2026-09-02 and filed as `code-yr2i`:
 
-- **Roll it one node at a time**, not all six in one apply. A bad combination of
-  new kubelet keys stops kubelet from starting, and a node whose kubelet will not
-  come up is only discovered at its own reboot, with console-only recovery. Use
-  the playbook's `--limit`.
-- **node1 may not get a kured reboot at all**, which would leave its config
-  written, `--check` reading clean, and the live kubelet unchanged indefinitely.
-  Confirm node1 is actually in kured's rotation before treating this phase as
-  applied there, and if it is not, node1's config activates at Phase 4's manual
-  reboot instead. That has a side effect worth naming: every Phase 3 key and
-  containerd 2.3 then come up in the **same boot** on node1, so a bad boot cannot
-  be attributed to either. Prefer giving node1 its own reboot for Phase 3 first.
+- **node1's gate is permanently closed by the GPU mitigation.** kured reboots only on `/var/run/gated-reboot-required`; the sentinel gate creates that only when `/var/run/reboot-required` exists; unattended-upgrades writes that only when it installs a kernel or libc. node1 holds six `linux-*` packages under the 26.04-userspace / 24.04-kernel GRUB pin, so it can never signal that a reboot is needed. Verified: neither file exists on node1, `apt-mark showhold` lists six `linux-*` entries, uptime 46 days, and its kured pod logs "Reboot not required" on every hourly tick. The mitigation that keeps the GPU working is the thing that closes the gate, so this is by construction rather than by accident.
+- **The nodes whose gate IS open are halted by kured's own alert filter.** `alertFilterRegexp` in `stacks/kured/main.tf:103` ignores only `^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor|KernelOOMKiller)$`, against 12 alerts firing at the time of writing and a standing floor of five to eight. kured logs `Reboot blocked: 6 active alerts`, `7 active alerts`, `8 active alerts` on successive ticks. node2 has been pending-reboot since 2026-07-18.
+
+Consequences for this phase, all of which change how it lands:
+
+- **Each node needs a deliberate, human-driven kubelet restart or reboot.** Drop the "applies at the next kured reboot" assumption entirely.
+- **Roll it one node at a time** with `--limit`. A bad combination of new kubelet keys stops kubelet from starting, and a node whose kubelet will not come up is discovered only at its own restart, with console-only recovery.
+- **Give node1 its own restart for this phase, separate from Phase 4.** Otherwise every Phase 3 key and containerd 2.3 come up in the same boot and a bad boot has two candidate causes.
+- A larger issue sits underneath and is out of scope here: kernel and libc security updates are not being taken on four nodes. `code-yr2i` carries the decision on whether to widen the alert filter or accept human-driven reboots.
 
 One caution: on node1, `apt install` resolves against 26.04 suites (§4). Simulate
 with `-s` and confirm nothing but `pigz` and its dependencies would move.
@@ -447,7 +446,7 @@ wants without reading them.
 | 4 | The content store does not survive 1.7 → 2.3, forcing a 73 GB cold re-pull through a cache VM at 100% full | unknown, §9 q1 | a full cold re-pull of node1's images, the outcome §3 describes | at reboot | slow |
 | 4 | Draining node1 evicts the active Vault leader | certain on drain | a write outage during leader election. Not quorum loss: 3 replicas, PDB allows 1 | seconds | self-heals |
 | 3 | An invalid combination of new kubelet keys stops kubelet starting | low-medium | a node with no kubelet, found at its own reboot | at reboot | console only |
-| 3 | node1 never gets a kured reboot, so its config never applies while `--check` reads clean | certain if node1 is outside the rotation | silent. Phase 3 and Phase 4 verification both unachievable there | never, by construction | n/a |
+| 3 | Config written but never applied, because kured reboots nothing | **CONFIRMED**, not a risk | silent. Verification unachievable without a deliberate restart | never, by construction | n/a |
 | 2 | `docker image prune -a` deletes the break-glass `infra-ci:latest`, whose recovery path needs this same full VM | high if `-a` is used | break-glass CI artefact gone | only when break-glass is needed | yes, re-pull |
 | 2 | Daily garbage-collect without re-sequencing the restart makes truncated blobs more frequent | high | intermittent `ErrImagePull` cluster-wide | hours to days | yes |
 | 1 | The reorder shifts dependency resolution and onnxruntime silently falls back to CPU | low, and guarded | recall latency regresses | the build-time `ort.preload_dlls()` + `pip check` guard | yes |
