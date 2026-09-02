@@ -80,9 +80,19 @@
     # page back into RAM. Measured 2026-09-02 that would be 5.2 GiB arriving into
     # 7.4 GiB of available RAM beside 30 live Claude sessions, for a cosmetic
     # gain. Same call, same reason, as the 2026-06-10 growth.
-    devvm_swap_areas:
-      - { path: /swapfile, size_gb: 14 }
-      - { path: /swapfile2, size_gb: 10 }
+    # ONE file is the target. It is two right now because growing swap on a live
+    # box has to be additive (see the swap tasks), and converging to one needs a
+    # swapoff, which reads every page in that file back into RAM. Measured
+    # 2026-09-02: /swapfile held 9 GiB against 8.2 GiB of MemAvailable, so the
+    # merge cannot be done while the box is carrying pages.
+    #
+    # So it converges instead of being done: the tasks below act on a swap area
+    # only when that area holds ZERO pages, which is true right after a boot and
+    # false the rest of the time. The first apply after any reboot resizes
+    # /swapfile to the target and retires /swapfile2, and every apply before that
+    # is a no-op. Same approach, same reason, as the 2026-06-12 merge, which was
+    # also done post-boot at 0B used.
+    devvm_swap_target: { path: /swapfile, size_gb: 24 }
     # The one account this playbook owns. Everyone else comes from the roster.
     devvm_admin_user: wizard
     devvm_admin_ssh_key: ""
@@ -452,67 +462,123 @@
 
     # ---- 7b) swap ------------------------------------------------------------
     # Swap was hand-managed until 2026-09-02: nothing in this repo declared the
-    # files or the fstab lines, so a rebuilt box came up swapless and the sizes
-    # lived only in one machine's memory and one person's notes.
+    # file or the fstab line, so a rebuilt box came up swapless and the size
+    # lived only in one machine and one person's notes.
     #
-    # Existing areas are left alone. Each task is guarded on the file's actual
-    # size, so a re-run is a no-op and no live swap area is ever touched.
-    # One task, not four, because a swap file is only usable once it has been
-    # allocated AND permissioned AND formatted: a half-made one that survived a
-    # failure between steps would be picked up by fstab at the next boot. The
-    # `creates` guard makes it idempotent, and it means --check skips cleanly
-    # rather than a later step failing on a file check mode did not create.
-    #
-    # fallocate, never dd: it is instant on ext4 and writes no data, so this
-    # costs nothing on a spindle that is already this box's bottleneck.
-    - name: Create any missing swap file
+    # Every task here is guarded on a swap area holding NOTHING, because the one
+    # operation this needs — swapoff — does not hand pages to another device.
+    # try_to_unuse() reads every page back into RAM, so acting on a carrying file
+    # risks the OOM this whole thread is about.
+    - name: List swap areas that hold no pages
       ansible.builtin.shell:
-        cmd: |
-          set -eu
-          fallocate -l {{ item.size_gb }}G {{ item.path }}
-          chown root:root {{ item.path }}
-          chmod 0600 {{ item.path }}
-          mkswap {{ item.path }}
-        creates: "{{ item.path }}"
-      loop: "{{ devvm_swap_areas }}"
-      loop_control:
-        label: "{{ item.path }}"
-      # set -eu, not -euo pipefail: ansible.builtin.shell runs /bin/sh, which is
-      # dash on Ubuntu and has no pipefail, and dash exits 2 on the `set` line
-      # before reaching fallocate. There are no pipes here to protect anyway.
-      #
-      # No changed_when override. The shell module already reports changed when
-      # it runs and skipped when `creates` is satisfied, and an unconditional
-      # changed_when reports a change even on the skip — which in --check made
-      # this look as though it would re-run mkswap over the LIVE swapfile.
-      # Verified against the box: "Did not run command since '/swapfile' exists".
+        cmd: "swapon --show=NAME,USED --bytes --noheadings | awk '$2 == 0 {print $1}'"
+      register: devvm_swap_empty
+      changed_when: false
+      check_mode: false
 
-    - name: Declare the swap files in fstab
-      loop: "{{ devvm_swap_areas }}"
-      loop_control:
-        label: "{{ item.path }}"
-      ansible.posix.mount:
-        src: "{{ item.path }}"
-        path: none
-        fstype: swap
-        opts: sw
-        state: present
-
-    - name: Read the active swap areas
+    - name: List every active swap area
       ansible.builtin.command:
         cmd: swapon --noheadings --show=NAME
       register: devvm_swap_active
       changed_when: false
       check_mode: false
 
-    - name: Activate any declared area that is not carrying yet
-      when: item.path not in devvm_swap_active.stdout
-      loop: "{{ devvm_swap_areas }}"
-      loop_control:
-        label: "{{ item.path }}"
-      ansible.builtin.command:
-        cmd: "swapon {{ item.path }}"
+    - name: Check the target swap file
+      ansible.builtin.stat:
+        path: "{{ devvm_swap_target.path }}"
+      register: devvm_swap_target_stat
+
+    # One task, not four: a swap file is usable only once allocated AND
+    # permissioned AND formatted, and a half-made one that survived a failure
+    # between steps would be picked up by fstab at the next boot. `creates` makes
+    # it idempotent and lets --check skip cleanly.
+    #
+    # fallocate, never dd: instant on ext4 and writes no data, so it costs
+    # nothing on a spindle that is already this box's bottleneck.
+    #
+    # set -eu, not -euo pipefail: ansible.builtin.shell runs /bin/sh, which is
+    # dash on Ubuntu and has no pipefail — dash exits 2 on the `set` line before
+    # reaching fallocate. No changed_when override either: an unconditional one
+    # reports a change even when `creates` skipped the task, which in --check made
+    # this look as though it would re-run mkswap over the LIVE swapfile.
+    - name: Create the target swap file if it is missing
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          fallocate -l {{ devvm_swap_target.size_gb }}G {{ devvm_swap_target.path }}
+          chown root:root {{ devvm_swap_target.path }}
+          chmod 0600 {{ devvm_swap_target.path }}
+          mkswap {{ devvm_swap_target.path }}
+        creates: "{{ devvm_swap_target.path }}"
+
+    # Resize to the target, but only while it is carrying nothing. Ordered BEFORE
+    # the retire below so the other area is still providing cover during the
+    # swapoff, which means there is never a swapless moment.
+    - name: Resize the target swap file to the declared size
+      when:
+        - devvm_swap_target_stat.stat.exists
+        - (devvm_swap_target_stat.stat.size | int) != (devvm_swap_target.size_gb | int * 1024 * 1024 * 1024)
+        - devvm_swap_target.path in devvm_swap_empty.stdout_lines
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          swapoff {{ devvm_swap_target.path }}
+          fallocate -l {{ devvm_swap_target.size_gb }}G {{ devvm_swap_target.path }}
+          chmod 0600 {{ devvm_swap_target.path }}
+          mkswap {{ devvm_swap_target.path }}
+          swapon {{ devvm_swap_target.path }}
       changed_when: true
+
+    - name: Declare the target in fstab
+      ansible.posix.mount:
+        src: "{{ devvm_swap_target.path }}"
+        path: none
+        fstype: swap
+        opts: sw
+        state: present
+
+    - name: Activate the target if it is not carrying yet
+      when: devvm_swap_target.path not in devvm_swap_active.stdout
+      ansible.builtin.command:
+        cmd: "swapon {{ devvm_swap_target.path }}"
+      changed_when: true
+
+    # Re-read the target's size: the resize above may have just changed it.
+    - name: Re-check the target swap file
+      ansible.builtin.stat:
+        path: "{{ devvm_swap_target.path }}"
+      register: devvm_swap_target_now
+
+    # Retire superseded areas, only when they hold nothing AND the target has
+    # already reached its declared size. That second guard is load-bearing: with
+    # /swapfile still 14G and /swapfile2 empty, retiring on emptiness alone would
+    # drop total swap from 24G to 14G while the user slices hold 8G of ceiling
+    # between them — shrinking capacity in the name of tidiness. The path guard
+    # keeps this from ever acting on a device rather than a file we made.
+    - name: Retire superseded swap areas
+      when:
+        - item != devvm_swap_target.path
+        - item is match('^/[^/]')
+        - (devvm_swap_target_now.stat.size | int) == (devvm_swap_target.size_gb | int * 1024 * 1024 * 1024)
+      loop: "{{ devvm_swap_empty.stdout_lines }}"
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          swapoff {{ item }}
+          rm -f {{ item }}
+      changed_when: true
+
+    - name: Drop superseded areas from fstab
+      when:
+        - item != devvm_swap_target.path
+        - item is match('^/[^/]')
+        - (devvm_swap_target_now.stat.size | int) == (devvm_swap_target.size_gb | int * 1024 * 1024 * 1024)
+      loop: "{{ devvm_swap_empty.stdout_lines }}"
+      ansible.posix.mount:
+        src: "{{ item }}"
+        path: none
+        fstype: swap
+        state: absent_from_fstab
 
     # ---- 8) resource containment (setup-devvm.sh section 10) ---------------
     # Added after 2026-06-22, when one user's runaway swap-thrashed the throttled
