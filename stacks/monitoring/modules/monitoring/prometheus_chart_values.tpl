@@ -5284,6 +5284,54 @@ extraScrapeConfigs: |
     - source_labels: [__meta_kubernetes_pod_name]
       target_label: pod
 
+  - job_name: 'alloy'
+    # Alloy ships every Loki-based alert in the cluster and had NO health
+    # telemetry of its own until 2026-09-02: 93 metric families exposed on
+    # :12345, none scraped, no prometheus.io annotations, no `up` series. That
+    # is why an auto-upgrade to v1.19.2 could silently stop honouring the
+    # `labels` argument on loki.source.journal, kill job="node-journal" and
+    # job="node-runtime-journal", and blind NodeImageGCThresholdCrossed,
+    # NodeImageCacheMassEviction and NodeEvictionManagerReclaiming for 100
+    # minutes. A Loki dead-man switch eventually caught the missing data
+    # downstream; alloy_component_controller_running_components would have said
+    # so immediately, and alloy_build_info would have named the version that
+    # did it.
+    #
+    # A dedicated job rather than pod annotations. Annotating routes to
+    # kubernetes-pods, which has no metric_relabel_configs at all, so it would
+    # store all 518 series per pod = 3,108 across the DaemonSet. Measured
+    # against 98,535 head series that is +3.2% for mostly Go runtime detail, and
+    # it would quietly undercut the cardinality budget the
+    # kubernetes-service-endpoints allowlist exists to enforce. The keep below
+    # holds it to a measured 21 series per pod (126 total): component health,
+    # config-reload success, build version, RSS, loki.write delivery failures
+    # and per-source line counters.
+    #
+    # loki_source_file_read_lines_total is deliberately EXCLUDED — it is
+    # per-file, and with a log file per container that is the one genuinely
+    # expensive series here. files_active_total covers the same question.
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - monitoring
+    relabel_configs:
+    - action: keep
+      regex: alloy
+      source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+    - source_labels: [__meta_kubernetes_pod_ip]
+      target_label: __address__
+      replacement: '$1:12345'
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+    - source_labels: [__meta_kubernetes_pod_node_name]
+      target_label: node
+    metric_relabel_configs:
+    - action: keep
+      source_labels: [__name__]
+      regex: 'alloy_build_info|alloy_component_controller_running_components|alloy_config_last_load_successful|alloy_config_load_failures_total|alloy_resources_process_resident_memory_bytes|loki_write_dropped_entries_total|loki_write_dropped_bytes_total|loki_write_batch_retries_total|loki_source_journal_target_lines_total|loki_source_file_files_active_total'
+    metrics_path: '/metrics'
+
   - job_name: 'crowdsec'
     # Pod discovery, not the crowdsec-service ClusterIP (changed 2026-09-02).
     # LAPI runs 3 replicas and each pod counts only the bouncers that talked to
