@@ -1190,7 +1190,7 @@ resource "null_resource" "pg_cluster" {
     storage_class  = "proxmox-lvm-encrypted"
     memory_limit   = "3Gi"
     memory_request = "2560Mi" # req < limit (Burstable); bumping this trigger forces the null_resource re-apply, 2026-07-26
-    pg_params      = "v5-shared1024-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500"
+    pg_params      = "v6-shared1024-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500-prewarm"
     affinity       = "required-hostname-v1"
   }
 
@@ -1221,8 +1221,37 @@ resource "null_resource" "pg_cluster" {
           topologyKey: kubernetes.io/hostname
         imageName: ${var.pg_cluster_image}
         postgresql:
+          # pg_prewarm's autoprewarm worker dumps the shared_buffers page list
+          # every autoprewarm_interval seconds and reloads it at startup, so a
+          # hot index stays hot across a restart instead of being re-read from
+          # the HDD one novel query at a time.
+          #
+          # Added for claude-memory (infra#86): recall embeds each query, and a
+          # NOVEL query walks HNSW index pages nothing had cached yet. Measured
+          # 2026-09-02 — only 339 of idx_memories_embedding_hnsw's 4,456 pages
+          # were resident, and a novel query read 199-491 blocks off sdc at
+          # ~8.9 ms each (1.25-2.48 s). After pg_prewarm loaded all 4,456 pages
+          # (35 MB, plus 18 MB of table, into a 1 GB shared_buffers) the same
+          # queries read 0 blocks and returned in 0.27-0.49 s.
+          #
+          # Idle time is NOT the variable — a repeated query read 0 blocks at
+          # 0 s, 30 s, 60 s and 120 s idle. Nothing evicts these pages once
+          # loaded; only a restart loses them, which is exactly what
+          # autoprewarm covers. Same pattern immich's own Postgres has run
+          # since its clip_index work (stacks/immich/main.tf).
+          #
+          # shared_preload_libraries is postmaster-level, so this triggers ONE
+          # rolling restart (unsupervised/restart, replicas first). Removing an
+          # entry later needs a full restart of every instance.
+          shared_preload_libraries:
+            - pg_prewarm
           parameters:
             search_path: '"$user", public'
+            # Both default to these values once the library is loaded; set
+            # explicitly so a future default change cannot silently drop the
+            # behaviour we depend on.
+            pg_prewarm.autoprewarm: "on"
+            pg_prewarm.autoprewarm_interval: "300"
             # Cluster grew past the 100-conn default ceiling (~90/100 idle
             # steady-state in May 2026; authentik+matrix alone hold ~55).
             # Bumped to 200 with shared_buffers/effective_cache_size/memory
