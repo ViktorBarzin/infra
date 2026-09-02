@@ -1,50 +1,26 @@
-# SLOW-1a overlay over the official authentik server image.
+# Old-browser overlay over the official authentik server image.
 #
-# The login flow's identification stage renders each enabled source's UI login
-# button. Upstream authentik/stages/identification/stage.py does:
-#     current_stage.sources.filter(enabled=True).order_by("name").select_subclasses()
-# The bare no-arg select_subclasses() (django-model-utils InheritanceManager)
-# LEFT-JOINs EVERY Source subtype table; on the cold-login hot path that is ~1.5s
-# (verified live on 2026.2.4: 1527ms vs 14ms). Passing only the subtypes that
-# actually render a UI login button — every concrete Source type that overrides
-# ui_login_button: oauth/saml/plex/telegram/kerberos, NOT the sync-only ldap/scim —
-# is ~100x faster and BYTE-IDENTICAL output (verified: concrete types + rendered
-# buttons match). django-model-utils accepts the lowercase subclass *accessor
-# names* as strings, so no new import is needed (no circular-import risk) — the
-# patch is a single, reviewable line edit.
+# ONE patch remains (PATCH #2 below). The overlay's original reason — SLOW-1a,
+# the login-flow select_subclasses() narrowing — WENT UPSTREAM and shipped in
+# 2026.8.1, so it is gone from here. Do not re-add it: 2026.8.1 carries
+# goauthentik/authentik#25238 (cherry-pick 2d140c46, "stages/identification:
+# only join Source subtypes that can render a login button"), which derives the
+# login-capable subclasses via an @cache'd login_capable_source_subclasses()
+# instead of our hardcoded list — strictly better, since a new login-capable
+# source type is picked up automatically. Verified against the version/2026.8.1
+# source on 2026-09-02: stage.py now reads
+#     .select_subclasses(*login_capable_source_subclasses())
+# History of that fix (~1.5s -> ~14ms on the cold-login hot path, measured live
+# on 2026.2.4: 1527ms vs 14ms) is in the git log of this file, up to 2026.8.0.
 #
 # RE-VERIFY ON EVERY AUTHENTIK BUMP: the FROM tag below, the hardcoded tags in
 # .github/workflows/build-authentik.yml, and the image tag in
 # modules/authentik/values.yaml all move together — see the UPGRADE note in
-# values.yaml for the full per-hop procedure. The grep guards fail the build LOUDLY
-# if the upstream target line moved. If a future authentik version adds a NEW
-# login-capable source type, add its lowercase accessor to the list below.
-# Upstream: still present in main as of 2026.8.0. Proposed upstream as
-# goauthentik/authentik#25238, which derives the login-capable subclasses instead of
-# listing them — drop this overlay once that (or any equivalent narrowing) ships.
-FROM ghcr.io/goauthentik/server:2026.8.0
+# values.yaml for the full per-hop procedure. patch-compat-sfe.py asserts its
+# upstream anchors, so the build fails LOUDLY if upstream moves underneath it.
+FROM ghcr.io/goauthentik/server:2026.8.1
 
 USER root
-RUN set -eux; \
-    F=/authentik/stages/identification/stage.py; \
-    grep -q 'order_by("name").select_subclasses()' "$F" || { \
-      echo "=== SLOW-1a GUARD TRIPPED ==="; \
-      echo "The upstream target line is gone from $F."; \
-      echo "This is EXPECTED, not a bug: the fix went upstream as"; \
-      echo "goauthentik/authentik#25238, merged to main and cherry-picked to"; \
-      echo "version-2026.8 on 2026-08-21. Any base image newer than the"; \
-      echo "version/2026.8.0 tag already narrows this query itself."; \
-      echo "DO: delete this entire PATCH #1 RUN block and the comment above it."; \
-      echo "DO NOT: repair the grep or re-apply the sed. It is redundant now."; \
-      echo "KEEP: PATCH #2 below (old-browser SFE). That one is NOT upstream --"; \
-      echo "  its PR #25247 is milestoned for 2026.11 as nice-to-have."; \
-      exit 1; \
-    }; \
-    sed -i 's/order_by("name")\.select_subclasses()/order_by("name").select_subclasses("oauthsource", "samlsource", "plexsource", "telegramsource", "kerberossource")/' "$F"; \
-    grep -q 'select_subclasses("oauthsource", "samlsource", "plexsource", "telegramsource", "kerberossource")' "$F"; \
-    PY="$(command -v python || command -v python3)"; "$PY" -c "import ast,sys; ast.parse(open('$F').read())"; \
-    rm -f /authentik/stages/identification/__pycache__/stage.*.pyc
-
 # PATCH #2 — old-browser BLANK LOGIN. authentik's modern flow SPA is ES2022 and
 # hard-fails (blank login) on Safari<=16.3 (e.g. iPadOS<=16.3). authentik already
 # ships a no-JS Simplified Flow Executor (SFE, ES5) but only serves it to
