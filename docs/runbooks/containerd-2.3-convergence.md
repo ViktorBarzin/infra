@@ -62,9 +62,9 @@ serving throughout. The header used to promise an API outage for master's window
 it did not happen. Section 5.8's `crictl`-only advice for master is still the
 right fallback, but it was not needed.
 
-This also makes the failure mode favourable rather than frightening: if 2.3.4
-refuses to start, the running control plane is still up while you read the
-journal, because its containers were never the thing being restarted.
+It also makes the failure mode a recoverable one. If 2.3.4 refuses to start, the
+running control plane is still serving while you read the journal, because its
+containers were never the thing being restarted.
 
 **0.3 What the drain on node1 did cost.** Draining is not free here even where it
 fits. The earlier node4/node5 pass drained two nodes whose evictable load does
