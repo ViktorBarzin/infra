@@ -87,6 +87,13 @@ resource "kubernetes_manifest" "external_secret" {
           secretKey = "FORGEJO_TOKEN"
           remoteRef = { key = "ci/global", property = "forgejo_repo_token" }
         },
+        {
+          # Forward-auth authorization assertion (infra#53, story 18). Only
+          # reads groups and POSTs to the policy-test endpoint, which evaluates
+          # without changing anything.
+          secretKey = "AUTHENTIK_TOKEN"
+          remoteRef = { key = "authentik", property = "tf_api_token" }
+        },
       ]
     }
   }
