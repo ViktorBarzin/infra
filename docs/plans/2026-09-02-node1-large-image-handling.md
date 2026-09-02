@@ -1,6 +1,6 @@
 # Large-image handling on k8s-node1
 
-**Status:** Phases 0 and 1 landed and verified 2026-09-02. Phase 2 authored, unapplied. Phases 3 and 4 staged for one human-driven window.
+**Status:** DONE. Phases 0-4 landed and verified 2026-09-02/03; all six nodes on containerd 2.3.4.
 **Date:** 2026-09-02
 **Owner:** Viktor Barzin
 **Origin:** "improve the boot time of images that have big image size, mostly GPU ones on node1"
@@ -397,7 +397,51 @@ Verification is `scripts/check-node-kubelet-tune`, which already exists and read
 each kubelet's live `/configz` rather than the file on disk (exit 1 = drift,
 2 = unreachable).
 
-### Phase 4 — containerd convergence to 2.3.4
+### Phase 4 — containerd convergence to 2.3.4 — DONE 2026-09-02/03
+
+All six nodes run `containerd 2.3.4` with `runc 1.4.3` and a `version = 4` root
+config. Executed in this order, with a Proxmox snapshot per node, all deleted and
+all locks cleared afterwards:
+
+| node | from | source pkg change | drained | store before / after | containers kept |
+|---|---|---|---|---|---|
+| node4, node5 | 2.2.x | none (Docker) | yes | byte-identical | n/a, drained |
+| **node1** (GPU) | 1.7.24 | Ubuntu `containerd` -> `containerd.io` | yes | 55 img / 29G / 61G, unchanged | n/a, drained |
+| node2 | 1.7.27 | none (Docker) | **no** | 367 img / 46G, unchanged | 104 / 104 |
+| node3 | 1.7.27 | none (Docker) | **no** | 233 img / 28G, unchanged | 89 / 89 |
+| master | 2.2.2 | Ubuntu `containerd` -> `containerd.io` | **no** | 68 img, unchanged | 30 / 30 |
+
+Three things this phase established that the plan had wrong or open:
+
+**The image store survives, and the open question in §9 is closed.** node1 went
+1.7.24 -> 2.3.4 across a package swap and its content store came back at exactly
+55 images, 29G of content and 61G of overlayfs snapshots, with the pinned
+`k8s.gcr.io/pause:3.6` still present. On the restart, 10 of 11 node1 pods reported
+`Container image already present on machine` and the single download was a 78 MB
+DaemonSet image in 456 ms. The 73 GB cold re-pull the plan treated as a live risk
+did not occur on any node.
+
+**A drain is not needed, and on two nodes is not possible.** `KillMode=process`
+means systemd leaves every shim running, so containers carry through the runtime
+swap: node3 kept all 65 shim PIDs and all 89 containers, and node2's oldest
+surviving shim had started four days earlier. This matters because node2 and node3
+**cannot** be drained — 26.3 and 27.9 GiB of evictable requests against 16.6 GiB
+of free requests across the four untainted nodes (`code-j3tx`) — so read as
+"drain first", Phase 4 was unexecutable on the two nodes furthest below the
+compatibility floor. In place, capacity does not enter into it.
+
+**master's API stays up.** etcd and kube-apiserver kept running with containerd
+stopped, and `kubectl` served throughout. The runbook's promise of a control-plane
+outage for that window was wrong in the safe direction.
+
+Also closed here: node1's `discard_unpacked_layers` was `true` in
+`/etc/containerd/config.toml` and `false` in `conf.d/99-nvidia.toml`, and the
+merged config the runtime reads takes the drop-in, so Phase 3's setting had never
+reached that node. Fixed in the playbook with an assert on the merged output
+(`6450ab38`), which is the check that would have caught it.
+
+The original Phase 4 text follows, kept for its reasoning.
+
 
 containerd 1.7 reaches EOL this month, and three nodes are below the documented
 floor for the running kubelet, not simply behind it. The 1.7 row is narrower
@@ -533,14 +577,16 @@ None of the left column should appear in a plan or a follow-up.
 
 ## 9. Open questions
 
-1. **Does the transition preserve node1's 23 GB content store and 50 GB of snapshots?** Still open. The RELEASES.md sentence that looked like a guarantee is inside the "Not Covered" section, which explicitly excludes snapshot and storage formats and says they may be migrated between minor versions. Settles by upgrading node4 or node5 first (2.2 → 2.3, no GPU) and inspecting the store either side.
+1. ~~Does the transition preserve node1's content store and snapshots?~~ **Closed 2026-09-03: yes, on all five upgraded nodes.** node1 crossed 1.7.24 → 2.3.4 with a package swap and came back at exactly 55 images / 29G content / 61G snapshots, pinned `pause:3.6` intact; node2 held 367 images / 46G, node3 233 / 28G, master 68 images. 10 of 11 node1 pods restarted from cache. The RELEASES.md "Not Covered" wording still offers no guarantee, so keep the per-node snapshot and the before/after reading — the practice was cheap and the reassurance is empirical rather than promised.
 2. ~~Does a version mismatch between the nvidia drop-in and the root config break containerd?~~ **Closed, and it was never a hazard.** Source at `v2.2.6` and `main` ignores root-versus-import version mismatches. `enable_cdi` is deprecated at v2.2 with removal at v2.4. The residual unknown is smaller: whether container-toolkit v1.18.2 rewrites the drop-in at all on a runtime change, and whether its own containerd restart lands mid-upgrade. Worth watching during node1's step rather than blocking on.
-3. **Is containerd 2.3.x supported with kubelet 1.35?** Still open, and now sharper: the 1.35 row names `2.2.0+, 2.1.5+, 1.7.28+` and 2.3.x appears first in the 1.36 row. The choice of 2.3.4 accepts an inference in exchange for an LTS branch and a supported hop from 1.7. Worth a note in the bead so the trade is visible if something later misbehaves.
-4. **Does Docker publish `containerd.io` for Ubuntu 26.04 resolute?** If not, node2 and node3 need Ubuntu's package or a static tarball, which changes Phase 5 step 2.
+3. **Is containerd 2.3.x supported with kubelet 1.35?** Still an inference, now running in production on six nodes. The 1.35 row names `2.2.0+, 2.1.5+, 1.7.28+`; 2.3.x appears first in the 1.36 row. Nothing has misbehaved in the hours since, which is evidence of nothing much yet. The trade — an LTS branch and a supported hop from 1.7, against a matrix row that does not name the version — is recorded here and in `code-g0va` so it is visible if something later does.
+4. ~~Does Docker publish `containerd.io` for Ubuntu 26.04 resolute?~~ **Closed: yes.** `2.3.4-1~ubuntu.26.04~resolute` installed from `download.docker.com` on node1, node2, node3 and master. The blocker was never publication, it was that four nodes carried a `download.docker.com` source reading `Enabled: no` / `Suites: jammy`; the playbook's `aptsource` tag rewrites it from apt's own configured suite.
 5. **Where do the remaining ~190 user CPU-seconds of a 341 s cold pull go?** Decode accounts for 43-76 of 231.8, and tar parsing for 1-3%. Overlayfs file creation and diffID hashing are the untested candidates. A `ctr image pull` on node3 with containerd's own metrics enabled would settle it, and it would confirm or retire the `pigz` estimate.
 6. **Is the ONNX export byte-reproducible?** Decides whether `touch -d @0` is sufficient or only necessary. Settles by exporting twice in one container and diffing `model.onnx` and `model.onnx_data`.
 7. ~~What is claude-memory's 7-day peak VRAM?~~ **Closed, and it changed a decision.** 7-day max is 3,206 MiB, but the exporter samples periodically and the documented sustained-load peak is 4,236 MiB. The declaration stays at 5,000 and the immich change is filed rather than done. What remains open is narrower: nobody has watched `nvidia-smi` directly under a driven recall load, which is the only way to establish the real ceiling.
 8. **Who created `claude-memory-image-prewarm`?** A bare pod took a full 5m46.276s pull on node1 at 11:07 EEST on 2026-09-01, exists in no stack, and is gone. It means one of that day's five cold pulls was an experiment rather than organic load.
+
+9. **Should the drain step be removed from the runbook rather than marked optional?** Raised by execution. `KillMode=process` made every in-place upgrade non-disruptive (node3 kept all 65 shim PIDs and all 89 containers), while the drains this project did run produced the 2026-09-02 evening incident. The argument for keeping a drain is that shim reattach is behaviour rather than a documented contract, and a future containerd could change it. Left as "optional, check the arithmetic first" pending someone's judgement.
 
 ## 10. Verification
 
