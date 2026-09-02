@@ -79,6 +79,27 @@ resource "authentik_stage_authenticator_webauthn" "recovery_passkey" {
 }
 
 resource "authentik_flow" "recovery" {
+  # depends_on is the structural fix for what went wrong on 2026-09-02. The
+  # first apply failed while creating the email stage, but terraform had already
+  # created the flow and three of its four bindings — leaving a LIVE recovery
+  # flow that ran identification -> register a passkey -> log in, with no email
+  # proof at all. Anyone who knew a non-superuser's address could have taken
+  # over that account. It existed for 3m41s; nobody reached it (one request to
+  # the URL, from our own devvm) and no WebAuthn credential was created.
+  #
+  # Terraform cannot apply this atomically, so the flow must be the LAST thing
+  # created. With every stage listed here, a stage failure means the flow is
+  # never created either, and the bindings depend on the flow — so a partial
+  # apply leaves unreferenced stage objects, which grant nothing, instead of a
+  # reachable half-built flow. A flow is reachable at its slug URL whether or
+  # not anything links to it, so "not wired up yet" is NOT a safety property.
+  depends_on = [
+    authentik_stage_identification.recovery_identification,
+    authentik_stage_email.recovery_email,
+    authentik_stage_authenticator_webauthn.recovery_passkey,
+    data.authentik_stage.default_authentication_login,
+  ]
+
   name           = "recovery"
   slug           = "recovery"
   title          = "Recover your access"
