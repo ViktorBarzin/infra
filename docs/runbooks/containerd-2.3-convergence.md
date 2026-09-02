@@ -587,9 +587,27 @@ proceed without the other operator's explicit agreement.
 On `pve-node-r730`:
 
 ```bash
-qm snapshot VMID pre-containerd-2.3.4 --description "code-g0va Phase 4, $(date -u +%FT%TZ)"
+qm snapshot VMID pre-containerd-234 --description "code-g0va Phase 4, $(date -u +%FT%TZ)"
 qm listsnapshot VMID
 ```
+
+The snapshot name carries no dots. Proxmox validates it as a configuration ID and
+rejects `pre-containerd-2.3.4` with `400 Parameter verification failed. snapname:
+invalid format`, which is why the name here is `pre-containerd-234`.
+
+Two things the output tells you, both worth reading rather than skipping:
+
+- The snapshot covers the node's **attached Proxmox CSI volumes** as well as its
+  root disk, so `snap_vm-9999-pvc-*` logical volumes appear. That is expected.
+- `pve/data` is thin and over-provisioned: the sum of thin volume sizes exceeds
+  the volume group, `activation/thin_pool_autoextend_threshold` is unset, and
+  `vg_free` is about 16 GiB, so the pool cannot be extended by much. Check there
+  is real room before proceeding, and delete the snapshot as soon as 5.9 allows:
+
+  ```bash
+  lvs --noheadings -o lv_name,lv_size,data_percent,metadata_percent pve/data
+  # 2026-09-02: data 10.54t, 73.18% data, 16.66% metadata -> ~2.8 TiB free, fine
+  ```
 
 A snapshot of a running VM leaves a lock. Delete the snapshot and clear the lock
 as soon as the node is verified (5.9). A stale lock blocks Proxmox CSI attaches
@@ -851,7 +869,7 @@ kubectl uncordon NODE
 On `pve-node-r730`, immediately:
 
 ```bash
-qm delsnapshot VMID pre-containerd-2.3.4
+qm delsnapshot VMID pre-containerd-234
 qm unlock VMID
 qm config VMID | grep -i lock          # expect no output
 ```
@@ -929,7 +947,7 @@ If the node will not boot or containerd will not start and the journal is not
 enough, the Proxmox snapshot from 5.1 is the floor:
 
 ```bash
-qm rollback VMID pre-containerd-2.3.4
+qm rollback VMID pre-containerd-234
 qm unlock VMID
 ```
 
