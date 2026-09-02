@@ -224,24 +224,29 @@ lapi:
     type: RollingUpdate
   
 config:
-  # Custom profiles: captcha_remediation soft-fails FP-prone scenarios; ban for attacks
+  # Custom profiles: every remediating alert becomes a real ban.
+  #
+  # captcha_remediation was REMOVED on 2026-09-02. It diverted four scenarios
+  # — http-429-abuse, http-403-abuse, http-crawl-non_statics and
+  # http-sensitive-files — to a captcha decision, and captcha is enforced
+  # NOWHERE (the Traefik plugin is ban-only by design, and the Cloudflare edge
+  # channel that might have carried it was retired 2026-08-18). So those four
+  # detected and did nothing.
+  #
+  # It cost us: on 2026-09-02 a Meta crawler swarm walked forgejo's git history
+  # and OOMKilled all three traefik pods plus forgejo. http-crawl-non_statics
+  # fired 60 times throughout and every one of those decisions was discarded as
+  # an inert captcha. Viktor's call to remove it — a soft-fail that fails to
+  # anything is worse than no rule, because the metrics look like coverage.
+  #
+  # These scenarios are genuinely FP-prone, which is why the divert existed.
+  # The mitigation is the trusted-ips whitelist in main.tf, which now pins the
+  # London egress explicitly (that address was self-banned for 363 days once
+  # already). If a legitimate source starts getting banned, whitelist it —
+  # do not reintroduce a remediation that goes nowhere.
   profiles.yaml: |
-    # LENIENT SOFT-FAIL (NOT an interactive captcha): captcha-type decisions are
-    # enforced NOWHERE since the Traefik captcha plugin was removed (firewall-bouncer
-    # drops bans only; cf-sync pushes bans only). This profile intentionally diverts
-    # these 4 FP-prone scenarios to an INERT captcha instead of a ban — do NOT delete
-    # it, or they fall through to default_ip_remediation and become real 4h bans.
-    name: captcha_remediation
-    filters:
-      - Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() in ["crowdsecurity/http-429-abuse", "crowdsecurity/http-403-abuse", "crowdsecurity/http-crawl-non_statics", "crowdsecurity/http-sensitive-files"]
-    decisions:
-      - type: captcha
-        duration: 4h
-    notifications:
-      - slack_alerts
-    on_success: break
-    ---
-    # Default: Ban for serious attacks (CVE exploits, scanners, brute force)
+    # Ban for serious attacks (CVE exploits, scanners, brute force) AND for the
+    # four ex-captcha scenarios above.
     name: default_ip_remediation
     filters:
       - Alert.Remediation == true && Alert.GetScope() == "Ip"
