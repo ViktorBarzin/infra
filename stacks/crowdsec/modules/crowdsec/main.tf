@@ -177,7 +177,15 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
       whitelist:
         reason: "Trusted IP - never block"
         ip:
-          - "176.12.22.76"
+          - "176.12.22.76" # home / Sofia egress (origin)
+          # London flat egress. Pinned 2026-09-02 alongside removing the
+          # captcha divert, which turned four FP-prone HTTP scenarios into real
+          # bans. This exact address was hand-banned for 363 days on 2026-08-16
+          # when a Nextcloud client retry loop was mistaken for an external
+          # attacker; it is dynamic in principle, so re-check it with
+          # `homelab ha ssh --instance london -- curl -s ifconfig.me` if someone
+          # in London reports being blocked.
+          - "137.220.71.46"
         cidr:
           # Never ban internal/cluster/LAN/tailnet sources. Enforcement (edge
           # Worker + firewall-bouncer) drops on real source IP, so an internal
@@ -414,6 +422,166 @@ module "ingress" {
   }
 }
 
+# Static, reviewable blocklist: Meta's announced address space.
+#
+# On 2026-09-02 a Meta crawler swarm walked forgejo's git history — per-commit
+# /commits, /src, /blame and /raw, the four most expensive pages the forge
+# renders — from hundreds of addresses in AS32934, using spoofed desktop Chrome
+# user-agents rather than declaring a bot. It OOMKilled all three traefik pods
+# and forgejo itself, taking every ingress down intermittently.
+#
+# This lives in Terraform rather than as a `cscli decisions add` because ad-hoc
+# decisions expire silently and nothing reminds anyone (the 363-day self-ban of
+# 2026-08-16 is the counter-example in the other direction). The import step in
+# the CronJob below re-applies it daily at 04:00 with a 168h duration, so the
+# block renews itself and a deliberate `terraform apply` is what removes it.
+#
+# ACCEPTED COST, Viktor's decision: no Facebook, Instagram, WhatsApp or
+# Messenger link previews for any viktorbarzin.me URL, because those fetches
+# originate from this same address space. Outbound is unaffected — our own
+# devices reaching Meta still work.
+#
+# Regenerate (772 announced prefixes collapse to 117 aggregates):
+#   for as in AS32934 AS63293 AS54115; do
+#     curl -s "https://stat.ripe.net/data/announced-prefixes/data.json?resource=$as" \
+#       | jq -r '.data.prefixes[].prefix'
+#   done | sort -u | python3 -c 'import sys,ipaddress as i; \
+#       n=[i.ip_network(l.strip()) for l in sys.stdin if l.strip()]; \
+#       print("\n".join(str(x) for x in list(i.collapse_addresses([a for a in n if a.version==4])) \
+#                                      + list(i.collapse_addresses([a for a in n if a.version==6]))))'
+resource "kubernetes_config_map" "crowdsec_static_blocklist" {
+  metadata {
+    name      = "crowdsec-static-blocklist"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+    labels = {
+      "app.kubernetes.io/name" = "crowdsec"
+    }
+  }
+
+  data = {
+    # One CIDR per line — cscli decisions import --format values.
+    "meta-asn.txt" = <<-LIST
+      31.13.24.0/21
+      31.13.64.0/18
+      45.64.40.0/22
+      57.141.0.0/24
+      57.141.2.0/23
+      57.141.4.0/23
+      57.141.6.0/24
+      57.141.8.0/24
+      57.141.10.0/24
+      57.141.12.0/23
+      57.141.14.0/24
+      57.141.16.0/22
+      57.141.20.0/24
+      57.141.22.0/24
+      57.141.24.0/24
+      57.144.0.0/14
+      66.220.144.0/20
+      69.63.176.0/20
+      69.171.224.0/19
+      74.119.76.0/22
+      102.132.96.0/20
+      102.132.112.0/24
+      102.132.115.0/24
+      102.132.116.0/23
+      102.132.119.0/24
+      102.132.120.0/23
+      102.132.123.0/24
+      102.132.125.0/24
+      102.132.126.0/24
+      102.221.188.0/22
+      103.4.96.0/22
+      129.134.0.0/17
+      129.134.130.0/24
+      129.134.132.0/24
+      129.134.135.0/24
+      129.134.136.0/22
+      129.134.140.0/24
+      129.134.143.0/24
+      129.134.144.0/24
+      129.134.148.0/23
+      129.134.150.0/24
+      129.134.154.0/23
+      129.134.156.0/22
+      129.134.160.0/22
+      129.134.164.0/23
+      129.134.168.0/21
+      129.134.176.0/20
+      129.134.194.0/23
+      129.134.196.0/23
+      157.240.0.0/17
+      157.240.128.0/23
+      157.240.131.0/24
+      157.240.132.0/24
+      157.240.134.0/24
+      157.240.136.0/23
+      157.240.139.0/24
+      157.240.140.0/24
+      157.240.156.0/22
+      157.240.169.0/24
+      157.240.170.0/24
+      157.240.175.0/24
+      157.240.177.0/24
+      157.240.179.0/24
+      157.240.181.0/24
+      157.240.182.0/23
+      157.240.184.0/21
+      157.240.192.0/18
+      163.70.128.0/17
+      163.77.132.0/23
+      163.77.136.0/23
+      163.114.128.0/20
+      173.252.64.0/18
+      179.60.192.0/22
+      185.60.216.0/22
+      185.89.216.0/22
+      199.201.64.0/22
+      204.15.20.0/22
+      2620:0:1c00::/40
+      2620:10d:c090::/44
+      2a03:2880::/32
+      2a03:2887:ff00::/48
+      2a03:2887:ff02::/47
+      2a03:2887:ff04::/46
+      2a03:2887:ff09::/48
+      2a03:2887:ff0a::/48
+      2a03:2887:ff1b::/48
+      2a03:2887:ff1e::/48
+      2a03:2887:ff20::/48
+      2a03:2887:ff22::/47
+      2a03:2887:ff27::/48
+      2a03:2887:ff28::/46
+      2a03:2887:ff2e::/47
+      2a03:2887:ff30::/48
+      2a03:2887:ff33::/48
+      2a03:2887:ff37::/48
+      2a03:2887:ff38::/46
+      2a03:2887:ff3e::/47
+      2a03:2887:ff40::/46
+      2a03:2887:ff44::/47
+      2a03:2887:ff48::/46
+      2a03:2887:ff4d::/48
+      2a03:2887:ff4e::/47
+      2a03:2887:ff50::/45
+      2a03:2887:ff58::/47
+      2a03:2887:ff5a::/48
+      2a03:2887:ff5f::/48
+      2a03:2887:ff60::/48
+      2a03:2887:ff62::/47
+      2a03:2887:ff64::/46
+      2a03:2887:ff68::/46
+      2a03:2887:ff6f::/48
+      2a03:2887:ff70::/46
+      2c0f:ef78:3::/48
+      2c0f:ef78:5::/48
+      2c0f:ef78:9::/48
+      2c0f:ef78:c::/47
+      2c0f:ef78:10::/47
+    LIST
+  }
+}
+
 # CronJob to import public blocklists into CrowdSec
 # https://github.com/wolffcatskyy/crowdsec-blocklist-import
 # Uses kubectl exec to run in an existing CrowdSec agent pod that's already registered
@@ -453,13 +621,26 @@ resource "kubernetes_cron_job_v1" "crowdsec_blocklist_import" {
 
           spec {
             service_account_name = kubernetes_service_account.blocklist_import.metadata[0].name
-            restart_policy       = "OnFailure"
+
+            volume {
+              name = "static-blocklist"
+              config_map {
+                name = kubernetes_config_map.crowdsec_static_blocklist.metadata[0].name
+              }
+            }
+            restart_policy = "OnFailure"
 
             container {
               name  = "blocklist-import"
               image = "bitnami/kubectl:latest"
 
               command = ["/bin/bash", "-c"]
+
+              volume_mount {
+                name       = "static-blocklist"
+                mount_path = "/static"
+                read_only  = true
+              }
               args = [
                 <<-EOF
                 set -e
@@ -498,6 +679,18 @@ resource "kubernetes_cron_job_v1" "crowdsec_blocklist_import" {
                   # Cleanup
                   rm -f /tmp/import.sh
                 '
+
+                # Our own static blocklist, re-applied every run so the 168h
+                # decisions never lapse. Kept separate from the public lists
+                # above because it is a deliberate, reviewed policy decision
+                # rather than a third-party feed — see the ConfigMap comment.
+                echo "Importing static blocklist (Meta ASN)..."
+                kubectl cp /static/meta-asn.txt crowdsec/$AGENT_POD:/tmp/meta-asn.txt
+                kubectl exec -n crowdsec "$AGENT_POD" -- cscli decisions import \
+                  -i /tmp/meta-asn.txt --format values --scope range \
+                  --duration 168h \
+                  --reason "static-blocklist/meta-asn (git-history crawler swarm 2026-09-02)"
+                kubectl exec -n crowdsec "$AGENT_POD" -- rm -f /tmp/meta-asn.txt
 
                 echo "Blocklist import completed successfully!"
                 EOF
