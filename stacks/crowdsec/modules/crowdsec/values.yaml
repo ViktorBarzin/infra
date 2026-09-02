@@ -74,6 +74,14 @@ agent:
       mountPath: /etc/crowdsec/scenarios/http-crawl-non_statics.yaml
       subPath: "http-crawl-non_statics.yaml"
       readonly: true
+    # New scenario rather than an override, so it sits alongside the stock one:
+    # the stock rule keeps catching FAST crawlers everywhere, this one catches a
+    # SLOW crawler on forgejo only. Adding a mount restarts the agent pods,
+    # which is what loads it (subPath mounts do not refresh on their own).
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/forgejo-crawl-slow.yaml
+      subPath: "forgejo-crawl-slow.yaml"
+      readonly: true
     - name: whitelist
       mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml
       subPath: "whitelist.yaml"
