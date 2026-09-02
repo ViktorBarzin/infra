@@ -1043,6 +1043,38 @@ serverFiles:
               severity: warning
             annotations:
               summary: "gpu-vram-watchdog has no available replica for 15m — runtime VRAM enforcement (over-budget recycle) is OFF. Budget still scheduler-enforced."
+          # A tenant sustained ABOVE its declared viktorbarzin.me/gpumem seat.
+          # The gpu-vram-watchdog already sees this and deliberately allows it
+          # while nothing is blocked (ADR-0016) — correct behaviour that
+          # produces log lines and no signal, which is how claude-memory sat
+          # 2,314 MiB over its seat for a day before anyone noticed (infra#85).
+          #
+          # min_over_time on the LHS means EVERY sample in the window must be
+          # over, so a single burst cannot fire it and the watchdog's deliberate
+          # burst tolerance is preserved. Summed per POD because
+          # gpu_pod_memory_used_bytes is PER-PROCESS and a pod can run several —
+          # reading one series is exactly the trap that hid the incident.
+          #
+          # 1536 MiB, no per-tenant exceptions (Viktor, 2026-09-02): it clears
+          # immich-ml's tolerated plateau by 488 MiB and would have caught the
+          # claude-memory incident by 778. A tighter threshold needs an
+          # exception list, and a stale exception list is how a real alert gets
+          # tuned out.
+          - alert: GPUTenantOverSeatSustained
+            expr: |
+              min_over_time(
+                (sum by (namespace, pod) (gpu_pod_memory_used_bytes) / 1024 / 1024)[45m:2m]
+              )
+              - on(namespace, pod) group_left()
+              sum by (namespace, pod) (kube_pod_container_resource_limits{resource="viktorbarzin_me_gpumem"})
+              > 1536
+            for: 5m
+            labels:
+              severity: warning
+              subsystem: gpu
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }} has been >1.5 GiB over its gpumem seat for 45m"
+              description: "Sustained overshoot of the declared viktorbarzin.me/gpumem budget, so the seating chart no longer describes the card. The watchdog only acts under contention, so this stays invisible until something is starved. Check whether the tenant genuinely needs a bigger seat or whether its allocator is at fault — an onnxruntime CUDA arena left on the default kNextPowerOfTwo strategy doubles on demand and never returns memory, which is what caused infra#85. See docs/adr/0016-gpu-vram-extended-resource-budget.md."
       # Memory recall. Nothing watched this path until 2026-09-01, which is how a
       # 6.5% silent-loss rate ran for seven weeks: the server never errored, the
       # per-turn hook gave up at 6s, and the only record was a log file on one
@@ -4620,6 +4652,21 @@ serverFiles:
       # terminal.viktorbarzin.me, so ~70% of /token preflight requests routed
       # to that replica returned 404 with router="-". The WS upgrade failed
       # intermittently. Fix: `kubectl delete pod -n traefik <replica>`.
+          # A stack CI deliberately SKIPS still needs a human to apply it, and
+          # the Slack post saying so can be missed. This is the durable
+          # backstop: the gauge is pushed on every apply run and set to 0 when
+          # nothing is pending, so a stuck non-zero means a real change has been
+          # sitting unapplied. 2h, because the remediation is a person running
+          # `cd stacks/vault && ../../scripts/tg apply` (infra#84).
+          - alert: CIStackPendingHumanApply
+            expr: ci_stack_pending_human_apply > 0
+            for: 2h
+            labels:
+              severity: warning
+              subsystem: ci
+            annotations:
+              summary: "A stack changed in CI and was NOT applied — it needs a human run"
+              description: "infra CI skipped a Tier-0 stack (today only stacks/vault, which CI cannot apply because the shared runner holds no Vault-admin permissions) and the change has been pending over 2h, so the repo and the live estate disagree until someone runs it. Apply: cd stacks/vault && ../../scripts/tg apply. See docs/architecture/ci-cd.md."
       - name: Webterminal
         rules:
       # Traefik router parity — detects the root cause of the webterminal
