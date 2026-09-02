@@ -1,5 +1,12 @@
 # containerd convergence to 2.3.4 LTS, and the registry cache VM prune
 
+> **One window, both phases.** Viktor chose 2026-09-02 to run Phase 3 (node
+> config) and Phase 4 (containerd) together, so each node reboots once. Step 5.2b
+> applies Phase 3 while the node is drained. kured cannot deliver Phase 3 on its
+> own: its alert filter was inverted to match-only on 2026-09-02 (`code-yr2i`),
+> which restores kured generally, but node1's reboot gate stays permanently
+> closed by the GPU mitigation's kernel holds.
+
 **Status:** prepared and verified, not executed
 **Prepared:** 2026-09-02
 **Owner:** Viktor Barzin
@@ -599,6 +606,67 @@ kubectl get pods -A -o wide --field-selector spec.nodeName=NODE
 Expect DaemonSet pods to remain. On node1, expect the Vault leader to move
 (section C5) and expect the seven GPU tenants to become Pending until the node
 returns. On master, the control-plane static pods are not drained.
+
+### 5.2b Apply Phase 3's node config, while the node is drained
+
+Viktor's decision, 2026-09-02: Phases 3 and 4 run in ONE window, so each node
+reboots once carrying both changes rather than twice carrying one each. This step
+is what makes that true, and it goes here because Phase 3 writes config that only
+takes effect when kubelet restarts, which 5.3 is about to do anyway.
+
+The trade he accepted, stated plainly so nobody has to rediscover it: a bad boot
+on a node now has two candidate causes instead of one. If a node does not come
+back cleanly, revert the containerd binary first (5.7) before touching kubelet
+config, because the runtime is the larger change and its rollback is already
+staged.
+
+```bash
+cd ~/code/infra
+# --check first. On a node not yet done this should show only the intended lines.
+ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml \
+  --limit NODE_IP --check --diff
+
+# then for real
+ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml \
+  --limit NODE_IP
+```
+
+The playbook refuses a node whose kubelet does not report `NodeSwap`,
+`ImageMaximumGCAge` and `GracefulNodeShutdownBasedOnPodPriority` as enabled. That
+guard is deliberate and fails closed: a gated kubelet key whose gate is off fails
+startup validation, and a kubelet that will not start is console-only recovery.
+All six nodes reported all three enabled on 2026-09-02, read from each kubelet's
+own `kubernetes_feature_enabled` metric. Do not override it with
+`-e kubelet_require_gate_check=false` to make a node proceed.
+
+What it writes, and what it deliberately does not:
+
+| writes | leaves alone |
+|---|---|
+| `shutdownGracePeriodByPodPriority` (P1 `code-xgcg`) | `systemReserved` (P2 `code-eu6l`) |
+| `memorySwap: LimitedSwap` | `kubeReserved` (same bead) |
+| `serializeImagePulls: true`, asserted | `evictionSoft` (same bead) |
+| a finite `imageMaximumGCAge` | `imageGCHighThresholdPercent` (never set by this repo) |
+| containerd `discard_unpacked_layers = true` | `maxParallelImagePulls` (aggregate ceiling, no gain) |
+| `pigz` on node1, node4, node5 | |
+| `allowedUnsafeSysctls` union | |
+
+The three reservations are excluded because they carve roughly 1,424 MiB out of
+every node's allocatable and node2 has only about 1,455 MiB of schedulable
+headroom, so applying them takes node2 to nearly zero and nothing can reschedule
+onto it.
+
+On node1 specifically, `apt` resolves against 26.04 suites, so simulate the pigz
+install and confirm nothing else moves:
+
+```bash
+ssh wizard@10.0.20.101 'sudo apt-get -s install pigz'
+# expect exactly: 0 upgraded, 1 newly installed, 0 to remove
+# if base-files appears in that list, STOP — see constraint C2
+```
+
+`pigz` only takes effect once containerd restarts, because containerd probes for
+`unpigz` at init. That restart is 5.3 and 5.6, so no separate action is needed.
 
 ### 5.3 Stop kubelet, then containerd
 
