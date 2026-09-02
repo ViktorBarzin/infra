@@ -5284,6 +5284,7 @@ extraScrapeConfigs: |
     - source_labels: [__meta_kubernetes_pod_name]
       target_label: pod
 
+  # Applied 2026-09-02.
   - job_name: 'alloy'
     # Alloy ships every Loki-based alert in the cluster and had NO health
     # telemetry of its own until 2026-09-02: 93 metric families exposed on
