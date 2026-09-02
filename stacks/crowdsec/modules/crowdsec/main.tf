@@ -143,6 +143,66 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
         label: "Aggressive Crawl"
         remediation: true
       YAML
+    # A SLOW, DISTRIBUTED crawl of forgejo's git history — the shape that got
+    # through on 2026-09-02 and that no per-IP scenario could see.
+    #
+    # MEASURED from the real attack trace (1000 requests over 412s, replayed
+    # through a simulated leaky bucket per source address):
+    #
+    #   capacity 40  leakspeed 0.5s   <- the stock scenario    0 of 61 banned
+    #   capacity 15  leakspeed 30s                             2 of 61
+    #   capacity 12  leakspeed 60s                             6 of 61
+    #   capacity 10  leakspeed 90s                            30 of 61
+    #   capacity  8  leakspeed 120s                           49 of 61
+    #   capacity  6  leakspeed 180s                           58 of 61
+    #
+    # Meta spread the crawl across 61 addresses, each in its own /64, at
+    # 0.059-0.121 req/s. The stock scenario drains 2 tokens/sec, so every one of
+    # them ran 16-34x under the threshold and it caught NONE. The aggregate was
+    # 2.43 req/s, which is what OOMKilled forgejo and all three traefik pods.
+    #
+    # The real ceiling is `distinct` pages per address: median 14, max 34 over
+    # that window. That is why the curve breaks at capacity 10 — above it, the
+    # median crawler simply never has enough distinct filenames to fill the
+    # bucket. Chose 10/120s: it caught 30 of 61 in a 412-second replay, and a
+    # real crawl runs for hours, so each address accumulates far more distinct
+    # pages than this short trace shows. The replay is a floor, not a forecast.
+    #
+    # SCOPED TO THE FORGEJO ROUTER ON PURPOSE. At capacity 10 a human browsing
+    # normally would trip this, so it must not apply fleet-wide — the blog,
+    # immich shares and the rest keep the stock scenario. Forgejo is a personal
+    # forge whose legitimate human readers are Viktor and emo, whose egress
+    # addresses are in the whitelist. That makes it the one router where a tight
+    # threshold costs almost nothing.
+    #
+    # Bans the INDIVIDUAL IP (default scope), Viktor's call — no range bans, so
+    # a false positive affects one address for 4h and `homelab crowdsec unban`
+    # lifts it in ~33s.
+    "forgejo-crawl-slow.yaml" : <<-YAML
+      type: leaky
+      name: viktor/forgejo-crawl-slow
+      description: "Detect a slow, distributed crawl of forgejo git history"
+      filter: "evt.Meta.log_type in ['http_access-log', 'http_error-log'] && evt.Parsed.static_ressource == 'false' && evt.Parsed.verb in ['GET', 'HEAD'] && evt.Parsed.traefik_router_name startsWith 'forgejo'"
+      distinct: "evt.Parsed.file_name"
+      capacity: 10
+      leakspeed: 120s
+      # cache_size must be >= capacity. The stock scenario ships cache_size 5
+      # against capacity 40, which lets an evicted filename pour a second time
+      # and inflate the count; sizing it above capacity keeps one page worth
+      # exactly one token.
+      cache_size: 50
+      groupby: "evt.Meta.source_ip"
+      blackhole: 5m
+      labels:
+        confidence: 2
+        spoofable: 0
+        classification:
+          - attack.T1595
+        behavior: "http:crawl"
+        service: http
+        label: "Slow distributed crawl of git history"
+        remediation: true
+    YAML
     "http-429-abuse.yaml" : <<-YAML
       type: leaky
       name: crowdsecurity/http-429-abuse
