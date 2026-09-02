@@ -1,6 +1,6 @@
 # Large-image handling on k8s-node1
 
-**Status:** Phase 1 landed and verified 2026-09-02 (`d949a91`); Phases 0, 2, 2b, 3, 4 outstanding
+**Status:** Phases 0 and 1 landed and verified 2026-09-02. Phase 2 authored, unapplied. Phases 3 and 4 staged for one human-driven window.
 **Date:** 2026-09-02
 **Owner:** Viktor Barzin
 **Origin:** "improve the boot time of images that have big image size, mostly GPU ones on node1"
@@ -166,7 +166,15 @@ Each phase lands to master when its own verification passes. Phase 0 goes first
 so later phases have a before-and-after; without it we would be claiming a
 two-thirds reduction we cannot show.
 
-### Phase 0 — Observability
+### Phase 0 — Observability — LANDED 2026-09-02 (`31d0d2a6`, CI #1407)
+
+Verified after CI applied: `kubelet_image_pull_duration_seconds_count` is in
+Prometheus with all five `image_size_in_bytes` classes populated including
+`1GB-5GB`; the `node-runtime-journal` job is registered in Loki and shipping live
+`containerd.service` lines; the image-GC rule's query returns a matrix against
+the new stream. The plan's own anchor numbers no longer need reading off a live
+kubelet by hand.
+
 
 `kubelet_image_pull_duration_seconds` is already exposed on every kubelet and is
 excluded twice in `stacks/monitoring/.../prometheus_chart_values.tpl`: the
@@ -361,11 +369,25 @@ independent reasons, both measured 2026-09-02 and filed as `code-yr2i`:
 - **node1's gate is permanently closed by the GPU mitigation.** kured reboots only on `/var/run/gated-reboot-required`; the sentinel gate creates that only when `/var/run/reboot-required` exists; unattended-upgrades writes that only when it installs a kernel or libc. node1 holds six `linux-*` packages under the 26.04-userspace / 24.04-kernel GRUB pin, so it can never signal that a reboot is needed. Verified: neither file exists on node1, `apt-mark showhold` lists six `linux-*` entries, uptime 46 days, and its kured pod logs "Reboot not required" on every hourly tick. The mitigation that keeps the GPU working is the thing that closes the gate, so this is by construction rather than by accident.
 - **The nodes whose gate IS open are halted by kured's own alert filter.** `alertFilterRegexp` in `stacks/kured/main.tf:103` ignores only `^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor|KernelOOMKiller)$`, against 12 alerts firing at the time of writing and a standing floor of five to eight. kured logs `Reboot blocked: 6 active alerts`, `7 active alerts`, `8 active alerts` on successive ticks. node2 has been pending-reboot since 2026-07-18.
 
+**Resolved 2026-09-02.** `alertFilterMatchOnly` was already present in
+`stacks/kured/main.tf` and set to `false`, which is what inverted the intent: the
+regexp was read as an ignore-list, so five named alerts had to cover a floor of
+five to eight firing warnings. Flipping it to `true` gives the semantics the
+"Upgrade Gates" group was added for, and the list becomes the nine conditions
+that genuinely mean a node should not be taken out. Landed as `d1307db0`
+(CI #1411), closing `code-yr2i`. `PVCStuckPending` is deliberately excluded
+despite sitting in that group, since it is a warning about one namespace's volume
+and was firing at the time. Note the failure direction flips with that setting: a
+typo'd name now fails open rather than closed, so all nine were checked to exist.
+
+node1 still needs a deliberate reboot regardless, because its gate is closed by
+the GPU mitigation rather than by the filter.
+
 Consequences for this phase, all of which change how it lands:
 
 - **Each node needs a deliberate, human-driven kubelet restart or reboot.** Drop the "applies at the next kured reboot" assumption entirely.
 - **Roll it one node at a time** with `--limit`. A bad combination of new kubelet keys stops kubelet from starting, and a node whose kubelet will not come up is discovered only at its own restart, with console-only recovery.
-- **Give node1 its own restart for this phase, separate from Phase 4.** Otherwise every Phase 3 key and containerd 2.3 come up in the same boot and a bad boot has two candidate causes.
+- **Viktor chose one window for Phases 3 and 4** (2026-09-02), so each node reboots once carrying both changes rather than twice carrying one each. The trade is accepted knowingly: a bad boot then has two candidate causes, so the runbook says to revert the containerd binary first, its rollback being already staged. Step 5.2b of `docs/runbooks/containerd-2.3-convergence.md` applies this phase while the node is drained.
 - A larger issue sits underneath and is out of scope here: kernel and libc security updates are not being taken on four nodes. `code-yr2i` carries the decision on whether to widen the alert filter or accept human-driven reboots.
 
 One caution: on node1, `apt install` resolves against 26.04 suites (§4). Simulate
