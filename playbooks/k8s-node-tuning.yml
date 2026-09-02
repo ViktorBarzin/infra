@@ -592,6 +592,113 @@
         update_cache: false
       tags: pigz
 
+    # ---- the Docker apt source, so containerd is upgradable at all --------
+    # Added 2026-09-02, during the Phase 4 window, because node2 and node3 could
+    # not see containerd 2.3.4 at all. Their source file read `Enabled: no` with
+    # `Suites: jammy` while the hosts run 26.04 resolute, and neither carried a
+    # Docker signing key, so simply enabling it would have failed verification.
+    # node4 and node5 worked only because they still have the pre-dist-upgrade
+    # arrangement: a legacy docker.list on `noble stable` plus
+    # /etc/apt/trusted.gpg.d/docker.gpg.
+    #
+    # Keyed off ansible_distribution_release so one task serves both OS
+    # generations rather than hard-coding noble, and written deb822 with an
+    # explicit Signed-By instead of dropping another key into the deprecated
+    # trusted.gpg.d. Docker publishes 2.3.4 for both suites, verified live:
+    # 2.3.4-1~ubuntu.24.04~noble and 2.3.4-1~ubuntu.26.04~resolute.
+    #
+    # This only makes the package VISIBLE. It installs nothing and upgrades
+    # nothing: containerd.io stays apt-held (cloud_init.yaml lines 153-154,
+    # placed after the March 2026 26-hour outage), so an upgrade is always a
+    # deliberate unhold plus a pinned version, never an `apt upgrade`.
+    # The suite comes from apt's OWN Ubuntu source, not from
+    # ansible_distribution_release, and not from /etc/os-release. On k8s-node1
+    # those disagree on purpose: its /etc/os-release was replaced with Noble
+    # content so NFD makes the GPU operator pick a driver image tag that exists
+    # (NVIDIA publishes no ubuntu26.04 driver images), while its userspace is
+    # really 26.04 resolute with glibc 2.43. Reading os-release there would
+    # install noble packages onto a resolute userspace. apt's configured suite is
+    # the honest answer and it needs no fact gathering, which both plays disable.
+    - name: Which Ubuntu suite is apt actually configured for
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          # apt's own view, which is authoritative and respects `Enabled: no`.
+          # Grepping ubuntu.sources for the first Suites: line does NOT work here:
+          # node2 and node3 still carry a DISABLED focal stanza ahead of the live
+          # resolute one, left behind by the 20.04 -> 26.04 upgrade chain, so a
+          # naive read returns 'focal' and would install packages built against
+          # glibc 2.31.
+          apt-get indextargets --format '$(RELEASE)' 2>/dev/null \
+            | grep -vE -- '-(updates|security|backports|proposed)$' \
+            | grep -vE '^$' | sort -u | head -1
+        executable: /bin/bash
+      register: apt_suite
+      changed_when: false
+      check_mode: false
+      tags: aptsource
+
+    - name: Refuse to guess if the suite could not be read
+      ansible.builtin.assert:
+        that:
+          - apt_suite.stdout | trim | length > 0
+          - apt_suite.stdout | trim in ['noble', 'resolute']
+        fail_msg: >-
+          Could not read a known Ubuntu suite from apt on {{ inventory_hostname }}
+          (got '{{ apt_suite.stdout | trim }}'). Refusing to write a Docker source
+          for a suite I cannot verify, because a wrong suite installs packages
+          built against the wrong glibc.
+      tags: aptsource
+
+    - name: Docker's apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+        owner: root
+        group: root
+      register: docker_key
+      tags: aptsource
+
+    - name: Docker's apt source, pointed at this host's own suite
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.sources
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by playbooks/k8s-node-tuning.yml. Edits here are overwritten.
+          Types: deb
+          URIs: https://download.docker.com/linux/ubuntu
+          Suites: {{ apt_suite.stdout | trim }}
+          Components: stable
+          Architectures: amd64
+          Signed-By: /etc/apt/keyrings/docker.asc
+          Enabled: yes
+      register: docker_source
+      tags: aptsource
+
+    # The stale ones, left behind by do-release-upgrade. It rewrites a source it
+    # cannot validate for the new suite into a disabled jammy stanza and keeps a
+    # .distUpgrade copy, which is why these hosts ended up with four files and no
+    # working repo. Disabling rather than deleting keeps the evidence.
+    - name: Retire the stale docker source files
+      ansible.builtin.command:
+        cmd: "mv {{ item }} {{ item }}.superseded-by-playbook"
+        removes: "{{ item }}"
+      loop:
+        - /etc/apt/sources.list.d/download_docker_com_linux_ubuntu.sources
+        - /etc/apt/sources.list.d/download_docker_com_linux_ubuntu.list
+        - /etc/apt/sources.list.d/docker.list
+      register: retired_sources
+      tags: aptsource
+
+    - name: Refresh the cache only when a source actually changed
+      ansible.builtin.apt:
+        update_cache: true
+      when: docker_key.changed or docker_source.changed or retired_sources.changed
+      tags: aptsource
+
     # ---- what the operator still has to do --------------------------------
     - name: Say plainly that nothing is live yet
       ansible.builtin.debug:
