@@ -25,6 +25,15 @@ locals {
   k8s_apps = {
     "kubernetes"           = "06733378-c2dc-46a8-a3f7-4f3670922ab4" # app "Kubernetes"
     "kubernetes-dashboard" = "9593b57a-83e5-45f2-ad92-16b3ddf9223a" # app "Kubernetes Dashboard"
+    # Added 2026-09-02 (infra#51 audit). This one had ZERO bindings, and a
+    # Proxy Users guest was verified live to pass check_access on it — so it
+    # would mint a cluster OIDC token for any authenticated user, including an
+    # invited non-admin. stacks/rbac/authentik-kubernetes.tf argued RBAC is the
+    # authoritative gate, which is true and is also the same argument that was
+    # already overridden for the two apps above. "An unmapped identity can do
+    # nothing with the token" is one RBAC misconfiguration away from false, and
+    # the token is issued before RBAC is ever consulted.
+    "kubernetes-agent" = "e3803ba4-cc7f-473b-9a71-d03b4ad946d6" # app "kubernetes-agent"
   }
   k8s_operator_groups = [
     "e4b39bac-540f-49b1-a53d-697baf8c92c5", # kubernetes-admins
