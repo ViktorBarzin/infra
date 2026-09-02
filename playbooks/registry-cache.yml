@@ -1,0 +1,471 @@
+---
+# playbooks/registry-cache.yml
+#
+# The LAN pull-through registry cache VM (10.0.20.10, hostname docker-registry),
+# which every node's /etc/containerd/certs.d points at as a mirror with upstream
+# as the fallback host. Until now it existed only as files someone typed onto the
+# box; this playbook is the declaration.
+#
+# It brings /opt/registry under git: the compose file, the six registry configs,
+# nginx.conf, the two maintenance scripts, the new maintenance wrapper, and the
+# schedule. Secrets are the exception and come from Vault at apply time.
+#
+# WHY THIS EXISTS NOW
+# -------------------
+# On 2026-09-02 this VM was at 100% disk with 0 bytes available, both live caches
+# returned HTTP 500 for real manifest fetches with `{"Op":"write",...,"Err":28}`
+# (errno 28 = ENOSPC), and six of its seven containers were unhealthy with
+# `OCI runtime exec failed: ... no space left on device` and a failing streak of
+# 852-853 (x 30s interval ~= 7h07m continuous). It had been that way, on and off,
+# for about 45 days. Nothing alerted, for two compounding reasons:
+#
+#   1. Both /v2/ and the old /healthz are storage-free, so they answered 200
+#      throughout. Verified live: /v2/ 200 while a manifest GET on the same port
+#      returned 500. That is Phase 2 change 2 below.
+#   2. The VM is not scraped by Prometheus AT ALL, so the existing
+#      `NodeFilesystemFull` alert never had a series to evaluate. That is Phase 2
+#      change 3.
+#
+# The disk oscillates around zero rather than being permanently dead: the same
+# two probes returned 500 and then 200 within 35 minutes. So a single 200 is not
+# evidence of health — pair it with the free-space floor.
+#
+# WHAT THIS PLAYBOOK DELIBERATELY DOES NOT DO
+# -------------------------------------------
+# It does not prune. Reclaiming the ~20 GB of residue (docker images 8.874 GB
+# reclaimable, buildx cache 4.066-11.55 GB depending on whether you read docker's
+# RECLAIMABLE column or the total) is a destructive step for a human in a window,
+# not a playbook task, and it must be done BY EXPLICIT LIST.
+#
+#   NEVER `docker image prune -a` on this VM. Only 3 of its 32 images are in
+#   use, so `-a` also deletes ghcr.io/viktorbarzin/infra-ci:latest (1.11 GB) —
+#   the break-glass CI image whose own recovery path is a ghcr pull-and-save onto
+#   this same VM. Deleting it means the recovery path needs the thing it is
+#   recovering.
+#
+# It also does not remove the three published-but-unserved mirror ports. 5020
+# (quay), 5030 (registry.k8s.io) and 5040 (kyverno) have docker-proxy listening
+# and their backing containers running, but nginx.conf declares only `listen
+# 5000` and `listen 5010` and only `upstream dockerhub` / `upstream ghcr`, so
+# connections to those three are refused. No node's certs.d references them
+# either. They are running, consuming part of /opt/registry's 34 GB, and reached
+# by nothing. Resolving that is a decision (serve them, or decommission and
+# reclaim), so the configs are declared as they are and the question is named
+# here rather than answered silently.
+#
+# KEEP THE NGINX TIER
+# -------------------
+# Its value is request collapsing, not hit ratio. `proxy_cache_lock on` with a 5m
+# lock timeout folds concurrent requests for the same blob into a single upstream
+# fetch, which is exactly what a six-node cluster scheduling the same image does.
+# The low hit ratio is `proxy_cache_min_uses 2` behaving as configured — a blob
+# pulled once is deliberately not cached — and it has been misread as evidence
+# the tier is idle at least once already. Removing it would turn one upstream
+# fetch per image into one per node.
+#
+# SECRETS
+# -------
+# Three secrets live at Vault path `secret/registry-cache`, KV v2. The path does
+# not exist yet; create it BEFORE the first apply (see PREREQUISITE below). The
+# playbook reads it with the `vault` CLI delegated to the controller, using your
+# own OIDC token — `hvac` is not installed on the devvm, so the
+# community.hashi_vault lookup plugins are not usable here.
+#
+#   dockerhub_username   the Docker Hub account the pull-through cache authenticates as
+#   dockerhub_token      its PAT. Was PLAINTEXT in /opt/registry/config-dockerhub.yml on
+#                        the box; this repo's GitHub mirror is public and that path is not
+#                        one of .gitattributes' git-crypt patterns, so it must not be committed
+#   htpasswd             the htpasswd file config-private.yml expects at /auth/htpasswd
+#   tls_fullchain        /opt/registry/tls/fullchain.pem
+#   tls_privkey          /opt/registry/tls/privkey.pem
+#
+# Honest note on the last three: nothing running currently reads them.
+# config-private.yml belongs to `registry-private`, decommissioned 2026-05-07 and
+# absent from docker-compose.yml, and nginx.conf's only TLS server block (port
+# 5050) went with it, so `tls/` is mounted into nginx and used by no listener.
+# They are declared anyway, because the point of this playbook is that a rebuilt
+# VM reproduces the box, and because dropping a cert bundle quietly is how the
+# next person spends an afternoon. `registry_cache_manage_unused_secrets: false`
+# skips them if you would rather they went away.
+#
+# PREREQUISITE — create the Vault path (once, by a human)
+# ------------------------------------------------------
+#   ssh wizard@10.0.20.10 'sudo -n cat /opt/registry/htpasswd'        > /tmp/rc-htpasswd
+#   ssh wizard@10.0.20.10 'sudo -n cat /opt/registry/tls/fullchain.pem' > /tmp/rc-fullchain
+#   ssh wizard@10.0.20.10 'sudo -n cat /opt/registry/tls/privkey.pem'   > /tmp/rc-privkey
+#   ssh wizard@10.0.20.10 "sudo -n grep -E '^  (username|password):' /opt/registry/config-dockerhub.yml"
+#
+#   vault kv put secret/registry-cache \
+#     dockerhub_username='<the username from that grep>' \
+#     dockerhub_token='<the password from that grep>' \
+#     htpasswd=@/tmp/rc-htpasswd \
+#     tls_fullchain=@/tmp/rc-fullchain \
+#     tls_privkey=@/tmp/rc-privkey
+#
+#   shred -u /tmp/rc-htpasswd /tmp/rc-fullchain /tmp/rc-privkey
+#
+# ONE `vault kv put` with every key, not five: KV v2 `put` REPLACES the whole
+# secret, so five sequential puts leave only the last key. Use `vault kv patch`
+# to change one field later. Verify with `vault kv get -format=json
+# secret/registry-cache | jq -r '.data.data | keys'` — expect all five names.
+#
+# RUN
+# ---
+#   syntax  : ansible-playbook -i playbooks/inventory.ini playbooks/registry-cache.yml --syntax-check
+#   dry-run : ansible-playbook -i playbooks/inventory.ini playbooks/registry-cache.yml --check --diff
+#   apply   : ansible-playbook -i playbooks/inventory.ini playbooks/registry-cache.yml
+#
+# Claim presence first: scripts/presence claim infra:registry-cache-vm
+#
+# ORDER MATTERS ON THE FIRST APPLY. The VM had 497 MB free when this was written,
+# and installing prometheus-node-exporter WITH its recommends pulls 18 packages
+# (smartmontools, openipmi, nvme-cli, moreutils, libsnmp40t64, ...). Reclaim the
+# ~20 GB first, or the apt step is the thing that fails. The playbook passes
+# `install_recommends: false`, which reduces it to exactly 1 package — verified
+# with `apt-get -s`: 18 newly installed with recommends, 1 without.
+#
+# The playbook writes config and, by default, does NOT restart anything: a
+# `docker compose up -d` here re-creates six containers and every node loses its
+# mirror for the duration. Restarting is the operator's step, and the tasks that
+# would need it say so in their `notify`-less comments. `-e
+# registry_cache_apply_compose=true` opts in to the compose reload for a window
+# where that is wanted.
+
+- name: Registry pull-through cache VM
+  hosts: "{{ registry_cache_target | default('registry_cache') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    registry_dir: /opt/registry
+    registry_vault_path: secret/registry-cache
+    # The htpasswd + TLS material that no running service currently reads.
+    registry_cache_manage_unused_secrets: true
+    # Off by default. `docker compose up -d` re-creates containers, which takes
+    # the cluster's mirror away for the duration.
+    registry_cache_apply_compose: false
+
+  tasks:
+    # ---- refuse to double-schedule ---------------------------------------
+    # The old schedule is eight lines in root's crontab (five clock times, GC on
+    # Sunday only). This playbook replaces it with /etc/cron.d/registry-cache.
+    # Both installed at once means garbage-collect runs twice and the containers
+    # restart twice, so stop rather than create that.
+    #
+    # Not automated: `crontab -r` wipes root's crontab wholesale, and a playbook
+    # should not do that on the operator's behalf even when all eight lines today
+    # are registry lines. Read it, confirm, then remove it by hand.
+    - name: Look for the superseded root crontab
+      ansible.builtin.command: crontab -l -u root
+      register: registry_root_crontab
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # Hard failure on a real apply. In --check it degrades to a loud message
+    # instead, so a reviewer can dry-run every config task BEFORE the window
+    # without first dismantling the live schedule. There is no flag that
+    # suppresses it on an apply.
+    - name: Stop if the old root-crontab schedule is still installed
+      ansible.builtin.assert:
+        that:
+          - "'/opt/registry/cleanup-tags.sh' not in registry_root_crontab.stdout"
+          - "'registry garbage-collect' not in registry_root_crontab.stdout"
+        success_msg: root crontab carries no registry schedule; /etc/cron.d/registry-cache is free to own it
+        fail_msg: >-
+          root's crontab still contains the old registry schedule. Running both
+          would garbage-collect twice a day and restart the containers twice.
+          Read it, confirm every line is a registry line, then remove it:
+            ssh wizard@10.0.20.10 'sudo -n crontab -l -u root'
+            ssh wizard@10.0.20.10 'sudo -n crontab -r -u root'
+          Two of those lines name `registry-private`, decommissioned 2026-05-07,
+          and have been failing every Sunday since. Re-run this playbook after.
+      when: not ansible_check_mode
+
+    - name: Say so in --check rather than stopping the dry run
+      ansible.builtin.debug:
+        msg: >-
+          WOULD FAIL ON APPLY — root's crontab still carries the old registry
+          schedule ({{ registry_root_crontab.stdout_lines | length }} lines).
+          Remove it with `sudo crontab -r -u root` on 10.0.20.10 after reading it,
+          then apply. Continuing the dry run so the config tasks below are
+          exercised.
+      when:
+        - ansible_check_mode
+        - >-
+          '/opt/registry/cleanup-tags.sh' in registry_root_crontab.stdout
+          or 'registry garbage-collect' in registry_root_crontab.stdout
+
+    # ---- secrets from Vault ----------------------------------------------
+    # delegate_to: localhost — the `vault` CLI and your OIDC token live on the
+    # controller, not on the cache VM, and the VM must never hold a Vault token.
+    # run_once because there is one host in the group and the values are shared.
+    # check_mode: false so --check still reads them; otherwise the template tasks
+    # below fail on an undefined variable and --check reports a false failure.
+    #
+    # `when: registry_secrets is not defined` is the escape hatch that makes this
+    # playbook reviewable BEFORE the Vault path exists, and lets an operator
+    # supply the values another way. Extra-vars outrank set_fact, so:
+    #   ansible-playbook ... --check --diff -e '{"registry_secrets": {
+    #     "dockerhub_username":"x","dockerhub_token":"x","htpasswd":"x",
+    #     "tls_fullchain":"x","tls_privkey":"x"}}'
+    # exercises every task with no Vault call and no real credentials. Do not use
+    # that form for a real apply — it would write those placeholder values.
+    - name: Read the registry-cache secrets from Vault
+      ansible.builtin.command:
+        argv:
+          - vault
+          - kv
+          - get
+          - -format=json
+          - "{{ registry_vault_path }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: registry_vault_raw
+      changed_when: false
+      check_mode: false
+      no_log: true
+      failed_when: registry_vault_raw.rc != 0
+      when: registry_secrets is not defined
+
+    - name: Unpack them
+      ansible.builtin.set_fact:
+        registry_secrets: "{{ (registry_vault_raw.stdout | from_json).data.data }}"
+      no_log: true
+      when: registry_secrets is not defined
+
+    - name: Every secret this playbook writes must be present and non-empty
+      ansible.builtin.assert:
+        that:
+          - registry_secrets.dockerhub_username | default('') | length > 0
+          - registry_secrets.dockerhub_token | default('') | length > 0
+          - (not registry_cache_manage_unused_secrets) or (registry_secrets.htpasswd | default('') | length > 0)
+          - (not registry_cache_manage_unused_secrets) or (registry_secrets.tls_fullchain | default('') | length > 0)
+          - (not registry_cache_manage_unused_secrets) or (registry_secrets.tls_privkey | default('') | length > 0)
+        fail_msg: >-
+          {{ registry_vault_path }} is missing a key. Expected
+          dockerhub_username, dockerhub_token{{ ', htpasswd, tls_fullchain, tls_privkey'
+          if registry_cache_manage_unused_secrets else '' }}.
+          Rendering config-dockerhub.yml without credentials would drop the whole
+          cluster onto Docker Hub's anonymous rate limit. See PREREQUISITE in this
+          file's header.
+        success_msg: all expected keys present at {{ registry_vault_path }}
+
+    # The -e escape hatch documented above is a real footgun without this: the
+    # same command run WITHOUT --check would write "PLACEHOLDER" over the live
+    # TLS private key and the Docker Hub PAT. An apply refuses any value that
+    # looks like a placeholder; a dry run does not care.
+    - name: Refuse placeholder secrets on a real apply
+      ansible.builtin.assert:
+        that:
+          - registry_secrets.values() | select('search', '(?i)placeholder|changeme|^x+$') | list | length == 0
+        fail_msg: >-
+          registry_secrets contains a placeholder value. That is fine for
+          `--check`, and it would overwrite the live TLS key and Docker Hub PAT on
+          an apply. Drop the -e override and let the playbook read
+          {{ registry_vault_path }}.
+        success_msg: no placeholder values in registry_secrets
+      when: not ansible_check_mode
+      no_log: true
+
+    # ---- /opt/registry ----------------------------------------------------
+    - name: The registry directory
+      ansible.builtin.file:
+        path: "{{ registry_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Verbatim copies of what is on the box, with the two Phase 2 edits noted in
+    # the files themselves. Nothing here is notified: a compose reload or a
+    # container restart takes the cluster's mirror away, so it is the operator's
+    # deliberate step (see registry_cache_apply_compose).
+    - name: Registry configs and the compose file
+      ansible.builtin.copy:
+        src: "files/registry-cache/{{ item }}"
+        dest: "{{ registry_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        # docker-compose.yml carries one change: nginx's healthcheck now goes
+        # through /healthz. See the comment in the file.
+        - docker-compose.yml
+        - config-ghcr.yml
+        - config-quay.yml
+        - config-k8s.yml
+        - config-kyverno.yml
+        # For `registry-private`, decommissioned 2026-05-07 and absent from
+        # docker-compose.yml. Declared so a rebuild reproduces the box exactly;
+        # nothing mounts it today.
+        - config-private.yml
+
+    - name: config-dockerhub.yml, with the pull-through credentials from Vault
+      ansible.builtin.template:
+        src: files/registry-cache/config-dockerhub.yml.j2
+        dest: "{{ registry_dir }}/config-dockerhub.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        registry_cache_dockerhub_username: "{{ registry_secrets.dockerhub_username }}"
+        registry_cache_dockerhub_token: "{{ registry_secrets.dockerhub_token }}"
+      no_log: true
+
+    # nginx_registry.conf is byte-identical to nginx.conf on the box
+    # (md5 0d2e23645da4f2f0c1c7e9bfe928785d for both) and docker-compose.yml
+    # mounts only nginx.conf, so the second copy is reached by nothing. One
+    # source, two destinations, so they cannot drift while it is still there —
+    # deleting it is a separate, easy decision.
+    - name: nginx.conf, and the unmounted duplicate beside it
+      ansible.builtin.copy:
+        src: files/registry-cache/nginx.conf
+        dest: "{{ registry_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - nginx.conf
+        - nginx_registry.conf
+
+    - name: Maintenance scripts
+      ansible.builtin.copy:
+        src: "files/registry-cache/{{ item }}"
+        dest: "{{ registry_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - cleanup-tags.sh
+        - fix-broken-blobs.sh
+        - registry-maintenance.sh
+
+    - name: The htpasswd file config-private.yml expects
+      ansible.builtin.copy:
+        content: "{{ registry_secrets.htpasswd }}"
+        dest: "{{ registry_dir }}/htpasswd"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      when: registry_cache_manage_unused_secrets
+
+    - name: The TLS directory
+      ansible.builtin.file:
+        path: "{{ registry_dir }}/tls"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: registry_cache_manage_unused_secrets
+
+    - name: The TLS material
+      ansible.builtin.copy:
+        content: "{{ registry_secrets[item.key] }}"
+        dest: "{{ registry_dir }}/tls/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - {key: tls_fullchain, name: fullchain.pem, mode: "0644"}
+        - {key: tls_privkey, name: privkey.pem, mode: "0600"}
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+      when: registry_cache_manage_unused_secrets
+
+    # ---- Phase 2 change 1: garbage-collect daily, in order ---------------
+    - name: The daily maintenance schedule
+      ansible.builtin.copy:
+        src: files/registry-cache/cron-registry-cache
+        dest: /etc/cron.d/registry-cache
+        owner: root
+        group: root
+        # cron refuses to read a file in /etc/cron.d that is group- or
+        # world-writable, and does so silently.
+        mode: "0644"
+
+    - name: The maintenance log, so the first run appends rather than creates
+      ansible.builtin.file:
+        path: /var/log/registry-maintenance.log
+        state: touch
+        owner: root
+        group: root
+        mode: "0640"
+        modification_time: preserve
+        access_time: preserve
+
+    # ---- Phase 2 change 3: make the VM visible to Prometheus -------------
+    # install_recommends: false is load-bearing, not tidiness. Measured
+    # 2026-09-02 with apt-get -s on this VM: WITH recommends "0 upgraded, 18
+    # newly installed"; without, "0 upgraded, 1 newly installed". The VM had
+    # 497 MB free.
+    #
+    # The exporter alone changes nothing — the scrape target is the other half,
+    # and it lives in
+    # stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl as a
+    # `registry-cache` job alongside the existing `devvm` and `proxmox-host`
+    # jobs. `NodeFilesystemFull` (avail/size * 100 < 5 for 15m, severity warning)
+    # carries no job filter, so the VM joins it as soon as it is scraped.
+    #
+    # update_cache is OFF on purpose, and it is the reason `--check` on this
+    # playbook is provably read-only. Ansible's apt module runs `apt-get update`
+    # even in check mode, and that writes to /var/lib/apt/lists on a VM that has
+    # been sitting at 0 bytes free. The current cache already resolves the package
+    # (`apt-get -s install --no-install-recommends prometheus-node-exporter` ->
+    # "0 upgraded, 1 newly installed", 1.7.0-1ubuntu0.3 from noble-updates), so
+    # there is nothing to gain and a full disk to lose. If the package ever stops
+    # resolving, run `apt-get update` by hand in the window, with free space.
+    - name: node_exporter, so the VM joins NodeFilesystemFull
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: present
+        install_recommends: false
+        update_cache: false
+
+    - name: node_exporter enabled and running
+      ansible.builtin.systemd_service:
+        name: prometheus-node-exporter
+        enabled: true
+        state: started
+      # Skipped under --check on purpose. In check mode the apt task above has
+      # not actually installed the package, so systemd does not know the unit and
+      # the module cannot pretend it does — it fails with "Could not find the
+      # requested service prometheus-node-exporter: host". That is an artefact of
+      # the two tasks' ordering in a dry run, not a real problem, and skipping it
+      # keeps `--check` readable instead of ending on a red herring.
+      when: not ansible_check_mode
+
+    # ---- optional: reload compose ----------------------------------------
+    # Off by default. This re-creates any container whose config changed, and the
+    # whole cluster's image mirror goes with it for the duration.
+    - name: Reload the compose stack
+      ansible.builtin.command:
+        argv: [docker, compose, -f, "{{ registry_dir }}/docker-compose.yml", up, -d]
+      args:
+        chdir: "{{ registry_dir }}"
+      register: registry_compose
+      changed_when: registry_compose.rc == 0
+      when: registry_cache_apply_compose | bool
+
+    # ---- what the operator still has to do -------------------------------
+    - name: What is not done yet
+      ansible.builtin.debug:
+        msg:
+          - "Config written. Containers NOT restarted unless -e registry_cache_apply_compose=true."
+          - >-
+            nginx.conf and docker-compose.yml only take effect on a container
+            re-create, so /healthz still proxies the old storage-free /v2/ until
+            then.
+          - >-
+            Verify with a REAL content request, never /v2/ or /healthz's HTTP code
+            alone, and repeat it over several minutes — this disk oscillates around
+            zero and the same probe returned 500 then 200 within 35 minutes on
+            2026-09-02:
+            curl -s -o /dev/null -w '%{http_code}\n' -H 'Accept: application/vnd.oci.image.index.v1+json'
+            http://10.0.20.10:5000/v2/library/alpine/manifests/latest
+          - "Free space floor: ssh wizard@10.0.20.10 'df -B1 /'  — expect tens of GB, stable across a day."
+          - "Prometheus: the registry-cache scrape job in prometheus_chart_values.tpl must be deployed too."
+          - "Pruning the ~20 GB is a human step, BY EXPLICIT LIST. Never `docker image prune -a` here."

@@ -3,11 +3,13 @@
 
 WHY THIS EXISTS
 ---------------
-`modules/create-template-vm/k8s-node-post-join-tune.sh` applies the homelab's
-kubelet settings exactly once, as a cloud-init runcmd right after `kubeadm
-join`. Nothing reconciles them afterwards, and `kubeadm upgrade node` rewrites
+`playbooks/k8s-node-tuning.yml` declares the homelab's kubelet settings, and it
+is the only thing that does. `kubeadm upgrade node` rewrites
 `/var/lib/kubelet/config.yaml` from the cluster-wide `kube-system/kubelet-config`
-ConfigMap — which does not contain them.
+ConfigMap, which does not contain them, so an upgrade erases the tune and the
+playbook has to be re-run. Until 2026-09-02 the settings came from
+`modules/create-template-vm/k8s-node-post-join-tune.sh`, a one-shot cloud-init
+runcmd that nothing reconciled at all; the playbook supersedes it.
 
 On 2026-07-26/27 the v1.35.7 upgrade did exactly that on all five nodes and
 removed the whole tune. Nothing alerted. The first visible symptom arrived
@@ -25,9 +27,9 @@ USAGE
 
 Exit codes: 0 = every node fully tuned · 1 = drift found · 2 = could not check.
 
-Re-applying the tune to a running node is a separate, deliberate action: it
-changes memory reservations and eviction thresholds, so it can move pods. See
-`modules/create-template-vm/k8s-node-post-join-tune.sh` for the source of truth.
+The playbook writes the config and does NOT restart kubelet, so a node reads as
+DRIFTED here between the apply and the node's next reboot. That is expected, and
+it is exactly why this script reads `/configz` rather than the file.
 """
 
 import json
@@ -35,18 +37,34 @@ import subprocess
 import sys
 
 # Each entry: key -> a predicate over the loaded KubeletConfiguration.
-# Mirrors k8s-node-post-join-tune.sh. Keep the two in step.
+# Mirrors what playbooks/k8s-node-tuning.yml declares. Keep the two in step —
+# checking for a key the playbook does not declare produces a permanent DRIFTED,
+# and dropping one it does declare hides a real regression.
 EXPECTED = {
     "allowedUnsafeSysctls": lambda c: "net.ipv4.ip_forward" in (c.get("allowedUnsafeSysctls") or []),
     "shutdownGracePeriodByPodPriority": lambda c: bool(c.get("shutdownGracePeriodByPodPriority")),
-    "systemReserved": lambda c: bool(c.get("systemReserved")),
-    "kubeReserved": lambda c: bool(c.get("kubeReserved")),
-    "evictionHard": lambda c: bool(c.get("evictionHard", {}).get("memory.available")),
-    "evictionSoft": lambda c: bool(c.get("evictionSoft", {}).get("memory.available")),
-    "containerLogMaxSize": lambda c: c.get("containerLogMaxSize") not in (None, ""),
-    "maxParallelImagePulls": lambda c: bool(c.get("maxParallelImagePulls")),
     "memorySwap": lambda c: (c.get("memorySwap") or {}).get("swapBehavior") == "LimitedSwap",
+    # true on every node today; asserted so a future change away from it is visible.
+    "serializeImagePulls": lambda c: c.get("serializeImagePulls") is True,
+    # "0s" disables age-based image collection, which is the state that let 130
+    # images / 56.8567 GiB go in one threshold-triggered pass on k8s-node1.
+    "imageMaximumGCAge": lambda c: c.get("imageMaximumGCAge") not in (None, "", "0s"),
 }
+
+# NOT checked, deliberately, because the playbook does not declare them:
+#   systemReserved / kubeReserved / evictionSoft  -> bead code-eu6l. They carve
+#     ~1,424 MiB from every node's allocatable and node2 has ~1,455 MiB of
+#     schedulable headroom, so they need their own headroom audit. Re-add these
+#     three rows when that bead lands.
+#   maxParallelImagePulls -> retired. 28-29 MB/s is an aggregate ceiling that
+#     containerd's own 5 concurrent streams already reach, so parallel pulls buy
+#     under 1.5x; the playbook pins serializeImagePulls: true instead.
+#   evictionHard -> the old row here tested only `bool(evictionHard["memory.available"])`,
+#     which the kubelet DEFAULT of 100Mi satisfies. It therefore reported PASS on
+#     all six nodes while the script's 500Mi/15%/20% values were in fact erased.
+#     Removed rather than left as a false pass; the playbook does not set it.
+#   containerLogMaxSize -> live 10Mi is both the old script's value and the
+#     kubelet default, so the row could never fail.
 
 
 def run(args):
@@ -102,11 +120,14 @@ def main():
         if unreachable:
             print("%d node(s) could not be checked: %s" % (len(unreachable), ", ".join(unreachable)))
         if drifted:
-            print("%d node(s) lost part of the post-join tune." % len(drifted))
-            print("Source of truth: modules/create-template-vm/k8s-node-post-join-tune.sh")
-            print("Re-applying moves memory reservations, so treat it as a deliberate change.")
+            print("%d node(s) are missing part of the declared kubelet tune." % len(drifted))
+            print("Source of truth: playbooks/k8s-node-tuning.yml")
+            print("Re-apply with:  ansible-playbook -i playbooks/inventory.ini \\")
+            print("                  playbooks/k8s-node-tuning.yml --tags kubelet --limit <node-ip>")
+            print("A node reads DRIFTED between that apply and its next reboot; the playbook")
+            print("writes the file and does not restart kubelet.")
         elif not unreachable:
-            print("All nodes carry the full post-join tune.")
+            print("All nodes carry the full declared kubelet tune.")
 
     if unreachable:
         return 2
