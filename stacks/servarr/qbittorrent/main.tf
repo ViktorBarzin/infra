@@ -710,16 +710,10 @@ resource "kubernetes_service" "qbittorrent_exporter" {
   }
 }
 
-# Adoption of the two resources above. Both objects already exist in the
-# cluster, so a plain apply would fail on "already exists"; these hand the
-# existing objects to Terraform instead of creating them. Once CI has applied
-# once, the blocks are a no-op and can be removed on any later pass.
-import {
-  to = kubernetes_deployment.qbittorrent_exporter
-  id = "servarr/qbittorrent-exporter"
-}
-
-import {
-  to = kubernetes_service.qbittorrent_exporter
-  id = "servarr/qbittorrent-exporter"
-}
+# Adopted by delete-and-recreate rather than an import block. import blocks are
+# only honoured in the ROOT module and these resources live in a child one, so
+# the pair declared here was silently ignored and apply #1400 fell through to
+# creating them: 'deployments.apps "qbittorrent-exporter" already exists'. The
+# exporter carries no volumes and nothing was scraping it, so removing the
+# hand-made objects and letting Terraform create them costs nothing and leaves
+# a cleaner result than a root-module import of a resource declared here.
