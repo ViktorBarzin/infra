@@ -7,21 +7,71 @@
 > which restores kured generally, but node1's reboot gate stays permanently
 > closed by the GPU mitigation's kernel holds.
 
-**Status:** prepared and verified, not executed
+**Status:** EXECUTED 2026-09-02/03 — all six nodes on containerd 2.3.4
 **Prepared:** 2026-09-02
 **Owner:** Viktor Barzin
 **Plan:** `docs/plans/2026-09-02-node1-large-image-handling.md` (Phase 4), bead `code-g0va`
 **Scope:** all six k8s nodes plus the registry cache VM (10.0.20.10, VMID 220)
 
 This is a human-driven maintenance runbook. It stops containerd on one node at a
-time, and on `k8s-master` that takes the cluster API down for the window. Nothing
-in it belongs in CI, in a playbook, or in an agent's hands.
+time.
 
-Every command below was checked without being run: package indexes were read from
+Every command below was checked before being run: package indexes were read from
 `download.docker.com` directly, the target `.deb` was downloaded and its binary
 executed out of a scratch directory on the devvm, and node state was read over
 read-only SSH. What that verification showed, and what it corrected in the plan,
-is recorded inline. Nothing was installed, restarted, drained, or pruned.
+is recorded inline.
+
+## 0. What execution changed about this runbook
+
+Two of the assumptions above are now measured, and both were wrong in the same
+direction: the procedure is far less disruptive than written.
+
+**0.1 A drain is not required, and stopping containerd does not stop containers.**
+`containerd.service` ships `KillMode=process`, verified on all six nodes. systemd
+stops only the daemon and leaves every `containerd-shim-runc-v2` child running;
+containerd 2.3.4 then reattaches to them on start. Measured across the major hop:
+
+| node | from | shim PIDs before / after | identical PIDs surviving | running containers before / after |
+|---|---|---|---|---|
+| k8s-node2 | 1.7.27 | 85 / 85 | 83 | 104 / 104 |
+| k8s-node3 | 1.7.27 | 65 / 65 | **65** | 89 / 89 |
+| k8s-master | 2.2.2 | 26 / 26 | 25 | 30 / 30 |
+
+The oldest surviving shim on node2 had started **2026-08-30 09:00:55**, four days
+before the upgrade. So containers genuinely carried through 1.7 → 2.3 untouched,
+and this extends the same finding already recorded for a plain 1.7.x restart
+(memory #10866, node1, 2026-08-12) to a major version change and a package swap.
+
+Why it matters beyond convenience: **node2 and node3 cannot be drained at all.**
+Only the four untainted nodes can absorb an eviction (master and node1 are
+`NoSchedule`), and the arithmetic does not close — draining node2 needs 26.3 GiB
+of evictable requests moved into 14.2 GiB, node3 needs 27.9 into 15.9. That is
+bead `code-j3tx`. Read as "drain required", this runbook was unexecutable on
+exactly the two nodes furthest below the compatibility floor. In place, capacity
+is irrelevant, because nothing relocates.
+
+Section 5.2 (cordon and drain) is therefore **optional**, and worth skipping on a
+capacity-bound node. node1 was drained because it was done first, before this was
+measured; nodes 2, 3 and master were not.
+
+**0.2 The control-plane API does not go down.** The same mechanism: master's
+etcd and kube-apiserver static-pod shims survive, so `pgrep etcd` and `pgrep
+kube-apiserver` both answered 1 with containerd stopped, and `kubectl` kept
+serving throughout. The header used to promise an API outage for master's window;
+it did not happen. Section 5.8's `crictl`-only advice for master is still the
+right fallback, but it was not needed.
+
+This also makes the failure mode favourable rather than frightening: if 2.3.4
+refuses to start, the running control plane is still up while you read the
+journal, because its containers were never the thing being restarted.
+
+**0.3 What the drain on node1 did cost.** Draining is not free here even where it
+fits. The earlier node4/node5 pass drained two nodes whose evictable load does
+not fit the remaining pool either, and that produced the 2026-09-02 evening
+incident: redis evicted out from under trading-bot, `learning` (which serves
+pages.viktorbarzin.me) in CrashLoopBackOff, all three traefik replicas OOMKilled,
+roughly 20 services degraded for about 25 minutes. Prefer 0.1.
 
 ---
 
@@ -613,7 +663,26 @@ A snapshot of a running VM leaves a lock. Delete the snapshot and clear the lock
 as soon as the node is verified (5.9). A stale lock blocks Proxmox CSI attaches
 for other workloads, so this is not tidiness.
 
-### 5.2 Cordon and drain
+### 5.2 Cordon and drain — OPTIONAL, see 0.1
+
+Skip this on any node whose evictable load does not fit the untainted pool
+(node2 and node3 today, per `code-j3tx`), and prefer skipping it generally: the
+shims survive the runtime restart either way, so the drain buys nothing and costs
+an eviction storm. Check the arithmetic before draining rather than after:
+
+```bash
+# which nodes can actually receive an eviction (no NoSchedule taint)
+kubectl get nodes -o json \
+  | jq -r '.items[] | select([.spec.taints // [] | .[].effect] | index("NoSchedule") | not)
+           | .metadata.name'
+```
+
+Then compare the target's evictable requests (its pods excluding DaemonSets,
+which `--ignore-daemonsets` never evicts) against the sum of free requests on the
+rest of that list. On 2026-09-02 that was 2.4 + 0.7 + 5.0 + 8.6 = 16.6 GiB total,
+against 26.3 GiB evictable on node2 and 27.9 GiB on node3.
+
+If you do drain:
 
 ```bash
 kubectl cordon NODE
