@@ -2885,7 +2885,13 @@ serverFiles:
             annotations:
               summary: "New Tailscale client registered ({{ $value | printf \"%.2f\" }} reauth/s)"
           - alert: CrowdSecDown
-            expr: up{job="crowdsec"} == 0
+            # max(), not a bare up==0, since the crowdsec job went from one
+            # service target to per-pod targets on 2026-09-02 (see the job in
+            # extraScrapeConfigs). LAPI is only down when every replica is, and
+            # a single pod restart should not page — two of the three were 44
+            # minutes old when this changed. A partial outage still shows in
+            # the up series and on the dashboard.
+            expr: max(up{job="crowdsec"}) == 0
             for: 10m
             labels:
               severity: warning
@@ -5132,9 +5138,36 @@ extraScrapeConfigs: |
       target_label: pod
 
   - job_name: 'crowdsec'
-    static_configs:
-        - targets:
-          - "crowdsec-service.crowdsec.svc.cluster.local:6060"
+    # Pod discovery, not the crowdsec-service ClusterIP (changed 2026-09-02).
+    # LAPI runs 3 replicas and each pod counts only the bouncers that talked to
+    # THAT pod, so a single target on the service VIP sampled a random replica
+    # per scrape. Measured 2026-09-02: all three Traefik bouncers were pinned to
+    # pod ...-6h69x (the plugin holds a keep-alive connection, so it sticks to
+    # one backend), which had cs_lapi_bouncer_requests_total for every
+    # traefik@<ip>; the other two pods had no traefik series at all. Two scrapes
+    # in three therefore saw nothing from the L7 bouncer and
+    # CrowdSecL7BouncerNotPolling fired, then resolved on the next scrape that
+    # happened to land on 6h69x — 3 fired / 3 resolved in 24h while cscli showed
+    # every bouncer pulling on schedule. The firewall bouncers hid the problem
+    # because they long-poll /v1/decisions/stream and so appear on all three.
+    # Scraping each pod gives every counter its own monotonic series, which is
+    # what sum(rate(...)) needs. This supersedes the 2026-08-31 selector
+    # widening documented on CrowdSecL7BouncerNotPolling; that fixed a different
+    # cause (per-pod bouncer registration names) and left this one in place.
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - crowdsec
+    relabel_configs:
+    - action: keep
+      regex: crowdsec;lapi
+      source_labels: [__meta_kubernetes_pod_label_k8s_app, __meta_kubernetes_pod_label_type]
+    - source_labels: [__meta_kubernetes_pod_ip]
+      target_label: __address__
+      replacement: '$1:6060'
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
     metrics_path: '/metrics'
   - job_name: 'snmp-idrac'
     # 30s (was 1m) so the HA dashboard iDRAC metrics (temps / fan RPM / power /
