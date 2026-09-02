@@ -14,7 +14,7 @@ resource "authentik_group" "proxy_users" {
 # AND the Google/GitHub/Facebook buttons (its identification stage lists those
 # sources). NOTE (2026-07-25): the GOOGLE path no longer completes through this
 # flow — an invitation can't survive the OAuth round-trip, so the Google source's
-# enrollment_flow is now the dedicated `google-proxy-enrollment` with a
+# enrollment_flow is now the dedicated `social-signup` flow with a
 # session-cache invite bridge (see stacks/authentik/google-social-signup.tf).
 # GitHub/Facebook still use this flow and share the broken-invite limitation.
 # Scoping is done per-invitation, WITHOUT touching that shared flow:
