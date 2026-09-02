@@ -84,6 +84,22 @@ slow arena drift, not an instantaneous spike, and the alternative (HAMi) carries
 disproportionate risk for this hardware.
 
 ## Consequences
+- **A first-party service putting onnxruntime on CUDA must pass
+  `{"arena_extend_strategy": "kSameAsRequested"}` in the provider options**, not
+  the bare `providers=[provider]` string. The CUDA BFC arena defaults to
+  `kNextPowerOfTwo`, so it doubles whenever inference asks for more than it
+  holds and never returns the memory. On 2026-09-02 that put claude-memory at
+  7,314 MiB against a 5,000 MiB seat — a step of exactly +4,096 followed by a
+  flat line, which is the signature: a power-of-two step is the arena, and a
+  flat line is not a leak. Pinning `kSameAsRequested` took it to 2,466 MiB.
+  Both upstream ONNX tenants already do this — immich at
+  `/usr/src/immich_ml/sessions/ort.py:130`, frigate at
+  `/opt/frigate/frigate/util/model.py:310` — so the gap was only ever in our own
+  code. Deliberately no `gpu_mem_limit`: a hard cap turns an over-large batch
+  into an inference failure, which is worse than a large arena, and the seat
+  plus the watchdog are what bound a tenant. `GPUTenantOverSeatSustained`
+  (infra#85) is the guardrail that now catches the next one.
+
 
 - **The 2026-06-02 class is bounded** without touching the pinned driver, the GPU
   operator, or time-slicing. immich-ml can no longer silently grow into
