@@ -579,7 +579,13 @@ module "ingress" {
 # retained PV needs spec.claimRef cleared so it returns to Available; after
 # that the five bound in 21 seconds and the three deployments came back with
 # their data intact (/downloads 349M, /audiobooks 10G). Worth knowing before
-# the other 27 mounted nfs-truenas claims are migrated — see bead code-yizt. Landing it took three pushes, which is worth recording
+# the other 27 mounted nfs-truenas claims are migrated — see bead code-yizt.
+#
+# Sequencing that actually lands it, after four cancelled pipelines: scale the
+# consumers to 0 and clear every PV's claimRef BEFORE pushing. The claims then
+# bind the moment Terraform creates them instead of the apply sitting on
+# pvc-protection finalizers, which cuts the apply from minutes to about one and
+# stops it losing the race against the next unrelated push. Landing it took three pushes, which is worth recording
 # because the failure mode is invisible: infra CI applies only the stacks a
 # push changed, and Woodpecker cancels a running pipeline when the next push
 # arrives. Pipeline #1386 (the adoption) and #1388 (the first retry) were both
