@@ -558,6 +558,63 @@
         validate: containerd -c %s config dump
       tags: containerd
 
+    # The same key again, in the conf.d drop-ins, because on k8s-node1 the root
+    # config's value does not reach the runtime. `imports` merge is last-wins per
+    # key, so a drop-in that carries the key overrides the root file regardless of
+    # which value is "more specific". Measured on node1, 2026-09-02:
+    #
+    #   /etc/containerd/config.toml      discard_unpacked_layers = true
+    #   /etc/containerd/conf.d/99-nvidia.toml
+    #                                    discard_unpacked_layers = false
+    #   containerd config dump           discard_unpacked_layers = false   <- wins
+    #
+    # So the task above reported `ok` on node1 while the setting stayed off. node1
+    # is the only node with a drop-in at all, and 99-nvidia.toml is written by the
+    # nvidia container toolkit as a whole-config snapshot taken from `containerd
+    # config dump` rather than as a minimal patch, which is how a default for an
+    # unrelated key ended up pinned there. Its mtime is 2026-07-18, so the toolkit
+    # regenerates rarely; when it next does, it snapshots the then-current dump,
+    # and this edit is what makes that dump read `true`.
+    #
+    # No `validate` here on purpose: a drop-in is a fragment, so `containerd -c
+    # <fragment> config dump` fails on a file that is perfectly valid as an
+    # import. The merged result is validated by the assert that follows.
+    - name: Find containerd conf.d drop-ins
+      ansible.builtin.find:
+        paths: /etc/containerd/conf.d
+        patterns: "*.toml"
+        file_type: file
+      register: containerd_dropins
+      changed_when: false
+      tags: containerd
+
+    - name: The drop-ins do not override the layer-retention setting back off
+      ansible.builtin.replace:
+        path: "{{ item.path }}"
+        regexp: '^(\s*)discard_unpacked_layers\s*=\s*false\s*$'
+        replace: '\1discard_unpacked_layers = true'
+        backup: true
+      loop: "{{ containerd_dropins.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      tags: containerd
+
+    # What the runtime will actually read, root plus every import merged. This is
+    # the check the two tasks above cannot make individually.
+    - name: The merged containerd config parses and keeps the setting on
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          containerd -c {{ containerd_config_path }} config dump \
+            | grep -E '^\s*discard_unpacked_layers' | head -1
+        executable: /bin/bash
+      register: containerd_merged
+      changed_when: false
+      failed_when: >-
+        containerd_merged.rc != 0
+        or 'true' not in containerd_merged.stdout
+      tags: containerd
+
     # ---- pigz -------------------------------------------------------------
     # containerd shells out to `unpigz` when it finds one on PATH and falls back
     # to Go's compress/gzip otherwise. Measured on a real 789.685 MB layer, one
