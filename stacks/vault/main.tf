@@ -1013,12 +1013,25 @@ resource "vault_database_secret_backend_static_role" "pg_affine" {
   rotation_period = 604800
 }
 
+# Pinned to a SCHEDULE rather than a period, so the moment of rotation is known
+# (infra#45). woodpecker-server reads its datasource once at boot and exits on a
+# store-setup failure, so every rotation costs an outage bounded by how long the
+# pod holds the dead password. With rotation_period the tick drifted, and the
+# only way to shorten the outage was to poll Vault harder all week. With a
+# schedule, stacks/woodpecker's force-sync CronJob can concentrate that polling
+# into the one hour it matters.
+#
+# Measured before the change, four consecutive ticks in Loki: Fri 09:17:07 (4m41s),
+# 09:16:00 (7m12s), 09:15:57 (7m12s), 09:15:57 (4m0s) — all inside the 09:00 hour,
+# which is what the cron below encodes. rotation_window bounds how long Vault will
+# keep trying if the scheduled attempt fails.
 resource "vault_database_secret_backend_static_role" "pg_woodpecker" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-woodpecker"
-  username        = "woodpecker"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-woodpecker"
+  username          = "woodpecker"
+  rotation_schedule = "0 9 * * FRI"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_claude_memory" {
