@@ -560,6 +560,11 @@ module "ingress" {
 
 # qBittorrent Prometheus exporter.
 #
+# Applied 2026-09-02. The adoption commit's own pipeline (#1386) was cancelled
+# by a later push before it ran, and infra CI applies only the stacks a push
+# changed, so the declaration sat committed-but-unapplied; this touches the
+# stack again so the changed-stack detection picks servarr up.
+#
 # Adopted into Terraform on 2026-09-02. It was created by hand on 2026-03-25
 # and had been running ever since in no state file and no commit, which is what
 # StrayWorkloadDetected flagged; the stray-workload job names it as the case it
