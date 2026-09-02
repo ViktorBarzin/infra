@@ -630,7 +630,7 @@ serverFiles:
           insecure_skip_verify: true
         metric_relabel_configs:
           - source_labels: [__name__]
-            regex: '(storage_operation_duration_seconds|csi_operations_seconds|volume_operation_total_seconds|kubelet_image_pull_duration_seconds|kubelet_http_requests_duration_seconds|rest_client_rate_limiter_duration_seconds|rest_client_request_duration_seconds|rest_client_request_size_bytes|rest_client_response_size_bytes|kubelet_pod_worker_duration_seconds|kubelet_volume_metric_collection_duration_seconds|kubelet_cgroup_manager_duration_seconds)_bucket'
+            regex: '(storage_operation_duration_seconds|csi_operations_seconds|volume_operation_total_seconds|kubelet_http_requests_duration_seconds|rest_client_rate_limiter_duration_seconds|rest_client_request_duration_seconds|rest_client_request_size_bytes|rest_client_response_size_bytes|kubelet_pod_worker_duration_seconds|kubelet_volume_metric_collection_duration_seconds|kubelet_cgroup_manager_duration_seconds)_bucket'
             action: drop
           - source_labels: [__name__]
             regex: 'kubernetes_feature_enabled|kubelet_container_log_filesystem_used_bytes'
@@ -641,8 +641,29 @@ serverFiles:
           # any PVC missing even one. Without inodes_free + inodes the
           # autoresizer's GetMetrics returns empty for every PVC and the
           # reconcile is a no-op cluster-wide.
+          #
+          # kubelet_image_pull_duration_seconds_(bucket|sum|count) added
+          # 2026-09-02 (Phase 0 of docs/plans/2026-09-02-node1-large-image-handling.md).
+          # It was excluded twice: named in the _bucket drop rule above AND
+          # absent from this list, so sum and count went too and no percentile
+          # or per-size-class breakdown of image pulls existed. The plan's own
+          # anchor number (node1 spending 2,898 s on 1-5 GB pulls over 36.9
+          # days) had to be read off the live kubelet by hand because
+          # Prometheus held none of it.
+          #
+          # Cardinality, measured 2026-09-02 rather than estimated: the metric
+          # exposes 21 series per image_size_in_bytes class (19 le buckets +
+          # sum + count). Live today that is 105 series on each of the five
+          # workers (5 classes) and 21 on k8s-master (1 class) = 546 series,
+          # against a 98,926-series head, so +0.55%. The label is
+          # image_size_in_bytes with bucketed STRING values ("1GB-5GB",
+          # "100MB-500MB"), not image_size_in_gb, and kubelet defines 7 classes
+          # in total, so the ceiling as nodes see bigger images is 7 x 21 x 6 =
+          # 882 series. Anchored, not open-ended — this stays a whitelist.
+          # Regex note: `keep` is fully anchored, so the bare metric name would
+          # NOT match the _bucket/_sum/_count children; the group is required.
           - source_labels: [__name__]
-            regex: 'kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_used_bytes|kubelet_volume_stats_available_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free|kubelet_running_containers|kubelet_runtime_operations_errors_total|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|go_memstats_alloc_bytes|up'
+            regex: 'kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_used_bytes|kubelet_volume_stats_available_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free|kubelet_running_containers|kubelet_runtime_operations_errors_total|kubelet_image_pull_duration_seconds_(bucket|sum|count)|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|go_memstats_alloc_bytes|up'
             action: keep
       - job_name: kubernetes-nodes-cadvisor
         scheme: https
