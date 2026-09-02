@@ -127,6 +127,14 @@ resource "kubernetes_job" "db_init" {
               PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='claude_memory'" | grep -q 1 || \
                 PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -c "CREATE DATABASE claude_memory OWNER claude_memory"
               PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE claude_memory TO claude_memory"
+              # pg_prewarm, for warming the HNSW index by hand (infra#86). The
+              # autoprewarm background worker that keeps it warm across restarts
+              # needs only shared_preload_libraries (set on the CNPG cluster in
+              # stacks/dbaas) and not this extension — the extension is what
+              # provides the pg_prewarm() function a person or a script calls,
+              # e.g. after a restore, or to re-warm pages added since the last
+              # buffer dump. Needs superuser, hence -U root.
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d claude_memory -c "CREATE EXTENSION IF NOT EXISTS pg_prewarm"
               echo "Database init complete"
             EOT
           ]
