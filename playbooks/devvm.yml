@@ -59,6 +59,30 @@
     devvm_user_memory_max: "{{ [24, (ansible_memtotal_mb / 1024 * 0.9) | round | int] | min }}G"
     devvm_pane_memory_max: "{{ [6, (ansible_memtotal_mb / 1024 * 0.2) | round | int] | min }}G"
     devvm_docker_memory_max: "{{ [8, (ansible_memtotal_mb / 1024 * 0.3) | round | int] | min }}G"
+    # Per-user swap, BOUNDED rather than off (2026-09-02). It was 0 from
+    # 2026-06-22, when a user runaway swap-thrashed the throttled virtual disk
+    # into an I/O storm and the box had to be hard-killed. Unlimited is what did
+    # that: the storm ran swap to 15 GB. A ceiling of 4G per user lets a session
+    # page out instead of being killed — which is the point, since tmpfs pages
+    # from /tmp are charged to a pane and are otherwise unswappable — while
+    # capping what one user can push at a disk that is seek-bound and shared
+    # (bead code-oflt is still open). The 6G pane cap remains the containment.
+    devvm_user_swap_max: "{{ [4, (ansible_memtotal_mb / 1024 * 0.13) | round | int] | min }}G"
+    # Swap sized from measurement, not from a RAM ratio: system.slice peaked at
+    # 8.4 GiB over the 30 days to 2026-09-02 (p50 2.7, p99 7.0) and two users at
+    # 4G each add 8, so 24 GiB total leaves ~7.6 GiB spare. The old 14 GiB never
+    # went past 60% because the user slices could not reach it at all.
+    #
+    # TWO FILES, ADDITIVE, rather than one grown in place. A swapfile cannot be
+    # extended — the header records its size and the kernel holds the extent map
+    # — so growing means a new file, and retiring the old one means swapoff.
+    # swapoff does NOT hand pages to another device: try_to_unuse() reads every
+    # page back into RAM. Measured 2026-09-02 that would be 5.2 GiB arriving into
+    # 7.4 GiB of available RAM beside 30 live Claude sessions, for a cosmetic
+    # gain. Same call, same reason, as the 2026-06-10 growth.
+    devvm_swap_areas:
+      - { path: /swapfile, size_gb: 14 }
+      - { path: /swapfile2, size_gb: 10 }
     # The one account this playbook owns. Everyone else comes from the roster.
     devvm_admin_user: wizard
     devvm_admin_ssh_key: ""
@@ -425,6 +449,70 @@
         enabled: true
         state: started
         daemon_reload: true
+
+    # ---- 7b) swap ------------------------------------------------------------
+    # Swap was hand-managed until 2026-09-02: nothing in this repo declared the
+    # files or the fstab lines, so a rebuilt box came up swapless and the sizes
+    # lived only in one machine's memory and one person's notes.
+    #
+    # Existing areas are left alone. Each task is guarded on the file's actual
+    # size, so a re-run is a no-op and no live swap area is ever touched.
+    # One task, not four, because a swap file is only usable once it has been
+    # allocated AND permissioned AND formatted: a half-made one that survived a
+    # failure between steps would be picked up by fstab at the next boot. The
+    # `creates` guard makes it idempotent, and it means --check skips cleanly
+    # rather than a later step failing on a file check mode did not create.
+    #
+    # fallocate, never dd: it is instant on ext4 and writes no data, so this
+    # costs nothing on a spindle that is already this box's bottleneck.
+    - name: Create any missing swap file
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          fallocate -l {{ item.size_gb }}G {{ item.path }}
+          chown root:root {{ item.path }}
+          chmod 0600 {{ item.path }}
+          mkswap {{ item.path }}
+        creates: "{{ item.path }}"
+      loop: "{{ devvm_swap_areas }}"
+      loop_control:
+        label: "{{ item.path }}"
+      # set -eu, not -euo pipefail: ansible.builtin.shell runs /bin/sh, which is
+      # dash on Ubuntu and has no pipefail, and dash exits 2 on the `set` line
+      # before reaching fallocate. There are no pipes here to protect anyway.
+      #
+      # No changed_when override. The shell module already reports changed when
+      # it runs and skipped when `creates` is satisfied, and an unconditional
+      # changed_when reports a change even on the skip — which in --check made
+      # this look as though it would re-run mkswap over the LIVE swapfile.
+      # Verified against the box: "Did not run command since '/swapfile' exists".
+
+    - name: Declare the swap files in fstab
+      loop: "{{ devvm_swap_areas }}"
+      loop_control:
+        label: "{{ item.path }}"
+      ansible.posix.mount:
+        src: "{{ item.path }}"
+        path: none
+        fstype: swap
+        opts: sw
+        state: present
+
+    - name: Read the active swap areas
+      ansible.builtin.command:
+        cmd: swapon --noheadings --show=NAME
+      register: devvm_swap_active
+      changed_when: false
+      check_mode: false
+
+    - name: Activate any declared area that is not carrying yet
+      when: item.path not in devvm_swap_active.stdout
+      loop: "{{ devvm_swap_areas }}"
+      loop_control:
+        label: "{{ item.path }}"
+      ansible.builtin.command:
+        cmd: "swapon {{ item.path }}"
+      changed_when: true
 
     # ---- 8) resource containment (setup-devvm.sh section 10) ---------------
     # Added after 2026-06-22, when one user's runaway swap-thrashed the throttled
