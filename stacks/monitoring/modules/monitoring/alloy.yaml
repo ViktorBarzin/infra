@@ -219,9 +219,22 @@ alloy:
       // Forward warning+ journal entries (priority 0-4: emerg, alert, crit, err, warning)
       // Also forwards kernel transport entries regardless of priority for OOM/panic detection.
       loki.process "journal" {
+        // job is set HERE, not only via `labels` on the loki.source.journal
+        // components, because alloy v1.19.2 stopped honouring that argument and
+        // labelled these streams with the component id instead
+        // (job="loki.source.journal.containerd_journal"). That silently killed
+        // job="node-journal" and job="node-runtime-journal" at 15:23 UTC on
+        // 2026-09-02 and blinded NodeImageGCThresholdCrossed,
+        // NodeImageCacheMassEviction and NodeEvictionManagerReclaiming;
+        // RuntimeJournalSilent is the dead-man switch that caught it.
+        // stage.static_labels is applied by the process pipeline regardless of
+        // what the source component does with `labels`, so this survives the
+        // chart staying unpinned. The `labels` blocks upstream are left in
+        // place; they are correct and harmless on versions that honour them.
         stage.static_labels {
           values = {
             cluster = "default",
+            job     = "node-journal",
           }
         }
 
@@ -300,9 +313,11 @@ alloy:
       // No level filter here — that is the whole point of the job. Only the
       // cluster label is added, matching loki.process.journal.
       loki.process "runtime_journal" {
+        // Same reason as loki.process "journal" above.
         stage.static_labels {
           values = {
             cluster = "default",
+            job     = "node-runtime-journal",
           }
         }
 
