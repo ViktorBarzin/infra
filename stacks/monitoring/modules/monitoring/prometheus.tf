@@ -71,7 +71,11 @@ resource "helm_release" "prometheus" {
   # Re-enable temporarily only when a StatefulSet volumeClaimTemplate change needs --force.
   force_update = false
 
-  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, haos_api_token = var.haos_api_token, authentik_walloff_targets = local.authentik_walloff_targets })]
+  values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, authentik_walloff_targets = local.authentik_walloff_targets })]
+
+  # The haos scrape job now reads its credential from this Secret's mount, so
+  # the Secret has to exist before the pod is rescheduled onto the new values.
+  depends_on = [kubernetes_secret.haos_scrape_token]
 }
 
 # Keel opt-out for this Deployment lives ENTIRELY in the annotation — see the
@@ -161,4 +165,26 @@ module "prometheus-otlp-ingress" {
     "gethomepage.dev/description" = "Prometheus OTLP metric ingest for Claude Code telemetry (LAN only)"
     "gethomepage.dev/icon"        = "prometheus.png"
   }
+}
+
+# The Home Assistant scrape credential, kept OUT of the rendered Prometheus
+# ConfigMap.
+#
+# It used to be interpolated straight into prometheus_chart_values.tpl as
+# `bearer_token: "<jwt>"`, which lands verbatim in configmap
+# monitoring/prometheus-server. ClusterRole oidc-power-user-readonly grants
+# get/list/watch on configmaps cluster-wide and has no `secrets` rule at all,
+# so every power-user could read Viktor's full-access HA token — walking
+# straight through the least-privilege carve-out stacks/openclaw/ha_tokens.tf
+# exists to provide. Prometheus reads it from this Secret via
+# `bearer_token_file` instead (infra#80, 2026-09-02).
+resource "kubernetes_secret" "haos_scrape_token" {
+  metadata {
+    name      = "haos-scrape-token"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+  data = {
+    token = var.haos_api_token
+  }
+  type = "Opaque"
 }
