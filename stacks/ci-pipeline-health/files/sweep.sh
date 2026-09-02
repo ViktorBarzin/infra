@@ -81,9 +81,83 @@ else
   echo "minutes check unavailable" >>"$NOTES"
 fi
 
-# v1 scope (deliberate, not silent): Forgejo→GitHub mirror-gap detection (a
-# Forgejo push that produced no GHA run) is NOT implemented yet — it needs the
-# per-repo mirror inventory that lands with the offinfra-onboard rollout (#13+).
+# --- Forgejo->GitHub mirror drift (infra#43) ---
+#
+# ADR-0003 makes Forgejo canonical and GitHub a one-way push-mirror, for
+# off-site backup. That only holds if the mirrors are actually running, and
+# until now nothing checked: mirrors were verified by hand at rollout and never
+# again.
+#
+# Three distinct faults, in descending severity:
+#
+#  1. EMPTY-CANONICAL. The Forgejo repo has no branches but a mirror exists. The
+#     mirror then tries to DELETE the target's default branch on every sync.
+#     Found on audiblez-web 2026-09-02 while enabling one by hand; only GitHub
+#     refusing to delete a default branch prevented the loss. This is the
+#     inverse of the usual drift and is the one worth waking someone for.
+#  2. MIRROR ERROR. push_mirrors reports a non-empty last_error, so the backup
+#     silently stopped.
+#  3. DRIFT. Both sides exist but their default-branch HEADs differ. Note a
+#     mirror EXISTING does not mean the sides are in sync — if something
+#     committed straight to GitHub, GitHub is ahead until the next Forgejo push
+#     force-overwrites it.
+#
+# Repos with no mirror at all are reported unless they are a recorded exception.
+# GitHub-first repos need no entry here: they are archived on the Forgejo side,
+# and the loop skips archived repos.
+FORGEJO_API="https://forgejo.viktorbarzin.me/api/v1"
+FORGEJO_ONLY="hmrc-sync portal-assistant travel-agent"  # ADR-0003, infra#39: deliberately not mirrored
+
+if [ -n "${FORGEJO_TOKEN:-}" ]; then
+  mirror_checked=0
+  repos=$(curl -sf -H "Authorization: token $FORGEJO_TOKEN" \
+    "$FORGEJO_API/user/repos?limit=100" 2>/dev/null |
+    jq -r '.[] | select(.owner.login=="viktor" and .archived==false) | "\(.name)\t\(.default_branch)\t\(.empty)"')
+  for line in $(echo "$repos" | tr '\t' '|' | tr ' ' '_'); do
+    name=$(echo "$line" | cut -d'|' -f1)
+    branch=$(echo "$line" | cut -d'|' -f2)
+    is_empty=$(echo "$line" | cut -d'|' -f3)
+    [ -n "$name" ] || continue
+    mirror_checked=$((mirror_checked + 1))
+    mirrors=$(curl -sf -H "Authorization: token $FORGEJO_TOKEN" \
+      "$FORGEJO_API/repos/viktor/$name/push_mirrors" 2>/dev/null)
+    count=$(echo "$mirrors" | jq -r 'length' 2>/dev/null || echo 0)
+
+    if [ "$count" = "0" ]; then
+      case " $FORGEJO_ONLY " in
+        *" $name "*) : ;;  # recorded exception, no backup by decision
+        *) echo "$name has no push-mirror and is not a recorded Forgejo-only exception (ADR-0003) — it has no off-site backup" >>"$ISSUES" ;;
+      esac
+      continue
+    fi
+
+    if [ "$is_empty" = "true" ]; then
+      echo "$name is EMPTY on Forgejo but has a push-mirror — every sync attempts to DELETE the mirror target's default branch (ADR-0003)" >>"$ISSUES"
+      continue
+    fi
+
+    err=$(echo "$mirrors" | jq -r '.[0].last_error // ""')
+    if [ -n "$err" ]; then
+      echo "$name mirror is failing: $(echo "$err" | head -1 | cut -c1-140)" >>"$ISSUES"
+      continue
+    fi
+
+    # HEAD comparison. Strip scheme and any .git suffix — getting this wrong
+    # makes every repo read as drifted, which is how this check cries wolf.
+    ghrepo=$(echo "$mirrors" | jq -r '.[0].remote_address' |
+      sed -E 's#^(https|ssh)://##; s#^github\.com/##; s#\.git$##')
+    fj_head=$(curl -sf -H "Authorization: token $FORGEJO_TOKEN" \
+      "$FORGEJO_API/repos/viktor/$name/commits?limit=1&sha=$branch" 2>/dev/null | jq -r '.[0].sha // ""')
+    gh_head=$(curl -sf -H "Authorization: token $GITHUB_PAT" \
+      "$GH_API/repos/$ghrepo/commits/$branch" 2>/dev/null | jq -r '.sha // ""')
+    if [ -n "$fj_head" ] && [ -n "$gh_head" ] && [ "$fj_head" != "$gh_head" ]; then
+      echo "$name has drifted: forgejo $(echo "$fj_head" | cut -c1-8) vs github $(echo "$gh_head" | cut -c1-8) on $branch ($ghrepo)" >>"$ISSUES"
+    fi
+  done
+  echo "mirrors: ${mirror_checked} repos checked" >>"$NOTES"
+else
+  echo "mirror check unavailable (no FORGEJO_TOKEN)" >>"$NOTES"
+fi
 
 # --- Report ---
 issue_count=$(grep -c . "$ISSUES" || true)

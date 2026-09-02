@@ -359,9 +359,28 @@ it has not been retested against neko's `/ws`.)
 
 ## Deferred (see the design doc)
 
-- **Phase 3 — Headscale exit nodes**: `tailscale --advertise-exit-node` on the
-  gateways so tailnet users route their own traffic through NordVPN (same
-  forwarding primitive; unblocked by Spike G).
+- **Phase 3 — Headscale exit nodes: DROPPED 2026-09-02 (infra#50).** The plan was
+  `tailscale --advertise-exit-node` on the gateways so tailnet users could route
+  their own traffic through NordVPN. It was never built — the live gateway pod
+  runs exactly two containers, gluetun and wgserver, and
+  `grep -rn advertise-exit-node` finds only prose in the design docs.
+  Dropped rather than deferred, because two things that shipped after it was
+  designed cover most of its case:
+    - **workload egress**: `proxy-egress-uk` (2026-08-16) gives any pod a
+      NordVPN UK exit through one env var, on this same gateway. Verified
+      2026-09-02 — a curl through it egressed as `187.13.137.34`, not the home
+      IP.
+    - **device exit node**: pfSense has been an approved Headscale exit node
+      since 2026-08-03 (node 10, `tag:infra`). Verified 2026-09-02 —
+      `headscale nodes list-routes` shows `0.0.0.0/0` both approved and serving.
+    - **per-country browsing**: already the product. The per-user browser here
+      picks a country through the UI.
+  What Phase 3 would still have added, and what nothing covers today, is a
+  tailnet *device* choosing a NordVPN country for all of its traffic. That is a
+  narrower want than the issue was written around, and it costs a third
+  container in every per-country gateway pod plus a live tailnet spike. The
+  forwarding primitive it needs is proven and running, so reviving this is
+  wiring rather than design if the want returns.
 - **WebRTC display — DONE** (neko, infra#81): hardware H.264 over a coturn relay,
   see "Browser pod" above. Two follow-ups it left open: the TURN credential is
   minted at browser-creation time with a 30-day TTL and neko's env is static, so a
