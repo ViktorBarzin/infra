@@ -43,15 +43,21 @@
 #   this same VM. Deleting it means the recovery path needs the thing it is
 #   recovering.
 #
-# It also does not remove the three published-but-unserved mirror ports. 5020
-# (quay), 5030 (registry.k8s.io) and 5040 (kyverno) have docker-proxy listening
-# and their backing containers running, but nginx.conf declares only `listen
-# 5000` and `listen 5010` and only `upstream dockerhub` / `upstream ghcr`, so
-# connections to those three are refused. No node's certs.d references them
-# either. They are running, consuming part of /opt/registry's 34 GB, and reached
-# by nothing. Resolving that is a decision (serve them, or decommission and
-# reclaim), so the configs are declared as they are and the question is named
-# here rather than answered silently.
+# The three published-but-unserved mirror ports are now SERVED (2026-09-02,
+# commit aa7cecfc). 5020 (quay), 5030 (registry.k8s.io) and 5040 (kyverno) had
+# docker-proxy listening and their backing containers running, but nginx.conf
+# declared only `listen 5000` / `listen 5010` and only `upstream dockerhub` /
+# `upstream ghcr`, so connections to those three were refused from 2026-07-18
+# onward while the containers consumed part of /opt/registry's 34 GB. The
+# decision named here was taken as "serve them": files/registry-cache/nginx.conf
+# now carries an upstream and a server block for each, and all five ports answer
+# 200. node4 and node5 already pointed their certs.d at 5020 and 5030.
+#
+# One trap that cost a wrong reading during that change: docker-compose.yml
+# bind-mounts nginx.conf as a SINGLE FILE, and Ansible's `copy` writes a temp
+# file and renames it, which gives a new inode. The container keeps the old
+# inode, so the host file can show five listeners while the container still
+# serves two. `docker restart registry-nginx` after any nginx.conf change.
 #
 # KEEP THE NGINX TIER
 # -------------------
@@ -302,13 +308,18 @@
         # nothing mounts it today.
         - config-private.yml
 
+    # 0600, not 0644, because this file carries the Docker Hub PAT in plaintext
+    # (the registry has no credential-helper indirection). It was 0644 on the box
+    # as of 2026-09-02, world-readable to any local account, while htpasswd and
+    # privkey.pem beside it were already 0600. Nothing reads it but the
+    # `registry-dockerhub` container, which runs as root.
     - name: config-dockerhub.yml, with the pull-through credentials from Vault
       ansible.builtin.template:
         src: files/registry-cache/config-dockerhub.yml.j2
         dest: "{{ registry_dir }}/config-dockerhub.yml"
         owner: root
         group: root
-        mode: "0644"
+        mode: "0600"
       vars:
         registry_cache_dockerhub_username: "{{ registry_secrets.dockerhub_username }}"
         registry_cache_dockerhub_token: "{{ registry_secrets.dockerhub_token }}"

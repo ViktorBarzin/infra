@@ -5150,6 +5150,32 @@ extraScrapeConfigs: |
       - source_labels: [__address__]
         target_label: instance
         replacement: 'devvm' # Giving it a friendly name
+  # registry-cache VM (10.0.20.10): the five pull-through caches behind nginx.
+  # Its node_exporter answers 200 and was scraped by nothing until 2026-09-03,
+  # which is the larger half of why /opt/registry sat at 100% full for 45 days
+  # without an alert. The `registry` job below reaches :5001 for the registry
+  # app's own metrics, and those carry no filesystem series at all.
+  #
+  # No new alert is needed for the disk: the LowDiskSpace rule is
+  # `node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.*"} / node_filesystem_size_bytes
+  # * 100 < 5` with no job selector, so it starts covering this host the moment
+  # the series exist. The reason a full disk went unnoticed was a missing target,
+  # not a missing rule.
+  #
+  # What ENOSPC looks like here, so nobody re-learns it: /v2/ and /healthz are
+  # both storage-free and answer 200 while content requests 500, so an HTTP
+  # probe reads healthy through the whole failure. Watch the bytes.
+  - job_name: 'registry-cache-host'
+    static_configs:
+      - targets:
+        - "10.0.20.10:9100"
+        labels:
+          node: 'registry-cache'
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'registry-cache' # Giving it a friendly name
   # t3-probe: differential t3 path-health prober (stacks/t3code). Legs:
   # cloudflare (full public path), internal (Traefik only), t3serve (the
   # serve process). See docs/runbooks/t3-drop-attribution.md.
