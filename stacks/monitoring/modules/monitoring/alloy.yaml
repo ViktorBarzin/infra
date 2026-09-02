@@ -1,4 +1,16 @@
 alloy:
+  # Where Alloy keeps its per-target READ POSITIONS. The chart default is
+  # /tmp/alloy, which is the container's writable layer and therefore dies with
+  # the pod — every restart made all six agents re-read every log file from the
+  # start. Measured 2026-09-02: a chart upgrade rolled the DaemonSet at 15:21
+  # and Loki rejected ~2.8M replayed samples in one burst
+  # (greater_than_max_sample_age + too_far_behind, plus rate_limited from the
+  # volume), firing LokiDiscardingSamples critical. The upgrade was only the
+  # trigger; a node reboot, eviction, OOM or image GC does the same thing.
+  # Paired with the hostPath under controller.volumes.extra below, positions now
+  # outlive the pod. Alloy runs as root here, so the kubelet-created directory
+  # is writable.
+  storagePath: /var/lib/alloy
   # Resource limits for the alloy container itself.
   # Must be under `alloy.resources` (NOT `controller.resources`) — the chart
   # only maps THIS key onto the alloy container. Without it, the container gets
@@ -329,6 +341,9 @@ alloy:
       - name: machine-id
         mountPath: /etc/machine-id
         readOnly: true
+      # Read positions — see alloy.storagePath above.
+      - name: alloy-data
+        mountPath: /var/lib/alloy
 
 controller:
   # Bump maxUnavailable above the chart default (1) so a 5-node DS finishes its
@@ -353,6 +368,11 @@ controller:
         hostPath:
           path: /etc/machine-id
           type: File
+      # Per-node, so each agent recovers its own positions after a restart.
+      - name: alloy-data
+        hostPath:
+          path: /var/lib/alloy
+          type: DirectoryOrCreate
 
   # Schedule on control-plane node too so we can tail /var/log/kubernetes/audit.log
   # from kube-apiserver. Without this, K8s audit log shipping (wave 1 K2-K9 alert
