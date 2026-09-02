@@ -655,6 +655,29 @@ resource "kubernetes_cron_job_v1" "crowdsec_blocklist_import" {
 
                 echo "Using agent pod: $AGENT_POD"
 
+                # ---- our own policy FIRST -------------------------------------
+                # Re-applied every run so the 168h decisions never lapse. It runs
+                # before the third-party feeds and outside the set +e below,
+                # deliberately: on 2026-09-02 the public-list download died with
+                # `curl: (35) TLS connect error: ... method not supported` (the
+                # image is bitnami/kubectl:latest and moved under us), and with
+                # `set -e` that aborted the whole job. Our reviewed blocklist must
+                # not be hostage to somebody else's CDN or to an unpinned image.
+                echo "Importing static blocklist (Meta ASN)..."
+                kubectl cp /static/meta-asn.txt crowdsec/$AGENT_POD:/tmp/meta-asn.txt
+                kubectl exec -n crowdsec "$AGENT_POD" -- cscli decisions import \
+                  -i /tmp/meta-asn.txt --format values --scope range \
+                  --duration 168h \
+                  --reason "static-blocklist/meta-asn (git-history crawler swarm 2026-09-02)"
+                kubectl exec -n crowdsec "$AGENT_POD" -- rm -f /tmp/meta-asn.txt
+
+                # ---- third-party feeds, non-fatal -----------------------------
+                # A failure here still exits non-zero at the end so the job goes
+                # red and is visible, but only AFTER our own policy has landed.
+                set +e
+                (
+                set -e
+
                 # Download the import script
                 echo "Downloading blocklist import script..."
                 curl -fsSL -o /tmp/import.sh \
@@ -679,18 +702,15 @@ resource "kubernetes_cron_job_v1" "crowdsec_blocklist_import" {
                   # Cleanup
                   rm -f /tmp/import.sh
                 '
+                )
+                EXT_RC=$?
+                set -e
 
-                # Our own static blocklist, re-applied every run so the 168h
-                # decisions never lapse. Kept separate from the public lists
-                # above because it is a deliberate, reviewed policy decision
-                # rather than a third-party feed — see the ConfigMap comment.
-                echo "Importing static blocklist (Meta ASN)..."
-                kubectl cp /static/meta-asn.txt crowdsec/$AGENT_POD:/tmp/meta-asn.txt
-                kubectl exec -n crowdsec "$AGENT_POD" -- cscli decisions import \
-                  -i /tmp/meta-asn.txt --format values --scope range \
-                  --duration 168h \
-                  --reason "static-blocklist/meta-asn (git-history crawler swarm 2026-09-02)"
-                kubectl exec -n crowdsec "$AGENT_POD" -- rm -f /tmp/meta-asn.txt
+                if [ "$EXT_RC" -ne 0 ]; then
+                  echo "WARNING: public blocklist import failed (exit $EXT_RC)."
+                  echo "The static blocklist above WAS applied; only the third-party feeds were skipped."
+                  exit "$EXT_RC"
+                fi
 
                 echo "Blocklist import completed successfully!"
                 EOF
