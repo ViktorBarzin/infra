@@ -504,7 +504,21 @@ resource "helm_release" "traefik" {
         memory = "768Mi"
       }
       limits = {
-        memory = "768Mi"
+        # Raised 768Mi -> 1536Mi during a live incident on 2026-09-02: all three
+        # pods were OOMKilled repeatedly (exit 137) and ALL ingress flapped.
+        # Trigger was a crawler swarm on forgejo's expensive commit/src/blame
+        # pages — hundreds of distinct IPv6 clients with real browser
+        # user-agents, ~5s per request, most ending 499. forgejo alone was 3.8
+        # of 8.2 cluster req/s and it OOMKilled forgejo too. Traefik sat at
+        # 681Mi of 768Mi between restarts, i.e. permanently at the ceiling.
+        #
+        # The request deliberately stays at 768Mi (so this is now Burstable, not
+        # Guaranteed): node2/node3 have only ~2.2-2.7GiB of free memory REQUESTS,
+        # and raising the request on three replicas would cost +2.3GiB of
+        # reservation and eat the N-1 headroom that ClusterCannotTolerateNonGpuNodeLoss
+        # watches. Actual node usage is ~40%, so the headroom to absorb a spike
+        # is real even though the reservation is not.
+        memory = "1536Mi"
       }
     }
 
