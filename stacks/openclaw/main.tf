@@ -1983,8 +1983,14 @@ resource "kubernetes_cron_job_v1" "memory_sync" {
         }
       }
       spec {
-        active_deadline_seconds    = 600
-        backoff_limit              = 0
+        active_deadline_seconds = 600
+        # Was 0, raised to 2 on 2026-09-03. The body is two kubectl execs into
+        # the openclaw pod, so it fails whenever that pod happens to be
+        # restarting or the node is stalling on IO, and at backoff_limit 0 a
+        # single such moment marked the Job Failed and paged. The sync is
+        # idempotent and concurrency_policy is Forbid, so retrying inside the
+        # 600s deadline is free.
+        backoff_limit              = 2
         ttl_seconds_after_finished = 86400
         template {
           metadata {
