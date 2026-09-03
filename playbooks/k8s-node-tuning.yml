@@ -239,6 +239,11 @@
     # shared spindle.
     containerd_max_concurrent_downloads: 3
 
+    # From `kubeadm config images list` on this cluster, not from a guess. Four
+    # of six nodes were on k8s.gcr.io/pause:3.2 or :3.6, an older version from a
+    # frozen registry. Pre-pulled to all six before the task below landed.
+    containerd_sandbox_image: registry.k8s.io/pause:3.10.1
+
     # Age after which kubelet collects an image no pod is using, regardless of
     # disk pressure. Live value is `0s`, which DISABLES age-based collection —
     # confirmed genuine on live /configz, unlike imageMinimumGCAge, whose on-disk
@@ -657,8 +662,35 @@
     - name: containerd pull concurrency is the same on every node
       ansible.builtin.replace:
         path: "{{ containerd_config_path }}"
-        regexp: '^(\s*)max_concurrent_downloads\s*=\s*\d+\s*$'
+        regexp: '^([ \t]*)max_concurrent_downloads[ \t]*=[ \t]*\d+[ \t]*$'
         replace: '\1max_concurrent_downloads = {{ containerd_max_concurrent_downloads }}'
+        backup: true
+        validate: containerd -c %s config dump
+      tags: containerd
+
+    # The pause image, which is a correctness problem rather than tidiness.
+    # kubeadm for this cluster's version answers registry.k8s.io/pause:3.10.1
+    # (`kubeadm config images list`), and that is what node4 and node5 run. The
+    # other four were left on k8s.gcr.io/pause:3.2 or :3.6 — an OLDER version
+    # from the FROZEN k8s.gcr.io, which upstream stopped publishing to. The
+    # sandbox image is pinned and so never GC-eligible, which is the only reason
+    # this has not bitten: a node that lost its copy, or a rebuilt one, would try
+    # to pull a tag from a registry that no longer serves new content.
+    #
+    # Both config versions in the fleet spell the key the same way (`sandbox`
+    # under pinned_images), so one regexp covers the v3 nodes and the v4 ones.
+    #
+    # Safe because the image was pre-pulled to all six BEFORE this landed, via
+    # the registry.k8s.io mirror declared above (0.4-0.7 s each). Changing it
+    # affects only NEWLY created sandboxes, so running pods are untouched and it
+    # takes effect on the next containerd restart or reboot.
+    - name: The pod sandbox image is the one kubeadm expects, on every node
+      ansible.builtin.replace:
+        path: "{{ containerd_config_path }}"
+        # [ \t]*$ not \s*$: \s matches a newline, so the looser form swallows the
+        # blank line after it and reports `changed` on a node already correct.
+        regexp: "^([ \\t]*)sandbox = '[^']*'[ \\t]*$"
+        replace: "\\1sandbox = '{{ containerd_sandbox_image }}'"
         backup: true
         validate: containerd -c %s config dump
       tags: containerd
