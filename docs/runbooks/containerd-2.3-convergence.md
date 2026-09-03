@@ -55,6 +55,18 @@ Section 5.2 (cordon and drain) is therefore **optional**, and worth skipping on 
 capacity-bound node. node1 was drained because it was done first, before this was
 measured; nodes 2, 3 and master were not.
 
+**Decided 2026-09-03: the step stays, gated on the arithmetic, rather than being
+deleted.** Shim reattach is observed behaviour and not a documented contract.
+Nothing in `RELEASES.md` promises it, and it rests on `KillMode=process` in a unit
+file that a package upgrade could change. Three measurements at 2.3.4 are enough
+to prefer in-place; they are not enough to remove the alternative, because the day
+reattach stops working there would be nothing to fall back to and the failure it
+guards against is a node's entire workload restarting at once. So the standing
+instruction is three steps, in order: compute evictable-versus-free before
+deciding, skip the drain when it does not fit, and verify shim survival after the
+upgrade instead of assuming it (`pgrep -f containerd-shim-runc-v2 | sort`, before
+and after, plus `crictl ps | wc -l`).
+
 **0.2 The control-plane API does not go down.** The same mechanism: master's
 etcd and kube-apiserver static-pod shims survive, so `pgrep etcd` and `pgrep
 kube-apiserver` both answered 1 with containerd stopped, and `kubectl` kept
