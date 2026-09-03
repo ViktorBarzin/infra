@@ -935,6 +935,56 @@ serverFiles:
             source_labels:
               - __meta_kubernetes_pod_node_name
             target_label: node
+      # Vault. A dedicated job (not the annotation-driven kubernetes-pods one)
+      # because VaultRaftLeaderStuck and VaultHAStatusUnavailable both key off
+      # job="vault", and because the target is the metrics-only listener on
+      # 8202, not the pod's advertised 8200. role: pod so all three replicas are
+      # scraped individually — vault_core_active is per-pod and the leader
+      # alerts compare across instances, which a Service-level scrape (one
+      # random backend per interval) cannot express.
+      - job_name: vault
+        metrics_path: /v1/sys/metrics
+        params:
+          format:
+            - prometheus
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - vault
+        relabel_configs:
+          - action: keep
+            regex: vault
+            source_labels:
+              - __meta_kubernetes_pod_label_app_kubernetes_io_name
+          - action: drop
+            regex: Pending|Succeeded|Failed|Completed
+            source_labels:
+              - __meta_kubernetes_pod_phase
+          # 8202 is the metrics-only listener declared in stacks/vault/main.tf.
+          # The pod's own 8200 refuses unauthenticated /v1/sys/metrics by design.
+          - action: replace
+            regex: (.+)
+            replacement: $1:8202
+            source_labels:
+              - __meta_kubernetes_pod_ip
+            target_label: __address__
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_pod_name
+            target_label: pod
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_pod_name
+            target_label: instance
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_namespace
+            target_label: namespace
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_pod_node_name
+            target_label: node
       - job_name: kubernetes-pods-slow
         honor_labels: true
         scrape_interval: 5m
@@ -2761,7 +2811,7 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Vault raft leader {{ $labels.instance }} is active but commit index has not advanced for >2m"
-              description: "The raft leader is reachable on TCP but its commit index has stalled — likely a stuck goroutine hang (see 2026-04-22 post-mortem). External /v1/sys/health will be 503. Recovery: graceful delete of the stuck pod (see docs/runbooks/vault-raft-leader-deadlock.md). NOTE: silent until vault telemetry + scrape job are enabled."
+              description: "The raft leader is reachable on TCP but its commit index has stalled — likely a stuck goroutine hang (see 2026-04-22 post-mortem). External /v1/sys/health will be 503. Recovery: graceful delete of the stuck pod (see docs/runbooks/vault-raft-leader-deadlock.md)."
           - alert: VaultHAStatusUnavailable
             expr: |
               (count(up{job="vault"} == 1) > 0)
@@ -2772,7 +2822,7 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Vault pods are Up but no pod reports HA active leader"
-              description: "At least one Vault pod is scraping healthy, but no pod has vault_core_active=1. HA layer is broken — external endpoint will be 503 even though the pods themselves are alive. See docs/runbooks/vault-raft-leader-deadlock.md. NOTE: silent until vault telemetry + scrape job are enabled."
+              description: "At least one Vault pod is scraping healthy, but no pod has vault_core_active=1. HA layer is broken — external endpoint will be 503 even though the pods themselves are alive. See docs/runbooks/vault-raft-leader-deadlock.md."
           - alert: VaultwardenBackupStale
             expr: (time() - kube_cronjob_status_last_successful_time{cronjob="vaultwarden-backup", namespace="vaultwarden"}) > 86400
             for: 30m
