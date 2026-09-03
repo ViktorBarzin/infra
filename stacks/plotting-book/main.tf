@@ -36,16 +36,6 @@ locals {
 # Ordering is safe without a depends_on: terragrunt.hcl already declares
 # dependency "vault", so the namespace exists before this stack applies.
 #
-# Transient, delete once applied: detaches the resource from THIS stack's state
-# without deleting the namespace. Same pattern as the cloudflare_ruleset detach
-# written up in stacks/rybbit/crowdsec_edge.tf.
-removed {
-  from = kubernetes_namespace.plotting-book
-  lifecycle {
-    destroy = false
-  }
-}
-
 resource "kubernetes_manifest" "external_secret" {
   field_manager {
     force_conflicts = true
