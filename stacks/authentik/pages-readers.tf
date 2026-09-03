@@ -7,11 +7,23 @@
 # stacks/learn), and the Caddyfile there gives each identity its own static
 # try_files list, so a Pages Reader sees only their own pages/<user>/ space.
 #
-# ORDERING, and it matters: the authorization table in this stack is GENERATED
-# from the live ingress annotations at apply time. stacks/learn must be applied
-# BEFORE this stack, or the table is rebuilt from the old annotation and the new
-# group is granted nothing. That is why the two halves landed as two pushes
-# (2026-09-03).
+# ORDERING, and it cost three pipelines on 2026-09-03 to get right. Two rules
+# pull in opposite directions:
+#
+#   1. scripts/check-allowed-groups.py is STATIC. It scans the repo for
+#      authentik_group names, so this file must be in the SAME commit as the
+#      ingress that names "Pages Readers", or that stack fails before apply.
+#   2. The authorization table in admin-services-restriction.tf is GENERATED
+#      from live ingress annotations at apply time. Within one pipeline this
+#      stack runs before stacks/learn, so it rebuilds the table from the
+#      annotation that learn is about to replace, and the new group is granted
+#      nothing.
+#
+# So the sequence is: land both stacks together (satisfies 1), then apply THIS
+# stack once more (satisfies 2). Verified after the fact by reading
+# /api/v3/policies/expression/07a11b85-.../ and checking that the HOST_GROUPS
+# row for pages.viktorbarzin.me actually lists the group. If you ever add
+# another non-admin group to an ingress, expect the same two-phase sequence.
 #
 # Membership is declared here rather than left to the Authentik UI (the pattern
 # "TripIt Users" uses), because the group has one member for one purpose and the
