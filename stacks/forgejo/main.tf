@@ -442,40 +442,34 @@ module "ingress" {
   # them into a redirect they can't follow.
   # auth = "none": Git + OCI registry clients use HTTP Basic auth / bearer tokens; native CLI tools cannot follow forward-auth redirects.
   auth = "none"
-  # PROXIED as of 2026-09-03, as a MEASURED EXPERIMENT — flip back to
-  # "non-proxied" if the numbers below say it did not help.
+  # NON-PROXIED, and the experiment that confirmed it is recorded here so nobody
+  # re-runs it: forgejo was proxied on 2026-09-03 to test whether Cloudflare's
+  # ai_bots_protection would stop Meta's crawler. IT DOES NOT.
   #
-  # WHY: Meta's AI crawler walks this forge's git history and sends
-  # 9,300-11,000 requests/hour. Every one is currently 403'd by the CrowdSec
-  # static blocklist, but they all still reach Traefik, and the aggregate is
-  # what OOMKilled forgejo and all three traefik pods on 2026-09-02. Cloudflare
-  # never got a chance at it: all 1,500 Meta requests sampled in 24h went to
-  # non-proxied hosts.
+  # Measured: of 73 residual Meta requests in 20 minutes, 66 arrived THROUGH the
+  # cloudflare tunnel (peers 10.10.107.222 / .195.220 / .169.165 are cloudflared
+  # pods) and only 5 still came direct from expiring DNS. So the requests reach
+  # Cloudflare's edge, pass straight through the AI-bot block, and are stopped by
+  # our own CrowdSec bouncer behind it. The reason is that Cloudflare identifies
+  # bots by verified identity (ASN + reverse DNS), and Meta was not claiming to
+  # be a bot at all — it sent spoofed desktop Chrome user-agents.
   #
-  # THE QUESTION THIS ANSWERS: does Cloudflare's ai_bots_protection (enabled
-  # 2026-09-03) actually catch Meta? It cannot be tested from here — Cloudflare
-  # verifies bot identity by ASN and reverse DNS, not the User-Agent, so
-  # sending a meta-externalagent UA from our own address proves nothing (tried:
-  # HTTP 200, as expected). Proxying the one host Meta actually crawls turns
-  # that into an observation: either those ~10k/hour stop reaching Traefik, or
-  # they do not.
+  # The 95% traffic drop during the test was NOT caused by proxying: the decline
+  # began at 04:57 and the change landed at 05:34, ~40 minutes later. That was
+  # Meta's own wind-down.
   #
-  # WHY THIS IS SAFE. Internal clients never traverse Cloudflare — split-horizon
-  # DNS answers 10.0.20.203 on the LAN and CoreDNS answers Traefik's ClusterIP
-  # in-cluster, both verified today. So CI, the devvm and every LAN/VPN client
-  # are untouched; only external traffic changes path.
+  # Reverted because with no bot-blocking benefit, only the costs remain — chiefly
+  # Cloudflare's 100MB request-body cap, which would reject a fresh full push of
+  # infra.git (183 MB on disk; terminal-lobby 81, website 74) from outside the
+  # house. Not worth an accidental breakage for nothing.
   #
-  # THE ONE REAL COST: Cloudflare caps a request body at 100MB, and a fresh full
-  # push of infra.git is 183 MB on disk (terminal-lobby 81, website 74).
-  # Incremental pushes are kilobytes and CI's largest blob is 5.9 MB, so day to
-  # day nothing comes close; seeding a NEW repo from outside the house needs SSH.
-  # git-upload-pack (clone/fetch) is unaffected either way, since the cap is on
-  # the request body and clone data comes back in the response. LFS is enabled
-  # but holds 0 objects, and the OCI registry is frozen.
+  # What the CrowdSec static blocklist does, and Cloudflare does not, is stop this
+  # traffic. Keep it.
   #
-  # NOTE dns_type = "proxied" creates NO DNS record (ADR-0021): the explicit
-  # A/AAAA records are removed and the host rides the zone's proxied wildcard.
-  dns_type        = "proxied"
+  # Lost by reverting: Cloudflare's managed robots.txt, which made /robots.txt
+  # serve 200 instead of 404 while proxied. If that is wanted, serve one from
+  # forgejo directly rather than proxying for it.
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
   tls_secret_name = var.tls_secret_name
