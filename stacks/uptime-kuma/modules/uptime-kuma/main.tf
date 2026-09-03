@@ -651,6 +651,23 @@ PYEOF
 # endpoints) that can't be discovered from ingress annotations. Idempotent:
 # looks up monitors by name, creates if missing, patches if drifted.
 #
+# Two sources, merged each run:
+#   1. local.internal_monitors below — the static list, for anything that is
+#      not a plain in-cluster HTTP GET (MySQL, Redis, TCP ports, direct IPs).
+#   2. Services annotated `uptime.viktorbarzin.me/internal-monitor=true`,
+#      discovered from the K8s API and probed at
+#      http://<svc>.<ns>.svc.cluster.local:<port><path>. This mirrors how
+#      external-monitor-sync reads its annotation off Ingresses, with one
+#      deliberate difference: external discovery is opt-OUT (every public
+#      ingress should be watched), internal discovery is opt-IN, because most
+#      of the cluster's ~200 Services are backends nobody wants a monitor for.
+#      Optional companions: `-name` (monitor label), `-path` (probe path,
+#      default `/`), `-port` (which service port, default the one named
+#      http/web/api, else the first).
+#      Discovered monitors are named `[Internal] <label>` so the orphan sweep
+#      can delete them when the annotation goes away without ever touching a
+#      statically declared monitor.
+#
 # Why a CronJob and not a one-shot Job:
 # - louislam/uptime-kuma has no Terraform provider (only a CLI tool).
 # - UK v2 stores monitors in MariaDB (`uptimekuma` on mysql.dbaas); if the DB
@@ -762,6 +779,42 @@ locals {
   ]
 }
 
+# Discovery needs to read Services cluster-wide. Separate SA/role from
+# external-monitor-sync so each job holds only the verbs it uses.
+resource "kubernetes_service_account_v1" "internal_monitor_sync" {
+  metadata {
+    name      = "internal-monitor-sync"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+}
+
+resource "kubernetes_cluster_role_v1" "internal_monitor_sync" {
+  metadata {
+    name = "internal-monitor-sync"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["services"]
+    verbs      = ["list", "get"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding_v1" "internal_monitor_sync" {
+  metadata {
+    name = "internal-monitor-sync"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.internal_monitor_sync.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.internal_monitor_sync.metadata[0].name
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+}
+
 resource "kubernetes_secret" "internal_monitor_sync" {
   metadata {
     name      = "internal-monitor-sync"
@@ -821,20 +874,115 @@ resource "kubernetes_cron_job_v1" "internal_monitor_sync" {
         template {
           metadata {}
           spec {
+            service_account_name = kubernetes_service_account_v1.internal_monitor_sync.metadata[0].name
             container {
               name  = "sync"
               image = "docker.io/library/python:3.12-alpine"
               command = ["/bin/sh", "-c", <<-EOT
                 pip install --quiet --disable-pip-version-check uptime-kuma-api
                 python3 << 'PYEOF'
-import json, os, time
+import json, os, ssl, time, urllib.error, urllib.request
 from uptime_kuma_api import UptimeKumaApi, MonitorType
 
 UPTIME_KUMA_URL = "http://uptime-kuma.uptime-kuma.svc.cluster.local"
 UPTIME_KUMA_PASS = os.environ["UPTIME_KUMA_PASSWORD"]
 
+# Annotation-discovered monitors carry this prefix. The static ones from
+# local.internal_monitors keep their bare names, which is what keeps the orphan
+# sweep at the bottom from ever touching them.
+PREFIX = "[Internal] "
+ANNOTATION_ENABLE = "uptime.viktorbarzin.me/internal-monitor"
+ANNOTATION_NAME = "uptime.viktorbarzin.me/internal-monitor-name"
+ANNOTATION_PATH = "uptime.viktorbarzin.me/internal-monitor-path"
+ANNOTATION_PORT = "uptime.viktorbarzin.me/internal-monitor-port"
+# A service root often answers 200/30x/40x while the app behind it is fine, so
+# only tighten when the annotation names a real probe path. Same reasoning as
+# external-monitor-sync.
+STATUSCODES_LENIENT = ["200-299", "300-399", "400-499"]
+STATUSCODES_STRICT = ["200-299"]
+NAMED_HTTP_PORTS = ("http", "web", "api")
+SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+API_SERVER = f"https://{os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc.cluster.local')}:{os.environ.get('KUBERNETES_SERVICE_PORT', '443')}"
+
 with open("/config/targets.json") as f:
     targets = json.load(f)
+
+
+def discover_services():
+    """List Services via the in-cluster API and turn every one annotated
+    `uptime.viktorbarzin.me/internal-monitor=true` into an in-cluster HTTP
+    probe. Opt-IN, unlike the ingress side: most Services are backends that
+    nobody wants a monitor for."""
+    with open(f"{SA_DIR}/token") as f:
+        token = f.read().strip()
+    ctx = ssl.create_default_context(cafile=f"{SA_DIR}/ca.crt")
+    req = urllib.request.Request(
+        f"{API_SERVER}/api/v1/services",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+        body = json.loads(resp.read())
+
+    found = []
+    for svc in body.get("items", []):
+        meta = svc.get("metadata") or {}
+        anns = meta.get("annotations") or {}
+        if anns.get(ANNOTATION_ENABLE, "").strip().lower() != "true":
+            continue
+        svc_name, ns = meta.get("name"), meta.get("namespace")
+        ports = (svc.get("spec") or {}).get("ports") or []
+        want_port = anns.get(ANNOTATION_PORT, "").strip()
+        port = None
+        if want_port:
+            try:
+                port = int(want_port)
+            except ValueError:
+                print(f"WARN: {ns}/{svc_name} has a non-numeric {ANNOTATION_PORT}; ignoring it")
+        if port is None:
+            named = [p for p in ports if p.get("name") in NAMED_HTTP_PORTS]
+            chosen = named or ports
+            if chosen:
+                port = chosen[0].get("port")
+        if port is None:
+            print(f"WARN: {ns}/{svc_name} is annotated but exposes no port; skipping")
+            continue
+        path = anns.get(ANNOTATION_PATH, "").strip()
+        if path and not path.startswith("/"):
+            path = "/" + path
+        # Fully qualified on purpose: the pod runs with ndots=2, so a bare
+        # `<svc>.<ns>.svc` would only resolve after two failed search-domain
+        # attempts.
+        host = f"{svc_name}.{ns}.svc.cluster.local"
+        netloc = host if port == 80 else f"{host}:{port}"
+        found.append({
+            "name": PREFIX + (anns.get(ANNOTATION_NAME) or f"{svc_name}.{ns}"),
+            "type": "http",
+            "url": f"http://{netloc}{path}",
+            "accepted_statuscodes": STATUSCODES_STRICT if path else STATUSCODES_LENIENT,
+            "ignore_tls": False,
+            "hostname": None,
+            "port": None,
+            "database_connection_string": None,
+            "password_env": None,
+            "interval": 300,
+            "retry_interval": 60,
+            "max_retries": 2,
+        })
+    return found
+
+
+try:
+    discovered = discover_services()
+    discovery_ok = True
+except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
+    # Keep the static list working on an API blip, and skip the orphan sweep
+    # below so a transient failure cannot delete every discovered monitor.
+    print(f"WARN: service discovery failed ({e!r}); syncing the static list only")
+    discovered, discovery_ok = [], False
+
+static_names = {t["name"] for t in targets}
+targets += [d for d in discovered if d["name"] not in static_names]
+print(f"{len(static_names)} static + {len(discovered)} discovered target(s)")
 
 api = None
 for _login_try in range(1, 6):
@@ -909,8 +1057,20 @@ for t in targets:
         print(f"Monitor {name} (id={m['id']}) already in desired state")
     time.sleep(0.3)
 
+# Drop discovered monitors whose annotation is gone. Only the prefixed ones,
+# and only when discovery actually succeeded this run.
+deleted = 0
+if discovery_ok:
+    wanted = {t["name"] for t in targets}
+    for name, m in existing.items():
+        if name.startswith(PREFIX) and name not in wanted:
+            print(f"Deleting orphaned discovered monitor: {name}")
+            api.delete_monitor(m["id"])
+            deleted += 1
+            time.sleep(0.3)
+
 api.disconnect()
-print("Internal monitor sync complete")
+print(f"Internal monitor sync complete ({len(targets)} target(s), {deleted} deleted)")
 PYEOF
               EOT
               ]
