@@ -308,7 +308,36 @@ fix-broken-blobs → restart.
 Verification: a real manifest fetch returning 200, `df` showing the reclaimed
 space, the VM appearing in Prometheus, and `--check` a no-op on a second run.
 
-### Phase 2b — node2 and node5 are closer to the cliff than node1
+### Phase 2b — node2 and node5 are closer to the cliff than node1 — DONE 2026-09-03
+
+**Measured, and the answer is that Phase 3 was sufficient.** The phase was scoped
+as measure-and-decide, with the cause explicitly unknown and possibly not images.
+
+| node | root fs at scoping | 2026-09-03 | change |
+|---|---|---|---|
+| k8s-node2 | 80.4% | 80-81% (193G of 252G) | flat |
+| k8s-node5 | 83.3% | **76%** (61G free) | **-7 points** |
+| k8s-node1 | 35.5% | 40% | +5 |
+
+Phase 3's settings are confirmed live on both, read from each kubelet's own
+`/configz` and from `containerd config dump` rather than from the files:
+`discard_unpacked_layers = true`, `imageMaximumGCAge = 168h0m0s`,
+`serializeImagePulls = true`. `imageGCHighThresholdPercent` reads 85, the kubelet
+default, which this repo has never set (§8).
+
+node5 falling 7 points with those settings live is the evidence the phase asked
+for, and node2 has stopped climbing. Neither is near the 85% GC cliff, so no
+further action: no threshold change, and specifically not the lower imageGC
+thresholds §7 rejected, which would shed 40-60 GB of warm cache from these two
+nodes to solve a problem they no longer have.
+
+Honest limit: node5's improvement is consistent with `discard_unpacked_layers`
+discarding compressed blobs after unpack, but it was not isolated from the
+containerd 2.3.4 upgrade that landed in the same window, so the attribution is
+inference rather than a controlled measurement. The conclusion does not depend
+on which of the two did it, since both are staying.
+
+
 
 Folded in once measured, because it is the same failure as §3 on different nodes.
 Live root-fs usage against the live `imageGCHighThresholdPercent: 85`:
@@ -586,7 +615,7 @@ None of the left column should appear in a plan or a follow-up.
 7. ~~What is claude-memory's 7-day peak VRAM?~~ **Closed, and it changed a decision.** 7-day max is 3,206 MiB, but the exporter samples periodically and the documented sustained-load peak is 4,236 MiB. The declaration stays at 5,000 and the immich change is filed rather than done. What remains open is narrower: nobody has watched `nvidia-smi` directly under a driven recall load, which is the only way to establish the real ceiling.
 8. **Who created `claude-memory-image-prewarm`?** A bare pod took a full 5m46.276s pull on node1 at 11:07 EEST on 2026-09-01, exists in no stack, and is gone. It means one of that day's five cold pulls was an experiment rather than organic load.
 
-9. **Should the drain step be removed from the runbook rather than marked optional?** Raised by execution. `KillMode=process` made every in-place upgrade non-disruptive (node3 kept all 65 shim PIDs and all 89 containers), while the drains this project did run produced the 2026-09-02 evening incident. The argument for keeping a drain is that shim reattach is behaviour rather than a documented contract, and a future containerd could change it. Left as "optional, check the arithmetic first" pending someone's judgement.
+9. ~~Should the drain step be removed from the runbook rather than marked optional?~~ **Decided 2026-09-03: keep it, gated on the arithmetic.** Shim reattach is observed behaviour, not a documented contract — nothing in `RELEASES.md` promises it, and it rests on `KillMode=process` in a unit file a package upgrade could change. Three measurements at 2.3.4 are enough to prefer in-place, not enough to delete the alternative. So the runbook keeps the drain as an explicitly optional step with the capacity check in front of it, and the standing instruction is: compute evictable-versus-free first, skip the drain when it does not fit, and verify shim survival after any upgrade rather than assuming it. Removing the step entirely would leave nothing to fall back to on the day reattach stops working, and the failure it protects against is a node's whole workload restarting at once.
 
 ## 10. Verification
 
