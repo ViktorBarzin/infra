@@ -402,16 +402,72 @@
     #   evictionSoftGracePeriod: {...}
     #
     # These were in the erased tune and are the reason it is only half restored
-    # here. Together they carve roughly 1,424 MiB out of every node's allocatable
-    # memory. k8s-node2 has about 1,455 MiB of schedulable headroom today
-    # (33,544,638,464 B allocatable against 32,019,316,736 B of running requests),
-    # so applying them takes node2 to roughly zero: nothing is evicted, but
-    # nothing can land there on the next reschedule either, and PodStuckPending
-    # follows. That is a capacity exercise with its own headroom audit across all
-    # six nodes, not a line in an image-size plan. Tracked as bead code-eu6l with
-    # the arithmetic. Note evictionSoftGracePeriod cannot be declared without
-    # evictionSoft anyway — kubelet requires a matching soft threshold for every
-    # grace period.
+    # here. Confirmed still erased on the live nodes 2026-09-03:
+    # /api/v1/nodes/<n>/proxy/configz reports systemReserved=None,
+    # kubeReserved=None, evictionSoft=None, and evictionHard at the kubelet
+    # DEFAULT set (memory.available 100Mi, nodefs 10%, imagefs 15%).
+    #
+    # HOW MUCH THEY COST. Only systemReserved, kubeReserved and evictionHard
+    # reduce allocatable; a SOFT eviction threshold does not, it only starts the
+    # grace timer. So declaring the two reservations carves 1,024 MiB
+    # (512 + 512), not the 1,424 MiB recorded earlier — that figure also counted
+    # moving evictionHard.memory.available from 100Mi to the script's 500Mi,
+    # which the block below explicitly declines to do. Checks out against the
+    # live nodes: capacity 32,860,836 Ki minus allocatable 32,758,436 Ki on
+    # k8s-node2 is exactly 100 MiB, the current evictionHard threshold and
+    # nothing else.
+    #
+    # HEADROOM, ALL SIX NODES, 2026-09-03. Read from `kubectl describe node`,
+    # which is the scheduler's own accounting. Both columns are what a
+    # re-check should reproduce.
+    #
+    #   node         allocatable  requests   used   free  free after 1,024
+    #   k8s-master     31,990 MiB   2,312       7%  29,678       28,654
+    #   k8s-node1      48,073 MiB  21,264      44%  26,809       25,785
+    #   k8s-node2      31,990 MiB  31,700      99%     290         -734
+    #   k8s-node3      31,990 MiB  29,258      91%   2,732        1,708
+    #   k8s-node4      31,995 MiB  31,344      97%     651         -373
+    #   k8s-node5      31,995 MiB  28,474      88%   3,521        2,497
+    #
+    # So the deferral stands, and for a tighter reason than the one recorded
+    # before. k8s-node2 has 290 MiB of schedulable headroom, not the 1,455 MiB
+    # noted earlier, and k8s-node4 at 651 MiB is a SECOND blocked node that the
+    # earlier arithmetic did not name. Declaring the reservations puts both
+    # below zero: nothing is evicted, but nothing can land on either node at the
+    # next reschedule, and PodStuckPending follows. k8s-node3 is comfortable at
+    # 2,732 MiB and is not the constraint.
+    #
+    # MEASURE THIS WITH kubectl, NOT PromQL. Three PromQL formulations of
+    # "memory requests on this node" were tried on 2026-09-03 —
+    # sum by (node) of kube_pod_container_resource_requests, the same with a
+    # Running|Pending phase join, and the same restricted to container!="" —
+    # and they returned 30,536 / 29,512 / 30,536 MiB for k8s-node2 against
+    # kubectl's 31,700, and 32,420 / 30,132 / 32,420 for k8s-node4 against
+    # 31,344. The error runs in both directions and reaches 1.1 GiB, which is
+    # larger than the headroom being measured, so kube-state-metrics is not
+    # precise enough to make this call. The phase filter the bead recommends
+    # does help against counting finished pods; it does not close this gap.
+    #
+    #   for n in k8s-master k8s-node1 k8s-node2 k8s-node3 k8s-node4 k8s-node5; do
+    #     kubectl describe node $n | sed -n '/Allocated resources/,/^Events/p' \
+    #       | grep -E '^\s+memory\s'
+    #   done
+    #
+    # RE-CHECK TRIGGER. Revisit when k8s-node2 AND k8s-node4 each hold at least
+    # 1,536 MiB free — the 1,024 MiB carve-out plus 512 MiB of room for the next
+    # pod to schedule. Until then this stays deferred rather than half-applied:
+    # the reservations are node-wide kubelet config, so there is no way to
+    # declare them on the four comfortable nodes only without making the
+    # playbook per-node, which is a bigger change than the saving justifies.
+    #
+    # The alternative is to shrink the top memory requesters on node2 and node4
+    # first and declare the reservations afterwards. That is a capacity change
+    # affecting running services, so it is Viktor's call rather than something
+    # this playbook should assume. Draining headroom is tracked separately as
+    # bead code-hn6k; this bead covers the reservations themselves.
+    #
+    # Note evictionSoftGracePeriod cannot be declared without evictionSoft
+    # anyway — kubelet requires a matching soft threshold for every grace period.
     #
     # ALSO NOT DECLARED, and why, so nothing is lost silently:
     #   evictionHard {memory.available 500Mi, nodefs.available 15%, imagefs.available 20%}
