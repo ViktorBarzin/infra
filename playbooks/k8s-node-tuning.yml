@@ -244,6 +244,20 @@
     # frozen registry. Pre-pulled to all six before the task below landed.
     containerd_sandbox_image: registry.k8s.io/pause:3.10.1
 
+    # Every setting above, in the form a conf.d drop-in would spell it, so the
+    # drop-in can never contradict the root config. See the task that consumes
+    # this for why node1 needs it and the other five do not.
+    containerd_dropin_overrides:
+      - what: discard_unpacked_layers
+        regexp: '^([ \t]*)discard_unpacked_layers[ \t]*=[ \t]*false[ \t]*$'
+        replace: '\1discard_unpacked_layers = true'
+      - what: sandbox_image
+        regexp: '^([ \t]*)sandbox_image[ \t]*=[ \t]*"[^"]*"[ \t]*$'
+        replace: '\1sandbox_image = "{{ containerd_sandbox_image }}"'
+      - what: max_concurrent_downloads
+        regexp: '^([ \t]*)max_concurrent_downloads[ \t]*=[ \t]*\d+[ \t]*$'
+        replace: '\1max_concurrent_downloads = {{ containerd_max_concurrent_downloads }}'
+
     # Age after which kubelet collects an image no pod is using, regardless of
     # disk pressure. Live value is `0s`, which DISABLES age-based collection —
     # confirmed genuine on live /configz, unlike imageMinimumGCAge, whose on-disk
@@ -628,31 +642,49 @@
       changed_when: false
       tags: containerd
 
-    - name: The drop-ins do not override the layer-retention setting back off
+    # A drop-in that carries ANY key the root config declares wins, so this has to
+    # cover every one of them, not just the first that was found to bite.
+    # 99-nvidia.toml on node1 is a whole-config snapshot the nvidia toolkit takes
+    # from `containerd config dump`, so it pins three settings this playbook owns:
+    #
+    #   discard_unpacked_layers   found 2026-09-02, silently off on node1 for ages
+    #   sandbox_image             found 2026-09-03, kept pause:3.6 live while the
+    #                             root config already said 3.10.1
+    #   max_concurrent_downloads  found the same way, kept 5 against a declared 3
+    #
+    # Note the drop-in spells the pause key `sandbox_image` (the v2 CRI name) while
+    # a v3/v4 root spells it `sandbox` under pinned_images, so both forms are
+    # handled. The lesson generalises: after adding any setting above, add it here
+    # too, or node1 will quietly not have it.
+    - name: The drop-ins do not override anything this playbook declares
       ansible.builtin.replace:
-        path: "{{ item.path }}"
-        regexp: '^(\s*)discard_unpacked_layers\s*=\s*false\s*$'
-        replace: '\1discard_unpacked_layers = true'
+        path: "{{ item.0.path }}"
+        regexp: "{{ item.1.regexp }}"
+        replace: "{{ item.1.replace }}"
         backup: true
-      loop: "{{ containerd_dropins.files }}"
+      loop: "{{ containerd_dropins.files | product(containerd_dropin_overrides) | list }}"
       loop_control:
-        label: "{{ item.path }}"
+        label: "{{ item.0.path | basename }}: {{ item.1.what }}"
       tags: containerd
 
-    # What the runtime will actually read, root plus every import merged. This is
-    # the check the two tasks above cannot make individually.
     - name: The merged containerd config parses and keeps the setting on
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
-          containerd -c {{ containerd_config_path }} config dump \
-            | grep -E '^\s*discard_unpacked_layers' | head -1
+          set -o pipefail
+          d=$(containerd -c {{ containerd_config_path }} config dump)
+          echo "$d" | grep -E '^\s*discard_unpacked_layers' | head -1
+          echo "$d" | grep -E "^\s*sandbox = " | head -1
+          echo "$d" | grep -E '^\s*max_concurrent_downloads' | head -1
         executable: /bin/bash
       register: containerd_merged
       changed_when: false
       failed_when: >-
         containerd_merged.rc != 0
         or 'true' not in containerd_merged.stdout
+        or containerd_sandbox_image not in containerd_merged.stdout
+        or ('max_concurrent_downloads = ' ~ containerd_max_concurrent_downloads)
+           not in containerd_merged.stdout
       tags: containerd
 
     # Pull concurrency, uniform. Diverged 3 vs 5 across the fleet with nothing
