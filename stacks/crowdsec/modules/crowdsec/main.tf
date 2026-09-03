@@ -776,8 +776,32 @@ resource "kubernetes_cron_job_v1" "crowdsec_blocklist_import" {
                 # image is bitnami/kubectl:latest and moved under us), and with
                 # `set -e` that aborted the whole job. Our reviewed blocklist must
                 # not be hostage to somebody else's CDN or to an unpinned image.
+                # NOT `kubectl cp`. A ConfigMap mount is a directory of
+                # symlinks — /static/meta-asn.txt points at ..data/meta-asn.txt —
+                # and `kubectl cp` tars the source without following symlinks, so
+                # it delivered a dangling link and every run since 2026-09-02
+                # died on `unable to open /tmp/meta-asn.txt: no such file or
+                # directory`. Shell redirection follows the symlink, so pipe the
+                # bytes through exec's stdin instead.
                 echo "Importing static blocklist (Meta ASN)..."
-                kubectl cp /static/meta-asn.txt crowdsec/$AGENT_POD:/tmp/meta-asn.txt
+                EXPECTED=$(grep -cvE '^[[:space:]]*(#|$)' /static/meta-asn.txt)
+                kubectl exec -i -n crowdsec "$AGENT_POD" -- \
+                  sh -c 'cat > /tmp/meta-asn.txt' < /static/meta-asn.txt
+
+                # Prove the file arrived before importing. The failure this
+                # guards against was silent for a day: the import errored, the
+                # job went red for what looked like the third-party feeds, and
+                # the 168h decisions quietly kept ticking down.
+                LANDED=$(kubectl exec -n crowdsec "$AGENT_POD" -- \
+                  sh -c 'grep -cvE "^[[:space:]]*(#|$)" /tmp/meta-asn.txt 2>/dev/null || echo 0')
+                if [ "$LANDED" != "$EXPECTED" ]; then
+                  echo "ERROR: static blocklist did not reach the agent:" \
+                       "expected $EXPECTED CIDRs, found $LANDED in /tmp/meta-asn.txt"
+                  kubectl exec -n crowdsec "$AGENT_POD" -- rm -f /tmp/meta-asn.txt || true
+                  exit 1
+                fi
+                echo "Staged $LANDED CIDRs on $AGENT_POD."
+
                 kubectl exec -n crowdsec "$AGENT_POD" -- cscli decisions import \
                   -i /tmp/meta-asn.txt --format values --scope range \
                   --duration 168h \
