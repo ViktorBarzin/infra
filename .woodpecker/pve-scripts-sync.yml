@@ -6,10 +6,17 @@
 # same shape: docs/architecture/backup-dr.md carried the scp invocation and a
 # person had to remember to run it, so a committed change could sit undeployed.
 #
-# Verified before first landing (2026-09-03, code-kpk0): all nine files are
-# byte-identical between the repo and the host, so the first run is a no-op.
+# The work itself lives in scripts/ci/pve-scripts-sync.sh, not inline here.
+# Woodpecker runs each `commands:` entry through /bin/sh -c, and an inline
+# multi-line loop containing quotes died with "syntax error: unterminated
+# quoted string" (pipeline #1466, 2026-09-03). A script file also lets you run
+# `sh -n` and shellcheck over it before landing.
 #
-# Trigger: push to master touching any of the nine files below.
+# Verified before landing (2026-09-03, code-kpk0): all nine files were
+# byte-identical between repo and host, and the script was run by hand against
+# the live host — three timers listed healthy, nothing changed.
+#
+# Trigger: push to master touching any of the nine files, or the sync script.
 #
 # Credentials:
 #   - pve_ssh_key: Woodpecker repo-secret, the same ed25519 keypair
@@ -20,6 +27,7 @@ when:
   - event: push
     branch: master
     path:
+      - scripts/ci/pve-scripts-sync.sh
       - scripts/lvm-pvc-snapshot.sh
       - scripts/lvm-pvc-snapshot.service
       - scripts/lvm-pvc-snapshot.timer
@@ -57,30 +65,7 @@ steps:
       - chmod 600 ~/.ssh/id_ed25519
       # Pin host key — CI's ~/.ssh/known_hosts is ephemeral.
       - ssh-keyscan -t ed25519 192.168.1.127 >> ~/.ssh/known_hosts 2>/dev/null
-      # Diff first, so the pipeline log shows the intended change even when the
-      # scp that follows is a no-op.
-      - |
-        echo '---diff---'
-        for n in lvm-pvc-snapshot daily-backup offsite-sync-backup; do
-          ssh -o BatchMode=yes root@192.168.1.127 "cat /usr/local/bin/$n" > /tmp/remote.$n 2>/dev/null || true
-          diff -u /tmp/remote.$n "scripts/$n.sh" && echo "$n.sh: unchanged" || true
-          for u in service timer; do
-            ssh -o BatchMode=yes root@192.168.1.127 "cat /etc/systemd/system/$n.$u" > /tmp/remote.$n.$u 2>/dev/null || true
-            diff -u /tmp/remote.$n.$u "scripts/$n.$u" && echo "$n.$u: unchanged" || true
-          done
-        done
-      - |
-        echo '---applying---'
-        for n in lvm-pvc-snapshot daily-backup offsite-sync-backup; do
-          scp -o BatchMode=yes "scripts/$n.sh" "root@192.168.1.127:/usr/local/bin/$n"
-          ssh -o BatchMode=yes root@192.168.1.127 "chmod 755 /usr/local/bin/$n && bash -n /usr/local/bin/$n"
-          scp -o BatchMode=yes "scripts/$n.service" "scripts/$n.timer" root@192.168.1.127:/etc/systemd/system/
-        done
-      - |
-        echo '---reloading---'
-        ssh -o BatchMode=yes root@192.168.1.127 "systemctl daemon-reload"
-        ssh -o BatchMode=yes root@192.168.1.127 "systemctl list-timers --no-pager lvm-pvc-snapshot.timer daily-backup.timer offsite-sync-backup.timer"
-      - echo '---done---'
+      - sh scripts/ci/pve-scripts-sync.sh
 
   - name: slack
     image: curlimages/curl:8.11.0
