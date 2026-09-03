@@ -72,6 +72,9 @@ backend.tf
 # apply while its namespace still had two Terraform owners; that is settled
 # (stacks/vault owns it) so the exception is gone.
 providers.tf
+# Same story, generated per-stack by stacks/infra/terragrunt.hcl rather than the
+# root, so it was never covered by the rules above.
+proxmox_provider.tf
 .terraform.lock.hcl
 cloudflare_provider.tf
 tiers.tf
