@@ -392,6 +392,15 @@ module "ingress_pages" {
   # one person at a time: the Caddyfile above still decides WHICH space each
   # identity sees, and a Pages Reader with no handle of their own falls through
   # to the 403. Admins keep passing via the break-glass branch regardless.
+  #
+  # Two things about naming a group here, both learned the hard way on
+  # 2026-09-03. scripts/check-allowed-groups.py is a STATIC guard: it scans the
+  # repo for authentik_group names, so the group's Terraform has to be in the
+  # same commit or CI fails this stack before apply. And stacks/authentik has to
+  # be applied AGAIN after this stack, because its authorization table is
+  # generated from live ingress annotations at apply time — applied in the same
+  # pipeline it runs first, rebuilding the table from the annotation this apply
+  # is about to replace, which grants the new group nothing.
   allowed_groups = ["Home Server Admins", "Pages Readers"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
