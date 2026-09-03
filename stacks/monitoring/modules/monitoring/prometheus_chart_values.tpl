@@ -1411,12 +1411,19 @@ serverFiles:
             # and before that nothing did: the 2026-06-11 QEMU stall ran ~90
             # minutes before a human looked at the sidebar and counted.
             #
-            # for: 3m against the global 2m scrape means three consecutive
-            # failed scrapes, so it speaks at ~4-6 minutes of real downtime.
-            # Calibrated on 30 days to 2026-09-03: up{job="devvm"} hit 0 in 13
-            # samples, and the longest contiguous run in any 10m window was 2
-            # samples, spanning 2m. Every one of those blips stays under this
-            # threshold, so the measured history contains no false positive.
+            # for: 5m, and the two minutes above 3m are bought deliberately.
+            # Calibrated on the 30 days to 2026-09-03: up{job="devvm"} hit 0 in
+            # 13 samples, and the longest contiguous run in any 10m window was
+            # 2. At a 2m scrape a 2-sample run keeps the rule true across
+            # evaluations spanning 4 minutes, so for: 3m WOULD have fired once
+            # on a blip that was not an outage. Requiring 3 consecutive failed
+            # scrapes never happened in those 30 days. It still catches the real
+            # thing: over 180 days the worst run was 6 samples.
+            #
+            # Cost of the choice: the alert speaks at roughly 6-8 minutes of
+            # real downtime instead of 4-6. Against ScrapeTargetDown's 30
+            # minutes and the 90 minutes a human took on 2026-06-11, that is
+            # cheap, and this is a critical that re-pings every 6h.
             #
             # `or on() vector(0)` mirrors NodeDown: if the target is dropped
             # from the scrape config entirely the series vanishes and a bare
@@ -1425,7 +1432,7 @@ serverFiles:
             # fine, because ScrapeTargetDown cannot fire on an absent series
             # either.
             expr: (up{job="devvm"} or on() vector(0)) == 0
-            for: 3m
+            for: 5m
             labels:
               severity: critical
             annotations:
