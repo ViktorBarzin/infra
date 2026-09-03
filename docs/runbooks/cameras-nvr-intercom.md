@@ -596,12 +596,23 @@ Operation`, но името реално се приложи и каналът �
 нерегистриран панел липсваше или паролата за регистрация, или адресът на
 главната станция. След попълването и трите се регистрираха веднага.
 
-Процедурата, която работи (Hikvision я описва като „Method 2"):
+Процедурата, която работи (Hikvision я описва като „Method 2"; на този фърмуер
+екранът се казва **Video Intercom Network**, не „Session Settings"):
 
 1. В iVMS-4200 добави панела: адрес, порт `8000`, `admin` + паролата от
    `secret/emo/vermont-panels`.
-2. `Remote Configuration` → `Intercom` → `Session Settings`: попълни адрес на
-   главната станция `192.168.1.116` и паролата за регистрация. Запази.
+2. `Remote Configuration` → `Video Intercom` → `Call Parameters` →
+   **`Video Intercom Network`**. Четирите задължителни полета, както са на
+   работещите панели:
+
+   | Поле | Стойност |
+   |---|---|
+   | Registration Password | паролата от `secret/emo/vermont-panels` |
+   | Main Door Station IP | `192.168.1.116` |
+   | Main Station IP | `192.168.1.116` |
+   | Private Server IP | `0.0.0.0` |
+
+   `Enable Protocol 1.0` стои включено. Запази.
 3. Записът се появява в `Device Management` на главния и минава в `online` до
    десет минути. `Offline reason: Register fail` значи точно тези липсващи полета.
 
