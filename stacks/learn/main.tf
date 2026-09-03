@@ -649,6 +649,9 @@ module "ingress_prep" {
   anti_ai_scraping = true
   extra_annotations = {
     "traefik.ingress.kubernetes.io/router.priority" = "150"
+    # A carve-out on a host that already has its dashboard tile, so it stays
+    # out of the catalog rather than listing pages twice.
+    "gethomepage.dev/enabled" = "false"
   }
 }
 
@@ -672,5 +675,7 @@ module "ingress_prep_api" {
   max_body_size    = "512k"
   extra_annotations = {
     "traefik.ingress.kubernetes.io/router.priority" = "200"
+    # An API path behind the page, not something anyone browses to.
+    "gethomepage.dev/enabled" = "false"
   }
 }
