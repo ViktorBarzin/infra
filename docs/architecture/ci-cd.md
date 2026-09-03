@@ -260,12 +260,18 @@ Three things the report tells you that the old count could not:
   folder ACL on every apply so that a permission edited in the Grafana UI is put
   back, and nothing else enforces that. Treat a `±` there as expected.
 
-  `infra`, `technitium` and `dbaas` used to be listed here too and no longer
-  belong: they plan clean now. `technitium`'s gate had its `always` trigger
-  removed on 2026-09-03 once its four digest triggers were shown to cover every
-  real rollout, with Prometheus watching DNS health continuously in between
-  (commit `3e75f574`). Before treating any remaining `±` as unavoidable, check
-  whether the trigger is doing work nothing else does, as `monitoring`'s is.
+  `infra`, `technitium` and `dbaas` used to be listed here too. As of 2026-09-03
+  none of them contains a `timestamp()` or `uuid()` trigger any more, checked by
+  grep across the whole `stacks/` tree. `technitium`'s gate had its `always`
+  trigger removed once its four digest triggers were shown to cover every real
+  rollout, with Prometheus watching DNS health continuously in between (commit
+  `3e75f574`); `technitium` and `tts` were each re-planned afterwards and both
+  report `No changes`. `infra` was separately resolved earlier the same day.
+  `dbaas` was not re-planned, so treat "no nondeterministic trigger" as the
+  claim there rather than "plans clean".
+
+  Before treating any remaining `±` as unavoidable, check whether the trigger is
+  doing work nothing else does, as `monitoring`'s is.
 - **"Could not be planned" is separate from "differs"**, and means state
   unknown. When the errored stacks form a contiguous **alphabetical tail** the
   report says the run most likely aborted partway and the counts are incomplete.
