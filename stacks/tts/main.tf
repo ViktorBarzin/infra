@@ -286,8 +286,20 @@ resource "kubernetes_job" "models_dir_init" {
     labels    = local.labels
   }
   spec {
-    backoff_limit              = 3
-    ttl_seconds_after_finished = 86400
+    backoff_limit = 3
+    # Deliberately NO ttl_seconds_after_finished. It was 86400, which had
+    # Kubernetes delete the completed Job a day after it ran, so Terraform saw
+    # the resource missing and planned to create it again on every run. That
+    # made this stack drift forever and gave the cluster-wide drift count a
+    # floor it could never reach below (bead code-yizt, 2026-09-03).
+    #
+    # A completed Job object left in the namespace costs a few hundred bytes and
+    # is the record that the bootstrap ran. It cannot be replaced by an
+    # initContainer on the deployment: this creates /srv/nfs-ssd/chatterbox
+    # itself, which is the directory the chatterbox PVC mounts, and a pod cannot
+    # mkdir the path it is mounting. That is why the Job mounts the parent
+    # export whole-tree instead. The inner directories DO have an initContainer
+    # (see the reference_audio seeding on the deployment below).
     template {
       metadata { labels = local.labels }
       spec {
