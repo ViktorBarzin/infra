@@ -158,6 +158,55 @@ Drilled on the live box in both directions, with the fix running:
 | `tmux kill-session` + `tmux-persist-forget` | `event=session_killed` — no rule selects it |
 | `kill -9` on the claude, no forget | `event=session_died` |
 
+## The second intent record, added 2026-09-03
+
+The tombstone covers every ending that goes through tmux-api's DELETE handler,
+which is more than it first appears: the lobby's own kill, and a T3 thread
+deletion, because `t3-sync` reaches the same endpoint. It does not cover a user
+typing `/exit`. Claude ends, its pane exits, the session closes, and tmux-api is
+never involved, so nothing records the intent.
+
+That reported one of emo's sessions as died at 08:25 on 2026-09-03 while he was
+tidying up three of them. The other two went through the lobby and were
+correctly silent, which is what made the shape of the gap clear.
+
+The `SessionEnd` hook now records the ending itself. `claude-tmux-state clear`
+appends a `<session>\t<epoch>` row — the same format as the tombstone file, so
+one parser reads both — and `tl-session-watch` merges the two sources before
+asking whether a disappearance was explained.
+
+**A hook cannot run when the process is SIGKILLed or OOM-killed.** That is what
+makes this safe rather than a blanket mute: the record exists exactly when the
+ending was orderly, and every death worth alerting on still has nothing to
+explain it.
+
+The record lives in `/run/user/<uid>/tl-clean-exit.tsv`. systemd already creates
+that directory mode 0700 owned by the user, so the hook writes it with no sudo
+grant, no user can forge a row that silences another user's alert, and root —
+which is what the watcher runs as — still reads it. It is tmpfs, so nothing
+survives a reboot, which is correct: after one, every session is gone and the
+`rebooted` branch handles it.
+
+Drilled on the live box in both directions, as before:
+
+| what was done | clean-exit record | what the watcher said |
+|---|---|---|
+| session closed with the hook having run | present | `event=session_killed` |
+| session closed with no record | absent | `event=session_died` |
+
+One thing to know about writing that guard: an earlier version tried to reject a
+name containing a tab or a newline with `*"$(printf '\n')"*`. Command
+substitution strips the trailing newline, so that pattern collapses to `*""*`,
+matches every name, and silently writes nothing at all. The check is now for an
+empty name only, which is sufficient — tmux rejects newlines in session names
+and every name the lobby creates passes tmux-api's `sessionNameRe`.
+
+Still uncovered: `tmux kill-session` typed at a CLI. It tombstones nothing and
+fires no hook, so it reads as a death. Closing it would need either a shell
+wrapper, which is bypassable, or a tmux `session-closed` hook, which fires
+identically for a kill and for a pane whose process was OOM-killed and so cannot
+tell them apart.
+
 ## How the signals travel
 
 ```mermaid

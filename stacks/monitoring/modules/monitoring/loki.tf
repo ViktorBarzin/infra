@@ -716,9 +716,20 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # next 5-minute save. The first version of this read an orphaned row
               # and so called every deliberate kill a death for up to five minutes.
               #
-              # Remaining false positive: `tmux kill-session` typed at a CLI
-              # without a matching `tmux-persist-forget` tombstones nothing and
-              # reads as a death.
+              # A clean /exit used to land here too, and paged emo on
+              # 2026-09-03 for tidying up. tmux-api's DELETE handler writes the
+              # tombstone, which covers a kill from the lobby and a T3 thread
+              # deletion, since t3-sync goes through that endpoint. It never saw
+              # a user typing /exit: claude ends, its pane exits, the session
+              # closes, and tmux-api is not involved. The SessionEnd hook now
+              # records that ending itself, in /run/user/<uid>/tl-clean-exit.tsv,
+              # and the watcher reads it alongside the tombstones. A hook cannot
+              # run when the process is SIGKILLed or OOM-killed, so this narrows
+              # the rule without blinding it (terminal-lobby 239324c).
+              #
+              # Remaining false positive: `tmux kill-session` typed at a CLI.
+              # It tombstones nothing and fires no hook, so it still reads as a
+              # death.
               alert  = "ClaudeSessionDied"
               expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"tl-session-watch\"} |~ \"event=(session_died|claude_died)\" | logfmt [2h])) > 0"
               for    = "0m"
