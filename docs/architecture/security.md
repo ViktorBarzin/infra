@@ -166,11 +166,20 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   without transiting Cloudflare — pfSense NATs WAN :443 straight to Traefik — so
   a banned client can connect directly and claim to be anyone. Verified live in
   both directions on 2026-08-18.
-- **Ban only.** `captcha` decisions are ignored. The `captcha_remediation` profile
-  diverts four false-positive-prone scenarios (`http-429-abuse`, `http-403-abuse`,
-  `http-crawl-non_statics`, `http-sensitive-files`) to a captcha that is enforced
-  nowhere; honouring it here would turn all four into live fleet-wide blocks.
-  `scope=Range` is handled as well as `scope=Ip`.
+- **Ban only.** `captcha` decisions are ignored, and `scope=Range` is handled as
+  well as `scope=Ip`. **The `captcha_remediation` profile was REMOVED on
+  2026-09-02** — it diverted `http-429-abuse`, `http-403-abuse`,
+  `http-crawl-non_statics` and `http-sensitive-files` to a captcha decision that
+  nothing enforces, so those four detected and did nothing. It cost us: a Meta
+  crawler swarm walked forgejo's git history that day and OOMKilled all three
+  traefik pods plus forgejo, while `http-crawl-non_statics` fired **60 times**
+  and every decision was discarded. A soft-fail that fails to nothing is worse
+  than no rule, because the scenario metrics look like coverage. All four now
+  fall through to `default_ip_remediation` and ban for 4h. They are genuinely
+  false-positive-prone, which is why the divert existed — the mitigation is the
+  trusted-ips whitelist, which now pins the London egress (`137.220.71.46`)
+  alongside the origin. **If a legitimate source starts getting banned,
+  whitelist it; do not reintroduce a remediation that goes nowhere.**
 - **CAPI is excluded** (`origins` config: `crowdsec`, `cscli`, `cscli-import`,
   `lists`, `console`). Those 22.7k community bans have never been enforced on
   proxied hosts, and their false positives (CGNAT, carrier ranges) would surface
@@ -179,6 +188,45 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   per poll instead of a few KB. **Consequence worth stating plainly: the enforced
   set is currently 4 decisions.** This surface is new coverage, not a like-for-like
   replacement of a large blocklist.
+- **The agents must POLL the traefik log, not trust inotify (2026-09-03).** The
+  helm chart renders every `agent.acquisition` entry with `force_inotify: true`
+  and `poll_without_inotify: false`, and with inotify alone an agent keeps
+  reading a file that has been rotated or replaced by a container restart.
+  Measured: the live container was writing `traefik/3.log` while the agent still
+  held an fd on `traefik/2.log` from the previous evening, and lines-read stayed
+  frozen at 54,238 across 80 fresh requests. Both replacements happen constantly
+  — traefik restarted five times during the crawler incident, and kubelet
+  rotates the file every 1.5-3h because traefik logs every request as JSON.
+  **Consequence: after each agent restart CrowdSec saw traefik for a couple of
+  hours and was then blind**, starving every `http_*` scenario, which is the
+  deeper reason the Meta crawl was never banned. The traefik entry is therefore
+  declared in `kubernetes_config_map.crowdsec_traefik_acquisition` (ours, with
+  polling) rather than by the chart. The mailserver entries the chart still
+  generates have the same fault, deliberately left alone.
+- **Per-IP detection cannot catch a distributed crawl, measured twice
+  (2026-09-03).** Meta sent 9,300-11,000 requests/hour to forgejo from 61-63
+  addresses, each in its own `/64`, at 0.059-0.121 req/s. Replaying that trace
+  through a simulated bucket, and accounting for requests being split across 3
+  traefik replicas (buckets are per-agent and in-memory), no usable threshold
+  works: capacity 10, 6 and 4 each catch **0 of 63**, and even capacity 2 catches
+  only 19 while banning any human who views three pages. `viktor/forgejo-crawl-slow`
+  (capacity 10, leakspeed 120s, forgejo router only) therefore catches *faster*
+  crawlers the stock rule misses but not this one. **What stops Meta is the
+  Terraform-managed static blocklist** of 117 collapsed ranges from AS32934,
+  AS63293 and AS54115, re-imported daily at 04:00 so its 168h decisions never
+  lapse.
+- **Cloudflare's AI-bot block does NOT catch Meta (measured 2026-09-03).**
+  `ai_bots_protection` was enabled on the zone, and forgejo was proxied as a
+  test. Of 73 residual Meta requests in 20 minutes, **66 arrived through the
+  cloudflared tunnel** and were stopped by our own bouncer behind it. Cloudflare
+  verifies bot identity by ASN and reverse DNS, and Meta never claimed to be a
+  bot — it sent spoofed desktop Chrome user-agents, so there is nothing to match
+  on. Sending `meta-externalagent`, `GPTBot` and `ClaudeBot` user agents from our
+  own address all return 200 for the same reason, so that is not a valid test.
+  forgejo was reverted to `non-proxied`: with no bot-blocking benefit, only the
+  100MB request-body cap remained, which would reject a fresh full push of
+  `infra.git` (183 MB). `ai_bots_protection` stays on — it still covers the
+  proxied hosts against crawlers that do declare themselves.
 - **Auth carve-out**: `authentik.viktorbarzin.me` and `public-auth.viktorbarzin.me`
   are never gated, so a false-positive ban cannot wall someone out of the login /
   WebAuthn flow they would need in order to fix it. Carried over from the WAF rule
