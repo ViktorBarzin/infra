@@ -392,10 +392,23 @@ blocks privileged / host-namespace pods (no Kyverno policy touches sysctls).
 Needed by the `proxy` shared per-country NordVPN gateway + Headscale exit nodes,
 which FORWARD foreign-origin traffic onto gluetun's `tun0` (impossible without
 `ip_forward=1` in the pod netns; the runtime mounts `/proc/sys` read-only, so it
-cannot be set at runtime even with `NET_ADMIN`). Managed in
-`modules/create-template-vm/k8s-node-post-join-tune.sh` (source of truth, all
-future nodes); master + GPU node1 were not live-rolled (no gateway schedules
-there) and pick it up on re-provision.
+cannot be set at runtime even with `NET_ADMIN`). Declared in
+`playbooks/k8s-node-tuning.yml` as `kubelet_allowed_unsafe_sysctls` and
+reconciled hourly on all six nodes. The one-shot
+`modules/create-template-vm/k8s-node-post-join-tune.sh` that previously owned it
+ran once per node with nothing re-applying it, so `kubeadm upgrade node` erased
+the key cluster-wide in July 2026; that script is deleted as of 2026-09-03.
+
+Verified live on 2026-09-03 via each kubelet's `/configz`: master, node1 and
+node2 each report exactly `['net.ipv4.ip_forward']`, and
+`scripts/check-node-kubelet-tune` reports all six nodes carrying the full
+declared tune. Two properties of the reconciler are worth knowing before relying
+on it as a control. This key is **unioned**, not pinned (`current + declared |
+unique | sort`), so the playbook guarantees `net.ipv4.ip_forward` is present but
+will not remove an unsafe sysctl added out of band. Detect that case with
+`scripts/check-node-kubelet-tune`. The playbook also writes the
+file without restarting kubelet, so a change to this list takes effect at the
+node's next reboot rather than at the next hourly run.
 
 #### Operational Policies
 
