@@ -285,6 +285,22 @@ alertmanager:
           - alertname =~ "HDDSaturated|HDDReadLatencyHigh"
         target_matchers:
           - alertname =~ "HDDHighIOPS|HDDHighReadRate|HDDHighWriteRate|HDDDailyReadVolume|HDDDailyWriteVolume"
+      # devvm down: the generic scrape alert says the same thing 27 minutes
+      # later and more quietly. equal: [job] keeps this surgical — every OTHER
+      # target's ScrapeTargetDown still notifies while devvm is unreachable.
+      - source_matchers:
+          - alertname = DevvmDown
+        target_matchers:
+          - alertname = ScrapeTargetDown
+        equal: [job]
+      # The two devvm dead-man switches in the Loki ruler go off whenever the
+      # box stops shipping journal lines, which a down box does by definition.
+      # Both alertnames are devvm-specific, so no `equal` is needed to keep this
+      # from reaching anything else.
+      - source_matchers:
+          - alertname = DevvmDown
+        target_matchers:
+          - alertname =~ "DevvmJournalSilent|SessionWatchSilent"
     receivers:
       - name: slack-critical
         slack_configs:
@@ -1389,6 +1405,32 @@ serverFiles:
       # Design: docs/plans/2026-09-01-devvm-session-loss-alerting.md
       - name: DevVM
         rules:
+          - alert: DevvmDown
+            # The box being GONE, as opposed to squeezed. Until this rule the
+            # only thing that noticed was ScrapeTargetDown at for: 30m/warning,
+            # and before that nothing did: the 2026-06-11 QEMU stall ran ~90
+            # minutes before a human looked at the sidebar and counted.
+            #
+            # for: 3m against the global 2m scrape means three consecutive
+            # failed scrapes, so it speaks at ~4-6 minutes of real downtime.
+            # Calibrated on 30 days to 2026-09-03: up{job="devvm"} hit 0 in 13
+            # samples, and the longest contiguous run in any 10m window was 2
+            # samples, spanning 2m. Every one of those blips stays under this
+            # threshold, so the measured history contains no false positive.
+            #
+            # `or on() vector(0)` mirrors NodeDown: if the target is dropped
+            # from the scrape config entirely the series vanishes and a bare
+            # up==0 can never fire. In that case the alert carries no job label
+            # and the ScrapeTargetDown inhibition below does not apply, which is
+            # fine, because ScrapeTargetDown cannot fire on an absent series
+            # either.
+            expr: (up{job="devvm"} or on() vector(0)) == 0
+            for: 3m
+            labels:
+              severity: critical
+            annotations:
+              summary: "devvm is not being scraped — the shared workstation may be down"
+              description: "Every Claude session, t3-serve and agent on this box is gone or unreachable. Check the VM on Proxmox first (qm status on proxmox-1); a QEMU stall looks identical to a reboot from here and was the 2026-06-11 failure. Journal history survives in Loki even while the box is unreachable: homelab logs query '{job=\"devvm-journal\"}' --since 1h. When the box is back, ClaudeSessionDied reports what did not come back with it."
           - alert: DevvmMemoryPressure
             # earlyoom SIGTERMs at 5% available and SIGKILLs at 3% (-m 5,3), and
             # when it fires on this box it takes claude processes: the 2026-08-16
@@ -3280,6 +3322,53 @@ serverFiles:
               severity: warning
             annotations:
               summary: "apiserver->etcd avg request latency {{ $value | printf \"%.2f\" }}s (>0.5s for 10m) — etcd likely slow on the shared HDD; control-plane recovery at risk on reboot"
+          # Static-pod restart rate, the second compensating control for keeping
+          # etcd on the shared HDD (code-oflt, risk-accepted 2026-09-03). The
+          # 2026-06-12 flap crashlooped the control plane for ~2h on etcd
+          # lease-renewal timeouts and nothing alerted; EtcdRequestLatencyHigh
+          # above watches the latency, these two watch the consequence.
+          #
+          # TWO rules, because the four containers have baselines two orders of
+          # magnitude apart. Measured over the 30 days to 2026-09-03:
+          #   etcd                     1 restart
+          #   kube-apiserver           5
+          #   kube-controller-manager  120
+          #   kube-scheduler          ~121
+          # A single ">= 1 restart" rule over all four would post roughly 8
+          # times a day about the chronic leader-election churn; a single
+          # ">= 3 in 15m" rule would leave etcd unwatched, since etcd restarting
+          # even once is the event worth hearing about.
+          #
+          # Open question this leaves: ~4 kube-controller-manager restarts a day
+          # is high for a quiet cluster and is consistent with lease renewal
+          # losing races against etcd fsync on the spindle. These rules watch
+          # the rate rather than explain it. Getting etcd itself scraped
+          # (etcd_disk_wal_fsync_duration_seconds) is what would settle it, and
+          # that needs a control-plane change — bead code-at4f.
+          - alert: ControlPlaneStaticPodRestarted
+            # etcd and the apiserver. Rare enough that one restart is news:
+            # over 30 days, 1 and 5 respectively, in 3 distinct episodes.
+            expr: increase(kube_pod_container_status_restarts_total{namespace="kube-system",pod=~"etcd.*|kube-apiserver.*"}[15m]) >= 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.container }} on {{ $labels.pod }} restarted {{ $value | printf \"%.0f\" }}x in 15m"
+              description: "A control-plane static pod restarted. On this cluster that is usually etcd being slow on the shared HDD and taking the lease with it. Check EtcdRequestLatencyHigh alongside this, then: homelab k8s status kube-system, and kubectl -n kube-system logs {{ $labels.pod }} --previous. If this is a burst rather than a single restart, ControlPlaneLeaderFlapping fires too."
+          - alert: ControlPlaneLeaderFlapping
+            # The scheduler and controller-manager restart on every lost leader
+            # lease, so they drip continuously: 21 and 20 separate hours in the
+            # 7 days to 2026-09-03 had at least one. The threshold is set above
+            # that drip and below a crashloop. Over 30 days the busiest 15m
+            # window held 5, and ">= 3 in 15m" was true in 26 five-minute
+            # samples, which is roughly 4 episodes — about one a week.
+            expr: increase(kube_pod_container_status_restarts_total{namespace="kube-system",pod=~"kube-scheduler.*|kube-controller-manager.*"}[15m]) >= 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.container }} restarted {{ $value | printf \"%.0f\" }}x in 15m — control plane is flapping, not drifting"
+              description: "Above the normal leader-election churn on this cluster (~4/day each, which is itself a known symptom of etcd on the shared spindle). A burst this size is the 2026-06-12 shape: etcd fsync stalls, the lease expires, the component restarts, repeat. Check the disk first: homelab metrics query 'rate(node_disk_io_time_seconds_total{device=\"sdc\"}[5m])'. Then kubectl -n kube-system logs {{ $labels.pod }} --previous."
           - alert: KubeletRuntimeOperationsLatency
             expr: histogram_quantile(0.99, sum by (instance, operation_type, le) (rate(kubelet_runtime_operations_duration_seconds_bucket[10m]))) > 60
             for: 10m
