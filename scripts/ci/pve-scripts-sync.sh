@@ -1,6 +1,12 @@
 #!/bin/sh
 # Sync the PVE host backup scripts and their systemd units from this repo.
 #
+# Covers all five: lvm-pvc-snapshot, daily-backup, offsite-sync-backup,
+# devvm-home-backup and vzdump-vms. The last two joined on 2026-09-03 —
+# devvm-home-backup was in the repo but nothing deployed it, so the live and
+# repo copies could drift apart unnoticed, and vzdump-vms still carried an
+# scp invocation in a runbook that someone had to remember to run.
+#
 # Run by .woodpecker/pve-scripts-sync.yml. Lives in a file rather than inline in
 # the pipeline because Woodpecker traces each `commands:` entry through
 # /bin/sh -c, and a multi-line loop containing quotes failed to parse there
@@ -16,7 +22,7 @@
 set -eu
 
 PVE_HOST="${PVE_HOST:-192.168.1.127}"
-NAMES="${NAMES:-lvm-pvc-snapshot daily-backup offsite-sync-backup}"
+NAMES="${NAMES:-lvm-pvc-snapshot daily-backup offsite-sync-backup devvm-home-backup vzdump-vms}"
 SSH="ssh -o BatchMode=yes root@$PVE_HOST"
 
 echo "---diff---"
