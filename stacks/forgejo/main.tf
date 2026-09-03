@@ -441,8 +441,41 @@ module "ingress" {
   # basic-auth / bearer tokens, NOT browser sessions. Forward-auth would 302
   # them into a redirect they can't follow.
   # auth = "none": Git + OCI registry clients use HTTP Basic auth / bearer tokens; native CLI tools cannot follow forward-auth redirects.
-  auth            = "none"
-  dns_type        = "non-proxied"
+  auth = "none"
+  # PROXIED as of 2026-09-03, as a MEASURED EXPERIMENT — flip back to
+  # "non-proxied" if the numbers below say it did not help.
+  #
+  # WHY: Meta's AI crawler walks this forge's git history and sends
+  # 9,300-11,000 requests/hour. Every one is currently 403'd by the CrowdSec
+  # static blocklist, but they all still reach Traefik, and the aggregate is
+  # what OOMKilled forgejo and all three traefik pods on 2026-09-02. Cloudflare
+  # never got a chance at it: all 1,500 Meta requests sampled in 24h went to
+  # non-proxied hosts.
+  #
+  # THE QUESTION THIS ANSWERS: does Cloudflare's ai_bots_protection (enabled
+  # 2026-09-03) actually catch Meta? It cannot be tested from here — Cloudflare
+  # verifies bot identity by ASN and reverse DNS, not the User-Agent, so
+  # sending a meta-externalagent UA from our own address proves nothing (tried:
+  # HTTP 200, as expected). Proxying the one host Meta actually crawls turns
+  # that into an observation: either those ~10k/hour stop reaching Traefik, or
+  # they do not.
+  #
+  # WHY THIS IS SAFE. Internal clients never traverse Cloudflare — split-horizon
+  # DNS answers 10.0.20.203 on the LAN and CoreDNS answers Traefik's ClusterIP
+  # in-cluster, both verified today. So CI, the devvm and every LAN/VPN client
+  # are untouched; only external traffic changes path.
+  #
+  # THE ONE REAL COST: Cloudflare caps a request body at 100MB, and a fresh full
+  # push of infra.git is 183 MB on disk (terminal-lobby 81, website 74).
+  # Incremental pushes are kilobytes and CI's largest blob is 5.9 MB, so day to
+  # day nothing comes close; seeding a NEW repo from outside the house needs SSH.
+  # git-upload-pack (clone/fetch) is unaffected either way, since the cap is on
+  # the request body and clone data comes back in the response. LFS is enabled
+  # but holds 0 objects, and the OCI registry is frozen.
+  #
+  # NOTE dns_type = "proxied" creates NO DNS record (ADR-0021): the explicit
+  # A/AAAA records are removed and the host rides the zone's proxied wildcard.
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
   tls_secret_name = var.tls_secret_name
