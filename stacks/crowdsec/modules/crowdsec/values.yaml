@@ -26,12 +26,12 @@ agent:
   priorityClassName: "tier-1-cluster"
   # To specify each pod you want to process it logs (pods present in the node)
   acquisition:
-    # The namespace where the pod is located
-    - namespace: traefik
-      # The pod name
-      podName: traefik-*
-      # as in crowdsec configuration, we need to specify the program name so the parser will match and parse logs
-      program: traefik
+    # traefik is NOT here on purpose. The chart hardcodes
+    # poll_without_inotify: false, and with inotify alone the agent keeps
+    # reading a file that has been rotated or replaced by a container restart —
+    # measured blind for hours on 2026-09-03. It is declared instead in
+    # kubernetes_config_map.crowdsec_traefik_acquisition (see main.tf) and
+    # mounted into acquis.d below, with polling enabled.
     # Mailserver logs for SMTP/IMAP brute-force detection
     - namespace: mailserver
       podName: mailserver-*
@@ -90,6 +90,10 @@ agent:
       mountPath: /etc/crowdsec/acquis.d/syslog.yaml
       subPath: "syslog.yaml"
       readonly: true
+    - name: traefik-acquisition
+      mountPath: /etc/crowdsec/acquis.d/traefik.yaml
+      subPath: "traefik.yaml"
+      readonly: true
   extraVolumes:
     - name: custom-scenarios
       configMap:
@@ -100,6 +104,9 @@ agent:
     - name: syslog-acquisition
       configMap:
         name: crowdsec-syslog-acquisition
+    - name: traefik-acquisition
+      configMap:
+        name: crowdsec-traefik-acquisition
 lapi:
   resources:
     requests:
