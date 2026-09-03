@@ -981,10 +981,14 @@ serverFiles:
             source_labels:
               - __meta_kubernetes_namespace
             target_label: namespace
-          - action: replace
-            source_labels:
-              - __meta_kubernetes_pod_node_name
-            target_label: node
+          # Deliberately no `node` label. VaultRaftLeaderStuck joins its two
+          # halves with `and on(instance)`, and a vault pod that reschedules
+          # keeps its name while changing node — so for the few minutes both
+          # series sit inside the lookback window there would be two series
+          # sharing an instance, which makes the join fail as a duplicate match
+          # rather than fire. Seen live while rolling vault-2 from k8s-node2 to
+          # k8s-node5 on 2026-09-03. Which node a pod is on is already in
+          # kube_pod_info if anyone needs it.
       - job_name: kubernetes-pods-slow
         honor_labels: true
         scrape_interval: 5m
@@ -2801,11 +2805,17 @@ serverFiles:
             annotations:
               summary: "Vault audit-log rotation failed to archive {{ $value | printf \"%.0f\" }} pod(s) — logs left intact, volume still growing"
               description: "The rotation job verifies each gzip archive before truncating the live log, so a failure here means the archive could not be written or did not verify. No audit data was lost, but the volume is not being reclaimed."
+          # vault_raft_storage_stats_applied_index, NOT vault_raft_last_index_gauge.
+          # The latter is what this rule shipped with in April and it does not
+          # exist in Vault 1.18.5 — checked against a live /v1/sys/metrics dump
+          # on 2026-09-03, which is also why nobody noticed: a rule referencing
+          # a metric that was never emitted evaluates to nothing, and nothing is
+          # exactly what a healthy cluster looks like.
           - alert: VaultRaftLeaderStuck
             expr: |
               (vault_core_active == 1)
               and on(instance)
-              (rate(vault_raft_last_index_gauge[5m]) == 0)
+              (rate(vault_raft_storage_stats_applied_index[5m]) == 0)
             for: 2m
             labels:
               severity: critical
