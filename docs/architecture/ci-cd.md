@@ -255,8 +255,17 @@ Three things the report tells you that the old count could not:
 - **Symbols** are `+` created, `-` destroyed, `~` updated in-place, `±` replaced.
   A stack showing only `±` on `null_resource` is almost always a
   `triggers = { always = timestamp() }` resource, which can never plan clean by
-  construction — `infra`, `monitoring`, `technitium` and `dbaas` are the standing
-  examples. Those are expected, not a backlog.
+  construction. As of 2026-09-03 there is exactly ONE left, `monitoring`, and it
+  is deliberate: `null_resource.grafana_admin_only_folder_acl` re-asserts the
+  folder ACL on every apply so that a permission edited in the Grafana UI is put
+  back, and nothing else enforces that. Treat a `±` there as expected.
+
+  `infra`, `technitium` and `dbaas` used to be listed here too and no longer
+  belong: they plan clean now. `technitium`'s gate had its `always` trigger
+  removed on 2026-09-03 once its four digest triggers were shown to cover every
+  real rollout, with Prometheus watching DNS health continuously in between
+  (commit `3e75f574`). Before treating any remaining `±` as unavoidable, check
+  whether the trigger is doing work nothing else does, as `monitoring`'s is.
 - **"Could not be planned" is separate from "differs"**, and means state
   unknown. When the errored stacks form a contiguous **alphabetical tail** the
   report says the run most likely aborted partway and the counts are incomplete.
