@@ -634,16 +634,30 @@ resource "kubernetes_service" "prep_sync" {
 # pages.viktorbarzin.me already has its record, and a second one would fight
 # over it. anti_ai_scraping is forced ON: this is a public page and there is no
 # reason to let it be harvested.
+#
+# auth = "none", not "public", and the difference is not cosmetic. "public"
+# attaches Authentik's public forward-auth, which is supposed to auto-bind a
+# guest but currently 302s an anonymous visitor to a login page instead —
+# measured 2026-09-03 against resume.viktorbarzin.me and echo.viktorbarzin.me,
+# both of which show the same login screen, so this is estate-wide and not
+# specific to this stack (see the open authentik embedded-outpost issue). "none"
+# attaches no auth middleware at all, which is what "anyone with the link opens
+# it" actually requires, and it is also the only posture the downloaded offline
+# copy can sync from: that page runs on file:// with no cookie for this domain,
+# so any redirect to Authentik would fail its fetch.
 module "ingress_prep" {
-  source           = "../../modules/kubernetes/ingress_factory"
-  name             = "prep"
-  host             = "pages"
-  ingress_path     = ["/prep"]
-  service_name     = "learn"
-  port             = 80
-  namespace        = kubernetes_namespace.learn.metadata[0].name
-  tls_secret_name  = var.tls_secret_name
-  auth             = "public"
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "prep"
+  host            = "pages"
+  ingress_path    = ["/prep"]
+  service_name    = "learn"
+  port            = 80
+  namespace       = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+  # auth = "none": the page anyone with the link should open with no login. Not
+  # "public", which currently 302s anonymous visitors to a login page (measured
+  # estate-wide 2026-09-03), and not a posture the offline file:// copy can sync from.
+  auth             = "none"
   dns_type         = "none"
   external_monitor = false
   anti_ai_scraping = true
@@ -658,17 +672,22 @@ module "ingress_prep" {
 # The state API. Separate module call because these paths need a different
 # backend, and separate settings: no anti-AI middleware, which inspects the user
 # agent and has no business on a JSON endpoint, and a body cap in front of the
-# service's own.
+# service's own. auth = "none" for the same two reasons as the page above, and
+# one more: a cookie dance in front of a JSON endpoint breaks every non-browser
+# caller, which is the case stacks/insta2spotify already warns about.
 module "ingress_prep_api" {
-  source           = "../../modules/kubernetes/ingress_factory"
-  name             = "prep-api"
-  host             = "pages"
-  ingress_path     = ["/prep/api"]
-  service_name     = kubernetes_service.prep_sync.metadata[0].name
-  port             = 80
-  namespace        = kubernetes_namespace.learn.metadata[0].name
-  tls_secret_name  = var.tls_secret_name
-  auth             = "public"
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "prep-api"
+  host            = "pages"
+  ingress_path    = ["/prep/api"]
+  service_name    = kubernetes_service.prep_sync.metadata[0].name
+  port            = 80
+  namespace       = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+  # auth = "none": a JSON state endpoint for that page, called from the page and
+  # from its downloaded offline copy. A cookie dance in front of it breaks every
+  # non-browser caller, which stacks/insta2spotify already warns about.
+  auth             = "none"
   dns_type         = "none"
   external_monitor = false
   anti_ai_scraping = false
