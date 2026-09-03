@@ -26,5 +26,5 @@ health:
     interval: 10s
     threshold: 3
 proxy:
-  remoteurl: https://ghcr.io
-  ttl: 0
+  remoteurl: https://reg.kyverno.io
+  ttl: 168h

@@ -214,9 +214,13 @@
     # answering 200 on 2026-09-03. Adding a registry here is the whole change
     # needed to put every node behind a new cache.
     #
-    # Port 5040 is deliberately absent: its config-kyverno.yml carries the same
-    # remoteurl as config-ghcr.yml (https://ghcr.io), so it duplicates 5010 and
-    # kyverno images already ride the ghcr.io entry below.
+    # All five cache ports are wired. 5040 was briefly read as a duplicate of
+    # 5010, because config-kyverno.yml carried remoteurl https://ghcr.io. That
+    # was a misconfiguration, not a duplicate: this cluster's kyverno images are
+    # reg.kyverno.io/kyverno/{kyverno,background-controller,cleanup-controller},
+    # so the cache had never served anything (4.0K on disk) and every kyverno
+    # pull went straight to the internet. The remoteurl is corrected and the
+    # registry is mirrored here.
     registry_mirrors:
       - registry: docker.io
         upstream: https://registry-1.docker.io
@@ -230,6 +234,9 @@
       - registry: registry.k8s.io
         upstream: https://registry.k8s.io
         port: 5030
+      - registry: reg.kyverno.io
+        upstream: https://reg.kyverno.io
+        port: 5040
 
     # containerd's own default, and what master, node4 and node5 already run;
     # node1, node2 and node3 drifted to 5 with nothing declaring it. Uniform at 3
