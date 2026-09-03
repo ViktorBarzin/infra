@@ -14,9 +14,13 @@
 # monorepo's plans/ tree of published HTML plan snapshots (infra#72); the
 # Caddyfile splits the two sites by Host header, module "ingress_plans" below.
 #
-# Access is GROUP-GATED, then open within the group: Authentik admits only
-# "Home Server Admins" (vbarzin, emil.barzin — see module "ingress_pages"),
-# and from 2026-08-09 every admitted identity can read every page space.
+# Access is GROUP-GATED at the edge, then per-identity in the Caddyfile:
+# Authentik admits "Home Server Admins" (vbarzin, emil.barzin) plus "Pages
+# Readers" (see module "ingress_pages"), and each admitted identity gets its own
+# static try_files list. The two admins read every space (2026-08-09, so a link
+# handed to the other one resolves instead of 404ing). A Pages Reader reads only
+# their own space — added 2026-09-03 for Anca, whose prep page lives in
+# pages/anca/ and who should not inherit the admins' 100+ published pages.
 # pages/<user>/ is an authoring namespace, not an access boundary; unlisted
 # identities still get 403. Before that date each identity was pinned to its
 # own directory, which meant a page URL handed to the other person resolved
@@ -165,6 +169,23 @@ resource "kubernetes_config_map" "caddyfile" {
       	handle @pages_wizard {
       		root * /repo/src/current/pages
       		try_files /wizard{path} /wizard{path}index.html /emo{path} /emo{path}index.html /shared{path} /shared{path}index.html
+      		file_server
+      	}
+      	# Anca (ancaelena98@gmail.com, display name "Anca Milea" — verified against
+      	# the live Authentik user list 2026-09-03; the OTHER account matching
+      	# "anca", anca.r.cristian10@gmail.com, last logged in Jul 2025 and is not
+      	# the one to use). Added 2026-09-03 so she can read her Citadel interview
+      	# prep at pages.viktorbarzin.me. Her try_files list is DELIBERATELY just
+      	# her own space: unlike the two admin handles above she gets no fallback
+      	# into /wizard, /emo or /shared, so admitting her to the host does not
+      	# hand her every page published here.
+      	@pages_anca {
+      		host pages.viktorbarzin.me
+      		header_regexp X-Authentik-Username ^ancaelena98(@.*)?$
+      	}
+      	handle @pages_anca {
+      		root * /repo/src/current/pages
+      		try_files /anca{path} /anca{path}index.html
       		file_server
       	}
       	@pages_emo {
@@ -367,6 +388,11 @@ module "ingress_pages" {
   service_name    = "learn"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  # "Pages Readers" (stacks/authentik/pages-readers.tf) is a read-only door for
+  # one person at a time: the Caddyfile above still decides WHICH space each
+  # identity sees, and a Pages Reader with no handle of their own falls through
+  # to the 403. Admins keep passing via the break-glass branch regardless.
+  allowed_groups = ["Home Server Admins", "Pages Readers"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Pages"
