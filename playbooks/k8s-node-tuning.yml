@@ -204,6 +204,41 @@
     kubelet_config_path: /var/lib/kubelet/config.yaml
     containerd_config_path: /etc/containerd/config.toml
 
+    # The LAN pull-through cache VM and Traefik's LB IP, both referenced by the
+    # certs.d tasks further down.
+    registry_cache_host: 10.0.20.10
+    traefik_lb_ip: 10.0.20.203
+
+    # Every upstream registry this cluster pulls from that has a cache in front
+    # of it, with the port serving it on registry_cache_host. All four verified
+    # answering 200 on 2026-09-03. Adding a registry here is the whole change
+    # needed to put every node behind a new cache.
+    #
+    # Port 5040 is deliberately absent: its config-kyverno.yml carries the same
+    # remoteurl as config-ghcr.yml (https://ghcr.io), so it duplicates 5010 and
+    # kyverno images already ride the ghcr.io entry below.
+    registry_mirrors:
+      - registry: docker.io
+        upstream: https://registry-1.docker.io
+        port: 5000
+      - registry: ghcr.io
+        upstream: https://ghcr.io
+        port: 5010
+      - registry: quay.io
+        upstream: https://quay.io
+        port: 5020
+      - registry: registry.k8s.io
+        upstream: https://registry.k8s.io
+        port: 5030
+
+    # containerd's own default, and what master, node4 and node5 already run;
+    # node1, node2 and node3 drifted to 5 with nothing declaring it. Uniform at 3
+    # because the plan measured 28-29 MB/s as an AGGREGATE ceiling containerd's
+    # existing streams already reach (docs/plans/2026-09-02-node1-large-image-handling.md
+    # section 7), so more streams buy no throughput and only add contention on the
+    # shared spindle.
+    containerd_max_concurrent_downloads: 3
+
     # Age after which kubelet collects an image no pod is using, regardless of
     # disk pressure. Live value is `0s`, which DISABLES age-based collection —
     # confirmed genuine on live /configz, unlike imageMinimumGCAge, whose on-disk
@@ -614,6 +649,117 @@
         containerd_merged.rc != 0
         or 'true' not in containerd_merged.stdout
       tags: containerd
+
+    # Pull concurrency, uniform. Diverged 3 vs 5 across the fleet with nothing
+    # declaring it. Value and reasoning are in the vars block above. Unlike
+    # certs.d this lives in config.toml, so it needs a containerd restart to take
+    # effect, which the node's next reboot provides.
+    - name: containerd pull concurrency is the same on every node
+      ansible.builtin.replace:
+        path: "{{ containerd_config_path }}"
+        regexp: '^(\s*)max_concurrent_downloads\s*=\s*\d+\s*$'
+        replace: '\1max_concurrent_downloads = {{ containerd_max_concurrent_downloads }}'
+        backup: true
+        validate: containerd -c %s config dump
+      tags: containerd
+
+    # ---- registry mirrors (the pull-through cache) -------------------------
+    # WHY THIS IS HERE. certs.d was written by two one-shot scripts and
+    # reconciled by nothing: modules/create-template-vm/k8s-node-containerd-setup.sh
+    # at first boot, and scripts/setup-forgejo-containerd-mirror.sh by hand on
+    # existing nodes. They ran at different times, so the six nodes ended up with
+    # THREE different configurations (measured 2026-09-03):
+    #
+    #   master        docker.io, forgejo, ghcr.io
+    #   node1/2/3     the above, plus TWO DEAD entries pointing at the port-5050
+    #                 R/W registry decommissioned 2026-05-07
+    #                 (10.0.20.10:5050 and registry.viktorbarzin.me)
+    #   node4/node5   the above, plus quay.io and registry.k8s.io
+    #
+    # So four of six nodes pulled quay.io and registry.k8s.io straight from the
+    # internet while a working local cache sat unused, and three carried mirror
+    # entries for a registry that has not existed since May. Same failure shape
+    # as the kubelet tune in this file's header: a one-shot with no reconciler.
+    #
+    # certs.d is read PER PULL, not at containerd startup, so these take effect
+    # without a restart. That is what makes it safe to reconcile hourly.
+    #
+    # UPSTREAM FALLBACK IS DELIBERATE on all four. node5's ghcr.io entry had the
+    # cache as its ONLY host, which fails ghcr pulls closed whenever the cache VM
+    # is down, and that VM ran out of disk for 45 days unnoticed. Listing the real
+    # registry second costs nothing on a hit and degrades to a direct pull rather
+    # than an outage.
+    #
+    # NOT MIRRORED, on purpose: the kyverno cache on port 5040. Its
+    # config-kyverno.yml has remoteurl https://ghcr.io, the same upstream as
+    # config-ghcr.yml on 5010, so it is a duplicate that no node references and
+    # every kyverno image already rides the ghcr.io mirror. Candidate for
+    # decommissioning, to reclaim disk on a VM that has run out of it.
+    - name: certs.d directories for the mirrored registries
+      ansible.builtin.file:
+        path: "/etc/containerd/certs.d/{{ item.registry }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: "{{ registry_mirrors }}"
+      loop_control:
+        label: "{{ item.registry }}"
+      tags: [containerd, mirrors]
+
+    - name: Point each mirrored registry at the pull-through cache
+      ansible.builtin.copy:
+        dest: "/etc/containerd/certs.d/{{ item.registry }}/hosts.toml"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/k8s-node-tuning.yml. Edits here are overwritten.
+          server = "{{ item.upstream }}"
+
+          [host."http://{{ registry_cache_host }}:{{ item.port }}"]
+            capabilities = ["pull", "resolve"]
+
+          # Fallback: a cache outage degrades to a direct pull, never an error.
+          [host."{{ item.upstream }}"]
+            capabilities = ["pull", "resolve"]
+      loop: "{{ registry_mirrors }}"
+      loop_control:
+        label: "{{ item.registry }} -> :{{ item.port }}"
+      tags: [containerd, mirrors]
+
+    # Kept separate because it is not a pull-through cache: it redirects forgejo
+    # image pulls at Traefik's LB IP by literal address so the node never leaves
+    # the LAN for them, and skip_verify is required because the node dials an IP
+    # while the certificate is for the hostname. The registry itself is frozen
+    # (break-glass only, ADR-0002), but the redirect stays so a break-glass pull
+    # does not hairpin out through the WAN and back.
+    - name: The forgejo redirect, which is not a cache
+      ansible.builtin.copy:
+        dest: /etc/containerd/certs.d/forgejo.viktorbarzin.me/hosts.toml
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/k8s-node-tuning.yml. Edits here are overwritten.
+          server = "https://forgejo.viktorbarzin.me"
+
+          [host."https://{{ traefik_lb_ip }}"]
+            capabilities = ["pull", "resolve"]
+            skip_verify = true
+      tags: [containerd, mirrors]
+
+    # The port-5050 R/W registry was decommissioned 2026-05-07. Its mirror
+    # entries survived on node1, node2 and node3 pointing at a listener that is
+    # gone. Moved aside rather than deleted, so the evidence survives a reconcile.
+    - name: Retire the mirror entries for the decommissioned registry
+      ansible.builtin.command:
+        cmd: "mv /etc/containerd/certs.d/{{ item }} /etc/containerd/certs.d/retired-{{ item | replace(':', '_') }}"
+        removes: "/etc/containerd/certs.d/{{ item }}"
+      loop:
+        - "10.0.20.10:5050"
+        - registry.viktorbarzin.me
+      tags: [containerd, mirrors]
 
     # ---- pigz -------------------------------------------------------------
     # containerd shells out to `unpigz` when it finds one on PATH and falls back
