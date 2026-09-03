@@ -2351,6 +2351,56 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }}: {{ $value | printf \"%.0f\" }} failure(s)"
+          # JobFailed cannot fire for a FAST CronJob, and that is why
+          # phpipam-dns-sync failed every 15 minutes for 20 hours on
+          # 2026-08-04/05 with nothing alerting.
+          #
+          # `for: 2h` is evaluated per time SERIES, and every CronJob run is a new
+          # series because job_name carries the run's schedule index. A failed Job
+          # is retained only until failedJobsHistoryLimit newer failures replace
+          # it, so at */15 with limit 3 each series lives ~46 minutes. Measured by
+          # replaying the JobFailed expression over the outage window
+          # (`count_over_time((<expr>)[24h:2m] @ 1785909600)`): every
+          # phpipam-dns-sync series topped out at 23 two-minute steps = 46 min,
+          # against the 120 min the `for` needs. The rule sat in pending forever.
+          # This is a different defect from the recency-window one fixed above,
+          # and widening that window did not touch it.
+          #
+          # Summing over the CronJob instead of the Job gives a series with a
+          # stable identity that stays > 0 while ANY of that CronJob's failures is
+          # retained, so overlapping 46-minute Jobs add up to one continuous
+          # 20-hour signal. The same recency guard is applied per-Job BEFORE the
+          # aggregation, which matters because phpIPAM keeps Failed Jobs from
+          # weeks ago in history and without it this would fire on those forever.
+          # cronjob is derived by stripping the trailing -<index> from job_name;
+          # kube_job_owner is not in this cluster's kube-state-metrics allowlist.
+          #
+          # Replayed over 2026-08-04/05 this holds true for 1442 continuous
+          # minutes on phpipam/phpipam-dns-sync, and names the collateral damage
+          # too (technitium-ingress-dns-sync, -zone-sync, -password-sync,
+          # -dns-optimization all failed in the same window on the same broken
+          # auth path). Against live state today it returns zero series.
+          #
+          # It overlaps JobFailed for SLOW CronJobs, where a single Job's series
+          # does survive 2h and both rules fire. Same severity and channel, so the
+          # cost is a duplicate warning; JobFailed is left alone because it also
+          # covers Jobs that no CronJob owns.
+          - alert: CronJobFailingRepeatedly
+            expr: |
+              sum by (namespace, cronjob) (
+                label_replace(
+                  kube_job_status_failed{reason="BackoffLimitExceeded", job_name=~".+-[0-9]+"} > 0
+                  and on(namespace, job_name)
+                  (time() - kube_job_status_start_time) < 21600,
+                  "cronjob", "$1", "job_name", "(.+)-[0-9]+"
+                )
+              ) > 0
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "CronJob {{ $labels.namespace }}/{{ $labels.cronjob }} has been failing for over 2h ({{ $value | printf \"%.0f\" }} failed run(s) retained)"
+              description: "Every run of this CronJob has failed for at least two hours. `kubectl -n {{ $labels.namespace }} get jobs | grep {{ $labels.cronjob }}` lists the retained failures and `homelab logs query '{namespace=\"{{ $labels.namespace }}\"}' --since 3h` has their output; note that failedJobsHistoryLimit prunes older runs, so Prometheus holds more history than kubectl does."
           # JobFailed only sees a Job that FAILS. A Job that hangs forever never
           # fails, so it was invisible -- and with concurrency_policy Forbid a
           # hung Job blocks every later run of its CronJob indefinitely.
