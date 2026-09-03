@@ -134,11 +134,18 @@ kubectl get pods -A -o wide --field-selector spec.nodeName=$NODE
 # 8. Remove from cluster
 kubectl delete node $NODE
 
-# 9. Shut down + (optional) destroy the VM
+# 9. Shut down, then pick ONE of the two endings. This step is not optional:
+#    a VM left stopped with onboot=1 auto-starts on the next PVE reboot and
+#    rejoins the cluster with stale kubelet config. See the note below.
 VMID=205
 ssh root@192.168.1.127 "qm shutdown $VMID --timeout 300; qm status $VMID"
-# To fully destroy (frees thin-pool space):
-# ssh root@192.168.1.127 "qm destroy $VMID --purge"
+
+# 9a. Destroy it (frees thin-pool space) — the default choice:
+ssh root@192.168.1.127 "qm destroy $VMID --purge"
+
+# 9b. OR keep it as a cold spare, with autostart off:
+ssh root@192.168.1.127 "qm set $VMID --onboot 0 && qm shutdown $VMID --timeout 300"
+ssh root@192.168.1.127 "qm config $VMID | grep -E '^onboot'"   # must read: onboot: 0
 
 # 10. Verify post-drain shape
 kubectl get volumeattachment -o json \
@@ -148,7 +155,11 @@ kubectl get volumeattachment -o json \
 # 11. Update this runbook's "Current shape" table
 ```
 
-**Cold-spare option:** instead of `qm destroy`, keep the VM stopped. The 256 GiB disk stays allocated on thin pool but the VM consumes no CPU/RAM. Re-add via `qm start <VMID>` + `kubeadm join` (the snippet still lives at `/var/lib/vz/snippets/k8s_cloud_init.yaml`).
+**Cold-spare option:** instead of `qm destroy`, keep the VM stopped **and set `qm set <VMID> --onboot 0`**. The 256 GiB disk stays allocated on thin pool but the VM consumes no CPU/RAM. Re-add via `qm start <VMID>` + `kubeadm join` (the snippet still lives at `/var/lib/vz/snippets/k8s_cloud_init.yaml`).
+
+> **Why `onboot 0` is mandatory on a cold spare.** node6 (VMID 206) was decommissioned on 2026-07-01 by draining it and deleting the Node object, but the VM was left stopped with `onboot=1`. The 2026-07-18 power-outage reboot auto-started it and it rejoined the cluster carrying stale kubelet config: no `providerID` and no topology labels, so proxmox-csi crash-looped, the node flapped NotReady (a tigera hot-loop risk), and csi-ghost-reconcile returned 500s on the missing `206.conf`. Full sequence in `docs/post-mortems/2026-07-18-sofia-power-outage-unclean-shutdown.md`. A decommissioned node is only safe once it is destroyed or its autostart is off.
+>
+> Audited 2026-09-03 (code-yqdf): `pve_guest_info` lists qemu 101, 102, 103, 105, 200-205, 220, 300, 9000 plus three templates. VMID 206 is gone, and every k8s node VM present is a live cluster member, so there is nothing currently non-compliant to fix.
 
 ## Special cases
 
