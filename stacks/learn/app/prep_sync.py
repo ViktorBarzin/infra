@@ -181,7 +181,18 @@ class Handler(BaseHTTPRequestHandler):
         return self.path.split("?", 1)[0].rstrip("/") or "/"
 
     def do_OPTIONS(self):
-        self._send(204, {})
+        # 204 means NO body, and on a keep-alive connection a body here desyncs
+        # the framing: the first preflight looks fine and every later request on
+        # that connection fails. curl tolerates it, a browser does not, which is
+        # exactly how this presented (measured 2026-09-03: first sync succeeded,
+        # the reconnect push failed with a bare "Failed to fetch").
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
 
     def do_GET(self):
         route = self._route()
