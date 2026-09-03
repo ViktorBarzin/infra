@@ -18,7 +18,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "realestate-crawler"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
