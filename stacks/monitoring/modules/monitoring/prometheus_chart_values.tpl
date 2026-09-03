@@ -3939,11 +3939,33 @@ serverFiles:
             #
             # A p95 says "a real share of requests are slow", which is the thing
             # worth waking up for, and one outlier can no longer move it.
+            #
+            # ha-sofia joined the exclusion list on 2026-09-03, for the same
+            # reason nextcloud and immich are on it: p95 request duration
+            # measures payload transfer for a service that proxies large media,
+            # not ingress health. Home Assistant's camera cards fetch
+            # /api/camera_proxy/camera.ds_7632nxi_* from the Hikvision NVR, 16
+            # at a time, 200-300 KiB each. Measured while the alert was firing
+            # at 13:40: of 611 requests in the window, 235 sat in 0.2-0.5s, 205
+            # in 0.5-1.0s, 25 in 1-2s, 9 in 2-5s. Nothing was wrong; someone was
+            # looking at the cameras. Twelve concurrent fetches driven from
+            # inside the cluster peak at 1.20s on their own, so the dashboard
+            # clears the 1s threshold without any fault at all, and it did so 12
+            # times in the 7 days to 2026-09-03.
+            #
+            # The exclusion is the whole service because
+            # traefik_service_request_duration_seconds_bucket carries no path
+            # label (code, instance, job, method, protocol, service), so the
+            # camera route cannot be dropped on its own. What still covers
+            # ha-sofia: four active uptime-kuma monitors (ha-sofia-public,
+            # ha-sofia-internal and ha-sofia-direct on /manifest.json, and
+            # [External] ha-sofia) plus healthcheck checks 26-29 and 45. Those
+            # are availability, not latency, which is the signal given up here.
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service, le)
               ) > 1
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 10m
             # Was 1h, to damp the mean's fire/resolve churn. The p95 doesn't
@@ -3959,9 +3981,9 @@ serverFiles:
             # single 4.5s matrix request kept re-announcing itself all day.
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service, le)
               ) > 3
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 5m
             keep_firing_for: 15m
