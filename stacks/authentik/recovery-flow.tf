@@ -39,20 +39,20 @@ resource "authentik_stage_identification" "recovery_identification" {
   pretend_user_exists = true
 }
 
-# token_expiry is deliberately NOT set. The provider is pinned ~> 2024.10 where
-# the attribute is a NUMBER, while authentik 2026.8.1 requires a duration string
-# ("hours=1") and rejects a number outright:
+# token_expiry is now SET, closing the gap noted when this shipped. It was left
+# unmanaged because the provider was pinned ~> 2024.10 (resolving 2024.12.1),
+# which types the attribute as a NUMBER and always sends one, and the server
+# rejects that outright:
 #   POST /stages/email/ -> 400
-#   {"token_expiry":["60 is not in the correct format of 'hours=3;minutes=1'."]}
-# Provider 2025.8.1 does type it as a string, but bumping the constraint moves
-# every resource in the stack that gates all authentication, which is not a
-# trade worth making for the gap between 30 and 60 minutes. So authentik's own
-# default of minutes=30 applies, and this stays unmanaged until the provider is
-# upgraded on its own merits.
+#   {"token_expiry":["30 is not in the correct format of 'hours=3;minutes=1'."]}
+# The floor moved to ~> 2025.8 the same day for an unrelated reason, and that
+# resolves 2025.12.1 where it is a string — so authentik's minutes=30 default no
+# longer has to stand in for the hour we actually wanted.
 resource "authentik_stage_email" "recovery_email" {
   name                     = "recovery-email"
   use_global_settings      = true
   activate_user_on_success = false
+  token_expiry             = "hours=1"
   subject                  = "Recover your access"
   # KNOWN COSMETIC GAP: neither stock template fits a passkey recovery.
   # password_reset.html says "requested to change your password ... set a new
