@@ -3,18 +3,46 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
-resource "kubernetes_namespace" "plotting-book" {
-  metadata {
-    name = "plotting-book"
-    labels = {
-      "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
-    }
-  }
+
+locals {
+  # Created and labelled by stacks/vault, not here. See the removed block below.
+  namespace = "plotting-book"
+}
+# The plotting-book namespace is owned by stacks/vault, NOT here.
+#
+# It was declared in both places, so both states held the same object
+# (kubernetes_namespace.plotting-book here, and
+# kubernetes_namespace.user_namespace["plotting-book"] there) and the two took
+# turns rewriting its labels on every apply. That is what kept this stack on the
+# differing list in code-yizt.
+#
+# vault owns it because that is where namespace-owners come from: its
+# user_namespace resource iterates every namespace-owner in the k8s_users map, and
+# it also creates the user-quota ResourceQuota this namespace has carried since
+# 2026-02 plus the resource-governance/custom-quota=true label that stops Kyverno
+# generating a second, competing quota beside it. Applying THIS stack's version
+# stripped that label and moved the drift onto stacks/vault instead of resolving
+# it.
+#
+# The two labels this declaration added and vault's does not are both dead:
+#   istio-injection = "disabled"  — no istio is installed on this cluster at all
+#                                   (0 namespaces, 0 pods, verified 2026-09-03)
+#   keel.sh/enrolled = "true"     — never reached the live namespace, and the
+#                                   deployment carries working keel.sh/policy,
+#                                   trigger and pollSchedule annotations anyway
+# so nothing observable changes by dropping them. If namespace-level keel
+# enrollment is ever wanted here, add it to vault's declaration.
+#
+# Ordering is safe without a depends_on: terragrunt.hcl already declares
+# dependency "vault", so the namespace exists before this stack applies.
+#
+# Transient, delete once applied: detaches the resource from THIS stack's state
+# without deleting the namespace. Same pattern as the cloudflare_ruleset detach
+# written up in stacks/rybbit/crowdsec_edge.tf.
+removed {
+  from = kubernetes_namespace.plotting-book
   lifecycle {
-    # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
-    ignore_changes = [metadata[0].labels["goldilocks.fairwinds.com/vpa-update-mode"]]
+    destroy = false
   }
 }
 
@@ -45,19 +73,18 @@ resource "kubernetes_manifest" "external_secret" {
       }]
     }
   }
-  depends_on = [kubernetes_namespace.plotting-book]
 }
 
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
-  namespace       = kubernetes_namespace.plotting-book.metadata[0].name
+  namespace       = local.namespace
   tls_secret_name = var.tls_secret_name
 }
 
 resource "kubernetes_persistent_volume_claim" "plotting-book-data" {
   metadata {
     name      = "plotting-book-data-proxmox"
-    namespace = kubernetes_namespace.plotting-book.metadata[0].name
+    namespace = local.namespace
     annotations = {
       "resize.topolvm.io/threshold"     = "10%"
       "resize.topolvm.io/increase"      = "100%"
@@ -85,7 +112,7 @@ resource "kubernetes_persistent_volume_claim" "plotting-book-data" {
 resource "kubernetes_deployment" "plotting-book" {
   metadata {
     name      = "plotting-book"
-    namespace = kubernetes_namespace.plotting-book.metadata[0].name
+    namespace = local.namespace
     labels = {
       app  = "plotting-book"
       tier = local.tiers.aux
@@ -202,7 +229,7 @@ resource "kubernetes_deployment" "plotting-book" {
 resource "kubernetes_service" "plotting-book" {
   metadata {
     name      = "plotting-book"
-    namespace = kubernetes_namespace.plotting-book.metadata[0].name
+    namespace = local.namespace
     labels = {
       "app" = "plotting-book"
     }
@@ -224,7 +251,7 @@ module "ingress" {
   source          = "../../modules/kubernetes/ingress_factory"
   auth            = "required"
   dns_type        = "non-proxied"
-  namespace       = kubernetes_namespace.plotting-book.metadata[0].name
+  namespace       = local.namespace
   name            = "plotting-book"
   tls_secret_name = var.tls_secret_name
 
@@ -246,7 +273,7 @@ module "ingress" {
 module "nfs_plotting_book_backup_host" {
   source             = "../../modules/kubernetes/nfs_volume"
   name               = "plotting-book-backup-host"
-  namespace          = kubernetes_namespace.plotting-book.metadata[0].name
+  namespace          = local.namespace
   nfs_server         = "192.168.1.127"
   nfs_path           = "/srv/nfs/plotting-book-backup"
   storage_class_name = "nfs-pve"
@@ -255,7 +282,7 @@ module "nfs_plotting_book_backup_host" {
 resource "kubernetes_cron_job_v1" "plotting_book_backup" {
   metadata {
     name      = "plotting-book-backup"
-    namespace = kubernetes_namespace.plotting-book.metadata[0].name
+    namespace = local.namespace
   }
   spec {
     concurrency_policy            = "Replace"
