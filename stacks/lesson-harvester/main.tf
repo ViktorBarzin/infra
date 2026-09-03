@@ -16,8 +16,8 @@ locals {
   # Static env shared by the Deployment + poll CronJob. All LH_-prefixed
   # (config.py env_prefix="LH_"). Secrets come via env_from (below).
   app_env = {
-    LH_LLM_ENDPOINT    = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
-    LH_LLM_MODEL       = "qwen3-8b"
+    LH_LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+    LH_LLM_MODEL    = "qwen3-8b"
     # whisper extra is not in the image yet (v0.3.0) — keep ASR off so a
     # caption-less video parks needs_attention instead of crashing on import.
     LH_WHISPER_ENABLED = "false"
@@ -202,8 +202,14 @@ resource "kubernetes_deployment" "lesson_harvester" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,    # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"], # KEEL_LIFECYCLE_V1
+      # Stakater Reloader stamps this on every secret-triggered restart. The
+      # 2026-08-14 switch to reloadStrategy = annotations (stacks/reloader) moved
+      # the marker onto this pod-template annotation on the expectation that
+      # Terraform does not manage it, but it does wherever the pod template
+      # declares annotations, so it planned as a removal on every run.
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],                                               # KEEL_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"],
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — CI set image wins

@@ -1,0 +1,82 @@
+# Sync infra/scripts/{lvm-pvc-snapshot,daily-backup,offsite-sync-backup} and
+# their systemd units to the PVE host on change.
+#
+# Modelled on pve-nfs-exports-sync.yml, which moved the "scp by hand from a
+# runbook" deploy for /etc/exports into CI. These three backup scripts had the
+# same shape: docs/architecture/backup-dr.md carried the scp invocation and a
+# person had to remember to run it, so a committed change could sit undeployed.
+#
+# The work itself lives in scripts/ci/pve-scripts-sync.sh, not inline here.
+# Woodpecker runs each `commands:` entry through /bin/sh -c, and an inline
+# multi-line loop containing quotes died with "syntax error: unterminated
+# quoted string" (pipeline #1466, 2026-09-03). A script file also lets you run
+# `sh -n` and shellcheck over it before landing.
+#
+# Verified before landing (2026-09-03, code-kpk0): all nine files were
+# byte-identical between repo and host, and the script was run by hand against
+# the live host — three timers listed healthy, nothing changed.
+#
+# Trigger: push to master touching any of the nine files, or the sync script.
+#
+# Credentials:
+#   - pve_ssh_key: Woodpecker repo-secret, the same ed25519 keypair
+#     pve-nfs-exports-sync uses. Public key in /root/.ssh/authorized_keys on
+#     the PVE host, private key mirrored in Vault `secret/woodpecker/pve_ssh_key`.
+
+when:
+  - event: push
+    branch: master
+    path:
+      - scripts/ci/pve-scripts-sync.sh
+      - scripts/lvm-pvc-snapshot.sh
+      - scripts/lvm-pvc-snapshot.service
+      - scripts/lvm-pvc-snapshot.timer
+      - scripts/daily-backup.sh
+      - scripts/daily-backup.service
+      - scripts/daily-backup.timer
+      - scripts/offsite-sync-backup.sh
+      - scripts/offsite-sync-backup.service
+      - scripts/offsite-sync-backup.timer
+    # A bare `event: manual` matches EVERY manual pipeline, so a trigger meant
+    # for another workflow would run this one too. Same guard the sibling
+    # pipelines carry. An undefined variable compares as empty, so a bare
+    # manual run (no variables) still enters here.
+  - event: manual
+    evaluate: 'PIPELINE == "" || PIPELINE == "pve-scripts-sync"'
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      partial: false
+      depth: 1
+      attempts: 3
+
+steps:
+  - name: deploy
+    image: alpine:3.20
+    environment:
+      PVE_SSH_KEY:
+        from_secret: pve_ssh_key
+    commands:
+      - apk add --no-cache openssh-client
+      - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      - printf '%s\n' "$PVE_SSH_KEY" > ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      # Pin host key — CI's ~/.ssh/known_hosts is ephemeral.
+      - ssh-keyscan -t ed25519 192.168.1.127 >> ~/.ssh/known_hosts 2>/dev/null
+      - sh scripts/ci/pve-scripts-sync.sh
+
+  - name: slack
+    image: curlimages/curl:8.11.0
+    environment:
+      SLACK_WEBHOOK:
+        from_secret: slack_webhook
+    commands:
+      - |
+        curl -s -X POST -H 'Content-type: application/json' \
+          --data "{\"channel\":\"general\",\"text\":\":red_circle: PVE backup-scripts sync FAILED\"}" \
+          "$SLACK_WEBHOOK" || true
+    when:
+      # Failure-only (Viktor 2026-07-02): CI notifies on failed runs only.
+      status: [failure]

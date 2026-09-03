@@ -353,7 +353,7 @@ graph LR
 
 Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62 Proxmox CSI PVCs. These are CoW snapshots — instant creation, minimal overhead, sharing the thin pool's free space.
 
-**Script**: `/usr/local/bin/lvm-pvc-snapshot` on PVE host (source: `infra/scripts/lvm-pvc-snapshot.sh`). Deploy: `scp infra/scripts/lvm-pvc-snapshot.sh root@192.168.1.127:/usr/local/bin/lvm-pvc-snapshot`
+**Script**: `/usr/local/bin/lvm-pvc-snapshot` on PVE host (source: `infra/scripts/lvm-pvc-snapshot.sh`, unit `infra/scripts/lvm-pvc-snapshot.service`, timer `infra/scripts/lvm-pvc-snapshot.timer`). **Deploy is CI, not a person** — see "Deploying the PVE host scripts" below.
 **Schedule**: Daily 03:00 via systemd timer, 7-day retention
 **Discovery**: Auto-discovers PVC LVs matching `vm-*-pvc-*` pattern in VG `pve` thin pool `data`
 
@@ -384,7 +384,7 @@ The hand-managed Linux VMs are **intentionally not in Terraform** (telmate/bpg p
 
 **Backup disk**: sda (1.1TB RAID1 SAS) → VG `backup` → LV `data` → ext4 → mounted at `/mnt/backup` on PVE host. Dedicated backup disk, independent of live storage.
 
-**Script**: `/usr/local/bin/daily-backup` on PVE host (source: `infra/scripts/daily-backup.sh`)
+**Script**: `/usr/local/bin/daily-backup` on PVE host (source: `infra/scripts/daily-backup.sh`, unit + timer alongside it). **Deploy is CI** — see "Deploying the PVE host scripts" below.
 **Schedule**: Daily 05:00 via systemd timer
 **Retention**: 4 weekly versions (weeks 0-3 via `--link-dest` hardlink dedup)
 
@@ -461,7 +461,7 @@ This provides both frequent backups (every 6h) AND continuous integrity monitori
 
 ### Layer 3: Offsite Sync to Synology NAS
 
-**Script**: `/usr/local/bin/offsite-sync-backup` on PVE host (source: `infra/scripts/offsite-sync-backup`)
+**Script**: `/usr/local/bin/offsite-sync-backup` on PVE host (source: `infra/scripts/offsite-sync-backup.sh`, unit + timer alongside it). **Deploy is CI** — see "Deploying the PVE host scripts" below.
 **Schedule**: Daily 06:00 via systemd timer (After=daily-backup.service)
 
 Two-step offsite sync:
@@ -610,6 +610,28 @@ DS218 (runs killed at 900 s and 2400 s on 2026-08-06). Measure hardlink-aware si
 PVE side instead (`du -sh` vs `du -slh` on `/mnt/backup/pvc-data`).
 
 > Memory: id=2673-2676 (Synology snapshot retention gotcha — deletion vs reclaim timing).
+
+### Deploying the PVE host scripts
+
+`lvm-pvc-snapshot`, `daily-backup` and `offsite-sync-backup` deploy from git through
+Woodpecker, not by hand. Push a change to any of the nine files under `infra/scripts/`
+(`<name>.sh`, `<name>.service`, `<name>.timer`) and `.woodpecker/pve-scripts-sync.yml`
+copies the script to `/usr/local/bin/<name>`, the units to `/etc/systemd/system/`, runs
+`bash -n` on each script, then `systemctl daemon-reload` and prints the timer list.
+Failures post to Slack.
+
+The pipeline follows `pve-nfs-exports-sync.yml` and uses the same `pve_ssh_key` repo
+secret (private key mirrored in Vault `secret/woodpecker/pve_ssh_key`).
+
+Why it exists: these three carried an `scp` invocation in this document and depended on
+someone remembering to run it, so a committed change could sit undeployed. Added
+2026-09-03 (code-kpk0), after `lvm-pvc-snapshot.service` turned out to exist on the host
+and in no repository at all (code-3ni). All nine files were byte-identical between repo
+and host when the pipeline landed, so its first run changed nothing.
+
+**Still deployed by hand:** `vzdump-vms` keeps the `scp` invocation documented with it
+above. It was outside the scope of code-kpk0; extending the pipeline to cover it is a
+small change if the same drift shows up there.
 
 ## Configuration
 
