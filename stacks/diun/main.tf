@@ -31,7 +31,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "diun"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

@@ -60,7 +60,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = kubernetes_namespace.ci_pipeline_health.metadata[0].name
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

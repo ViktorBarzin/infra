@@ -60,7 +60,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "trading-bot"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

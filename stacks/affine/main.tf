@@ -16,7 +16,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "affine"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

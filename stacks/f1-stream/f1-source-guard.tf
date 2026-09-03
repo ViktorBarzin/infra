@@ -25,7 +25,7 @@ resource "kubernetes_manifest" "f1_stream_guard_secrets" {
       namespace = "f1-stream"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
