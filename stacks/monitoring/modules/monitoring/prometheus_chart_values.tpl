@@ -3592,6 +3592,93 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Traefik pod {{ $labels.instance }} is down"
+
+          # Traefik healthy, and nothing able to reach it. This is the hole
+          # TraefikDown above cannot see, and the comment on it is wrong about
+          # this case: a total-ingress outage does NOT always show as up == 0.
+          # In all three outages below every Traefik pod stayed Ready and
+          # scraped fine while the LoadBalancer path on 443 refused connections.
+          #
+          # THE FAILURE MODE. websecure/TCP:443 and websecure-http3/UDP:443
+          # share a port NUMBER, and Kubernetes uses `port` as the
+          # strategic-merge key for Service.spec.ports. A helm upgrade of the
+          # traefik release corrupts the TCP entry on that key: on 2026-08-31 it
+          # was deleted outright, and on 2026-09-03 it came back with
+          # targetPort=websecure-http3, a named port the pod does not have
+          # (its ports are web/8000 and websecure/8443). Either way kube-proxy
+          # has no backend for 443 and every ingress refuses. The long comment
+          # in stacks/traefik/modules/traefik/main.tf carries the detail and the
+          # `kubectl patch --type=json` recovery, which bypasses merge keys.
+          #
+          # BACKTESTED, because a rule that exists is not a rule that fires.
+          # `max(probe_success{job="blackbox-authentik-walloff"})` over 7 days at
+          # a 1m step gives exactly three all-targets-down episodes, and each one
+          # starts within ~2 min of a traefik helm revision:
+          #
+          #   revision 72  2026-08-31 11:17:22Z -> 11:19-11:22    3 min
+          #   revision 75  2026-09-01 07:46:19Z -> 07:47-10:36  169 min, unnoticed
+          #   revision 76  2026-09-03 04:54:29Z -> 04:56-04:57    1 min, hand-patched
+          #
+          # Three upgrades, three outages. The 1-minute one is short only because
+          # somebody was watching the apply; the 169-minute one is what this
+          # costs unattended, and nothing alerted for any of them.
+          #
+          # Zero isolated false-positive samples in those 7 days (9,929 samples,
+          # 3 episodes, no singletons outside them), so `for: 2m` is affordable.
+          # It catches the 3-minute and 169-minute episodes. A 1-minute episode
+          # is deliberately allowed to pass: at 1m scrape it cannot be
+          # distinguished from one bad probe round, and an outage nobody
+          # interrupts does not stay 1 minute long.
+          #
+          # WHY THIS JOB. Its name is about the Authentik walling-off guard, but
+          # its probes are ordinary HTTPS requests through the shared 443 path,
+          # which is what makes the AGGREGATE meaningful: one target at 0 is that
+          # app's problem, every target at 0 at once is the path they share.
+          # `max()` and not `min()` for the same reason — two of these targets
+          # (insta2spotify, instagram-poster) sit at probe_success 0 in steady
+          # state, so `min()` would fire forever.
+          #
+          # REJECTED, having measured it: traefik_entrypoint_requests_total on
+          # the websecure entrypoint. It does not drop during these outages. The
+          # entrypoint listens on 8443 inside the pod and in-cluster clients
+          # (cloudflared, probes, service-to-service) reach the ClusterIP
+          # directly, so request rate stayed above 0.05/s throughout 2026-09-03
+          # with zero samples below it. Only the LoadBalancer path was broken.
+          - alert: IngressAllTargetsUnreachable
+            expr: max(probe_success{job="blackbox-authentik-walloff"}) == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Every ingress probe target is unreachable — the shared 443 path is down"
+              description: >-
+                No blackbox target answers over HTTPS, so this is the path they
+                share rather than any one app. Traefik's pods are probably Ready
+                and TraefikDown silent. Check the Service first:
+                `kubectl get svc -n traefik traefik -o json | jq '.spec.ports'`
+                — websecure/TCP:443 must have targetPort `websecure`, and a
+                recent `helm history traefik -n traefik` revision is the usual
+                trigger. Recover with
+                `kubectl patch svc -n traefik traefik --type=json
+                -p '[{"op":"replace","path":"/spec/ports/2/targetPort","value":"websecure"}]'`
+                after confirming the index, then re-check the mapping.
+
+          # The detector going away must not read as healthy. max() over an empty
+          # selector returns NO series, so the rule above evaluates to nothing and
+          # goes silent — the same absence trap the Loki rules hit needing
+          # `or vector(0)`. If the probe job is renamed or its targets removed,
+          # this fires instead of leaving a comfortable silence.
+          - alert: IngressReachabilityProbesAbsent
+            expr: absent(up{job="blackbox-authentik-walloff"})
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Ingress reachability probes are gone — IngressAllTargetsUnreachable cannot fire"
+              description: >-
+                The blackbox-authentik-walloff scrape job has no series, so the
+                total-ingress-outage detector has nothing to evaluate. Restore
+                the job or repoint the alert at whatever replaced it.
           # Detects a Traefik replica whose K8s Ingress informer cache has gone
           # stale — pod reloads at a fraction of the rate of peers, returns 404
           # for ingresses it never re-listed. Pattern observed 2026-05-12 when
