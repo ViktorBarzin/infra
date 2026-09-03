@@ -1409,4 +1409,20 @@ resource "kubernetes_deployment" "goodreads_sync" {
       }
     }
   }
+
+  # Kyverno stamps keel.sh/policy, keel.sh/trigger and keel.sh/pollSchedule onto
+  # every workload in this keel-enrolled namespace, and the kubernetes provider
+  # manages metadata.annotations as a whole map even where none is declared, so
+  # all three planned as removals on every apply. That is the same two-owners,
+  # one-field fight the siblings in this file already settle; this deployment
+  # was simply missing the block. dns_config comes from inject-ndots and is the
+  # repo-wide requirement for any kubernetes_deployment.
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
+  }
 }
