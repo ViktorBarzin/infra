@@ -450,6 +450,13 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
 
   lifecycle {
     ignore_changes = [
+      # Kyverno's inject-keel-annotations adds these two alongside the
+      # keel.sh/policy = "never" declared above. policy is set explicitly so the
+      # explicit value wins, but trigger and pollSchedule are injected only, and
+      # this resource declares an annotations map, so Terraform managed the whole
+      # map and planned both as removals on every apply. KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].labels["tier"],             # stamped by Kyverno sync-tier-label-from-namespace
 
