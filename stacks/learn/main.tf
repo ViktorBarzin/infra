@@ -184,8 +184,17 @@ resource "kubernetes_config_map" "caddyfile" {
       		header_regexp X-Authentik-Username ^ancaelena98(@.*)?$
       	}
       	handle @pages_anca {
-      		root * /repo/src/current/pages
-      		try_files /anca{path} /anca{path}index.html
+      		# Her document ROOT is her own directory, not the pages tree with a
+      		# /anca prefix in try_files. That distinction is the whole control:
+      		# Caddy's try_files falls back to the UNCHANGED path when no candidate
+      		# exists, so a prefixed try_files over the whole tree still served
+      		# /wizard/<page>.html and a 42KB /wizard/ index to her (measured
+      		# 2026-09-03 against the live pod before this was pinned). Pinning the
+      		# root means a path outside her space cannot resolve at all. The two
+      		# admin handles above keep the prefixed form because they are supposed
+      		# to read every space, so the same fallback is harmless there.
+      		root * /repo/src/current/pages/anca
+      		try_files {path} {path}index.html
       		file_server
       	}
       	@pages_emo {
