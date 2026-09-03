@@ -1086,7 +1086,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 62
+        "y": 71
       },
       "fieldConfig": {
         "defaults": {
@@ -1260,7 +1260,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 68
+        "y": 77
       },
       "fieldConfig": {
         "defaults": {
@@ -1436,7 +1436,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 82
+        "y": 91
       },
       "fieldConfig": {
         "defaults": {
@@ -1734,6 +1734,131 @@
       ]
     },
     {
+      "id": 14,
+      "title": "Meta payroll: bank deposit vs payslip net pay",
+      "description": "Bank deposits from Meta versus net pay on the payslip, by month. Sourced from payslip_ingest.external_meta_deposits (populated by the actualbudget-payroll-sync CronJob) joined against payslip_ingest.payslip. Removed 2026-04-25 in 53f555dc because migration 0007 had not been deployed and the table did not exist; restored 2026-09-03 (code-lxhf) now that the schema is at 0008 and the table holds rows. A non-zero delta on a vest month is expected: the deposit includes the RSU proceeds and the payslip net pay does not.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deposit_sum"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Bank deposit (ActualBudget)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "payslip_net_pay"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Payslip net pay"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "delta"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Delta (deposit \u2212 payslip)"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawSql": "WITH deposits AS (SELECT DATE_TRUNC('month', deposit_date)::date AS month_start, SUM(amount) AS deposit_sum FROM payslip_ingest.external_meta_deposits GROUP BY 1), payslip_net AS (SELECT DATE_TRUNC('month', pay_date)::date AS month_start, SUM(net_pay) AS payslip_net_pay FROM payslip_ingest.payslip GROUP BY 1) SELECT COALESCE(p.month_start, d.month_start) AS \"time\", d.deposit_sum, p.payslip_net_pay, COALESCE(d.deposit_sum, 0) - COALESCE(p.payslip_net_pay, 0) AS delta FROM deposits d FULL OUTER JOIN payslip_net p ON p.month_start = d.month_start WHERE $__timeFilter(COALESCE(p.month_start, d.month_start)) ORDER BY \"time\"",
+          "format": "time_series",
+          "refId": "A",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ]
+    },
+    {
       "id": 8,
       "title": "Sankey \u2014 where the money went",
       "description": "Income sources flow into gross, then out to deductions and take-home. Aggregated over the selected time range (use the time picker to scope to a single tax year).",
@@ -1746,7 +1871,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 57
       },
       "options": {
         "monochrome": false,
@@ -1784,7 +1909,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 103
       },
       "fieldConfig": {
         "defaults": {
