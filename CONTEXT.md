@@ -257,6 +257,14 @@ _Avoid_: "private registry" (collides with the registry VM's pull-through caches
 The caching mirror tier on the registry VM that **Node**s pull upstream images through, wired per-registry in each node's `/etc/containerd/certs.d`, with the upstream registry listed as a fallback host so a cache failure degrades rather than blocks. Its nginx layer is there for **request collapsing** — concurrent requests for one blob are folded into a single upstream fetch — which is a separate job from caching, and `proxy_cache_min_uses 2` means a low hit ratio is the configured behaviour rather than a sign the tier is idle.
 _Avoid_: "private registry" (that was decommissioned 2026-05-07); judging the nginx tier by hit ratio; treating a 200 from `/v2/` as a health signal — that path is a static version probe that never touches storage, so it answers 200 while every content request fails on a full disk.
 
+**Registry mirror**:
+The node-side half of a **Pull-through cache**: an `/etc/containerd/certs.d/<registry>/hosts.toml` entry telling containerd to try the cache before the real registry. Declared in `playbooks/k8s-node-tuning.yml` as `registry_mirrors` and reconciled hourly; read per pull rather than at containerd startup, so a change needs no restart.
+_Avoid_: treating "we have a cache" as meaning nodes use it. Until 2026-09-03 four of six nodes had no mirror for quay.io or registry.k8s.io and pulled them straight from the internet while the caches sat unused, and one cache was pointed at the wrong registry entirely. The cache existing and the cache being reached are separate facts, each worth checking.
+
+**Drop-in override**:
+A `/etc/containerd/conf.d/*.toml` file silently winning over `/etc/containerd/config.toml`, because containerd merges imports last-wins per key. Only node1 has one, `99-nvidia.toml`, which the nvidia toolkit writes as a whole-config snapshot of `containerd config dump` rather than a minimal patch, so it pins keys it has no interest in.
+_Avoid_: verifying a containerd setting by reading the file you edited. Read `containerd config dump`, which is the merged result the runtime actually uses — three settings were found overridden this way, each after the file looked correct.
+
 **Cold pull** / **Warm pull**:
 A **Cold pull** fetches layers absent from the node's containerd store over the network; a **Warm pull** finds them already there. The gap is three orders of magnitude — 6m24.561s against 405 ms for the same 3,216.9 MB image on the same node — and the store lives on the node's persistent root filesystem, so a reboot is a Warm pull.
 _Avoid_: "boot time" and "image pull" unqualified — say which, because the answer to "large images are slow to start" depends entirely on it, and reasoning about reboots as though they were Cold pulls has led to work aimed at the wrong stage.
@@ -266,7 +274,8 @@ A commit whose layer ordering gives a large, otherwise-unchanged layer a new dig
 _Avoid_: reading a changed `diff_id` as proof the content changed (it hashes the tar, and tar headers carry mtime); assuming a `CACHED` producer stage means its output layer held.
 
 **Image GC cliff**:
-Mass image eviction when kubelet crosses `imageGCHighThresholdPercent`, reclaiming in one pass rather than draining gradually. Distinct from age-based collection, which `imageMaximumGCAge: 0s` disables, so unreferenced tags accumulate until the threshold discards them together — 130 images and 56.8567 GiB in a single 4m38s pass on the GPU node on 2026-09-01, which is what turns each later reschedule into a **Cold pull**.
+Mass image eviction when kubelet crosses `imageGCHighThresholdPercent`, reclaiming in one pass rather than draining gradually — 130 images and 56.8567 GiB in a single 4m38s pass on the GPU node on 2026-09-01, which is what turns each later reschedule into a **Cold pull**. Distinct from age-based collection, which `imageMaximumGCAge` drives; that read `0s` (disabled) until 2026-09-03 and is now `168h` on all six nodes, so unreferenced tags are collected gradually instead of accumulating until the threshold discards them together.
+_Avoid_: reading a FALLING disk-usage figure as the fix working. A cliff and a working retention setting both make the number go down, and they are indistinguishable from the number alone — node5 falling 83.3% to 76% was the cliff firing, not the settings. Check for a pass in the same window and whether the unique-digest count dropped, since retention lowers it gradually and a threshold pass does it in seconds.
 _Avoid_: conflating it with pod eviction (no pod was evicted); reading a recovered `DiskPressure` condition as evidence nothing happened.
 
 **Keel**:

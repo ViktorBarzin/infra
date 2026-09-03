@@ -23,3 +23,11 @@ stacks/backup-mx/cloud-init.yaml.tftpl:jfrog-identity-token:613
 # committed on purpose: the vector proves our paste format still matches what
 # PrivateBin's own frontend produces, which a round-trip test cannot show.
 cli/paste_golden_test.go:generic-api-key:20
+
+# False positive: the `generic-api-key` rule matches the literal filename
+# `99-nvidia.toml` in the CONTEXT.md Drop-in override entry, on entropy 3.52
+# alone. It is the nvidia container toolkit's containerd drop-in, already
+# committed by name in the node-tuning playbook and two docs; the rule fires
+# here because the phrasing puts it after a comma in backticks, which reads
+# like an assignment.
+CONTEXT.md:generic-api-key:265
