@@ -141,6 +141,12 @@ resource "helm_release" "vault" {
             # spec instead of listening on an undeclared one. No Service maps
             # 8202, and the vault namespace has no NetworkPolicy, so Prometheus
             # reaches it directly on the pod IP and nothing else can.
+            #
+            # A second listener also opens a cluster port at address+1, so the
+            # pods now listen on 8203 as well. It is inert: VAULT_CLUSTER_ADDR
+            # still advertises 8201, nothing dials 8203, and no Service maps it
+            # either. Noted because it is visible in netstat and otherwise
+            # looks unexplained.
             listener "tcp" {
               tls_disable = 1
               address     = "[::]:8202"
