@@ -1,0 +1,14 @@
+[Unit]
+Description=Watch the playwright-mcp browsers for a wedged GPU process
+
+[Timer]
+# Every minute, because the check is one pass over /proc and the strike count
+# is what supplies the patience. A slower tick would only make the window
+# coarser without saving anything measurable.
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=playwright-reaper.service
+
+[Install]
+WantedBy=timers.target

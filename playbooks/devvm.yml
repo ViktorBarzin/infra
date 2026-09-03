@@ -68,6 +68,13 @@
     # capping what one user can push at a disk that is seek-bound and shared
     # (bead code-oflt is still open). The 6G pane cap remains the containment.
     devvm_user_swap_max: "{{ [4, (ansible_memtotal_mb / 1024 * 0.13) | round | int] | min }}G"
+    # When the playwright browser reaper decides a gpu-process has wedged.
+    # 2 cores is roughly the working peak of a headless page render, and the
+    # 2026-06-12 leak sat at 10.5; 10 samples is 10 minutes, against 6.5 hours
+    # of it actually running. Both are deliberately far from the observed
+    # numbers on either side, so a busy page is never mistaken for a leak.
+    devvm_playwright_reaper_threshold_cores: 2
+    devvm_playwright_reaper_window_minutes: 10
     # Swap sized from measurement, not from a RAM ratio: system.slice peaked at
     # 8.4 GiB over the 30 days to 2026-09-02 (p50 2.7, p99 7.0) and two users at
     # 4G each add 8, so 24 GiB total leaves ~7.6 GiB spare. The old 14 GiB never
@@ -288,6 +295,11 @@
         - /etc/systemd/system/system.slice.d
         - /etc/systemd/user/scope.d
         - /usr/local/sbin
+        # The playwright-mcp slice has no unit file of its own -- it exists
+        # only because playwright-mcp@.service names it with Slice=. systemd
+        # still reads drop-ins for an implicit slice, which is how the CPU
+        # cap below reaches it without this repo owning the slice itself.
+        - '/etc/systemd/system/system-playwright\x2dmcp.slice.d'
 
     # ---- 4) the enforced machine-wide Claude config -------------------------
     # Top of the settings precedence chain, and carries no secrets.
@@ -629,6 +641,78 @@
         name: earlyoom
         enabled: true
         state: started
+
+    # ---- 8a) the shared playwright-mcp browsers ------------------------------
+    # Adopted 2026-09-03 for bead code-r725. On 2026-06-12 a headless Chrome
+    # from the playwright-shared MCP wedged its swiftshader-webgl gpu-process
+    # at about 10.5 cores for 6.5 hours on a blank page, dominating this box
+    # and the Proxmox host and starving etcd. The MCP's own browser_close did
+    # not clear it, because page.close never reaches a spinning GPU process.
+    #
+    # Two halves. The quota bounds the damage the moment it starts; the reaper
+    # clears it a few minutes later so nobody has to notice. Each file carries
+    # its own reasoning, including how the reaper is kept away from a browser
+    # a person started themselves.
+    #
+    # Note for a rebuild: playwright-mcp@.service and its snapshot-refresh
+    # timer are NOT declared by this playbook. They were hand-installed in
+    # /etc/systemd/system on 2026-06-20 and no repository holds them, so a
+    # fresh machine gets this cap and this reaper with nothing to act on.
+    - name: Cap the playwright-mcp browser slice
+      ansible.builtin.copy:
+        src: files/devvm/50-devvm-playwright-cpu.conf
+        dest: '/etc/systemd/system/system-playwright\x2dmcp.slice.d/50-devvm-playwright-cpu.conf'
+        mode: "0644"
+        owner: root
+        group: root
+      notify: reload systemd
+
+    - name: Install the playwright browser reaper
+      ansible.builtin.copy:
+        src: files/devvm/playwright-reaper
+        dest: /usr/local/bin/playwright-reaper
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Configure the playwright browser reaper
+      ansible.builtin.copy:
+        dest: /etc/default/playwright-reaper
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by playbooks/devvm.yml -- edit there, not here.
+          # Cores a gpu-process has to hold before a sample counts against it,
+          # and how many consecutive one-minute samples it takes to be killed.
+          PLAYWRIGHT_REAPER_THRESHOLD_CORES={{ devvm_playwright_reaper_threshold_cores }}
+          PLAYWRIGHT_REAPER_WINDOW_MINUTES={{ devvm_playwright_reaper_window_minutes }}
+          PLAYWRIGHT_REAPER_DRY_RUN=0
+      notify: reload systemd
+
+    - name: Install the playwright reaper units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - playwright-reaper.service
+        - playwright-reaper.timer
+      notify: reload systemd
+
+    # Skipped under --check: the unit file has not been written yet on a box
+    # that has never had this applied, and systemd cannot be asked about a
+    # unit that does not exist. Without the guard the documented check-first
+    # workflow fails on a fresh machine rather than reporting the change.
+    - name: Enable the playwright reaper timer
+      ansible.builtin.systemd_service:
+        name: playwright-reaper.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
 
     # ---- 8a-bis) the log shipper ---------------------------------------------
     # scripts/devvm-promtail.yaml has described itself as the source of truth

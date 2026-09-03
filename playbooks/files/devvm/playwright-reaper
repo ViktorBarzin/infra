@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Kill a playwright-mcp Chrome GPU process that has wedged at high CPU.
+
+Background (infra bead code-r725). On 2026-06-12 a headless Chrome from the
+playwright-shared MCP pinned its swiftshader-webgl gpu-process at about 10.5
+cores for 6.5 hours on a blank page. This is a known headless-Chromium leak:
+the GPU process spins and never returns, the page it belongs to is idle, and
+the MCP's browser_close does not help because page.close never reaches it.
+Clearing it needs an OS-level kill.
+
+50-devvm-playwright-cpu.conf caps the slice so the damage is bounded the
+moment it starts. This clears it afterwards, so nobody has to notice.
+
+WHAT IT WILL KILL, and why it cannot touch a person's own browser.
+A process has to satisfy all three of these before it is even considered:
+
+  1. its argv contains --type=gpu-process
+  2. its argv contains --user-data-dir=/tmp/playwright_chromiumdev_profile...
+     (playwright appends a random suffix per launch, so this is a prefix test)
+  3. its cgroup is inside system-playwright\x2dmcp.slice
+
+Check 3 is the one that actually guarantees safety. A browser a person started
+lives in their own user-<uid>.slice and can never appear inside the MCP's
+system slice, whatever its arguments look like. Checks 1 and 2 are there so
+that a healthy renderer or network process in the same slice is left alone.
+
+HOW "SUSTAINED" IS MEASURED.
+Instantaneous CPU is noise: a normal GPU process spikes hard while a page
+paints. So each run records utime+stime per process and compares against the
+previous run's sample, which gives the average over the interval rather than a
+moment. A process over the threshold earns a strike; anything at or below it
+loses every strike it had. It is killed once it has held the threshold for the
+whole window, which at the shipped settings means ten consecutive minutes
+above two cores. The 2026-06-12 process would have earned its tenth strike ten
+minutes in, against 6.5 hours of actually running.
+
+Samples are keyed by pid plus the process start time, so a recycled pid starts
+from zero instead of inheriting a dead process's strikes. State lives in /run
+because it is meaningless across a reboot.
+
+SIGKILL, not SIGTERM: the process is stuck in a spin and does not service
+signal handlers, which is what made browser_close useless. Chrome notices its
+GPU process died and either restarts it or falls back to software rendering;
+either way the browser survives and the session keeps working.
+"""
+
+import os
+import signal
+import sys
+import time
+
+# Overridable so the kill path can be exercised against a synthetic process
+# without disturbing the strike counts the timer is keeping.
+STATE_DIR = os.environ.get("PLAYWRIGHT_REAPER_STATE_DIR", "/run/playwright-reaper")
+PROFILE_PREFIX = "--user-data-dir=/tmp/playwright_chromiumdev_profile"
+GPU_ARG = "--type=gpu-process"
+SLICE_MARKER = "system-playwright\\x2dmcp.slice"
+
+CLK_TCK = os.sysconf("SC_CLK_TCK")
+
+
+def env_float(name, default):
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def env_int(name, default):
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+# Cores. Sustained usage above this counts as a strike.
+THRESHOLD_CORES = env_float("PLAYWRIGHT_REAPER_THRESHOLD_CORES", 2.0)
+# Minutes the threshold has to hold before the process is killed.
+WINDOW_MINUTES = env_int("PLAYWRIGHT_REAPER_WINDOW_MINUTES", 10)
+# Set to 1 to log what would happen and kill nothing.
+DRY_RUN = env_int("PLAYWRIGHT_REAPER_DRY_RUN", 0)
+
+
+def log(msg):
+    sys.stdout.write(msg + "\n")
+    sys.stdout.flush()
+
+
+def read(path):
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+def candidates():
+    """Yield (pid, starttime, cpu_ticks) for every process safe to consider."""
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        try:
+            cmdline = read("/proc/%d/cmdline" % pid).decode("utf-8", "replace")
+            if GPU_ARG not in cmdline:
+                continue
+            if PROFILE_PREFIX not in cmdline:
+                continue
+            cgroup = read("/proc/%d/cgroup" % pid).decode("utf-8", "replace")
+            if SLICE_MARKER not in cgroup:
+                continue
+            stat = read("/proc/%d/stat" % pid).decode("utf-8", "replace")
+        except (OSError, IOError):
+            # Process exited between listdir and read. Nothing to do.
+            continue
+
+        # Field 2 is (comm) and may itself contain spaces or parentheses, so
+        # split after the LAST ')' rather than on whitespace.
+        close = stat.rfind(")")
+        if close < 0:
+            continue
+        fields = stat[close + 2:].split()
+        # After comm, fields[0] is state (field 3), so field N is fields[N-3].
+        try:
+            utime = int(fields[11])      # field 14
+            stime = int(fields[12])      # field 15
+            starttime = int(fields[19])  # field 22
+        except (IndexError, ValueError):
+            continue
+        yield pid, starttime, utime + stime
+
+
+def state_path(pid, starttime):
+    return os.path.join(STATE_DIR, "%d.%d" % (pid, starttime))
+
+
+def main():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    now = time.time()
+    live = set()
+
+    for pid, starttime, ticks in candidates():
+        path = state_path(pid, starttime)
+        live.add(os.path.basename(path))
+
+        prev = None
+        try:
+            with open(path) as fh:
+                parts = fh.read().split()
+            prev = (float(parts[0]), int(parts[1]), int(parts[2]))
+        except (OSError, IOError, IndexError, ValueError):
+            prev = None
+
+        strikes = 0
+        if prev is not None:
+            prev_time, prev_ticks, prev_strikes = prev
+            elapsed = now - prev_time
+            if elapsed > 0:
+                cores = (ticks - prev_ticks) / CLK_TCK / elapsed
+                if cores > THRESHOLD_CORES:
+                    strikes = prev_strikes + 1
+                    log("pid %d gpu-process at %.2f cores over %.0fs "
+                        "(strike %d of %d)"
+                        % (pid, cores, elapsed, strikes, WINDOW_MINUTES))
+                else:
+                    strikes = 0
+
+        if strikes >= WINDOW_MINUTES:
+            if DRY_RUN:
+                log("pid %d would be killed (dry run)" % pid)
+            else:
+                log("pid %d held >%.1f cores for %d consecutive samples, "
+                    "killing it" % (pid, THRESHOLD_CORES, strikes))
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError as exc:
+                    log("pid %d could not be killed: %s" % (pid, exc))
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+                live.discard(os.path.basename(path))
+                continue
+
+        tmp = path + ".new"
+        with open(tmp, "w") as fh:
+            fh.write("%f %d %d\n" % (now, ticks, strikes))
+        os.replace(tmp, path)
+
+    # Forget processes that are gone, so /run does not grow without bound.
+    for name in os.listdir(STATE_DIR):
+        if name not in live:
+            try:
+                os.unlink(os.path.join(STATE_DIR, name))
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    main()
