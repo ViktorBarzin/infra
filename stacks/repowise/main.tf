@@ -498,9 +498,19 @@ resource "kubernetes_deployment" "repowise" {
             # the limit can now clear the plateau and the request can state what
             # the process actually holds instead of the 2Gi the old 3Gi
             # namespace quota forced. Re-measure with krr before trimming.
+            #
+            # CPU request raised from 50m on 2026-09-03. Measured over 6h this
+            # container averages 1383m and peaks at 1995m, so 50m was 28x
+            # short. CFS hands out contended CPU in proportion to the request,
+            # so on a busy node it was getting a ~0.6% share while needing 1.4
+            # cores: /health then blew its 15s probe timeout and logged 1025
+            # Unhealthy events in six hours, never crossing failureThreshold
+            # and so never restarting, just filling the event stream. The
+            # namespace quota caps requests.cpu at 2, which is what holds this
+            # at 1200m rather than the measured average.
             requests = {
               memory = "4Gi"
-              cpu    = "50m"
+              cpu    = "1200m"
             }
             limits = {
               memory = "6Gi"
@@ -772,9 +782,14 @@ resource "kubernetes_deployment" "repowise" {
             # Measured at ~35 MiB in steady state, so the request came down;
             # the limit stays high because a from-scratch bootstrap runs the
             # whole initial index in this container.
+            #
+            # CPU raised from 50m on 2026-09-03 for the same reason as the api
+            # container above. A normal pass is short, but each one shells out
+            # to git across 40 repos and then drives the reindex, so it wants a
+            # real share rather than a token one.
             requests = {
               memory = "192Mi"
-              cpu    = "50m"
+              cpu    = "400m"
             }
             limits = {
               memory = "2Gi"
