@@ -1,6 +1,6 @@
 # Runbook: Applying the Technitium Terraform stack
 
-Last updated: 2026-04-19
+Last updated: 2026-09-03
 
 The `stacks/technitium/` apply has a **post-apply readiness gate** that asserts all three DNS instances are healthy before the apply is allowed to finish. This runbook explains what it checks, how to interpret failures, and how to override it for emergency maintenance.
 
@@ -9,10 +9,12 @@ The `stacks/technitium/` apply has a **post-apply readiness gate** that asserts 
 `stacks/technitium/modules/technitium/readiness.tf` defines `null_resource.technitium_readiness_gate`. It runs after the three Technitium deployments, the DNS LoadBalancer service, and the PDB are applied, and performs:
 
 1. **Rollout status** — `kubectl rollout status deploy/<name> --timeout=180s` for `technitium`, `technitium-secondary`, `technitium-tertiary`. Fails if any deployment has not reached its desired pod count within 180s.
-2. **Per-pod API health** — for every pod with label `dns-server=true`, executes `wget http://127.0.0.1:5380/api/stats/get` inside the pod and asserts the response contains `"status":"ok"`. Catches Technitium process hangs that TCP probes miss.
-3. **Zone-count parity** — queries `technitium-web`, `technitium-secondary-web`, `technitium-tertiary-web` and counts the zones returned. Fails if the three counts differ, which would mean `technitium-zone-sync` has drifted or a replica has lost state.
+2. **Per-pod DNS answer** — for every pod with label `dns-server=true`, runs `dig +short +time=5 +tries=2 @127.0.0.1 idrac.viktorbarzin.lan A` inside the pod and requires an A record back. Retries up to 6 times with a 10s backoff first, because zone load can take tens of seconds after a memory-bump rollout. Fails if a pod never answers. The check is DNS rather than HTTP because the Technitium image ships `dig` and no HTTP client.
+3. **Content parity** — the A records collected in step 2 must be identical across all three pods (`sort -u` must yield one value). Catches a zone that failed to load on one instance, and divergence between primary and replicas, which the AXFR chain should have converged.
 
-The gate is re-run whenever any of the deployment container spec, the CoreDNS Corefile, or the apply timestamp changes (see `triggers` in `readiness.tf`).
+The gate re-runs when a deployment's container spec or the CoreDNS Corefile changes (the `triggers` in `readiness.tf` are sha256 digests of exactly those).
+
+It deliberately does **not** re-run on every apply. It carried an `always = timestamp()` trigger until 2026-09-03, which made `terraform plan` non-empty by construction, so nightly drift-detection counted this stack as drifting every night. The per-apply run was redundant: Prometheus asserts the same properties continuously, whereas the gate only ever ran during an apply. `TechnitiumDNSDown` covers deployment availability, `TechnitiumZoneCountMismatch` covers replica zone-count parity, `TechnitiumZoneSyncStale` covers sync freshness, and `DNSQueryRateDropped` covers the pods actually answering. What the gate uniquely provides is failing an apply that breaks DNS, and an apply that changes nothing cannot break it.
 
 ## Emergency override
 
