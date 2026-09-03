@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Cluster health check script.
-# Runs 49 diagnostic checks against the Kubernetes cluster and prints
+# Runs 50 diagnostic checks against the Kubernetes cluster and prints
 # a colour-coded report with PASS / WARN / FAIL for each section.
 #
 # Usage: ./scripts/cluster_healthcheck.sh [--fix] [--quiet|-q] [--json] [--kubeconfig <path>]
@@ -28,6 +28,9 @@ KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/config}"
 KUBECTL=""
 JSON_RESULTS=()
 TOTAL_CHECKS=50
+# Check functions that returned without emitting a json_add record. Populated
+# by the serial loop and by replay_check_outputs; read by assert_check_arity.
+MISSING_CHECKS=()
 
 # Parallel execution settings. Each check function is self-contained — it
 # only reads cluster state and mutates the in-memory counters / JSON_RESULTS
@@ -74,6 +77,51 @@ count_lines() {
     else
         echo "$input" | wc -l | tr -d ' '
     fi
+}
+
+# Read one field out of Vault, retrying before giving up.
+#
+# Every caller used to do a single `vault kv get ... || true`, so one blip
+# reads as "the secret is not there". On 2026-09-03 a transient read blanked
+# six checks in one run: the three token/password reads plus the four HA
+# checks behind ha_sofia_available, which needs haos_api_token to answer yes.
+# Three attempts with a short backoff turn a blip into a slower read. A
+# genuinely absent secret still returns empty after the last attempt, so the
+# caller's WARN-and-skip path still reports honestly.
+#
+# Always exits 0 — callers substitute it and test the value, and a non-zero
+# status inside $(...) would trip `set -e`.
+vault_field() {
+    local field="$1" path="${2:-secret/viktor}" attempt=1 value=""
+    if ! command -v vault >/dev/null 2>&1; then
+        echo ""
+        return 0
+    fi
+    while (( attempt <= 3 )); do
+        value=$(vault kv get -field="$field" "$path" 2>/dev/null) || value=""
+        if [[ -n "$value" ]]; then
+            printf '%s' "$value"
+            return 0
+        fi
+        if (( attempt < 3 )); then
+            sleep "$attempt"
+        fi
+        attempt=$((attempt + 1))
+    done
+    echo ""
+    return 0
+}
+
+# Median of the numeric arguments, for latency probes where one sample is
+# noise. With an even count it returns the upper of the two middle values,
+# which keeps a degraded reading from being averaged away.
+#
+# Why it exists: check 46 timed the Immich ANN query once and FAILed above
+# 1.5s, on a probe that is noisy by nature. 15 samples on 2026-09-03 spread
+# 134-1144 ms around a ~316 ms median — spacing them 3s apart made no
+# difference — and one 2.05s draw from that tail turned the whole board red.
+median() {
+    printf '%s\n' "$@" | sort -n | awk '{v[NR]=$1} END{if (NR > 0) print v[int(NR/2)+1]}'
 }
 
 # --- Parallel runner ---
@@ -143,8 +191,14 @@ replay_check_outputs() {
     # Replay temp files in numeric index order so the report reads exactly
     # like the serial run did. Marker lines re-populate counters; everything
     # else is forwarded to stdout.
-    local f line stripped
+    #
+    # A check that dies inside its subshell before json_add leaves an .out file
+    # with no JSON marker in it. `wait -n || true` swallows the exit status, so
+    # that used to be invisible — one run emitted 49 of 50 checks and nothing
+    # said so. Record the name here; assert_check_arity reports it.
+    local f line stripped base fn saw_json
     while IFS= read -r f; do
+        saw_json=false
         while IFS= read -r line || [[ -n "$line" ]]; do
             case "$line" in
                 "${PARALLEL_MARKER}PASS:"*)
@@ -161,13 +215,43 @@ replay_check_outputs() {
                     ;;
                 "${PARALLEL_MARKER}JSON:"*)
                     JSON_RESULTS+=("${line#${PARALLEL_MARKER}JSON:}")
+                    saw_json=true
                     ;;
                 *)
                     printf '%s\n' "$line"
                     ;;
             esac
         done < "$f"
+        if [[ "$saw_json" != true ]]; then
+            # Filenames are <zero-padded index>_<check function name>.out
+            base="${f##*/}"
+            base="${base%.out}"
+            fn="${base#*_}"
+            MISSING_CHECKS+=("$fn")
+        fi
     done < <(find "$TMP_DIR" -maxdepth 1 -type f -name '*.out' | sort)
+}
+
+# Every check calls json_add exactly once, so the report should carry one
+# record per entry in the canonical checks[] array. TOTAL_CHECKS only ever fed
+# the "[n/50]" section labels — nothing compared the emitted JSON against it,
+# so a check that vanished mid-run just left the board one shorter and silent.
+assert_check_arity() {
+    local expected="$1" actual="${#JSON_RESULTS[@]}" detail
+    if (( actual == expected )); then
+        return 0
+    fi
+    if (( ${#MISSING_CHECKS[@]} > 0 )); then
+        detail="only $actual/$expected checks reported — no result from: ${MISSING_CHECKS[*]}"
+    else
+        detail="only $actual/$expected checks reported — could not identify which"
+    fi
+    if [[ "$JSON" != true ]]; then
+        echo ""
+        echo -e "${BOLD}Check arity${NC}"
+    fi
+    warn "$detail"
+    json_add "healthcheck_arity" "WARN" "$detail"
 }
 
 # --- Argument parsing ---
@@ -864,10 +948,11 @@ check_uptime_kuma() {
     section 14 "Uptime Kuma Monitors"
     local result
 
-    # Get password from Vault (or env var fallback)
+    # Get password from Vault (or env var fallback). vault_field retries, so a
+    # transient read no longer reads as "no password" and blanks this check.
     local uk_pass="${UPTIME_KUMA_PASSWORD:-}"
     if [[ -z "$uk_pass" ]]; then
-        uk_pass=$(vault kv get -field=uptime_kuma_admin_password secret/viktor 2>/dev/null) || true
+        uk_pass=$(vault_field uptime_kuma_admin_password)
     fi
     if [[ -z "$uk_pass" ]]; then
         warn "Uptime Kuma: password not available (set UPTIME_KUMA_PASSWORD or vault login)"
@@ -1620,9 +1705,14 @@ ha_sofia_available() {
     fi
     if [[ -z "${HOME_ASSISTANT_SOFIA_TOKEN:-}" ]]; then
         if command -v vault >/dev/null 2>&1 && [[ -n "${VAULT_TOKEN:-}${HOME:-}" ]]; then
+            # Retried: this one read gates FIVE checks (the four HA checks plus
+            # the dashboard), so a single failed read used to take out all of
+            # them at once.
             local t
-            t=$(vault kv get -field=haos_api_token secret/viktor 2>/dev/null || true)
-            [[ -n "$t" ]] && export HOME_ASSISTANT_SOFIA_TOKEN="$t"
+            t=$(vault_field haos_api_token)
+            if [[ -n "$t" ]]; then
+                export HOME_ASSISTANT_SOFIA_TOKEN="$t"
+            fi
         fi
     fi
     [[ -n "${HOME_ASSISTANT_SOFIA_TOKEN:-}" ]] || return 1
@@ -3158,6 +3248,18 @@ PYEOF
 # shared_buffers (kept warm by the prewarm step of immich-search-probe); if it decays out of cache a
 # query pays a ~1.8s cold storage read instead of ~4ms warm. We measure both
 # the live ANN latency and the clip_index residency to catch the regression.
+#
+# The latency is the MEDIAN of three samples, not one. The probe is noisy on its
+# own: 15 samples on 2026-09-03 spread 134-1144 ms around a ~316 ms median,
+# whether taken back-to-back or 3s apart, and a single 2.05s draw FAILed the
+# board by itself. A median needs two of three samples to be slow before it
+# moves, which is the difference between a regression and a draw from the tail.
+# The residency probe stays single-sample — buffer occupancy does not jitter
+# the same way.
+#
+# The 500 ms WARN threshold below sits inside that spread, so this check still
+# flaps PASS/WARN on a healthy cluster. Deliberately left alone: it warns, it
+# does not fail, and re-siting it wants a baseline longer than one afternoon.
 check_immich_search() {
     section 46 "Immich Smart Search"
     local pg pct dur_ms dur detail=""
@@ -3177,17 +3279,29 @@ check_immich_search() {
     pct=$($KUBECTL exec -n immich -c immich-postgresql "$pg" -- psql -U postgres -d immich -tAc \
         "SELECT COALESCE(round(100.0*count(*)*8192/greatest(pg_relation_size('clip_index'::regclass),1),1),0) FROM pg_buffercache b JOIN pg_class c ON b.relfilenode=pg_relation_filenode(c.oid) WHERE c.relname='clip_index'" 2>/dev/null | tr -d ' ' || true)
 
-    # Representative random-vector ANN latency, measured in-pod (excludes exec overhead)
-    dur_ms=$($KUBECTL exec -n immich -c immich-postgresql "$pg" -- bash -c \
-        's=$(date +%s%3N); psql -U postgres -d immich -tAc "SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) x" >/dev/null 2>&1; e=$(date +%s%3N); echo $((e-s))' 2>/dev/null | tr -d ' ' || true)
+    # Representative random-vector ANN latency, measured in-pod (excludes exec
+    # overhead). Three samples; the median is what the thresholds below judge.
+    # Same `|| true` guard as the residency probe above.
+    local -a samples=()
+    local sample
+    for _ in 1 2 3; do
+        sample=$($KUBECTL exec -n immich -c immich-postgresql "$pg" -- bash -c \
+            's=$(date +%s%3N); psql -U postgres -d immich -tAc "SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) x" >/dev/null 2>&1; e=$(date +%s%3N); echo $((e-s))' 2>/dev/null | tr -d ' ' || true)
+        if [[ "$sample" =~ ^[0-9]+$ ]]; then
+            samples+=("$sample")
+        fi
+    done
 
-    if ! [[ "$dur_ms" =~ ^[0-9]+$ ]]; then
+    if (( ${#samples[@]} == 0 )); then
         warn "Smart-search probe query failed (clip_index residency: ${pct:-?}%)"
         json_add "immich_search" "WARN" "probe query failed; residency=${pct:-?}%"
         return 0
     fi
+    dur_ms=$(median "${samples[@]}")
     dur=$(awk "BEGIN{printf \"%.2f\", $dur_ms/1000}")
-    detail="latency=${dur}s clip_index_resident=${pct:-?}%"
+    local samples_str
+    samples_str=$(IFS=/; echo "${samples[*]}")
+    detail="latency=${dur}s (median of ${samples_str} ms) clip_index_resident=${pct:-?}%"
 
     if (( dur_ms > 1500 )); then
         [[ "$QUIET" == true ]] && section_always 46 "Immich Smart Search"
@@ -3447,7 +3561,7 @@ check_slack_alerts() {
     # Token from env override or Vault (mirrors UPTIME_KUMA_PASSWORD).
     local slack_token="${SLACK_BOT_TOKEN:-}"
     if [[ -z "$slack_token" ]]; then
-        slack_token=$(vault kv get -field=slack_bot_token secret/viktor 2>/dev/null) || true
+        slack_token=$(vault_field slack_bot_token)
     fi
     if [[ -z "$slack_token" ]]; then
         [[ "$QUIET" == true ]] && section_always 49 "Slack — #alerts Recent Alerts"
@@ -3828,15 +3942,23 @@ main() {
         run_checks_parallel "${checks[@]}"
         replay_check_outputs
     else
-        local fn
+        local fn before
         for fn in "${checks[@]}"; do
+            before=${#JSON_RESULTS[@]}
             "$fn"
+            if (( ${#JSON_RESULTS[@]} == before )); then
+                MISSING_CHECKS+=("$fn")
+            fi
         done
     fi
 
     # Summary + exit code count one unit per CHECK (from the json_add
     # records), not per finding — see recompute_check_counters.
     recompute_check_counters
+
+    # Runs after the counters so its own WARN lands in them, and before the
+    # summary so it appears in both the human report and the JSON checks[].
+    assert_check_arity "${#checks[@]}"
 
     print_summary
 
