@@ -7,7 +7,8 @@
 > which restores kured generally, but node1's reboot gate stays permanently
 > closed by the GPU mitigation's kernel holds.
 
-**Status:** EXECUTED 2026-09-02/03 — all six nodes on containerd 2.3.4
+**Status:** EXECUTED 2026-09-02/03 — all six nodes on containerd 2.3.4, and the
+runtime config is uniform across the fleet (see §0.4)
 **Prepared:** 2026-09-02
 **Owner:** Viktor Barzin
 **Plan:** `docs/plans/2026-09-02-node1-large-image-handling.md` (Phase 4), bead `code-g0va`
@@ -84,6 +85,52 @@ not fit the remaining pool either, and that produced the 2026-09-02 evening
 incident: redis evicted out from under trading-bot, `learning` (which serves
 pages.viktorbarzin.me) in CrashLoopBackOff, all three traefik replicas OOMKilled,
 roughly 20 services degraded for about 25 minutes. Prefer 0.1.
+
+**0.4 What else turned out to be uneven, and is not any more.** Converging the
+binary exposed three settings that had drifted with nothing declaring them. All
+three are now in `playbooks/k8s-node-tuning.yml` and reconciled hourly:
+
+| setting | was | now |
+|---|---|---|
+| `sandbox_image` | `pause:3.2` on master/node2/node3, `:3.6` on node1, `:3.10.1` on node4/node5 | `registry.k8s.io/pause:3.10.1` on all six |
+| `max_concurrent_downloads` | 3 on master/node4/node5, 5 on node1/node2/node3 | 3, containerd's own default |
+| `certs.d` registry mirrors | three different sets, two carrying dead entries | identical on all six, all five caches wired |
+
+The pause image was the one that mattered. `kubeadm config images list` answers
+`registry.k8s.io/pause:3.10.1`, and four nodes were on an OLDER version from
+`k8s.gcr.io`, which upstream has frozen. It is pinned and so never GC-eligible,
+which is the only reason it had not bitten: a node that lost its copy, or a
+rebuilt one, would try to pull a tag from a registry that no longer serves new
+content. Sequenced safely by pre-pulling `pause:3.10.1` to all six through the
+`registry.k8s.io` mirror (0.4-0.7 s each) BEFORE the config changed. Existing
+sandboxes keep the image they were created with by design, so the old ones drain
+away as pods restart rather than all at once.
+
+**The drop-in trap is the part to remember.** node1's
+`/etc/containerd/conf.d/99-nvidia.toml` is a whole-config snapshot the nvidia
+toolkit takes from `containerd config dump`, and containerd merges imports
+last-wins per key, so it silently overrides the root config. It was caught
+pinning `discard_unpacked_layers` on 2026-09-02, and then `sandbox_image` AND
+`max_concurrent_downloads` on 2026-09-03 — the second pair only visible after
+restarting containerd and re-reading the dump, because node2 and node3 picked up
+the new pause image while node1 did not. **Any setting added to that playbook
+must also be added to its `containerd_dropin_overrides` list**, and the
+merged-config assert must check every one, which is what catches this without
+needing a restart to reveal it. Note the drop-in spells the pause key
+`sandbox_image` (the v2 CRI name) while a v3 or v4 root spells it `sandbox` under
+`pinned_images`.
+
+Verify the whole set from the merged config, never from the file:
+
+```bash
+for n in k8s-master k8s-node1 k8s-node2 k8s-node3 k8s-node4 k8s-node5; do
+  printf '%-12s ' "$n"
+  ssh "$n" 'sudo containerd config dump \
+    | grep -E "^\s*(sandbox = |max_concurrent_downloads|discard_unpacked_layers)" \
+    | tr -s " " | tr "\n" " "'
+  echo
+done
+```
 
 ---
 
@@ -874,9 +921,11 @@ sudo ctr version
 sudo ctr -n k8s.io images ls | tail -n +2 | awk '{print $3}' | sort -u | wc -l
 ```
 
-The image count must be within a few of the P1 baseline for this node. On node1
-the pinned sandbox image `k8s.gcr.io/pause:3.6` must still be present; it is
-cached today and, once pinned, is not GC-eligible.
+The image count must be within a few of the P1 baseline for this node. The pinned
+sandbox image must still be present; once pinned it is not GC-eligible. That is
+`registry.k8s.io/pause:3.10.1` on every node as of 2026-09-03 (§0.4) — during the
+migration node1 still carried `k8s.gcr.io/pause:3.6` and master, node2 and node3
+`:3.2`, so a run against an older transcript will see those instead.
 
 If containerd is not active, read the journal. `drop-in config version N higher
 than root config version M` means step 5.4 did not take. `expected containerd
