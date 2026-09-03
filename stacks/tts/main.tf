@@ -264,12 +264,12 @@ resource "kubernetes_namespace" "tts" {
 # llama-cpp's nfs_models. First start downloads the model into /data/hf_cache
 # (HF_HOME below), so weights persist across pod restarts.
 module "nfs_models" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "chatterbox-models"
-  namespace  = kubernetes_namespace.tts.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs-ssd/chatterbox"
-  storage    = "20Gi" # multilingual weights + HF cache + voices headroom
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "chatterbox-models"
+  namespace          = kubernetes_namespace.tts.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs-ssd/chatterbox"
+  storage            = "20Gi" # multilingual weights + HF cache + voices headroom
   storage_class_name = "nfs-pve"
 }
 
