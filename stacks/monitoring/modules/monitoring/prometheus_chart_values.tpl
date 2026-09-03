@@ -989,6 +989,52 @@ serverFiles:
           # rather than fire. Seen live while rolling vault-2 from k8s-node2 to
           # k8s-node5 on 2026-09-03. Which node a pod is on is already in
           # kube_pod_info if anyone needs it.
+      # etcd's own disk metrics (code-at4f, 2026-09-03). Until today Prometheus
+      # had NONE of these: `count(etcd_disk_wal_fsync_duration_seconds_count)`
+      # returned no series, and the only etcd_* metrics present were
+      # etcd_request_duration_*, which the apiserver emits about its own calls
+      # rather than etcd about its disk. kubeadm binds --listen-metrics-urls to
+      # 127.0.0.1:2381, so nothing off the master could reach it;
+      # stacks/rbac/modules/rbac/etcd-tuning.tf now adds the node IP alongside
+      # loopback.
+      #
+      # Why it matters: keeping etcd on the shared 7200rpm HDD was explicitly
+      # risk-accepted on 2026-09-03 (bead code-oflt), and measurement is the
+      # compensating control. wal_fsync and backend_commit p99 are the two
+      # numbers that show the spindle hurting, and they are what would explain
+      # the ~4 kube-controller-manager restarts a day this cluster sees.
+      #
+      # role: node rather than a hardcoded address so a renumbered control
+      # plane does not silently stop being scraped. Plain HTTP is correct here:
+      # :2381 serves /metrics and /health only, never the client API, which
+      # stays on https://127.0.0.1:2379 behind mTLS.
+      - job_name: etcd
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          # `labelpresent`, not the label itself. node-role.kubernetes.io/
+          # control-plane carries an EMPTY value on the master, and a node
+          # without the label also reads as empty, so keeping on the label
+          # value would match every node in the cluster and scrape :2381 on
+          # five workers that are not running etcd.
+          - action: keep
+            regex: "true"
+            source_labels:
+              - __meta_kubernetes_node_labelpresent_node_role_kubernetes_io_control_plane
+          - action: replace
+            regex: (.+)
+            replacement: $1:2381
+            source_labels:
+              - __meta_kubernetes_node_address_InternalIP
+            target_label: __address__
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_node_name
+            target_label: node
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_node_name
+            target_label: instance
       - job_name: kubernetes-pods-slow
         honor_labels: true
         scrape_interval: 5m
@@ -3456,12 +3502,10 @@ serverFiles:
           # ">= 3 in 15m" rule would leave etcd unwatched, since etcd restarting
           # even once is the event worth hearing about.
           #
-          # Open question this leaves: ~4 kube-controller-manager restarts a day
-          # is high for a quiet cluster and is consistent with lease renewal
-          # losing races against etcd fsync on the spindle. These rules watch
-          # the rate rather than explain it. Getting etcd itself scraped
-          # (etcd_disk_wal_fsync_duration_seconds) is what would settle it, and
-          # that needs a control-plane change — bead code-at4f.
+          # The open question these left ("~4 kube-controller-manager restarts
+          # a day is high, is it etcd fsync on the spindle?") is now measurable:
+          # the etcd scrape job above landed 2026-09-03 and the two rules below
+          # watch the disk directly.
           - alert: ControlPlaneStaticPodRestarted
             # etcd and the apiserver. Rare enough that one restart is news:
             # over 30 days, 1 and 5 respectively, in 3 distinct episodes.
@@ -3486,6 +3530,44 @@ serverFiles:
             annotations:
               summary: "{{ $labels.container }} restarted {{ $value | printf \"%.0f\" }}x in 15m — control plane is flapping, not drifting"
               description: "Above the normal leader-election churn on this cluster (~4/day each, which is itself a known symptom of etcd on the shared spindle). A burst this size is the 2026-06-12 shape: etcd fsync stalls, the lease expires, the component restarts, repeat. Check the disk first: homelab metrics query 'rate(node_disk_io_time_seconds_total{device=\"sdc\"}[5m])'. Then kubectl -n kube-system logs {{ $labels.pod }} --previous."
+          # etcd's own disk latency, the third compensating control for
+          # code-oflt. These are the numbers the other two rules could only
+          # infer from consequences.
+          #
+          # THRESHOLDS ARE SET AGAINST THIS CLUSTER, NOT AGAINST HEALTHY
+          # HARDWARE. Read off the live endpoint on 2026-09-03, lifetime
+          # histograms (17.5M fsyncs, 7.7M commits):
+          #   wal_fsync       p99 between 64ms and 128ms, p99.9 512ms-1.02s
+          #   backend_commit  p99 between 128ms and 256ms, p99.9 1.02s-2.05s
+          # etcd's own guidance is p99 under 10ms for fsync and under 25ms for
+          # commit, so this cluster already sits an order of magnitude past it.
+          # That is the accepted cost of keeping etcd on the shared 7200rpm
+          # HDD, and alerting at the recommended figures would page constantly
+          # about a condition that was decided deliberately.
+          #
+          # So each threshold sits at roughly this cluster's normal p99.9: the
+          # alert means "the 99th percentile has reached what is usually the
+          # 99.9th", which is a stall episode rather than the chronic baseline.
+          #
+          # These are lifetime figures and therefore include past bad periods.
+          # Re-base both once a few weeks of scraped data exist and a recent
+          # windowed p99 can be computed properly.
+          - alert: EtcdWalFsyncSlow
+            expr: histogram_quantile(0.99, sum by (instance, le) (rate(etcd_disk_wal_fsync_duration_seconds_bucket[10m]))) > 0.5
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "etcd WAL fsync p99 {{ $value | printf \"%.2f\" }}s on {{ $labels.instance }} (baseline p99 ~0.1s)"
+              description: "etcd is waiting on the disk to durably write its log. At this level lease renewals start losing races and the control plane restarts, which is the ControlPlaneLeaderFlapping shape. Check what else is hitting the spindle: homelab metrics query 'rate(node_disk_io_time_seconds_total{device=\"sdc\"}[5m])'. The durable fix is moving etcd off the shared HDD, deliberately deferred in bead code-oflt."
+          - alert: EtcdBackendCommitSlow
+            expr: histogram_quantile(0.99, sum by (instance, le) (rate(etcd_disk_backend_commit_duration_seconds_bucket[10m]))) > 1.0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "etcd backend commit p99 {{ $value | printf \"%.2f\" }}s on {{ $labels.instance }} (baseline p99 ~0.2s)"
+              description: "etcd is slow committing its backend boltdb transaction, which stalls every write through the apiserver. Usually arrives alongside EtcdWalFsyncSlow and EtcdRequestLatencyHigh; if it arrives alone, suspect a large defrag or snapshot rather than general IO contention."
           - alert: KubeletRuntimeOperationsLatency
             expr: histogram_quantile(0.99, sum by (instance, operation_type, le) (rate(kubelet_runtime_operations_duration_seconds_bucket[10m]))) > 60
             for: 10m
