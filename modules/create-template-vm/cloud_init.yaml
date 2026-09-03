@@ -78,11 +78,6 @@ write_files:
     owner: root:root
     encoding: b64
     content: ${k8s_node_setup_script_b64}
-  - path: /usr/local/bin/k8s-node-post-join-tune.sh
-    permissions: '0755'
-    owner: root:root
-    encoding: b64
-    content: ${k8s_node_post_join_script_b64}
 %{endif}
 
 runcmd:
@@ -185,10 +180,14 @@ runcmd:
   - ${k8s_join_command}
   - systemctl enable kubelet
   - systemctl start kubelet
-  # Kubelet tuning runs AFTER kubeadm join — that's when
-  # /var/lib/kubelet/config.yaml gets written. Restarts kubelet at the
-  # end to pick up the patched config.
-  - bash /usr/local/bin/k8s-node-post-join-tune.sh
+  # Kubelet tuning is NOT done here. It used to run
+  # k8s-node-post-join-tune.sh as a one-shot after kubeadm join, which applied
+  # once and was never reconciled: `kubeadm upgrade node` rewrites
+  # /var/lib/kubelet/config.yaml from the cluster-wide kubelet-config
+  # ConfigMap, which does not carry those keys, so the v1.35.7 upgrade on
+  # 2026-07-26/27 erased the whole tune from all six nodes and nothing
+  # alerted. playbooks/k8s-node-tuning.yml owns those settings now and
+  # reconciles them, so a rebuilt node picks them up from there.
   %{ endif }
   %{ for provision_cmd in provision_cmds ~}
   - ${provision_cmd}

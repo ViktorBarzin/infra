@@ -103,7 +103,7 @@ sed -i "s/^[[:space:]]*exit_timeout = .*/  exit_timeout = '5m'/" /etc/containerd
 
 # 4. (kubelet tuning intentionally NOT here — /var/lib/kubelet/config.yaml
 # only exists AFTER kubeadm join. That work runs in
-# k8s-node-post-join-tune.sh, invoked as a separate cloud-init runcmd
+# playbooks/k8s-node-tuning.yml (this used to be k8s-node-post-join-tune.sh,
 # step after the join completes.)
 
 # 5. logind + kubelet systemd unit — total kubelet shutdown 310s, so
