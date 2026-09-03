@@ -56,11 +56,13 @@ commit index are one query away:
 ```sh
 # Which pod thinks it is the leader, and is its commit index moving?
 homelab metrics query 'vault_core_active'
-homelab metrics query 'rate(vault_raft_last_index_gauge[5m])'
+homelab metrics query 'rate(vault_raft_storage_stats_applied_index[5m])'
 ```
 
 A pod with `vault_core_active=1` and a flat `vault_raft_last_index_gauge`
 is the stuck leader — that pairing is what `VaultRaftLeaderStuck` alerts on.
+(`vault_raft_last_index_gauge` does not exist in Vault 1.18.5; the applied
+index is the one that moves on every committed entry.)
 If Prometheus itself is unreachable, fall back to reading the logs:
 
 ```sh
