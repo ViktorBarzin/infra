@@ -235,6 +235,20 @@ resource "helm_release" "traefik" {
         # patch, so the missing entry was restored by hand with an additive JSON
         # patch (`kubectl patch --type=json`), which bypasses merge keys.
         #
+        # THIS IS NOW ALERTED. IngressAllTargetsUnreachable (critical, for 2m,
+        # group "Traefik Ingress" in the monitoring stack) fires when every
+        # blackbox probe target fails at once, which is what a lost 443 mapping
+        # looks like from outside. It exists because the drift is silent from
+        # every other angle: Traefik's pods stay Ready so TraefikDown cannot
+        # fire, and the websecure entrypoint's request rate does not drop
+        # either, since in-cluster clients reach the ClusterIP directly. A
+        # backtest over the 7 days to 2026-09-03 found THREE occurrences, each
+        # within ~2 min of a helm revision here (rev 72 -> 3 min, rev 75 -> 169
+        # min unnoticed, rev 76 -> 1 min because someone was watching). Treat
+        # any apply of this stack as capable of taking all ingress down, and
+        # check the mapping afterwards:
+        #   kubectl get svc -n traefik traefik -o json | jq '.spec.ports'
+        #
         # To disable HTTP/3 for real, do it at the Cloudflare edge for proxied
         # hosts (stacks/cloudflared), and for origin-direct hosts strip the
         # alt-svc response header with a middleware rather than touching this
