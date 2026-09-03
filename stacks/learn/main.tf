@@ -116,6 +116,27 @@ resource "kubernetes_config_map" "caddyfile" {
       	handle /healthz {
       		respond "ok" 200
       	}
+      	# pages.viktorbarzin.me/prep/ — PUBLIC, no login (2026-09-03). Viktor asked
+      	# for a link anyone can open and edit, for Anca's interview prep, so this
+      	# path is carved out of the gated host by its own ingress
+      	# (module "ingress_prep" below, auth = "public"). Requests arrive bound to
+      	# Authentik's `guest` user, so this handle deliberately does NOT look at
+      	# X-Authentik-Username: it must serve an identity no other handle matches.
+      	# It sits FIRST so nothing downstream can shadow it, and its root is
+      	# pinned to pages/anca so the rest of the tree stays unreachable from a
+      	# public request. The page's shared state is a separate service on
+      	# /prep/api (module "ingress_prep_api"); everything under /prep that is
+      	# not a real file falls back to the page itself.
+      	@pages_prep {
+      		host pages.viktorbarzin.me
+      		path /prep /prep/*
+      	}
+      	handle @pages_prep {
+      		root * /repo/src/current/pages/anca
+      		uri strip_prefix /prep
+      		try_files {path} {path}index.html /index.html
+      		file_server
+      	}
       	# pages.viktorbarzin.me: per-user page spaces (pages/<user>/) + a shared
       	# area (pages/shared/), served from the git-synced monorepo pages/ tree.
       	# Every page is readable by every identity that clears the Authentik gate
@@ -435,5 +456,221 @@ module "ingress_plans" {
   auth            = "required"
   extra_annotations = {
     "gethomepage.dev/enabled" = "false"
+  }
+}
+
+
+# === pages.viktorbarzin.me/prep/ — the public, editable prep page ===
+#
+# Anca's Citadel interview prep needed a link that opens with no login, keeps
+# edits anyone makes, and still works on a plane (Viktor, 2026-09-03). The page
+# itself is static and served by the Caddy handle above; these resources are the
+# state behind it.
+#
+# Why a small service rather than something already running: `homelab how` and
+# the service catalog have no public read/write JSON store, the artifact runtime
+# turns organisation-internal the moment it declares a database, and Nextcloud's
+# WebDAV sends no CORS headers so a browser cannot reach it cross-origin. Same
+# origin was the deciding factor — /prep/api sits on pages.viktorbarzin.me, so
+# the page needs no CORS at all when online, and the downloaded offline copy
+# (Origin: null) is the only caller that relies on the wildcard the service does
+# send.
+#
+# The write path is UNAUTHENTICATED on purpose. That was Viktor's call in
+# exchange for a link a non-technical reader can just open. What makes it
+# survivable: every write snapshots the previous document and 50 are kept, so a
+# wipe is one copy away from undone; bodies, key counts and value lengths are
+# capped; and writes are rate limited per address. See app/prep_sync.py.
+
+resource "kubernetes_persistent_volume_claim" "prep_sync" {
+  metadata {
+    name      = "prep-sync-data"
+    namespace = kubernetes_namespace.learn.metadata[0].name
+  }
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "nfs-pve"
+    resources {
+      requests = {
+        storage = "1Gi"
+      }
+    }
+  }
+  # The document is a few KB. NFS rather than local-path so a node move does not
+  # lose it, and 1Gi because that is the smallest the class bothers with.
+  wait_until_bound = false
+}
+
+resource "kubernetes_config_map" "prep_sync_code" {
+  metadata {
+    name      = "prep-sync-code"
+    namespace = kubernetes_namespace.learn.metadata[0].name
+  }
+  data = {
+    "prep_sync.py" = file("${path.module}/app/prep_sync.py")
+  }
+}
+
+resource "kubernetes_deployment" "prep_sync" {
+  metadata {
+    name      = "prep-sync"
+    namespace = kubernetes_namespace.learn.metadata[0].name
+    labels = {
+      app = "prep-sync"
+    }
+  }
+  spec {
+    replicas = 1
+    # One writer at a time. The service serialises writes on an in-process lock,
+    # so a second replica could interleave two read-modify-write cycles on the
+    # same NFS file and lose one side's merge.
+    strategy {
+      type = "Recreate"
+    }
+    selector {
+      match_labels = {
+        app = "prep-sync"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "prep-sync"
+        }
+        annotations = {
+          # Restart when the code changes; the ConfigMap mount alone would not.
+          "checksum/code" = sha256(file("${path.module}/app/prep_sync.py"))
+        }
+      }
+      spec {
+        container {
+          name    = "prep-sync"
+          image   = "python:3.12-slim"
+          command = ["python", "/app/prep_sync.py"]
+          port {
+            container_port = 8080
+          }
+          env {
+            name  = "DATA_DIR"
+            value = "/data"
+          }
+          volume_mount {
+            name       = "code"
+            mount_path = "/app"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+          }
+          security_context {
+            # NFS export squashes, and the proven pattern on this server
+            # (stacks/poison-fountain) writes as uid 0.
+            run_as_user = 0
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 30
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
+            initial_delay_seconds = 2
+            period_seconds        = 10
+          }
+        }
+        volume {
+          name = "code"
+          config_map {
+            name = kubernetes_config_map.prep_sync_code.metadata[0].name
+          }
+        }
+        volume {
+          name = "data"
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.prep_sync.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "prep_sync" {
+  metadata {
+    name      = "prep-sync"
+    namespace = kubernetes_namespace.learn.metadata[0].name
+  }
+  spec {
+    selector = {
+      app = "prep-sync"
+    }
+    port {
+      name        = "http"
+      port        = 80
+      target_port = 8080
+    }
+  }
+}
+
+# The public page. Same HOST as the gated ingress above, carved out by path:
+# Traefik picks the longest matching rule, and the explicit priority makes that
+# ordering a decision rather than a coincidence. dns_type = "none" because
+# pages.viktorbarzin.me already has its record, and a second one would fight
+# over it. anti_ai_scraping is forced ON: this is a public page and there is no
+# reason to let it be harvested.
+module "ingress_prep" {
+  source           = "../../modules/kubernetes/ingress_factory"
+  name             = "prep"
+  host             = "pages"
+  ingress_path     = ["/prep"]
+  service_name     = "learn"
+  port             = 80
+  namespace        = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name  = var.tls_secret_name
+  auth             = "public"
+  dns_type         = "none"
+  external_monitor = false
+  anti_ai_scraping = true
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/router.priority" = "150"
+  }
+}
+
+# The state API. Separate module call because these paths need a different
+# backend, and separate settings: no anti-AI middleware, which inspects the user
+# agent and has no business on a JSON endpoint, and a body cap in front of the
+# service's own.
+module "ingress_prep_api" {
+  source           = "../../modules/kubernetes/ingress_factory"
+  name             = "prep-api"
+  host             = "pages"
+  ingress_path     = ["/prep/api"]
+  service_name     = kubernetes_service.prep_sync.metadata[0].name
+  port             = 80
+  namespace        = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name  = var.tls_secret_name
+  auth             = "public"
+  dns_type         = "none"
+  external_monitor = false
+  anti_ai_scraping = false
+  max_body_size    = "512k"
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/router.priority" = "200"
   }
 }
