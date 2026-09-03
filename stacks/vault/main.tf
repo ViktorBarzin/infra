@@ -79,6 +79,14 @@ resource "helm_release" "vault" {
         enabled  = true
         replicas = 3
 
+        # Editing `config` below does NOT restart anything. The chart renders
+        # it into the vault-config ConfigMap, the pod template carries no
+        # checksum annotation, and the StatefulSet is updateStrategy: OnDelete
+        # (deliberate for HA Vault — the operator, not the controller, decides
+        # when a leader election happens). So an apply is non-disruptive and the
+        # running pods keep the old config until deleted one at a time,
+        # standbys first and the leader last, verifying unseal and raft health
+        # between each. See docs/runbooks/vault-raft-leader-deadlock.md.
         raft = {
           enabled   = true
           setNodeId = true
@@ -111,6 +119,44 @@ resource "helm_release" "vault" {
               retry_join {
                 leader_api_addr = "http://vault-2.vault-internal:8200"
               }
+            }
+
+            # Metrics-only listener, separate from the public one on 8200.
+            #
+            # `unauthenticated_metrics_access` cannot go on the 8200 listener:
+            # that one is what https://vault.viktorbarzin.me serves (ingress ->
+            # vault-active:8200, auth = "none" because Vault does its own auth),
+            # so enabling it there would publish /v1/sys/metrics to the internet.
+            # Vault telemetry carries every mount path and policy name as label
+            # values (vault_route_*{mount_point}, vault_token_count_by_policy),
+            # which is a map of the secret store for anyone who asks.
+            # Verified 2026-09-03: vault.viktorbarzin.me resolves to Cloudflare
+            # (104.21.3.16) publicly and /v1/sys/health already answers 200
+            # through the edge, so the path is genuinely reachable.
+            #
+            # Port 8202 is already declared as a containerPort on the
+            # StatefulSet (name http-rep, the Enterprise replication port).
+            # This is OSS Vault with no Enterprise license, so nothing binds it
+            # and nothing will; reusing it keeps the port visible in the pod
+            # spec instead of listening on an undeclared one. No Service maps
+            # 8202, and the vault namespace has no NetworkPolicy, so Prometheus
+            # reaches it directly on the pod IP and nothing else can.
+            listener "tcp" {
+              tls_disable = 1
+              address     = "[::]:8202"
+
+              telemetry {
+                unauthenticated_metrics_access = true
+              }
+            }
+
+            # Without this stanza the metrics endpoint answers but holds almost
+            # nothing. disable_hostname strips the pod hostname from every
+            # metric NAME (Vault prepends it otherwise), which would make
+            # vault_core_active unqueryable as a single series.
+            telemetry {
+              prometheus_retention_time = "24h"
+              disable_hostname          = true
             }
 
             service_registration "kubernetes" {}
