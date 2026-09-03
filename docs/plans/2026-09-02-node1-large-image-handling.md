@@ -1,6 +1,6 @@
 # Large-image handling on k8s-node1
 
-**Status:** DONE. Phases 0-4 landed and verified 2026-09-02/03; all six nodes on containerd 2.3.4.
+**Status:** Phases 0-4 landed and verified 2026-09-02/03; all six nodes on containerd 2.3.4. Phase 2b's measurement is done and its decision is handed to `code-3uwk`.
 **Date:** 2026-09-02
 **Owner:** Viktor Barzin
 **Origin:** "improve the boot time of images that have big image size, mostly GPU ones on node1"
@@ -308,59 +308,57 @@ fix-broken-blobs → restart.
 Verification: a real manifest fetch returning 200, `df` showing the reclaimed
 space, the VM appearing in Prometheus, and `--check` a no-op on a second run.
 
-### Phase 2b — node2 and node5 are closer to the cliff than node1 — DONE 2026-09-03
+### Phase 2b — node2 and node5 are closer to the cliff than node1 — HALF ANSWERED, rest is `code-3uwk`
 
-**Measured, and the answer is that Phase 3 was sufficient.** The phase was scoped
-as measure-and-decide, with the cause explicitly unknown and possibly not images.
+**First half answered: it IS images.** containerd's store is 93.9% of node2's
+used space and 96.6% of node5's. On node5, 328 of 433 unique digests (68.16 GiB,
+83.6% of cached image bytes) were used by no pod on that node, and 85% of its
+content-store blob bytes were older than 14 days; node2 reads 84.6% and 78%. So
+`imageMaximumGCAge=168h` has plenty to bite on and is the right primary lever.
 
-| node | root fs at scoping | 2026-09-03 | change |
-|---|---|---|---|
-| k8s-node2 | 80.4% | 80-81% (193G of 252G) | flat |
-| k8s-node5 | 83.3% | **76%** (61G free) | **-7 points** |
-| k8s-node1 | 35.5% | 40% | +5 |
+**Second half NOT answered, and a first pass at it here was wrong.** An earlier
+version of this section read node5 falling from 83.3% to 76% as evidence that
+Phase 3's settings were sufficient. They are not what moved it. node5 **hit the
+cliff**: at 14:36:46 on 2026-09-02 kubelet logged `Disk usage on image filesystem
+is over the high threshold` with `usage=85 highThreshold=85
+amountToFree=10729684992`, then 43 `Removing image to free bytes` lines through
+14:37:17, taking used% 83.48 to 73.41, digests 433 to 390 and the content store
+53G to 46G. `DiskPressure` never went True and nothing alerted. The drop was the
+failure Phase 2b was written to prevent, not proof against it.
 
-Phase 3's settings are confirmed live on both, read from each kubelet's own
-`/configz` and from `containerd config dump` rather than from the files:
+The sawtooth is already returning. Measured 2026-09-03 06:05:
+
+| | post-GC 2026-09-02 | 2026-09-03 |
+|---|---|---|
+| node5 used | 73.41% | **77%** (188G of 247G) |
+| node5 unique digests | 390 | **401** |
+
+What the settings ARE confirmed to do, read from each kubelet's own `/configz` and
+from `containerd config dump` rather than from the files:
 `discard_unpacked_layers = true`, `imageMaximumGCAge = 168h0m0s`,
 `serializeImagePulls = true`. `imageGCHighThresholdPercent` reads 85, the kubelet
-default, which this repo has never set (§8).
+default this repo has never set (§8).
 
-node5 falling 7 points with those settings live is the evidence the phase asked
-for, and node2 has stopped climbing. Neither is near the 85% GC cliff, so no
-further action: no threshold change, and specifically not the lower imageGC
-thresholds §7 rejected, which would shed 40-60 GB of warm cache from these two
-nodes to solve a problem they no longer have.
+**Why the retention window may not be enough, stated as the inference it is.** A
+168h window bounds how long a digest lingers, not how fast new ones arrive, and
+node5 takes both the Woodpecker pipeline pods and the largest share of
+`:latest`-tagged CronJob pulls, each of which can resolve to a fresh digest. The
+burn on 2026-09-02 ran roughly 5x the 7-day trend and was not attributable to one
+cause. Stale-tag census on node5: 41 f1-stream, 25 tripit, 23 book-search, 15
+claude-agent-service.
 
-Honest limit: node5's improvement is consistent with `discard_unpacked_layers`
-discarding compressed blobs after unpack, but it was not isolated from the
-containerd 2.3.4 upgrade that landed in the same window, so the attribution is
-inference rather than a controlled measurement. The conclusion does not depend
-on which of the two did it, since both are staying.
+So this phase closes its measurement half and hands the decision to **`code-3uwk`**,
+which carries the acceptance criteria: arrival rate in new digests and bytes per
+day over at least 7 days with `imageMaximumGCAge` live, a recorded decision on
+whether 168h holds or the rate needs reducing at source, and node5 staying under
+80% for 7 days with no threshold-triggered pass. Two gaps make this hard to see
+and belong with it: `kubelet.service` journals are not shipped to Loki (local
+retention is 9-16h, so the 14:36 pass had already rolled off by the next morning),
+and no alert exists anywhere on an image-GC pass.
 
-
-
-Folded in once measured, because it is the same failure as §3 on different nodes.
-Live root-fs usage against the live `imageGCHighThresholdPercent: 85`:
-
-| node | usage | headroom to the threshold |
-|---|---|---|
-| k8s-master | 44.2% | — |
-| **k8s-node1** | **35.5%** | the node this plan was written about |
-| k8s-node3 | 46.1% | — |
-| k8s-node4 | 66.1% | — |
-| **k8s-node2** | **80.4%** | 4.6 points |
-| **k8s-node5** | **83.3%** | **1.7 points** |
-
-node5 is within two points of a natural mass eviction of exactly the kind that
-started this investigation, and nothing watches for it — there is no alert on an
-image-GC pass anywhere today, which is what Phase 0 adds. node1, meanwhile, sits
-at 35.5% because its own cliff already fired.
-
-This phase is therefore: find what is consuming node2 and node5, and decide
-whether a finite `imageMaximumGCAge` (Phase 3) is sufficient there or whether
-something else is accumulating. It is deliberately scoped as *measure and
-decide*, not *fix*, because the cause is not yet known and may not be images at
-all.
+Still rejected, and this does not change it: the lower imageGC thresholds in §7,
+which would shed 40-60 GB of warm cache from these two nodes and make the
+sawtooth worse rather than better.
 
 ### Phase 3 — Node config declared
 
