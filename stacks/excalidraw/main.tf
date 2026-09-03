@@ -27,23 +27,6 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
-# Transient. The PVC exists and is Bound on nfs-pve, but it is absent from
-# state, so a plan wants to create it and the apply fails with
-# `persistentvolumeclaims "excalidraw-data-host" already exists` — which is how
-# this stack has been failing every CI run. Lost during the nfs-truenas ->
-# nfs-pve migration (f28e026b): the pvc-protection finalizer holds a PVC
-# Terminating while a pod still mounts it, so the destroy leaves state without
-# the resource while the object survives.
-#
-# Nothing about the live volume changes here; the module already declares
-# nfs-pve and /srv/nfs/excalidraw, matching what is bound. Remove this block
-# once the apply has adopted it (repo convention: commit stanza, plan to zero,
-# apply, delete stanza).
-import {
-  to = module.nfs_data_host.kubernetes_persistent_volume_claim.this
-  id = "excalidraw/excalidraw-data-host"
-}
-
 module "nfs_data_host" {
   source             = "../../modules/kubernetes/nfs_volume"
   name               = "excalidraw-data-host"
