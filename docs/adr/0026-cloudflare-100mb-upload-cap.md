@@ -32,11 +32,16 @@ remedies: chunk the request, set the record to DNS-only, or upgrade the plan.
 ## The architectural constraint
 
 ```mermaid
-flowchart LR
-  C["Client<br/>(browser, Immich app, git, curl)"] --> E{{"Cloudflare edge<br/>413 at 104,857,600 bytes"}}
-  E -."over cap".-> X["rejected, no origin contact"]
-  E -->|under cap| CD["cloudflared x3"] --> T["Traefik x3"] --> B["Backend service"]
-  C2["Client"] -->|"grey-cloud host"| W["WAN 176.12.22.76"] --> P["pfSense NAT :443"] --> T
+flowchart TB
+  C["Client<br/>browser, Immich app, git, curl"]
+  C -->|proxied host| E{{"Cloudflare edge<br/>413 at 104,857,600 bytes"}}
+  E -.->|over cap| X["rejected<br/>origin never contacted"]
+  E -->|under cap| CD["cloudflared x3"]
+  CD --> T["Traefik x3"]
+  C -->|grey-cloud host| W["WAN 176.12.22.76"]
+  W --> P["pfSense NAT :443"]
+  P --> T
+  T --> B["Backend service"]
   style E fill:#ffd7e0,stroke:#c0392b,stroke-width:2px
 ```
 
