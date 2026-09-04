@@ -260,8 +260,12 @@ module "ingress" {
   # (AUTH_URL/AUTH_SECRET/GOOGLE_CLIENT_{ID,SECRET} env vars above). Putting
   # Authentik forward-auth in front double-gates the app and breaks iOS/Android
   # webview clients that can't complete the Authentik 302/cookie dance.
-  auth            = "app"
-  dns_type        = "non-proxied"
+  auth = "app"
+  # ADR-0026 / code-6m20: grey because forward-auth broke the NextAuth /
+  # Google OAuth flow and the mobile webviews. That is a Traefik concern,
+  # not a Cloudflare one. Proxied rides the zone-wide wildcard CNAME
+  # (ADR-0021) and creates no A/AAAA record.
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.novelapp.metadata[0].name
   name            = "novelapp"
   tls_secret_name = var.tls_secret_name

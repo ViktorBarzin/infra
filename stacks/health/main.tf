@@ -259,8 +259,11 @@ module "ingress" {
   sablier = {
     group = "health"
   }
-  auth            = "required"
-  dns_type        = "non-proxied"
+  auth = "required"
+  # ADR-0026 / code-6m20: auth-grey host. Dashboard UI behind Authentik,
+  # small JSON payloads. Proxied rides the zone-wide wildcard CNAME
+  # (ADR-0021) and creates no A/AAAA record.
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.health.metadata[0].name
   name            = "health"
   tls_secret_name = var.tls_secret_name
@@ -332,8 +335,13 @@ module "ingress_api" {
   # Shortcuts can't do the forward-auth dance; the app validates per-user
   # hashed tokens itself, strip-auth-headers kills spoofed X-authentik-*, and
   # the /api/ingest path allowlist keeps every other route unreachable here.
-  auth              = "none"
-  dns_type          = "non-proxied"
+  auth = "none"
+  # ADR-0026 / code-6m20: the reason for auth = "none" above is that
+  # forward-auth breaks the iOS Shortcuts bearer-token push. That is a
+  # Traefik concern; Cloudflare's proxy adds no auth. The ingest bodies are
+  # small JSON, far under the 104,857,600-byte edge cap measured in ADR-0026.
+  # Proxied creates no A/AAAA record (ADR-0021).
+  dns_type          = "proxied"
   namespace         = kubernetes_namespace.health.metadata[0].name
   name              = "health-api"
   service_name      = kubernetes_service.health.metadata[0].name

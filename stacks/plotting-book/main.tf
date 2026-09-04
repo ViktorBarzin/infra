@@ -238,9 +238,14 @@ resource "kubernetes_service" "plotting-book" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
-  dns_type        = "non-proxied"
+  source = "../../modules/kubernetes/ingress_factory"
+  auth   = "required"
+  # ADR-0026 / code-6m20: this was an auth-grey host. Nothing about the app
+  # needs the direct path. It is a text-only interactive-fiction UI behind
+  # Authentik, so no large bodies and no long-held requests. Proxied rides
+  # the zone-wide wildcard CNAME (ADR-0021) and creates no A/AAAA record,
+  # which takes the WAN IP out of public DNS for this name.
+  dns_type        = "proxied"
   namespace       = local.namespace
   name            = "plotting-book"
   tls_secret_name = var.tls_secret_name
