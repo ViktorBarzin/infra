@@ -596,7 +596,7 @@ check_pvcs() {
     # autoresizer can never act on it.
     #
     # /volume1 IS covered, independently and correctly, by
-    # OffsiteDestinationFillingUp (<10% free) and OffsiteDestinationAlmostFull
+    # OffsiteDestinationFillingUp (<6% free) and OffsiteDestinationAlmostFull
     # (<4%) reading the offsite_dest_* gauges offsite-sync-backup pushes. Those
     # exist because the same volume hit 99% on 2026-08-06 and surfaced only
     # through this PVC by accident; the accident has since been replaced by
