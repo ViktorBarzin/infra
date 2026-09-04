@@ -92,8 +92,24 @@ resource "kubernetes_config_map" "mysql_standalone_cnf" {
       max_connections=80
       innodb_log_buffer_size=16777216
       innodb_flush_log_at_trx_commit=2
-      innodb_io_capacity=100
-      innodb_io_capacity_max=200
+      # 2000/4000 (was 100/200) — code-963q 2026-09-04. The 8.4.9 DD-upgrade
+      # stall of 2026-05-18 was diagnosed as flush starvation, and the wipe +
+      # reinit plan was built to route around it rather than test it. These
+      # are the pre-flight values that plan names, and they are the right
+      # steady-state values regardless of whether the upgrade ever happens:
+      # 100 is half MySQL's own default of 200 and roughly 20x too low for
+      # storage that answers a write in 0.50 ms.
+      # Measured before the change, 26.6 days of uptime:
+      #   Innodb_buffer_pool_wait_free = 46,458 (1,746/day) — every one of
+      #   those is a query thread stalled waiting for the page cleaner to
+      #   produce a free page. On a cleaner that keeps up this counter is 0.
+      #   Steady-state flush rate 30.6 pages/s, but dirty-page bursts of
+      #   23,461 pages drained in under 20 s, i.e. ~1,173 pages/s — the server
+      #   already blows through io_capacity=100 whenever a checkpoint gets
+      #   urgent. The low ceiling does not reduce the work, it just defers it
+      #   into emergency flushing.
+      innodb_io_capacity=2000
+      innodb_io_capacity_max=4000
       innodb_redo_log_capacity=1073741824
       innodb_buffer_pool_size=2147483648
       # DETECT_ONLY: stop writing full page content to the doublewrite buffer
@@ -115,7 +131,11 @@ resource "kubernetes_config_map" "mysql_standalone_cnf" {
       # the 1 here was a deliberate HDD-era choice, not an inherited default.
       innodb_flush_neighbors=0
       innodb_lru_scan_depth=256
-      innodb_page_cleaners=1
+      # 4 (was 1) — code-963q 2026-09-04, same change as innodb_io_capacity
+      # above. One cleaner thread serialises every LRU and flush-list pass for
+      # the whole 2 GiB pool. NOT dynamic: this one needs a pod restart, which
+      # is why the two knobs landed together.
+      innodb_page_cleaners=4
       innodb_adaptive_flushing_lwm=10
       innodb_max_dirty_pages_pct=90
       innodb_max_dirty_pages_pct_lwm=10
