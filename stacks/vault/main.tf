@@ -512,10 +512,15 @@ resource "kubernetes_role" "audit_rotate" {
     resources  = ["pods"]
     verbs      = ["get", "list"]
   }
+  # Scoped to the three Vault pods by name. RBAC resourceNames matches on a
+  # subresource create because the pod name is in the request path, so this SA
+  # cannot exec into anything else in the namespace even if its token leaks.
+  # `list` above stays unscoped: resourceNames does not apply to list.
   rule {
-    api_groups = [""]
-    resources  = ["pods/exec"]
-    verbs      = ["create"]
+    api_groups     = [""]
+    resources      = ["pods/exec"]
+    verbs          = ["create"]
+    resource_names = ["vault-0", "vault-1", "vault-2"]
   }
 }
 
