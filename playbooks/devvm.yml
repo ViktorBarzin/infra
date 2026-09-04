@@ -453,6 +453,40 @@
         owner: root
         group: root
 
+    # copy never deletes, so retiring a patch or an exclude in the repo would
+    # otherwise leave it applying on the box forever. This directory is entirely
+    # repo-owned, so anything on disk the repo does not carry is stale. Both
+    # sides are enumerated with find and compared on the path relative to their
+    # own root; a fileglob lookup silently returns nothing here, which makes the
+    # difference "delete everything".
+    - name: List the skill-policy files the repo carries
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/files/devvm/claude-skills"
+        recurse: true
+        file_type: file
+      register: devvm_skill_policy_repo
+      delegate_to: localhost
+      become: false
+      check_mode: false
+
+    - name: List the skill-policy files on the box
+      ansible.builtin.find:
+        paths: /usr/local/share/claude-skills
+        recurse: true
+        file_type: file
+      register: devvm_skill_policy_live
+      check_mode: false
+
+    - name: Remove skill-policy files the repo no longer carries
+      ansible.builtin.file:
+        path: "/usr/local/share/claude-skills/{{ item }}"
+        state: absent
+      loop: >-
+        {{ (devvm_skill_policy_live.files | map(attribute='path')
+            | map('relpath', '/usr/local/share/claude-skills') | list)
+           | difference(devvm_skill_policy_repo.files | map(attribute='path')
+             | map('relpath', playbook_dir + '/files/devvm/claude-skills') | list) }}
+
     - name: Install the skills updater units
       ansible.builtin.copy:
         src: "files/devvm/{{ item }}"
