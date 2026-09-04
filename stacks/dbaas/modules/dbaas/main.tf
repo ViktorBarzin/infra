@@ -74,7 +74,10 @@ module "tls_secret" {
 #### MYSQL — Standalone (migration target)
 #
 # Standalone MySQL without Group Replication. Eliminates ~95 GB/day of GR
-# write overhead (binlog, relay log, XCom cache) for databases totaling ~35 MB.
+# write overhead (binlog, relay log, XCom cache). The 20 tenant databases held
+# ~35 MB when this was written; they hold 7,830 MB across 692 tables as of
+# 2026-09-04, which is worth knowing before quoting any dump-and-restore
+# window from the old number.
 # Binary logging disabled entirely (skip-log-bin) since no replication needed.
 # Uses official mysql:8.4 image (Bitnami images deprecated by Broadcom Aug 2025).
 
@@ -135,6 +138,18 @@ resource "kubernetes_config_map" "mysql_standalone_cnf" {
       # above. One cleaner thread serialises every LRU and flush-list pass for
       # the whole 2 GiB pool. NOT dynamic: this one needs a pod restart, which
       # is why the two knobs landed together.
+      #
+      # THE SERVER RUNS 2, NOT 4, AND SAYS NOTHING ABOUT IT. MySQL clamps
+      # innodb_page_cleaners to innodb_buffer_pool_instances, which is 2 here
+      # because the pool is 2 GiB and instances are auto-sized at 1 GiB each.
+      # Verified on the live server after the 2026-09-04 restart:
+      #   @@innodb_page_cleaners = 2, @@innodb_buffer_pool_instances = 2
+      # and no warning in the error log. The 4 is left in place deliberately:
+      # it is the value we want, and it takes effect on its own if the pool
+      # ever grows. Getting 4 cleaners today would mean setting
+      # innodb_buffer_pool_instances=4 as well, which costs another restart of
+      # every MySQL tenant, so it waits for the next restart rather than
+      # earning one of its own.
       innodb_page_cleaners=4
       innodb_adaptive_flushing_lwm=10
       innodb_max_dirty_pages_pct=90
