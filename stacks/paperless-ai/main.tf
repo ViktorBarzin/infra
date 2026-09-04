@@ -225,10 +225,24 @@ resource "kubernetes_deployment" "paperless_ai" {
             mount_path = "/app/data"
           }
 
+          # The memory REQUEST went 2Gi -> 7Gi on 2026-09-04 (bead code-hn6k).
+          # This one goes UP, and it is the only one in that sweep that does.
+          #
+          # Measured peak working set over 30 days is 6,580Mi: 3.2x its own
+          # request, against the 8Gi limit the comment below explains. So the
+          # scheduler has been placing a service that really uses ~6.5G as if
+          # it needed 2G, which is how a node ends up genuinely oversubscribed
+          # rather than merely over-reserved. Under memory pressure a Burstable
+          # pod exceeding its request is also an early eviction candidate, so
+          # the under-declaration made the pod that most needs the memory the
+          # most likely to be evicted for using it.
+          #
+          # 7Gi rather than 6.6 to leave margin under the 8Gi limit without
+          # reserving the whole ceiling.
           resources {
             requests = {
               cpu    = "200m"
-              memory = "2Gi"
+              memory = "7Gi"
             }
             limits = {
               # torch + sentence-transformers load in-process for the RAG

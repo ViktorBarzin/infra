@@ -110,10 +110,17 @@ resource "kubernetes_deployment" "ytdlp" {
         container {
           image = "tzahi12345/youtubedl-material:nightly"
           name  = "ytdlp"
+          # requests 512Mi -> 256Mi on 2026-09-04 (bead code-hn6k). Measured
+          # peak working set over 30 days is 165Mi, a third of the old request,
+          # and this deployment is Sablier-parked at 0 replicas most of the
+          # time anyway. 256Mi is 1.5x that peak.
+          #
+          # The LIMIT stays at 512Mi. Request and limit were equal before, so a
+          # download that needs more headroom has exactly as much as it did.
           resources {
             requests = {
               cpu    = "25m"
-              memory = "512Mi"
+              memory = "256Mi"
             }
             limits = {
               memory = "512Mi"
