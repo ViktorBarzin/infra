@@ -5477,6 +5477,61 @@ serverFiles:
             annotations:
               summary: "IMAP confirmation ingest has never reported to Pushgateway"
               description: "No imap_sync_last_success_timestamp_seconds series exists at all, so IMAPIngestStale and IMAPIngestFailures are both evaluating nothing and the confirmation-email path is entirely unwatched."
+      - name: Payslip Freshness
+        rules:
+          # Payslips only reach Paperless because Viktor forwards or uploads the
+          # PDF himself. That manual step stopped after pay_date 2026-05-29 and
+          # nothing noticed for 98 days (code-oqyb): the payslip-ingest webhook
+          # and the actualbudget-payroll-sync CronJob both kept exiting 0 the
+          # whole time, because "no new payslip document" is a healthy run for
+          # both. So the check has to read the DATA, not a job result.
+          #
+          # 40 days, per Viktor's ruling. Meta pays monthly on the last working
+          # day, so the widest normal gap between two pay_dates is 31 days, and
+          # the document is filed on or after the pay date. 40 leaves ~9 days of
+          # slack for a late filing and still catches a missed cycle inside a
+          # fortnight rather than a quarter.
+          #
+          # `for: 6h` only debounces a Pushgateway restart reloading its
+          # persistence file; by the time this is true it has been true for
+          # weeks, so a longer hold would buy nothing.
+          - alert: PayslipStale
+            expr: (time() - payslip_latest_pay_date_timestamp_seconds{job="payslip-freshness"}) > 3456000
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Newest payslip in payslip_ingest is {{ $value | humanizeDuration }} old (>40d, so at least one pay cycle is missing)"
+              description: "max(pay_date) in payslip_ingest.payslip has not moved in over 40 days. Nothing in the pipeline is broken when this fires — payslip-ingest reads documents already tagged in Paperless, and no payslip PDF has been filed. Compare payslip_latest_deposit_date_timestamp_seconds: if deposits are still arriving, he was paid and only the document is missing. Fix is to forward or upload the payslip PDFs to Paperless; the parser picks them up on the next webhook with no further work. Runbook context is on bead code-oqyb."
+          # Pushgateway serves the last pushed value forever, so a frozen
+          # pay_date from an exporter that died still ages and still trips
+          # PayslipStale — safe, but for the wrong reason. This rule is what
+          # tells the two apart.
+          #
+          # 26h ~= four missed 6-hourly runs. Shorter than the 50h the daily
+          # broker-sync and backup jobs use, because this one runs 4x a day and
+          # a whole day of frozen data is already more blindness than it needs.
+          - alert: PayslipFreshnessExportStale
+            expr: (time() - payslip_freshness_last_success_timestamp_seconds{job="payslip-freshness"}) > 93600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "payslip-freshness-export has not completed successfully in {{ $value | humanizeDuration }}"
+              description: "CronJob payslip-freshness-export (every 6h, ns payslip-ingest) has no recent successful run, so payslip_latest_pay_date_timestamp_seconds is frozen history rather than a current fact and PayslipStale is reading a stale number. The job refuses to push when either query returns nothing, so an empty result looks like this rather than like a 1970 pay date. Check `kubectl -n payslip-ingest get jobs` and the last pod's logs; a rotated pg-payslip-ingest password surfaces here first."
+          # A feed that has never pushed leaves an ABSENT series, not a stale
+          # one, so neither rule above can age anything and both stay silent
+          # about an exporter that was broken from its first run. 48h matches
+          # the other NeverReported pairs — long enough to ride out a
+          # Pushgateway restart reloading persistence.
+          - alert: PayslipFreshnessNeverReported
+            expr: absent(payslip_latest_pay_date_timestamp_seconds{job="payslip-freshness"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "payslip freshness has never reported to Pushgateway"
+              description: "No payslip_latest_pay_date_timestamp_seconds series exists at all, so PayslipStale is evaluating nothing and the payslip gap that produced code-oqyb could repeat unseen. Either payslip-freshness-export has never had a successful run, or the Pushgateway URL is unreachable from the payslip-ingest namespace."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
