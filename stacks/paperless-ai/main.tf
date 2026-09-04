@@ -37,7 +37,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -225,6 +225,25 @@ resource "kubernetes_deployment" "paperless_ai" {
             mount_path = "/app/data"
           }
 
+          # DO NOT raise this request above 4Gi without also raising the
+          # namespace ResourceQuota. Tried 7Gi on 2026-09-04 and it took the
+          # service down for an hour: every pod create was rejected with
+          # "exceeded quota: tier-quota, requested: requests.memory=7Gi,
+          # limited: requests.memory=4Gi", so the ReplicaSet sat at 0/1 with no
+          # pod and no obvious symptom beyond the deployment never becoming
+          # available. Reverted to the known-good 2Gi.
+          #
+          # The underlying finding still stands and is worth fixing properly:
+          # measured peak working set over 30 days is 6,580Mi, 3.2x this
+          # request and above the 4Gi the quota permits it to ask for. So the
+          # scheduler places a ~6.5G service as if it needed 2G, and because a
+          # Burstable pod over its request is an early eviction candidate, the
+          # under-declaration makes the pod that most needs memory the likeliest
+          # to be evicted for using it.
+          #
+          # Fixing it means raising requests.memory on the paperless-ai
+          # ResourceQuota (currently 4Gi, with limits.memory already at 32Gi)
+          # and then this request together. Tracked on bead code-hn6k.
           resources {
             requests = {
               cpu    = "200m"

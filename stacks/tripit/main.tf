@@ -742,12 +742,17 @@ resource "kubernetes_deployment" "mail_listener" {
 # the jobs stay identical except for schedule, subcommand, and the suspend flag.
 locals {
   cronjobs = {
-    # Hourly (not */30) to stay within AeroDataBox's free 600-unit/month quota:
-    # the sweep spends 1 unit per soon-departing flight per run. On-demand reads
-    # (the segment status endpoint) still refresh on a 30-min staleness window
-    # when the user opens the app, so this only paces background change-detection.
+    # Every 10 minutes, against the 3h POLL_HORIZON in flight_poller.py. The
+    # sweep spends 1 AeroDataBox unit per in-window flight per run, so the window
+    # sets the bill and the interval sets the resolution. The old pairing (48h
+    # window, hourly) cost ~720 units for a single flight against a 600-unit
+    # BASIC plan and hit 100% of the quota on 2026-09-04. At 3h and 10 minutes a
+    # flight costs 18 units, so Viktor's measured rate (26 flights over the 12
+    # months to 2026-09, peak 5/month) spends ~90 units in a peak month, 15% of
+    # the plan; it only breaks past ~33 flights/month. Runs outside a departure
+    # window make no API call at all, so idle weeks cost nothing.
     poll-flights = {
-      schedule  = "0 * * * *"
+      schedule  = "*/10 * * * *"
       command   = ["python", "-m", "tripit_api", "poll-flights"]
       suspend   = false
       extra_env = {}

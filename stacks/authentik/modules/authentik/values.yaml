@@ -244,8 +244,23 @@ worker:
       maxUnavailable: 1
   resources:
     requests:
+      # 1.5Gi -> 896Mi on 2026-09-04 (bead code-hn6k). Measured peak working set
+      # over 30 days across both worker pods is 595Mi, so the old request
+      # reserved 2.6x what the worker has ever used and the cluster could not
+      # drain a node as a result. 896Mi is 1.5x that measured peak.
+      #
+      # The LIMIT deliberately stays at 2Gi, so nothing about what a worker task
+      # may burst to has changed. Lowering a request cannot cause an OOM kill;
+      # the kernel kills on the limit. The only behavioural change is that under
+      # node memory pressure a pod using more than its request is ranked as an
+      # earlier eviction candidate, and the QoS class is unaffected here because
+      # requests and limits already differed, so it was Burstable before and is
+      # Burstable now.
+      #
+      # The SERVER block above is deliberately left at 1.5Gi: it peaked at
+      # 1,070Mi, which is 70% of its request, so there is no slack to take.
       cpu: 100m
-      memory: 1.5Gi
+      memory: 896Mi
     limits:
       memory: 2Gi
   topologySpreadConstraints:

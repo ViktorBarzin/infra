@@ -106,8 +106,16 @@ in `apt list --upgradable` — excluding k8s components (the K8s pipeline
 owns those) and the kernel (kured handles the reboot half).
 
 Typical cause: a major-version bump (e.g. containerd 1.7 → 2.2,
-runc 1.1 → 1.4). These are held because they need cluster-wide
-coordination, not silent in-release patching.
+runc 1.1 → 1.4). These are held so the upgrade is a decision someone
+makes, rather than silent in-release patching.
+
+For **containerd specifically, the upgrade itself does not need a drain.**
+Measured across all six nodes on 2026-09-02/03 taking them from 1.7.24 and
+2.2.2 to 2.3.4: the packaged unit runs `KillMode=process`, so the shims
+outlive the daemon restart, running containers keep running, and 2.3.4
+reattaches to them. The image store survived byte-identically and the
+control-plane API stayed up. Procedure and per-node evidence:
+`docs/runbooks/containerd-2.3-convergence.md`.
 
 ```bash
 # Inspect the situation on the flagged node
@@ -117,7 +125,7 @@ ssh wizard@10.0.20.10X 'apt-mark showhold; apt list --upgradable 2>/dev/null'
 ssh wizard@10.0.20.10X 'sudo apt-mark unhold containerd && sudo apt-get install -y containerd'
 ```
 
-Node IPs: master=`100`, node1=`101`, node2=`102`, node3=`103`, node4=`104`.
+Node IPs: master=`100`, node1=`101`, node2=`102`, node3=`103`, node4=`104`, node5=`105`. (node6 was decommissioned 2026-07-01.)
 
 ### OS `⚠` — pending reboot
 

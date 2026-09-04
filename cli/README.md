@@ -65,6 +65,8 @@ operations in the encrypted infra repo.
 auto-detected suite) unless you pass `--no-verify` — landing to master unverified
 must be deliberate. After pushing it **watches CI to green** (`ci watch` on the
 landed commit) and fails if the pipeline does; pass `--no-ci-watch` to skip.
+A commit that never gets a pipeline is reported as a note and exits zero, not as
+a failed build — repos that build off-infra legitimately never get one.
 
 Tiers are recorded per verb so a future PreToolUse classifier can auto-allow
 reads / prompt writes; v0.1 allows everything and relies on existing gates
@@ -104,11 +106,14 @@ remote, with retries that ride Woodpecker's intermittent empty responses.
 | Command | Tier | What it does |
 |---|---|---|
 | `ci status [commit]` | read | pipeline status for HEAD (or a commit) |
-| `ci watch [commit]` | read | poll the pipeline to terminal; exit non-zero on failure |
+| `ci watch [commit] [--timeout D] [--appear-grace D]` | read | poll the pipeline to terminal; exit non-zero on failure. Once a pipeline is found it waits **as long as the build takes** — `--timeout` bounds that if you want it bounded (default unbounded). Waiting for one to first *appear* stays bounded (`--appear-grace`, default 10m) and reports a missing pipeline as its own outcome rather than a red build. |
 | `deploy wait <ns>/<deploy> [--sha SHA]` | read | wait for the deployment image to match the sha, *then* rollout status (rollout status alone lies on the old ReplicaSet) |
 
 `work land` now calls `ci watch` on the landed commit automatically (skip with
-`--no-ci-watch`), closing the v0.1 "doesn't wait for CI" gap. `ci logs` (failing
+`--no-ci-watch`), closing the v0.1 "doesn't wait for CI" gap, and forwards
+`--timeout`/`--appear-grace` to it. The fixed 20-minute deadline this replaced
+(v0.22.0, 2026-09-04) reported a still-running build as "CI did not go green",
+which was a claim about the build the CLI had not earned. `ci logs` (failing
 step) is deferred to v0.4.1 — Woodpecker's per-pipeline detail/log endpoints were
 the least reliable; `status`/`watch` use the list endpoint that works.
 

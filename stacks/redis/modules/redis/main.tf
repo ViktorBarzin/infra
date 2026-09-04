@@ -458,3 +458,124 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
+
+#### NetworkPolicy — who may reach redis-master
+#
+# This instance runs WITHOUT requirepass. That was risk-accepted in the
+# 2026-04-19 rework (bead code-iho) on the assumption that a NetworkPolicy
+# fenced the port off; no such policy existed until now, so every one of the
+# 151 namespaces in the cluster could read and write the shared session store.
+# Viktor's ruling (2026-09-04) on code-iho: ship the fence, keep the port
+# unauthenticated. An 18-client simultaneous credential change risks logging
+# the whole estate out of its session store, and buys less than the fence does.
+#
+# The allow-list below was derived from live state on 2026-09-04, not from the
+# bead (whose "17 clients" was stale). Three sources, unioned:
+#
+#   1. redis-cli CLIENT LIST on redis-v2-0, every remote addr resolved against
+#      RUNNING pods only. Pod IPs get recycled, and resolving against all pods
+#      including Completed ones wrongly named technitium and tts as clients.
+#   2. Cluster-wide scan of ConfigMap and Secret contents for redis-master,
+#      which is how authentik surfaced (AUTHENTIK_REDIS__HOST arrives via
+#      secret/goauthentik, so it is absent from the pod spec) and how the
+#      uptime-kuma Redis monitor surfaced.
+#   3. Deployment specs of parked workloads, for clients that are configured
+#      and scaled to zero rather than gone.
+#
+# CONNECTED at the snapshot (12): cyberchef, dawarich, f1-stream, homepage,
+#   immich, jsoncrack, kms, nextcloud, paperless-ngx, realestate-crawler,
+#   trading-bot, website. The single-connection ones are Anubis sidecars using
+#   redis as their shared challenge store.
+# CONFIGURED but idle (3): authentik (5 running pods carry the env; it opens
+#   connections lazily), redis itself (the redis-backup CronJob below runs
+#   weekly and connects to redis-master.redis), uptime-kuma (Redis monitor).
+# PARKED at 0/0 replicas but configured (4): affine, grampsweb, netbox, ytdlp
+#   (its yt-highlights deployment). Each live Deployment spec still names
+#   redis-master, so scaling one back up must not hit a closed port. Drop a
+#   name here if its stack is ever retired.
+#
+# Two extra rules cover the exporter sidecar on 9121: Prometheus scrapes the
+# pod IP directly from the monitoring namespace, and the sidecar's httpGet
+# liveness probe is dialled by kubelet from the node's own address, which is
+# not a pod and so needs the node CIDR rather than a namespace selector.
+# Losing either would restart redis, which is the outcome this policy exists
+# to avoid.
+#
+# Ingress-only: egress is deliberately left unpoliced, and no pod restarts.
+locals {
+  redis_client_namespaces = [
+    "affine",
+    "authentik",
+    "cyberchef",
+    "dawarich",
+    "f1-stream",
+    "grampsweb",
+    "homepage",
+    "immich",
+    "jsoncrack",
+    "kms",
+    "netbox",
+    "nextcloud",
+    "paperless-ngx",
+    "realestate-crawler",
+    "redis",
+    "trading-bot",
+    "uptime-kuma",
+    "website",
+    "ytdlp",
+  ]
+}
+
+resource "kubernetes_network_policy_v1" "redis_ingress" {
+  metadata {
+    name      = "redis-client-namespaces"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+  }
+  spec {
+    pod_selector {
+      match_labels = { app = "redis-v2" }
+    }
+    policy_types = ["Ingress"]
+
+    ingress {
+      dynamic "from" {
+        for_each = local.redis_client_namespaces
+        content {
+          namespace_selector {
+            match_labels = { "kubernetes.io/metadata.name" = from.value }
+          }
+        }
+      }
+      ports {
+        port     = "6379"
+        protocol = "TCP"
+      }
+    }
+
+    # redis_exporter scrape from Prometheus.
+    ingress {
+      from {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "monitoring" }
+        }
+      }
+      ports {
+        port     = "9121"
+        protocol = "TCP"
+      }
+    }
+
+    # redis_exporter httpGet liveness probe, dialled by kubelet from the node.
+    ingress {
+      from {
+        ip_block {
+          cidr = "10.0.20.0/24"
+        }
+      }
+      ports {
+        port     = "9121"
+        protocol = "TCP"
+      }
+    }
+  }
+}

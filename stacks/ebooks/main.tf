@@ -107,7 +107,7 @@ resource "kubernetes_manifest" "calibre_external_secret" {
       namespace = "ebooks"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -137,7 +137,7 @@ resource "kubernetes_manifest" "audiobookshelf_external_secret" {
       namespace = "ebooks"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -167,7 +167,7 @@ resource "kubernetes_manifest" "servarr_external_secret" {
       namespace = "ebooks"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

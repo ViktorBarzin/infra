@@ -695,6 +695,41 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # Grouped by uid because that is what the kernel line carries
               # (1000=wizard, 1002=emo); tl-session-watch's own lines carry the
               # username.
+              # The OTHER killer on this box, and the one that acts when the
+              # BOX is short rather than a single pane. earlyoom runs with
+              # -m 5,3: SIGTERM at 5% MemAvailable, SIGKILL at 3%. It picks by
+              # badness, which on a workstation full of Claude sessions
+              # usually means a claude. Measured on 2026-09-01 18:49-18:51,
+              # the last event before this rule: 90 kill signals against uid
+              # 1000 in one 2h window, taking claude processes, a vitest run
+              # and python3; uid 1002 lost 1.
+              #
+              # Matched on "to process" deliberately. earlyoom prints its
+              # thresholds at startup as "sending SIGTERM when mem <= 5.00%",
+              # which a bare /sending SIGTERM/ matches, so that filter would
+              # have paged on every restart of the service (3 in the 397h to
+              # 2026-09-03). This version of earlyoom never prints "Killing
+              # process" at all. Both signals are counted: earlyoom escalates
+              # SIGTERM to SIGKILL for the same victim, so one stubborn process
+              # can contribute two, and it also SIGKILLs directly once below
+              # the lower threshold.
+              #
+              # 2h window grouped by uid, matching ClaudeOOMKilled, so a burst
+              # is one Slack line per affected user rather than ninety. uid
+              # 1000=wizard, 1002=emo, 0=root. Distinct from ClaudeOOMKilled,
+              # which reads the KERNEL's memcg oom-kill line: that one is a
+              # pane hitting its own 6G cap with the box otherwise healthy,
+              # this one is the box itself running out.
+              alert  = "EarlyoomKilledProcess"
+              expr   = "sum by (uid) (count_over_time({job=\"devvm-journal\", identifier=\"earlyoom\"} |~ \"sending SIG(TERM|KILL) to process\" | regexp \"uid (?P<uid>[0-9]+)\" [2h])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "earlyoom killed {{ $value }} processes on the devvm (uid={{ $labels.uid }})"
+                description = "The box ran out of memory and earlyoom started picking victims, which on this machine usually means Claude sessions. WHAT DIED: homelab logs query '{job=\"devvm-journal\", identifier=\"earlyoom\"} |~ \"to process\"' --since 2h. uid 1000=wizard, 1002=emo, 0=root. A SIGTERM that escalated counts twice. DevvmMemoryPressure should have fired first at 8% available; if it did not, the box crossed from healthy to 5% inside one 2-minute scrape. Containment design: docs/post-mortems/2026-06-22-devvm-mem-io-overload-containment.md."
+              }
+            },
+            {
               alert  = "ClaudeOOMKilled"
               expr   = "sum by (uid) (count_over_time({job=\"devvm-journal\", identifier=\"kernel\"} |= \"oom-kill:\" |= \"task=claude\" | regexp \"uid=(?P<uid>[0-9]+)\" [2h])) > 0"
               for    = "0m"
@@ -898,9 +933,16 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             # K4: Exec into pod in sensitive namespace.
+            # Excluded alongside Viktor: the vault-audit-rotate CronJob, which
+            # stat/gzip/truncates /vault/audit/vault-audit.log inside vault-0/1/2
+            # nightly at 03:30. The audit log lives in the container with no volume
+            # to mount, so rotation can only go through `kubectl exec` and this rule
+            # fired every night from 2026-09-02 (the day the CronJob was applied).
+            # Its Role is scoped to resource_names vault-0/1/2, so the exclusion
+            # cannot hide an exec into any other pod in the namespace.
             {
               alert  = "K8sExecIntoSensitiveNamespace"
-              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"pods\" | objectRef_subresource=\"exec\" | objectRef_namespace=~\"vault|kube-system|dbaas|cnpg-system\" | user_username!=\"me@viktorbarzin.me\" [5m])) > 0"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"pods\" | objectRef_subresource=\"exec\" | objectRef_namespace=~\"vault|kube-system|dbaas|cnpg-system\" | user_username!~\"^(me@viktorbarzin\\\\.me|system:serviceaccount:vault:vault-audit-rotate)$\" [5m])) > 0"
               for    = "0m"
               labels = { severity = "warning", lane = "security" }
               annotations = {

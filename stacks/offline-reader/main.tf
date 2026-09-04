@@ -224,7 +224,7 @@ resource "kubernetes_manifest" "offline_reader_secrets" {
     kind       = "ExternalSecret"
     metadata   = { name = "offline-reader-secrets", namespace = local.namespace }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef  = { name = "vault-kv", kind = "ClusterSecretStore" }
       target = {
         name     = "offline-reader-secrets"
