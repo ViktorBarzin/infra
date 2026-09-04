@@ -2273,6 +2273,320 @@
           "rawSql": "WITH projected AS (SELECT ((CURRENT_DATE - INTERVAL '12 months')::date + (pay_date - MAKE_DATE(SUBSTRING(tax_year, 1, 4)::int, 4, 6)))::timestamp AS t, tax_year, SUM(COALESCE(taxable_pay, gross_pay) + COALESCE(pension_sacrifice, 0)) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd FROM payslip_ingest.payslip) SELECT t AS \"time\", tax_year AS metric, ytd AS ytd_gross FROM projected ORDER BY t, tax_year"
         }
       ]
+    },
+    {
+      "id": 15,
+      "title": "RSU vest reconciliation \u2014 payslip vs Schwab",
+      "description": "Per-vest-month reconciliation between what Meta payroll reported as taxable RSU income (payslip.rsu_vest, GBP) and what vested at the broker.\n\nBroker side comes from wealthfolio_sync, not from payslip_ingest.rsu_vest_events. That table is empty and has no writer: Schwab Stock Plan Services does not email release confirmations (188 emails surveyed, broker-sync abf9fa7), so the IMAP path this panel was originally built on cannot fill it. The same events are already in wealthfolio_sync as the BUY legs of the Schwab (US workplace) account, where shares x unit_price is the gross USD vest value.\n\nFX basis: fx_usd_gbp is wealthfolio's own daily USD to GBP rate for this account (daily_account_valuation.fx_rate_to_base), read on the vest date itself. It is a market spot rate, not a month average and not an HMRC published rate, so it will not reproduce whatever rate Meta payroll applied. payslip_vs_broker is payslip over broker, so 100% means agreement.\n\nTwo patterns show up in the current data, and both look like properties of the sources rather than errors to fix. From 2023-05 the payslip runs about 5% below the vest-date spot conversion, consistently and in the same direction; an FX date shift does not account for it, since 2026-05 implies 0.712 while the lowest 2026 daily rate is 0.723. The difference in basis has not been identified yet. Before 2023-05 the broker side is partial, about a quarter of the gross the payslip implies, because the Schwab CSV import covers only some grants; those rows read near 400% and are a coverage gap on the broker side, not a payroll discrepancy.",
+      "type": "table",
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 113
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "right",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "unit": "currencyGBP",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vest_month"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 108
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vest_date"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 105
+              },
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ticker"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 70
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "shares_vested"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 115
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "broker_gross_usd"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fx_usd_gbp"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 5
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "delta_gbp"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "no payslip",
+                        "color": "text",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "payslip_vs_broker"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 130
+              },
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "no payslip",
+                        "color": "text",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.9
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.97
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1.03
+                    },
+                    {
+                      "color": "red",
+                      "value": 1.1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "vest_month"
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "vest_month",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "binary",
+            "alias": "delta_gbp",
+            "replaceFields": false,
+            "binary": {
+              "left": "payslip_rsu_gbp",
+              "operator": "-",
+              "right": "broker_gross_gbp"
+            }
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "binary",
+            "alias": "payslip_vs_broker",
+            "replaceFields": false,
+            "binary": {
+              "left": "payslip_rsu_gbp",
+              "operator": "/",
+              "right": "broker_gross_gbp"
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH schwab AS (SELECT id FROM accounts WHERE name = 'Schwab (US workplace)'), vest AS (SELECT date_trunc('month', a.activity_date)::date AS vm, MIN(a.activity_date)::date AS vest_date, MAX(s.symbol) AS ticker, SUM(a.quantity) AS shares_vested, SUM(a.quantity * a.unit_price) AS gross_usd FROM activities a JOIN assets s ON s.id = a.asset_id WHERE a.account_id = (SELECT id FROM schwab) AND a.activity_type = 'BUY' GROUP BY 1) SELECT to_char(v.vm, 'YYYY-MM') AS vest_month, v.vest_date, v.ticker, v.shares_vested, round(v.gross_usd, 2) AS broker_gross_usd, round(f.fx_rate_to_base, 5) AS fx_usd_gbp, round(v.gross_usd * f.fx_rate_to_base, 2) AS broker_gross_gbp FROM vest v LEFT JOIN daily_account_valuation f ON f.account_id = (SELECT id FROM schwab) AND f.valuation_date = v.vest_date ORDER BY 1 DESC"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT to_char(date_trunc('month', pay_date), 'YYYY-MM') AS vest_month, SUM(rsu_vest) AS payslip_rsu_gbp FROM payslip_ingest.payslip WHERE rsu_vest > 0 GROUP BY 1 ORDER BY 1 DESC"
+        }
+      ]
     }
   ],
   "refresh": "5m",
