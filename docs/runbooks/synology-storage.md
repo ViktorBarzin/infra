@@ -114,14 +114,25 @@ Alerts (in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`,
 
 | Alert | Fires | Notice at ~100 GiB/day |
 |---|---|---|
-| `OffsiteDestinationFillingUp` (warning) | <10% free, 30m | ~5 days |
+| `OffsiteDestinationFillingUp` (warning) | <6% free, 30m | ~3 days |
 | `OffsiteDestinationAlmostFull` (critical) | <4% free, 15m | ~2 days |
 | `OffsiteDestinationCapacityUnknown` (warning) | metric absent 48h | dead-man |
 
 Thresholds are deliberately loose — a backup target legitimately runs hot (same
-reasoning that moved `NodeFilesystemFull` 90% → 95% on 2026-06-05). They were set
-before a post-fix steady state existed; **revisit after a few weeks** — if the
-volume now settles well below 90% used, tighten, and if the warning nags, loosen.
+reasoning that moved `NodeFilesystemFull` 90% → 95% on 2026-06-05).
+
+**Revisited 2026-09-04**, as that note asked. The warning moved
+**10% → 6% free**; the 4% critical is unchanged. 10% was a placeholder chosen
+before any post-fix steady state existed, and it falls inside this disk's normal
+operating band — 95% used is where `/volume1` lives and needs no action (see
+`a7fd8211`), so a warning at 10% free reports the baseline rather than a
+problem. 6% sits below the band and still fires ahead of the critical.
+
+Range actually observed since the gauge started on 2026-08-06: **20.5% free at
+the high, 4.8% at the low** (the low is 2026-09-04, during an active fill that
+took it from 11.1% on 08-31 to 4.8% in four days). Nothing in that history
+crossed 10% until 2026-09-02.
+
 `BackupDiskFull` (the sda `/mnt/backup` disk) is a separate alert, still 85%.
 
 ## Current assessment — 2026-06-05

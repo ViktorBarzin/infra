@@ -3004,11 +3004,16 @@ serverFiles:
           # match. /volume1 reached 99% (103 GiB free, ~1 day from stopping the
           # offsite leg) and only surfaced because an unrelated navidrome PVC shares
           # the volume. offsite-sync-backup now publishes the gauges directly.
-          # Warn early — a full destination silently breaks Copy 3 of 3-2-1.
+          # Warn threshold moved 10% -> 6% free on 2026-09-04, the revisit the
+          # runbook asked for. 10% was a placeholder picked on 2026-08-06 before
+          # any steady state existed. It sits inside this disk's normal
+          # operating band: 95% used is where /volume1 lives and needs no action
+          # (a7fd8211), so a 10% warning reports the baseline, not a problem.
+          # 6% is below the band and still a step ahead of the 4% critical.
           - alert: OffsiteDestinationFillingUp
             expr: |
               (offsite_dest_available_bytes{job="offsite-backup-sync"}
-               / offsite_dest_size_bytes{job="offsite-backup-sync"}) * 100 < 10
+               / offsite_dest_size_bytes{job="offsite-backup-sync"}) * 100 < 6
             for: 30m
             labels:
               severity: warning
