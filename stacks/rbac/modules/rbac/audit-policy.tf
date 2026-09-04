@@ -23,9 +23,10 @@
 # NOT FIXED HERE, deliberately. Both `triggers` values below are content
 # hashes: change them and this null_resource re-runs, which rewrites the
 # apiserver static-pod manifest and restarts the API on the single control-plane
-# node. CI applies this stack with no ssh_private_key, so a re-run would fail
-# there rather than reach the node at all. Reconciling the two policies is a
-# deliberate control-plane change, sized and sequenced in
+# node. Since 2026-09-04 CI does resolve an ssh_private_key (a dedicated key from
+# Vault, see stacks/rbac/main.tf), so a re-run now REACHES the node instead of
+# failing on auth. Moving either trigger is therefore a live control-plane
+# change, sized and sequenced in
 # docs/runbooks/apiserver-oidc-agent-identity.md -> "The audit read gap".
 # ############################################################################
 #
