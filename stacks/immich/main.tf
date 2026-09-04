@@ -1113,7 +1113,9 @@ resource "kubernetes_service" "immich-machine-learning" {
 # Per tick:
 #   init  measure  (postgres image — has psql)
 #         · re-prewarms clip_index + smart_search, but only on :00/:30 ticks
-#         · times a representative random-vector ANN query
+#         · times a representative random-vector ANN query two ways: what
+#           Postgres says the query took (the alerting series) and how long
+#           the psql process took end to end (context only)
 #         · reads clip_index residency from pg_buffercache
 #         · writes Prometheus exposition text to a shared emptyDir
 #   then, in parallel:
@@ -1184,21 +1186,55 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                   fi
                 fi
 
+                # Two numbers, deliberately separate (2026-09-04, bead code-9hb8):
+                #
+                #   db_seconds   what POSTGRES says the query took. The outer
+                #                projection runs once the sub-select below it has
+                #                produced its row, so clock_timestamp() there minus
+                #                statement_timestamp() (fixed when the backend
+                #                received the statement) is the server-side elapsed
+                #                time, parse and plan included. This is the series
+                #                ImmichSmartSearchSlow and cluster-health check #46
+                #                read, and it is what their thresholds were always
+                #                meant to judge.
+                #
+                #   wall_seconds the old number: how long the psql PROCESS took,
+                #                start to exit. Kept because it is the only evidence
+                #                that the probe pod itself burns seconds, which is
+                #                still unexplained. No alert reads it.
+                #
+                # Until now db_seconds carried the wall-clock value, so the alert
+                # judged psql startup, DNS, TCP connect and pod scheduling against a
+                # threshold named after query time. Measured over 8 days: the query
+                # ran 0.085-0.600 s server-side while the probe reported up to
+                # 19.52 s on days nothing was wrong. Post-mortem:
+                # docs/post-mortems/2026-09-03-immich-smart-search-probe-measures-wall-clock.md
                 success=1
                 start=$(date +%s%3N)
-                if ! psql -v ON_ERROR_STOP=1 -tA -c "SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) s" >/dev/null 2>/tmp/err; then
+                q_ms=$(psql -v ON_ERROR_STOP=1 -tA -c "SELECT round(extract(epoch from clock_timestamp() - statement_timestamp()) * 1000) FROM (SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) s) q" 2>/tmp/err)
+                rc=$?
+                end=$(date +%s%3N)
+                wall_ms=$((end - start))
+                # Anything but a clean integer means the query did not finish. Fall
+                # back to the wall clock so the series never goes missing (the
+                # Pushgateway would otherwise keep serving the last good value and
+                # hide the failure), and let probe_success carry the truth.
+                if [ $rc -ne 0 ] || ! [[ $q_ms =~ ^[0-9]+$ ]]; then
                   success=0
                   cat /tmp/err >&2
+                  q_ms=$wall_ms
                 fi
-                end=$(date +%s%3N)
-                dur_ms=$((end - start))
-                dur=$(printf '%d.%03d' $((dur_ms/1000)) $((dur_ms%1000)))
+                dur=$(printf '%d.%03d' $((q_ms/1000)) $((q_ms%1000)))
+                wall=$(printf '%d.%03d' $((wall_ms/1000)) $((wall_ms%1000)))
                 pct=$(psql -tA -c "SELECT COALESCE(round(100.0*count(*)*8192/greatest(pg_relation_size('clip_index'::regclass),1),1),0) FROM pg_buffercache b JOIN pg_class c ON b.relfilenode=pg_relation_filenode(c.oid) WHERE c.relname='clip_index'" 2>/dev/null)
                 if [ -z "$pct" ]; then pct=-1; fi
                 {
-                  echo "# HELP immich_smart_search_db_seconds Wall-clock latency of a representative smart-search ANN query."
+                  echo "# HELP immich_smart_search_db_seconds Postgres-reported elapsed time of a representative smart-search ANN query."
                   echo "# TYPE immich_smart_search_db_seconds gauge"
                   echo "immich_smart_search_db_seconds $dur"
+                  echo "# HELP immich_smart_search_probe_wall_seconds End-to-end wall clock of the probe psql process, including startup, DNS and connect. Context only, no alert reads it."
+                  echo "# TYPE immich_smart_search_probe_wall_seconds gauge"
+                  echo "immich_smart_search_probe_wall_seconds $wall"
                   echo "# HELP immich_clip_index_cached_pct Percent of clip_index vchord index resident in PG shared_buffers."
                   echo "# TYPE immich_clip_index_cached_pct gauge"
                   echo "immich_clip_index_cached_pct $pct"
@@ -1209,7 +1245,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                   echo "# TYPE immich_smart_search_probe_last_run_timestamp gauge"
                   echo "immich_smart_search_probe_last_run_timestamp $(date +%s)"
                 } > "$OUT"
-                echo "probe dur=$dur pct=$pct success=$success"
+                echo "probe dur=$dur wall=$wall pct=$pct success=$success"
                 exit 0
               EOT
               ]
