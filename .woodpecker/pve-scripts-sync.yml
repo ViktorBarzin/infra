@@ -1,6 +1,6 @@
 # Sync infra/scripts/{lvm-pvc-snapshot,daily-backup,offsite-sync-backup,
-# devvm-home-backup,vzdump-vms} and their systemd units to the PVE host on
-# change.
+# devvm-home-backup,vzdump-vms,nfs-mirror} and their systemd units to the PVE
+# host on change.
 #
 # Modelled on pve-nfs-exports-sync.yml, which moved the "scp by hand from a
 # runbook" deploy for /etc/exports into CI. These backup scripts had the same
@@ -13,6 +13,10 @@
 # host copy at the time (md5 e1b06d5b3862fa62edf826e274e4b1fc), so adding it
 # closed a drift window rather than changing anything.
 #
+# nfs-mirror was added 2026-09-04, the last of the six still deployed by hand.
+# All three of its files were byte-identical between repo and host when it
+# joined (script a4f380fa2bc7172620226b037fa8971f).
+#
 # The work itself lives in scripts/ci/pve-scripts-sync.sh, not inline here.
 # Woodpecker runs each `commands:` entry through /bin/sh -c, and an inline
 # multi-line loop containing quotes died with "syntax error: unterminated
@@ -23,7 +27,7 @@
 # byte-identical between repo and host, and the script was run by hand against
 # the live host — three timers listed healthy, nothing changed.
 #
-# Trigger: push to master touching any of the fifteen files, or the sync script.
+# Trigger: push to master touching any of the eighteen files, or the sync script.
 #
 # Credentials:
 #   - pve_ssh_key: Woodpecker repo-secret, the same ed25519 keypair
@@ -50,6 +54,9 @@ when:
       - scripts/vzdump-vms.sh
       - scripts/vzdump-vms.service
       - scripts/vzdump-vms.timer
+      - scripts/nfs-mirror.sh
+      - scripts/nfs-mirror.service
+      - scripts/nfs-mirror.timer
     # A bare `event: manual` matches EVERY manual pipeline, so a trigger meant
     # for another workflow would run this one too. Same guard the sibling
     # pipelines carry. An undefined variable compares as empty, so a bare

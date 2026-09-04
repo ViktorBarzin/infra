@@ -375,7 +375,9 @@ The hand-managed Linux VMs are **intentionally not in Terraform** (telmate/bpg p
 **Mode**: `vzdump --mode snapshot` — live, no downtime. devvm has the qemu guest agent enabled (`agent: 1`), so the snapshot is **filesystem-consistent** (fs-freeze) rather than merely crash-consistent. Runs `Nice=10` + `IOSchedulingClass=idle` + `--ionice 7` so it never starves etcd on the contended sdc IO domain.
 **Scope**: VMIDs in `VZDUMP_VMIDS` (default `102` = devvm). Add VMIDs there to image other hand-managed VMs.
 **Retention**: `KEEP=3` newest dumps per VMID on sda (`/mnt/backup/vzdump/`); each devvm image is ~35-50 GB zstd.
-**Critical dependency**: `nfs-mirror` MUST keep `--exclude='/vzdump/'`. Its nightly `rsync -rlt --delete /srv/nfs/ → /mnt/backup/` treats any `/mnt/backup` dir with no `/srv/nfs` counterpart as an orphan and deletes it — this silently reaped the first two vzdump images at 02:00 on 2026-06-10 before the exclude was added (same reason `pvc-data`/`pfsense`/`pve-config`/`sqlite-backup` are excluded).
+**Critical dependency**: `nfs-mirror` MUST keep `--exclude='/vzdump/'` **and `--exclude='/devvm-home/'`**. Its nightly `rsync -rlt --delete /srv/nfs/ → /mnt/backup/` treats any `/mnt/backup` dir with no `/srv/nfs` counterpart as an orphan and deletes it — this silently reaped the first two vzdump images at 02:00 on 2026-06-10 before the exclude was added (same reason `pvc-data`/`pfsense`/`pve-config`/`sqlite-backup` are excluded).
+
+**It happened again.** `devvm-home-backup` landed 2026-08-16 without a matching exclude, so `nfs-mirror` reaped its generations nightly for the next 19 days. Measured 2026-09-04: generations `2026-08-31` through `2026-09-03` held **0 entries under `wizard/`** against 87 in `2026-09-04`, and their mtimes (02:05-02:11) sat just after this job's 02:00 slot. Only the current night's generation ever survived, so retention was **1 day, not 14**. Fixed the same day by adding `/devvm-home/`. **Anything new written under `/mnt/backup/` needs its own exclude line here on the same commit** — that is the whole lesson from both incidents.
 **Offsite**: deliberately **NOT** appended to the incremental offsite manifest — it never deletes, so daily multi-GB images would accumulate unbounded on Synology. Instead the **monthly offsite-sync full pass (days 1-7)** mirrors all of `/mnt/backup` (including `vzdump/`) to Synology with `--delete`, bounded to local retention. So Copy 2 (sda) refreshes **weekly**; Copy 3 (Synology) refreshes **monthly**.
 **Monitoring**: pushes `vzdump_last_run_timestamp` / `vzdump_last_status` / `vzdump_last_success_timestamp` to Pushgateway job `vzdump-backup`. Alerts `VzdumpBackupStale` (>~50h since last success), `VzdumpBackupNeverRun`, `VzdumpBackupFailing` (status≠0) are defined in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` (the 3-2-1 group) — **effective on the next `monitoring` stack apply** (metrics already flow, so the alerts arm immediately once applied).
 **Restore**: on the PVE host, `qmrestore /mnt/backup/vzdump/vzdump-qemu-<vmid>-<ts>.vma.zst <vmid>` — restore to a spare VMID first if the original still exists, then swap disks; or use the PVE UI (add `/mnt/backup` as a dir storage with content=backup → Restore).
@@ -613,9 +615,10 @@ PVE side instead (`du -sh` vs `du -slh` on `/mnt/backup/pvc-data`).
 
 ### Deploying the PVE host scripts
 
-`lvm-pvc-snapshot`, `daily-backup`, `offsite-sync-backup`, `devvm-home-backup` and
-`vzdump-vms` deploy from git through Woodpecker, not by hand. Push a change to any of the
-fifteen files under `infra/scripts/` (`<name>.sh`, `<name>.service`, `<name>.timer`) and
+`lvm-pvc-snapshot`, `daily-backup`, `offsite-sync-backup`, `devvm-home-backup`,
+`vzdump-vms` and `nfs-mirror` deploy from git through Woodpecker, not by hand. Push a
+change to any of the eighteen files under `infra/scripts/` (`<name>.sh`, `<name>.service`,
+`<name>.timer`) and
 `.woodpecker/pve-scripts-sync.yml` copies the script to `/usr/local/bin/<name>`, the units
 to `/etc/systemd/system/`, runs `bash -n` on each script, then `systemctl daemon-reload`
 and prints the timer list. Failures post to Slack.
@@ -635,6 +638,9 @@ deploy path at all — neither CI nor Ansible carried it — so its repo copy wa
 nobody kept in step with the host. `vzdump-vms` was byte-identical to the host copy
 (md5 `e1b06d5b3862fa62edf826e274e4b1fc`), so adding it closed a drift window rather than
 changing anything.
+
+`nfs-mirror` joined 2026-09-04, the last one still deployed by hand. All three of its
+files were byte-identical between repo and host when it joined.
 
 Nothing in this set is deployed by hand any more.
 
