@@ -18,6 +18,14 @@ data "vault_kv_secret_v2" "viktor" {
   name  = "viktor"
 }
 
+# Basic-auth credentials for the dawarich-sidekiq-metrics scrape job. The same
+# pair reaches the pod through the dawarich-secrets ExternalSecret, so Vault is
+# the single source and neither side can drift.
+data "vault_kv_secret_v2" "dawarich" {
+  mount = "secret"
+  name  = "dawarich"
+}
+
 module "monitoring" {
   source                         = "./modules/monitoring"
   tls_secret_name                = var.tls_secret_name
@@ -30,6 +38,8 @@ module "monitoring" {
   idrac_password                 = data.vault_kv_secret_v2.secrets.data["monitoring_idrac_password"]
   alertmanager_slack_api_url     = data.vault_kv_secret_v2.secrets.data["alertmanager_slack_api_url"]
   tiny_tuya_service_secret       = data.vault_kv_secret_v2.secrets.data["tiny_tuya_service_secret"]
+  dawarich_metrics_username      = data.vault_kv_secret_v2.dawarich.data["metrics_username"]
+  dawarich_metrics_password      = data.vault_kv_secret_v2.dawarich.data["metrics_password"]
   haos_api_token                 = data.vault_kv_secret_v2.secrets.data["haos_api_token"]
   pve_password                   = data.vault_kv_secret_v2.secrets.data["pve_password"]
   grafana_admin_password         = data.vault_kv_secret_v2.secrets.data["grafana_admin_password"]
