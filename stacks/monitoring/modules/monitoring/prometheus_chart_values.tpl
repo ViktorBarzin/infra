@@ -4480,6 +4480,66 @@ serverFiles:
             annotations:
               summary: "Dawarich ingestion freshness monitor has never pushed"
               description: "Expected `dawarich_ingestion_monitor_last_push_timestamp` to appear once the daily CronJob runs. Check the CronJob in dawarich namespace."
+          # Dawarich Sidekiq, from the yabeda exporter enabled 2026-09-04
+          # (code-1q5). Metric names below were read off the live endpoint, not
+          # the yabeda-sidekiq README — note `sidekiq_queue_latency` carries no
+          # _seconds suffix while `sidekiq_job_runtime_seconds` does.
+          # Sidekiq is what turns raw points into tracks, stats and digests, so
+          # when it stops the map keeps accepting writes and quietly stops
+          # updating. That is the failure code-459 hit.
+          - alert: DawarichSidekiqDown
+            # The exporter thread lives inside the Sidekiq server process, so a
+            # failed scrape means that process is not serving. `absent` covers
+            # the case where the target disappears from discovery entirely.
+            expr: |
+              up{job="dawarich-sidekiq-metrics"} == 0
+              or absent(up{job="dawarich-sidekiq-metrics"})
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich Sidekiq metrics endpoint unreachable for 15m"
+              description: "The exporter runs inside the Sidekiq server process, so this usually means Sidekiq is down or wedged, and imports, track building and stats have stopped. `kubectl -n dawarich get pods` then `kubectl -n dawarich logs deploy/dawarich -c dawarich-sidekiq`. Sidekiq is the container with the 4Gi limit that the hourly stats job has outgrown before."
+          - alert: DawarichSidekiqQueueLatencyHigh
+            # sidekiq_queue_latency is the age of the oldest job still queued.
+            # Every queue sat at 0 when this was written, with concurrency 2.
+            expr: max by (queue) (sidekiq_queue_latency) > 1800
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich Sidekiq queue {{ $labels.queue }} backed up {{ $value | printf \"%.0f\" }}s"
+              description: "The oldest job in {{ $labels.queue }} has been waiting over 30 minutes for 15 minutes running. A large import can do this legitimately. If nothing is importing, check whether Sidekiq is alive and whether reverse_geocoding is throttled to one worker (config/initializers/sidekiq.rb limits it when Photon points at komoot.io)."
+          - alert: DawarichSidekiqDeadGrowing
+            # The dead set already held 667 jobs when this alert was written, so
+            # an absolute threshold says nothing. Sidekiq keeps dead jobs for
+            # six months by default, which puts the accumulated background rate
+            # near four a day. Ten in an hour is a burst, not the background.
+            expr: delta(sidekiq_jobs_dead_count[1h]) > 10
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich Sidekiq dead set grew by {{ $value | printf \"%.0f\" }} in an hour"
+              description: "Jobs are exhausting their retries. Open the Sidekiq dead set and read the backtrace on the newest entries. A burst usually means one repeating input the worker cannot handle, not a general outage."
+          - alert: DawarichSidekiqFailureRateHigh
+            # Volume floor so a single failure in a quiet hour cannot page. Both
+            # counters are per-process and reset when the container restarts,
+            # which increase() already accounts for.
+            expr: |
+              (
+                sum(increase(sidekiq_jobs_failed_total[15m]))
+                /
+                sum(increase(sidekiq_jobs_executed_total[15m]))
+              ) > 0.2
+              and
+              sum(increase(sidekiq_jobs_executed_total[15m])) >= 5
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich Sidekiq failing {{ $value | humanizePercentage }} of jobs"
+              description: "Over a fifth of executed jobs raised in the last 15 minutes, across at least five jobs. `kubectl -n dawarich logs deploy/dawarich -c dawarich-sidekiq` and look for a repeating exception class. Check the database and Redis are reachable before blaming the worker."
       - name: "Network Traffic (GoFlow2)"
         rules:
           - alert: GoFlow2Down
@@ -5627,6 +5687,45 @@ extraScrapeConfigs: |
       target_label: cnpg_cluster
     - source_labels: [__meta_kubernetes_pod_label_cnpg_io_instanceRole]
       target_label: cnpg_role
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+
+  # Dawarich's Sidekiq exporter (code-1q5, 2026-09-04). Dawarich 1.7.11 runs
+  # yabeda, so the Sidekiq server process serves its own metrics from a WEBrick
+  # thread on 9394 inside the dawarich-sidekiq container. That is the target
+  # here, NOT the web container's /metrics on 3000: the web route is behind
+  # Rails host authorization (config.hosts from APPLICATION_HOSTS), and a pod-SD
+  # scrape sends `Host: <pod-ip>:3000`, which Rails answers 403. Prometheus has
+  # no way to override the Host header, so 9394 it is. Measured on the live pod
+  # 2026-09-04: :3000/metrics returned 403 with correct credentials and 200 with
+  # `Host: dawarich.viktorbarzin.me`.
+  #
+  # Scraping 9394 also makes `up` mean what the alerts need it to mean. The web
+  # container's aggregated endpoint fetches this one and, on failure, logs a
+  # warning and serves its local metrics with a 200 (lib/dawarich/
+  # aggregating_metrics.rb) — a dead Sidekiq exporter would look like missing
+  # series, not a failed scrape. Here it is a failed scrape, which is what
+  # DawarichSidekiqDown keys off.
+  #
+  # Both endpoints are wrapped in Dawarich::MetricsBasicAuth. There was no
+  # basic_auth on any job in this file before; the credentials come from Vault
+  # secret/dawarich through stacks/monitoring/main.tf, the same pair the pod
+  # gets from its ExternalSecret.
+  - job_name: 'dawarich-sidekiq-metrics'
+    basic_auth:
+      username: '${dawarich_metrics_username}'
+      password: '${dawarich_metrics_password}'
+    kubernetes_sd_configs:
+    - role: pod
+      namespaces:
+        names:
+        - dawarich
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_label_app, __meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: 'dawarich;prometheus'
+    - source_labels: [__meta_kubernetes_namespace]
+      target_label: namespace
     - source_labels: [__meta_kubernetes_pod_name]
       target_label: pod
 

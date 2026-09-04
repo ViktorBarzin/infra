@@ -19,6 +19,15 @@ variable "haos_api_token" {
   type      = string
   sensitive = true
 }
+variable "dawarich_metrics_username" {
+  type        = string
+  sensitive   = true
+  description = "Basic-auth user for Dawarich's Sidekiq /metrics exporter (Vault secret/dawarich)."
+}
+variable "dawarich_metrics_password" {
+  type      = string
+  sensitive = true
+}
 variable "pve_password" {
   type      = string
   sensitive = true
