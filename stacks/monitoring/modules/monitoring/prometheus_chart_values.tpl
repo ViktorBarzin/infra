@@ -175,6 +175,18 @@ alertmanager:
           - alertname = ImmichThumbnailReconcileStale
         target_matchers:
           - alertname =~ "ImmichThumbnailRepairNotTaking|ImmichThumbnailRepairUnowned"
+      # Third instance of the same Pushgateway shape, for the broker feeds.
+      # t212_/ibkr_position_drift_shares keep serving their last pushed value
+      # after the CronJob stops running, so a frozen drift reading is history,
+      # not a current fact. Let the staleness alert carry the message.
+      - source_matchers:
+          - alertname = T212SyncStale
+        target_matchers:
+          - alertname = T212PositionDrift
+      - source_matchers:
+          - alertname = IBKRSyncStale
+        target_matchers:
+          - alertname = IBKRPositionDrift
       # The generic ratio alerts and the Immich-specific rate alerts describe the
       # same errors two ways. If the ratio one has already escalated to critical,
       # the warning that saw it first adds nothing — keep the louder one.
@@ -5330,6 +5342,141 @@ serverFiles:
             annotations:
               summary: "MyProtein daily digest has never posted successfully"
               description: "The myprotein-watch-digest CronJob has no successful run on record, so the daily heartbeat has never arrived. Most likely a deploy-time problem — missing SLACK_WEBHOOK_URL from ESO, or the script ConfigMap not mounted — rather than anything about MyProtein's page."
+      # Broker feeds reconcile what a broker says it holds against what
+      # Wealthfolio derives from its own activity ledger. broker-sync pushes
+      # the comparison to Pushgateway at the end of each daily run
+      # (broker_sync/cli.py, _push_position_drift / _push_run_freshness).
+      #
+      # Why this group exists: on 2026-05-27, 78 InvestEngine BUY rows were
+      # re-inserted into the Wealthfolio ledger and inflated it by GBP 252k.
+      # Nothing noticed for days. The drift number that would have shown it
+      # was being computed for IBKR alone, and no alert rule read it.
+      #
+      # There is deliberately NO IEPositionDrift here. InvestEngine has no
+      # holdings endpoint wired, the Bearer token in Vault expired 2026-08-24,
+      # and there is no broker-sync-invest-engine CronJob. IE reaches
+      # Wealthfolio only through the IMAP confirmation path, which has skipped
+      # InvestEngine by default since broker-sync 0d23487 — so an "IE drift"
+      # series would be an invented number rather than a measurement. Whether
+      # their private API exposes holdings at all is tracked as its own bead.
+      - name: Broker Sync
+        rules:
+          # A TOLERANCE, not zero. Fractional-share brokers round their own
+          # position differently from a sum over the activity ledger: measured
+          # live 2026-09-03, Trading212 GIA VUAG was 4125.09499749 at the
+          # broker against 4125.09499836 in the ledger, a gap of -8.7e-07
+          # shares with nothing wrong. 0.01 sits four orders of magnitude
+          # above that floor and below any fill worth investigating.
+          #
+          # abs(), not a bare `> 0.01`: the 2026-05-27 incident was a DOUBLE
+          # IMPORT, so the ledger exceeded the broker and the drift was
+          # NEGATIVE. A one-sided comparison looks straight past that shape.
+          #
+          # for: 2h — the metric only changes once a day (02:00 UK), so this
+          # fires the same night rather than waiting out a second run. Both
+          # sides are read in the same request round at 02:00 with markets
+          # closed, so "fill visible in /portfolio but not yet in
+          # /history/orders" is not a realistic transient here.
+          - alert: T212PositionDrift
+            expr: abs(t212_position_drift_shares{job="broker-sync-trading212"}) > 0.01
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Trading212 {{ $labels.symbol }} is {{ $value | printf \"%.4f\" }} shares away from the Wealthfolio ledger (account {{ $labels.account }})"
+              description: "The broker's own position and the quantity Wealthfolio derives from its activity ledger disagree. NEGATIVE means the ledger holds MORE than the broker — a double import, the 2026-05-27 shape. POSITIVE means a fill never landed. Broker side is /api/v0/equity/portfolio, ledger side is Wealthfolio's activities/search; compare both before editing either."
+          - alert: IBKRPositionDrift
+            # Idle by design today: the IBKR account holds GBP 1.23 of cash
+            # and no positions, so provider.open_positions() returns [] and
+            # the metric loop emits nothing (verified against the live Flex
+            # query 2026-09-03). The rule evaluates fine with no series and
+            # starts covering the account the moment it holds something.
+            expr: abs(ibkr_position_drift_shares{job="broker-sync-ibkr"}) > 0.01
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "IBKR {{ $labels.symbol }} is {{ $value | printf \"%.4f\" }} shares away from the Wealthfolio ledger (account {{ $labels.account }})"
+              description: "Same check as T212PositionDrift, against the IBKR Flex query's OpenPositions rather than a REST holdings call. NEGATIVE means the ledger holds more than the broker (double import); positive means a fill never landed."
+          # Pushgateway serves the last pushed value forever, so a drift of 0
+          # from a cron that stopped running a fortnight ago reads exactly
+          # like a healthy feed. These three staleness rules are what stop the
+          # drift alerts above from going quietly blind, and they are the only
+          # cover the IMAP feed can have at all.
+          #
+          # 50h ~= two missed daily runs, the same threshold MyProteinWatch
+          # and the backup jobs use: one transient failure recovers on the
+          # next run without saying anything.
+          - alert: T212SyncStale
+            expr: (time() - t212_sync_last_success_timestamp_seconds{job="broker-sync-trading212"}) > 180000
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Trading212 sync has not completed successfully in {{ $value | humanizeDuration }} (>2 missed daily runs)"
+              description: "CronJob broker-sync-trading212 (daily 02:00 UK, ns broker-sync) has no recent successful run, so t212_position_drift_shares is frozen history rather than a current fact. Check `kubectl -n broker-sync get jobs` and the last pod's logs; a rejected API key surfaces as Trading212AuthError on HTTP 401."
+          - alert: IBKRSyncStale
+            expr: (time() - ibkr_sync_last_success_timestamp_seconds{job="broker-sync-ibkr"}) > 180000
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "IBKR sync has not completed successfully in {{ $value | humanizeDuration }} (>2 missed daily runs)"
+              description: "CronJob broker-sync-ibkr (daily 02:00 UK, ns broker-sync) has no recent successful run. The Flex query is generated server-side at IBKR and expires; a stale or revoked IBKR_FLEX_TOKEN is the usual cause. Check `kubectl -n broker-sync get jobs` and the last pod's logs."
+          - alert: IMAPIngestStale
+            # The mailbox feed gets no drift metric by design: it carries trade
+            # confirmations, and neither InvestEngine nor Schwab exposes
+            # holdings to reconcile against. What goes wrong silently is the
+            # mailbox going quiet, so freshness is the whole check here.
+            expr: (time() - imap_sync_last_success_timestamp_seconds{job="broker-sync-imap"}) > 180000
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "IMAP confirmation ingest has not completed successfully in {{ $value | humanizeDuration }} (>2 missed daily runs)"
+              description: "CronJob broker-sync-imap (daily 02:30 UK, ns broker-sync) has no recent successful run, so InvestEngine and Schwab trade confirmations are not reaching Wealthfolio and nothing else watches that path. Usual causes are IMAP credentials in Vault going stale or the mailbox moving. Check `kubectl -n broker-sync get jobs` and the last pod's logs."
+          - alert: IMAPIngestFailures
+            # `imported` deliberately has NO alert. A healthy run right now
+            # fetches mail and imports zero rows, because the ingest skips
+            # InvestEngine by default (broker-sync 0d23487) — measured
+            # 2026-09-04: fetched=18, imported=0, failed=0. Only `failed`
+            # moving off zero means a confirmation was seen and then dropped.
+            expr: imap_activities_failed{job="broker-sync-imap"} > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "IMAP ingest could not import {{ $value | printf \"%.0f\" }} confirmation email(s) on its last run"
+              description: "broker-sync-imap parsed confirmation emails it could not turn into Wealthfolio activities, so those trades are missing from the ledger and will not reappear on their own. The per-email parse errors are in the last broker-sync-imap pod's logs."
+          # A feed that has NEVER pushed leaves an absent series, not a stale
+          # one, so the staleness rules above have nothing to age and stay
+          # silent about a feed that was broken from its first run. `for: 48h`
+          # matches the LVM-snapshot and vzdump pairs above: long enough to
+          # ride out a Pushgateway restart reloading its persistence file.
+          - alert: T212SyncNeverReported
+            expr: absent(t212_sync_last_success_timestamp_seconds{job="broker-sync-trading212"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Trading212 sync has never reported to Pushgateway"
+              description: "No t212_sync_last_success_timestamp_seconds series exists at all, so T212SyncStale and T212PositionDrift are both evaluating nothing. Either the CronJob has never had a successful run, or PUSHGATEWAY_URL is unreachable from the job."
+          - alert: IBKRSyncNeverReported
+            expr: absent(ibkr_sync_last_success_timestamp_seconds{job="broker-sync-ibkr"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "IBKR sync has never reported to Pushgateway"
+              description: "No ibkr_sync_last_success_timestamp_seconds series exists at all, so IBKRSyncStale and IBKRPositionDrift are both evaluating nothing. Note this is distinct from IBKRPositionDrift having no series, which is normal while the account holds no positions."
+          - alert: IMAPIngestNeverReported
+            expr: absent(imap_sync_last_success_timestamp_seconds{job="broker-sync-imap"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "IMAP confirmation ingest has never reported to Pushgateway"
+              description: "No imap_sync_last_success_timestamp_seconds series exists at all, so IMAPIngestStale and IMAPIngestFailures are both evaluating nothing and the confirmation-email path is entirely unwatched."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
