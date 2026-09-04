@@ -933,9 +933,16 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             # K4: Exec into pod in sensitive namespace.
+            # Excluded alongside Viktor: the vault-audit-rotate CronJob, which
+            # stat/gzip/truncates /vault/audit/vault-audit.log inside vault-0/1/2
+            # nightly at 03:30. The audit log lives in the container with no volume
+            # to mount, so rotation can only go through `kubectl exec` and this rule
+            # fired every night from 2026-09-02 (the day the CronJob was applied).
+            # Its Role is scoped to resource_names vault-0/1/2, so the exclusion
+            # cannot hide an exec into any other pod in the namespace.
             {
               alert  = "K8sExecIntoSensitiveNamespace"
-              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"pods\" | objectRef_subresource=\"exec\" | objectRef_namespace=~\"vault|kube-system|dbaas|cnpg-system\" | user_username!=\"me@viktorbarzin.me\" [5m])) > 0"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"pods\" | objectRef_subresource=\"exec\" | objectRef_namespace=~\"vault|kube-system|dbaas|cnpg-system\" | user_username!~\"^(me@viktorbarzin\\\\.me|system:serviceaccount:vault:vault-audit-rotate)$\" [5m])) > 0"
               for    = "0m"
               labels = { severity = "warning", lane = "security" }
               annotations = {
