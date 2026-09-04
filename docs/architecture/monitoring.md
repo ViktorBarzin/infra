@@ -407,6 +407,23 @@ The email monitoring system uses a CronJob (`email-roundtrip-monitor`, every 10 
 
 Uptime Kuma monitors: TCP SMTP (port 25) on `176.12.22.76` (external), IMAP (port 993) on `10.0.20.202`, and Dovecot exporter metrics on port 9166.
 
+#### Dawarich Sidekiq Alerts
+
+Sidekiq is what turns raw location points into tracks, stats and digests. When it stops, the map keeps accepting writes and quietly stops updating, which is the shape of the April failure that nobody noticed for weeks. It had no telemetry until 2026-09-04 (bead `code-1q5`).
+
+- **DawarichSidekiqDown**: `up{job="dawarich-sidekiq-metrics"} == 0 or absent(...)` for 15m. The exporter thread runs inside the Sidekiq server process, so a failed scrape means that process is not serving. Remediation: `kubectl -n dawarich get pods`, then `kubectl -n dawarich logs deploy/dawarich -c dawarich-sidekiq`. That container has the 4Gi limit the hourly stats job has outgrown before.
+- **DawarichSidekiqQueueLatencyHigh**: `max by (queue) (sidekiq_queue_latency) > 1800` for 15m — the oldest job in a queue has been waiting over 30 minutes. A large import does this legitimately. If nothing is importing, check whether `reverse_geocoding` is throttled to one worker (`config/initializers/sidekiq.rb` limits it when Photon points at komoot.io).
+- **DawarichSidekiqDeadGrowing**: `delta(sidekiq_jobs_dead_count[1h]) > 10` for 15m. The dead set already held 667 jobs when this was written and Sidekiq keeps them for 180 days, which puts the accumulated background rate near four a day, so an absolute threshold says nothing and the rule watches growth instead.
+- **DawarichSidekiqFailureRateHigh**: over a fifth of executed jobs raised in 15m, across at least five jobs. The volume floor exists so one failure in a quiet hour cannot fire.
+
+Two things about this target are worth knowing before changing it.
+
+Dawarich 1.7.11 dropped the `prometheus_exporter` gem for yabeda, so there is no client/server split and no sidecar: `PROMETHEUS_EXPORTER_ENABLED=true` makes the Sidekiq server process start its own WEBrick exporter on 9394, and the web container mounts `/metrics` on the Rails router, merging its own `rails_`/`puma_`/`activerecord_` series with whatever it fetches from `SIDEKIQ_METRICS_URL`. The bead's original plan called for a third container running a binary that is no longer in the image.
+
+The scrape targets 9394 rather than the web container's aggregated `/metrics` on 3000, for two reasons measured on the live pod. The web route sits behind Rails host authorization (`config.hosts` from `APPLICATION_HOSTS`), so a pod-SD scrape addressed to the pod IP gets a 403 and Prometheus cannot override the Host header. And `lib/dawarich/aggregating_metrics.rb` swallows a failed fetch of the Sidekiq endpoint, logs a warning and answers 200 with local metrics only, so a dead worker would look like missing series rather than a failed scrape. Scraping the worker directly makes `up` mean what `DawarichSidekiqDown` needs it to mean.
+
+Both endpoints check HTTP basic auth, and `dawarich-sidekiq-metrics` is the only job in `extraScrapeConfigs` that uses `basic_auth`. The credentials come from Vault `secret/dawarich` (keys `metrics_username`, `metrics_password`) through `stacks/monitoring/main.tf`, the same pair the pod reads from its `dawarich-secrets` ExternalSecret, so the two sides cannot drift. Leaving them unset is not "auth off": `Dawarich::MetricsBasicAuth` compares the request credentials against the variables after `.to_s`, so with both nil an empty username and empty password authenticate.
+
 #### Stray Workload Alerts
 
 - **StrayWorkloadDetected**: `stray_workload_count > 0` for 30m — one or more running workloads or pods that no Terraform declaration accounts for. The `stray_workload` series carries `kind`, `namespace`, `name` and a `reason`: `undeclared` (a resource removed from `.tf` without a destroy — adopt it with an `import {}` block or delete the live object), `orphan-pod` (a bare pod left behind by hand, older than 24h), `helm-release-undeclared` (a release nothing declares, i.e. a hand-run `helm install`). If the name belongs to a Tier-0 stack, regenerate the committed projection instead: `python3 scripts/gen-tier0-workload-inventory.py`.
