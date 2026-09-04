@@ -105,7 +105,7 @@ func ciWatch(args []string) error {
 		}
 		switch policy.decide(seen, time.Since(start)) {
 		case ciGiveUpNoPipeline:
-			return fmt.Errorf("%w (waited %s for %s; this repo may build elsewhere — tripit builds on GitHub Actions and only deploys through Woodpecker)",
+			return fmt.Errorf("%w (waited %s for %s; this repo may build elsewhere — some repos build on GitHub Actions and only deploy through Woodpecker, on an event that carries a different commit)",
 				errNoCIPipeline, policy.appearGrace, short(commit))
 		case ciGiveUpTimeout:
 			return fmt.Errorf("gave up after the requested --timeout %s; pipeline for %s was still running, not failing", policy.runTimeout, short(commit))
