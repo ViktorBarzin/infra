@@ -245,6 +245,44 @@ module "ingress_assets" {
   homepage_enabled = false # path carve-out, not its own dashboard tile
 }
 
+# The two build stamps, which are NOT public assets and so are not in the
+# carve-out above.
+#
+# tl-stamp writes share/build-id and share/term-build-id at package time
+# (release/manifest.go installs them into /usr/local/share/ttyd), and
+# clipboard-upload serves both. Neither path was routed anywhere, so both fell
+# through to the main ingress, reached ttyd and 404ed — the same shape as the
+# tl-symbols font above, and the same fix.
+#
+# What it cost while it was missing: ADR-0007 has the lobby update itself by
+# comparing the build it is running against the build being served, and
+# /build-id is where it reads the second one. A 404 there leaves the Build row
+# of the connection panel reading "not checked yet" forever, and the self-update
+# path falls back to refetching the whole document. Measured 2026-09-04:
+# clipboard-upload answers 200 for both on :7683, ttyd answers 404.
+#
+# auth = "required", not "none" like the assets beside it: only the PAGE fetches
+# these (frontend-v2/src/deploy/healer.ts), and the page already holds a
+# session. The service worker never does — which is worth stating because sw.js
+# IS in the public list, and had it been the fetcher these would have to be too.
+module "ingress_build_stamps" {
+  source       = "../../modules/kubernetes/ingress_factory"
+  auth         = "required"
+  namespace    = kubernetes_namespace.terminal.metadata[0].name
+  name         = "terminal-build-stamps"
+  service_name = kubernetes_service.clipboard_upload.metadata[0].name
+  port         = 80
+  ingress_path = [
+    "/build-id",
+    "/term-build-id",
+  ]
+  full_host        = "terminal.viktorbarzin.me" # as above: must match, or the factory derives its own host and the carve-out never matches
+  dns_type         = "none"                     # host record already owned by the main terminal ingress
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false # two short strings behind auth
+  homepage_enabled = false # path carve-out, not its own dashboard tile
+}
+
 # === Multi-session lobby on terminal.viktorbarzin.me ===
 #
 # Application code (frontend, tmux-api, clipboard-upload, DevVM
