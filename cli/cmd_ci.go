@@ -12,7 +12,7 @@ func ciCommands() []Command {
 		{Path: []string{"ci", "status"}, Tier: TierRead,
 			Summary: "pipeline status for HEAD/a commit: ci status [commit] [--repo <owner/name>]", Run: ciStatus},
 		{Path: []string{"ci", "watch"}, Tier: TierRead,
-			Summary: "poll the pipeline to terminal; non-zero on failure: ci watch [commit] [--repo <owner/name>]", Run: ciWatch},
+			Summary: "poll the pipeline to terminal, waiting as long as the build takes; non-zero on failure: ci watch [commit] [--repo <owner/name>] [--timeout 45m] [--appear-grace 10m]", Run: ciWatch},
 	}
 }
 
@@ -72,10 +72,17 @@ func ciWatch(args []string) error {
 	if err != nil {
 		return err
 	}
-	timeout := 20 * time.Minute
-	deadline := time.Now().Add(timeout)
+	policy, err := parseCIWaitFlags(args)
+	if err != nil {
+		return err
+	}
+	// A build takes as long as it takes. The old fixed 20m deadline reported a
+	// still-running (and a nonexistent) pipeline as "CI did not go green", which
+	// is a claim about the build that we had not earned.
+	start := time.Now()
+	seen := false
 	last := ""
-	for time.Now().Before(deadline) {
+	for {
 		p, err := c.findPipeline(id, commit)
 		if err != nil {
 			if last != "waiting" {
@@ -83,6 +90,7 @@ func ciWatch(args []string) error {
 				last = "waiting"
 			}
 		} else {
+			seen = true
 			if p.Status != last {
 				fmt.Fprintf(os.Stderr, "homelab: #%d %s\n", p.Number, p.Status)
 				last = p.Status
@@ -95,9 +103,15 @@ func ciWatch(args []string) error {
 				return nil
 			}
 		}
+		switch policy.decide(seen, time.Since(start)) {
+		case ciGiveUpNoPipeline:
+			return fmt.Errorf("%w (waited %s for %s; this repo may build elsewhere — tripit builds on GitHub Actions and only deploys through Woodpecker)",
+				errNoCIPipeline, policy.appearGrace, short(commit))
+		case ciGiveUpTimeout:
+			return fmt.Errorf("gave up after the requested --timeout %s; pipeline for %s was still running, not failing", policy.runTimeout, short(commit))
+		}
 		time.Sleep(15 * time.Second)
 	}
-	return fmt.Errorf("timed out after %s waiting for CI on %s", timeout, short(commit))
 }
 
 // ciPositionalCommit reads the commit argument while skipping flag VALUES.
