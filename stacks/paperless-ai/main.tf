@@ -243,7 +243,10 @@ resource "kubernetes_deployment" "paperless_ai" {
           #
           # Fixing it means raising requests.memory on the paperless-ai
           # ResourceQuota (currently 4Gi, with limits.memory already at 32Gi)
-          # and then this request together. Tracked on bead code-hn6k.
+          # and then this request together. The namespace would need its own
+          # quota rather than the Kyverno tier-3-edge one, the way
+          # chrome-service does it with the resource-governance/custom-quota
+          # label. Tracked on bead code-7ag3.
           resources {
             requests = {
               cpu    = "200m"
