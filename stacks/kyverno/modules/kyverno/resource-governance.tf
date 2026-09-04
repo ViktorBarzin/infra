@@ -24,6 +24,29 @@ locals {
   # pressure, never immich-ml/frigate/llama-swap. See the tts stack
   # (stacks/tts/) + docs/plans/2026-06-08-chatterbox-tts-infra.md §3.
   gpu_priority_excluded_namespaces = concat(local.excluded_namespaces, ["tts"])
+
+  # gpumem-declaration exclude list (Layer 6, below). Four namespaces on top of
+  # the base set, each holding a GPU tenant that is seatless ON PURPOSE, so
+  # Enforce must not reject its pods:
+  #
+  #   nvidia    — the GPU operator's own namespace. gpu-pod-exporter is a
+  #               DaemonSet that requests a time-slice to read NVML and holds no
+  #               VRAM (26 weeks of gpu_pod_memory_used_bytes carry no series for
+  #               this namespace). A DaemonSet pod rejected at admission is the
+  #               worst failure mode this policy has, and the operator owns and
+  #               recreates 11 other DaemonSets here, so the whole namespace is
+  #               out.
+  #   llama-cpp — llama-swap is the opportunistic tenant by design (ADR-0016):
+  #               it fills whatever slack the seated tenants leave, ~7 GiB when
+  #               qwen3-8b is loaded, idle almost always. A seat would either
+  #               strand that memory or make it Pending.
+  #   stremio   — NVENC transcode server, measured zero VRAM.
+  #   ytdlp     — yt-highlights, Sablier-parked at 0 replicas, measured zero VRAM.
+  #
+  # These are the three the bead names as deliberate, plus the exporter. Adding
+  # a GPU workload to one of these namespaces escapes the check, same caveat as
+  # the base excluded set.
+  gpumem_excluded_namespaces = concat(local.excluded_namespaces, ["nvidia", "llama-cpp", "stremio", "ytdlp"])
 }
 
 # -----------------------------------------------------------------------------
@@ -1187,7 +1210,7 @@ resource "kubectl_manifest" "mutate_strip_cpu_limits" {
 # (See stacks/tts/main.tf — same apply-trigger note, tripit#26.)
 
 # -----------------------------------------------------------------------------
-# Layer 6: GPU VRAM budget declaration (Kyverno Validate, AUDIT)
+# Layer 6: GPU VRAM budget declaration (Kyverno Validate, ENFORCE)
 # -----------------------------------------------------------------------------
 # Closes ADR-0016's deferred gap. The gpumem extended resource makes the
 # scheduler VRAM-aware, but only for pods that DECLARE a budget — a pod that
@@ -1196,18 +1219,33 @@ resource "kubectl_manifest" "mutate_strip_cpu_limits" {
 # only ever considers declaring tenants. On 2026-08-31 four pods were in that
 # state (yt-highlights, android-emulator, f1-stream, gpu-pod-exporter).
 #
-# Ships in AUDIT so it reports rather than blocks: enforce would make any GPU
-# pod without a declaration unschedulable on its next restart, including
-# workloads created outside this repo (the proxy-browser pods carry their own
-# 384 MiB declaration but are not Terraform-managed here). Read the
-# PolicyReports first, then decide — see
+# Audit -> Enforce, 2026-09-04. Audit was the right first step but bought
+# nothing here: cluster-wide policy reporting has been off since 2026-06-28
+# (the etcd incident), there is no reports controller in the kyverno namespace,
+# and `kubectl get clusterpolicyreport` returns "No resources found". So the
+# audit verdicts were computed and discarded. The pre-flip review therefore read
+# the live pod and workload specs instead, which found three gaps the original
+# survey missed:
+#
+#   1. nvidia/gpu-pod-exporter, a DaemonSet with no declaration -> namespace
+#      excluded (see local.gpumem_excluded_namespaces).
+#   2. tts/chatterbox-tts -> seated at 5200 MiB in stacks/tts.
+#   3. the three ebook2audiobook deployments -> seated at 400 MiB each in
+#      stacks/ebook2audiobook.
+#
+# Both measurements came from gpu_pod_memory_used_bytes over the exporter's full
+# 26-week record; the numbers and the method are written up next to each seat.
+#
+# What Enforce now means: a pod that requests nvidia.com/gpu in a non-excluded
+# namespace and declares no gpumem is rejected at admission. Workloads created
+# outside this repo are covered too — the proxy-browser pods carry their own
+# 384 MiB declaration from the broker (stacks/proxy/files/broker/broker.py:116),
+# so they pass. See
 # docs/plans/2026-08-31-gpu-vram-admission-and-oom-observability.md.
 #
-#   kubectl get clusterpolicyreport -o wide | grep require-gpumem-declaration
-#
-# Known audit failures at ship time, both deliberate: stremio and yt-highlights
-# keep a T4 time-slice with no seat (measured zero VRAM over 7 days), and
-# llama-swap declares none by design because it is an opportunistic tenant.
+# The deliberately seatless tenants (llama-swap, stremio, yt-highlights) are
+# excluded by namespace rather than given seats, which is the disposition the
+# bead asked for. Their reasons are on local.gpumem_excluded_namespaces.
 resource "kubectl_manifest" "validate_gpumem_declared" {
   yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
@@ -1216,12 +1254,12 @@ resource "kubectl_manifest" "validate_gpumem_declared" {
       name = "require-gpumem-declaration"
       annotations = {
         "policies.kyverno.io/title"       = "Require GPU VRAM Budget Declaration"
-        "policies.kyverno.io/description" = "Pods requesting nvidia.com/gpu should also declare viktorbarzin.me/gpumem so the scheduler counts their VRAM and the gpu-vram-watchdog can hold them to a contract (ADR-0016). Audit mode."
+        "policies.kyverno.io/description" = "Pods requesting nvidia.com/gpu must also declare viktorbarzin.me/gpumem so the scheduler counts their VRAM and the gpu-vram-watchdog can hold them to a contract (ADR-0016). Enforce mode; namespaces holding a deliberately seatless tenant are excluded."
         "policies.kyverno.io/severity"    = "medium"
       }
     }
     spec = {
-      validationFailureAction = "Audit"
+      validationFailureAction = "Enforce"
       background              = true
       rules = [
         {
@@ -1239,7 +1277,7 @@ resource "kubectl_manifest" "validate_gpumem_declared" {
             any = [
               {
                 resources = {
-                  namespaces = local.excluded_namespaces
+                  namespaces = local.gpumem_excluded_namespaces
                 }
               }
             ]

@@ -108,12 +108,30 @@ disproportionate risk for this hardware.
 - **The card has a seating chart now.** Sum of declared budgets ≤ ~14 GB, so a new
   always-on GPU tenant requires re-budgeting; an over-budget on-demand tenant sits
   `Pending`. This is the intended, legible back-pressure.
-- **Small/on-demand tenants (android-emulator, ytdlp, tts, ebook2audiobook) are
-  NOT budgeted in v1** — they fill *actual* slack rather than holding a scheduler
-  seat (tts via its existing free-VRAM demand-gate), and are covered by the
-  ~1.4 GiB physical reserve plus budget headroom (the five residents' budgets sum
-  to 13300 ≤ 14000 advertised). Give them budgets later if they grow; until then
-  the watchdog protects the budgeted five and counts everyone's usage toward free.
+- **Small/on-demand tenants (android-emulator, ytdlp, tts, ebook2audiobook) were
+  NOT budgeted in v1** — they filled *actual* slack rather than holding a scheduler
+  seat (tts via its existing free-VRAM demand-gate), covered by the ~1.4 GiB
+  physical reserve plus budget headroom.
+- **Superseded 2026-09-04 (bead code-0twf): declaring a budget is now mandatory,
+  and the exemptions are explicit.** The Kyverno `require-gpumem-declaration`
+  policy moved from Audit to **Enforce**, so a pod requesting `nvidia.com/gpu` in
+  a non-excluded namespace and declaring no `gpumem` is rejected at admission.
+  android-emulator (300), f1-stream (500) and claude-memory (5000) had already
+  taken seats; tts/chatterbox-tts (5200) and the three ebook2audiobook
+  deployments (400 each) were seated in the same change. Four namespaces are
+  excluded rather than seated, each holding a deliberately seatless tenant:
+  `nvidia` (gpu-pod-exporter, a DaemonSet that reads NVML and holds no VRAM),
+  `llama-cpp` (llama-swap, the opportunistic tenant this ADR describes),
+  `stremio` and `ytdlp` (both measured at zero VRAM). The exclude list and its
+  reasons live in `local.gpumem_excluded_namespaces`,
+  `stacks/kyverno/modules/kyverno/resource-governance.tf`.
+- **The seating chart as of 2026-09-04** (running tenants, node advertises
+  14000 MiB): claude-memory 5000, frigate 2800, immich-ml 2500, immich-worker
+  1500, f1-stream 500, android-emulator 300 = **12600**, leaving 1400
+  unallocated. tts and ebook2audiobook hold seats but sit at `replicas=0`, so
+  they reserve nothing today. Chatterbox's 5200 does not fit against that 1400,
+  which is deliberate and recorded next to the seat: its scheduling has been off
+  since 2026-08-16, and turning it back on means re-budgeting the card first.
 - **New RBAC:** the reconcile SA patches `nodes/status`; the watchdog SA lists pods
   cluster-wide and deletes pods in GPU tenant namespaces. Far less privileged than
   existing cluster-admin tooling (woodpecker-agent).

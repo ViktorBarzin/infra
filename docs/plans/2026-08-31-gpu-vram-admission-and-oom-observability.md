@@ -370,10 +370,19 @@ deferred budgeting small on-demand tenants, and that deferral is what we are
 now closing.
 
 A Kyverno rule requires `gpumem` on any pod requesting `nvidia.com/gpu`. It
-ships in **audit** mode so we can see what it would block before it blocks
-anything. f1-stream and android-emulator get the budgets above; the decision to
-move the rule to enforce is deliberately left for after the audit output has
-been reviewed.
+shipped in **audit** mode so we could see what it would block before it blocked
+anything. f1-stream and android-emulator got the budgets above.
+
+**Update 2026-09-04 (bead code-0twf): the rule is now in Enforce.** Audit turned
+out to buy nothing here — cluster-wide policy reporting has been off since
+2026-06-28, the kyverno namespace runs no reports controller, and
+`kubectl get clusterpolicyreport` returns "No resources found", so every audit
+verdict was computed and discarded. The pre-flip review read the live pod and
+workload specs instead and found three gaps this section had not anticipated:
+the `nvidia/gpu-pod-exporter` DaemonSet, `tts/chatterbox-tts`, and the three
+`ebook2audiobook` deployments. The first is handled by excluding the `nvidia`
+namespace; the rest took measured seats. `llama-cpp`, `stremio` and `ytdlp` are
+excluded by namespace as the deliberately seatless tenants they always were.
 
 ### Alerting
 
@@ -441,7 +450,7 @@ new ordering constraint is introduced here.
 | New `ContainerOOMKilled` rule | fires against a container whose last termination reason is OOMKilled |
 | dawarich | no OOMKill over 24 h; `memory.events` `oom_kill` stays 0 and `max` reclaim events fall |
 | Sablier | yt-highlights parks at zero replicas and wakes on a request within its 180s ready-after |
-| Kyverno audit | policy reports on the pods lacking `gpumem`, blocks nothing |
+| Kyverno audit | policy reports on the pods lacking `gpumem`, blocks nothing. **Superseded 2026-09-04:** the policy is in Enforce; the check is now that a GPU pod without `gpumem` is rejected in a non-excluded namespace, every excluded one still admits, and no pod is Pending on `gpumem`. |
 | CrowdSec alert | resolves, and stays resolved across a traefik pod roll |
 
 ## Open questions
