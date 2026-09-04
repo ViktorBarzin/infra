@@ -62,12 +62,16 @@ All source-IP-based alerts (K2, K9, V7, S1) reference this list. It is **inlined
 **Meaning:** Someone `kubectl exec`'d into a pod in `vault`, `kube-system`, `dbaas`, or `cnpg-system`.
 
 ```logql
-{job="kubernetes-audit"} | json | verb = "create" | objectRef_resource = "pods" | objectRef_subresource = "exec" | objectRef_namespace =~ "vault|kube-system|dbaas|cnpg-system" | user_username != "me@viktorbarzin.me"
+{job="kubernetes-audit"} | json | verb = "create" | objectRef_resource = "pods" | objectRef_subresource = "exec" | objectRef_namespace =~ "vault|kube-system|dbaas|cnpg-system" | user_username !~ "^(me@viktorbarzin\\.me|system:serviceaccount:vault:vault-audit-rotate)$"
 ```
 
 **Action:** Determine if Viktor authorized the exec. If unrecognized actor, revoke their access and rotate any credentials they could have read inside the pod.
 
-**False positives:** Break-glass SAs used during incident response — extend the allowlist to include them by SA name.
+Audit events for a ServiceAccount carry bound-token extras under `user.extra` — `authentication.kubernetes.io/pod-name`, `node-name`, and their uids. A token issued to a pod can only be presented with those values, so matching them against a live pod tells you whether the exec came from the workload the SA belongs to or from a copy of its token elsewhere.
+
+**Known benign trigger (2026-09-04):** the `vault-audit-rotate` CronJob runs at 03:30 daily and `stat`/`gzip`/`truncate`s `/vault/audit/vault-audit.log` inside `vault-0`, `vault-1`, `vault-2`. The audit log has no volume to mount, so rotation can only go through `kubectl exec`. It fired K4 nightly from 2026-09-02, the day the CronJob reached the cluster, until `system:serviceaccount:vault:vault-audit-rotate` was added to the exclusion. Its Role is scoped to `resourceNames: [vault-0, vault-1, vault-2]`, so the exclusion cannot mask an exec into any other pod in the namespace.
+
+**False positives:** Break-glass SAs used during incident response. Extend the allowlist by SA name in `stacks/monitoring/modules/monitoring/loki.tf` (K4) rather than widening the namespace selector. When you exclude an SA, check what its Role actually permits first: an exclusion is only as narrow as the RBAC behind it, and scoping the Role with `resourceNames` keeps the blind spot to the pods the job needs.
 
 ### K5 — Mass delete
 
