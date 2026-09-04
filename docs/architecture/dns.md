@@ -395,8 +395,8 @@ Counts are exact as of the 2026-07-08 record cleanup (zone total **185**):
 | Type | Records | Target | Example |
 |------|---------|--------|---------|
 | Proxied CNAME (tunnel) | 99 | `{tunnel_id}.cfargotunnel.com` | blog (apex), hackmd, homepage, ntfy |
-| Non-proxied A | 34 | `176.12.22.76` (public IP) | mail, headscale, immich |
-| Non-proxied AAAA | 33 | IPv6 (HE tunnel) | Same set as non-proxied A (minus the IPv4-only names) |
+| Non-proxied A | 30 (live, 2026-09-04) | `176.12.22.76` (public IP) | mail, headscale, immich |
+| Non-proxied AAAA | 26 (live, 2026-09-04) | IPv6 (HE tunnel) | Same set as non-proxied A (minus the IPv4-only names: turn, vpn, xray-reality, vlmcs) |
 | Internal-IP A (`dns_type = "internal"`) | 2 | `10.0.20.203` (internal Traefik LB) | highlights-immich kiosks — publicly resolvable, routable only from home/WG/VPN |
 | MX | 2 | `mail.viktorbarzin.me` (pri 1), `mx2.viktorbarzin.me` (pri 20, ADR-0019) | Inbound email + offsite store-and-forward backup |
 | TXT (SPF) | 1 | `v=spf1 include:spf.brevo.com ~all` | Email authentication (Brevo relay) |
@@ -421,6 +421,50 @@ The free plan hard-caps the zone at **200 records** (error 81045 on overflow —
 - **Proxied (orange cloud)**: Traffic routes through Cloudflare CDN → Cloudflared tunnel → Traefik. Benefits: DDoS protection, caching, no public IP exposure.
 - **Non-proxied (grey cloud)**: DNS resolves directly to public IP. Required for services needing direct connections (mail, VPN, WebSocket-heavy apps).
 - **Outage behaviour (ADR-0020, since 2026-07-08)**: during a homelab outage, proxied hosts no longer show Cloudflare's raw 530/1033 — a free-plan Worker on `*.viktorbarzin.me/*` + apex intercepts origin-down errors (fetch-error/530/521–523, browser GET/HEAD HTML only) and serves a branded **503 + Retry-After** from mx2's self-contained `/error.html`. It deliberately does NOT touch 502/504 (in-cluster error-pages owns app errors). Grey-cloud hosts still time out — automatic DNS flip to mx2 was rejected (see the ADR); their story is MX pri 20 for mail + status-page visibility.
+
+### Which names stay grey, and why (2026-09-04, code-6m20)
+
+ADR-0026 observed that most direct A/AAAA names were direct for reasons about
+authentication rather than about Cloudflare, and left the follow-up untracked.
+This is that pass. Every name whose A record pointed at the WAN IP on
+2026-09-04 was classified against one question: does Cloudflare's proxy break
+this specific service? Forward-auth breaking a native client is a Traefik
+concern and does not answer it, because a proxied name gains no auth.
+
+Measured on the live zone that day: 35 names carried an A record to
+`176.12.22.76`, 31 of them with a matching AAAA, for 66 of the zone's 95
+records. Five names moved to `dns_type = "proxied"` and gave up their explicit
+records, leaving **30 names / 56 records**. That remaining set is the scope of
+the DDNS updater tracked as `code-dvla`, since a proxied name creates no record
+and needs no update when the WAN IP moves (ADR-0021).
+
+Moved to proxied: `health`, `health-api`, `k8s-portal`, `novelapp`,
+`plotting-book`. Each is a small text or JSON web app with no large bodies, no
+long-held requests and no non-browser client that Cloudflare's bot management
+would challenge.
+
+| name | why it stays direct | basis |
+|---|---|---|
+| `turn` | STUN/TURN on UDP 3478. The proxy carries HTTP(S) on its published port list only. | protocol |
+| `vpn` | WireGuard on UDP 51820/51821. | protocol |
+| `xray-reality` | REALITY on TCP 7443; the transport depends on the client completing TLS against the origin. | protocol |
+| `vlmcs` | KMS activation on TCP 1688, NAT'd to the vlmcsd MetalLB IP (`stacks/kms`). | protocol |
+| `mail` | MX target for the zone at priority 1, plus SMTP, IMAP and submission. Proxying would point inbound mail at Cloudflare addresses. | protocol |
+| `immich` | 413 at 104,857,600 bytes, measured in ADR-0026. Also the CDN large-file terms (memory #8163). | measured |
+| `forgejo` | A fresh full push of `infra.git` is 183 MB (ADR-0026). | measured |
+| `files` | Synology NAS transfers routinely exceed the edge body cap. | body size |
+| `send` | End-to-end encrypted file drop; large files are the feature. | body size |
+| `stremio` | infra#80 chose the direct path to stay outside the CDN video terms; CrowdSec nftables covers the origin. | recorded decision |
+| `poison` | The trap exists to be scraped. Cloudflare bot management in front would defeat it. | recorded decision |
+| `traefik` | The dashboard is wanted most when the tunnel is the thing that broke. Same reasoning as `status` in ADR-0020. | recovery path |
+| `ci` | Woodpecker is how a fix gets deployed, including a fix to the tunnel. | recovery path |
+| `audiobookshelf`, `audiblez`, `ebook2audiobook`, `f1`, `music-assistant`, `music-emo`, `music-viktor`, `yt`, `yt-highlights` | Audio and video delivery. The same CDN terms question already answered for `immich` and `stremio` applies, and the conversion jobs behind `audiblez` and `ebook2audiobook` also hold a request open for minutes. | CDN terms |
+| `ha-london`, `ha-sofia`, `headscale`, `openclaw`, `qbittorrent`, `soulseek` | Long-held or streaming HTTP: Home Assistant websockets, the Tailscale map long-poll, LLM streaming, torrent and P2P transfers. Cloudflare's 100 s first-byte timeout has not been measured against any of them. | open question |
+| `kms`, `webhook` | The clients are not browsers: PowerShell `iwr \| iex` for the activator scripts, third-party webhook POSTs for the handler. Cloudflare bot management could challenge either. | open question |
+
+The last two groups are open questions rather than settled constraints. Each
+can be answered by measuring one host, and any that clears moves out of the
+DDNS scope.
 
 ### Zone Settings
 
