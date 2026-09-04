@@ -742,19 +742,19 @@ resource "kubernetes_deployment" "mail_listener" {
 # the jobs stay identical except for schedule, subcommand, and the suspend flag.
 locals {
   cronjobs = {
-    # SUSPENDED 2026-09-04: the AeroDataBox BASIC plan (600 units/month) hit 100%
-    # and RapidAPI warned of overage fees or a block. The hourly sweep spends 1
-    # unit per soon-departing flight per run, so a single flight in the 48h
-    # window costs ~720 units/month on its own — more than the whole quota. The
-    # 01:00-03:00 UTC runs on 2026-09-04 show the result: alternating 200s and
-    # 429s. Suspended to stop the unattended burn; re-enable once the sweep is
-    # paced to fit the quota (schedule tied to the departure window rather than a
-    # flat hourly sweep). On-demand reads (the segment status endpoint, 30-min
-    # staleness when the user opens the app) are unaffected and still live.
+    # Every 10 minutes, against the 3h POLL_HORIZON in flight_poller.py. The
+    # sweep spends 1 AeroDataBox unit per in-window flight per run, so the window
+    # sets the bill and the interval sets the resolution. The old pairing (48h
+    # window, hourly) cost ~720 units for a single flight against a 600-unit
+    # BASIC plan and hit 100% of the quota on 2026-09-04. At 3h and 10 minutes a
+    # flight costs 18 units, so Viktor's measured rate (26 flights over the 12
+    # months to 2026-09, peak 5/month) spends ~90 units in a peak month, 15% of
+    # the plan; it only breaks past ~33 flights/month. Runs outside a departure
+    # window make no API call at all, so idle weeks cost nothing.
     poll-flights = {
-      schedule  = "0 * * * *"
+      schedule  = "*/10 * * * *"
       command   = ["python", "-m", "tripit_api", "poll-flights"]
-      suspend   = true
+      suspend   = false
       extra_env = {}
     }
     run-reminders = {
