@@ -2,7 +2,7 @@
 
 - Date: 2026-09-03
 - Bead: code-9hb8
-- Status: cause identified, fix proposed, nothing changed yet
+- Status: cause identified, fix shipped 2026-09-04 (see "What shipped")
 
 ## Summary
 
@@ -160,6 +160,64 @@ clears the worst day's p95 sits around 7 s, and even then the daily maxima
 still cross it, so this series will page occasionally whatever number is
 chosen. That is a reason to alert on the query time and keep the wall clock as
 context, rather than to keep tuning one threshold against two different things.
+
+## What shipped
+
+Viktor's ruling on 2026-09-04 took the proposal as written: report query time on
+`immich_smart_search_db_seconds`, keep the wall clock as its own gauge, leave the
+1.5 s threshold where it is. Landed in `stacks/immich/main.tf`, in the `measure`
+init container of the `immich-search-probe` CronJob.
+
+| series | what it measures | who reads it |
+|---|---|---|
+| `immich_smart_search_db_seconds` | Postgres-reported elapsed time of the ANN query | `ImmichSmartSearchSlow` (> 1 s for 15m), cluster-health check 46 |
+| `immich_smart_search_probe_wall_seconds` | the `psql` process, start to exit | nothing yet; context for the unexplained pod-side seconds |
+
+The shipped SQL uses `statement_timestamp()` rather than a second
+`clock_timestamp()` in the same target list:
+
+```sql
+SELECT round(extract(epoch from clock_timestamp() - statement_timestamp()) * 1000)
+FROM (SELECT count(*) FROM (
+        SELECT "assetId" FROM smart_search
+        ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1)
+        LIMIT 100) s) q;
+```
+
+Both forms returned the same numbers when run side by side against the live
+database (200 ms and 191 ms on consecutive runs, which is within the run-to-run
+spread a random probe vector produces). The difference is in what guarantees
+them. The proposal's form puts `clock_timestamp() AS t0` and the counting
+sub-select in one target list and relies on left-to-right evaluation; that holds
+here only because `random()` makes the sub-select volatile, so the planner emits
+a SubPlan instead of hoisting it into an InitPlan. `statement_timestamp()` is
+fixed when the backend receives the statement, and the outer projection cannot
+run until the row beneath it exists, so the ordering holds whatever the planner
+decides. It also counts parse and plan time, measured at 1.2-1.6 ms.
+
+Eight paired samples inside `immich-postgresql`, wrapper against
+`EXPLAIN (ANALYZE, TIMING OFF)` on separate runs:
+
+| wrapper ms | 95 | 94 | 387 | 334 | 269 | 276 | 179 | 82 |
+|---|---|---|---|---|---|---|---|---|
+| EXPLAIN execution ms | 610 | 78 | 192 | 108 | 276 | 138 | 114 | 143 |
+
+They do not pair up run for run, because each run draws a different random
+vector and probes a different vchord list. Both sit in the same 78-610 ms
+distribution the 102-sample set above found.
+
+A dry run of the full container script against the live database, before
+landing, reported `dur=0.100 wall=0.249` on one tick: 149 ms of psql startup,
+DNS and connect, which is the gap this change takes out of the alerting series.
+
+If the query fails, `db_seconds` falls back to the wall-clock value rather than
+going missing. The Pushgateway keeps serving the last value it was given, so a
+missing series would read as a healthy one; `immich_smart_search_probe_success`
+is what says which happened.
+
+Still open, and untouched by this change: where the seconds inside the probe pod
+actually go. `immich_smart_search_probe_wall_seconds` is now the series to watch
+for it.
 
 ## A separate observation about the prewarm
 
