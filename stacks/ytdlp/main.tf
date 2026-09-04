@@ -111,9 +111,13 @@ resource "kubernetes_deployment" "ytdlp" {
           image = "tzahi12345/youtubedl-material:nightly"
           name  = "ytdlp"
           # requests 512Mi -> 256Mi on 2026-09-04 (bead code-hn6k). Measured
-          # peak working set over 30 days is 165Mi, a third of the old request,
-          # and this deployment is Sablier-parked at 0 replicas most of the
-          # time anyway. 256Mi is 1.5x that peak.
+          # peak working set over 30 days is 165Mi, a third of the old request.
+          # 256Mi is 1.5x that peak.
+          #
+          # An earlier version of this comment said the deployment is
+          # Sablier-parked at 0 replicas most of the time. It is not: it runs
+          # 1/1 and has for 248 days, so the reservation is real and worth
+          # taking back.
           #
           # The LIMIT stays at 512Mi. Request and limit were equal before, so a
           # download that needs more headroom has exactly as much as it did.
