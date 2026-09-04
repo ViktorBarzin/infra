@@ -37,6 +37,7 @@ resource "null_resource" "provisioner_ssh_check" {
 
   triggers = {
     # Bumped 2026-09-04 to prove the dedicated CI key works end to end (bd code-5w5u).
-    check = "1"
+    # "2" re-proves it after the key was narrowed to from="10.0.20.0/24".
+    check = "2"
   }
 }
