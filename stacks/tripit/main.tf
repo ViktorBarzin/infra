@@ -425,10 +425,12 @@ locals {
     LLM_MODE     = "llamacpp"
     LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
     # Text extraction needs the 8B model to retain flight numbers. qwen3-8b
-    # crashes on the current CUDA image, while qwen3vl-8b is proven live;
-    # attachments stay on the smaller vision model (ADR-0033 fallback remains).
+    # crashes on the current CUDA image, while qwen3vl-8b is proven live.
+    # Attachments share it: qwen3vl-4b is retired, and both VLMs were served
+    # with the same 3072-token context, so this is token-neutral and stops
+    # mail ingest swapping models within one email (ADR-0033 fallback remains).
     LLM_MODEL           = "qwen3vl-8b"
-    LLM_VISION_MODEL    = "qwen3vl-4b"
+    LLM_VISION_MODEL    = "qwen3vl-8b"
     MAIL_INGEST_ENABLED = "true"
     # Forwarded Reels require POI-level Nominatim, isolated from the global
     # city-level OpenMeteo geocoder used by weather/tours (ADR-0031).
