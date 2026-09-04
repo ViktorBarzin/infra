@@ -2277,7 +2277,7 @@
     {
       "id": 15,
       "title": "RSU vest reconciliation \u2014 payslip vs Schwab",
-      "description": "Per-vest-month reconciliation between what Meta payroll reported as taxable RSU income (payslip.rsu_vest, GBP) and what vested at the broker.\n\nBroker side comes from wealthfolio_sync, not from payslip_ingest.rsu_vest_events. That table is empty and has no writer: Schwab Stock Plan Services does not email release confirmations (188 emails surveyed, broker-sync abf9fa7), so the IMAP path this panel was originally built on cannot fill it. The same events are already in wealthfolio_sync as the BUY legs of the Schwab (US workplace) account, where shares x unit_price is the gross USD vest value.\n\nFX basis: fx_usd_gbp is wealthfolio's own daily USD to GBP rate for this account (daily_account_valuation.fx_rate_to_base), read on the vest date itself. It is a market spot rate, not a month average and not an HMRC published rate, so it will not reproduce whatever rate Meta payroll applied. payslip_vs_broker is payslip over broker, so 100% means agreement.\n\nTwo patterns show up in the current data, and both look like properties of the sources rather than errors to fix. From 2023-05 the payslip runs about 5% below the vest-date spot conversion, consistently and in the same direction; an FX date shift does not account for it, since 2026-05 implies 0.712 while the lowest 2026 daily rate is 0.723. The difference in basis has not been identified yet. Before 2023-05 the broker side is partial, about a quarter of the gross the payslip implies, because the Schwab CSV import covers only some grants; those rows read near 400% and are a coverage gap on the broker side, not a payroll discrepancy.",
+      "description": "Per-vest-month reconciliation of the Meta RSU vest across three figures: what the broker recorded, what the payslip's rsu_vest column says, and what the payslip implies the gross vest actually was.\n\nSources. The broker side is wealthfolio_sync, not payslip_ingest.rsu_vest_events. That table is empty and has no writer, because Schwab Stock Plan Services does not email release confirmations (188 emails surveyed, broker-sync abf9fa7), so the IMAP path this panel was originally built on cannot fill it. wealthfolio_sync records each vest as a BUY on the Schwab (US workplace) account.\n\nRead shares_sold and broker_sold_gbp as the sold-to-cover half of the vest, not the whole vest. broker-sync infers the BUY from the same-day SELL at identical quantity, so the recorded share count is what was sold, not what vested. Measured across all 23 months with both sides present, broker_sold_gbp is 44.2% to 55.3% of payslip_gross_gbp, mean 50.4%, with no trend, which is what a roughly half sell-to-cover withholding looks like.\n\npayslip_gross_gbp is taxable_pay minus salary minus bonus plus pension_sacrifice, which is the gross RSU figure the payslip supports. It is shown because the rsu_vest column alone does not carry it: for 2023-05 onward rsu_vest is 47.5% to 48.6% of that derived gross.\n\nFX basis: fx_usd_gbp is wealthfolio's own daily USD to GBP rate for this account (daily_account_valuation.fx_rate_to_base), read on the vest date itself. A market spot rate, not a month average and not an HMRC published rate, so it will not reproduce whatever rate Meta payroll applied.\n\nHow to read the two ratios. broker_pct_of_gross is the stable one and sits near 50% throughout. payslip_vs_broker compares two figures that are each about half the gross, so from 2023-05 it lands near 95%; the residual few percent is the difference between two different half measures and is not yet attributed. Before 2023-05 payslip_vs_broker jumps to roughly 400%, and that break is on the payslip side, not the broker side: rsu_vest runs 167.6% to 200.9% of the derived gross in those months while broker_pct_of_gross stays near 50%. Treat the early rsu_vest values as a parser artifact rather than evidence about the broker record.",
       "type": "table",
       "datasource": {
         "type": "datasource",
@@ -2319,7 +2319,7 @@
             "properties": [
               {
                 "id": "custom.width",
-                "value": 108
+                "value": 95
               },
               {
                 "id": "custom.align",
@@ -2339,7 +2339,7 @@
             "properties": [
               {
                 "id": "custom.width",
-                "value": 105
+                "value": 95
               },
               {
                 "id": "unit",
@@ -2350,32 +2350,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "ticker"
+              "options": "shares_sold"
             },
             "properties": [
               {
                 "id": "custom.width",
-                "value": 70
-              },
-              {
-                "id": "custom.align",
-                "value": "left"
-              },
-              {
-                "id": "unit",
-                "value": "none"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "shares_vested"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 115
+                "value": 95
               },
               {
                 "id": "unit",
@@ -2390,7 +2370,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "broker_gross_usd"
+              "options": "broker_sold_usd"
             },
             "properties": [
               {
@@ -2407,7 +2387,7 @@
             "properties": [
               {
                 "id": "custom.width",
-                "value": 100
+                "value": 90
               },
               {
                 "id": "unit",
@@ -2422,36 +2402,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "delta_gbp"
-            },
-            "properties": [
-              {
-                "id": "mappings",
-                "value": [
-                  {
-                    "type": "special",
-                    "options": {
-                      "match": "nan",
-                      "result": {
-                        "text": "no payslip",
-                        "color": "text",
-                        "index": 0
-                      }
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
               "options": "payslip_vs_broker"
             },
             "properties": [
               {
                 "id": "custom.width",
-                "value": 130
+                "value": 112
               },
               {
                 "id": "unit",
@@ -2513,6 +2469,77 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "broker_pct_of_gross"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 145
+              },
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "no payslip",
+                        "color": "text",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.44
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.47
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.56
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.6
+                    }
+                  ]
+                }
+              }
+            ]
           }
         ]
       },
@@ -2540,12 +2567,12 @@
           "id": "calculateField",
           "options": {
             "mode": "binary",
-            "alias": "delta_gbp",
+            "alias": "payslip_vs_broker",
             "replaceFields": false,
             "binary": {
               "left": "payslip_rsu_gbp",
-              "operator": "-",
-              "right": "broker_gross_gbp"
+              "operator": "/",
+              "right": "broker_sold_gbp"
             }
           }
         },
@@ -2553,12 +2580,12 @@
           "id": "calculateField",
           "options": {
             "mode": "binary",
-            "alias": "payslip_vs_broker",
+            "alias": "broker_pct_of_gross",
             "replaceFields": false,
             "binary": {
-              "left": "payslip_rsu_gbp",
+              "left": "broker_sold_gbp",
               "operator": "/",
-              "right": "broker_gross_gbp"
+              "right": "payslip_gross_gbp"
             }
           }
         }
@@ -2573,7 +2600,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "WITH schwab AS (SELECT id FROM accounts WHERE name = 'Schwab (US workplace)'), vest AS (SELECT date_trunc('month', a.activity_date)::date AS vm, MIN(a.activity_date)::date AS vest_date, MAX(s.symbol) AS ticker, SUM(a.quantity) AS shares_vested, SUM(a.quantity * a.unit_price) AS gross_usd FROM activities a JOIN assets s ON s.id = a.asset_id WHERE a.account_id = (SELECT id FROM schwab) AND a.activity_type = 'BUY' GROUP BY 1) SELECT to_char(v.vm, 'YYYY-MM') AS vest_month, v.vest_date, v.ticker, v.shares_vested, round(v.gross_usd, 2) AS broker_gross_usd, round(f.fx_rate_to_base, 5) AS fx_usd_gbp, round(v.gross_usd * f.fx_rate_to_base, 2) AS broker_gross_gbp FROM vest v LEFT JOIN daily_account_valuation f ON f.account_id = (SELECT id FROM schwab) AND f.valuation_date = v.vest_date ORDER BY 1 DESC"
+          "rawSql": "WITH schwab AS (SELECT id FROM accounts WHERE name = 'Schwab (US workplace)'), vest AS (SELECT date_trunc('month', a.activity_date)::date AS vm, MIN(a.activity_date)::date AS vest_date, SUM(a.quantity) AS shares_sold, SUM(a.quantity * a.unit_price) AS sold_usd FROM activities a WHERE a.account_id = (SELECT id FROM schwab) AND a.activity_type = 'BUY' GROUP BY 1) SELECT to_char(v.vm, 'YYYY-MM') AS vest_month, v.vest_date, v.shares_sold, round(v.sold_usd, 2) AS broker_sold_usd, round(f.fx_rate_to_base, 5) AS fx_usd_gbp, round(v.sold_usd * f.fx_rate_to_base, 2) AS broker_sold_gbp FROM vest v LEFT JOIN daily_account_valuation f ON f.account_id = (SELECT id FROM schwab) AND f.valuation_date = v.vest_date ORDER BY 1 DESC"
         },
         {
           "refId": "B",
@@ -2584,7 +2611,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT to_char(date_trunc('month', pay_date), 'YYYY-MM') AS vest_month, SUM(rsu_vest) AS payslip_rsu_gbp FROM payslip_ingest.payslip WHERE rsu_vest > 0 GROUP BY 1 ORDER BY 1 DESC"
+          "rawSql": "SELECT to_char(date_trunc('month', pay_date), 'YYYY-MM') AS vest_month, SUM(rsu_vest) AS payslip_rsu_gbp, SUM(taxable_pay - salary - bonus + pension_sacrifice) AS payslip_gross_gbp FROM payslip_ingest.payslip WHERE rsu_vest > 0 GROUP BY 1 ORDER BY 1 DESC"
         }
       ]
     }
