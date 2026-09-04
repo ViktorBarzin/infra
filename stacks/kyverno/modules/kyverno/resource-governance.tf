@@ -1295,14 +1295,31 @@ resource "kubectl_manifest" "validate_gpumem_declared" {
           # non-empty ("?*"). Containers with no GPU request are not matched by
           # the anchor and so are not constrained. Same "?*" idiom the tier
           # label check uses.
+          #
+          # `=(resources)` and `=(limits)` are EXISTENCE anchors, not conditional
+          # ones, and the difference is the whole rule (fixed 2026-09-04, bead
+          # code-0twf). A conditional `()` anchor treats a sub-pattern that does
+          # NOT match as a SKIP, so nesting the real requirement two conditionals
+          # deep inverted every failure into a pass: `(limits)` saw the inner map
+          # fail, called itself unmatched, skipped, and `(resources)` skipped in
+          # turn. The policy shipped that way on 2026-08-31 and could never fail
+          # anything, in Audit or Enforce. An existence anchor instead means "if
+          # this key is present its value MUST match", so the failure propagates.
+          # Measured with kyverno-cli 1.18.2 (same build as the cluster) over six
+          # pod shapes: the old pattern gave pass 1 / fail 0 / skip 5, including a
+          # skip for a GPU container with no gpumem; the new one fails exactly the
+          # two GPU-without-gpumem shapes (single-container and one with a
+          # sidecar) and passes a non-GPU container, a container with no
+          # `resources` block at all, and one with requests but no limits.
+          # Re-run that before touching the anchors again.
           validate = {
             message = "Pod requests nvidia.com/gpu but declares no viktorbarzin.me/gpumem budget. The scheduler cannot count its VRAM and the gpu-vram-watchdog cannot hold it to a contract (ADR-0016). Add resources.limits.\"viktorbarzin.me/gpumem\" set from measured use, or record why it is deliberately seatless."
             pattern = {
               spec = {
                 containers = [
                   {
-                    "(resources)" = {
-                      "(limits)" = {
+                    "=(resources)" = {
+                      "=(limits)" = {
                         "(nvidia.com/gpu)"       = "?*"
                         "viktorbarzin.me/gpumem" = "?*"
                       }

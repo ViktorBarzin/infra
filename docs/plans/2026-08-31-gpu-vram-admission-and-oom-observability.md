@@ -384,6 +384,13 @@ the `nvidia/gpu-pod-exporter` DaemonSet, `tts/chatterbox-tts`, and the three
 namespace; the rest took measured seats. `llama-cpp`, `stremio` and `ytdlp` are
 excluded by namespace as the deliberately seatless tenants they always were.
 
+The flip also exposed that the rule had never worked. Its `pattern` wrapped the
+requirement in two conditional anchors, and a conditional anchor turns a
+non-matching sub-pattern into a skip rather than a failure, so the rule passed
+every pod from the day it shipped. Both anchors are now existence anchors
+(`=(resources)`, `=(limits)`). The check that settles this is a
+deliberately-violating resource, not a quiet report.
+
 ### Alerting
 
 - `GPUVRAMLow` currently fires at 1,024 MiB free, below the 1,536 MiB action
