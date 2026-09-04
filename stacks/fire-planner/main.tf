@@ -820,8 +820,8 @@ variable "claude_agent_service_url" {
 
 variable "examples_llm_model" {
   type        = string
-  description = "llama-swap model id for the examples LLM primary extractor. Use qwen3-8b when GPU has ≥5GB free; qwen3vl-4b when immich-ml is using ~10GB."
-  default     = "qwen3vl-4b"
+  description = "llama-swap model id for the examples LLM primary extractor. The extractor is text-only, so this is the text model; the app default in fire_planner/examples/llm_extract.py matches."
+  default     = "qwen3-8b"
 }
 
 variable "run_examples_bulk_ingest" {
