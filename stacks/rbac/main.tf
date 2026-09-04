@@ -24,7 +24,17 @@ variable "tls_secret_name" { type = string }
 #   private half   Vault secret/ci/infra -> rbac_provisioner_ssh_key
 #   public half    Vault secret/ci/infra -> rbac_provisioner_ssh_key_pub, and
 #                  wizard's ~/.ssh/authorized_keys on k8s-master, carrying
-#                  no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-user-rc
+#                  from="10.0.20.0/24",no-agent-forwarding,no-port-forwarding,
+#                  no-X11-forwarding,no-user-rc
+#
+# The from= is measured, not assumed. A Woodpecker workflow pod reaches
+# 10.0.20.100 SNAT'd to the IP of whatever node it landed on, so sshd sees a
+# node address (observed 10.0.20.105 on the 2026-09-04 run), never a Calico pod
+# IP. The /24 is the node VLAN, so a node added later is covered without anyone
+# remembering to edit the line. One consequence worth knowing before you debug
+# it: this key does NOT work from the devvm (10.0.10.10). "Permission denied
+# (publickey)" when you try it by hand from there is the restriction doing its
+# job, not a broken key.
 # It is deliberately NOT Viktor's own key: CI holds a credential that can be
 # revoked on its own (delete the authorized_keys line and the two Vault keys)
 # without touching his access. The k8s-upgrade-pipeline key in
