@@ -742,17 +742,23 @@ resource "kubernetes_deployment" "mail_listener" {
 # the jobs stay identical except for schedule, subcommand, and the suspend flag.
 locals {
   cronjobs = {
-    # Every 10 minutes, against the 3h POLL_HORIZON in flight_poller.py. The
-    # sweep spends 1 AeroDataBox unit per in-window flight per run, so the window
-    # sets the bill and the interval sets the resolution. The old pairing (48h
-    # window, hourly) cost ~720 units for a single flight against a 600-unit
-    # BASIC plan and hit 100% of the quota on 2026-09-04. At 3h and 10 minutes a
-    # flight costs 18 units, so Viktor's measured rate (26 flights over the 12
-    # months to 2026-09, peak 5/month) spends ~90 units in a peak month, 15% of
-    # the plan; it only breaks past ~33 flights/month. Runs outside a departure
-    # window make no API call at all, so idle weeks cost nothing.
+    # Hourly, which is the fastest tier flight_poller.py will actually spend a
+    # call on. The sweep decides per flight: hourly inside 24h of departure,
+    # two-hourly out to the 48h POLL_HORIZON, nothing beyond it. So the schedule
+    # is the carrier and the pacing in the code is the bill.
+    #
+    # An AeroDataBox call costs 2 units, not 1 — the adapter asks for
+    # withLocation and the position data is billed on top. Measured on the live
+    # plan counter 2026-09-04: 300 requests had spent all 600 units. A flight
+    # therefore costs 36 calls = 72 units end to end, so Viktor's measured rate
+    # (26 flights over the 12 months to 2026-09, peak 5 in a month) spends 360
+    # units in a peak month, 60% of the 600-unit BASIC plan, and only breaks past
+    # ~8 flights in one month. Sweeps with nothing due make no call at all, so
+    # idle weeks cost nothing. Polling every in-window flight on every run, which
+    # is what ran before, cost ~720 units for a single flight and hit 100% of the
+    # quota on 2026-09-04.
     poll-flights = {
-      schedule  = "*/10 * * * *"
+      schedule  = "0 * * * *"
       command   = ["python", "-m", "tripit_api", "poll-flights"]
       suspend   = false
       extra_env = {}
