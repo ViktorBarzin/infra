@@ -59,6 +59,30 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# Both volumes below moved nfs-truenas -> nfs-pve as part of the class rename
+# (bead code-yizt, Class A). Worth knowing before touching them again:
+#
+# The two storage classes are BYTE-IDENTICAL. Both nfs-truenas and nfs-pve are
+# nfs.csi.k8s.io with server 192.168.1.127 and share /srv/nfs, so this rename
+# moves no data whatsoever. What makes it a "Class A" change is only that
+# storageClassName is immutable on a PVC, so Terraform must destroy and
+# recreate the claim, and the pvc-protection finalizer holds that while a pod
+# mounts it.
+#
+# That is exactly how this stack got stuck: an apply on 2026-09-04 at 05:13 UTC
+# deleted the ytdlp-data-host PVC while the pod was still running, so it sat
+# Terminating for nine hours. The service kept working, because a mounted PVC
+# still serves, but it was one restart away from failing to mount. Cleared on
+# 2026-09-04 by scaling the deployment to 0, letting the PVC finish deleting,
+# deleting the two Released PVs, and re-applying.
+#
+# Deleting those PVs is safe and does not touch the files: both carry
+# reclaimPolicy Retain, and the module hardcodes nfs_path, so the recreated PV
+# points back at the same directory. Verified across the operation:
+# /srv/nfs/ytdlp 121M / 25 files and /srv/nfs/ytdlp-highlights 3.2G / 21 files,
+# identical before and after.
+#
+# If you change storage_class_name here again, scale the deployment to 0 FIRST.
 module "nfs_data_host" {
   source             = "../../modules/kubernetes/nfs_volume"
   name               = "ytdlp-data-host"
