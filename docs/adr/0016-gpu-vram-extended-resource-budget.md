@@ -125,6 +125,20 @@ disproportionate risk for this hardware.
   `stremio` and `ytdlp` (both measured at zero VRAM). The exclude list and its
   reasons live in `local.gpumem_excluded_namespaces`,
   `stacks/kyverno/modules/kyverno/resource-governance.tf`.
+- **The rule was inert from 2026-08-31 until 2026-09-04, and the flip to Enforce
+  is what exposed it.** Its `pattern` nested the requirement inside two
+  CONDITIONAL anchors, `(resources)` then `(limits)`. A conditional anchor treats
+  a sub-pattern that does not match as a SKIP, so a GPU container missing
+  `gpumem` made the inner map fail, `(limits)` call itself unmatched and skip,
+  and `(resources)` skip in turn: the rule passed everything, in Audit and in
+  Enforce alike. Verified live on the day of the flip, by server-dry-running the
+  real frigate pod with its `gpumem` stripped and watching it be admitted. Both
+  anchors are now EXISTENCE anchors, `=(resources)` and `=(limits)`, which mean
+  "if this key is present its value must match" and let the failure propagate.
+  Measured with kyverno-cli 1.18.2 over every live pod in the cluster: 6 pass
+  (the six seated tenants), 0 fail, 368 skip. **A validate `pattern` that reports
+  nothing is not evidence that nothing violates it** — check it against a
+  deliberately-violating resource before believing a clean result.
 - **The seating chart as of 2026-09-04** (running tenants, node advertises
   14000 MiB): claude-memory 5000, frigate 2800, immich-ml 2500, immich-worker
   1500, f1-stream 500, android-emulator 300 = **12600**, leaving 1400
