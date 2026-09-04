@@ -80,10 +80,11 @@ variable "agent_oidc_enabled" {
 
     Default false, and flipping it is NOT a push-and-let-CI-apply change. It
     moves the null_resource trigger, which re-runs the SSH provisioner against
-    the single control-plane node — and CI applies this stack with no
-    ssh_private_key, so a CI run would fail there rather than reach the node.
-    Apply it locally first, then push. Full procedure, verification and
-    rollback: docs/runbooks/apiserver-oidc-agent-identity.md.
+    the single control-plane node. Since 2026-09-04 CI resolves a key from Vault
+    (stacks/rbac/main.tf), so a CI run now reaches the node and rewrites the
+    apiserver manifest unattended. Apply it locally first, then push. Full
+    procedure, verification and rollback:
+    docs/runbooks/apiserver-oidc-agent-identity.md.
   DESC
 }
 
@@ -182,8 +183,8 @@ YAML
   # WHAT THE APISERVER GETS. With the flag off this is `apiserver_auth_config_base`
   # unchanged, so `sha256(local.apiserver_auth_config_yaml)` — the null_resource
   # trigger below — does not move, the SSH provisioner stays a no-op, and a CI
-  # apply (which has no ssh_private_key and would fail if it had to re-run)
-  # leaves the control plane alone.
+  # apply leaves the control plane alone. That no-op is now the ONLY thing
+  # keeping CI off the apiserver: since 2026-09-04 a CI apply can authenticate.
   apiserver_auth_config_yaml = (
     var.agent_oidc_enabled
     ? "${local.apiserver_auth_config_base}${local.agent_issuer_yaml}"
@@ -332,10 +333,10 @@ resource "null_resource" "apiserver_oidc_config" {
   }
 
   triggers = {
-    # Intentionally hash ONLY the issuer config, NOT the remote script. CI applies
-    # the rbac stack with no ssh_private_key (var defaults to ""), so a re-run of
-    # this SSH provisioner in CI would fail — hence the null_resource must stay a
-    # no-op on a plain CI apply. Script changes (e.g. the 2026-06-24 kubeadm-config
+    # Intentionally hash ONLY the issuer config, NOT the remote script, so an
+    # edit to the script does not by itself restart the apiserver on the single
+    # control-plane node. CI can authenticate since 2026-09-04, so this trigger is
+    # what keeps a routine CI apply a no-op. Script changes (e.g. the 2026-06-24 kubeadm-config
     # reconciliation) reach the cluster via the apiserver-oidc-restore ConfigMap
     # below (a plain k8s resource, no ssh) which the upgrade chain re-runs. To force
     # this provisioner to re-run after a script change, apply locally with
