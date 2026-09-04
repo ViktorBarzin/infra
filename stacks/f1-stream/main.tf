@@ -44,7 +44,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "f1-stream"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -76,7 +76,7 @@ resource "kubernetes_manifest" "chrome_service_client_secret" {
       namespace = "f1-stream"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

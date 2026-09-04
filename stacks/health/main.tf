@@ -396,7 +396,7 @@ resource "kubernetes_manifest" "external_secret_kv" {
       namespace = "health"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

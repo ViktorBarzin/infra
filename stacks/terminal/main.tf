@@ -229,11 +229,19 @@ module "ingress_assets" {
     "/fonts/JetBrainsMono-Italic.woff2",
     "/fonts/JetBrainsMono-BoldItalic.woff2",
     "/fonts/dm-sans-latin-wght-normal.woff2",
+    # The symbol fallback face, added 2026-09-04. JetBrains Mono ships no
+    # braille and none of Claude Code's spinner glyphs, so both terminals carry
+    # an Iosevka subset for them. term.html embeds it as a data: URI and needed
+    # no route; the app-rendered terminal declares it in CSS and asks for it by
+    # URL, and while this path was missing here it fell through to the main
+    # ingress, reached ttyd, and 404ed, leaving the face at status "error" and
+    # the glyphs on whatever font the client happened to have.
+    "/fonts/tl-symbols.woff2",
   ]
   full_host        = "terminal.viktorbarzin.me" # MUST match the main ingress host; otherwise the factory derives terminal-assets.viktorbarzin.me and the carve-out never matches.
   dns_type         = "none"                     # host record already owned by the main terminal ingress
   tls_secret_name  = var.tls_secret_name
-  anti_ai_scraping = false # a manifest, three icons and five OFL font files; nothing for scrapers to mine
+  anti_ai_scraping = false # a manifest, three icons and six OFL font files; nothing for scrapers to mine
   homepage_enabled = false # path carve-out, not its own dashboard tile
 }
 

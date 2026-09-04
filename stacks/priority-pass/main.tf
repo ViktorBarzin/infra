@@ -121,13 +121,19 @@ resource "kubernetes_deployment" "priority-pass" {
             name       = "uploads"
             mount_path = "/data/uploads"
           }
+          # requests 512Mi -> 384Mi on 2026-09-04 (bead code-hn6k). Measured
+          # peak working set over 30 days is 240Mi, under half the old request,
+          # while the cluster could not drain a node because requests were
+          # oversubscribed against 41-54% real use. 384Mi is 1.5x that peak.
+          #
+          # The LIMIT stays at 512Mi, so burst headroom is unchanged.
           resources {
             limits = {
               memory = "512Mi"
             }
             requests = {
               cpu    = "10m"
-              memory = "512Mi"
+              memory = "384Mi"
             }
           }
         }

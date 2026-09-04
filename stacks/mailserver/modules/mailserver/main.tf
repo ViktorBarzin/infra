@@ -915,7 +915,7 @@ resource "kubernetes_manifest" "email_roundtrip_monitor_secrets" {
       namespace = kubernetes_namespace.mailserver.metadata[0].name
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

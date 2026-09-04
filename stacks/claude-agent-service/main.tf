@@ -49,7 +49,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -939,6 +939,17 @@ resource "kubernetes_service" "claude_agent" {
     name      = "claude-agent-service"
     namespace = kubernetes_namespace.claude_agent.metadata[0].name
     labels    = local.labels
+    annotations = {
+      # This service has no ingress, so external-monitor-sync never sees it and
+      # nothing in Uptime Kuma watched it. These annotations make
+      # internal-monitor-sync create `[Internal] claude-agent-service`, probing
+      # http://claude-agent-service.claude-agent.svc.cluster.local:8080/health
+      # every 5 minutes. Same endpoint the kubelet probes, so a monitor going
+      # red means the pod is failing its own readiness check.
+      "uptime.viktorbarzin.me/internal-monitor"      = "true"
+      "uptime.viktorbarzin.me/internal-monitor-name" = "claude-agent-service"
+      "uptime.viktorbarzin.me/internal-monitor-path" = "/health"
+    }
   }
 
   spec {

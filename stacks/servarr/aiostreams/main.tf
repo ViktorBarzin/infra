@@ -196,7 +196,7 @@ resource "kubernetes_manifest" "probe_secrets" {
       namespace = kubernetes_namespace.aiostreams.metadata[0].name
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

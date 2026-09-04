@@ -285,6 +285,22 @@ alertmanager:
           - alertname =~ "HDDSaturated|HDDReadLatencyHigh"
         target_matchers:
           - alertname =~ "HDDHighIOPS|HDDHighReadRate|HDDHighWriteRate|HDDDailyReadVolume|HDDDailyWriteVolume"
+      # devvm down: the generic scrape alert says the same thing 27 minutes
+      # later and more quietly. equal: [job] keeps this surgical — every OTHER
+      # target's ScrapeTargetDown still notifies while devvm is unreachable.
+      - source_matchers:
+          - alertname = DevvmDown
+        target_matchers:
+          - alertname = ScrapeTargetDown
+        equal: [job]
+      # The two devvm dead-man switches in the Loki ruler go off whenever the
+      # box stops shipping journal lines, which a down box does by definition.
+      # Both alertnames are devvm-specific, so no `equal` is needed to keep this
+      # from reaching anything else.
+      - source_matchers:
+          - alertname = DevvmDown
+        target_matchers:
+          - alertname =~ "DevvmJournalSilent|SessionWatchSilent"
     receivers:
       - name: slack-critical
         slack_configs:
@@ -919,6 +935,60 @@ serverFiles:
             source_labels:
               - __meta_kubernetes_pod_node_name
             target_label: node
+      # Vault. A dedicated job (not the annotation-driven kubernetes-pods one)
+      # because VaultRaftLeaderStuck and VaultHAStatusUnavailable both key off
+      # job="vault", and because the target is the metrics-only listener on
+      # 8202, not the pod's advertised 8200. role: pod so all three replicas are
+      # scraped individually — vault_core_active is per-pod and the leader
+      # alerts compare across instances, which a Service-level scrape (one
+      # random backend per interval) cannot express.
+      - job_name: vault
+        metrics_path: /v1/sys/metrics
+        params:
+          format:
+            - prometheus
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - vault
+        relabel_configs:
+          - action: keep
+            regex: vault
+            source_labels:
+              - __meta_kubernetes_pod_label_app_kubernetes_io_name
+          - action: drop
+            regex: Pending|Succeeded|Failed|Completed
+            source_labels:
+              - __meta_kubernetes_pod_phase
+          # 8202 is the metrics-only listener declared in stacks/vault/main.tf.
+          # The pod's own 8200 refuses unauthenticated /v1/sys/metrics by design.
+          - action: replace
+            regex: (.+)
+            replacement: $1:8202
+            source_labels:
+              - __meta_kubernetes_pod_ip
+            target_label: __address__
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_pod_name
+            target_label: pod
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_pod_name
+            target_label: instance
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_namespace
+            target_label: namespace
+          # Deliberately no `node` label. VaultRaftLeaderStuck joins its two
+          # halves with `and on(instance)`, and a vault pod that reschedules
+          # keeps its name while changing node — so for the few minutes both
+          # series sit inside the lookback window there would be two series
+          # sharing an instance, which makes the join fail as a duplicate match
+          # rather than fire. Seen live while rolling vault-2 from k8s-node2 to
+          # k8s-node5 on 2026-09-03. Which node a pod is on is already in
+          # kube_pod_info if anyone needs it.
       - job_name: kubernetes-pods-slow
         honor_labels: true
         scrape_interval: 5m
@@ -1389,6 +1459,39 @@ serverFiles:
       # Design: docs/plans/2026-09-01-devvm-session-loss-alerting.md
       - name: DevVM
         rules:
+          - alert: DevvmDown
+            # The box being GONE, as opposed to squeezed. Until this rule the
+            # only thing that noticed was ScrapeTargetDown at for: 30m/warning,
+            # and before that nothing did: the 2026-06-11 QEMU stall ran ~90
+            # minutes before a human looked at the sidebar and counted.
+            #
+            # for: 5m, and the two minutes above 3m are bought deliberately.
+            # Calibrated on the 30 days to 2026-09-03: up{job="devvm"} hit 0 in
+            # 13 samples, and the longest contiguous run in any 10m window was
+            # 2. At a 2m scrape a 2-sample run keeps the rule true across
+            # evaluations spanning 4 minutes, so for: 3m WOULD have fired once
+            # on a blip that was not an outage. Requiring 3 consecutive failed
+            # scrapes never happened in those 30 days. It still catches the real
+            # thing: over 180 days the worst run was 6 samples.
+            #
+            # Cost of the choice: the alert speaks at roughly 6-8 minutes of
+            # real downtime instead of 4-6. Against ScrapeTargetDown's 30
+            # minutes and the 90 minutes a human took on 2026-06-11, that is
+            # cheap, and this is a critical that re-pings every 6h.
+            #
+            # `or on() vector(0)` mirrors NodeDown: if the target is dropped
+            # from the scrape config entirely the series vanishes and a bare
+            # up==0 can never fire. In that case the alert carries no job label
+            # and the ScrapeTargetDown inhibition below does not apply, which is
+            # fine, because ScrapeTargetDown cannot fire on an absent series
+            # either.
+            expr: (up{job="devvm"} or on() vector(0)) == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "devvm is not being scraped — the shared workstation may be down"
+              description: "Every Claude session, t3-serve and agent on this box is gone or unreachable. Check the VM on Proxmox first (qm status on proxmox-1); a QEMU stall looks identical to a reboot from here and was the 2026-06-11 failure. Journal history survives in Loki even while the box is unreachable: homelab logs query '{job=\"devvm-journal\"}' --since 1h. When the box is back, ClaudeSessionDied reports what did not come back with it."
           - alert: DevvmMemoryPressure
             # earlyoom SIGTERMs at 5% available and SIGKILLs at 3% (-m 5,3), and
             # when it fires on this box it takes claude processes: the 2026-08-16
@@ -2302,6 +2405,56 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }}: {{ $value | printf \"%.0f\" }} failure(s)"
+          # JobFailed cannot fire for a FAST CronJob, and that is why
+          # phpipam-dns-sync failed every 15 minutes for 20 hours on
+          # 2026-08-04/05 with nothing alerting.
+          #
+          # `for: 2h` is evaluated per time SERIES, and every CronJob run is a new
+          # series because job_name carries the run's schedule index. A failed Job
+          # is retained only until failedJobsHistoryLimit newer failures replace
+          # it, so at */15 with limit 3 each series lives ~46 minutes. Measured by
+          # replaying the JobFailed expression over the outage window
+          # (`count_over_time((<expr>)[24h:2m] @ 1785909600)`): every
+          # phpipam-dns-sync series topped out at 23 two-minute steps = 46 min,
+          # against the 120 min the `for` needs. The rule sat in pending forever.
+          # This is a different defect from the recency-window one fixed above,
+          # and widening that window did not touch it.
+          #
+          # Summing over the CronJob instead of the Job gives a series with a
+          # stable identity that stays > 0 while ANY of that CronJob's failures is
+          # retained, so overlapping 46-minute Jobs add up to one continuous
+          # 20-hour signal. The same recency guard is applied per-Job BEFORE the
+          # aggregation, which matters because phpIPAM keeps Failed Jobs from
+          # weeks ago in history and without it this would fire on those forever.
+          # cronjob is derived by stripping the trailing -<index> from job_name;
+          # kube_job_owner is not in this cluster's kube-state-metrics allowlist.
+          #
+          # Replayed over 2026-08-04/05 this holds true for 1442 continuous
+          # minutes on phpipam/phpipam-dns-sync, and names the collateral damage
+          # too (technitium-ingress-dns-sync, -zone-sync, -password-sync,
+          # -dns-optimization all failed in the same window on the same broken
+          # auth path). Against live state today it returns zero series.
+          #
+          # It overlaps JobFailed for SLOW CronJobs, where a single Job's series
+          # does survive 2h and both rules fire. Same severity and channel, so the
+          # cost is a duplicate warning; JobFailed is left alone because it also
+          # covers Jobs that no CronJob owns.
+          - alert: CronJobFailingRepeatedly
+            expr: |
+              sum by (namespace, cronjob) (
+                label_replace(
+                  kube_job_status_failed{reason="BackoffLimitExceeded", job_name=~".+-[0-9]+"} > 0
+                  and on(namespace, job_name)
+                  (time() - kube_job_status_start_time) < 21600,
+                  "cronjob", "$1", "job_name", "(.+)-[0-9]+"
+                )
+              ) > 0
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "CronJob {{ $labels.namespace }}/{{ $labels.cronjob }} has been failing for over 2h ({{ $value | printf \"%.0f\" }} failed run(s) retained)"
+              description: "Every run of this CronJob has failed for at least two hours. `kubectl -n {{ $labels.namespace }} get jobs | grep {{ $labels.cronjob }}` lists the retained failures and `homelab logs query '{namespace=\"{{ $labels.namespace }}\"}' --since 3h` has their output; note that failedJobsHistoryLimit prunes older runs, so Prometheus holds more history than kubectl does."
           # JobFailed only sees a Job that FAILS. A Job that hangs forever never
           # fails, so it was invisible -- and with concurrency_policy Forbid a
           # hung Job blocks every later run of its CronJob indefinitely.
@@ -2652,17 +2805,23 @@ serverFiles:
             annotations:
               summary: "Vault audit-log rotation failed to archive {{ $value | printf \"%.0f\" }} pod(s) — logs left intact, volume still growing"
               description: "The rotation job verifies each gzip archive before truncating the live log, so a failure here means the archive could not be written or did not verify. No audit data was lost, but the volume is not being reclaimed."
+          # vault_raft_storage_stats_applied_index, NOT vault_raft_last_index_gauge.
+          # The latter is what this rule shipped with in April and it does not
+          # exist in Vault 1.18.5 — checked against a live /v1/sys/metrics dump
+          # on 2026-09-03, which is also why nobody noticed: a rule referencing
+          # a metric that was never emitted evaluates to nothing, and nothing is
+          # exactly what a healthy cluster looks like.
           - alert: VaultRaftLeaderStuck
             expr: |
               (vault_core_active == 1)
               and on(instance)
-              (rate(vault_raft_last_index_gauge[5m]) == 0)
+              (rate(vault_raft_storage_stats_applied_index[5m]) == 0)
             for: 2m
             labels:
               severity: critical
             annotations:
               summary: "Vault raft leader {{ $labels.instance }} is active but commit index has not advanced for >2m"
-              description: "The raft leader is reachable on TCP but its commit index has stalled — likely a stuck goroutine hang (see 2026-04-22 post-mortem). External /v1/sys/health will be 503. Recovery: graceful delete of the stuck pod (see docs/runbooks/vault-raft-leader-deadlock.md). NOTE: silent until vault telemetry + scrape job are enabled."
+              description: "The raft leader is reachable on TCP but its commit index has stalled — likely a stuck goroutine hang (see 2026-04-22 post-mortem). External /v1/sys/health will be 503. Recovery: graceful delete of the stuck pod (see docs/runbooks/vault-raft-leader-deadlock.md)."
           - alert: VaultHAStatusUnavailable
             expr: |
               (count(up{job="vault"} == 1) > 0)
@@ -2673,7 +2832,7 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Vault pods are Up but no pod reports HA active leader"
-              description: "At least one Vault pod is scraping healthy, but no pod has vault_core_active=1. HA layer is broken — external endpoint will be 503 even though the pods themselves are alive. See docs/runbooks/vault-raft-leader-deadlock.md. NOTE: silent until vault telemetry + scrape job are enabled."
+              description: "At least one Vault pod is scraping healthy, but no pod has vault_core_active=1. HA layer is broken — external endpoint will be 503 even though the pods themselves are alive. See docs/runbooks/vault-raft-leader-deadlock.md."
           - alert: VaultwardenBackupStale
             expr: (time() - kube_cronjob_status_last_successful_time{cronjob="vaultwarden-backup", namespace="vaultwarden"}) > 86400
             for: 30m
@@ -2845,11 +3004,16 @@ serverFiles:
           # match. /volume1 reached 99% (103 GiB free, ~1 day from stopping the
           # offsite leg) and only surfaced because an unrelated navidrome PVC shares
           # the volume. offsite-sync-backup now publishes the gauges directly.
-          # Warn early — a full destination silently breaks Copy 3 of 3-2-1.
+          # Warn threshold moved 10% -> 6% free on 2026-09-04, the revisit the
+          # runbook asked for. 10% was a placeholder picked on 2026-08-06 before
+          # any steady state existed. It sits inside this disk's normal
+          # operating band: 95% used is where /volume1 lives and needs no action
+          # (a7fd8211), so a 10% warning reports the baseline, not a problem.
+          # 6% is below the band and still a step ahead of the 4% critical.
           - alert: OffsiteDestinationFillingUp
             expr: |
               (offsite_dest_available_bytes{job="offsite-backup-sync"}
-               / offsite_dest_size_bytes{job="offsite-backup-sync"}) * 100 < 10
+               / offsite_dest_size_bytes{job="offsite-backup-sync"}) * 100 < 6
             for: 30m
             labels:
               severity: warning
@@ -3280,6 +3444,53 @@ serverFiles:
               severity: warning
             annotations:
               summary: "apiserver->etcd avg request latency {{ $value | printf \"%.2f\" }}s (>0.5s for 10m) — etcd likely slow on the shared HDD; control-plane recovery at risk on reboot"
+          # Static-pod restart rate, the second compensating control for keeping
+          # etcd on the shared HDD (code-oflt, risk-accepted 2026-09-03). The
+          # 2026-06-12 flap crashlooped the control plane for ~2h on etcd
+          # lease-renewal timeouts and nothing alerted; EtcdRequestLatencyHigh
+          # above watches the latency, these two watch the consequence.
+          #
+          # TWO rules, because the four containers have baselines two orders of
+          # magnitude apart. Measured over the 30 days to 2026-09-03:
+          #   etcd                     1 restart
+          #   kube-apiserver           5
+          #   kube-controller-manager  120
+          #   kube-scheduler          ~121
+          # A single ">= 1 restart" rule over all four would post roughly 8
+          # times a day about the chronic leader-election churn; a single
+          # ">= 3 in 15m" rule would leave etcd unwatched, since etcd restarting
+          # even once is the event worth hearing about.
+          #
+          # Open question this leaves: ~4 kube-controller-manager restarts a day
+          # is high for a quiet cluster and is consistent with lease renewal
+          # losing races against etcd fsync on the spindle. These rules watch
+          # the rate rather than explain it. Getting etcd itself scraped
+          # (etcd_disk_wal_fsync_duration_seconds) is what would settle it, and
+          # that needs a control-plane change — bead code-at4f.
+          - alert: ControlPlaneStaticPodRestarted
+            # etcd and the apiserver. Rare enough that one restart is news:
+            # over 30 days, 1 and 5 respectively, in 3 distinct episodes.
+            expr: increase(kube_pod_container_status_restarts_total{namespace="kube-system",pod=~"etcd.*|kube-apiserver.*"}[15m]) >= 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.container }} on {{ $labels.pod }} restarted {{ $value | printf \"%.0f\" }}x in 15m"
+              description: "A control-plane static pod restarted. On this cluster that is usually etcd being slow on the shared HDD and taking the lease with it. Check EtcdRequestLatencyHigh alongside this, then: homelab k8s status kube-system, and kubectl -n kube-system logs {{ $labels.pod }} --previous. If this is a burst rather than a single restart, ControlPlaneLeaderFlapping fires too."
+          - alert: ControlPlaneLeaderFlapping
+            # The scheduler and controller-manager restart on every lost leader
+            # lease, so they drip continuously: 21 and 20 separate hours in the
+            # 7 days to 2026-09-03 had at least one. The threshold is set above
+            # that drip and below a crashloop. Over 30 days the busiest 15m
+            # window held 5, and ">= 3 in 15m" was true in 26 five-minute
+            # samples, which is roughly 4 episodes — about one a week.
+            expr: increase(kube_pod_container_status_restarts_total{namespace="kube-system",pod=~"kube-scheduler.*|kube-controller-manager.*"}[15m]) >= 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.container }} restarted {{ $value | printf \"%.0f\" }}x in 15m — control plane is flapping, not drifting"
+              description: "Above the normal leader-election churn on this cluster (~4/day each, which is itself a known symptom of etcd on the shared spindle). A burst this size is the 2026-06-12 shape: etcd fsync stalls, the lease expires, the component restarts, repeat. Check the disk first: homelab metrics query 'rate(node_disk_io_time_seconds_total{device=\"sdc\"}[5m])'. Then kubectl -n kube-system logs {{ $labels.pod }} --previous."
           - alert: KubeletRuntimeOperationsLatency
             expr: histogram_quantile(0.99, sum by (instance, operation_type, le) (rate(kubelet_runtime_operations_duration_seconds_bucket[10m]))) > 60
             for: 10m
@@ -3843,11 +4054,33 @@ serverFiles:
             #
             # A p95 says "a real share of requests are slow", which is the thing
             # worth waking up for, and one outlier can no longer move it.
+            #
+            # ha-sofia joined the exclusion list on 2026-09-03, for the same
+            # reason nextcloud and immich are on it: p95 request duration
+            # measures payload transfer for a service that proxies large media,
+            # not ingress health. Home Assistant's camera cards fetch
+            # /api/camera_proxy/camera.ds_7632nxi_* from the Hikvision NVR, 16
+            # at a time, 200-300 KiB each. Measured while the alert was firing
+            # at 13:40: of 611 requests in the window, 235 sat in 0.2-0.5s, 205
+            # in 0.5-1.0s, 25 in 1-2s, 9 in 2-5s. Nothing was wrong; someone was
+            # looking at the cameras. Twelve concurrent fetches driven from
+            # inside the cluster peak at 1.20s on their own, so the dashboard
+            # clears the 1s threshold without any fault at all, and it did so 12
+            # times in the 7 days to 2026-09-03.
+            #
+            # The exclusion is the whole service because
+            # traefik_service_request_duration_seconds_bucket carries no path
+            # label (code, instance, job, method, protocol, service), so the
+            # camera route cannot be dropped on its own. What still covers
+            # ha-sofia: four active uptime-kuma monitors (ha-sofia-public,
+            # ha-sofia-internal and ha-sofia-direct on /manifest.json, and
+            # [External] ha-sofia) plus healthcheck checks 26-29 and 45. Those
+            # are availability, not latency, which is the signal given up here.
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service, le)
               ) > 1
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 10m
             # Was 1h, to damp the mean's fire/resolve churn. The p95 doesn't
@@ -3863,9 +4096,9 @@ serverFiles:
             # single 4.5s matrix request kept re-announcing itself all day.
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service, le)
               ) > 3
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 5m
             keep_firing_for: 15m

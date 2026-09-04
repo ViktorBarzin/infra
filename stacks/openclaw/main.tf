@@ -48,7 +48,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "openclaw"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -398,7 +398,26 @@ resource "kubernetes_deployment" "openclaw" {
     strategy {
       type = "Recreate"
     }
-    replicas = 1
+    # PARKED 2026-09-04 (Viktor, bead code-hn6k). Scaled to 0 as a one-week
+    # reversibility test before deciding whether to decommission properly.
+    #
+    # Why: the cluster cannot drain a node because memory REQUESTS are
+    # oversubscribed while actual use sits at 41-54%, and this namespace
+    # reserves 2,560 MiB across five containers. Measured over 30 days the
+    # openclaw container peaked at 1,111 MiB and burnt 2,325 CPU-seconds in
+    # 7 days, about 0.4% of a core, while restarting 15 times.
+    #
+    # Evidence it is not in use: every "telegram" line in 30 days of Loki is a
+    # startup banner (15 restarts x 4 lines), with no message traffic;
+    # recruiter-responder, one of its consumers, has been at 0/0 replicas for
+    # 111 days; and nextcloud-todos shows no approval-card dispatches.
+    #
+    # Deliberately a park, not a removal. Five stacks still reference this
+    # namespace (nextcloud-todos, recruiter-responder, n8n,
+    # tuya-bridge/saksii_poller, monitoring's dashboard + walloff probe +
+    # scrape), and unpicking those is the real work. If nothing misses it in a
+    # week, that removal gets its own change. Reverting is this one line.
+    replicas = 0
     selector {
       match_labels = {
         app = "openclaw"
@@ -1695,7 +1714,10 @@ resource "kubernetes_deployment" "task_webhook" {
     }
   }
   spec {
-    replicas = 1
+    # Parked alongside the openclaw deployment above, same date and reasoning.
+    # It exists only to receive callbacks for openclaw tasks, so with openclaw
+    # at 0 it has nothing to serve. 64 MiB.
+    replicas = 0
     selector {
       match_labels = {
         app = "task-webhook"

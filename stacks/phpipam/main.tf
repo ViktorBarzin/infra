@@ -11,6 +11,15 @@ data "vault_kv_secret_v2" "secrets" {
 
 locals {
   technitium_password = data.vault_kv_secret_v2.secrets.data["technitium_password"]
+  technitium_username = try(data.vault_kv_secret_v2.secrets.data["technitium_username"], "admin")
+  # Optional Technitium PERMANENT API token. A session login is tied to the admin
+  # password, so rotating that password silently breaks every consumer of this
+  # API; a permanent token survives it. The key is absent from Vault today, so
+  # this is "" and phpipam-dns-sync falls back to the session login. Minting it
+  # is a one-time human step -- POST /api/user/createToken with user, pass and
+  # tokenName -- then `vault kv patch secret/platform technitium_api_token=...`,
+  # after which the next apply picks it up with no code change.
+  technitium_api_token = try(data.vault_kv_secret_v2.secrets.data["technitium_api_token"], "")
 }
 
 resource "kubernetes_namespace" "phpipam" {
@@ -298,69 +307,158 @@ resource "kubernetes_cron_job_v1" "phpipam_dns_sync" {
               command = ["/bin/bash", "-c", <<-EOT
                 set -e
                 TECH_URL="http://technitium-web.technitium.svc.cluster.local:5380"
+                TECH_OUT=/tmp/tech-response.json
 
-                # Login to Technitium
-                TECH_TOKEN=$$(curl -sf "$$TECH_URL/api/user/login?user=admin&pass=$$TECH_PASS" | sed 's/.*"token":"\([^"]*\)".*/\1/')
-                if [ -z "$$TECH_TOKEN" ]; then echo "Technitium login failed"; exit 1; fi
-                echo "Technitium auth OK"
+                # Every Technitium API endpoint answers HTTP 200 and carries the
+                # real outcome in a JSON "status" field, so `curl -sf` on its own
+                # cannot tell success from failure. Verified against the live API
+                # 2026-09-03: a wrong password returns 200 {"status":"error"} and a
+                # stale token returns 200 {"status":"invalid-token"}. The previous
+                # version of this script tested the login only for an EMPTY token,
+                # so a rotated password left TECH_TOKEN holding the error JSON
+                # itself, printed "Technitium auth OK", wrote nothing, and exited 0
+                # -- a silent no-op sync that no monitor could see. tech_call
+                # publishes TECH_HTTP / TECH_STATUS / TECH_BODY and returns
+                # non-zero unless status is "ok".
+                tech_call() {
+                  TECH_PATH="$1"; shift
+                  # Truncate first: on a connection failure curl writes no output
+                  # file at all, and without this the parse below reads the PREVIOUS
+                  # call's body and reports its status as this call's.
+                  : > "$$TECH_OUT"
+                  TECH_HTTP=$$(curl -s --max-time 20 -o "$$TECH_OUT" -w '%%{http_code}' "$$TECH_URL$$TECH_PATH" "$$@") || TECH_HTTP=000
+                  TECH_STATUS=$$(sed -n 's/.*"status":"\([^"]*\)".*/\1/p' "$$TECH_OUT" | head -1)
+                  TECH_BODY=$$(head -c 300 "$$TECH_OUT" | tr -d '\n')
+                  [ "$$TECH_HTTP" = "200" ] && [ "$$TECH_STATUS" = "ok" ]
+                }
+
+                # --- authenticate -------------------------------------------------
+                # Prefer a Technitium PERMANENT API token when one is in Vault: it
+                # survives an admin-password rotation, which a session login does
+                # not. Falls back to the session login while that key is absent.
+                if [ -n "$${TECH_API_TOKEN:-}" ]; then
+                  TECH_TOKEN="$$TECH_API_TOKEN"
+                  echo "Technitium auth: permanent API token from Vault"
+                else
+                  TECH_TOKEN=""
+                  BACKOFF=5
+                  for ATTEMPT in 1 2 3 4; do
+                    if tech_call "/api/user/login" --data-urlencode "user=$$TECH_USER" --data-urlencode "pass=$$TECH_PASS"; then
+                      TECH_TOKEN=$$(sed -n 's/.*"token":"\([^"]*\)".*/\1/p' "$$TECH_OUT" | head -1)
+                      echo "Technitium auth OK (session login, attempt $$ATTEMPT)"
+                      break
+                    fi
+                    echo "Technitium login attempt $$ATTEMPT/4 failed: http=$$TECH_HTTP status=$${TECH_STATUS:-<none>} body=$${TECH_BODY:-<empty>}"
+                    # status "error" means Technitium answered and rejected the
+                    # credentials. Retrying that just burns 75s and logs the same
+                    # line four times; only a connection failure or a 5xx is worth
+                    # waiting out (Technitium restarting, which is what the
+                    # 2026-08-04 primary outage looked like from in here).
+                    if [ "$$TECH_STATUS" = "error" ]; then
+                      echo "Technitium rejected the credentials; this is not transient, not retrying"
+                      break
+                    fi
+                    [ "$$ATTEMPT" = "4" ] && break
+                    echo "  retrying in $${BACKOFF}s"
+                    sleep "$$BACKOFF"
+                    BACKOFF=$$((BACKOFF * 2))
+                  done
+                fi
+                if [ -z "$$TECH_TOKEN" ]; then
+                  echo "Technitium login failed; see the per-attempt http/status/body lines above"
+                  exit 1
+                fi
+
+                # Prove the credential actually works BEFORE touching phpIPAM, so a
+                # bad token fails the Job here with a readable reason instead of
+                # writing zero records and exiting green.
+                if ! tech_call "/api/zones/list?token=$$TECH_TOKEN"; then
+                  echo "Technitium token rejected: http=$$TECH_HTTP status=$${TECH_STATUS:-<none>} body=$${TECH_BODY:-<empty>}"
+                  exit 1
+                fi
+                echo "Technitium auth verified"
 
                 # Query phpIPAM MySQL directly for hosts with hostnames
-                HOSTS=$$(mysql -h $$DB_HOST -u $$DB_USER -p$$DB_PASS $$DB_NAME -N -B -e \
-                  "SELECT INET_NTOA(ip_addr), hostname FROM ipaddresses WHERE hostname != '' AND hostname IS NOT NULL AND subnetId >= 7")
+                mysql -h $$DB_HOST -u $$DB_USER -p$$DB_PASS $$DB_NAME -N -B -e \
+                  "SELECT INET_NTOA(ip_addr), hostname FROM ipaddresses WHERE hostname != '' AND hostname IS NOT NULL AND subnetId >= 7" > /tmp/hosts.tsv
 
+                # Read from a file, not a pipeline: `... | while` runs the loop in a
+                # subshell, so the counters below never survived it.
                 SYNCED=0
-                echo "$$HOSTS" | while IFS=$$'\t' read -r IP HOSTNAME; do
+                FAILED=0
+                while IFS=$$'\t' read -r IP HOSTNAME; do
                   [ -z "$$IP" ] || [ -z "$$HOSTNAME" ] && continue
                   SHORT=$$(echo "$$HOSTNAME" | cut -d. -f1)
                   FQDN="$$SHORT.viktorbarzin.lan"
 
                   # A record
-                  curl -sf -o /dev/null -X POST "$$TECH_URL/api/zones/records/add?token=$$TECH_TOKEN" \
-                    -d "domain=$$FQDN&zone=viktorbarzin.lan&type=A&ipAddress=$$IP&overwrite=true&ttl=300"
+                  if tech_call "/api/zones/records/add?token=$$TECH_TOKEN" -X POST \
+                    -d "domain=$$FQDN&zone=viktorbarzin.lan&type=A&ipAddress=$$IP&overwrite=true&ttl=300"; then
+                    SYNCED=$$((SYNCED + 1))
+                    echo "  $$IP -> $$FQDN"
+                  else
+                    FAILED=$$((FAILED + 1))
+                    echo "  A add FAILED $$IP -> $$FQDN: http=$$TECH_HTTP status=$${TECH_STATUS:-<none>} body=$${TECH_BODY:-<empty>}"
+                  fi
 
-                  # PTR record
+                  # PTR record. Tolerated on failure as before: reverse zones do not
+                  # exist for every subnet, so a miss here is normal, not an error.
                   O1=$$(echo $$IP | cut -d. -f1); O2=$$(echo $$IP | cut -d. -f2)
                   O3=$$(echo $$IP | cut -d. -f3); O4=$$(echo $$IP | cut -d. -f4)
-                  curl -sf -o /dev/null -X POST "$$TECH_URL/api/zones/records/add?token=$$TECH_TOKEN" \
-                    -d "domain=$$O4.$$O3.$$O2.$$O1.in-addr.arpa&zone=$$O3.$$O2.$$O1.in-addr.arpa&type=PTR&ptrName=$$FQDN&overwrite=true&ttl=300" 2>/dev/null || true
-
-                  SYNCED=$$((SYNCED + 1))
-                  echo "  $$IP -> $$FQDN"
-                done
-                echo "Push sync complete"
+                  tech_call "/api/zones/records/add?token=$$TECH_TOKEN" -X POST \
+                    -d "domain=$$O4.$$O3.$$O2.$$O1.in-addr.arpa&zone=$$O3.$$O2.$$O1.in-addr.arpa&type=PTR&ptrName=$$FQDN&overwrite=true&ttl=300" || true
+                done < /tmp/hosts.tsv
+                echo "Push sync complete: $$SYNCED A record(s) written, $$FAILED failure(s)"
+                if [ "$$SYNCED" -eq 0 ] && [ "$$FAILED" -gt 0 ]; then
+                  echo "Every A record write failed; treating this run as failed rather than reporting success"
+                  exit 1
+                fi
 
                 # Reverse sync: pull hostnames from DNS into phpIPAM for unnamed entries
                 echo ""
                 echo "=== Reverse sync: DNS -> phpIPAM ==="
-                UNNAMED=$$(mysql -h $$DB_HOST -u $$DB_USER -p$$DB_PASS $$DB_NAME -N -B -e \
-                  "SELECT id, INET_NTOA(ip_addr) FROM ipaddresses WHERE (hostname IS NULL OR hostname = '') AND subnetId >= 7")
+                mysql -h $$DB_HOST -u $$DB_USER -p$$DB_PASS $$DB_NAME -N -B -e \
+                  "SELECT id, INET_NTOA(ip_addr) FROM ipaddresses WHERE (hostname IS NULL OR hostname = '') AND subnetId >= 7" > /tmp/unnamed.tsv
 
-                echo "$$UNNAMED" | while IFS=$$'\t' read -r ID IP; do
+                while IFS=$$'\t' read -r ID IP; do
                   [ -z "$$ID" ] || [ -z "$$IP" ] && continue
                   # Query Technitium for PTR record
                   O1=$$(echo $$IP | cut -d. -f1); O2=$$(echo $$IP | cut -d. -f2)
                   O3=$$(echo $$IP | cut -d. -f3); O4=$$(echo $$IP | cut -d. -f4)
                   PTR_NAME="$$O4.$$O3.$$O2.$$O1.in-addr.arpa"
                   REV_ZONE="$$O3.$$O2.$$O1.in-addr.arpa"
-                  RESULT=$$(curl -sf "$$TECH_URL/api/zones/records/get?token=$$TECH_TOKEN&domain=$$PTR_NAME&zone=$$REV_ZONE&type=PTR" 2>/dev/null)
-                  HOSTNAME=$$(echo "$$RESULT" | sed -n 's/.*"ptrName":"\([^"]*\)".*/\1/p' | head -1)
+                  tech_call "/api/zones/records/get?token=$$TECH_TOKEN&domain=$$PTR_NAME&zone=$$REV_ZONE&type=PTR" || continue
+                  HOSTNAME=$$(sed -n 's/.*"ptrName":"\([^"]*\)".*/\1/p' "$$TECH_OUT" | head -1)
                   [ -z "$$HOSTNAME" ] && continue
 
                   # Extract short name
                   SHORT=$$(echo "$$HOSTNAME" | cut -d. -f1)
                   [ -z "$$SHORT" ] && continue
+                  # $$SHORT is interpolated into SQL below and its value comes from a
+                  # DNS record, so restrict it to what a hostname label may contain.
+                  case "$$SHORT" in
+                    *[!A-Za-z0-9-]*) echo "  skipping $$IP: PTR name '$$SHORT' is not a plain hostname label"; continue ;;
+                  esac
 
                   # Update phpIPAM
                   mysql -h $$DB_HOST -u $$DB_USER -p$$DB_PASS $$DB_NAME -e \
                     "UPDATE ipaddresses SET hostname='$$SHORT' WHERE id=$$ID AND (hostname IS NULL OR hostname = '')"
                   echo "  $$IP -> $$SHORT (from DNS)"
-                done
+                done < /tmp/unnamed.tsv
                 echo "Bidirectional sync complete"
               EOT
               ]
               env {
+                name  = "TECH_USER"
+                value = local.technitium_username
+              }
+              env {
                 name  = "TECH_PASS"
                 value = local.technitium_password
+              }
+              env {
+                name  = "TECH_API_TOKEN"
+                value = local.technitium_api_token
               }
               env {
                 name  = "DB_HOST"

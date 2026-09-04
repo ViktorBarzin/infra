@@ -255,8 +255,23 @@ Three things the report tells you that the old count could not:
 - **Symbols** are `+` created, `-` destroyed, `~` updated in-place, `±` replaced.
   A stack showing only `±` on `null_resource` is almost always a
   `triggers = { always = timestamp() }` resource, which can never plan clean by
-  construction — `infra`, `monitoring`, `technitium` and `dbaas` are the standing
-  examples. Those are expected, not a backlog.
+  construction. As of 2026-09-03 there is exactly ONE left, `monitoring`, and it
+  is deliberate: `null_resource.grafana_admin_only_folder_acl` re-asserts the
+  folder ACL on every apply so that a permission edited in the Grafana UI is put
+  back, and nothing else enforces that. Treat a `±` there as expected.
+
+  `infra`, `technitium` and `dbaas` used to be listed here too. As of 2026-09-03
+  none of them contains a `timestamp()` or `uuid()` trigger any more, checked by
+  grep across the whole `stacks/` tree. `technitium`'s gate had its `always`
+  trigger removed once its four digest triggers were shown to cover every real
+  rollout, with Prometheus watching DNS health continuously in between (commit
+  `3e75f574`); `technitium` and `tts` were each re-planned afterwards and both
+  report `No changes`. `infra` was separately resolved earlier the same day.
+  `dbaas` was not re-planned, so treat "no nondeterministic trigger" as the
+  claim there rather than "plans clean".
+
+  Before treating any remaining `±` as unavoidable, check whether the trigger is
+  doing work nothing else does, as `monitoring`'s is.
 - **"Could not be planned" is separate from "differs"**, and means state
   unknown. When the errored stacks form a contiguous **alphabetical tail** the
   report says the run most likely aborted partway and the counts are incomplete.
@@ -293,8 +308,22 @@ separates it from `renew-tls` and from the PVE backup chain; and metrics are emi
 *after* the confirmation pass rather than inside the plan loop, so a reclassified
 stack needs no metric rewritten (the Pushgateway is also read once for the
 first-seen timestamps instead of once per drifted stack). `drift_stack_first_seen`
-is still preserved across runs, so `DriftUnaddressed` keeps ageing a stack that
-genuinely keeps drifting.
+is preserved across runs, so `DriftUnaddressed` ages a stack that genuinely keeps
+drifting.
+
+The read-back is fussier than it looks. The Pushgateway does not serve a metric
+in the shape you pushed it: it adds `instance` and `job` grouping labels, sorts
+the label set, and renders the value as a Go float
+(`drift_stack_first_seen{instance="",job="drift-detection",stack="monitoring"}
+1.788494507e+09`). The lookup compared the whole label set as a literal string
+against what the run had pushed, so it matched nothing, every drifted stack was
+stamped as first seen at the current run, and `drift_stack_age_hours` read 0 for
+every stack from the day the metric was added until 2026-09-04. Anything else
+reading a metric back off the gateway wants to match on the metric name plus the
+label it cares about, and to parse the value as a float rather than feeding it to
+shell arithmetic. Ages accumulate from the first run after the fix; the earlier
+first-seen history was overwritten nightly and is only recoverable from
+`drift_stack_state` in Prometheus.
 
 **Errored stacks are deliberately not re-planned** — "could not be planned" is a
 different signal from "differs", and re-running a failing plan does not make the
