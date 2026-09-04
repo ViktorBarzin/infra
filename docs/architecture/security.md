@@ -477,7 +477,7 @@ Beads epic: `code-8ywc`. **Status: partially live as of 2026-05-18.**
 | W1.4 Kyverno security policies → Enforce | **LIVE** — 3 policies in Enforce mode with 35-namespace exclude list. |
 | W1.5 Kyverno trusted-registries → Enforce | **LIVE** — explicit allowlist (15 registries + 6 DockerHub library bare names + 56 DockerHub user repos). Verified by admission dry-run: `evilcorp.example/malware:v1` BLOCKED, `alpine:3.20` and `docker.io/library/alpine:3.20` ALLOWED. |
 | W1.6 Calico observe-phase (pilot: recruiter-responder) | **LIVE** (2026-05-19) — GlobalNetworkPolicy `wave1-egress-observe-recruiter-responder` with rules `[action:Log, action:Allow]`. FelixConfiguration.flowLogsFileEnabled approach abandoned (Calico Enterprise-only field, rejected by OSS v3.26). Log action emits iptables LOG with prefix `calico-packet: ` → kernel → journald → Alloy → Loki. Verified: `{job="node-journal"} \|~ "calico-packet"` returns real packet metadata (SRC/DST/PROTO). Expand to more namespaces by adding to `namespaceSelector`. |
-| W1.7 NetworkPolicy phased enforce | **PARTIAL ANALYSIS** — first observation snapshot at `docs/architecture/wave1-egress-observation-2026-05-22.md` (36 source namespaces seen so far, 29 thin-profile candidates). Recommend continuing observation through 2026-05-29 (full week) before any enforce flip. Pilot enforce target: `recruiter-responder` (2 destinations only). `servarr` stays in Log+Allow indefinitely (BitTorrent P2P incompatible with static enforce). |
+| W1.7 NetworkPolicy phased enforce | **ANALYSIS COMPLETE, RESCOPED, NOTHING ENFORCED** (2026-09-04) — full-window snapshot at `docs/architecture/wave1-egress-observation-2026-09-04.md`, read from 7.19M banked `calico-packet` lines by `scripts/egress-observation.py` (committed and re-runnable). Of the 101 tier 3+4 namespaces, 85 ran a pod in the week, 50 reached anything external, and 2 of those (`servarr`, `chrome-service`) account for 96% of the 9,822 external addresses. **Scope changed 2026-09-04:** Viktor declined default-deny egress across all 101 namespaces; W1.7 is now per-namespace and opt-in on a named handful. Recommended order: `learn` (2 GitHub SSH addresses), `ntfy` (zero external), `webhook-handler`, `kms`. `recruiter-responder` is no longer the pilot — it has run no pods for ~16 days and `stacks/recruiter-responder/main.tf:185` sets `replicas = 0`. Calico OSS v3.30.7 offers no `domains:` selector, so every allowlist is CIDR-based. `servarr` stays in Log+Allow indefinitely (BitTorrent P2P incompatible with static enforce). |
 
 The block below documents the locked design.
 
@@ -629,9 +629,12 @@ SELECT DISTINCT dst_ns FROM edge WHERE src_ns='<ns>' AND action='allow' ORDER BY
 The full SQL recipe (whole-cluster matrix, deny sanity-checks, the ≥7-day
 observation caveat) is in
 [runbooks/goldmane-flow-trail.md → Deriving the Wave-1 egress allowlist](../runbooks/goldmane-flow-trail.md#deriving-the-wave-1-egress-allowlist-from-the-edge-table-infra-62).
-**External / public-internet egress is NOT in this table** (empty-namespace flows
-are dropped) — for those destinations keep using the Calico flow-log observation
-(the W1.6 snapshot, `wave1-egress-observation-2026-05-22.md`). This feeds the
+**External / public-internet egress is NOT in this table** (a destination with no
+namespace is normalised to the sentinel `dst_ns = '-'`, which records that a
+namespace egressed off-cluster but never to where) — for those destinations keep
+using the Calico flow-log observation (the W1.6 snapshot,
+`wave1-egress-observation-2026-09-04.md`, read by
+`scripts/egress-observation.py`). This feeds the
 existing observe-then-enforce effort (beads `code-8ywc`); **enforce-flips remain
 out of scope** of the trail — it is observe-and-derive only.
 

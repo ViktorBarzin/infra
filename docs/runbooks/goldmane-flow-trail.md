@@ -199,11 +199,13 @@ the `edge` table intentionally aggregates that away.
 
 The durable edge set is a faster, identity-stamped data source for the existing
 **observe-then-enforce** egress effort (beads `code-8ywc`; snapshot
-`docs/architecture/wave1-egress-observation-2026-05-22.md`) than the original
+`docs/architecture/wave1-egress-observation-2026-09-04.md`) than the original
 iptables-`LOG` → journald → Loki path (ADR-0014 consequence: "Enforcement gains
 a better data source"). It replaces the *internal* (namespace-to-namespace) leg
-of the allowlist; **external/public-internet egress is NOT in this table** (empty
-dst namespace, dropped) — for those destinations keep using the Calico flow-log
+of the allowlist; **external/public-internet egress is NOT in this table**
+(a destination with no namespace is normalised to the sentinel `dst_ns = '-'`,
+which records that a namespace egressed off-cluster but never to where — 141
+such rows across 139 source namespaces as of 2026-09-04) — for those destinations keep using the Calico flow-log
 path described in security.md.
 
 **Per-namespace internal egress allowlist** — the set of in-cluster namespaces a
@@ -241,7 +243,7 @@ the external destinations still come from the Wave-1 observation snapshot.
 the phased per-namespace default-deny rollout (starting `recruiter-responder`)
 is tracked under `code-8ywc`. Cross-links:
 [security.md → NetworkPolicy Default-Deny Egress](../architecture/security.md#networkpolicy-default-deny-egress-wave-1--observe-then-enforce-tier-34),
-[wave1-egress-observation-2026-05-22.md](../architecture/wave1-egress-observation-2026-05-22.md),
+[wave1-egress-observation-2026-09-04.md](../architecture/wave1-egress-observation-2026-09-04.md),
 [ADR-0014](../adr/0014-service-identity-and-east-west-observability.md).
 
 > **Caveat (same as the Wave-1 snapshot):** an edge only exists if it was
@@ -340,7 +342,7 @@ completed; confirm the aggregator pod is `Running` and not `ImagePullBackOff`
 - [ADR-0014 — Service identity & east-west observability](../adr/0014-service-identity-and-east-west-observability.md)
 - [security.md — NetworkPolicy Default-Deny Egress + east-west flow observability](../architecture/security.md)
 - [monitoring.md — east-west flow observability + alerts](../architecture/monitoring.md)
-- [wave1-egress-observation-2026-05-22.md](../architecture/wave1-egress-observation-2026-05-22.md)
+- [wave1-egress-observation-2026-09-04.md](../architecture/wave1-egress-observation-2026-09-04.md)
 - `CONTEXT.md` glossary — **Service identity**, **Goldmane / Whisker**
 - Code: `~/code/goldmane-edge-aggregator` (`README.md`, `DEPLOY.md`); stacks
   `stacks/goldmane-edge-aggregator`, `stacks/calico`
