@@ -303,9 +303,18 @@
     # Apps tolerate SIGKILL; databases do not -- this deliberately favours DBs.
     #
     # This is the half tied to P1 bead code-xgcg, "no working graceful shutdown
-    # on power loss". Live /configz on every node reads shutdownGracePeriod: 0s
-    # with shutdownGracePeriodByPodPriority ABSENT, so today there is no
-    # priority-ordered shutdown at all. Update code-xgcg with what lands.
+    # on power loss". Before this playbook, live /configz on every node read
+    # shutdownGracePeriod: 0s with shutdownGracePeriodByPodPriority ABSENT, so
+    # there was no priority-ordered shutdown at all. Verified 2026-09-05: all six
+    # nodes now return a byte-identical 9-rung ladder from their live /configz,
+    # and each node's logind admits it (InhibitDelayMaxUSec 480s).
+    #
+    # The 180s figure below is the guest's `down=` in `qm config`, read live on
+    # 2026-09-05 for all six k8s guests. Note that the six have DISTINCT startup
+    # orders (10, 20-24), so Proxmox stops them one at a time rather than in
+    # parallel: 6 x 180s = 18 minutes for the k8s half of a host shutdown. See
+    # docs/plans/2026-07-18-graceful-shutdown-on-power-loss.md section 4, which
+    # weighs that against the battery margin the UPS trigger leaves.
     kubelet_shutdown_ladder:
       - priority: 0
         shutdownGracePeriodSeconds: 10
