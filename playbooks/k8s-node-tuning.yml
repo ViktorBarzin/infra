@@ -143,8 +143,32 @@
 #             scripts/check-node-kubelet-tune
 #             ssh wizard@10.0.20.104 'command -v unpigz; sudo containerd config dump | grep discard_unpacked'
 #
-# A --check run against converged nodes should be a no-op. Output that is not a
-# no-op means a node has drifted, or has been rebuilt without the setting.
+# THE DRIFT CONTRACT
+# ------------------
+# A `--check --diff` run against converged nodes IS A NO-OP. Any host reporting
+# `changed=` above zero in the PLAY RECAP has drifted: a `kubeadm upgrade node`
+# rewrote its kubelet config, the nvidia toolkit regenerated node1's containerd
+# drop-in, or the node was rebuilt without a playbook run. That is the whole
+# signal, and it is the same contract playbooks/devvm.yml has.
+#
+# Verified 2026-09-05: `changed=0` on all six hosts. Getting there needed two
+# fixes, both worth knowing about because both are easy to reintroduce:
+#   * `get_url` with no `checksum` reports `changed` under --check on a file that
+#     is byte-identical to the URL, so the Docker key task lied on every node,
+#     every run. It is now guarded by a `stat`. A permanent false positive in a
+#     drift check is worse than no check, because people learn to skip it.
+#   * k8s-node4 and k8s-node5 had never had the `aptsource` half applied at all,
+#     so their drift was real and had simply never been looked at.
+#
+# NOBODY HAS TO REMEMBER TO RUN THIS. `scripts/k8s-node-drift-check` does it
+# hourly from the devvm (`k8s-node-drift-check.timer`, installed by
+# playbooks/devvm.yml), pushes gauges to the Prometheus pushgateway, and five
+# rules in stacks/monitoring put a warning in Slack #alerts through Alertmanager.
+# It REPORTS and does not re-apply: re-applying writes kubelet config to six
+# nodes, where a bad key combination means a node that will not boot and a
+# console-only recovery. A person reads the alert and runs the playbook. Bead
+# code-yypr, which also found that five documents claimed this playbook was
+# "reconciled hourly" when nothing scheduled it anywhere.
 
 - name: Kubernetes node network tuning
   hosts: "{{ k8s_nodes_target | default('k8s_nodes') }}"
@@ -403,6 +427,59 @@
       shutdownGracePeriodCriticalPods: "0s"
       shutdownGracePeriodByPodPriority: "{{ kubelet_shutdown_ladder }}"
 
+      # Image garbage collection thresholds, and the hard eviction set, pinned at
+      # exactly what the six nodes run today. Added 2026-09-05 for bead code-yypr,
+      # which asked for the values that are live rather than the values someone
+      # wishes were live.
+      #
+      # THIS CHANGES NO BEHAVIOUR. Both blocks are the kubelet's own defaults,
+      # read from live /configz on all six nodes on 2026-09-05:
+      #   imageGCHighThresholdPercent 85, imageGCLowThresholdPercent 80
+      #   evictionHard  memory.available 100Mi · nodefs.available 10%
+      #                 nodefs.inodesFree 5% · imagefs.available 15%
+      #                 imagefs.inodesFree 5%
+      # None of them appears in /var/lib/kubelet/config.yaml on any node — the
+      # kubelet fills them in at startup — so declaring them writes five new lines
+      # to the file and leaves the running behaviour identical.
+      #
+      # WHY DECLARE A DEFAULT AT ALL. Because `.claude/CLAUDE.md` claimed for
+      # months that imageGC ran at 70/60 sourced from stacks/infra/main.tf, and a
+      # repo-wide grep found nothing setting either key while live read 85/80
+      # (bead code-fjtu). A plan nearly shipped 70/60 believing it was restoring
+      # something. An undeclared default and an erased setting look identical from
+      # the repo, and that ambiguity is the whole bug. Written down, the next
+      # change to them is a diff someone approves.
+      #
+      # THE COST, stated plainly: if upstream kubelet ever changes these defaults
+      # for a good reason, we keep the old numbers and have to notice. That is the
+      # trade this bead deliberately takes -- a visible stale value beats an
+      # invisible live one.
+      #
+      # NOT the values the deleted post-join script asked for. It wanted
+      # evictionHard {memory.available 500Mi, nodefs.available 15%,
+      # imagefs.available 20%}, which is MORE aggressive than the defaults: node5
+      # has 4.07 GB of headroom to its imageGC threshold and moving
+      # imagefs.available to 20% would make it evict sooner, the opposite of what
+      # docs/plans/2026-09-02-node1-large-image-handling.md set out to do.
+      # `.claude/CLAUDE.md` recorded evictionHard as having "survived" the v1.35.7
+      # upgrade; it did not, live is the default set, and the old
+      # scripts/check-node-kubelet-tune row read as a false pass because it only
+      # tested for a truthy memory.available. Adopting 500Mi/15%/20% would be a
+      # new behaviour change and needs its own decision.
+      #
+      # Kubelet 1.35 validation: high must exceed low (85 > 80), each percentage
+      # in [0,100], and every evictionHard signal must be a known one. No feature
+      # gate is involved, unlike the three keys above.
+      imageGCHighThresholdPercent: 85
+      imageGCLowThresholdPercent: 80
+
+      evictionHard:
+        memory.available: 100Mi
+        nodefs.available: 10%
+        nodefs.inodesFree: 5%
+        imagefs.available: 15%
+        imagefs.inodesFree: 5%
+
     # DELIBERATELY NOT DECLARED — bead code-eu6l.
     #
     #   systemReserved:  {memory: 512Mi, cpu: 200m}
@@ -486,26 +563,20 @@
     # Note evictionSoftGracePeriod cannot be declared without evictionSoft
     # anyway — kubelet requires a matching soft threshold for every grace period.
     #
-    # ALSO NOT DECLARED, and why, so nothing is lost silently:
-    #   evictionHard {memory.available 500Mi, nodefs.available 15%, imagefs.available 20%}
-    #     The script's values are MORE aggressive than the kubelet defaults the
-    #     nodes run today (100Mi / 10% / 15%). k8s-node5 has 4.07 GB of headroom
-    #     to its imageGC threshold; moving imagefs.available to 20% would make it
-    #     evict sooner, which is the opposite of this plan's goal.
-    #     `.claude/CLAUDE.md` records evictionHard as having "survived" the
-    #     upgrade. Live /configz shows the kubelet DEFAULT set, not the script's,
-    #     and scripts/check-node-kubelet-tune reads it as present only because it
-    #     tests for any truthy memory.available — so that is a false pass worth
-    #     correcting separately.
+    # MOVED INTO kubelet_declared on 2026-09-05 (bead code-yypr), at their live
+    # values rather than the deleted script's: evictionHard,
+    # imageGCHighThresholdPercent and imageGCLowThresholdPercent. The reasoning,
+    # including why the script's more aggressive eviction numbers are NOT adopted,
+    # sits with the keys themselves in kubelet_declared above.
+    #
+    # STILL NOT DECLARED, and why, so nothing is lost silently:
     #   containerLogMaxFiles: 3   (live is the default 5). A small disk saving,
     #     not part of Phase 3. containerLogMaxSize is already 10Mi live, which is
     #     both the script's value and the kubelet default, so there is nothing to
     #     restore there.
-    #   imageGCHighThresholdPercent / imageGCLowThresholdPercent. A repo-wide grep
-    #     outside docs/ returns zero matches, so nothing here has ever set them and
-    #     live 85/80 is the upstream kubelet default rather than a third erasure.
-    #     Lowering them would be a new behaviour change, and the plan's own
-    #     analysis argues imageMaximumGCAge is the knob that matches the cause.
+    #   evictionPressureTransitionPeriod. On disk 0s, live 5m0s after defaulting.
+    #     Same shape as the two blocks just promoted, and a candidate for the same
+    #     treatment; left out here to keep this change to the keys the bead named.
 
   tasks:
     # ---- pre-flight: the feature gates the declared keys depend on ---------
@@ -997,6 +1068,32 @@
           built against the wrong glibc.
       tags: aptsource
 
+    # Fetched only when the file is missing, and that guard is the point rather
+    # than an optimisation. `get_url` with no `checksum` cannot compare an
+    # existing file against the URL without downloading it, so under `--check` it
+    # reports `changed` on every node, every run, forever. Measured 2026-09-05 on
+    # k8s-master: the key is present, its sha256 is
+    # 1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570 and the URL
+    # serves exactly those bytes -- and the task still said `changed` under
+    # --check. That false positive was half of why a --check run had never been
+    # the no-op this file's header promises, and a drift check that cries wolf
+    # every hour is a drift check people learn to ignore.
+    #
+    # A pinned `checksum:` was the other option and is worse here: Docker rotates
+    # the key on their schedule, and the failure mode would be an hourly alert
+    # about a key rotation rather than about node config. The repo this key signs
+    # only makes containerd.io VISIBLE -- the package is apt-held, so nothing
+    # installs from it without a deliberate unhold -- and apt verifies the
+    # signature itself on every update, so a corrupt key surfaces there.
+    - name: Is Docker's apt signing key already installed
+      ansible.builtin.stat:
+        path: /etc/apt/keyrings/docker.asc
+      register: docker_key_file
+      # Read-only, and it must answer under --check or the guard below cannot be
+      # evaluated and the task reports a false change again.
+      check_mode: false
+      tags: aptsource
+
     - name: Docker's apt signing key
       ansible.builtin.get_url:
         url: https://download.docker.com/linux/ubuntu/gpg
@@ -1005,6 +1102,7 @@
         owner: root
         group: root
       register: docker_key
+      when: not docker_key_file.stat.exists
       tags: aptsource
 
     - name: Docker's apt source, pointed at this host's own suite

@@ -393,8 +393,11 @@ Needed by the `proxy` shared per-country NordVPN gateway + Headscale exit nodes,
 which FORWARD foreign-origin traffic onto gluetun's `tun0` (impossible without
 `ip_forward=1` in the pod netns; the runtime mounts `/proc/sys` read-only, so it
 cannot be set at runtime even with `NET_ADMIN`). Declared in
-`playbooks/k8s-node-tuning.yml` as `kubelet_allowed_unsafe_sysctls` and
-reconciled hourly on all six nodes. The one-shot
+`playbooks/k8s-node-tuning.yml` as `kubelet_allowed_unsafe_sysctls` on all six
+nodes. The playbook is applied by hand; what runs hourly is
+`scripts/k8s-node-drift-check`, which reports divergence and does not repair it
+(corrected 2026-09-05, code-yypr — this paragraph previously said the playbook
+itself was reconciled hourly, and nothing scheduled it). The one-shot
 `modules/create-template-vm/k8s-node-post-join-tune.sh` that previously owned it
 ran once per node with nothing re-applying it, so `kubeadm upgrade node` erased
 the key cluster-wide in July 2026; that script is deleted as of 2026-09-03.
@@ -408,7 +411,7 @@ unique | sort`), so the playbook guarantees `net.ipv4.ip_forward` is present but
 will not remove an unsafe sysctl added out of band. Detect that case with
 `scripts/check-node-kubelet-tune`. The playbook also writes the
 file without restarting kubelet, so a change to this list takes effect at the
-node's next reboot rather than at the next hourly run.
+node's next reboot rather than when the playbook runs.
 
 #### Operational Policies
 

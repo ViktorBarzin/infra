@@ -1,0 +1,23 @@
+[Unit]
+Description=Report drift between the k8s nodes and playbooks/k8s-node-tuning.yml
+Documentation=file:///home/wizard/code/infra/scripts/k8s-node-drift-check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as wizard, not root: it needs that account's SSH keys to reach the six
+# nodes and its kubeconfig to read each kubelet's /configz. Nothing here writes
+# to the nodes -- the ansible run is --check -- so it needs no privilege.
+User=wizard
+Group=wizard
+ExecStart=/usr/local/bin/k8s-node-drift-check
+StandardOutput=journal
+StandardError=journal
+# Reports drift, so a non-zero exit is the normal way it says something. Without
+# this, systemd marks the unit failed and the box's own failure alerting fires
+# alongside the Prometheus alert that is meant to carry the signal.
+SuccessExitStatus=0 1 2
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=20min

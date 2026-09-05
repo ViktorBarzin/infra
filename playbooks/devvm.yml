@@ -813,6 +813,54 @@
         enabled: true
         state: started
 
+    # ---- 8c) the k8s node drift check ---------------------------------------
+    # The devvm is where ansible, the node SSH keys and a kubeconfig already
+    # live, so it is where the check that compares the six k8s nodes against
+    # playbooks/k8s-node-tuning.yml runs. Added 2026-09-05 for bead code-yypr.
+    #
+    # It REPORTS, it does not repair. Several docs claimed for two days that the
+    # node tuning was "reconciled hourly"; nothing scheduled it, on this box or
+    # anywhere else, and the claim outlived every grep for it. This is the
+    # schedule those docs were describing, with one deliberate difference: an
+    # unattended run that WROTE kubelet config to six nodes could brick a node at
+    # its next boot with console-only recovery, so a person reads the alert and
+    # runs the playbook. What changes is that the person finds out.
+    #
+    # Reaches Slack through Prometheus: the script pushes gauges to the
+    # pushgateway, five rules in stacks/monitoring read them, and Alertmanager
+    # routes warning to #alerts. The freshness of the metric is alerted on too,
+    # so a checker that quietly stops running is itself the signal.
+    - name: Install the k8s node drift check
+      ansible.builtin.copy:
+        src: ../scripts/k8s-node-drift-check
+        dest: /usr/local/bin/k8s-node-drift-check
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Install the k8s node drift check units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - k8s-node-drift-check.service
+        - k8s-node-drift-check.timer
+      notify: reload systemd
+
+    # Same --check guard as the playwright reaper above: on a box that has never
+    # had this applied the unit file does not exist yet, and systemd cannot be
+    # asked about a unit that is not there.
+    - name: Enable the k8s node drift check timer
+      ansible.builtin.systemd_service:
+        name: k8s-node-drift-check.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
     # ---- 9) docker containment ----------------------------------------------
     - name: Create the capped docker slice
       ansible.builtin.template:

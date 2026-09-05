@@ -3615,6 +3615,63 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Calico: only {{ $value | printf \"%.0f\" }} of desired calico-node pods ready — networking degraded"
+          # ---- node OS config drift (bead code-yypr) --------------------------
+          # playbooks/k8s-node-tuning.yml declares the kubelet, containerd and
+          # sysctl settings kubeadm does not carry. Until 2026-09-05 nothing ran
+          # it on a schedule and nothing reported when live had diverged, so a
+          # `kubeadm upgrade node` erased the whole kubelet tune from all six
+          # nodes on 2026-07-26/27 and the first symptom anyone noticed arrived
+          # three weeks later as a VPN gateway that would not start.
+          #
+          # scripts/k8s-node-drift-check now runs hourly on the devvm
+          # (k8s-node-drift-check.timer, installed by playbooks/devvm.yml) and
+          # pushes these gauges. It reports and does not repair: re-applying is a
+          # human running the playbook, because a bad kubelet config combination
+          # makes kubelet exit at boot with console-only recovery.
+          #
+          # These do NOT gate kured. Its alertFilterMatchOnly is true, so only the
+          # named alerts in stacks/kured/main.tf block a reboot — which matters
+          # here, since the playbook writes files and the node's next reboot is
+          # what activates them. A drift alert that stopped reboots would keep
+          # itself firing.
+          - alert: K8sNodeConfigDrift
+            expr: k8s_node_config_drift_nodes{job="k8s-node-drift-check"} > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} k8s node(s) no longer match playbooks/k8s-node-tuning.yml"
+              description: "An `ansible-playbook --check --diff` of playbooks/k8s-node-tuning.yml is no longer a no-op. Which tasks differ is in the journal: homelab logs query '{job=\"devvm-journal\", unit=\"k8s-node-drift-check.service\"}' --since 24h. Re-apply with --limit on the affected node."
+          - alert: K8sNodeKubeletTuneDrift
+            expr: k8s_node_kubelet_tune_drift_nodes{job="k8s-node-drift-check"} > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} k8s node(s) are running a kubelet whose live config is missing part of the declared tune"
+              description: "Read from each kubelet's own /configz, not the file on disk, so this is what the kubelet actually loaded. A node reads drifted between an apply and its next reboot, which is expected; a node that has rebooted since the last apply and still reads drifted has genuinely lost the tune. Check with scripts/check-node-kubelet-tune."
+          - alert: K8sNodeDriftCheckStale
+            expr: (time() - k8s_node_config_drift_last_run_timestamp{job="k8s-node-drift-check"}) > 21600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "k8s node drift check last ran {{ $value | humanizeDuration }} ago (timer is hourly, threshold 6h)"
+              description: "A drift check that stops running is the same silent failure it exists to catch. Check: systemctl status k8s-node-drift-check.timer on the devvm."
+          - alert: K8sNodeDriftCheckNeverRun
+            expr: absent(k8s_node_config_drift_last_run_timestamp{job="k8s-node-drift-check"})
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "k8s node drift check has never pushed metrics to Pushgateway"
+          - alert: K8sNodeDriftCheckFailing
+            expr: k8s_node_config_drift_status{job="k8s-node-drift-check"} == 2
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "k8s node drift check could not complete — a node was unreachable or a check task failed"
       # Upgrade Gates: any firing alert here halts kured rolling reboots via
       # --prometheus-url + alertFilterRegexp ignore-list (see stacks/kured/main.tf).
       # These are silent-failure detectors and cluster-health velocity signals

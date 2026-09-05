@@ -88,7 +88,9 @@ roughly 20 services degraded for about 25 minutes. Prefer 0.1.
 
 **0.4 What else turned out to be uneven, and is not any more.** Converging the
 binary exposed three settings that had drifted with nothing declaring them. All
-three are now in `playbooks/k8s-node-tuning.yml` and reconciled hourly:
+three are now declared in `playbooks/k8s-node-tuning.yml`, and checked hourly for
+drift by `scripts/k8s-node-drift-check` (which reports; re-applying is a person
+running the playbook):
 
 | setting | was | now |
 |---|---|---|

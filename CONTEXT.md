@@ -258,7 +258,7 @@ The caching mirror tier on the registry VM that **Node**s pull upstream images t
 _Avoid_: "private registry" (that was decommissioned 2026-05-07); judging the nginx tier by hit ratio; treating a 200 from `/v2/` as a health signal — that path is a static version probe that never touches storage, so it answers 200 while every content request fails on a full disk.
 
 **Registry mirror**:
-The node-side half of a **Pull-through cache**: an `/etc/containerd/certs.d/<registry>/hosts.toml` entry telling containerd to try the cache before the real registry. Declared in `playbooks/k8s-node-tuning.yml` as `registry_mirrors` and reconciled hourly; read per pull rather than at containerd startup, so a change needs no restart.
+The node-side half of a **Pull-through cache**: an `/etc/containerd/certs.d/<registry>/hosts.toml` entry telling containerd to try the cache before the real registry. Declared in `playbooks/k8s-node-tuning.yml` as `registry_mirrors`, and checked hourly for drift by `scripts/k8s-node-drift-check`, which reports rather than re-applies. Read per pull rather than at containerd startup, so a change needs no restart.
 _Avoid_: treating "we have a cache" as meaning nodes use it. Until 2026-09-03 four of six nodes had no mirror for quay.io or registry.k8s.io and pulled them straight from the internet while the caches sat unused, and one cache was pointed at the wrong registry entirely. The cache existing and the cache being reached are separate facts, each worth checking.
 
 **Drop-in override**:
