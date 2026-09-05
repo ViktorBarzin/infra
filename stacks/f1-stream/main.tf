@@ -279,6 +279,21 @@ resource "kubernetes_deployment" "f1-stream" {
           # connection itself; the chrome-service-client-secrets ExternalSecret
           # below stays in place because the snapshot endpoint (dev-box only,
           # not used by f1-stream) reuses the same Vault key.
+          #
+          # Deliberately NOT repointed at chrome-fleet, which docs/playback-guard.md
+          # proposes as build step 2. Two things measured 2026-09-05 say that swap
+          # would be a regression rather than a fix:
+          #   - chrome-fleet:8080 is the lease broker, not a CDP endpoint. Its
+          #     /json/version returns the FleetView HTML page, so
+          #     connect_over_cdp() against it fails. Leasing is a code change
+          #     (backend/chrome_fleet.py), not an env value.
+          #   - the address below now answers. From this pod,
+          #     chrome-service:9222/json/version returned 200 Chrome/147.0.7727.55.
+          #     The connection-refused the design recorded was the neko container
+          #     in that pod being taskless after a restart; the pod has since
+          #     restarted again and reads 3/3 Running.
+          # The guard CronJob does not set this var at all — it leases a worker
+          # per run and injects that worker's URL directly. See f1-source-guard.tf.
           env {
             name  = "CHROME_CDP_URL"
             value = "http://chrome-service.chrome-service.svc.cluster.local:9222"

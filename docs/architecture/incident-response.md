@@ -173,6 +173,7 @@ For contributors who want to understand how the automation works.
 ```mermaid
 flowchart LR
     subgraph "Forgejo (viktor/infra)"
+        A0["f1-stream source guard<br/>(hourly, calendar-gated)"] --> A
         A["Issue labelled<br/>'broken'"] --> B[Webhook fires]
     end
 
@@ -186,6 +187,8 @@ flowchart LR
         I --> J[Comment on Issue]
         I --> K[Terraform Apply / push + CI]
         I --> L[Post-Mortem Pipeline]
+        H -->|"also labelled<br/>'f1-source'"| R[f1-source-fixer agent]
+        R --> S["push viktor/f1-stream<br/>watch deploy, verify,<br/>close the issue"]
     end
 
     subgraph "Post-Mortem Pipeline"
@@ -209,6 +212,8 @@ flowchart LR
 | Forgejo webhook | `viktor/infra` -> `POST /hooks/forgejo` | Fires on the `broken` label; signature-verified, gated, dispatches a fixer run |
 | fixer-tick CronJob | `stacks/claude-agent-service` | Drains queued `broken` issues and follows pushed commits through CI |
 | Issue Responder | `.claude/agents/issue-responder.md` | Reads issue, classifies, investigates, fixes or escalates |
+| f1-stream source guard | `stacks/f1-stream/f1-source-guard.tf` | Hourly CronJob, calendar-gated to T-2h and T-30m before a session. Plays each source's stream in a leased chrome-fleet worker and files `broken` + `f1-source` when the chain does not produce a moving picture |
+| f1 Source Fixer | `.claude/agents/f1-source-fixer.md` | Repairs an f1-stream extractor or resolver from an `f1-source` issue, ships to `viktor/f1-stream`, verifies recovery, closes the issue |
 | Post-Mortem Orchestrator | `.claude/agents/post-mortem.md` | 4-stage investigation pipeline |
 | SEV Triage | `.claude/agents/sev-triage.md` | Fast cluster scan + severity classification |
 | SEV Historian | `.claude/agents/sev-historian.md` | Cross-references past incidents |
@@ -242,6 +247,7 @@ The automated agent follows strict rules:
 | `sev1` / `sev2` / `sev3` | Severity classification |
 | `postmortem-required` | SEV1/SEV2 — the post-mortem pipeline owes a writeup |
 | `needs-human` | Escalated — handed back to a human |
+| `f1-source` | An f1-stream upstream source stopped producing playable streams — **routes the issue to `f1-source-fixer`** rather than being fixed in place |
 
 ### Commit Conventions
 
