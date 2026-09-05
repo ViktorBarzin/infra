@@ -127,8 +127,18 @@ elif [ "$DRIFTED_NODES" -gt 0 ] || [ "$KUBELET_DRIFT_NODES" -gt 0 ]; then
 fi
 
 # ---- 4) the metrics the alerts read -----------------------------------------
+# Built into a file and posted from it, rather than piped straight into curl.
+# The pipeline form reported a failed push on its very first real run while the
+# metrics had in fact landed: under `set -o pipefail` the brace group's exit
+# status is its LAST command, and that was a `[ "$STATUS" -eq 0 ] && echo`
+# guard, which returns 1 whenever there is drift to report. curl had already
+# answered 200. scripts/devvm-home-backup.sh carries the same lesson in its
+# cleanup trap; this is the same trap wearing a different hat. A push failure has
+# to come from curl, or the one signal that says the alert path is blind is
+# itself unreliable.
 push_metrics() {
-  local now; now=$(date +%s)
+  local now payload; now=$(date +%s)
+  payload=$(mktemp) || return 0
   {
     echo "# HELP k8s_node_config_drift_last_run_timestamp When k8s-node-drift-check last completed."
     echo "# TYPE k8s_node_config_drift_last_run_timestamp gauge"
@@ -145,14 +155,23 @@ push_metrics() {
     echo "# HELP k8s_node_config_drift_unreachable_nodes Nodes the check could not reach."
     echo "# TYPE k8s_node_config_drift_unreachable_nodes gauge"
     echo "k8s_node_config_drift_unreachable_nodes $((UNREACHABLE_NODES + KUBELET_UNREACHABLE))"
-    [ "$STATUS" -eq 0 ] && echo "k8s_node_config_drift_last_success_timestamp ${now}"
-  } | curl -sS --connect-timeout 5 --max-time 20 --data-binary @- \
-        "${PUSHGATEWAY}/metrics/job/${PUSH_JOB}" \
-    && log "metrics pushed to ${PUSHGATEWAY}" \
-    || log "WARNING: could not push metrics to ${PUSHGATEWAY} — the alert path is blind this run"
+    if [ "$STATUS" -eq 0 ]; then
+      echo "k8s_node_config_drift_last_success_timestamp ${now}"
+    fi
+  } > "$payload"
+
+  local code
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 20 \
+           --data-binary "@${payload}" "${PUSHGATEWAY}/metrics/job/${PUSH_JOB}" 2>&1)
+  rm -f "$payload"
+  if [ "$code" = "200" ]; then
+    log "metrics pushed to ${PUSHGATEWAY} (job=${PUSH_JOB})"
+  else
+    log "WARNING: pushgateway answered '${code}' — the alert path is blind this run"
+  fi
   return 0
 }
-[ "$PUSH" -eq 1 ] && push_metrics
+if [ "$PUSH" -eq 1 ]; then push_metrics; fi
 
 case "$STATUS" in
   0) log "CONVERGED: all six nodes match playbooks/k8s-node-tuning.yml, live and on disk." ;;
