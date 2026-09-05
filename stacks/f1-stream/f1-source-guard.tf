@@ -20,11 +20,33 @@
 
 # Credentials the guard needs in this namespace.
 #
-# forgejo_token is now the claude-agent-service agent account rather than
-# ci/global's read-only repo token: the guard files and comments on issues, and
-# the old token has read scope only (it existed to count auto-fix commits for a
-# cooldown that no longer runs). This is the same account issue-responder
-# already writes issues with.
+# forgejo_token stays on ci/global, and that is a deliberate choice rather than
+# the old default left in place. The obvious move was to hand the guard the
+# claude-agent-service agent token, since that account already writes issues.
+# It would have broken the dispatch it exists to start: that account IS the
+# fixer's bot identity (FIXER_BOT_ACTOR=infra-agent, stacks/claude-agent-service
+# /main.tf), and the webhook refuses the bot's own actions before every other
+# gate — claude-agent-service/app/fixer/gates.py:112,
+# `if delivery.actor == bot_actor: return Verdict.OWN_ACTION`. A guard-filed
+# issue would be delivered, recognised as the bot's own, and never dispatched by
+# the webhook.
+#
+# ci/global's token is `viktor`, the repo owner, so it clears both gates the
+# webhook applies to the filer: it is not the bot actor, and
+# ForgejoClient.trusted_actors() is the collaborator set plus the owner. Scope
+# was measured on 2026-09-05 rather than assumed — the earlier comment here
+# called this token read-only, which is true of its repository scope and not of
+# its issue scope. POST to a non-existent issue's comments distinguishes the two
+# without writing anything:
+#
+#   forgejo_repo_token  -> 404 IsErrIssueNotExist   (write:issue present)
+#   forgejo_push_token  -> 403 "token does not have at least one of required
+#                               scope(s): [write:issue]"
+#
+# The cost of this choice is that the issue reads as filed by Viktor. The guard
+# says so in the title marker and the body, and #alerts carries the same event,
+# so the audit trail is not lost — but a dedicated `f1-guard` Forgejo account
+# would be cleaner if one is ever created.
 #
 # slack_webhook is the shared #alerts incoming webhook, projected here the way
 # goldmane-edge-aggregator projects it rather than minted fresh. The guard's
@@ -53,11 +75,13 @@ resource "kubernetes_manifest" "f1_stream_guard_secrets" {
       }
       data = [
         {
-          # Write-scoped: the guard opens issues and comments on them.
+          # `viktor` — carries write:issue, and is NOT the fixer's bot actor, so
+          # a guard-filed issue survives the webhook's loop guard. See the block
+          # comment above before repointing this at the agent account.
           secretKey = "forgejo_token"
           remoteRef = {
-            key      = "claude-agent-service"
-            property = "forgejo_agent_token"
+            key      = "ci/global"
+            property = "forgejo_repo_token"
           }
         },
         {
@@ -136,7 +160,31 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
               # :latest + Always pull — a CronJob spawns a fresh pod each run.
               image             = "ghcr.io/viktorbarzin/f1-stream:latest"
               image_pull_policy = "Always"
-              command           = ["python", "-m", "backend.guard"]
+              # Version gate, because infra CI auto-applies on push and this
+              # stack cannot wait for the f1-stream image.
+              #
+              # This commit removes GUARD_AGENT_TOKEN and moves the schedule
+              # from 6h to hourly. The image currently on :latest still reads
+              # GUARD_AGENT_TOKEN and POSTs /execute with a bare `Bearer `,
+              # then raise_for_status — so applied ahead of the f1-stream
+              # rollout it would fail every hour, and pitsport is dead right
+              # now, so it would take that path every time.
+              #
+              # backend/chrome_fleet.py ships with the new guard and exists in
+              # no earlier image, which makes importing it an exact test for
+              # "does this image carry the code these env vars describe". On an
+              # older image the probe fails, the pod logs one line and exits 0,
+              # and nothing dispatches. On the new image it execs the guard
+              # unchanged. So the apply is inert until the code is present, and
+              # arms itself on the next rollout with no second apply.
+              command = ["/bin/sh", "-c", <<-EOT
+                if ! python -c 'import backend.chrome_fleet' 2>/dev/null; then
+                  echo "image predates the playback guard (no backend.chrome_fleet) - skipping this run"
+                  exit 0
+                fi
+                exec python -m backend.guard
+              EOT
+              ]
 
               resources {
                 requests = {
@@ -221,11 +269,23 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
                   }
                 }
               }
-              # Three events reach #alerts: a fault filed, a check that could
+              # The guard's share of #alerts: a fault filed, a check that could
               # not run (no browser leased — every source then looks dead and
               # none of that is evidence), and a filing that failed. Not
               # optional any more: an unset webhook is what made the last set of
               # failures invisible.
+              #
+              # docs/playback-guard.md names three events, and the other two —
+              # a repair landed, and a repair that failed or could not run — are
+              # deliberately NOT here. The old guard blocked on the job it
+              # dispatched and reported the outcome itself; this one files an
+              # issue and exits, so it is not around when the repair finishes
+              # and has nothing to report. Those two events belong to the actor
+              # that observes recovery, which is f1-source-fixer — the same
+              # reason closing the issue is its job. They are wired in
+              # .claude/agents/f1-source-fixer.md, "Telling a person", off the
+              # same webhook read from Vault. Do not add a poll back here to
+              # recover them.
               env {
                 name = "GUARD_SLACK_WEBHOOK"
                 value_from {

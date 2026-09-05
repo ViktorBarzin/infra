@@ -155,6 +155,12 @@ on `fixes` the moment the commit lands, which would close the issue before CI ha
 run and before anyone has seen whether the site recovered. You close it yourself
 at the end, after verification.
 
+When you name your sha on the `viktor/infra` issue, write it in prose with its
+repo — ``pushed `viktor/f1-stream@abc1234` `` — and **never as a
+`Pushed-Commit:` line**. That marker is machine-read by the fixer loop, which
+watches `viktor/infra` CI; pointing it at an f1-stream sha leaves the run
+waiting on a pipeline that does not exist.
+
 Then: merge latest master, `git push origin HEAD:master`, and **verify recovery**.
 
 - Watch the GHA build and the Woodpecker deploy (~5-8 min; poll the deployment
@@ -176,13 +182,32 @@ deploy has rolled out and you have verified the source is working:
 
 1. **Comment with the verification output** — the actual command and its actual
    output, not a summary of it. The next run reads this thread.
-2. **Close the issue** with a `Closes: #N` trailer in that comment, and drop the
-   `agent-in-progress` label:
+2. **Drop the `agent-in-progress` label.** Labels are removed by ID, so resolve
+   it by name first rather than hard-coding a number that can change:
+
+   ```bash
+   LID=$(curl -s -H "$AUTH" "$FJ/repos/viktor/infra/labels?limit=100" \
+     | python3 -c 'import json,sys; print(next(l["id"] for l in json.load(sys.stdin) if l["name"]=="agent-in-progress"))')
+   curl -s -X DELETE -H "$AUTH" "$FJ/repos/viktor/infra/issues/<N>/labels/$LID"
+   ```
+
+   That label is the fixer loop's in-flight marker. The loop only scans open
+   issues, so a stale one on a closed issue costs nothing immediately — but the
+   moment anyone reopens the thread it reads as in-flight, and the next tick
+   tries to drive a run that finished days ago. Drop it before you close, in
+   that order.
+3. **Close the issue** with a PATCH:
 
    ```bash
    curl -s -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
      "$FJ/repos/viktor/infra/issues/<N>" -d '{"state":"closed"}'
    ```
+
+   This PATCH is what closes it. A `Closes: #N` line in a comment does not —
+   Forgejo acts on those trailers in commit messages, not in comment bodies —
+   so write one only if you want the cross-reference, never instead of the
+   PATCH, and never in the commit itself (see Shipping: `ref #N`, not
+   `fixes #N`).
 
    The guard dedupes on **open** issues carrying this source's marker, so a
    closed issue means the next fault opens a fresh thread rather than commenting
@@ -191,6 +216,33 @@ deploy has rolled out and you have verified the source is working:
 
 Close it only after verified recovery. If you reverted, or you stopped, the issue
 stays open.
+
+## Telling a person
+
+The guard posts to Slack `#alerts` when it files the fault. It does not stay
+alive to see what happened next — it files and exits — so **the outcome is
+yours to post**, and it is the event that was missing on 2026-09-05, when three
+repair runs died and nobody heard about it.
+
+Post exactly once, at the end of your run, in all three of these cases:
+
+| what happened | message |
+|---|---|
+| verified recovery, issue closed | `f1-source <key>: repaired and verified. <what changed>. viktor/infra#<N> closed.` |
+| pushed, did not recover, reverted | `f1-source <key>: repair did NOT recover the source. Reverted <sha>. viktor/infra#<N> still open.` |
+| stopped without pushing | `f1-source <key>: could not repair. <where you stopped>. viktor/infra#<N> still open, needs-human.` |
+
+```bash
+HOOK=$(vault kv get -field=alertmanager_slack_api_url secret/viktor)
+python3 -c 'import json,sys; print(json.dumps({"text": sys.stdin.read()}))' \
+  < /tmp/slack.txt > /tmp/slack.json
+curl -s -X POST -H 'Content-Type: application/json' -d @/tmp/slack.json "$HOOK"
+```
+
+Same webhook the guard and Alertmanager use, so no new hook and no new Slack
+app. Never echo `$HOOK`. If the post fails, say so in your report rather than
+retrying in a loop — the issue thread is the durable record, Slack is the
+notification.
 
 ## Scope: what you may change
 
