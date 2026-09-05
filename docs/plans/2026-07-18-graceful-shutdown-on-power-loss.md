@@ -108,17 +108,16 @@ hours while the UPS estimated 5.5. Both halves now have an answer that did not
 need an outage.
 
 ```mermaid
-flowchart LR
-    GRID["Sofia grid<br/>236-245 V, varies"] --> ATS["ATS<br/>L1 / L2, Tuya-monitored<br/>24 V inverter battery"]
-    GRID --> UPSIN["Huawei UPS2000 2kVA<br/>input 239-245 V"]
-    UPSIN --> UPSOUT["UPS output<br/>regulated 230 V, flat"]
-    ATS --> PS2["R730 PSU2<br/>input tracks grid<br/>236 / 240 / 244 V<br/>carries ~2/3 of load"]
-    UPSOUT --> PS1["R730 PSU1<br/>input pinned 230 V<br/>carries ~1/3 of load"]
-    UPSOUT --> OTHER["NAS, network, iDRAC<br/>(share not measured)"]
-    PS1 --> R730["Dell R730 / pve<br/>~280 W total"]
+flowchart TD
+    GRID["Sofia grid<br/>236-245 V"]
+    GRID --> ATS["ATS<br/>L1 / L2, Tuya<br/>24 V inverter"]
+    GRID --> UPS["Huawei UPS2000 2kVA<br/>in 239-245 V<br/>out 230 V, flat"]
+    ATS --> PS2["R730 PSU2<br/>tracks grid<br/>~2/3 of load"]
+    UPS --> PS1["R730 PSU1<br/>pinned 230 V<br/>~1/3 of load"]
+    UPS --> OTHER["NAS, network<br/>share unmeasured"]
+    PS1 --> R730["Dell R730 / pve<br/>~280 W"]
     PS2 --> R730
-
-    GRID -. "mains fails" .-> X(["PSU2 input lost<br/>PSU1 carries 100%<br/>UPS load steps up"])
+    GRID -. "mains fails" .-> X(["PSU2 input lost<br/>PSU1 takes 100%<br/>UPS load steps up<br/>2 h measured"])
 ```
 
 ### The evidence for PSU1 on the UPS
@@ -211,24 +210,21 @@ Every value below was read off the live system on 2026-09-05.
 
 ```mermaid
 sequenceDiagram
-    participant NAS as NAS watchdog<br/>(10 min cadence)
-    participant UPS as Huawei UPS<br/>(SNMP)
-    participant IDRAC as iDRAC
+    participant NAS as NAS watchdog
+    participant BMC as iDRAC
     participant PVE as pve host
     participant G as guests
     participant K as kubelet
 
-    NAS->>UPS: read voltage, minutes, charge
-    UPS-->>NAS: inputVoltage=0, minutes<20
-    NAS->>IDRAC: POST ComputerSystem.Reset<br/>{"ResetType":"GracefulShutdown"}
-    IDRAC->>PVE: virtual power button (ACPI)
-    PVE->>PVE: logind HandlePowerKey=poweroff
-    PVE->>PVE: systemd stops pve-guests.service<br/>(TimeoutStopUSec=infinity)
-    PVE->>G: pvesh create /nodes/localhost/stopall
-    Note over G: reverse startup order,<br/>one order group at a time
-    G->>K: ACPI shutdown into each k8s guest
-    K->>K: shutdownGracePeriodByPodPriority<br/>215 s ladder, 480 s inhibitor window
-    Note over G,K: guest force-stopped at its own down= ceiling
+    Note over NAS: every 10 min:<br/>on battery,<br/>under 20 min left
+    NAS->>BMC: POST Reset<br/>GracefulShutdown
+    BMC->>PVE: virtual power button
+    PVE->>PVE: logind poweroff
+    PVE->>G: pvesh stopall
+    Note over G: reverse order,<br/>one group at a time
+    G->>K: ACPI into each k8s guest
+    K->>K: 215 s priority ladder
+    Note over G,K: force-stop at down=180 s
     G-->>PVE: all guests stopped
     PVE->>PVE: poweroff
 ```
