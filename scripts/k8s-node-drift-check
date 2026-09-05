@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+#
+# scripts/k8s-node-drift-check
+#
+# Answers one question on a schedule: does the live configuration of the six
+# Kubernetes nodes still match what playbooks/k8s-node-tuning.yml declares?
+#
+# WHY THIS EXISTS
+# ---------------
+# The playbook and scripts/check-node-kubelet-tune both existed already, and both
+# needed a human to remember to run them. Nobody did. Between 2026-07-26 and
+# 2026-08-16 a `kubeadm upgrade node` erased the whole kubelet tune from all six
+# nodes and the first symptom anyone saw, three weeks later, was a VPN gateway
+# that would not start. Three more instances were found on 2026-09-04 while
+# triaging bead code-yypr: a doc that recorded imageGC thresholds nothing set, a
+# stale reservation figure, and a decommissioned node that rejoined the cluster
+# on the next host reboot.
+#
+# So this is the piece that was missing: the check running on its own clock, with
+# an alert on the other end.
+#
+# IT REPORTS, IT DOES NOT REPAIR. Deliberate, and bead code-yypr asked for it that
+# way. The playbook writes kubelet config on six nodes, and an invalid combination
+# of kubelet keys makes kubelet exit at boot with console-only recovery. That is
+# not something to do unattended at 03:00. A human reads the alert and runs the
+# playbook. What this buys is that the human finds out.
+#
+# HOW IT REACHES SLACK
+# --------------------
+# It pushes gauges to the Prometheus pushgateway (NodePort 30091 on k8s-master).
+# Five rules in stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl
+# read them -- K8sNodeConfigDrift, K8sNodeKubeletTuneDrift, K8sNodeDriftCheckStale,
+# K8sNodeDriftCheckNeverRun, K8sNodeDriftCheckFailing -- and Alertmanager routes
+# `severity: warning` to the `slack-warning` receiver, which posts to #alerts with
+# send_resolved on. No second notification path of its own: reusing Alertmanager
+# means the alert has the grouping, silencing and resolve behaviour every other
+# alert here has, and one fewer webhook to keep working.
+#
+# A checker that quietly stops running is the same failure this bead is about, so
+# the freshness of the metric is itself alerted on: Stale fires when the last run
+# is over 6h old, NeverRun when the series is absent entirely.
+#
+# USAGE
+#   scripts/k8s-node-drift-check            # check, push, report
+#   scripts/k8s-node-drift-check --no-push  # check and report only
+#
+# Exit codes: 0 = converged · 1 = drift · 2 = could not check.
+#
+# Run on a schedule by k8s-node-drift-check.timer (hourly), installed by
+# playbooks/devvm.yml. Runs as wizard, because it needs that account's SSH keys
+# for the nodes and its kubeconfig for the /configz reads.
+
+set -uo pipefail
+
+REPO="${K8S_DRIFT_REPO:-/home/wizard/code/infra}"
+PUSHGATEWAY="${K8S_DRIFT_PUSHGATEWAY:-http://10.0.20.100:30091}"
+PUSH_JOB="k8s-node-drift-check"
+PUSH=1
+[ "${1:-}" = "--no-push" ] && PUSH=0
+
+log() { printf '%s %s\n' "$(date -Is)" "$*"; }
+
+cd "$REPO" || { log "FATAL: no repo at $REPO"; exit 2; }
+log "repo $REPO at $(git rev-parse --short HEAD 2>/dev/null || echo '?') ($(git log -1 --format=%cs 2>/dev/null || echo '?'))"
+
+# ---- 1) the playbook's own contract: --check --diff must be a no-op ----------
+# Non-no-op output IS the drift signal, the same contract playbooks/devvm.yml
+# has. Parsed from PLAY RECAP rather than from task output, because the recap is
+# the one line per host whose format ansible has kept stable.
+RECAP_FILE=$(mktemp) || exit 2
+trap 'rm -f "$RECAP_FILE"' EXIT
+
+log "--- ansible-playbook --check --diff (six nodes) ---"
+ANSIBLE_FORCE_COLOR=0 timeout 900 ansible-playbook \
+  -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml \
+  --check --diff > "$RECAP_FILE" 2>&1
+ANSIBLE_RC=$?
+
+DRIFTED_NODES=0 UNREACHABLE_NODES=0 FAILED_NODES=0 RECAP=""
+while read -r line; do
+  host=$(awk '{print $1}' <<<"$line")
+  ch=$(grep -oE 'changed=[0-9]+' <<<"$line" | cut -d= -f2)
+  un=$(grep -oE 'unreachable=[0-9]+' <<<"$line" | cut -d= -f2)
+  fa=$(grep -oE 'failed=[0-9]+' <<<"$line" | cut -d= -f2)
+  [ "${ch:-0}" -gt 0 ] && { DRIFTED_NODES=$((DRIFTED_NODES+1)); RECAP+="  $host: $ch task(s) would change"$'\n'; }
+  [ "${un:-0}" -gt 0 ] && { UNREACHABLE_NODES=$((UNREACHABLE_NODES+1)); RECAP+="  $host: UNREACHABLE"$'\n'; }
+  [ "${fa:-0}" -gt 0 ] && { FAILED_NODES=$((FAILED_NODES+1)); RECAP+="  $host: task FAILED"$'\n'; }
+done < <(sed -n '/PLAY RECAP/,$p' "$RECAP_FILE" | grep -E 'ok=[0-9]+')
+
+RECAP_LINES=$(sed -n '/PLAY RECAP/,$p' "$RECAP_FILE" | grep -cE 'ok=[0-9]+')
+if [ "$RECAP_LINES" -eq 0 ]; then
+  log "ansible produced no PLAY RECAP (rc=$ANSIBLE_RC) — cannot judge drift"
+  sed -n '$!{/./p}' "$RECAP_FILE" | tail -25
+  ANSIBLE_UNJUDGEABLE=1
+else
+  ANSIBLE_UNJUDGEABLE=0
+  sed -n '/PLAY RECAP/,$p' "$RECAP_FILE"
+fi
+
+# The tasks that would change, so the journal says WHAT drifted and not just how
+# much. Loki keeps 30 days of this, which is the history a "when did this start"
+# question needs.
+if [ "$DRIFTED_NODES" -gt 0 ]; then
+  log "--- tasks reporting changed under --check ---"
+  awk '/^TASK \[/ {t=$0} /^changed: \[/ {print "  " t " <- " $0}' "$RECAP_FILE" | sort -u
+fi
+
+# ---- 2) live kubelet /configz, which the playbook's --check cannot see -------
+# The playbook diffs /var/lib/kubelet/config.yaml. The kubelet only reads that
+# file at startup, so between an apply and the node's next reboot the file is
+# right and the running kubelet is wrong. This half reads what the kubelet
+# actually loaded.
+log "--- scripts/check-node-kubelet-tune (live /configz) ---"
+KUBELET_OUT=$(timeout 300 ./scripts/check-node-kubelet-tune 2>&1)
+KUBELET_RC=$?
+printf '%s\n' "$KUBELET_OUT"
+KUBELET_DRIFT_NODES=$(grep -c 'DRIFTED' <<<"$KUBELET_OUT")
+KUBELET_UNREACHABLE=$(grep -c 'UNREACHABLE' <<<"$KUBELET_OUT")
+
+# ---- 3) verdict --------------------------------------------------------------
+STATUS=0
+if [ "$ANSIBLE_UNJUDGEABLE" -eq 1 ] || [ "$UNREACHABLE_NODES" -gt 0 ] \
+   || [ "$FAILED_NODES" -gt 0 ] || [ "$KUBELET_RC" -eq 2 ]; then
+  STATUS=2
+elif [ "$DRIFTED_NODES" -gt 0 ] || [ "$KUBELET_DRIFT_NODES" -gt 0 ]; then
+  STATUS=1
+fi
+
+# ---- 4) the metrics the alerts read -----------------------------------------
+push_metrics() {
+  local now; now=$(date +%s)
+  {
+    echo "# HELP k8s_node_config_drift_last_run_timestamp When k8s-node-drift-check last completed."
+    echo "# TYPE k8s_node_config_drift_last_run_timestamp gauge"
+    echo "k8s_node_config_drift_last_run_timestamp ${now}"
+    echo "# HELP k8s_node_config_drift_status 0 converged, 1 drift, 2 could not check."
+    echo "# TYPE k8s_node_config_drift_status gauge"
+    echo "k8s_node_config_drift_status ${STATUS}"
+    echo "# HELP k8s_node_config_drift_nodes Nodes whose files differ from playbooks/k8s-node-tuning.yml."
+    echo "# TYPE k8s_node_config_drift_nodes gauge"
+    echo "k8s_node_config_drift_nodes ${DRIFTED_NODES}"
+    echo "# HELP k8s_node_kubelet_tune_drift_nodes Nodes whose live kubelet /configz is missing part of the declared tune."
+    echo "# TYPE k8s_node_kubelet_tune_drift_nodes gauge"
+    echo "k8s_node_kubelet_tune_drift_nodes ${KUBELET_DRIFT_NODES}"
+    echo "# HELP k8s_node_config_drift_unreachable_nodes Nodes the check could not reach."
+    echo "# TYPE k8s_node_config_drift_unreachable_nodes gauge"
+    echo "k8s_node_config_drift_unreachable_nodes $((UNREACHABLE_NODES + KUBELET_UNREACHABLE))"
+    [ "$STATUS" -eq 0 ] && echo "k8s_node_config_drift_last_success_timestamp ${now}"
+  } | curl -sS --connect-timeout 5 --max-time 20 --data-binary @- \
+        "${PUSHGATEWAY}/metrics/job/${PUSH_JOB}" \
+    && log "metrics pushed to ${PUSHGATEWAY}" \
+    || log "WARNING: could not push metrics to ${PUSHGATEWAY} — the alert path is blind this run"
+  return 0
+}
+[ "$PUSH" -eq 1 ] && push_metrics
+
+case "$STATUS" in
+  0) log "CONVERGED: all six nodes match playbooks/k8s-node-tuning.yml, live and on disk." ;;
+  1) log "DRIFT: ${DRIFTED_NODES} node(s) differ on disk, ${KUBELET_DRIFT_NODES} node(s) differ in live kubelet config."
+     printf '%s' "$RECAP"
+     log "Re-apply: ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml --limit <node-ip>"
+     log "A node reads DRIFTED in the /configz half between an apply and its next reboot; the playbook writes files and restarts nothing." ;;
+  2) log "COULD NOT CHECK: unreachable=${UNREACHABLE_NODES} failed=${FAILED_NODES} kubelet-rc=${KUBELET_RC}"
+     printf '%s' "$RECAP" ;;
+esac
+
+exit "$STATUS"

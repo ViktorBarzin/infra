@@ -36,35 +36,72 @@ import json
 import subprocess
 import sys
 
+# Mirrors kubelet_declared in playbooks/k8s-node-tuning.yml. Kept as data rather
+# than inline in the lambdas so a mismatch is a one-line diff against the
+# playbook instead of a puzzle.
+SHUTDOWN_LADDER = [
+    (0, 10),
+    (200000, 10),
+    (400000, 15),
+    (600000, 15),
+    (800000, 90),
+    (1000000, 30),
+    (1200000, 15),
+    (2000000000, 15),
+    (2000001000, 15),
+]
+
+EVICTION_HARD = {
+    "memory.available": "100Mi",
+    "nodefs.available": "10%",
+    "nodefs.inodesFree": "5%",
+    "imagefs.available": "15%",
+    "imagefs.inodesFree": "5%",
+}
+
 # Each entry: key -> a predicate over the loaded KubeletConfiguration.
 # Mirrors what playbooks/k8s-node-tuning.yml declares. Keep the two in step —
 # checking for a key the playbook does not declare produces a permanent DRIFTED,
 # and dropping one it does declare hides a real regression.
 EXPECTED = {
     "allowedUnsafeSysctls": lambda c: "net.ipv4.ip_forward" in (c.get("allowedUnsafeSysctls") or []),
-    "shutdownGracePeriodByPodPriority": lambda c: bool(c.get("shutdownGracePeriodByPodPriority")),
     "memorySwap": lambda c: (c.get("memorySwap") or {}).get("swapBehavior") == "LimitedSwap",
     # true on every node today; asserted so a future change away from it is visible.
     "serializeImagePulls": lambda c: c.get("serializeImagePulls") is True,
     # "0s" disables age-based image collection, which is the state that let 130
     # images / 56.8567 GiB go in one threshold-triggered pass on k8s-node1.
     "imageMaximumGCAge": lambda c: c.get("imageMaximumGCAge") not in (None, "", "0s"),
+    # The shutdown ladder, checked rung by rung rather than for mere presence. A
+    # truthy test would pass on a one-rung ladder, and the tier ordering IS the
+    # setting: it is what gets the databases 90 seconds inside the host's 180s
+    # `down=` ceiling (bead code-xgcg).
+    "shutdownGracePeriodByPodPriority": lambda c: [
+        (r.get("priority"), r.get("shutdownGracePeriodSeconds"))
+        for r in (c.get("shutdownGracePeriodByPodPriority") or [])
+    ] == SHUTDOWN_LADDER,
+    # Declared 2026-09-05 (code-yypr) at the kubelet's own defaults, so that a
+    # change to them is a diff someone approved rather than a silent drift. These
+    # rows are exact-value, not truthy: the old evictionHard row tested only for a
+    # truthy memory.available, which the 100Mi default satisfies, so it reported
+    # PASS on all six nodes while the values it claimed to check were absent.
+    "imageGCHighThresholdPercent": lambda c: c.get("imageGCHighThresholdPercent") == 85,
+    "imageGCLowThresholdPercent": lambda c: c.get("imageGCLowThresholdPercent") == 80,
+    "evictionHard": lambda c: (c.get("evictionHard") or {}) == EVICTION_HARD,
 }
 
+
 # NOT checked, deliberately, because the playbook does not declare them:
-#   systemReserved / kubeReserved / evictionSoft  -> bead code-eu6l. They carve
-#     ~1,424 MiB from every node's allocatable and node2 has ~1,455 MiB of
-#     schedulable headroom, so they need their own headroom audit. Re-add these
-#     three rows when that bead lands.
+#   systemReserved / kubeReserved / evictionSoft  -> bead code-eu6l. Together they
+#     carve 1,024 MiB (512 + 512; a SOFT threshold costs no allocatable at all)
+#     out of every node, and that call is code-eu6l's to make. Re-add these three
+#     rows when it lands. The 1,424 MiB figure this line used to carry also
+#     counted moving evictionHard.memory.available to 500Mi, which the playbook
+#     explicitly declines to do.
 #   maxParallelImagePulls -> retired. 28-29 MB/s is an aggregate ceiling that
 #     containerd's own 5 concurrent streams already reach, so parallel pulls buy
 #     under 1.5x; the playbook pins serializeImagePulls: true instead.
-#   evictionHard -> the old row here tested only `bool(evictionHard["memory.available"])`,
-#     which the kubelet DEFAULT of 100Mi satisfies. It therefore reported PASS on
-#     all six nodes while the script's 500Mi/15%/20% values were in fact erased.
-#     Removed rather than left as a false pass; the playbook does not set it.
-#   containerLogMaxSize -> live 10Mi is both the old script's value and the
-#     kubelet default, so the row could never fail.
+#   containerLogMaxSize / containerLogMaxFiles -> live 10Mi and 5 are the kubelet
+#     defaults; the playbook does not declare either.
 
 
 def run(args):

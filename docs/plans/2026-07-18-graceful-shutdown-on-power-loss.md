@@ -291,8 +291,11 @@ powers on.
 
 ### The kubelet ladder
 
-Declared in `playbooks/k8s-node-tuning.yml`, reconciled hourly, and read back
-today from each node's live `/configz` rather than from the file. All six nodes
+Declared in `playbooks/k8s-node-tuning.yml` and read back today from each node's
+live `/configz` rather than from the file. (This line said "reconciled hourly"
+until 2026-09-05; nothing scheduled the playbook. An hourly drift CHECK,
+`scripts/k8s-node-drift-check`, exists as of that date and alerts when the ladder
+no longer matches — code-yypr.) All six nodes
 return a byte-identical ladder (SHA-256 prefix `80ce6bfb04b3`), nine rungs,
 215 s total, with `shutdownGracePeriod` and `shutdownGracePeriodCriticalPods`
 both pinned at `0s` as kubelet 1.35 validation requires.
