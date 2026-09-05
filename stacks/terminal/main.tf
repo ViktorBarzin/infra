@@ -453,6 +453,13 @@ resource "kubernetes_endpoints" "session_events" {
 # /hooks/* is deliberately absent: it is loopback-only and must stay off the
 # public ingress.
 #
+# /model was added on 2026-09-05: which model a session answers on, and how hard
+# it thinks. Neither is a launch flag — the terminal attach carries a command
+# KEY rather than a command line, and the pre-warm pool warms the bare `claude`
+# key — so the service applies a choice to a session that is already running by
+# driving the CLI's own picker. The lobby's model chip and its new-session row
+# both POST here; without the route both controls 404.
+#
 # /search and /answer-text were added on 2026-08-18. /search finds text
 # anywhere in a session's transcript — the browser holds only the last 20 turns,
 # so the search has to run where the whole file is. /answer-text types the free
@@ -481,7 +488,7 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`))"
+        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`) || PathPrefix(`/model/`))"
         kind  = "Rule"
         middlewares = [
           {
