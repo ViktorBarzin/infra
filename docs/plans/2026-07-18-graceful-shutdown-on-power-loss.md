@@ -1,296 +1,568 @@
-# Graceful shutdown on power loss — root cause + robust fix
+# Graceful shutdown on power loss — what is wired, what was decided, what is untested
 
-- **Date:** 2026-07-18
-- **Status:** DRAFT / proposal (read-only investigation; no changes applied — awaiting human review)
-- **Trigger:** Grid power outage 2026-07-18 dawn. The Dell R730 (Proxmox host `pve`, `192.168.1.127`) ran on UPS battery for ~2 h and then **died hard** — no graceful shutdown of the host or its VMs.
-- **Scope:** Sofia homelab. Single PVE host, no cluster/HA. UPS = Huawei UPS2000 (SNMP card `192.168.1.5` / `ups.viktorbarzin.lan`, community `‹snmp-community redacted›`). iDRAC `192.168.1.4`. Synology NAS `NAS_Barzini` `192.168.1.13`.
+- **Date:** 2026-07-18, rewritten 2026-09-05
+- **Status:** the shutdown and power-on path is built, deployed and armed. One end-to-end drill remains, and it is parked because it needs a full estate outage that has not been scheduled.
+- **Trigger:** the grid outage of 2026-07-18 (03:43 to ~09:27 EEST). The Dell R730 ran on battery for two hours and then died hard, with no shutdown of the host or its guests. Post-mortem: `docs/post-mortems/2026-07-18-sofia-power-outage-unclean-shutdown.md`.
+- **Scope:** Sofia homelab. One PVE host, no cluster HA. Huawei UPS2000 2kVA (SNMP card `192.168.1.5` / `ups.viktorbarzin.lan`, community `‹snmp-community redacted›`). iDRAC `192.168.1.4`. Synology NAS `NAS_Barzini` `192.168.1.13`. Bead `code-xgcg`.
+- **Bead:** `code-xgcg`.
+
+> **This document replaces a proposal.** The 2026-07-18 draft recommended building a
+> new shutdown agent on the PVE host and treating the NAS watchdog as a backup
+> layer. That recommendation was rejected the next day and never built. If you came
+> here looking for the host agent, read §5 first: it explains why it does not exist
+> and should not be built.
 
 ---
 
 ## TL;DR
 
-The low-battery watchdog **did detect the outage and did fire on schedule** — at 05:30 it correctly computed "12 minutes remaining, turning off server" (14 min before the host died) and issued an iDRAC `GracefulShutdown`. **The shutdown had no effect** because the watchdog POSTs the Redfish reset request to the *wrong URL* — the bare iDRAC root `https://192.168.1.4` instead of the reset-action endpoint `…/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset`. The request errored, but `main()` **discards the error**, so the failure was silent. The host never received a shutdown signal and ran until the battery was exhausted, dying uncleanly at **05:44:37**.
+The watchdog that should have saved the host on 2026-07-18 is a Go binary on the
+Synology NAS. It detected the outage correctly and fired on time. Its shutdown
+command went to the wrong URL and the error was discarded, so it did nothing and
+said nothing. Commit `601614d0` fixed the URL, the TLS client, and the error
+handling, added a UPS-safe gate to the power-on side, and added Prometheus
+metrics and alerts. That build has been deployed and armed on the NAS since
+2026-07-19 and has run every ten minutes since.
 
-This was **not** a detection problem (Prometheus already fired `PowerOutage`, `OnBattery`, `LowUPSBattery` today; the NAS watchdog also detected correctly). It was an **actuation** problem in a safety mechanism that has almost certainly never worked and had zero observability. The fix moves the shutdown decision+action onto the PVE host itself (reusing the *proven* SNMP data path), does explicit `qm shutdown` per VM, and adds alerting so a broken shutdown path can never again be invisible.
+Two things this rewrite settles that the original draft left open.
+
+**Which battery feeds the server.** PSU1 sits on the Huawei UPS, PSU2 on
+unprotected grid through the ATS. PSU1's input voltage has read a flat 230 V for
+seven days while PSU2's tracked the grid between 236 V and 244 V, and the UPS's
+own output register reads the same flat 230 V. The iDRAC SEL confirms it from the
+other direction: every AC-loss event on record, the 2026-07-18 outage included,
+names power supply 2 alone.
+
+**Why the UPS says 5.5 hours and delivered 2.** In normal operation PSU2 carries
+roughly two thirds of the server. When mains fails, that share transfers to PSU1,
+so the UPS load steps up at the exact moment its runtime estimate starts to
+matter. The estimate is computed from the load before the step. Measured
+endurance on 2026-07-18 was 2 h 00 m 43 s against a register that today reads
+334 to 497 minutes at rest.
+
+**What is still open.** The full chain from "iDRAC accepts the shutdown POST" to
+"host is off" has never been observed on this machine, and §4 gives an arithmetic
+reason to expect it does not fit inside the battery margin as currently
+configured. Confirming that needs the parked drill (§7).
 
 ---
 
-## 1. Verdict: unclean shutdown — confirmed
+## 1. What runs today
 
-| Evidence | Finding |
-|---|---|
-| `journalctl --list-boots` on `pve` | Boot `-1` last entry **Sat 2026-07-18 05:44:37 EEST**; next boot `0` first entry **09:33:49 EEST**. A 3h49m gap with **no shutdown sequence**. |
-| `last -x` | `reboot … Sat Jul 18 09:30 - still running` with **no paired `shutdown` line** (contrast: clean reboots on Apr 1 / Jan 6 show `shutdown system down` entries). |
-| PVE journal tail before the gap | Normal operational logs right up to 05:44:37, then nothing — the classic signature of power being cut mid-run, not an orderly `systemctl poweroff`. |
-| NAS watchdog logs | Ran every 10 min through **05:40:02**, then a gap to **09:30:02** — the NAS lost power at the same time as the host (~05:44) and rebooted with the grid (~09:27). |
+`scripts/server_safe_poweroff/` (Go) builds `powercheck-armv8`, which is rsynced to
+the NAS at `~/server-power-cycle/` by `deploy_to_nas.sh` and run from Synology's
+Task Scheduler through `synology_main.sh`.
 
-**Conclusion:** the host hard-died on battery exhaustion. No graceful shutdown occurred.
+Verified live on 2026-09-05:
 
-### Outage timeline (real local time, EEST)
-
-| Time (EEST) | Event | Source |
+| Fact | Value | How it was read |
 |---|---|---|
-| ~03:43 | Mains fails. UPS transfers to battery. | NAS log: last "on AC" run 03:40; first "on Battery" run **03:50** (mains dropped between 03:40–03:50). iDRAC SEL AC-loss (BMC clock +3 h skew). |
-| 03:50 | Watchdog: "UPS on Battery power. **Minutes remaining is 90.** Server will not be shutdown yet." | NAS `…INFO.20260718-035001` |
-| 03:46 | Prometheus `PowerOutage` fires (`ups_upsInputVoltage < 150` for 3m). | prometheus rules |
-| ~04:13 | Prometheus `OnBattery` fires (`ups_upsSecondsOnBattery > 0` for 30m). | prometheus rules |
-| 04:00–05:20 | Runtime estimate erratic: 99, 75, 68, 54, 60, 52, 36, 26, 20 min. | NAS logs (10-min cadence) |
-| ~05:20 | Prometheus `LowUPSBattery` fires (`minutesRemaining < 25 & inputVoltage < 150`). | prometheus rules |
-| **05:30:02** | Watchdog: **"Minutes remaining is too low - 12 Turning off server. Starting graceful reset type GracefulShutdown!"** → iDRAC reset **issued but ineffective**. | NAS `…INFO.20260718-053001` |
-| **05:40:02** | Watchdog fires again: "…too low - 2 … GracefulShutdown!" — still no effect. | NAS `…INFO.20260718-054001` |
-| **05:44:37** | Host + NAS lose power (battery exhausted). Hard death. | PVE journal last entry |
-| ~09:27–09:33 | Mains returns. NAS boots 09:27; **R730 self-powers-on**, host boot 09:33:49; VMs auto-start (`onboot=1`). | uptime / journal |
+| Binary on the NAS | `powercheck-armv8`, dated 2026-07-19 14:31 | `ls -la ~/server-power-cycle/` |
+| Actuation armed | yes, no `powercheck.disable` present | file listing, and `powercheck_actuation_disabled = 0` |
+| Run cadence | every 10 minutes | `changes(powercheck_last_run_timestamp_seconds[24h])` = 143 |
+| Last run | 2026-09-05 14:30:01 EEST, "Server On, UPS on mains (input 237V, charge 100%). Nothing to do." | `logs/powercheck-armv8.INFO` |
+| Shutdown attempts since the fix | none (`last_shutdown_attempt: 0`) | `powercheck-state.json` |
+| Power-on attempts since the fix | none (`last_power_on_attempt: 0`) | `powercheck-state.json` |
+| Mains continuously up since | 2026-07-19 14:16 EEST, 48 days | `mains_online_since`, and `max_over_time(ups_upsSecondsOnBattery[60d]) = 0` |
 
-The UPS held **~2 h 01 m** (03:43 → 05:44). The runtime estimate collapsed at the end (20 → 12 → 2 min over the final 20 min).
+The zeroes in the last three rows are the honest summary of the test coverage:
+the fixed actuation code has never fired in production, because the grid has not
+dropped since it was deployed.
 
----
+### Thresholds in force
 
-## 2. What exists today (two mechanisms, both non-functional for shutdown)
+Flag defaults, overridden by `powercheck.env` on the NAS (mode 600, not in git).
 
-### 2a. NUT on the PVE host — installed but dead (red herring)
+| Setting | Effective value | Source |
+|---|---|---|
+| `SHUTDOWN_MIN_MINUTES` | 20 | flag default, not overridden |
+| `POWERON_MIN_CHARGE_PCT` | 50 | `powercheck.env` |
+| `MAINS_STABLE_DWELL_MINUTES` | 10 | `powercheck.env` |
+| Pushgateway | `http://10.0.20.100:30091` | flag default |
 
-`/etc/nut/` is populated and `nut-server` (`upsd`) runs, but it is a half-finished config that has **never worked**:
+### Observability
 
-- **`nut-monitor` (`upsmon`, the shutdown controller) fatally fails on every boot:**
-  `Fatal error: insufficient power configured! Sum of power values: 0 / Minimum value (MINSUPPLIES): 1`. Cause: `upsmon.conf` has **no `MONITOR` line**. Service is in `failed` state (restart-looped out at boot).
-- **The UPS driver can't connect:** `ups.conf` defines `[huaweiups] driver = blazer_ser port = /dev/ttyUSB0` — a **serial** driver, but there is no `/dev/ttyUSB0`: `Can't connect to UPS [huaweiups] (blazer_ser-huaweiups): No such file or directory` every 5 min.
-- `SHUTDOWNCMD "/sbin/shutdown -h +0"` — even if it ran, this does **not** explicitly stop guests.
+`main.go` pushes a gauge set to Pushgateway under `job=powercheck` on every run,
+including the latched outcome of the last actuation attempt, so a failure
+survives between runs. `stacks/monitoring/.../prometheus_chart_values.tpl` alerts
+on: never reported, stale for 30 minutes, `powercheck_up == 0`, a failed shutdown
+POST, a failed power-on POST, and shutdown issued but the server still on after
+five minutes. That last one is the alert that would have caught the 2026-07-18
+failure on the day it was introduced rather than years later.
 
-**Net:** NUT contributed nothing to the outage and misleads investigation (looks like host UPS monitoring exists). It should be either properly reconfigured (see §5 alternative) or disabled/masked so it stops failing at boot.
-
-### 2b. Synology NAS watchdog — the real mechanism; detects fine, actuation broken
-
-- **Source in-repo:** `scripts/server_safe_poweroff/` (Go). Built for arm64 and rsynced to the NAS (`deploy_to_nas.sh`) as `~/server-power-cycle/powercheck-armv8` (binary dated 2025-03-09).
-- **Schedule:** Synology Task Scheduler task `id=1`, driven by `/etc/crontab`: `0,10,20,30,40,50 * * * *` → `synology_main.sh` → runs the binary, ships glog output to Synology's log + prunes logs >7 d. **Runs every 10 minutes; ran reliably.**
-- **Logic (`main.go`, `ups_utils.go`, `idrac_utils.go`):**
-  1. Read server power state via iDRAC Redfish `GET /redfish/v1/Systems/System.Embedded.1` (creds `root`/`‹default-pw redacted›`).
-  2. Read UPS via SNMP `192.168.1.5` (community `‹snmp-community redacted›`, v2c): input voltage OID `1.3.6.1.2.1.33.1.3.3.1.3.1`, minutes-remaining OID `1.3.6.1.2.1.33.1.2.3.0`.
-  3. If server **On** and UPS on battery (`inputVoltage == 0`) and `minutesRemaining < 20` → `performGracefulShutdown()` (iDRAC).
-  4. If server **Off** and on AC and `minutesRemaining >= 20` → `performPowerOn()` (iDRAC).
-- The NAS is on battery-backed power (it survived to 05:40 and died with the host at ~05:44), so **NAS availability was not the failure**.
-
----
-
-## 3. Root cause (definitive)
-
-**The iDRAC reset request is POSTed to the wrong URL, and the resulting error is silently swallowed.**
-
-`scripts/server_safe_poweroff/idrac_utils.go`:
-
-```go
-func performResetType(idracCredentials idracCredentials, resetType ResetType) error {
-    glog.Warningf("Starting graceful reset type %s!\n", resetType)   // <-- last thing logged today
-    payload := map[string]string{"ResetType": string(resetType)}
-    ...
-    // BUG: POSTs to the bare host root, not the reset action endpoint
-    req, err := http.NewRequest("POST", idracCredentials.url, bytes.NewBuffer(payloadBytes))
-    //                                   ^^^^^^^^^^^^^^^^^^^  == "https://192.168.1.4"
-    ...
-    resp, err := client.Do(req)
-    if err != nil { return fmt.Errorf(...) }                          // error path
-    if resp.StatusCode != 200 && resp.StatusCode != 202 { return ... }// error path
-    glog.Infof("Reset type %s initiated successfully.\n")            // <-- NEVER logged today
-```
-
-`main.go` calls it and **ignores the return value**:
-
-```go
-performGracefulShutdown(idracCredentials)   // error discarded
-```
-
-**Proof from today's logs:** at 05:30 and 05:40 the last line is `idrac_utils.go:88 Starting graceful reset type GracefulShutdown!` — the success line (`idrac_utils.go:122`) never appears, and no error is logged (because `main` drops it). The host meanwhile logged normally until 05:44 and shut down at no point → the reset action was never invoked.
-
-**The correct endpoint** (verified live, read-only, today — creds `root`/`‹default-pw redacted›` return HTTP 200):
-
-```
-POST https://192.168.1.4/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset
-Body: {"ResetType":"GracefulShutdown"}
-ResetType@Redfish.AllowableValues: On, ForceOff, ForceRestart, GracefulShutdown, PushPowerButton, Nmi
-```
-
-The code POSTs `{"ResetType":"GracefulShutdown"}` to `https://192.168.1.4` (no path). That hits the iDRAC web root, not the reset action → no reset. Because the error is discarded, the watchdog has been **failing silently since at least the current code** (git: unchanged logic since the 2025-10 move; deployed binary 2025-03). Prior outages were brief AC-flickers (per SEL history) that never reached the threshold, so this is the **first outage long enough to exercise the shutdown path — and it was broken.**
-
-### Contributing / latent factors
-
-1. **Silent failure + zero observability.** `main` discards the shutdown error; nothing alerts on "shutdown attempted but host still up". A safety mechanism was broken for months, invisibly.
-2. **Actuation via iDRAC ACPI cascade is indirect.** Even a *correct* `GracefulShutdown` only presses the virtual power button; the host must then cascade to guests. `acpid` is **inactive** on `pve` (relies on systemd-logind default `HandlePowerKey=poweroff`), and host shutdown relies on `pve-guests` to stop VMs (per-guest timeout, can force-kill). Doing explicit `qm shutdown` on the host is more deterministic.
-3. **Unreliable runtime estimate + coarse cadence.** `minutesRemaining` bounced (90→99→75→…→20→12→2); 10-min polling vs a 20-min threshold leaves only ~2 polls of margin. `upsBatteryCurrent`/`upsBatteryTemperature` read `2.147e9` (garbage, matches memory #7228). Need multi-signal thresholds + finer polling + debounce.
-4. **Watchdog lives off-host, off-GitOps, undocumented.** A single hand-built binary on the NAS, not in Terraform, no runbook, no monitoring. It also shares the UPS with the host (dies with it) — fine for shutdown, but a single point of failure with no backup.
-5. **NUT half-config** fails every boot and masquerades as host UPS monitoring.
+One limit worth stating plainly. Pushgateway, Prometheus and Alertmanager all run
+in the cluster, which runs on the host the watchdog is trying to save. Once the
+host is down, none of these can report anything. Prometheus does not even hold
+the record of the last outage: the TSDB has no samples between 2026-07-18 00:27
+and 06:27 UTC, which is the whole on-battery window. The alerts fired at the time
+(the post-mortem records them), so the most likely explanation is that the head
+block was still in the write-ahead log when power was cut. Either way, in-cluster
+monitoring cannot be the record of an event that kills the cluster.
 
 ---
 
-## 4. Proposed design
+## 2. How the power is actually wired
 
-**Principle:** the machine that must be protected should be the one that decides to save itself, using the data path we have *proven* works, taking the most *direct* shutdown action, and *loudly* reporting health. Keep power-on in firmware (already works). Add a second, independent last-resort layer.
+The bead asked which battery system feeds the R730, since the host died after two
+hours while the UPS estimated 5.5. Both halves now have an answer that did not
+need an outage.
 
 ```mermaid
-flowchart TD
-    A["Grid OK — UPS input ~230-250V<br/>upsInputVoltage≈238, secondsOnBattery=0"] -->|mains fails| B["UPS on battery<br/>upsInputVoltage=0, upsSecondsOnBattery&gt;0"]
-    B --> C{"Debounce:<br/>on battery ≥ 90s?"}
-    C -->|"no (flicker)"| A
-    C -->|yes| D["Ride through on battery<br/>host agent polls UPS every 30s"]
-    D --> E{"Low battery? first to trip:<br/>minutesRemaining &lt; 20<br/>OR charge &lt; 35%<br/>OR batteryStatus = Low(3)<br/>OR on-battery &gt; 90 min"}
-    E -->|no| D
-    E -->|yes| F["Graceful shutdown script<br/>runs ON the PVE host (root)"]
-    F --> G["qm shutdown each running guest<br/>--timeout 120 (parallel; master last)"]
-    G --> H{"guest still up<br/>after timeout?"}
-    H -->|yes| I["qm stop straggler (force)"]
-    H -->|no| J["all guests down"]
-    I --> J
-    J --> K["poweroff PVE host cleanly"]
-    K --> L["Host + UPS idle — everything off before battery dies"]
-    L -->|mains returns| M["BIOS AcPwrRcvry = On/Last<br/>→ R730 self-powers-on"]
-    M --> N["VMs onboot=1 auto-start<br/>k8s cluster + services recover"]
-    N --> A
+flowchart LR
+    GRID["Sofia grid<br/>236-245 V, varies"] --> ATS["ATS<br/>L1 / L2, Tuya-monitored<br/>24 V inverter battery"]
+    GRID --> UPSIN["Huawei UPS2000 2kVA<br/>input 239-245 V"]
+    UPSIN --> UPSOUT["UPS output<br/>regulated 230 V, flat"]
+    ATS --> PS2["R730 PSU2<br/>input tracks grid<br/>236 / 240 / 244 V<br/>carries ~2/3 of load"]
+    UPSOUT --> PS1["R730 PSU1<br/>input pinned 230 V<br/>carries ~1/3 of load"]
+    UPSOUT --> OTHER["NAS, network, iDRAC<br/>(share not measured)"]
+    PS1 --> R730["Dell R730 / pve<br/>~280 W total"]
+    PS2 --> R730
 
-    E -.->|"host agent dead/wedged"| O["BACKUP: NAS watchdog (URL fixed)<br/>iDRAC GracefulShutdown, later threshold"]
-    O -.-> P{"PowerState=Off<br/>within 5 min?"}
-    P -.->|no| Q["iDRAC ForceOff (last resort)"]
-    P -.->|yes| L
-    Q -.-> L
-
-    F ==>|heartbeat + result| R[("node_exporter textfile<br/>→ Prometheus → alerts")]
+    GRID -. "mains fails" .-> X(["PSU2 input lost<br/>PSU1 carries 100%<br/>UPS load steps up"])
 ```
 
-### 4a. Primary — host-local shutdown agent (recommended)
+### The evidence for PSU1 on the UPS
 
-- **Where:** on the PVE host as a **systemd service** (long-running loop, or oneshot + 30 s timer). Deployed the same out-of-band way as the other host scripts (`/usr/local/bin/…`, `scp`), source tracked in `scripts/server_safe_poweroff/`.
-- **What:** reuse the existing Go program (static binary — no net-snmp needed on the hypervisor; `pve` has **no** `snmpget`), adding a `--local` mode that:
-  - Keeps the **proven** SNMP polling (the two OIDs that read correctly today) and additionally reads `upsEstimatedChargeRemaining`, `upsSecondsOnBattery`, `upsBatteryStatus` for robustness.
-  - Replaces the iDRAC drive with a **local graceful-shutdown script** (below).
-  - **Fixes error handling:** never discard the shutdown result; log + retry; write a heartbeat/result metric.
-  - Runs a **debounce** (≥ 90 s continuously on battery) before counting down — ignores the recurring dawn AC-flickers.
-- A small shell/Python rewrite is acceptable too, but the Go static binary is the lowest-dependency fit for the hypervisor.
+PSU1's input voltage does not move. Everything else does.
 
-### 4b. Trigger thresholds (multi-signal, first-to-trip; debounced)
+| Sampled at | PSU1 in | UPS out | PSU2 in | ATS L1 | UPS in |
+|---|---|---|---|---|---|
+| now | 230 | 230 | 236 | 237 | 240 |
+| 2 h ago | 230 | 230 | 236 | 236 | 239 |
+| 6 h ago | 230 | 230 | 240 | 239 | 241 |
+| 12 h ago | 230 | 230 | 244 | 242 | 245 |
+| 24 h ago | 230 | 230 | 238 | 237 | 240 |
+| 48 h ago | 230 | 230 | 242 | 243 | 245 |
+| 7 d ago | 230 | 229 | 238 | 237 | 239 |
 
-Trigger graceful shutdown when **any** of these holds for ≥ 2 consecutive polls, after the on-battery debounce:
+Volts. `r730_idrac_powerSupplyCurrentInputVoltage` by `powerSupplyIndex`,
+`ups_upsOutputVoltage`, `ups_upsInputVoltage`,
+`automatic_transfer_switch_voltage_l1_volts`.
 
-| Signal (live metric) | Threshold | Why |
+PSU1 matches the UPS output in six of seven samples and is 1 V off in the
+seventh. PSU2 stays within 2 V of the ATS across an 8 V grid swing. A regulated
+UPS output holding 230 V while its own input sits 9 to 15 V higher is the
+signature that separates the two feeds.
+
+The iDRAC SEL says the same thing from the failure side. Every AC-loss event it
+holds names supply 2 on its own:
+
+```
+2026-07-18T03:43:54+03:00  The power input for power supply 2 is lost.
+2026-07-18T03:43:54+03:00  Power supply redundancy is lost.
+2026-06-04T02:44:39+03:00  The power input for power supply 2 is lost.
+2026-04-16T01:31:39+03:00  The power input for power supply 2 is lost.
+2026-04-15T02:44:20+03:00  The power input for power supply 2 is lost.
+```
+
+The 03:43:54 timestamp agrees with the NAS watchdog's own logs, which show the
+UPS on mains at 03:40 and on battery at 03:50, so the SEL clock is trustworthy
+here. The post-mortem's note about a BMC clock offset does not apply to these
+entries, which carry an explicit `+03:00`.
+
+**Conclusion:** the R730 is fed by the Huawei UPS2000 2kVA on PSU1 and by
+unprotected grid through the ATS on PSU2. The ATS has its own 24 V battery
+(`automatic_transfer_switch_voltage_battery_volts` reads 24.9 V), and that
+battery did not keep PSU2 alive on 2026-07-18. What else the UPS carries, and
+what the ATS inverter is actually for, are not established here.
+
+### Why 2 hours, not 5.5
+
+Normal-operation load split, from `r730_idrac_amperageProbeReading` over 14 days:
+
+| Sampled at | PSU1 | PSU2 | System board |
+|---|---|---|---|
+| now | 0.4 A | 0.8 A | 280 W |
+| 6 h ago | 0.2 A | 1.0 A | 266 W |
+| 24 h / 48 h / 14 d ago | 0.4 A | 0.8 A | 280 W |
+| 7 d ago | 0.2 A | 1.0 A | 238 W |
+
+PSU1 carries between a sixth and a third of the server while mains is up. The
+moment PSU2's input goes, PSU1 carries all of it, and the UPS load rises by
+roughly 190 W on top of whatever else it holds.
+
+The UPS computes `upsEstimatedMinutesRemaining` from the load it sees at the
+time. On mains that load excludes the two thirds PSU2 is carrying, so the
+estimate is structurally optimistic about a mains failure. Measured against the
+one real discharge:
+
+| | Value |
+|---|---|
+| Endurance measured 2026-07-18 | 2 h 00 m 43 s (03:43:54 to 05:44:37) |
+| Register at rest today, 100% charge, 18% load | 334 min (watchdog) / 497 min (snmp-exporter) |
+| Ratio | the register over-reads by 2.8x to 4.1x |
+
+The load step explains the direction and much of the size. Battery age and the
+non-linear relationship between discharge rate and capacity plausibly account for
+the rest, though neither is measured here.
+
+Near empty the register behaves better. On 2026-07-18 it read 20 minutes at
+05:20, 12 at 05:30 and 2 at 05:40, against a real death at 05:44:37, so in the
+final half hour it under-read by 2 to 5 minutes. **Treat it as unusable above
+roughly 30 minutes and roughly correct below it.** That asymmetry is what makes
+the current 20-minute trigger workable at all, and it is the reason the trigger
+should not be raised on the strength of the register alone.
+
+---
+
+## 3. The shutdown chain as it is wired
+
+Every value below was read off the live system on 2026-09-05.
+
+```mermaid
+sequenceDiagram
+    participant NAS as NAS watchdog<br/>(10 min cadence)
+    participant UPS as Huawei UPS<br/>(SNMP)
+    participant IDRAC as iDRAC
+    participant PVE as pve host
+    participant G as guests
+    participant K as kubelet
+
+    NAS->>UPS: read voltage, minutes, charge
+    UPS-->>NAS: inputVoltage=0, minutes<20
+    NAS->>IDRAC: POST ComputerSystem.Reset<br/>{"ResetType":"GracefulShutdown"}
+    IDRAC->>PVE: virtual power button (ACPI)
+    PVE->>PVE: logind HandlePowerKey=poweroff
+    PVE->>PVE: systemd stops pve-guests.service<br/>(TimeoutStopUSec=infinity)
+    PVE->>G: pvesh create /nodes/localhost/stopall
+    Note over G: reverse startup order,<br/>one order group at a time
+    G->>K: ACPI shutdown into each k8s guest
+    K->>K: shutdownGracePeriodByPodPriority<br/>215 s ladder, 480 s inhibitor window
+    Note over G,K: guest force-stopped at its own down= ceiling
+    G-->>PVE: all guests stopped
+    PVE->>PVE: poweroff
+```
+
+### Confirmed at each hop
+
+| Hop | State | Read from |
 |---|---|---|
-| `upsEstimatedMinutesRemaining` | `< 20` | Original signal; erratic, so not sole trigger. |
-| `upsEstimatedChargeRemaining` | `< 35 %` | Charge % is steadier than the minutes estimate. |
-| `upsBatteryStatus` | `== 3` (batteryLow) | Firmware's own low-battery flag (if populated). |
-| `upsSecondsOnBattery` | `> 5400` (90 min) | Hard ride-through cap so we never gamble the last of the battery on a bad estimate. |
+| Watchdog to iDRAC | correct Redfish action URL, `InsecureSkipVerify` client, error checked and latched | `idrac_utils.go`, `main.go` |
+| iDRAC to host | ACPI "Power Button" input device present on pve | `/sys/class/input/event0/device/name` |
+| Host power-key policy | `HandlePowerKey = poweroff`, `HandlePowerKeyLongPress = ignore` | `busctl get-property … login1.Manager` |
+| Guest stop | `ExecStop` = `vzdump -stop` then `pvesh create /nodes/localhost/stopall`, `TimeoutStopUSec=infinity` | `systemctl show pve-guests` |
+| Guest ordering | see the table below | `qm config <vmid>` on all 11 running guests |
+| In-guest pod drain | 9-rung ladder, 215 s total, identical on all six nodes | live `/configz` via the apiserver proxy |
+| Inhibitor window | `InhibitDelayMaxUSec = 480 s` on all six nodes, from `/etc/systemd/logind.conf.d/zz-kubelet-shutdown.conf` | `busctl` on each node |
 
-Rationale: the UPS gives ~2 h, so most outages ride through untouched (good — that's the point of the UPS). We only shut down when the battery is genuinely low, leaving a comfortable margin for 6 VMs + host to stop (shutdown takes a few minutes; today 14 min was available and would have sufficed). Poll every 30 s (finer than the 10-min cron) so the countdown is tracked closely.
+### Guest shutdown order and per-guest ceiling
 
-### 4c. Graceful guest shutdown script (deterministic)
+Proxmox stops guests in reverse startup order, waiting for each order group
+before starting the next. Every guest here has a distinct order, so the whole
+sequence is serial.
 
-```
-for vmid in <running guests, workers first, k8s-master last>:
-    qm shutdown $vmid --timeout 120 &        # ACPI + guest agent (all VMs have agent:1 except pfsense→ACPI)
-wait / poll qm status
-for vmid still running after timeout:
-    qm stop $vmid                            # force-stop stragglers
-poweroff                                     # only after all guests are down
-```
+| Step | order | Guest | `down=` | Notes |
+|---|---|---|---|---|
+| 1 | 32 | Windows10 | 120 s | `agent: 1` |
+| 2 | 31 | home-assistant | 60 s | `agent: 0`, ACPI only |
+| 3 | 30 | devvm | 120 s | |
+| 4 | 24 | k8s-node5 | 180 s | |
+| 5 | 23 | k8s-node4 | 180 s | |
+| 6 | 22 | k8s-node3 | 180 s | |
+| 7 | 21 | k8s-node2 | 180 s | |
+| 8 | 20 | k8s-node1 | 180 s | |
+| 9 | 10 | k8s-master | 180 s | |
+| 10 | 5 | docker-registry | 60 s | |
+| 11 | 1 | pfsense | 60 s | `agent: 1` absent, ACPI only, stopped last |
+| | | **Sum of ceilings** | **1500 s = 25 min** | |
 
-- All node VMs (200–205), pfsense (101), devvm (102) have `onboot=1` → auto-restart on power-on.
-- All have `agent:1` except pfsense (101), which stops via ACPI. `qm shutdown` handles both.
-- Explicit `qm` avoids relying on `pve-guests`/`acpid`/logind cascades.
-- Single node, no corosync/HA → no fencing complications.
+All eleven carry `onboot: 1`, so the estate restarts by itself when the host
+powers on.
 
-### 4d. Backup layer — fixed NAS watchdog as last resort (optional but recommended)
+### The kubelet ladder
 
-Keep the NAS watchdog for defense-in-depth, but:
-- **Fix the URL** → `…/Actions/ComputerSystem.Reset`; **stop ignoring the error**; after `GracefulShutdown`, poll `PowerState` and escalate to **`ForceOff`** if not `Off` within ~5 min.
-- Give it a **later** threshold than the host agent (e.g., `< 12` min / `< 20 %`) so the host agent is primary and the NAS only acts if the host agent is dead/wedged.
-- Two independent triggers, same UPS, different hosts and mechanisms (local `poweroff` vs remote iDRAC `ForceOff`).
+Declared in `playbooks/k8s-node-tuning.yml`, reconciled hourly, and read back
+today from each node's live `/configz` rather than from the file. All six nodes
+return a byte-identical ladder (SHA-256 prefix `80ce6bfb04b3`), nine rungs,
+215 s total, with `shutdownGracePeriod` and `shutdownGracePeriodCriticalPods`
+both pinned at `0s` as kubelet 1.35 validation requires.
 
-### 4e. Power-on — leave in firmware (already works)
+| Priority | Grace | Cumulative | Tier, per the playbook |
+|---|---|---|---|
+| 0 | 10 s | 10 s | apps |
+| 200000 | 10 s | 20 s | apps |
+| 400000 | 15 s | 35 s | edge |
+| 600000 | 15 s | 50 s | gpu |
+| 800000 | 90 s | 140 s | databases |
+| 1000000 | 30 s | 170 s | core, Traefik drains in ~26 s |
+| 1200000 | 15 s | 185 s | gpu-workload |
+| 2000000000 | 15 s | 200 s | system-cluster / node critical |
+| 2000001000 | 15 s | 215 s | system-node critical |
 
-The R730 self-powered-on when the grid returned (09:33) — the NAS watchdog's power-on path was never needed (and has the same URL bug). **Action:** verify iDRAC/BIOS **AC Power Recovery = On** (or **Last**) so this is guaranteed (the BIOS attribute couldn't be read via Redfish this session — confirm in the iDRAC UI / `racadm get BIOS.SysSecurity.AcPwrRcvry`). No software needed for power-on; VMs already `onboot=1`.
+The ladder is 215 s inside a 180 s `down=` ceiling, so the last 35 s never runs
+and the guest is force-stopped. That is deliberate: the design reaches the
+database tier at 50 s and gives it 90 s of the budget, on the reasoning that apps
+tolerate SIGKILL and databases do not. The per-tier numbers come from a full-node
+drain drill on 2026-07-20, which measured a 9-minute uncapped drain and showed
+kubelet consuming close to each tier's full grace in sequence rather than
+short-circuiting.
 
-### 4f. Retire the broken NUT config
+**Caveat on provenance.** The 480 s logind drop-in that gives the ladder room to
+run is dated 2026-07-20 on all six nodes and is not declared in any playbook. It
+was placed by hand during that drill. Nothing reconciles it, so a node rebuild
+would silently drop the inhibitor window back to the 5 s default and cut the
+ladder short. Worth folding into `k8s-node-tuning.yml`; not done here.
 
-Remove or `systemctl mask nut-monitor nut-server` (and fix `ups.conf`/`upsmon.conf`) so it stops failing every boot and stops looking like working monitoring. (Or adopt the NUT alternative in §5.)
+---
 
-### 4g. Monitoring — close the silent-failure gap (the real systemic fix)
+## 4. The chain is longer than the margin
 
-Detection already exists and fired today (`PowerOutage`, `OnBattery`, `LowUPSBattery` — `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl`). Add **actuation observability** so a broken shutdown path is loud:
+This is the open technical risk, and it is arithmetic on the numbers above rather
+than an observation.
 
-- **Agent liveness:** the host agent writes a node_exporter **textfile** (node_exporter already runs on `pve`): `power_shutdown_agent_last_run_timestamp`, `power_shutdown_agent_last_result` (0=ok/1=fail), `power_shutdown_agent_on_battery`. Alert `ShutdownAgentStale` if the timestamp is stale.
-- **Shutdown-attempt visibility:** alert `GracefulShutdownTriggered` (info, so the event shows in Slack) and — critically — `GracefulShutdownFailed`: fires if a shutdown was triggered **but the host is still up** N minutes later (exactly today's signature). Because the cluster dies with the host, this alert is best evaluated cheaply (agent result metric + external heartbeat), not from in-cluster inference alone.
-- Keep thresholds consistent with the agent (alert `LowUPSBattery` at 25 min ≈ agent trigger at 20 min).
+Because each k8s guest runs a 215 s ladder inside a 180 s ceiling, each of the six
+consumes its full 180 s and is then force-stopped. That is a floor, not a
+worst case:
 
-### 4h. Where each piece lives
+| Component | Time |
+|---|---|
+| Six k8s guests, serial, each hitting its ceiling | 1080 s = 18 min |
+| The other five guests, worst case at their ceilings | 420 s = 7 min |
+| Host poweroff after the last guest | not measured |
+| **Total** | **18 min floor, 25 min ceiling** |
 
-| Piece | Location | Managed as |
+Against the battery margin the trigger leaves:
+
+| Scenario | Margin before battery death |
+|---|---|
+| Trigger fires exactly at the 20-minute threshold | ~24 min (from the 2026-07-18 curve) |
+| What actually happened on 2026-07-18 | 14 m 35 s (fired 05:30:02, death 05:44:37) |
+
+The best case is roughly the length of the chain. The observed case is shorter
+than its floor. The 10-minute poll cadence is what turns one into the other: on
+2026-07-18 the register read 20 at 05:20 and 12 at 05:30, so the trigger tripped
+a full poll late.
+
+Three levers exist, none of them applied here, and each wants its own change:
+
+1. **Poll more often.** A 1 or 2 minute cadence removes up to 10 minutes of
+   avoidable delay and costs nothing but Task Scheduler entries. This is the
+   cheapest of the three.
+2. **Collapse the k8s guests into one order group.** Giving all six nodes the
+   same `startup order` shuts them down in parallel, taking the k8s portion from
+   18 minutes to about 3. The cost is that they also start in parallel, which
+   changes the boot behaviour the current staggered orders were chosen for.
+3. **Trigger earlier.** The least attractive, because it spends ride-through on
+   an estimate §2 shows is not trustworthy above 30 minutes, and because most
+   outages here are short.
+
+Whether the chain fits at all is the thing the parked drill would settle (§7).
+Until then, treat "the estate shuts down cleanly on a long outage" as designed
+and plumbed but not demonstrated.
+
+---
+
+## 5. Decisions taken
+
+### The host-local shutdown agent was rejected and will not be built
+
+The 2026-07-18 draft recommended moving the decision and the action onto the PVE
+host, with the NAS as a backup layer. Viktor rejected that on 2026-07-18, for a
+reason that holds regardless of implementation quality: **a host agent can turn
+the host off but cannot turn it back on.** A powered-off host runs nothing. The
+watchdog therefore has to live somewhere external that stays up, which is what the
+NAS already is, and it drives the machine in both directions through iDRAC.
+
+The work that followed fixed the NAS watchdog instead. Nothing in
+`scripts/server_safe_poweroff/` runs on the PVE host, and the `--local` mode the
+draft described was never written.
+
+### BIOS AC power recovery stays ON
+
+Commit `601614d0`'s message says the NAS watchdog becomes the sole power-on path
+and that `AcPwrRcvry` should be set OFF once that path is validated. **That step
+is cancelled** (Viktor, 2026-09-04). Turning it off buys nothing and makes a dead
+Synology mean the server never powers on again.
+
+The cost of keeping it on, stated plainly so nobody re-litigates this from
+first principles: with `AcPwrRcvry` on, the R730 powers itself up the moment PSU2
+sees mains, which is before the watchdog gets a say. The UPS-safe gate in
+`handleWhenServerOff` (charge at least 50%, mains stable 10 minutes) therefore
+never applies in practice, because the watchdog finds `PowerState=On` and has
+nothing to do. A flapping grid can power-cycle the server on a battery that never
+recharges. That is the accepted trade against the failure mode where a broken NAS
+leaves the server dark indefinitely.
+
+The gate is not dead code. It still covers the case where the server is off for
+some other reason while the UPS is depleted.
+
+**The setting's value cannot currently be read out of band.** Redfish
+`/Systems/System.Embedded.1/Bios` returns an empty `Attributes` object, and
+`racadm get BIOS.SysSecurity` reports no objects under the group, on iDRAC as of
+2026-09-05. The behavioural evidence is strong: on 2026-07-18 the R730
+self-powered-on at ~09:30 when the grid returned, at a time when the watchdog's
+power-on path was broken by the same URL bug, so firmware did it. Nothing has
+changed the setting since. Reading the value directly means the BIOS setup screen
+at POST, or fixing whatever stops iDRAC publishing the BIOS attribute inventory.
+
+### The NUT install on the host stays broken, and stays a red herring
+
+Confirmed still true on 2026-09-05: `nut-monitor` is in `failed` state,
+`upsmon.conf` has `MINSUPPLIES 1` and no `MONITOR` line, `ups.conf` still points
+`blazer_ser` at a `/dev/ttyUSB0` that does not exist, and `upsc huaweiups`
+answers `Error: Driver not connected`. `nut-server` is active and serving
+nothing.
+
+It contributes nothing and it looks like working UPS monitoring to anyone reading
+the host. Masking both units, or reconfiguring the driver to `snmp-ups` against
+`192.168.1.5`, would remove that. Neither is done, and neither is on this bead's
+path, because the shutdown mechanism does not go through NUT.
+
+### iDRAC credentials
+
+Left as the Dell defaults (Viktor, 2026-07-18). They are supplied to the watchdog
+through `powercheck.env` on the NAS (mode 600, not in git) rather than baked into
+the binary. Rotating them into Vault remains available and unclaimed.
+
+---
+
+## 6. What is verified today, and how
+
+| Claim | Verified | Instrument |
 |---|---|---|
-| Host shutdown agent + graceful-shutdown script | `scripts/server_safe_poweroff/` (source) → `/usr/local/bin/` + `/etc/systemd/system/` on `pve` | Out-of-band host config (scp), like `nfs-mirror` etc. Documented in a runbook. |
-| NAS backup watchdog (fixed) | `scripts/server_safe_poweroff/` → NAS `~/server-power-cycle/` | Out-of-band (`deploy_to_nas.sh`). |
-| UPS detection alerts | `stacks/monitoring/.../prometheus_chart_values.tpl` | **Terraform** (already exists). |
-| Actuation-observability alerts + textfile scrape | `stacks/monitoring/...` | **Terraform** (new). |
-| Runbook | `docs/runbooks/power-loss-graceful-shutdown.md` (new) + link from `docs/runbooks/proxmox-host.md` | Git. |
-| BIOS AcPwrRcvry | iDRAC/BIOS | Out-of-band; documented + verified. |
+| Fixed watchdog deployed and armed on the NAS | yes | binary dated 2026-07-19, no `powercheck.disable`, `powercheck_actuation_disabled = 0` |
+| Watchdog running on schedule | yes, every 10 min | `changes(powercheck_last_run_timestamp_seconds[24h])` = 143 |
+| Watchdog reads both iDRAC and UPS | yes | `powercheck_up = 1`; its own log line |
+| Metrics reach Prometheus, alerts exist | yes | 14 `job="powercheck"` series present; six alert rules |
+| Redfish reset action URL is correct | code-reviewed, not exercised | `idrac_utils.go`; the endpoint answered 200 read-only in 2026-07 |
+| PSU1 on the UPS, PSU2 on grid | yes | 7-day voltage signature; iDRAC SEL |
+| Runtime discrepancy explained | yes | load split, measured endurance, register comparison |
+| Kubelet ladder in force on all six nodes | yes | live `/configz`, identical hash on all six |
+| Logind inhibitor window admits the ladder | yes | `busctl`, 480 s on all six |
+| Guest shutdown ordering and ceilings | yes | `qm config` on 11 guests |
+| Host power-key policy | yes | `busctl`, `HandlePowerKey = poweroff` |
+| Reset POST actually shuts the host down | **no** | needs the drill |
+| Whole chain completes inside the battery margin | **no**, and §4 argues it may not | needs the drill |
+| `AcPwrRcvry` value | **no**, inferred from 2026-07-18 behaviour | BIOS screen at POST |
 
 ---
 
-## 5. Alternative considered — NUT done properly (`snmp-ups`)
+## 7. The parked drill
 
-Instead of a custom agent, reconfigure the existing NUT on `pve`: driver `snmp-ups` against `192.168.1.5` (not the broken serial `blazer_ser`), add the missing `MONITOR` line, and a custom `SHUTDOWNCMD` that runs the graceful-guest-shutdown script. This is the standard, battle-tested homelab pattern, runs on the host, and polls continuously.
+Parked, not cancelled. Testing whether the NAS can power the server on requires
+the server to be off, which is a full estate outage. It has not been scheduled.
 
-**Why it is the *alternative*, not the primary:** its low-battery detection depends on NUT's Huawei→`ups.status OB/LB` MIB mapping, which is **unvalidated** on this 2017-firmware Huawei card (memory #7228 documents multiple garbage/unpopulated registers). The specific OIDs the custom agent needs (`upsInputVoltage`, `upsEstimatedMinutesRemaining`, `upsEstimatedChargeRemaining`) **did** read correctly today, so the custom agent reuses only proven data. Recommend: if Viktor prefers the standard daemon, first validate `upsc huaweiups` reports usable `battery.charge`/`battery.runtime`/`ups.status LB` on battery (test per §6), then it becomes viable. Until then, the custom host agent is lower-risk.
+**What it would involve.**
+
+1. Pick a window with fresh backups and nobody depending on the estate. Everything
+   in Sofia goes down: the cluster, pfSense, Home Assistant, the devvm.
+2. Arm a stopwatch against `powercheck_ups_minutes_remaining` and the guest list.
+3. Pull mains, or trip the UPS input. Do not shut anything down by hand.
+4. Watch the ride-through. PSU2's input drops, PSU1 takes the whole load, and the
+   UPS load steps up. Record the new `upsOutputPercentLoad` and how the minutes
+   register moves under the real on-battery load, which is the one measurement
+   nothing else can produce.
+5. Let it reach the 20-minute threshold. Record when the watchdog POSTs, whether
+   iDRAC accepts it, and how long after that the host starts shutting down.
+6. Time each guest group as `stopall` walks the reverse order. This is the number
+   §4 estimates at 18 to 25 minutes and cannot confirm.
+7. Record whether the host reaches `poweroff` before the battery empties, and by
+   how much.
+8. Restore mains. The server should self-power-on from `AcPwrRcvry` within
+   seconds, well before the watchdog's next 10-minute run. Confirm guests come
+   back on `onboot`.
+
+**What it would prove that nothing else can.**
+
+- That the Redfish `GracefulShutdown` POST actually stops this host, rather than
+  being accepted and ignored. This is the exact failure of 2026-07-18 and the only
+  part of it still untested.
+- The real on-battery runtime at the real on-battery load, which is the number the
+  20-minute threshold should be set from.
+- Whether the 18 to 25 minute shutdown chain fits, and which of the three levers in
+  §4 is needed.
+- That `AcPwrRcvry` is on, by observing the power-on with the watchdog unable to
+  have caused it.
+- Whether the estate comes back clean, or repeats the degraded cascade of
+  2026-07-18 (post-mortem §4).
+
+**Cheaper partial tests, if a full window stays out of reach.**
+
+- Power-on only. If the host is off for any other reason, remove
+  `powercheck.disable` and let the watchdog issue the `On` reset. Exercises the
+  same `performResetType` code path as shutdown, which is what makes it useful.
+- Single-guest stop timing. `qm shutdown` one k8s node in a window and time the
+  ladder against its 180 s ceiling. Gives the per-node number that §4's floor is
+  built from, without touching the host.
+- Dry-run decision. `touch powercheck.disable` and point the binary at fabricated
+  UPS values to confirm it decides to shut down and logs `[DRY-RUN]`.
+  `decision_test.go` already covers the pure decision functions.
 
 ---
 
-## 6. Testing plan (safe — no real outage required first)
+## 8. Open questions
 
-1. **Dry-run decision (zero risk):** run the agent in `--dry-run` against a **mock SNMP responder** (snmpsim / tiny fake) returning `inputVoltage=0, minutes=10, charge=25` → confirm it *decides* to shut down and writes the result metric, without acting.
-2. **Guest-shutdown path on one VM (low risk, maintenance window):** run the graceful-shutdown logic against a **single non-critical guest** (throwaway test VM, or `devvm` in a window) — confirm `qm shutdown --timeout` → clean stop, and `qm stop` fallback works, then it restarts. Validates actuation without powering off the host.
-3. **iDRAC backup path (read-only):** already verified the Reset action endpoint + AllowableValues respond (HTTP 200) — do **not** POST a reset; just confirm the corrected URL is reachable.
-4. **NUT validation (if pursuing §5):** temporarily bring up `snmp-ups` and check `upsc` reports OB/LB + battery.charge/runtime on battery (can simulate by briefly running the driver while the UPS is on battery, or trust the alternative only after a real-outage observation).
-5. **Full end-to-end (supervised, once, after the fix):** with fresh backups, during a window, **physically pull mains** (or trip UPS input) and watch: debounce → ride-through → threshold → `qm shutdown` all VMs → `poweroff` **before** the battery empties; then restore mains → confirm **auto-power-on** + VM `onboot`. This is the only true test of the whole chain; repeat periodically.
-6. **Verify BIOS AcPwrRcvry = On/Last** so power-on is guaranteed.
+1. **Does the chain fit?** §4 says the floor is 18 minutes against a best-case
+   24-minute margin and an observed 14.6-minute one. Unresolved until the drill,
+   and the most consequential thing on this page.
+2. **Which lever, if it does not fit?** Faster polling is cheapest and least
+   disruptive. Parallel k8s shutdown is the biggest win and changes boot
+   behaviour. Preference not recorded.
+3. **What else is on the UPS?** The UPS reads 18% load of 2 kVA while PSU1 draws
+   roughly 92 W, so it carries more than the server. The NAS is on it (it died
+   with the host on 2026-07-18 and rebooted with the grid). The rest is not
+   inventoried.
+4. **What is the ATS inverter for?** It has a 24 V battery that reads 24.9 V and
+   it did not keep PSU2 alive on 2026-07-18. Whether that is by design, by
+   configuration, or a fault is not established.
+5. **Should the 480 s logind drop-in be declared?** It is hand-placed on six
+   nodes and reconciled by nothing. A rebuild loses it silently and cuts the
+   ladder to 5 s.
+6. **Retire or repair NUT on the host?** Still failing every boot, still
+   misleading.
+7. **Rotate the iDRAC credentials into Vault?** Available, unclaimed, and
+   deliberately deferred once already.
 
 ---
 
-## 7. Open questions / decisions for Viktor
+## Appendix A — the 2026-07-18 failure, for reference
 
-1. **Primary engine:** custom host agent (recommended, reuses proven OIDs) vs NUT `snmp-ups` (standard, needs MIB validation first)?
-2. **Keep the NAS backup layer** (fixed URL + ForceOff last resort), or single host-local agent only?
-3. **Trigger tuning:** shut down at `< 20 min / < 35 % / > 90 min on battery` — or shut down **earlier** (bigger margin, less ride-through) given the erratic estimate?
-4. **iDRAC creds:** `root`/`‹default-pw redacted›` are the Dell defaults and work today. Rotate and store in Vault (`secret/viktor`), consuming from there in both agents? (Also `‹snmp-community redacted›` SNMP community.)
-5. **Retire vs repair NUT** on `pve`.
+The mechanism, kept because it is the reason every alert in §1 exists.
 
----
+`performResetType` POSTed `{"ResetType":"GracefulShutdown"}` to the bare iDRAC
+root `https://192.168.1.4` instead of
+`…/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset`. The request
+returned an error. `main()` discarded it. The watchdog logged the line before the
+POST and nothing after, on both the 05:30 and 05:40 runs.
 
-## Appendix A — key evidence
-
-**Host boots (`journalctl --list-boots`):**
-```
--1  9d1a7841… 2026-06-22 13:02:32 EEST → 2026-07-18 05:44:37 EEST   (hard death)
- 0  db953e92… 2026-07-18 09:33:49 EEST → …                          (grid-return boot)
-```
-
-**NAS watchdog — the fire that had no effect (`…INFO.20260718-053001`):**
 ```
 I0718 05:30:02  main.go:41] Server power state: On
 W0718 05:30:02  main.go:70] UPS is on Battery power
 W0718 05:30:02  main.go:72] Minutes remaining is too low - 12 Turning off server.
 W0718 05:30:02  idrac_utils.go:88] Starting graceful reset type GracefulShutdown!
-<end of log — no "initiated successfully", no error>
+<end of log — no success line, no error>
 ```
 
-**Minutes-remaining trace (NAS logs, 10-min cadence):**
-`03:50=90, 04:00=99, 04:10=75, 04:20=68, 04:30=54, 04:40=60, 04:50=52, 05:00=36, 05:10=26, 05:20=20, 05:30=12(→fire), 05:40=2(→fire), 05:44 dead`
+Two further faults in the same path would each have broken it on their own: the
+HTTP client had no `InsecureSkipVerify`, so it would have failed TLS against the
+iDRAC self-signed certificate even with the URL right, and `performPowerOn` uses
+the same function, so the power-on path was dead too. All three are fixed in
+`601614d0`.
 
-**NUT on pve:** `nut-monitor` failed — `Fatal error: insufficient power configured! Sum of power values: 0` (no `MONITOR` line); driver `blazer_ser`/`/dev/ttyUSB0` → `No such file or directory`.
+Minutes-remaining trace from the NAS logs, 10-minute cadence:
+`03:50=90, 04:00=99, 04:10=75, 04:20=68, 04:30=54, 04:40=60, 04:50=52, 05:00=36,
+05:10=26, 05:20=20, 05:30=12 (fired), 05:40=2 (fired), 05:44:37 dead`.
 
-**iDRAC Redfish (live, read-only):** `GET …/Systems/System.Embedded.1` → HTTP 200 (root/‹default-pw redacted›), `PowerState: On`; Reset target `…/Actions/ComputerSystem.Reset`; AllowableValues `On, ForceOff, ForceRestart, GracefulShutdown, PushPowerButton, Nmi`.
+## Appendix B — live UPS registers
 
-## Appendix B — live UPS metrics (snmp-exporter, module=huawei, target=192.168.1.5)
+Read 2026-09-05 on mains, `snmp-ups` job, `module=huawei`, target `192.168.1.5`.
 
-| Metric | Value now (on AC) | Usable? |
+| Register | Value | Usable |
 |---|---|---|
-| `upsEstimatedMinutesRemaining` | 324 | ✅ (dropped 90→2 during outage) |
-| `upsEstimatedChargeRemaining` | 81 (%) | ✅ |
-| `upsSecondsOnBattery` | 0 | ✅ (>0 on battery) |
-| `upsInputVoltage{upsInputLineIndex="1"}` | 238 | ✅ (0 on battery) |
-| `upsBatteryStatus` | 2 (normal) | ✅ (3 = low) |
-| `upsBatteryVoltage` | 817 | ✅ |
-| `upsBatteryCurrent` / `upsBatteryTemperature` | 2.147e9 | ❌ garbage |
+| `upsIdentManufacturer` / `upsIdentModel` | HUAWEI / UPS2000 2kVA | identity |
+| `upsInputVoltage` | 239 V | yes, reads 0 on battery |
+| `upsOutputVoltage` | 229 V | yes, the flat 230 V that identifies PSU1's feed |
+| `upsOutputPercentLoad` | 18% | yes, but of a rating the card does not report |
+| `upsEstimatedChargeRemaining` | 100% | yes |
+| `upsEstimatedMinutesRemaining` | 334 to 497 | **only below ~30 min**, see §2 |
+| `upsSecondsOnBattery` | 0 | yes |
+| `upsBatteryStatus` | 2 (normal) | yes, 3 = low |
+| `upsBatteryVoltage` | 815 (81.5 V) | yes |
+| `upsAlarmsPresent` | 0 | yes |
+| `upsConfigOutputVA` / `upsConfigOutputPower` | 0 | unpopulated |
+| `upsBatteryCurrent` / `upsBatteryTemperature` | 2.147e9 | garbage, matches memory #7228 |
+| `hwUpsOutputActivePowerA` | 1 to 3 | unit undocumented here, does not reconcile with 280 W |
 
-Scraped by Prometheus (`snmp-ups` job, 30 s) as `ups_ups*`. Existing alerts: `PowerOutage`, `OnBattery`, `LowUPSBattery`, `UPSBatteryDegraded`, `UPSAlarmsActive`, `UPSOverloaded`, `UPSOutputVoltageAbnormal` — all in `prometheus_chart_values.tpl`.
+Existing UPS alerts in `prometheus_chart_values.tpl`: `PowerOutage`, `OnBattery`,
+`LowUPSBattery`, `UPSBatteryDegraded`, `UPSAlarmsActive`, `UPSOverloaded`,
+`UPSOutputVoltageAbnormal`.
