@@ -26,19 +26,19 @@ metrics and alerts. That build has been deployed and armed on the NAS since
 
 Two things this rewrite settles that the original draft left open.
 
-**Which battery feeds the server.** PSU1 sits on the Huawei UPS, PSU2 on
-unprotected grid through the ATS. PSU1's input voltage has read a flat 230 V for
-seven days while PSU2's tracked the grid between 236 V and 244 V, and the UPS's
-own output register reads the same flat 230 V. The iDRAC SEL confirms it from the
-other direction: every AC-loss event on record, the 2026-07-18 outage included,
-names power supply 2 alone.
+**Which battery feeds the server.** PSU1 sits on the Huawei UPS. PSU2, which is
+the enforced primary, sits on the ATS, and the ATS selects between the apartment
+grid and the solar inverter's non-essential `out1` line. That line drops to 0 V
+when the building supply is gone, so a full outage takes PSU2 out by design. Every
+AC-loss event in the iDRAC SEL, the 2026-07-18 outage included, names power supply
+2 alone.
 
-**Why the UPS says 5.5 hours and delivered 2.** In normal operation PSU2 carries
-roughly two thirds of the server. When mains fails, that share transfers to PSU1,
-so the UPS load steps up at the exact moment its runtime estimate starts to
-matter. The estimate is computed from the load before the step. Measured
-endurance on 2026-07-18 was 2 h 00 m 43 s against a register that today reads
-334 to 497 minutes at rest.
+**Why the UPS says 5.5 hours and delivered 2.** PSU2 carries essentially the whole
+server, and PSU1 idles on the UPS at roughly 15 W. When mains fails the UPS
+inherits all ~280 W of it, so its load steps up by around 19x at the exact moment
+its runtime estimate starts to matter. The estimate is computed from the load
+before the step. Measured endurance on 2026-07-18 was 2 h 00 m 43 s against a
+register that today reads 334 to 497 minutes at rest.
 
 **What is still open.** The full chain from "iDRAC accepts the shutdown POST" to
 "host is off" has never been observed on this machine, and §4 gives an arithmetic
@@ -109,15 +109,17 @@ need an outage.
 
 ```mermaid
 flowchart TD
-    GRID["Sofia grid<br/>236-245 V"]
-    GRID --> ATS["ATS<br/>L1 / L2, Tuya<br/>24 V inverter"]
+    GRID["Apartment grid<br/>236-245 V"]
+    INV["Solar inverter fv_b<br/>52.5 V pack<br/>out1 = non-essential"]
+    GRID --> ATS["ATS, Tuya-metered<br/>selects grid or out1"]
+    INV -->|out1| ATS
     GRID --> UPS["Huawei UPS2000 2kVA<br/>in 239-245 V<br/>out 230 V, flat"]
-    ATS --> PS2["R730 PSU2<br/>tracks grid<br/>~2/3 of load"]
-    UPS --> PS1["R730 PSU1<br/>pinned 230 V<br/>~1/3 of load"]
-    UPS --> OTHER["NAS, network<br/>share unmeasured"]
+    ATS --> PS2["R730 PSU2, PRIMARY<br/>tracks its input<br/>carries ~all of the load"]
+    UPS --> PS1["R730 PSU1, hot spare<br/>pinned 230 V<br/>~15 W standby"]
+    UPS --> OTHER["NAS, rack gear<br/>share unmeasured"]
     PS1 --> R730["Dell R730 / pve<br/>~280 W"]
     PS2 --> R730
-    GRID -. "mains fails" .-> X(["PSU2 input lost<br/>PSU1 takes 100%<br/>UPS load steps up<br/>2 h measured"])
+    GRID -. "total outage" .-> X(["out1 -> 0 V by design<br/>PSU2 input lost<br/>PSU1 takes ~100%<br/>2 h measured"])
 ```
 
 ### The evidence for PSU1 on the UPS
@@ -159,31 +161,51 @@ UPS on mains at 03:40 and on battery at 03:50, so the SEL clock is trustworthy
 here. The post-mortem's note about a BMC clock offset does not apply to these
 entries, which carry an explicit `+03:00`.
 
-**Conclusion:** the R730 is fed by the Huawei UPS2000 2kVA on PSU1 and by
-unprotected grid through the ATS on PSU2. The ATS has its own 24 V battery
-(`automatic_transfer_switch_voltage_battery_volts` reads 24.9 V), and that
-battery did not keep PSU2 alive on 2026-07-18. What else the UPS carries, and
-what the ATS inverter is actually for, are not established here.
+**Conclusion:** PSU1 is on the Huawei UPS2000 2kVA. PSU2 is on the ATS, which
+selects between the apartment grid and the solar inverter's `out1` line.
+
+This agrees with Viktor's hand-drawn wiring diagram of 2026-07-05 and with the
+load-correlation work done at the time (memory #7218, #7230), which is the
+stronger of the two instruments. **Identify a feed by load correlation, not by
+voltage signature.** Reading the flat 230 V as "PSU1 is on the inverter" is a
+mistake already made once, in July, and the readings above are corroboration
+rather than the primary evidence.
+
+Two details that follow from that diagram and matter here. `out1` carries
+non-essential loads, and it drops to 0 V when the building common supply is gone,
+so a total grid outage removes PSU2's input **by design** rather than by fault,
+which is what the SEL entries above record. And the ATS's
+`automatic_transfer_switch_voltage_battery_volts` (24.9 V) is the ATS's own DC
+sensing, not a battery pack; the estate's second battery is the solar inverter's
+52.5 V bank behind `out1`. What else the UPS carries beyond PSU1 is still not
+inventoried.
 
 ### Why 2 hours, not 5.5
 
-Normal-operation load split, from `r730_idrac_amperageProbeReading` over 14 days:
+PSU2 is the primary by standing policy, enforced every 10 minutes by
+`automation.r730_psu_primary_enforce_psu2` on ha-sofia since 2026-07-05. PSU1 is
+a hot spare that sits on the UPS and carries almost nothing.
 
-| Sampled at | PSU1 | PSU2 | System board |
-|---|---|---|---|
-| now | 0.4 A | 0.8 A | 280 W |
-| 6 h ago | 0.2 A | 1.0 A | 266 W |
-| 24 h / 48 h / 14 d ago | 0.4 A | 0.8 A | 280 W |
-| 7 d ago | 0.2 A | 1.0 A | 238 W |
+| Sampled at | PSU1 | PSU2 | System board | ATS meter |
+|---|---|---|---|---|
+| now | 0.4 A | 0.8 A | 280 W | 289.7 W |
+| 6 h ago | 0.2 A | 1.0 A | 266 W | |
+| 24 h / 48 h / 14 d ago | 0.4 A | 0.8 A | 280 W | |
+| 7 d ago | 0.2 A | 1.0 A | 238 W | |
 
-PSU1 carries between a sixth and a third of the server while mains is up. The
-moment PSU2's input goes, PSU1 carries all of it, and the UPS load rises by
-roughly 190 W on top of whatever else it holds.
+Read the PSU1 column with care. The iDRAC current probe quantises in 0.2 A steps,
+so 0.2 A is its resolution floor rather than a measurement, and a sleeping spare's
+true standby draw is closer to 15 W (established 2026-07-05 against the Tuya
+meter). The ATS meter settles it from outside the server: it reads 289.7 W now
+against the R730's own 280 W, and ranges 130 W to 346 W over 7 days, so the ATS
+leg is carrying essentially the whole machine through PSU2.
 
-The UPS computes `upsEstimatedMinutesRemaining` from the load it sees at the
-time. On mains that load excludes the two thirds PSU2 is carrying, so the
-estimate is structurally optimistic about a mains failure. Measured against the
-one real discharge:
+So the transfer on mains loss is not a two-thirds shift. **The UPS goes from
+holding roughly 15 W of the server to holding all ~280 W of it**, on top of
+whatever else sits on it. The UPS computes `upsEstimatedMinutesRemaining` from
+the load it sees at the time, which is the pre-transfer load, so the estimate is
+structurally optimistic about exactly the event it is consulted for. Measured
+against the one real discharge:
 
 | | Value |
 |---|---|
@@ -191,9 +213,11 @@ one real discharge:
 | Register at rest today, 100% charge, 18% load | 334 min (watchdog) / 497 min (snmp-exporter) |
 | Ratio | the register over-reads by 2.8x to 4.1x |
 
-The load step explains the direction and much of the size. Battery age and the
-non-linear relationship between discharge rate and capacity plausibly account for
-the rest, though neither is measured here.
+A load step of that size explains the direction and plausibly most of the
+magnitude. Battery age and the non-linear relationship between discharge rate and
+capacity would account for the rest. Neither is measured here, and the exact
+on-battery load has never been observed, which is one of the things the drill in
+§7 would capture.
 
 Near empty the register behaves better. On 2026-07-18 it read 20 minutes at
 05:20, 12 at 05:30 and 2 at 05:40, against a real death at 05:44:37, so in the
@@ -421,7 +445,8 @@ the binary. Rotating them into Vault remains available and unclaimed.
 | Watchdog reads both iDRAC and UPS | yes | `powercheck_up = 1`; its own log line |
 | Metrics reach Prometheus, alerts exist | yes | 14 `job="powercheck"` series present; six alert rules |
 | Redfish reset action URL is correct | code-reviewed, not exercised | `idrac_utils.go`; the endpoint answered 200 read-only in 2026-07 |
-| PSU1 on the UPS, PSU2 on grid | yes | 7-day voltage signature; iDRAC SEL |
+| PSU1 on the UPS, PSU2 on the ATS | yes | Viktor's 2026-07-05 wiring diagram and load correlation (#7218, #7230); corroborated by the 7-day voltage signature and the iDRAC SEL |
+| PSU2 carries essentially the whole server | yes | ATS meter 289.7 W against the R730's 280 W |
 | Runtime discrepancy explained | yes | load split, measured endurance, register comparison |
 | Kubelet ladder in force on all six nodes | yes | live `/configz`, identical hash on all six |
 | Logind inhibitor window admits the ladder | yes | `busctl`, 480 s on all six |
@@ -498,9 +523,11 @@ the server to be off, which is a full estate outage. It has not been scheduled.
    roughly 92 W, so it carries more than the server. The NAS is on it (it died
    with the host on 2026-07-18 and rebooted with the grid). The rest is not
    inventoried.
-4. **What is the ATS inverter for?** It has a 24 V battery that reads 24.9 V and
-   it did not keep PSU2 alive on 2026-07-18. Whether that is by design, by
-   configuration, or a fault is not established.
+4. **Should PSU2 stay the primary?** It is enforced policy since 2026-07-05, and
+   it means the machine normally runs on the feed that dies first. The reasoning
+   is that all the source selection and battery protection sit upstream of PSU2
+   in the inverter and the ATS, so the PSU layer needs no logic of its own. Worth
+   re-reading against §4 now that the shutdown budget is quantified.
 5. **Should the 480 s logind drop-in be declared?** It is hand-placed on six
    nodes and reconciled by nothing. A rebuild loses it silently and cuts the
    ladder to 5 s.
