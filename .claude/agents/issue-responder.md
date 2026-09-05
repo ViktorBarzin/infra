@@ -217,7 +217,15 @@ You still own the issue. Your part:
      have to re-fetch them before starting
    - any earlier attempt recorded in the thread, and what it concluded
 4. **Relay its result back onto the issue** as a comment — what it changed, its
-   test result, whether the deploy recovered the source, and any sha it declared.
+   test result, and whether the deploy recovered the source.
+
+   > **Never write a `Pushed-Commit:` line for this route.** That marker is
+   > machine-read, and what reads it watches `viktor/infra` CI. The sub-agent's
+   > sha is a `viktor/f1-stream` commit, so a marker carrying it sends the
+   > watcher looking for a pipeline that will never exist, and the run hangs
+   > waiting on it. Name the sha in prose instead, with its repo, like
+   > ``pushed `viktor/f1-stream@abc1234` `` — prose is not parsed. The marker is
+   > only ever for a commit you pushed to `viktor/infra` yourself.
 
 The sub-agent ships and closes: it pushes to `viktor/f1-stream`, watches the
 deploy, verifies the source recovered, and closes the issue itself with the

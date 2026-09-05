@@ -249,6 +249,39 @@ The automated agent follows strict rules:
 | `needs-human` | Escalated — handed back to a human |
 | `f1-source` | An f1-stream upstream source stopped producing playable streams — **routes the issue to `f1-source-fixer`** rather than being fixed in place |
 
+#### Recreating a label
+
+These labels are live objects on `viktor/infra`, created by hand. Nothing in
+this repo declares them, so a repo restored from a backup that predates one, or
+a label someone deletes, comes back only by being recreated. Current ids on
+`viktor/infra`: `broken` 12, `change` 13, `agent-in-progress` 14, `paused` 15,
+`needs-human` 16, `f1-source` 22. Ids are assigned by Forgejo and are not worth
+matching — every consumer resolves by name.
+
+Idempotent recreate, for `f1-source` or any other name in the table:
+
+```bash
+FJ=https://forgejo.viktorbarzin.me/api/v1
+AUTH="Authorization: token $(vault kv get -field=forgejo_repo_token secret/ci/global)"
+NAME=f1-source
+
+curl -s -H "$AUTH" "$FJ/repos/viktor/infra/labels?limit=100" \
+  | python3 -c 'import json,sys; ls=json.load(sys.stdin); n=sys.argv[1];
+print(next((l["id"] for l in ls if l["name"]==n), "missing"))' "$NAME"
+
+# only if that printed "missing"
+curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+  "$FJ/repos/viktor/infra/labels" \
+  -d '{"name":"f1-source","color":"#1d76db","description":"f1-stream upstream source is not producing playable streams"}'
+```
+
+What breaks while `f1-source` is missing: the f1-stream source guard resolves
+label names to ids before it files and refuses to file when one is absent
+(`backend/guard_issues.py`, `resolve_label_ids`), on the reasoning that an
+unlabelled issue would look handled while dispatching nothing. So a real fault
+is logged and posted to `#alerts`, and no issue is opened — the fault is visible
+but nothing repairs it. `broken` missing has the same effect for every filer.
+
 ### Commit Conventions
 
 | Pattern | Used by |
