@@ -197,14 +197,27 @@ func capabilities() []capability {
 			},
 		},
 		{
-			Intent:  "make a request that must not come from our IP, or must appear from another country",
+			// Two moments, deliberately in one row. The request moment ("this
+			// curl must not come from home") was the only one worded here until
+			// 2026-09-06, so the authoring moment ("the Deployment I am writing
+			// should egress via the VPN") ranked third behind `browser run` and
+			// `k8s debug` for the words people actually use for it.
+			Intent:  "route a workload's outbound traffic through the VPN, or make a request that must not come from our IP",
 			Use:     "HTTPS_PROXY=http://proxy-egress-uk.proxy.svc.cluster.local:8888 (SOCKS5 on :1080, the h in socks5h matters)",
-			Instead: "making the request directly",
-			Synonyms: []string{"geo", "geoblock", "geo-restricted", "vpn", "egress", "another country",
-				"uk", "proxy", "not from home"},
+			Instead: "letting the pod egress straight out the home connection, or making the request directly",
+			Synonyms: []string{"geo", "geoblock", "geo-restricted", "vpn", "nordvpn", "egress",
+				"another country", "uk", "proxy", "not from home", "home ip", "source ip",
+				"workload", "container", "outbound", "route traffic", "tunnel"},
 			Detail: []string{
+				"Set it on the WORKLOAD, as env in the Deployment — the moment to reach",
+				"        for this is while AUTHORING a stack whose traffic is geo-sensitive,",
+				"        not only when you are running a request yourself.",
 				"Always set NO_PROXY=.svc.cluster.local,.cluster.local,localhost,127.0.0.1",
 				"        or in-cluster calls take a round trip through the UK.",
+				"Client ignores proxy env vars (native binaries, own DNS)? The path is a",
+				"        gluetun WireGuard SIDECAR sharing the pod netns — recipe in",
+				"        stacks/proxy/README.md, documented but never run, and its peer",
+				"        registration is rebuilt every 60s so it needs a broker change.",
 				"NOT a way past anti-bot walls: VPN exits sit in hosting ASNs that score",
 				"        worse than a residential address. Use homelab browser run for those.",
 			},
