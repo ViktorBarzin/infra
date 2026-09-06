@@ -808,7 +808,12 @@ resource "kubernetes_deployment" "immich-postgres" {
                   # Wait for PG to accept connections, then prewarm vector search tables
                   for i in $(seq 1 60); do
                     if pg_isready -U postgres > /dev/null 2>&1; then
-                      psql -U postgres -d immich -c "CREATE EXTENSION IF NOT EXISTS pg_prewarm; SELECT pg_prewarm('smart_search'); SELECT pg_prewarm('clip_index');" > /dev/null 2>&1
+                      # pg_prewarm does NOT follow a table into its TOAST. The
+                      # vectors vchordrq re-ranks on live in smart_search's TOAST
+                      # (~706MB); the smart_search main fork is a ~13MB stub. Warming
+                      # the stub alone leaves the re-rank cold. reltoastrelid keeps
+                      # this OID-stable — the pg_toast_NNNNN name changes on restore.
+                      psql -U postgres -d immich -c "CREATE EXTENSION IF NOT EXISTS pg_prewarm; SELECT pg_prewarm('clip_index'); SELECT pg_prewarm(reltoastrelid) FROM pg_class WHERE relname='smart_search' AND relnamespace='public'::regnamespace; SELECT pg_prewarm('smart_search'); SELECT pg_prewarm(reltoastrelid) FROM pg_class WHERE relname='face_search' AND relnamespace='public'::regnamespace;" > /dev/null 2>&1
                       break
                     fi
                     sleep 1
@@ -824,10 +829,17 @@ resource "kubernetes_deployment" "immich-postgres" {
               # 14d median ~2.3Gi / peak ~3.6Gi. Request lowered 4Gi->3Gi 2026-07-26
               # (reverses the 2026-07-06 reserve-peak call) to free N-1 scheduler headroom;
               # 3Gi req stays above observed peak, spikes ride the 4Gi limit (Burstable).
+              # Request stays 3Gi: node3 memory REQUESTS are already at 97% of
+              # allocatable, so raising it makes the pod unschedulable. Actual node
+              # memory is far less committed (13Gi free), so the 5Gi limit is real
+              # headroom, but this pod now sits above its request and is therefore
+              # an eviction candidate if node3 ever comes under genuine pressure.
               memory = "3Gi"
             }
             limits = {
-              memory = "4Gi"
+              # 4Gi -> 5Gi to cover shared_buffers 2048MB -> 3072MB. Measured RSS
+              # was 2255Mi at 2048MB shared_buffers, so expect ~3.3Gi steady.
+              memory = "5Gi"
             }
           }
         }
@@ -844,8 +856,13 @@ resource "kubernetes_deployment" "immich-postgres" {
             fi
             cat > /data/postgresql.override.conf <<'PGCONF'
             # Immich vector search performance tuning
-            shared_buffers = 2048MB
-            effective_cache_size = 2560MB
+            # 2048MB could not hold the hot set: clip_index 743MB +
+            # smart_search TOAST 706MB + face_search TOAST 630MB = 2079MB, so they
+            # evicted each other and the nightly postgresql-backup seq-scan tipped
+            # it over every night (measured 2026-09-06). 3072MB fits all three with
+            # room for the asset tables.
+            shared_buffers = 3072MB
+            effective_cache_size = 3584MB
             work_mem = 64MB
             shared_preload_libraries = 'vchord.so, vectors.so, pg_prewarm'
             pg_prewarm.autoprewarm = on
@@ -1112,11 +1129,14 @@ resource "kubernetes_service" "immich-machine-learning" {
 #
 # Per tick:
 #   init  measure  (postgres image — has psql)
-#         · re-prewarms clip_index + smart_search, but only on :00/:30 ticks
+#         · re-prewarms clip_index, the smart_search TOAST, smart_search and
+#           the face_search TOAST, but only on :00/:30 ticks
 #         · times a representative random-vector ANN query two ways: what
 #           Postgres says the query took (the alerting series) and how long
 #           the psql process took end to end (context only)
-#         · reads clip_index residency from pg_buffercache
+#         · reads clip_index AND smart_search-TOAST residency from pg_buffercache.
+#           Both matter: clip_index holds the quantized codes vchordrq scans,
+#           the TOAST holds the full-precision vectors it re-ranks with.
 #         · writes Prometheus exposition text to a shared emptyDir
 #   then, in parallel:
 #     push    (curl image) — POSTs those metrics to the Pushgateway
@@ -1179,7 +1199,21 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                 #
                 # 10# forces base 10 — bash reads a bare "05" as octal and errors.
                 if [ $(( 10#$(date +%M) % 30 )) -eq 0 ]; then
-                  if psql -v ON_ERROR_STOP=1 -c "SELECT pg_prewarm('clip_index'); SELECT pg_prewarm('smart_search');" >/dev/null 2>&1; then
+                  # Ordered deliberately: clip_index and the smart_search TOAST
+                  # are the smart-search read path and go in first, so that under
+                  # buffer pressure face_search's TOAST is the one that loses.
+                  # pg_prewarm does NOT descend into TOAST (proven 2026-09-06:
+                  # pg_prewarm('smart_search') warms 1,632 blocks of a 13MB stub and
+                  # 0 of the 88,320 TOAST blocks holding the vectors), which is why
+                  # a 100% clip_index residency reading could sit next to a 19.3s
+                  # query. reltoastrelid, not the pg_toast_NNNNN name, which is
+                  # OID-derived and changes across a dump/restore.
+                  if psql -v ON_ERROR_STOP=1 \
+                      -c "SELECT pg_prewarm('clip_index');" \
+                      -c "SELECT pg_prewarm(reltoastrelid) FROM pg_class WHERE relname='smart_search' AND relnamespace='public'::regnamespace;" \
+                      -c "SELECT pg_prewarm('smart_search');" \
+                      -c "SELECT pg_prewarm(reltoastrelid) FROM pg_class WHERE relname='face_search' AND relnamespace='public'::regnamespace;" \
+                      >/dev/null 2>&1; then
                     echo "prewarm ok"
                   else
                     echo "prewarm FAILED" >&2
@@ -1228,6 +1262,13 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                 wall=$(printf '%d.%03d' $((wall_ms/1000)) $((wall_ms%1000)))
                 pct=$(psql -tA -c "SELECT COALESCE(round(100.0*count(*)*8192/greatest(pg_relation_size('clip_index'::regclass),1),1),0) FROM pg_buffercache b JOIN pg_class c ON b.relfilenode=pg_relation_filenode(c.oid) WHERE c.relname='clip_index'" 2>/dev/null)
                 if [ -z "$pct" ]; then pct=-1; fi
+                # The other half of the smart-search read path. vchordrq scans the
+                # quantized codes in clip_index, then RE-RANKS by reading the
+                # full-precision vectors, which live in smart_search's TOAST. Until
+                # 2026-09-06 nothing measured that relation, so clip_index at 100%
+                # was read as "the cache is fine" while the re-rank ran cold.
+                toast_pct=$(psql -tA -c "SELECT COALESCE(round(100.0*count(b.bufferid)*8192/greatest(pg_relation_size(t.oid),1),1),0) FROM pg_class c JOIN pg_class t ON t.oid=c.reltoastrelid LEFT JOIN pg_buffercache b ON b.relfilenode=pg_relation_filenode(t.oid) WHERE c.relname='smart_search' AND c.relnamespace='public'::regnamespace GROUP BY t.oid" 2>/dev/null)
+                if [ -z "$toast_pct" ]; then toast_pct=-1; fi
                 {
                   echo "# HELP immich_smart_search_db_seconds Postgres-reported elapsed time of a representative smart-search ANN query."
                   echo "# TYPE immich_smart_search_db_seconds gauge"
@@ -1238,6 +1279,9 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                   echo "# HELP immich_clip_index_cached_pct Percent of clip_index vchord index resident in PG shared_buffers."
                   echo "# TYPE immich_clip_index_cached_pct gauge"
                   echo "immich_clip_index_cached_pct $pct"
+                  echo "# HELP immich_smart_search_toast_cached_pct Percent of the smart_search TOAST relation (the full-precision vectors the vchordrq re-rank reads) resident in PG shared_buffers."
+                  echo "# TYPE immich_smart_search_toast_cached_pct gauge"
+                  echo "immich_smart_search_toast_cached_pct $toast_pct"
                   echo "# HELP immich_smart_search_probe_success 1 if the probe ANN query succeeded."
                   echo "# TYPE immich_smart_search_probe_success gauge"
                   echo "immich_smart_search_probe_success $success"
@@ -1245,7 +1289,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                   echo "# TYPE immich_smart_search_probe_last_run_timestamp gauge"
                   echo "immich_smart_search_probe_last_run_timestamp $(date +%s)"
                 } > "$OUT"
-                echo "probe dur=$dur wall=$wall pct=$pct success=$success"
+                echo "probe dur=$dur wall=$wall pct=$pct toast_pct=$toast_pct success=$success"
                 exit 0
               EOT
               ]
