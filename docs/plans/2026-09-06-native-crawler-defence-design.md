@@ -1,6 +1,6 @@
 # Crawler defence at the Cloudflare edge
 
-Status: approved, not started
+Status: executing — steps 1 to 3 done and verified 2026-09-06
 Date: 2026-09-06 (revised the same day)
 Author: Viktor Barzin (design worked through with Claude)
 
@@ -257,14 +257,58 @@ usable for CrowdSec decision volume is not yet measured.
 
 ## Sequence
 
-1. **Turn on the three edge controls.** Bot Fight Mode stays as it is. Applies
-   to all ~110 proxied hosts immediately, no code.
-2. **Enable SSH on Forgejo** and move remotes on this box, in CI and in
-   Woodpecker.
-3. **Proxy `forgejo.viktorbarzin.me`.**
+1. **DONE** — Turned on the edge controls. `ai_search`, `ai_training` and
+   `ai_user` set to block (all three were disabled); `browser_check` on (was
+   off); the Cloudflare Managed Free Ruleset deployed as an entrypoint in the
+   `http_request_firewall_managed` phase, where it had been present but
+   attached to nothing. Bot Fight Mode left on. `cf_robots_variant` could not
+   be set: five candidate values were all rejected with 10400 on our plan.
+2. **DONE** — Forgejo SSH. Built-in server on 2222 in-pod behind a
+   `forgejo-ssh` LoadBalancer on 10.0.20.200:22, `git.viktorbarzin.me` A record
+   both publicly and in Technitium, pfSense NAT plus its linked pass rule, and
+   the pre-existing `ssh-pfense` forward on the ISP router enabled. All 40
+   Forgejo remotes across 39 repos moved to SSH and verified.
+3. **DONE** — `forgejo.viktorbarzin.me` is proxied. Verified: 200 with a
+   `cf-ray`, `/robots.txt` now 200 where it was 404, git over SSH unaffected.
 4. **Watch what the edge stops**, then decide whether the `/64` detector is
    still worth building.
 5. **Retire the 117-range static blocklist.**
+
+## As built (2026-09-06)
+
+What the plan did not anticipate, recorded so the next reader is not surprised.
+
+**`DISABLE_SSH = true` was baked into `app.ini` on the PVC** at install time
+and silently overrode `START_SSH_SERVER`. It appears in no Terraform file; the
+only way to find it was reading the config inside the running pod. Now declared
+in `stacks/forgejo/main.tf`.
+
+**Split-horizon DNS is two independent records and only one is in code.**
+`git.viktorbarzin.me` resolved publicly from `cloudflare_record.git` and
+resolved to nothing internally until a Technitium A record was added by hand,
+the same way `vlmcs` was. Set only the public half and the name works from a
+cafe and fails from your desk.
+
+**The upstream ISP router already had the port 22 forward, disabled.** pfSense
+is not our edge: its WAN address is 192.168.1.2 and the public address belongs
+to a TP-Link Archer AX6000 at 192.168.1.1. A rule named `ssh-pfense` mapping
+22 to 192.168.1.2 existed and was switched off. Adding a second one is refused
+with "This item conflicts with existed ones".
+
+**`pfctl` prints port 22 as `ssh`**, so grepping its output for `port = 22`
+finds nothing and a working rule looks broken.
+
+**Almost nothing else was exposed.** Measured from outside on 2026-09-06, of
+every host still answering directly rather than through Cloudflare, none served
+bulk scrapeable content anonymously. `f1` and `kms`, the two highest-volume
+ones, sit behind Anubis; the rest return a login wall, an empty body or a 404.
+Forgejo really was the whole problem, which is consistent with 22,115 of 22,189
+Meta requests landing on it.
+
+**Untracked drift this created.** The Cloudflare zone settings in step 1 and
+the Technitium record in step 2 are both set outside Terraform.
+`cloudflare_zone_settings_override` appears nowhere in this repo, so nothing
+will revert them, and equally nothing records them. Worth codifying.
 
 ## Risks
 
