@@ -166,7 +166,7 @@ alertmanager:
       - source_matchers:
           - alertname = ImmichSearchProbeStale
         target_matchers:
-          - alertname =~ "ImmichSmartSearchSlow|ImmichClipIndexColdCache"
+          - alertname =~ "ImmichSmartSearchSlow|ImmichClipIndexColdCache|ImmichSmartSearchToastColdCache"
       # Same shape for the thumbnail reconciler: its gauges live in the
       # Pushgateway, which keeps serving the last value forever. If the CronJob
       # stops running, "N photos still need repair" is frozen history rather than
@@ -1697,7 +1697,18 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "Immich context search slow: {{ $value | printf \"%.2f\" }}s (>1s) — clip_index likely evicted; check the immich-search-probe CronJob, which now also does the prewarm"
+              summary: "Immich context search slow: {{ $value | printf \"%.2f\" }}s (>1s). Check BOTH residency gauges, not just clip_index: immich_clip_index_cached_pct (quantized codes) and immich_smart_search_toast_cached_pct (the full-precision vectors the re-rank reads). A hot clip_index next to a cold TOAST is the known shape. Prewarm runs in the immich-search-probe CronJob."
+          - alert: ImmichSmartSearchToastColdCache
+            # Backstop for the half of the read path that went unmeasured until
+            # 2026-09-06. pg_prewarm does not descend into TOAST, so warming
+            # smart_search warmed a 13MB stub and left ~706MB of vectors cold
+            # while immich_clip_index_cached_pct still read 100%.
+            expr: immich_smart_search_toast_cached_pct{job="immich-search-probe"} >= 0 and immich_smart_search_toast_cached_pct{job="immich-search-probe"} < 50
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich smart_search TOAST only {{ $value | printf \"%.1f\" }}% resident (<50%) — the vchordrq re-rank vectors are cold, expect slow context search even if clip_index reads 100%"
           - alert: ImmichClipIndexColdCache
             expr: immich_clip_index_cached_pct{job="immich-search-probe"} >= 0 and immich_clip_index_cached_pct{job="immich-search-probe"} < 50
             for: 15m
