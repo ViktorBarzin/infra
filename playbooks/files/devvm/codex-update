@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Keep the codex CLI at the latest published version.
+#
+# Viktor, 2026-09-06: he wants these agent binaries always at latest, and this
+# is what makes that true between playbook runs. What prompted it: codex sat at
+# 0.144.3 from 2026-07-13 while npm latest was 0.153.4 from 2026-09-04, nine
+# minor versions behind, and a model released in that window was missing from
+# its picker. Codex fetches its model list from the server, so an old CLI shows
+# an old list even though the account is entitled to more.
+#
+# `npm install -g` rather than a version check and conditional install: npm
+# already no-ops when the installed version matches the tag, and asking npm what
+# it would do costs the same network round trip as letting it decide.
+#
+# Deliberately NOT pinned. The exception in this fleet is t3, pinned at v0.0.24
+# for a real regression; a pin needs that kind of reason.
+set -euo pipefail
+
+PKG="${CODEX_PKG:-@openai/codex}"
+TAG="${CODEX_TAG:-latest}"
+
+log() { printf '%s codex-update: %s\n' "$(date -Is)" "$*"; }
+
+before="$(codex --version 2>/dev/null | head -1 || echo 'not installed')"
+
+# --no-fund/--no-audit keep a package install from turning into a registry
+# survey on a box where this runs unattended every day.
+if ! npm install -g --no-fund --no-audit "${PKG}@${TAG}"; then
+    log "npm install failed; leaving ${before} in place"
+    exit 1
+fi
+
+after="$(codex --version 2>/dev/null | head -1 || echo 'not installed')"
+
+if [[ "$before" == "$after" ]]; then
+    log "already at ${after}; nothing to do"
+else
+    log "updated ${before} -> ${after}"
+fi
