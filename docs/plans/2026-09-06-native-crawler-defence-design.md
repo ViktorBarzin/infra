@@ -17,6 +17,13 @@ generalise, and retires the list once they are proven.
 All figures are from our own Traefik access logs in Loki, trailing 24h, read on
 2026-09-06.
 
+```stats
+22,187 | Meta requests blocked
+393 | distinct source addresses
+98.3% | now declare themselves
+95.5% | of all Traefik 403s
+```
+
 | Meta traffic (`2a03:2880::/32`) | count |
 |---|---|
 | requests blocked (403) | 22,187 |
@@ -30,6 +37,10 @@ Two findings changed the design.
 61 to 63 distinct addresses. There are now 393. Per-address request rate falls
 correspondingly, which reinforces the earlier measurement that no per-IP
 threshold can separate this crawler from a human.
+
+> [!IMPORTANT]
+> The crawler's behaviour changed between the incident and this measurement.
+> Layer 1 carries 98.3% of the volume only while it keeps declaring itself.
 
 **It declares itself now.** 21,804 of 22,189 requests (98.3%) carry `meta-
 externalagent/1.1` appended to an otherwise ordinary Chrome user-agent. On
@@ -58,21 +69,38 @@ have not identified it.
 
 ```mermaid
 flowchart TD
-    R[Request on websecure] --> UA{UA declares<br/>an AI crawler?}
-    UA -->|yes| D[403 deny<br/>layer 1]
-    UA -->|no| CS{CrowdSec decision<br/>for this client?}
-    CS -->|ban| B[403 deny]
-    CS -->|captcha| C{Valid pass cookie?}
-    C -->|yes| P[proxy to backend]
-    C -->|no| T[Turnstile interstitial<br/>layer 2]
-    T -->|solved| SC[set signed cookie] --> P
-    CS -->|none| P
-    P --> L[Traefik access log]
-    L --> SC2[CrowdSec scenario<br/>groupby /64<br/>layer 3]
-    SC2 -->|first overflow| CD[captcha decision]
-    SC2 -->|repeat overflow| BD[ban decision 4h]
-    CD --> CS
-    BD --> CS
+    R[Request] --> UA{Declares<br/>AI crawler?}
+    UA -->|yes| D[deny]
+    UA -->|no| CS{CrowdSec<br/>decision?}
+    CS -->|ban| D
+    CS -->|captcha| G[gate]
+    CS -->|none| P[serve]
+```
+
+Layer 1 is the `UA` test. The captcha gate is layer 2:
+
+```mermaid
+flowchart TD
+    G[captcha gate] --> K{cookie valid?}
+    K -->|yes| P[proxy to app]
+    K -->|no| T[serve Turnstile]
+    T --> S{solved?}
+    S -->|yes| SC[sign cookie]
+    SC --> P
+    S -->|no| X[403 deny]
+```
+
+Layer 3 is the feedback loop that produces the CrowdSec decision:
+
+```mermaid
+flowchart TD
+    L[Traefik access log] --> S[crawl scenario<br/>groupby /64]
+    S --> F{seen this<br/>/64 before?}
+    F -->|no| CD[captcha decision]
+    F -->|yes| BD[ban 4h]
+    CD --> Q[(LAPI)]
+    BD --> Q
+    Q --> PL[Traefik plugin]
 ```
 
 ### Layer 1: deny declared AI crawlers by user-agent
@@ -154,15 +182,16 @@ written to prevent. IPv4 sources stay per-address.
 
 ## Sequence
 
-1. **robots.txt for Forgejo.** It currently 404s. Meta documents that `meta-
-externalagent` honours robots.txt. Publish it because it is correct to publish,
-and treat any volume reduction as a bonus rather than a control. 2. **Layer 1,
-the UA deny.** Covers 98.3% of current volume. 3. **Layer 2, the captcha.**
-Plugin work plus the Turnstile secret in Vault, then restore the
-`captcha_remediation` profile. 4. **Layer 3, the /64 crawl detector.** Depends
-on layer 2 existing, because captcha-first is what makes it safe to run on every
-host. 5. **Retire the 117-range static blocklist** and watch whether Meta volume
-returns.
+1. **robots.txt for Forgejo.** It currently 404s. Meta documents that
+   `meta-externalagent` honours robots.txt. Publish it because it is correct to
+   publish, and treat any volume reduction as a bonus rather than a control.
+2. **Layer 1, the UA deny.** Covers 98.3% of current volume.
+3. **Layer 2, the captcha.** Plugin work plus the Turnstile secret in Vault,
+   then restore the `captcha_remediation` profile.
+4. **Layer 3, the /64 crawl detector.** Depends on layer 2 existing, because
+   captcha-first is what makes it safe to run on every host.
+5. **Retire the 117-range static blocklist** and watch whether Meta volume
+   returns.
 
 ## Risks
 
