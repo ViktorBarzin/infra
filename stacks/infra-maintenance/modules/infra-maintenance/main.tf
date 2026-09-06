@@ -287,6 +287,13 @@ resource "kubernetes_cron_job_v1" "cleanup-failed-pods" {
       }
       spec {
         ttl_seconds_after_finished = 600
+        # The run is a serial kubectl delete per pod, so it takes minutes rather
+        # than seconds, and it talks to the apiserver throughout. On 2026-09-06 the
+        # apiserver restarted mid-run (its own liveness probe, unrelated to this
+        # job) and the pod sat in Error while the Job kept retrying. With
+        # concurrency_policy Forbid, a run that never finishes silently cancels
+        # every later schedule, so the deadline is what keeps the hourly cadence.
+        active_deadline_seconds = 600
         template {
           metadata {
             name = "cleanup-failed-pods"
