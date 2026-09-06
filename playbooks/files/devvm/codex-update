@@ -21,7 +21,29 @@ TAG="${CODEX_TAG:-latest}"
 
 log() { printf '%s codex-update: %s\n' "$(date -Is)" "$*"; }
 
-before="$(codex --version 2>/dev/null | head -1 || echo 'not installed')"
+# The INSTALLED version, read from npm's own metadata rather than by running
+# `codex --version`.
+#
+# The wrapper at /usr/local/bin/codex runs `set -u` and reads $HOME, and a
+# systemd system service starts with no HOME, so shelling through it here failed
+# with "HOME: unbound variable" and this script reported "already at not
+# installed; nothing to do" on 2026-09-06 while npm was in fact installing a new
+# version underneath it. The update worked; only the report lied, which is the
+# worse of the two ways to be wrong.
+#
+# npm root -g finds the prefix wherever it is rather than assuming
+# /usr/lib/node_modules, and a missing file means the package is genuinely not
+# installed.
+installed_version() {
+    local root pkg
+    root="$(npm root -g 2>/dev/null)" || return 0
+    pkg="$root/${PKG}/package.json"
+    [ -r "$pkg" ] || return 0
+    node -p "require('$pkg').version" 2>/dev/null
+}
+
+before="$(installed_version)"
+before="${before:-not installed}"
 
 # --no-fund/--no-audit keep a package install from turning into a registry
 # survey on a box where this runs unattended every day.
@@ -30,7 +52,8 @@ if ! npm install -g --no-fund --no-audit "${PKG}@${TAG}"; then
     exit 1
 fi
 
-after="$(codex --version 2>/dev/null | head -1 || echo 'not installed')"
+after="$(installed_version)"
+after="${after:-not installed}"
 
 if [[ "$before" == "$after" ]]; then
     log "already at ${after}; nothing to do"
