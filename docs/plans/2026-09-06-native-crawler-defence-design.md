@@ -170,6 +170,79 @@ value for undeclared crawlers that clear the edge, and it is the fallback if the
 declared user-agents disappear again. Revisit it once we can see what the edge
 actually stops.
 
+
+## Phase 1: which hosts are not behind Cloudflare, and why
+
+Measured against the live zone on 2026-09-06. The zone holds 85 records. 42
+names carry a grey A record, but only 30 of them are publicly reachable:
+
+| A record points at | count | meaning |
+|---|---|---|
+| 176.12.22.76 (WAN) | 30 | publicly reachable, the scope of this phase |
+| 10.0.20.203 | 9 | `dns_type = "internal"`, dark, no crawler can reach them |
+| 92.5.132.215 | 2 | `mx2` and `status`, the ADR-0020 recovery path |
+| 130.162.165.220 | 1 | `keyserver`, a different origin |
+
+The 2026-09-04 classification in `docs/architecture/dns.md` covers 29 of the 30
+accurately. `affine` is the one name it does not list.
+
+### Can move
+
+| host | blocker | what clears it |
+|---|---|---|
+| `send` | recorded as body size | Nothing. The blocker does not exist: the browser client streams the payload over a WebSocket to `/api/ws` in 64 KiB ECE frames, verified in the v3.4.27 source we run (`fileSender.js:57` calls `uploadWs` unconditionally, `ece.js:9` sets `ECE_RECORD_SIZE = 1024 * 64`). Cloudflare caps HTTP request bodies, not WebSocket frames. Caveat: the server still exposes `POST /api/upload` for non-browser clients, and whether the `ffsend` CLI uses it is unknown. |
+| `forgejo` | 183 MB git push | Moving git to SSH, already decided in this document |
+| `affine`, `kms`, `webhook`, `openclaw`, `qbittorrent` | none found | Nothing. Maximum origin response time over 24h is 13.81s (`kms`), and the rest are lower. Traffic is 285 to 565 requests per 24h, which is close to the health monitor's own rate, so both the risk and the benefit are small |
+
+### Cannot move, and the reason is settled
+
+| host | reason |
+|---|---|
+| `turn`, `vpn`, `xray-reality`, `vlmcs`, `mail` | Not HTTP. UDP 3478, UDP 51820, TCP 7443, TCP 1688, and the zone's MX target |
+| `immich` | Measured 413 at 104,857,600 bytes. Upstream PR #22385 for resumable uploads has been open since 2025-09-25, is unmerged as of 2026-08-22, and appears in no release. A maintainer declined alternative chunking on 2026-08-17 |
+| `files` | Synology's documented upload API is a single RFC 1867 multipart POST (`SYNO.FileStation.Upload` v2). Its full parameter set is path, create_parents, mtime, crtime, atime, filename, overwrite. No chunk, offset, upload-id or resume parameter exists, and no setting changes it |
+| `stremio`, `poison` | Deliberate. infra#80 kept `stremio` outside the CDN video terms; the `poison` trap exists to be scraped |
+| `traefik`, `ci` | Recovery path. Both are wanted most when the tunnel is what broke |
+
+### Needs a decision or more measurement
+
+| hosts | question |
+|---|---|
+| `audiobookshelf`, `audiblez`, `ebook2audiobook`, `f1`, `music-assistant`, `music-emo`, `music-viktor`, `yt`, `yt-highlights` | Cloudflare's CDN terms on audio and video delivery. Same question already answered for `immich` and `stremio`, not yet asked for these nine |
+| `ha-london`, `ha-sofia`, `headscale` | Long-lived requests: 278s, 1,505s and 63,975s maximum origin duration over 24h. Cloudflare's 100s limit is time to first byte, not total duration, and WebSockets are exempt once established, so these numbers show which hosts are exposed rather than proving they would fail |
+
+Net: 7 of the 30 can move, 6 of them today and `forgejo` once its git traffic
+is on SSH.
+
+## Phase 2: what Cloudflare gives us that we are not using
+
+Read from the live zone on 2026-09-06. Plan is Free Website.
+
+| control | state | what it covers |
+|---|---|---|
+| `crawler_protection` categories `ai_search`, `ai_training`, `ai_user` | all disabled | declared AI crawlers, zone-wide |
+| `browser_check` (Browser Integrity Check) | off | requests with suspicious or missing headers |
+| Cloudflare Managed Free Ruleset | present but not deployed | no entrypoint exists in the `http_request_firewall_managed` phase, so the free WAF is not running |
+| `cf_robots_variant` | off | managed robots.txt for proxied hosts |
+| WAF custom rules | 1 rule, disabled | 4 of 5 free slots unused. All actions except Log, no regex |
+| IP Access Rules | 0 configured | a channel separate from the Lists API |
+| Bot Fight Mode | on | undeclared automation, the only free control that does this |
+| `security_level` | medium | `under_attack` is available as an emergency lever |
+| `ddos_l7` managed ruleset | deployed | always on, no configuration needed |
+
+Two of these are worth calling out.
+
+**The free managed WAF is not running.** The ruleset exists on the zone but the
+`http_request_firewall_managed` phase has no entrypoint, so none of its rules
+apply.
+
+**IP Access Rules may be a way back to edge enforcement.** The CrowdSec to
+Cloudflare sync was retired in August because the Lists API holds a hard ~72h
+floor between successful item writes, and the list disagreed with our LAPI for
+107 of 216 observed hours. IP Access Rules are a different mechanism, available
+on the free plan, and currently hold zero rules. Whether their write rate is
+usable for CrowdSec decision volume is not yet measured.
+
 ## Decisions taken
 
 | Decision | Choice |
