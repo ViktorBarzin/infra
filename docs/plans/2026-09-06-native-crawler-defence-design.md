@@ -20,7 +20,7 @@ at all and stay with CrowdSec and the firewall bouncer, as today.
 | surface | covered by |
 |---|---|
 | ~110 proxied HTTP hosts | Cloudflare edge, from step 1 |
-| forgejo | Cloudflare edge, from step 3 |
+| forgejo | CrowdSec + firewall bouncer (step 3's edge proxying was reverted, infra#91) |
 | non-HTTP names, internal `.lan` | CrowdSec + firewall bouncer, unchanged |
 
 ## What changed, and why this document was rewritten
@@ -268,8 +268,18 @@ usable for CrowdSec decision volume is not yet measured.
    both publicly and in Technitium, pfSense NAT plus its linked pass rule, and
    the pre-existing `ssh-pfense` forward on the ISP router enabled. All 40
    Forgejo remotes across 39 repos moved to SSH and verified.
-3. **DONE** — `forgejo.viktorbarzin.me` is proxied. Verified: 200 with a
-   `cf-ray`, `/robots.txt` now 200 where it was 404, git over SSH unaffected.
+3. **DONE, then REVERTED same day (infra#91).** `forgejo.viktorbarzin.me` was
+   proxied (verified: 200 with a `cf-ray`, `/robots.txt` 200 where it was 404,
+   git over SSH unaffected), but proxying 403'd terminal-lobby's release: its
+   GitHub-Actions job PUTs the built `.deb` to `/api/packages/...` from a runner
+   IP, and zone-wide Bot Fight Mode — which cannot be excepted on the free plan
+   — rejected it at the edge (56 ms, never reaching Forgejo), so nothing
+   deployed to the devvm. Reverted to `non-proxied` in `stacks/forgejo/main.tf`.
+   The crawler defence is unaffected: it was already CrowdSec, not Cloudflare
+   (see step 4's measurement — CF passes the spoofed-UA Meta crawlers through).
+   To re-proxy without breaking CI, give the off-infra publish step an
+   origin-direct upload path (`--resolve …:443:176.12.22.76`, or a dedicated
+   non-proxied packages hostname) in the terminal-lobby repo first.
 4. **Watch what the edge stops**, then decide whether the `/64` detector is
    still worth building.
 5. **Retire the 117-range static blocklist.**
