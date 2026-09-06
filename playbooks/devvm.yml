@@ -302,6 +302,7 @@
         - /etc/apt/sources.list.d
         - /etc/systemd/system/user-.slice.d
         - /etc/systemd/system/system.slice.d
+        - /etc/systemd/system/systemd-tmpfiles-clean.timer.d
         - /etc/systemd/user/scope.d
         - /usr/local/sbin
         # The playwright-mcp slice has no unit file of its own -- it exists
@@ -422,6 +423,28 @@
         - codex-auth-backup.path
         - docker-disk-gc.timer
         - networkd-dhcp-watchdog.timer
+
+    # Claude Code leaves one scratch directory per session under /tmp and never
+    # reaps them. /tmp is a RAM-backed tmpfs here, so that is a slow memory leak:
+    # it reached 8.0G of 8.0G on 2026-09-06 and background commands began failing
+    # with ENOSPC. The reasoning, the measurements and why the age check is
+    # pinned to mtime are in the file itself.
+    - name: Bound the Claude Code scratch retention under /tmp
+      ansible.builtin.copy:
+        src: files/devvm/claude-scratch.conf
+        dest: /etc/tmpfiles.d/claude-scratch.conf
+        mode: "0644"
+        owner: root
+        group: root
+
+    - name: Sweep tmpfiles hourly rather than daily
+      ansible.builtin.copy:
+        src: files/devvm/tmpfiles-clean-hourly.conf
+        dest: /etc/systemd/system/systemd-tmpfiles-clean.timer.d/override.conf
+        mode: "0644"
+        owner: root
+        group: root
+      notify: reload systemd
 
     # ---- 7a2) the codex CLI, and keeping it current -------------------------
     # Added 2026-09-06. Nothing in this repo installed codex: setup-devvm.sh and
