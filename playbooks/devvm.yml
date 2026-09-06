@@ -112,6 +112,15 @@
     # Pinned on purpose: this npm package runs unattended as each user, so the
     # version is a reviewed choice. Bump it when you mean to.
     devvm_skills_cli: skills@1.5.23
+    # Users whose Claude Code the nightly timer keeps current. Claude Code
+    # installs PER USER (~/.local/share/claude/versions), so unlike codex there
+    # is no single binary to swap and every account needs its own update run.
+    # A user with no native install is skipped by the script, so listing one
+    # who does not use Claude Code is harmless rather than an error.
+    devvm_claude_users:
+      - wizard
+      - emo
+      - ancamilea
 
   tasks:
     # ---- 1) the apt toolset -------------------------------------------------
@@ -462,6 +471,68 @@
         enabled: true
         state: started
         daemon_reload: true
+
+    # ---- 7a3) keeping Claude Code current, for everyone ---------------------
+    # Added 2026-09-06, same reason as the codex block above: Viktor wants these
+    # agent binaries always at latest.
+    #
+    # It was true for one account. `claude update` ran from wizard's PERSONAL
+    # crontab at 03:30 — a hand-installed line in no repository, covering no one
+    # else — and the installs had drifted apart behind it:
+    #
+    #   wizard     2.1.263   (the cron)
+    #   emo        2.1.259
+    #   ancamilea  2.1.183
+    #
+    # Claude Code installs per user, so this cannot be one `npm install -g` the
+    # way codex is; the script runs the update as each account in turn.
+    - name: Install the Claude Code updater
+      ansible.builtin.copy:
+        src: files/devvm/claude-update
+        dest: /usr/local/bin/claude-update
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Configure the Claude Code updater
+      ansible.builtin.copy:
+        dest: /etc/default/claude-update
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by playbooks/devvm.yml — edit there, not here.
+          CLAUDE_UPDATE_USERS="{{ devvm_claude_users | join(' ') }}"
+
+    - name: Install the Claude Code updater units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - claude-update.service
+        - claude-update.timer
+      notify: reload systemd
+
+    - name: Enable the Claude Code updater timer
+      ansible.builtin.systemd_service:
+        name: claude-update.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # The personal crontab line this replaces. Left in place it would run the
+    # same update an unknown number of minutes from the timer, against the same
+    # per-user install, and keep appending to a log on the tmpfs.
+    - name: Drop the hand-installed claude update cron line
+      ansible.builtin.lineinfile:
+        path: "/var/spool/cron/crontabs/{{ item }}"
+        regexp: 'claude(-code)?.*\bupdate\b'
+        state: absent
+      loop: "{{ devvm_claude_users }}"
+      failed_when: false
 
     # ---- 7b) nightly refresh of the mattpocock skill set --------------------
     # Added 2026-08-30. The skills are a working dependency of how sessions run
