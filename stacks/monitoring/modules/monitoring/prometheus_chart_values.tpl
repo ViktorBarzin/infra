@@ -1312,6 +1312,59 @@ serverFiles:
               severity: warning
             annotations:
               summary: "chrome-service pod quota >90% used for 10m — the pool may be unable to burst new workers. Raise the chrome-pool ResourceQuota or investigate leaked sessions."
+      # Added 2026-09-06 alongside retiring the 117-range Meta blocklist. That
+      # removed a control that was demonstrably working (it was stopping ~99
+      # requests/hour at the moment of removal) before its Cloudflare
+      # replacement had been proven, so these exist to make the crawl visible
+      # if it returns rather than discovering it from an outage.
+      #
+      # Thresholds are ratios against each series' own recent baseline, not
+      # absolute numbers, because normal volume here varies by two orders of
+      # magnitude between hosts.
+      - name: Scrape and traffic anomalies
+        rules:
+          - alert: ScrapeVolumeAnomaly
+            # Whole-edge request rate against its own 6h average. The 2026-09-02
+            # Meta crawl ran 9,300-11,000 req/hour on top of a ~10 req/s
+            # baseline, so a sustained 3x is comfortably above noise while still
+            # catching a crawl of that size. The >2 req/s floor stops a quiet
+            # night (where 3x of almost nothing is still almost nothing) from
+            # paging.
+            expr: |
+              sum(rate(traefik_service_requests_total[5m]))
+                > 3 * avg_over_time(sum(rate(traefik_service_requests_total[5m]))[6h:5m])
+              and sum(rate(traefik_service_requests_total[5m])) > 2
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Edge request rate {{ $value | printf \"%.1f\" }}/s is over 3x its 6h average for 15m — possible scrape or crawl. Check `homelab logs query` for a single host or user-agent dominating."
+          - alert: ForgejoCrawlSurge
+            # Forgejo specifically, because it is where every crawl has landed:
+            # 22,115 of 22,189 Meta requests in a 24h window, and 137,760
+            # direct-to-origin requests in 12h before it went behind Cloudflare.
+            # Baseline is ~0.4 req/s, so 5x is a real change and not jitter.
+            expr: |
+              sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m]))
+                > 5 * avg_over_time(sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m]))[6h:5m])
+              and sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m])) > 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "forgejo request rate {{ $value | printf \"%.1f\" }}/s is over 5x its 6h average — the crawl target. If the Meta blocklist retirement was premature, this is how we find out."
+          - alert: EdgeBlockSurge
+            # A sustained 403 rate means something is being refused in volume,
+            # which is the signature of a crawl meeting CrowdSec or the edge.
+            # Useful even when total volume looks normal, because blocked
+            # requests are cheap and may not move the aggregate.
+            expr: sum(rate(traefik_service_requests_total{code="403"}[5m])) > 1
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.1f\" }} req/s being refused with 403 for 15m — something is being blocked in bulk. Identify it before deciding whether the block is right."
+
       - name: R730 Host
         rules:
           - alert: HighCPUTemperature
