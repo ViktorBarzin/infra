@@ -110,7 +110,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeMaintenanceInProgress
         target_matchers:
-          - alertname =~ "NodeDown|NodeNotReady|NodeConditionBad|CalicoNodeNotReady|RecentNodeReboot|TraefikDown|AuthentikDown|AuthentikRootRouter5xxHigh|ForwardAuthFallbackActive|MailServerDown|DaemonSetMissingPods|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|PodCrashLooping|ContainerOOMKilled|KernelOOMKiller|ScrapeTargetDown|HighMemoryUsage|HighSystemLoad|HighPowerUsage|ServerHighPowerUsage|KubeletRunningContainersDrop|GPUVRAMLow|MysqlStandaloneDown|PostgreSQLDown|RedisDown|CloudflaredDown|HeadscaleDown|HeadscaleReplicasMismatch|ClusterCannotTolerateNonGpuNodeLoss|PodStuckPending|PVCStuckPending|NodeExporterDown|NodeLowFreeMemory|KubeletImagePullErrors|PodsStuckContainerCreating|TechnitiumZoneCountMismatch|TechnitiumDNSDown|EmailRoundtripFailing|TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet"
+          - alertname =~ "NodeDown|NodeNotReady|NodeConditionBad|CalicoNodeNotReady|RecentNodeReboot|TraefikDown|AuthentikDown|AuthentikRootRouter5xxHigh|ForwardAuthFallbackActive|MailServerDown|DaemonSetMissingPods|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|PodCrashLooping|ContainerOOMKilled|KernelOOMKiller|ScrapeTargetDown|HighMemoryUsage|HighSystemLoad|HighPowerUsage|ServerHighPowerUsage|KubeletRunningContainersDrop|GPUVRAMLow|MysqlStandaloneDown|PostgreSQLDown|RedisDown|CloudflaredDown|HeadscaleDown|HeadscaleReplicasMismatch|ClusterCannotTolerateNonGpuNodeLoss|PodStuckPending|PVCStuckPending|NodeExporterDown|NodeLowFreeMemory|NodeMemoryRequestsHigh|KubeletImagePullErrors|PodsStuckContainerCreating|TechnitiumZoneCountMismatch|TechnitiumDNSDown|EmailRoundtripFailing|TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet"
       # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
@@ -2684,6 +2684,85 @@ serverFiles:
                 Remediation: right-size the top memory reservers with `krr` (trim
                 over-provisioned requests — e.g. claude-agent, stirling-pdf, traefik,
                 authentik-worker), or add/return a worker node.
+          # NodeMemoryRequestsHigh — defined 2026-09-06.
+          #
+          # WHY IT DID NOT EXIST BEFORE. Nothing in this file watched per-node
+          # memory REQUESTS against allocatable, which is the number that decides
+          # whether a pod can be placed. The nearest neighbours answer different
+          # questions: ClusterCannotTolerateNonGpuNodeLoss is an N-1 question about
+          # the pool, NodeLowFreeMemory watches actual free bytes, and
+          # KubeQuotaAlmostFull is per-namespace. So the four untainted workers sat
+          # between 95% and 99% of requests for weeks with nothing saying so, and
+          # the condition surfaced only indirectly — a Recreate roll leaving a pod
+          # Pending for 10 minutes, and the repowise incident of 2026-09-03.
+          #
+          # THE PHASE FILTER IS LOAD-BEARING, not decoration. kube-state-metrics
+          # keeps publishing kube_pod_container_resource_requests for Succeeded and
+          # Failed pods until the pod object is GC'd. Counting those phantoms is
+          # what made the N-1 alert above flap for days in August, and measured
+          # 2026-09-06 `kubectl describe` overstates cluster-wide requests by
+          # 4.5 GiB for the same reason. Any future request-sum alert needs this.
+          #
+          # THRESHOLD, calibrated 2026-09-06 rather than guessed. Phase-filtered
+          # request utilisation, live and 7-day maximum:
+          #     node2  90.8% now / 95.8% 7d max
+          #     node3  87.3% now / 98.6% 7d max
+          #     node4  77.0% now / 95.4% 7d max
+          #     node5  92.6% now / 99.0% 7d max
+          #     node1  51.2% now / 59.4% 7d max   (GPU-tainted)
+          #     master  6.4% now /  6.4% 7d max   (control-plane tainted)
+          # 90% is where a 31.2 GiB node has under ~3 GiB of request headroom,
+          # which is smaller than several single pods here (repowise alone requests
+          # 4,672Mi), so past this line a routine roll can strand its own
+          # replacement. Note a 30-day subquery on this expression returns EMPTY
+          # rather than erroring — it is too expensive — so 7d is the longest
+          # window these figures can honestly claim.
+          #
+          # WHY WARNING AND NOT CRITICAL. Under the alert-on-change routing at the
+          # top of this file a warning notifies once and then stays quiet, which
+          # suits a standing capacity condition. A critical re-pings every 6h and
+          # would nag about a fact that does not change hour to hour.
+          #
+          # NO COMPANION LIMITS ALERT, deliberately. Node memory LIMITS run
+          # 133-206% of allocatable here and that is not what hurts: of 313 OOM
+          # kills in the 30 days to 2026-09-06, 313 were cgroup-level against a
+          # container's own limit and none were node-level. Alerting on limit
+          # overcommit would report a condition that has never caused an outage,
+          # while ContainerOOMKilled and ContainerNearOOM already cover the kills
+          # that do happen.
+          - alert: NodeMemoryRequestsHigh
+            expr: |
+              100 * (
+                sum by (node) (
+                  kube_pod_container_resource_requests{resource="memory",unit="byte"}
+                  * on(namespace,pod) group_left() max by (namespace,pod) (
+                      kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                    )
+                )
+                / on(node) group_left() kube_node_status_allocatable{resource="memory",unit="byte"}
+              ) > 90
+            for: 30m
+            # Same reasoning as the N-1 alert above: pod churn tips this back and
+            # forth across the line, so fold an episode into one alert rather than
+            # a fire/resolve pair per CronJob.
+            keep_firing_for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.node }} memory requests at {{ $value | printf \"%.1f\" }}% of allocatable"
+              description: |
+                Phase-filtered memory requests on {{ $labels.node }} are
+                {{ $value | printf "%.1f" }}% of allocatable. Past ~90% a 31.2 GiB
+                node has under 3 GiB of request headroom, which is less than a
+                single large pod, so a Deployment roll can leave its own
+                replacement Pending (maxSurge defaults to 1, so the new pod must
+                schedule alongside the old one).
+                This is about SCHEDULING, not memory exhaustion — actual usage on
+                these nodes runs near 47%, and MemoryPressure has never fired.
+                Remediation: trim over-provisioned requests with `krr`, park an
+                unused service, or add capacity. Do not read `kubectl describe`
+                percentages for this — they count finished CronJob pods and
+                overstate by ~4.5 GiB cluster-wide.
           # NodeLowFreeMemory — defined 2026-09-06. The name was already in two
           # inhibit_rules target lists (NodeDown and NodeMaintenanceInProgress,
           # see alertmanager.config above) but no rule ever produced it, so both
