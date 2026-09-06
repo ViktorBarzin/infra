@@ -453,25 +453,6 @@
         owner: root
         group: root
 
-    - name: Install the codex updater units
-      ansible.builtin.copy:
-        src: "files/devvm/{{ item }}"
-        dest: "/etc/systemd/system/{{ item }}"
-        mode: "0644"
-        owner: root
-        group: root
-      loop:
-        - codex-update.service
-        - codex-update.timer
-      notify: reload systemd
-
-    - name: Enable the codex updater timer
-      ansible.builtin.systemd_service:
-        name: codex-update.timer
-        enabled: true
-        state: started
-        daemon_reload: true
-
     # ---- 7a3) keeping Claude Code current, for everyone ---------------------
     # Added 2026-09-06, same reason as the codex block above: Viktor wants these
     # agent binaries always at latest.
@@ -504,25 +485,6 @@
           # Managed by playbooks/devvm.yml — edit there, not here.
           CLAUDE_UPDATE_USERS="{{ devvm_claude_users | join(' ') }}"
 
-    - name: Install the Claude Code updater units
-      ansible.builtin.copy:
-        src: "files/devvm/{{ item }}"
-        dest: "/etc/systemd/system/{{ item }}"
-        mode: "0644"
-        owner: root
-        group: root
-      loop:
-        - claude-update.service
-        - claude-update.timer
-      notify: reload systemd
-
-    - name: Enable the Claude Code updater timer
-      ansible.builtin.systemd_service:
-        name: claude-update.timer
-        enabled: true
-        state: started
-        daemon_reload: true
-
     # The personal crontab line this replaces. Left in place it would run the
     # same update an unknown number of minutes from the timer, against the same
     # per-user install, and keep appending to a log on the tmpfs.
@@ -533,6 +495,69 @@
         state: absent
       loop: "{{ devvm_claude_users }}"
       failed_when: false
+
+    # ---- 7a4) one job for every agent CLI -----------------------------------
+    # Added 2026-09-06. Viktor: "we don't need separate jobs for updates".
+    #
+    # The three updaters landed as three timers over the course of one
+    # afternoon, at 03:39, 04:59 and 05:58, staggered so they would not share a
+    # network window. One sequential job removes the need for that arrangement
+    # and leaves a single unit to look at when a morning's update did something
+    # unexpected.
+    #
+    # He also asked whether apt's unattended-upgrades could own this. It cannot
+    # reach any of the three: codex and t3 are global npm packages and Claude
+    # Code is a per-user native install under ~/.local/share, so none is a deb
+    # and apt has no handle on them. The two things on this box that ARE debs,
+    # terminal-lobby and ttyd-devvm, are already covered by apt and by the
+    # release deploy.
+    #
+    # The scripts stay separate. Each is individually runnable by hand, which is
+    # what the t3 runbook instructs, and t3-autoupdate.service is kept for the
+    # same reason. What goes away is the three schedules.
+    - name: Install the agent updater units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - agent-update.service
+        - agent-update.timer
+        - claude-update.service
+        - codex-update.service
+      notify: reload systemd
+
+    - name: Enable the agent updater timer
+      ansible.builtin.systemd_service:
+        name: agent-update.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # The per-tool schedules this replaces. Stopped and disabled before their
+    # unit files go, or systemd keeps an enabled symlink pointing at nothing.
+    - name: Stop the per-tool update timers
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop:
+        - claude-update.timer
+        - codex-update.timer
+        - t3-autoupdate.timer
+      failed_when: false
+
+    - name: Remove the per-tool update timer units
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - claude-update.timer
+        - codex-update.timer
+        - t3-autoupdate.timer
+      notify: reload systemd
 
     # ---- 7b) nightly refresh of the mattpocock skill set --------------------
     # Added 2026-08-30. The skills are a working dependency of how sessions run
