@@ -1699,6 +1699,8 @@ serverFiles:
             annotations:
               summary: "Immich context search slow: {{ $value | printf \"%.2f\" }}s (>1s). Check BOTH residency gauges, not just clip_index: immich_clip_index_cached_pct (quantized codes) and immich_smart_search_toast_cached_pct (the full-precision vectors the re-rank reads). A hot clip_index next to a cold TOAST is the known shape. Prewarm runs in the immich-search-probe CronJob."
           - alert: ImmichSmartSearchToastColdCache
+            # Gauge is emitted by the immich-search-probe CronJob defined in
+            # stacks/immich/main.tf — the two move together.
             # Backstop for the half of the read path that went unmeasured until
             # 2026-09-06. pg_prewarm does not descend into TOAST, so warming
             # smart_search warmed a 13MB stub and left ~706MB of vectors cold

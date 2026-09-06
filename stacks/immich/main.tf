@@ -1279,6 +1279,10 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                   echo "# HELP immich_clip_index_cached_pct Percent of clip_index vchord index resident in PG shared_buffers."
                   echo "# TYPE immich_clip_index_cached_pct gauge"
                   echo "immich_clip_index_cached_pct $pct"
+                  # Consumed by ImmichSmartSearchToastColdCache in
+                  # stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl.
+                  # Renaming this gauge without changing that alert leaves the
+                  # alert silently never firing, so the two move together.
                   echo "# HELP immich_smart_search_toast_cached_pct Percent of the smart_search TOAST relation (the full-precision vectors the vchordrq re-rank reads) resident in PG shared_buffers."
                   echo "# TYPE immich_smart_search_toast_cached_pct gauge"
                   echo "immich_smart_search_toast_cached_pct $toast_pct"
