@@ -298,6 +298,19 @@ resource "kubernetes_deployment" "f1-stream" {
             name  = "CHROME_CDP_URL"
             value = "http://chrome-service.chrome-service.svc.cluster.local:9222"
           }
+          # The streamed extractor resolves embed pages by loading them in a
+          # browser, and leases a worker from the fleet broker to do it rather
+          # than holding the single chrome-service instance above for a whole
+          # extraction run. Without this the extractor logs that the var is
+          # unset and returns no streams, which is how it shipped on
+          # 2026-09-06: registered, deployed, and quietly yielding nothing.
+          # Note this is the BROKER, not a CDP endpoint — :8080 serves
+          # /acquire and /release, and the worker's own podIP:9222 is what
+          # gets dialled. See backend/chrome_fleet.py.
+          env {
+            name  = "CHROME_FLEET_URL"
+            value = "http://chrome-fleet.chrome-service.svc.cluster.local:8080"
+          }
           # The embed proxy (this pod's /embed?url=…) must be reachable from
           # the remote chrome-service pod. Default 127.0.0.1 only works for
           # in-process Chromium — for the remote browser we point it at our
