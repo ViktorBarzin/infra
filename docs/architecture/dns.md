@@ -649,3 +649,32 @@ For external `.viktorbarzin.me` records:
 - [Security Architecture](security.md) — Kyverno ndots policy
 - [Monitoring Architecture](monitoring.md) — CoreDNS metrics, Uptime Kuma external monitors
 - Runbook: `docs/runbooks/add-dns-record.md` (referenced but not yet created)
+
+### git over SSH (2026-09-06)
+
+`git.viktorbarzin.me` is an A-only, non-proxied record for git traffic, added so
+`forgejo.viktorbarzin.me` can move behind Cloudflare without breaking git.
+Cloudflare caps request bodies at 100 MB on our plan and a full push of
+`infra.git` is 183 MB; SSH does not pass through Cloudflare, so neither that cap
+nor the 100 s first-byte timeout applies to git.
+
+Both halves are needed, and the internal one is easy to miss:
+
+| view | answer | set where |
+|---|---|---|
+| public | 176.12.22.76 | `cloudflare_record.git`, `stacks/forgejo/main.tf` |
+| internal | 10.0.20.200 | Technitium, by hand via the API (same as `vlmcs`) |
+
+Without the Technitium record the name resolves publicly and **not at all** on
+the LAN or in the cluster, so every internal client fails to resolve it. Path
+from outside: `git.viktorbarzin.me` -> 176.12.22.76 -> ISP router forward
+`ssh-pfense` (22 -> 192.168.1.2:22) -> pfSense rdr -> `k8s_shared_lb`
+(10.0.20.200:22) -> `forgejo-ssh` Service -> forgejo pod :2222.
+
+Forgejo's built-in SSH server is public-key only, so there is no password to
+brute force.
+
+**Woodpecker is unaffected by the Cloudflare move.** It talks to
+`https://forgejo.viktorbarzin.me`, which resolves to the in-cluster service
+address 10.111.111.95 from every pod, so its API calls and clones never reach
+Cloudflare. Verified from the `woodpecker` namespace on 2026-09-06.
