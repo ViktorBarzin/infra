@@ -170,6 +170,16 @@ resource "kubernetes_deployment" "forgejo" {
           # keyboard-interactive handler (modules/ssh/ssh.go), so there is no
           # credential to brute force. CrowdSec's nftables bouncer covers the
           # address reputation side on non-HTTP traffic.
+          # DISABLE_SSH was baked into app.ini on the PVC at install time and
+          # silently overrides START_SSH_SERVER, so the built-in server stayed
+          # down and nothing listened on 2222. It appears in no Terraform file;
+          # the only way to find it was reading /data/gitea/conf/app.ini inside
+          # the running pod (2026-09-06). Declared here so it is never a
+          # surprise again.
+          env {
+            name  = "FORGEJO__server__DISABLE_SSH"
+            value = "false"
+          }
           env {
             name  = "FORGEJO__server__START_SSH_SERVER"
             value = "true"
