@@ -613,6 +613,12 @@ module "ingress" {
   # origin-direct path (curl --resolve forgejo.viktorbarzin.me:443:176.12.22.76,
   # or a dedicated non-proxied packages hostname) so it skips the edge. That is
   # a terminal-lobby-repo change; do it there first, then flip this back.
+  #
+  # 2026-09-06 (ref #91, fix-forward): the revert above was committed in
+  # 02b97919 but its CI apply (pipeline #1589) was SIGKILLed by a cancel-on-
+  # new-push before the forgejo stack applied, and the follow-up docs commit
+  # touched no stack — so the forge stayed proxied and external CI kept 403ing.
+  # This re-touches the stack so CI re-applies the non-proxied record.
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
