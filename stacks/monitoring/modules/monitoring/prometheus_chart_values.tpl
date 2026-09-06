@@ -95,7 +95,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeDown|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
+          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeDown|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing|F1MetricsMissing"
       # Planned node maintenance (kured drain-reboot or a manual cordon): the
       # window is announced by NodeMaintenanceInProgress (info — one Slack
       # line), and everything a 3-6 min drain+reboot predictably trips is
@@ -5684,6 +5684,168 @@ serverFiles:
             annotations:
               summary: "payslip freshness has never reported to Pushgateway"
               description: "No payslip_latest_pay_date_timestamp_seconds series exists at all, so PayslipStale is evaluating nothing and the payslip gap that produced code-oqyb could repeat unseen. Either payslip-freshness-export has never had a successful run, or the Pushgateway URL is unreachable from the payslip-ingest namespace."
+      # =====================================================================
+      # F1 Stream sources
+      # =====================================================================
+      # The failure these rules exist for: f1.viktorbarzin.me served ZERO
+      # streams from 2026-08-26 10:36 to 2026-09-05, about ten days, and
+      # nothing told anyone. Two upstreams broke independently (pitsport
+      # rewrote its API to /v1/live-now and started 404ing the old paths;
+      # aceztrims' embed host swapped a base64 blob for a pair of XORed hex
+      # strings). f1-stream/docs/playback-guard.md has the incident.
+      #
+      # There IS already a guard, and this does not replace it. The playback
+      # guard (stacks/f1-stream/f1-source-guard.tf) plays a real stream in a
+      # browser and files a Forgejo issue that dispatches a repair agent — a
+      # much stronger assertion than any of these rules make. It is
+      # CALENDAR-GATED though: hourly CronJob, acting only inside T-2h and
+      # T-30m of a session per /api/schedule. So a break that happens midweek
+      # waits for the next race weekend to be noticed, which is exactly how
+      # ten days passed. These rules are the always-on floor underneath it.
+      #
+      # Metric contract (backend/, f1-stream): f1_streams_served is a gauge
+      # labelled by `source` (site_key: pitsport, aceztrims, streamed) counting
+      # currently-served verified streams. The two *_timestamp_seconds gauges
+      # report 0 — NOT the current time — for a source that has never
+      # succeeded, because a now-valued timestamp reads as healthy and is how a
+      # ten-day outage stays invisible. No total is exposed; sum() it here.
+      #
+      # Scrape job: `f1-stream` (extraScrapeConfigs), 1m, straight at
+      # f1.f1-stream.svc.cluster.local:80/metrics. `up{job="f1-stream"} == 0`
+      # is already covered by ScrapeTargetDown (30m, warning) — no rule here
+      # duplicates it.
+      - name: F1 Stream Sources
+        rules:
+          # THE rule. Sustained zero across every source is the ten-day
+          # outage's own signature, and it fires on day one of a repeat.
+          #
+          # 2h, from the extraction logs in Loki rather than a guess. Over
+          # 2026-08-18..08-23 — midweek, no F1 on — f1-stream logged 284
+          # extraction runs and NOT ONE of them returned zero streams;
+          # aceztrims published 1-2 streams around the clock, 02:00 UTC
+          # included. Over 2026-08-27..08-30, inside the outage, 156 runs
+          # returned zero in a row. So an all-zero run is not a quiet period
+          # here, it is a fault, and there is no measured healthy stretch this
+          # threshold has to clear. Extraction runs every 30 min while idle
+          # (5 min during a live session, backend/main.py
+          # _scheduled_extraction), so 2h is 4 consecutive idle cycles — past
+          # any single bad run or a deploy, well short of a day.
+          #
+          # keep_firing_for damps the half-recovered shape: a site that goes
+          # dry, catches one stream on one cycle, and goes dry again is still
+          # broken, and without this it would resolve and re-fire on that.
+          #
+          # Two defences against reading its own metric wrong. `or on()
+          # vector(0)` covers f1_streams_served emitting NO series for a dry
+          # source rather than an explicit 0 — sum() over an empty vector
+          # returns no series, not zero, so without this the rule would go
+          # silent in precisely the all-sources-dry case it is named after.
+          # The `and on()` guard then requires the exposition to be live, so a
+          # dead pod produces F1MetricsMissing alone instead of both.
+          # f1_extraction_last_run_timestamp_seconds is the anchor because the
+          # contract makes it a single unlabelled gauge that is always present
+          # while /metrics answers.
+          - alert: F1AllSourcesDry
+            expr: |
+              (sum(f1_streams_served) or on() vector(0)) == 0
+              and on() f1_extraction_last_run_timestamp_seconds > 0
+            for: 2h
+            keep_firing_for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream has served zero streams from every source for over 2h — the site shows nothing"
+              description: "sum(f1_streams_served) has been 0 across all sources for two hours. Measured over 284 healthy extraction runs (2026-08-18..08-23, midweek) this never once happened, so treat it as every upstream extractor being broken rather than a quiet period. Check f1_source_last_extraction_ok per source to see whether they are raising or returning empty, then `homelab logs query '{namespace=\"f1-stream\"} |= \"Extraction run complete\"'`. The playback guard will not help until the next race weekend."
+          # Without this every other rule in the group evaluates nothing and
+          # goes quiet, which is the same silence the ten-day outage had.
+          # sum() over an empty vector returns NO series rather than 0, so
+          # F1AllSourcesDry cannot fire when the endpoint disappears — only
+          # this can. Causes worth expecting: /metrics removed or renamed, the
+          # scrape job misconfigured, or Anubis challenging the scrape (see the
+          # f1-metrics ALLOW rule in stacks/f1-stream/main.tf).
+          #
+          # 30m matches ScrapeTargetDown's hold so a dead pod produces one
+          # alert rather than two at different times.
+          #
+          # Anchored on the extraction timestamp, NOT on f1_streams_served.
+          # If the backend omits a source's gauge while that source is dry,
+          # then f1_streams_served vanishes entirely when everything is dry —
+          # and keying on it would report a healthy pod as a missing endpoint
+          # while the real fault (nothing being served) went unnamed. The
+          # extraction timestamp is a single unlabelled gauge that is always
+          # exposed, so its absence means the exposition itself is gone.
+          - alert: F1MetricsMissing
+            expr: absent(f1_extraction_last_run_timestamp_seconds)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream /metrics has returned nothing for 30m — every F1 stream alert is now blind"
+              description: "Prometheus has no f1_extraction_last_run_timestamp_seconds series at all, so F1AllSourcesDry, F1ExtractionStalled, F1SourceStale and F1SourceExtractionErroring are all evaluating nothing. Either the f1-stream pod is down (ScrapeTargetDown says so too), /metrics moved, or Anubis started challenging the scrape. Confirm with `homelab k8s status f1-stream` and a direct `curl f1.f1-stream.svc.cluster.local/metrics` from in-cluster."
+          # The extraction loop itself stopping. Distinct from every source
+          # failing: the sources look frozen at their last values rather than
+          # empty, so nothing above notices while the site quietly serves
+          # yesterday's links.
+          #
+          # 2h = 4 missed runs at the idle 30-minute cadence. The live-session
+          # cadence is 5 min, so this is loose by design — it should not fire
+          # on a slow run holding a chrome-fleet lease.
+          - alert: F1ExtractionStalled
+            expr: (time() - f1_extraction_last_run_timestamp_seconds) > 7200
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream has not run an extraction in {{ $value | humanizeDuration }} (>4 missed cycles)"
+              description: "The APScheduler stream_extraction job (30 min idle, 5 min during a live session) has not completed a run in over two hours, so every stream the site is serving is stale and no new ones are being found. This is the scheduler, not the upstreams — check the f1-stream pod logs for an exception that killed the job, and whether the pod restarted into a bad state."
+          # Per-source staleness, scoped to aceztrims ON PURPOSE.
+          #
+          # 6h = 12 consecutive dry cycles at the idle cadence. aceztrims is
+          # the one source with a measured around-the-clock baseline: 284 of
+          # 284 runs over five midweek days returned its streams, so its normal
+          # gap between successes is one extraction interval and 6h is two
+          # orders of magnitude above it.
+          #
+          # pitsport and streamed are deliberately NOT in this selector.
+          # pitsport publishes per session, so returning nothing between race
+          # weekends is CORRECT — a wall-clock staleness rule for it cannot
+          # tell "extractor broken" from "no F1 on" without a threshold wider
+          # than the summer break, which is too slow to be worth having. Their
+          # season-independent signal is F1SourceExtractionErroring below, and
+          # their in-session coverage is the playback guard's job. Add a source
+          # to this regex only once it has a measured around-the-clock
+          # baseline of its own.
+          #
+          # The `> 0` guard is load-bearing: the contract makes 0 mean "never
+          # succeeded", and time() - 0 is 56 years, so without it this fires
+          # instantly for any source that has not yet had a first success.
+          - alert: F1SourceStale
+            expr: |
+              f1_source_last_success_timestamp_seconds{source=~"aceztrims"} > 0
+              and (time() - f1_source_last_success_timestamp_seconds{source=~"aceztrims"}) > 21600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream source {{ $labels.source }} has produced no streams in {{ $value | humanizeDuration }} (normal gap is one 30-min cycle)"
+              description: "This source publishes around the clock — measured 1-2 streams on every one of 284 extraction runs over 2026-08-18..08-23, including 02:00 UTC midweek — so six hours of nothing means its extractor or its upstream has changed. This is the shape aceztrims broke in on 2026-08-26, when the embed host swapped a base64 encodedUrl blob for a pair of XORed hex strings and the resolver returned nothing while the page still looked fine."
+          # The season-independent per-source check, and the one that catches
+          # what actually happened to pitsport: it rewrote its API, the old
+          # /v1/streams/live and /v1/streams/24h started 404ing, and the
+          # extractor raised. A source returning nothing can be correct at any
+          # hour; a source whose extraction attempt does not complete cannot.
+          #
+          # 2h = 4 consecutive failed cycles at the idle cadence. Upstreams
+          # rate-limit and time out transiently, so a single bad run must not
+          # page; four in a row is a change, not weather.
+          - alert: F1SourceExtractionErroring
+            expr: f1_source_last_extraction_ok == 0
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream extractor for {{ $labels.source }} has been raising for 2h"
+              description: "This source's last four extraction attempts ended in an exception rather than returning a (possibly empty) list, so the site has lost it entirely. Unlike an empty result, this is wrong in any season — pitsport returning nothing between race weekends is normal, pitsport throwing is not. That is the exact 2026-09-05 failure: pitsport moved to /v1/live-now and 404'd the paths the extractor still asked for. Read the traceback in the f1-stream pod logs before assuming the upstream is down."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
@@ -6456,3 +6618,28 @@ extraScrapeConfigs: |
         regex: 'goflow2_flow_process_nf_templates_total'
         action: drop
 
+  # f1-stream: how many verified streams the site is actually serving, per
+  # upstream source. Added 2026-09-06 after the site served ZERO streams from
+  # 2026-08-26 10:36 to 2026-09-05, about ten days, with nothing to notice it —
+  # the app exposed no metrics at all until now. Alerts: the "F1 Stream
+  # Sources" group in alerting_rules.yml. Incident and timing analysis:
+  # f1-stream/docs/playback-guard.md.
+  #
+  # Straight at the app Service (`f1` in ns f1-stream, :80 -> pod :8000), NOT
+  # through the ingress. The Anubis instance sits only in front of the Ingress,
+  # so this scrape never meets a proof-of-work challenge; the /metrics ALLOW
+  # rule in stacks/f1-stream/main.tf exists so a human can curl the endpoint
+  # from outside, not for this job.
+  #
+  # 1m rather than the 30m extraction cadence: the gauges are cheap (a handful
+  # of series) and a fast scrape keeps `up` meaningful and the alert clocks
+  # honest without adding data the extraction loop does not produce.
+  - job_name: 'f1-stream'
+    scrape_interval: 1m
+    static_configs:
+      - targets:
+        - "f1.f1-stream.svc.cluster.local:80"
+    metrics_path: '/metrics'
+    relabel_configs:
+      - target_label: instance
+        replacement: 'f1-stream'
