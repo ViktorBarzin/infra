@@ -6,6 +6,21 @@ Produced by a 15-agent workflow: five probes covering each layer between etcd's
 `fdatasync()` and the platter, one adversarial refuter per probe, two impact
 agents, two remedy agents and a synthesist. 2.09M tokens, 73 minutes.
 
+```stats
+12.08 ms | WAL fsync mean (target under 10 ms p99)
+186-345 ms | WAL fsync p99
+0.28 /s | reads by etcd's own VM disk
+402 | scheduler + controller-manager restarts
+1,254x | apiserver 5xx rate in bad windows
+0 ms | cost of the three prime suspects
+```
+
+> [!IMPORTANT]
+> The QEMU byte throttle, the missing iothread and dm-thin metadata commits were
+> the three leading suspects going in. All three measure at exactly zero. etcd
+> waits behind other tenants' reads on a shared 7200 rpm spindle, and nothing
+> above the host queue contributes meaningfully at p99.
+
 ## What I re-verified by hand
 
 The workflow's claims are a subagent's report, so the load-bearing ones were
@@ -17,7 +32,7 @@ re-measured directly before publishing.
 | WAL fsync mean 11.05-11.94 ms | `increase(..._sum)/increase(..._count)` | 12.08 ms |
 | etcd metric history is only 2.17 days | `time() - min_over_time(timestamp(...)[30d:1h])` | 189,064 s = 2.19 days, confirmed |
 | dm-217 is devvm | `dmsetup info -c -j 252 -m 217` | `pve-vm--102--disk--0`, confirmed. dm-251 is VM 203 (k8s-node3) |
-| etcd's own VM barely reads | 7d mean on dm-220 | 0.28 reads/s. etcd is a victim, it reads almost nothing |
+| etcd's own VM barely reads | 7d mean on dm-220 | 0.28 reads/s. etcd reads almost nothing, so it contributes little to the queue it waits in |
 
 ## One correction to the attribution
 
@@ -106,29 +121,23 @@ Three things the brief listed as suspects contribute **exactly zero measured mil
 
 ```mermaid
 flowchart TD
-    A["etcd fdatasync()<br/>7.93/s<br/>p50 0.85-1.5ms · p99 186-345ms"] --> B
-    B["WAL encode + buffer<br/>+0.002ms"] --> C
-    C["guest ext4 /dev/sda1<br/>shared journal, commit=60<br/>median +0.18ms · 6.1% over 32ms"] --> D
-    D["guest blk-flush<br/>write_cache=write back, fua=0<br/>20.7 flush/s"] --> E
-    E["virtio-scsi-pci<br/>no iothread · 0ms measured"] --> F
-    F["QEMU throttle-drive-scsi0<br/>60MB/s cap, used 1.24%<br/>0ms measured"] --> G
-    G["QEMU io_uring workers<br/>26.3 iou-wrk/s<br/>+0.245ms quiet, +20.7ms burst"] --> H
-    H["dm-220 vm-200-disk-0<br/>lifetime 1.371ms<br/>r=0.877 with guest tail"] --> I
-    I["dm-6 pve-data-tpool<br/>1.802ms · 96-98% util"] --> J
-    J["sdc mq-deadline queue<br/>aqu-sz 7.2-7.5, nr_requests 256<br/>r_await 9-57ms · 98.9% util"] --> K
-    K["PERC H730 WriteBack + BBU<br/>writes absorbed 1.929ms<br/>reads not cached · 0ms flush"] --> L
-    L["2x ST12000NM007H 7200rpm RAID1<br/>read 4.483ms · ~150-200 random IOPS"]
+    A["etcd fdatasync()<br/>7.93/s<br/>p50 0.85-1.5ms<br/>p99 186-345ms"] --> C
+    C["guest ext4 sda1<br/>shared journal<br/>+0.18ms"] --> D
+    D["guest blk-flush<br/>20.7/s"] --> E
+    E["virtio-scsi<br/>no iothread<br/>0ms measured"] --> F
+    F["QEMU byte throttle<br/>60MB/s cap<br/>used 1.24%<br/>0ms measured"] --> G
+    G["QEMU io_uring<br/>+0.245ms quiet<br/>+20.7ms burst"] --> H
+    H["dm-220 etcd's LV<br/>lifetime 1.371ms"] --> I
+    I["dm-6 thin pool<br/>1.802ms<br/>96-98% util<br/>tmeta not a cause"] --> J
+    J["CONTENDED QUEUE<br/>sdc mq-deadline<br/>aqu-sz 7.2-7.5<br/>98.9% util<br/>r_await 9-57ms"] --> K
+    K["PERC H730<br/>WriteBack + BBU<br/>writes 1.929ms<br/>reads NOT cached"] --> L
+    L["2x 7200rpm RAID1<br/>read 4.483ms<br/>150-200 IOPS"]
 
-    N1["devvm VM102 dm-217<br/>+342.9 reads/s = 80.2%"] --> J
-    N2["k8s-node3 dm-251 +28.7/s"] --> J
-    N3["pg-cluster-4 dm-240 +24.3/s"] --> J
-    N4["prometheus dm-255 +23.1/s"] --> J
-    N5["354 other LVs, 72 PVCs,<br/>7 other VMs, weekly vzdump"] --> J
-    N6["dm-4 tmeta 0.032-0.193ms<br/>r = -0.155, not a cause"] --> J
+    N["NEIGHBOUR READS<br/>7d avg / peak per s<br/>nfs-data 75 / 1517<br/>devvm 67 / 1123<br/>pvc-ba04 44 / 786<br/>node3 20 / 1508<br/>etcd itself 0.28"] --> J
 
     style A fill:#fff3cd,stroke:#856404
     style J fill:#f8d7da,stroke:#721c24
-    style N1 fill:#f8d7da,stroke:#721c24
+    style N fill:#f8d7da,stroke:#721c24
     style L fill:#d1ecf1,stroke:#0c5460
 ```
 
@@ -162,7 +171,7 @@ Three post-mortems name etcd IO starvation as the direct cause of a control-plan
 
 ### Latent risk
 
-Zero Raft redundancy. One member, so a wedged etcd is a full control-plane stop with no failover. The recovery path is worse than the runbook states: `backup-etcd` runs `0 1 * * 0`, **weekly**, five snapshots kept, so RPO reaches 6.9 days. `docs/runbooks/restore-etcd.md` claims "Daily at 00:00", 30-day retention, and a backup path the CronJob does not use. A restore rolls 151 namespaces, 336 pods, 226 deployments and 158 PVCs back to the snapshot.
+Zero Raft redundancy. One member, so a wedged etcd is a full control-plane stop with no failover. The recovery path does not match the runbook: `backup-etcd` runs `0 1 * * 0`, **weekly**, five snapshots kept, so RPO reaches 6.9 days. `docs/runbooks/restore-etcd.md` claims "Daily at 00:00", 30-day retention, and a backup path the CronJob does not use. A restore rolls 151 namespaces, 336 pods, 226 deployments and 158 PVCs back to the snapshot.
 
 Host RAM is committed at 264 of 267 GB across running VMs, which is what blocks adding etcd members for HA.
 
@@ -173,7 +182,7 @@ Host RAM is committed at 264 of 267 GB across running VMs, which is what blocks 
 - **Kubelet node leases never come close.** Renewal every 10 s against a 40 s grace period, so a 5 s stall is invisible. Two Ready transitions on k8s-master over 2 days.
 - **The external user path barely moves.** The blackbox HTTPS probe of status.viktorbarzin.me took 102.4 ms in bad windows against 98.1 ms in good, +4.3 ms.
 - **etcd has never wedged or lost data.** Zero leader changes, zero health failures over 2 days, clean recovery from the 2026-07-18 unclean shutdown. Every documented failure is the apiserver giving up on a slow etcd.
-- **The write side is shrinking, not growing.** sdc weekly average write IOPS fell from 596-697/s in March to 289/s this week, while reads climbed from 54-90/s to 304/s. Any framing that puts the regression on writes is measuring the wrong half.
+- **The write side is shrinking, not growing.** sdc weekly average write IOPS fell from 596-697/s in March to 289/s this week, while reads climbed from 54-90/s to 304/s. The regression is on the read side.
 - **t3 Code websocket drops are not this.** Measured 2026-06-26: the human-visible class is one user's cellular last mile, 92 force-closes in 14 days, 100% one user across 19 rotating UK cellular IPs. Moving etcd will not fix them.
 - **The nightly PVC snapshot and the nfs-mirror rsync are not the systematic cause.** 00 UTC averages 0.2519 s and 03 UTC 0.2891 s of apiserver→etcd latency; the worst hour is 17 UTC at 0.5103 s. Evening human and agent activity, not the backup window.
 
@@ -195,15 +204,15 @@ Free and zero-downtime first. The SSD move for etcd sits last as the comparison 
 | 8 | `--bwlimit 40000` on `vzdump-vms` | Host-side unthrottled LV reads that bypass the QEMU cap. dm-217 hits 103.9 MB/s sustained against a 62.9 MB/s guest cap in 1.27% of samples | Removes one recurring cliff, 1-3 h/week. **Does not move the weekly p99** | none | free | minutes |
 | 9 | `--backend-batch-interval=500ms` in `etcd-tuning.tf` | Backend commit wall clock, 280 s/hour, p99 507.6 ms | Commit count −40%, wall clock **40-70 s/hour** (15-25%). **No crash-loss window**, the WAL covers durability; the cost is buffer memory and serializable-read staleness | 30-90 s etcd static pod restart, full apiserver datastore outage | free | minutes |
 | 10 | `--wal-dir` on the 10k SAS pair (VG backup, 2x ST1200MM0099). Needs an 8 G `lvreduce` of the backup LV first | The shared guest ext4 journal *and* the shared spindle. Takes ~9.2 fsync/s off sdc | p50 → **0.4-0.8 ms**; p99 → **20-50 ms**. Backend commit unchanged | backups paused 30-60 min for the shrink; one etcd restart. Bundle with row 9 | free (8 G of backup capacity) | hours |
-| 11 | sdc queue tuning: `writes_starved` 2→1, `nr_requests` 256→64, `read_expire` 500→250; ionice the QEMU scopes | The queue itself. mq-deadline dispatches two read batches per write batch, backwards when the writes are a control plane | **2-5 ms** off the mean, unquantified at p99. Capped by dm-220's own queue depth of 0.10-0.29 | none, live sysfs | free | minutes |
-| 12 | `IOSchedulingClass=idle` on the maintenance units; move `defrag-etcd` off `0 3 * * 0` UTC | Scheduled host IO. **Weak lever** and the evidence says so: the worst hour is 17 UTC with nothing scheduled | under **0.5 ms** off the mean | none | free | minutes |
-| — | **LAST RESORT, the user's stated veto.** etcd on SSD. Full: `qm move-disk 200 scsi0 ssd`. WAL-only: 4 G LV in VG ssd + `--wal-dir` | Everything below the guest at once. The only remedy that does not depend on predicting another workload | p50 → **0.3-0.8 ms**; mean → **~0.5 ms** (20x); p99 → **2-10 ms** (30-100x). Best non-SSD outcome (rows 1+2+5) reaches mean 3.5-5.0, p99 70-150, so the SSD is worth another ~7x on the mean and 10-20x on the tail | full: none for the move. WAL-only: 10-30 s etcd restart | free with present hardware; **a mirror is not** | hours |
+| 11 | sdc queue tuning: `writes_starved` 2→1, `nr_requests` 256→64, `read_expire` 500→250; ionice the QEMU scopes | The queue itself. mq-deadline dispatches two read batches per write batch, which favours reads over a latency-sensitive write stream | **2-5 ms** off the mean, unquantified at p99. Capped by dm-220's own queue depth of 0.10-0.29 | none, live sysfs | free | minutes |
+| 12 | `IOSchedulingClass=idle` on the maintenance units; move `defrag-etcd` off `0 3 * * 0` UTC | Scheduled host IO. Small effect. The worst hour is 17 UTC, with nothing scheduled then | under **0.5 ms** off the mean | none | free | minutes |
+| — | **Last resort, ranked last by Viktor.** etcd on SSD. Full: `qm move-disk 200 scsi0 ssd`. WAL-only: 4 G LV in VG ssd + `--wal-dir` | Everything below the guest at once. The only remedy that does not depend on predicting another workload | p50 → **0.3-0.8 ms**; mean → **~0.5 ms** (20x); p99 → **2-10 ms** (30-100x). Best non-SSD outcome (rows 1+2+5) reaches mean 3.5-5.0, p99 70-150, so the SSD is worth another ~7x on the mean and 10-20x on the tail | full: none for the move. WAL-only: 10-30 s etcd restart | free with present hardware; **a mirror is not** | hours |
 
 ### Rejected, with the measurement that killed each
 
 | Change | Why not |
 |---|---|
-| Remove or raise VM 200's byte throttle | 0 ms. 1 Hz peak is 1.243% of the cap, worst windows reach 306 kB/s against 60 MB/s (205x oversized), no burst bucket to drain. Poking it live is a pinned contributor to the 90-minute VM 102 wedge of 2026-06-11 |
+| Remove or raise VM 200's byte throttle | 0 ms. 1 Hz peak is 1.243% of the cap, worst windows reach 306 kB/s against 60 MB/s (205x oversized), no burst bucket to drain. Changing it live is a pinned contributor to the 90-minute VM 102 wedge of 2026-06-11 |
 | Add iothread to VM 200 | 0 ms on latency. Main kvm thread 0.7% CPU, 7.5 us mean scheduler wait, io_uring workers already carry the fsync, and busy-queue writes are 41% *faster* than idle-queue. Worth doing as a resilience change in a planned window, at 3-5 minutes of full control-plane outage |
 | `etcdctl defrag` | Reclaims 67.4 MB of a db using 11.9% of its quota, buys 0 ms (bbolt commits only dirty pages), and costs 20-90 s of complete etcd unavailability on a single member |
 | Thick LV for etcd outside the thin pool on sdc | Impossible. `vgs pve -o vg_free` = 16.25 GiB against a 64 G disk, and LVM cannot shrink a thin pool |
@@ -242,7 +251,7 @@ Reassess after those three before spending an etcd restart on row 9 or a backup 
 | etcd log history for the May and June incidents | Nothing. etcd's logs are not in Loki (no `etcd` job label) and the container log rotates every ~11 minutes at the current warning volume. `kubectl logs --since=720h` returned 9,108 lines spanning 650 seconds |
 | apiserver-side `etcd_request_duration_seconds` between 2026-04-19 and 2026-07-19 | Nothing. There is a hole in the series covering the entire May/June incident period, so those incidents are quantified from post-mortems plus `up{job="kubernetes-apiservers"}` |
 | Whether io_uring worker IO is charged to the right cgroup scope on kernel 6.14.11-4-pve, which gates row 2 | Enable the controller, then compare `cat /sys/fs/cgroup/qemu.slice/200.scope/io.stat` against a simultaneous `/proc/diskstats` delta for dm-220 |
-| devvm's 436 w/s and 16 MB/s write burst in one 60 s host window, against ~100 kB/s from guest pidstat in a different window | `pidstat -d 1 60` inside devvm run simultaneously with the host `/proc/diskstats` delta, same wall clock. The two measurements do not reconcile and nobody has chased it |
+| devvm's 436 w/s and 16 MB/s write burst in one 60 s host window, against ~100 kB/s from guest pidstat in a different window | `pidstat -d 1 60` inside devvm run simultaneously with the host `/proc/diskstats` delta, same wall clock. The two measurements do not reconcile, and this is not yet investigated |
 | Whether etcd's read amplification lengthens anything | Already settled and worth recording as a negative: 0.427 guest read IOPS and 32.8 kB/s against 972 kB/s served, so 96.6% of served bytes never touch a disk. The 442 MB db sits inside 5.45 GB of guest page cache |
 
 ---
@@ -255,7 +264,7 @@ Reassess after those three before spending an etcd restart on row 9 or a backup 
 
 3. **Should `backup-etcd` move from weekly to daily before anything touches etcd's storage?** Present RPO is up to 6.9 days and the runbook documents a schedule and a path that do not match the CronJob. That is worth fixing independently of this investigation, and it is a prerequisite for any change that puts etcd's data on a less redundant device.
 
-4. **Is devvm's read storm actually necessary?** Nobody has looked at what generates 354 reads/s at 17 kB each. Its filesystem is 97% full (205 G of 223 G, 7.9 G free), which plausibly makes its IO smaller and more random than it needs to be, but no fragmentation measurement exists. `e4defrag -c` on the hot directories is read-only and would answer it.
+4. **Is devvm's read storm actually necessary?** What generates 354 reads/s at 17 kB each is not yet measured. Its filesystem is 97% full (205 G of 223 G, 7.9 G free), which plausibly makes its IO smaller and more random than it needs to be, but no fragmentation measurement exists. `e4defrag -c` on the hot directories is read-only and would answer it.
 
 5. **What explains the residual 17.8 ms between sdc's per-request accounting and dm-220's in the slow windows?** The dm-thin metadata-commit story is refuted (zero flushes, zero pool commits, tmeta at 0.032-0.193 ms and negatively correlated). Queue wait at the dm/tpool layer under a saturated sdc is the plausible remainder, but the mechanism is unmeasured and would need blktrace.
 
