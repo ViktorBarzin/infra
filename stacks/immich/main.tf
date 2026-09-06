@@ -549,29 +549,6 @@ resource "kubernetes_deployment" "immich_api" {
             value = "api"
           }
           env {
-            # Every thumbnail request reads a file off NFS, and Node routes file
-            # I/O through libuv's threadpool, which defaults to 4 regardless of
-            # how many CPUs the container sees (8 here). Measured 2026-09-06 on
-            # one api pod, concurrent GETs of size=thumbnail:
-            #
-            #   concurrency   1     2     4     8    16    32
-            #   wall         43ms  38ms  34ms  49ms  88ms  181ms
-            #
-            # Flat to 4, then linear, while the pod used 1.58 of 8 available
-            # cores and had no CPU limit, so it was not CPU-bound. That is an
-            # I/O concurrency ceiling, and it matters because a photo grid is
-            # exactly this shape: measured 64 requests/second at peak, with 87%
-            # of thumbnail requests arriving in bursts of 16+/s. Under those
-            # bursts production p50 was 0.543s and p90 0.986s, against 0.020s
-            # for an isolated request.
-            #
-            # 16 rather than 8: the pool is shared with crypto, zlib and DNS, so
-            # sizing it to the core count alone still lets a burst of file reads
-            # starve them. Threads are cheap and idle ones cost nothing.
-            name  = "UV_THREADPOOL_SIZE"
-            value = "16"
-          }
-          env {
             name  = "DB_DATABASE_NAME"
             value = "immich"
           }
@@ -674,6 +651,23 @@ resource "kubernetes_deployment" "immich_api" {
               # from that series. No CPU limit on purpose, so bursts stay free
               # on an idle node. 3 replicas x 500m = 1.5 cores of new requests,
               # and the busiest node was at 60%.
+              #
+              # This is right-sizing, NOT a fix for slow thumbnails. That
+              # symptom is still open: production thumbnail latency is p50 107ms
+              # and p90 823ms, and it is backend time (Traefik OriginDuration
+              # equals Duration to within 2ms, so it is not the client link).
+              # What has been RULED OUT by measurement, so nobody re-tests it:
+              # storage is fine (32 concurrent raw reads off the NFS mount in
+              # 18ms); the pod is not CPU-capped (1.58 of 8 visible cores, no
+              # limit); and libuv's threadpool is not the ceiling - setting
+              # UV_THREADPOOL_SIZE=16 was tried here and reverted because the
+              # concurrency curve was unchanged (4/8/16/32 concurrent ran
+              # 34/49/88/181 ms before and 30-37/48-55/80-117/189-245 ms after).
+              # A clean single-process harness also shows no collapse at all:
+              # one pod serves 242-460 thumbnails/s locally against a measured
+              # production peak of 64/s across three pods. The unexplained gap
+              # is between in-pod localhost (~4ms/req) and the same request
+              # through Traefik (70ms single, up to 590ms under parallelism).
               cpu = "500m"
               # API-only profile — the old 6.9Gi peaks belong to jobs (now in
               # immich-worker). Lean so 3 replicas + cronjobs fit the 24Gi ns
