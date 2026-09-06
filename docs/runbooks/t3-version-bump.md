@@ -1,8 +1,9 @@
-# Runbook: t3 version — gated nightly tracker (freeze / revert / roll back)
+# Runbook: t3 version — gated release tracker (freeze / revert / roll back)
 
-t3 on the devvm **auto-tracks the `nightly` npm dist-tag** (Viktor, 2026-06-16,
-risk explicitly accepted), via the daily `t3-autoupdate` timer. Every bump is
-GATED so a bad nightly self-heals instead of repeating 2026-06-09. This reverses
+t3 on the devvm **auto-tracks the `latest` npm dist-tag** (Viktor, 2026-09-06;
+it tracked `nightly` from 2026-06-16, and was pinned before that), via the daily
+`t3-autoupdate` timer. Every bump is GATED so a bad build self-heals instead of
+repeating 2026-06-09. This reverses
 the post-incident pin decision — read `2026-06-09-t3-nightly-autoupdate-auth-outage.md`
 for why every guard below exists. t3 is still pre-1.0 and ships breaking changes
 between builds; the gate is what makes auto-tracking safe.
@@ -11,7 +12,7 @@ between builds; the gate is what makes auto-tracking safe.
 
 1. **Freeze gate** — `/etc/t3-autoupdate.freeze` present (or `T3_PIN=<ver>` set) →
    hold at current, do nothing.
-2. **Resolve + downgrade-guard** — `npm view t3@nightly version`; proceed only if
+2. **Resolve + downgrade-guard** — `npm view t3@latest version`; proceed only if
    the target is strictly newer than installed AND a `-nightly.` build (the tag is
    mutable and can point backward).
 3. **Pre-bump backup** — online `VACUUM INTO` of every user's `state.sqlite` to
