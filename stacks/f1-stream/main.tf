@@ -490,6 +490,12 @@ module "anubis" {
       # is on disk, since the original release is released once its copy is
       # verified. Missing from this list, a cookie flap makes it answer with the
       # PoW page and every converted session looks absent.
+      # `replays/refresh` joined them on 2026-09-06, when the Replays page's
+      # Refresh button stopped merely re-reading the cache and started asking the
+      # server to go and look. It is a POST rather than a GET, which changes
+      # nothing here: Anubis matches on path, so without the entry the SPA's
+      # fetch gets the challenge page back as 200 text/html and .json() throws
+      # the same 'Unexpected token <' it throws for a missing GET route.
       # It was added after this rule; while missing, any request whose Anubis
       # cookie didn't validate (the IP-sensitive cookie flap) fell through to
       # catchall-challenge and got the PoW HTML back — so the SPA's res.json()
@@ -502,7 +508,7 @@ module "anubis" {
       # `admin/login` is deliberately NOT here -- it is a top-level navigation
       # gated by Authentik on its own Ingress, and never reaches Anubis.
       - name: f1-data-routes
-        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|schedule|streams)(/|\?|$)
+        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|replays/refresh|schedule|streams)(/|\?|$)
         action: ALLOW
       # NOTE: /metrics is deliberately NOT allow-listed here. The Prometheus
       # scrape reaches the app Service directly at
