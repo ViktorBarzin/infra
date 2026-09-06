@@ -640,7 +640,35 @@ resource "kubernetes_deployment" "immich_api" {
           }
           resources {
             requests = {
-              cpu = "100m"
+              # 100m -> 500m (2026-09-06). Serving 40 concurrent thumbnails
+              # measured 1.58 cores on one pod, so the old request was 16x under
+              # what a routine grid scroll asks for. CPU requests set the CFS
+              # share a cgroup gets when a node is contended, so a 100m request
+              # meant this pod was entitled to a tenth of a core at exactly the
+              # moment a user was waiting on a burst of images. The 30d
+              # Prometheus peak reads only 0.58 cores, but that is
+              # rate(...[5m]) and cannot see a 565ms burst; do not size this
+              # from that series. No CPU limit on purpose, so bursts stay free
+              # on an idle node. 3 replicas x 500m = 1.5 cores of new requests,
+              # and the busiest node was at 60%.
+              #
+              # This is right-sizing, NOT a fix for slow thumbnails. That
+              # symptom is still open: production thumbnail latency is p50 107ms
+              # and p90 823ms, and it is backend time (Traefik OriginDuration
+              # equals Duration to within 2ms, so it is not the client link).
+              # What has been RULED OUT by measurement, so nobody re-tests it:
+              # storage is fine (32 concurrent raw reads off the NFS mount in
+              # 18ms); the pod is not CPU-capped (1.58 of 8 visible cores, no
+              # limit); and libuv's threadpool is not the ceiling - setting
+              # UV_THREADPOOL_SIZE=16 was tried here and reverted because the
+              # concurrency curve was unchanged (4/8/16/32 concurrent ran
+              # 34/49/88/181 ms before and 30-37/48-55/80-117/189-245 ms after).
+              # A clean single-process harness also shows no collapse at all:
+              # one pod serves 242-460 thumbnails/s locally against a measured
+              # production peak of 64/s across three pods. The unexplained gap
+              # is between in-pod localhost (~4ms/req) and the same request
+              # through Traefik (70ms single, up to 590ms under parallelism).
+              cpu = "500m"
               # API-only profile — the old 6.9Gi peaks belong to jobs (now in
               # immich-worker). Lean so 3 replicas + cronjobs fit the 24Gi ns
               # quota; re-measure after a week (plan §7).
@@ -1245,7 +1273,26 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                 # docs/post-mortems/2026-09-03-immich-smart-search-probe-measures-wall-clock.md
                 success=1
                 start=$(date +%s%3N)
-                q_ms=$(psql -v ON_ERROR_STOP=1 -tA -c "SELECT round(extract(epoch from clock_timestamp() - statement_timestamp()) * 1000) FROM (SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) s) q" 2>/tmp/err)
+                # THE QUERY SHAPE MATTERS MORE THAN THE TIMING METHOD (2026-09-06).
+                # Until now this timed a bare ANN scan: no owner filter, no join,
+                # no tiebreaker. That shape uses the vchordrq index and returns in
+                # 70-94 ms. Immich never runs it. The real searchSmart query joins
+                # asset, filters ownerId/visibility/deletedAt, and ends
+                #   ORDER BY smart_search.embedding <=> $1, asset.id ASC
+                # (server/src/repositories/search.repository.ts, still on upstream
+                # main). That SECOND sort key means the index cannot satisfy the
+                # ordering, so Postgres computes the distance for EVERY asset the
+                # owner has and top-N sorts. Measured on a 59k-asset account, same
+                # data, three query vectors: 1279/1321/1090 ms with the tiebreaker
+                # against 10/15/20 ms without it. So the old gauge under-reported
+                # what a user actually waits for by roughly 15x, and the 1 s alert
+                # threshold was calibrated against a query nobody issues.
+                #
+                # Now timed against the LARGEST library on the instance, because
+                # cost scales with the owner's asset count and the worst account is
+                # the one worth alerting on. Picking it by count rather than by
+                # name keeps this correct as libraries grow.
+                q_ms=$(psql -v ON_ERROR_STOP=1 -tA -c "SELECT round(extract(epoch from clock_timestamp() - statement_timestamp()) * 1000) FROM (SELECT count(*) FROM (SELECT a.id FROM asset a INNER JOIN smart_search s ON a.id = s.\"assetId\" WHERE a.visibility != 'hidden' AND a.\"ownerId\" = (SELECT u.id FROM \"user\" u JOIN asset a2 ON a2.\"ownerId\" = u.id AND a2.\"deletedAt\" IS NULL GROUP BY u.id ORDER BY count(a2.id) DESC LIMIT 1) AND a.\"deletedAt\" IS NULL ORDER BY s.embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1), a.id ASC LIMIT 21) t) q" 2>/tmp/err)
                 rc=$?
                 end=$(date +%s%3N)
                 wall_ms=$((end - start))
@@ -1257,6 +1304,16 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                   success=0
                   cat /tmp/err >&2
                   q_ms=$wall_ms
+                fi
+                # The OLD shape, kept as a separate signal. It is the one query
+                # that does use the vchordrq index, so it isolates index and cache
+                # health from the plan problem above. Both slow means the index or
+                # the buffer cache; only db_seconds slow means the plan.
+                idx_ms=$(psql -tA -c "SELECT round(extract(epoch from clock_timestamp() - statement_timestamp()) * 1000) FROM (SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) s) q" 2>/dev/null)
+                if [[ $idx_ms =~ ^[0-9]+$ ]]; then
+                  idx=$(printf '%d.%03d' $((idx_ms/1000)) $((idx_ms%1000)))
+                else
+                  idx=-1
                 fi
                 dur=$(printf '%d.%03d' $((q_ms/1000)) $((q_ms%1000)))
                 wall=$(printf '%d.%03d' $((wall_ms/1000)) $((wall_ms%1000)))
@@ -1270,7 +1327,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                 toast_pct=$(psql -tA -c "SELECT COALESCE(round(100.0*count(b.bufferid)*8192/greatest(pg_relation_size(t.oid),1),1),0) FROM pg_class c JOIN pg_class t ON t.oid=c.reltoastrelid LEFT JOIN pg_buffercache b ON b.relfilenode=pg_relation_filenode(t.oid) WHERE c.relname='smart_search' AND c.relnamespace='public'::regnamespace GROUP BY t.oid" 2>/dev/null)
                 if [ -z "$toast_pct" ]; then toast_pct=-1; fi
                 {
-                  echo "# HELP immich_smart_search_db_seconds Postgres-reported elapsed time of a representative smart-search ANN query."
+                  echo "# HELP immich_smart_search_db_seconds Postgres-reported elapsed time of Immich's ACTUAL searchSmart query (asset join, owner/visibility/deletedAt filters, and the asset.id tiebreaker) against the largest library on the instance."
                   echo "# TYPE immich_smart_search_db_seconds gauge"
                   echo "immich_smart_search_db_seconds $dur"
                   echo "# HELP immich_smart_search_probe_wall_seconds End-to-end wall clock of the probe psql process, including startup, DNS and connect. Context only, no alert reads it."
@@ -1283,6 +1340,9 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                   # stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl.
                   # Renaming this gauge without changing that alert leaves the
                   # alert silently never firing, so the two move together.
+                  echo "# HELP immich_smart_search_index_seconds Postgres-reported time of a bare ANN scan that DOES use the vchordrq index (no owner filter, no tiebreaker). Index and cache health only; not what a user waits for. -1 means the query failed."
+                  echo "# TYPE immich_smart_search_index_seconds gauge"
+                  echo "immich_smart_search_index_seconds $idx"
                   echo "# HELP immich_smart_search_toast_cached_pct Percent of the smart_search TOAST relation (the full-precision vectors the vchordrq re-rank reads) resident in PG shared_buffers."
                   echo "# TYPE immich_smart_search_toast_cached_pct gauge"
                   echo "immich_smart_search_toast_cached_pct $toast_pct"
@@ -1293,7 +1353,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                   echo "# TYPE immich_smart_search_probe_last_run_timestamp gauge"
                   echo "immich_smart_search_probe_last_run_timestamp $(date +%s)"
                 } > "$OUT"
-                echo "probe dur=$dur wall=$wall pct=$pct toast_pct=$toast_pct success=$success"
+                echo "probe dur=$dur wall=$wall idx=$idx pct=$pct toast_pct=$toast_pct success=$success"
                 exit 0
               EOT
               ]
