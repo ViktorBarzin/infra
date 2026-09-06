@@ -166,7 +166,7 @@ alertmanager:
       - source_matchers:
           - alertname = ImmichSearchProbeStale
         target_matchers:
-          - alertname =~ "ImmichSmartSearchSlow|ImmichClipIndexColdCache|ImmichSmartSearchToastColdCache"
+          - alertname =~ "ImmichSmartSearchSlow|ImmichClipIndexColdCache|ImmichSmartSearchToastColdCache|ImmichSmartSearchIndexSlow"
       # Same shape for the thumbnail reconciler: its gauges live in the
       # Pushgateway, which keeps serving the last value forever. If the CronJob
       # stops running, "N photos still need repair" is frozen history rather than
@@ -1691,13 +1691,40 @@ serverFiles:
           # clip_index is partially evicted — 6 fire/resolve pairs in 7 days for
           # one cache-cold episode (measured 2026-08-10).
           - alert: ImmichSmartSearchSlow
-            expr: immich_smart_search_db_seconds{job="immich-search-probe"} > 1
+            # Threshold moved 1s -> 3s on 2026-09-06, because the series changed
+            # meaning. db_seconds now times Immich's REAL searchSmart query
+            # (asset join, owner filter, and the asset.id tiebreaker that makes the
+            # vchordrq index unusable) instead of a bare indexed ANN scan nobody
+            # issues. Measured baseline on the largest library: 834-1088 ms over 10
+            # samples, median 971 ms. A 1s threshold against that would fire
+            # permanently. 3s leaves headroom over the normal range while still
+            # catching the cold-TOAST case, which reached 19s.
+            expr: immich_smart_search_db_seconds{job="immich-search-probe"} > 3
             for: 15m
-            keep_firing_for: 2h
+            # 2h -> 15m. keep_firing_for is RE-ARMED by every single sample over
+            # the threshold, so isolated spikes kept this alert lit for hours after
+            # the slowness ended: measured 2026-09-06, fired 00:26 and still firing
+            # at 09:06 while the real slowness stopped at 02:32, extended by three
+            # daytime samples of 1.05s, 1.17s and 2.91s. 15m bridges a gap between
+            # 5-minutely probe runs without turning one spike into a half-day alert.
+            keep_firing_for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Immich context search slow: {{ $value | printf \"%.2f\" }}s (>1s). Check BOTH residency gauges, not just clip_index: immich_clip_index_cached_pct (quantized codes) and immich_smart_search_toast_cached_pct (the full-precision vectors the re-rank reads). A hot clip_index next to a cold TOAST is the known shape. Prewarm runs in the immich-search-probe CronJob."
+              summary: "Immich context search slow: {{ $value | printf \"%.2f\" }}s (>3s). Check BOTH residency gauges, not just clip_index: immich_clip_index_cached_pct (quantized codes) and immich_smart_search_toast_cached_pct (the full-precision vectors the re-rank reads). A hot clip_index next to a cold TOAST is the known shape. Prewarm runs in the immich-search-probe CronJob."
+          - alert: ImmichSmartSearchIndexSlow
+            # The old ImmichSmartSearchSlow semantic, now pointed at the series it
+            # was always describing: a bare ANN scan that DOES use the vchordrq
+            # index. Normal is 70-95 ms. This firing means the index or the buffer
+            # cache is unhealthy. If this is quiet while ImmichSmartSearchSlow
+            # fires, the index is fine and the cost is the query plan.
+            expr: immich_smart_search_index_seconds{job="immich-search-probe"} >= 0 and immich_smart_search_index_seconds{job="immich-search-probe"} > 1
+            for: 15m
+            keep_firing_for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich indexed ANN scan slow: {{ $value | printf \"%.2f\" }}s (>1s, normal 0.07-0.095s) — the vchordrq index path itself is degraded, check clip_index and smart_search TOAST residency"
           - alert: ImmichSmartSearchToastColdCache
             # Gauge is emitted by the immich-search-probe CronJob defined in
             # stacks/immich/main.tf — the two move together.
