@@ -4,6 +4,15 @@ variable "tag" {
   default = "latest"
 }
 variable "tier" { type = string }
+
+# Scaled to 0 on 2026-09-06: 24h of Traefik logs showed 284-286 requests per
+# day on music-viktor and music-emo, which is the Gatus health check's own
+# rate and no organic use. The deployment, ingress and every credential stay
+# declared, so restoring an instance is this one number.
+variable "replicas" {
+  type    = number
+  default = 1
+}
 variable "protected" {
   type    = bool
   default = false
@@ -81,7 +90,7 @@ resource "kubernetes_deployment" "freedify" {
     }
   }
   spec {
-    replicas = 1
+    replicas = var.replicas
     strategy {
       type = "RollingUpdate"
     }
