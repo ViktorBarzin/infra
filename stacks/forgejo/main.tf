@@ -568,13 +568,31 @@ module "ingress" {
   # infra.git (183 MB on disk; terminal-lobby 81, website 74) from outside the
   # house. Not worth an accidental breakage for nothing.
   #
-  # What the CrowdSec static blocklist does, and Cloudflare does not, is stop this
-  # traffic. Keep it.
+  # RE-PROXIED 2026-09-06. The cap objection is gone: git now runs over SSH on
+  # git.viktorbarzin.me (see cloudflare_record.git and kubernetes_service
+  # .forgejo_ssh above), and SSH does not pass through Cloudflare at all, so
+  # neither the 100MB body cap nor the 100s first-byte timeout touches git. All
+  # 40 forgejo remotes on the devvm were moved to SSH and verified before this
+  # flip. Two further facts settled it:
   #
-  # Lost by reverting: Cloudflare's managed robots.txt, which made /robots.txt
-  # serve 200 instead of 404 while proxied. If that is wanted, serve one from
-  # forgejo directly rather than proxying for it.
-  dns_type        = "non-proxied"
+  #   - This is where the crawlers are. 22,115 of 22,189 Meta requests and 460
+  #     of 464 OpenAI requests in one 24h window landed on this host, and it was
+  #     the only public HTTP host not behind the edge.
+  #   - Woodpecker is unaffected. It reaches https://forgejo.viktorbarzin.me,
+  #     which resolves to the in-cluster service address 10.111.111.95 from
+  #     every pod, so its API calls and clones never leave for Cloudflare.
+  #     Verified from the woodpecker namespace before flipping.
+  #
+  # Known cost, accepted: Bot Fight Mode is on zone-wide and CANNOT be excepted
+  # on the free plan (Cloudflare documents that no WAF or Page Rule can skip
+  # it). Any EXTERNAL non-browser client still using forgejo.viktorbarzin.me
+  # over HTTPS may be challenged with no way to exempt it. Internal clients are
+  # insulated by split-horizon DNS. If an external integration breaks after
+  # this, that is the first thing to suspect, and the revert is this one word.
+  #
+  # Regained by proxying: Cloudflare's managed robots.txt, which makes
+  # /robots.txt serve 200 instead of 404.
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
   tls_secret_name = var.tls_secret_name
