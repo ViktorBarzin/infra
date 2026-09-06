@@ -139,6 +139,22 @@ flowchart TD
     Q --> PL[Traefik plugin]
 ```
 
+### Layer 0: a host-wide rate limit as a safety net
+
+Traefik 3.4 added Redis-backed distributed rate limiting, so a limit shared
+across all three replicas is configuration rather than code. We run 3.7.1 and a
+Redis stack is already in the cluster.
+
+A limit on the Forgejo router with `sourceCriterion: requestHost` counts every
+request to the forge in one bucket, which makes it the only lever here that does
+not care how many source addresses a crawler spreads across. Set well above
+human use, it never fires for a person and caps any crawler's total draw. On its
+own it would have prevented the September outage, which was resource exhaustion
+rather than the crawl itself.
+
+It does not identify or stop a crawler, so it complements the layers below
+rather than replacing them.
+
 ### Layer 1: deny declared AI crawlers by user-agent
 
 A new deny in the first-party Traefik plugin, matching the same user-agent set
@@ -179,14 +195,23 @@ is 13 lines. Turnstile's free tier is unlimited verifications but caps at 20
 widgets per account and 10 hostnames per widget, which needs planning against
 ~110 hosts.
 
+Turnstile is confirmed free against Cloudflare's own plans page: unlimited
+challenges and verification requests, no billing account, capped at 20 widgets
+per account and 10 hostnames per widget. That is 200 hostname slots against our
+~110 hosts. The free plan has no "any hostname" option, so **every public host
+must be enumerated in a widget by hand**, and a host added without registering
+it will fail the challenge. This is a known ongoing cost, accepted deliberately;
+if it becomes a source of drift, Anubis below is the fallback.
+
 > [!NOTE]
-> Two alternatives worth weighing before building this layer, neither yet
-> chosen. **Anubis in subrequest-auth mode** (`TARGET=" "` plus a
+> The alternative considered and not chosen. **Anubis in subrequest-auth mode** (`TARGET=" "` plus a
 > `status_codes` override) turns the Anubis we already run into a challenge
 > sidecar, adds no vendor, and brings a no-JS `metarefresh` path that no token
 > provider offers; the handoff back to Traefik has no documented precedent, so
 > we would be designing it. **Altcha** is MIT, self-hosted, and verifies an HMAC
-> in-process with no outbound call at all, at roughly 40 lines.
+> in-process with no outbound call at all, at roughly 40 lines. Viktor's call:
+> use Cloudflare while it is genuinely free, and fall back to the Anubis stack
+> otherwise.
 
 This restores the `captcha_remediation` profile removed on 2026-09-02. That
 profile was removed because nothing enforced the decisions it produced: four
@@ -237,18 +262,22 @@ written to prevent. IPv4 sources stay per-address.
 | Pass state | HMAC-signed cookie, no server-side storage |
 | Static AS32934 list | Retire once the three layers are proven, not before |
 | Rollout | Enforce on deploy rather than a dryRun period |
+| Host-wide rate limit | Add it, Redis-backed, keyed on `requestHost`, set above human use |
+| Challenge provider | Turnstile while its free tier holds; Anubis subrequest-auth as the fallback |
 
 ## Sequence
 
-1. **robots.txt for Forgejo.** It currently 404s. Meta documents that
+1. **Layer 0, the Redis-backed rate limit.** Configuration only, and it closes
+   the outage failure mode independently of everything below.
+2. **robots.txt for Forgejo.** It currently 404s. Meta documents that
    `meta-externalagent` honours robots.txt. Publish it because it is correct to
    publish, and treat any volume reduction as a bonus rather than a control.
-2. **Layer 1, the UA deny.** Covers 98.3% of current volume.
-3. **Layer 2, the captcha.** Plugin work plus the Turnstile secret in Vault,
+3. **Layer 1, the UA deny.** Covers 98.3% of current volume.
+4. **Layer 2, the captcha.** Plugin work plus the Turnstile secret in Vault,
    then restore the `captcha_remediation` profile.
-4. **Layer 3, the /64 crawl detector.** Depends on layer 2 existing, because
+5. **Layer 3, the /64 crawl detector.** Depends on layer 2 existing, because
    captcha-first is what makes it safe to run on every host.
-5. **Retire the 117-range static blocklist** and watch whether Meta volume
+6. **Retire the 117-range static blocklist** and watch whether Meta volume
    returns.
 
 ## Risks
