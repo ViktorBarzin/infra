@@ -6,8 +6,22 @@ Author: Viktor Barzin (design worked through with Claude)
 
 ## Goal
 
-Stop AI crawler swarms without maintaining a hand-curated list of one vendor's
-address space, and with as little code of our own as possible.
+Stop AI crawler swarms across **every host we run**, without maintaining a
+hand-curated list of one vendor's address space, and with as little code of our
+own as possible.
+
+Scope is the whole estate, not one service. The edge controls below are
+zone-wide and cover all ~110 proxied hosts the moment they are enabled. Forgejo
+appears often in this document only because it is the single public HTTP host
+currently outside that coverage, so it needs work to join. The handful of
+non-HTTP names (`turn`, `vpn`, `xray-reality`) cannot be covered by Cloudflare
+at all and stay with CrowdSec and the firewall bouncer, as today.
+
+| surface | covered by |
+|---|---|
+| ~110 proxied HTTP hosts | Cloudflare edge, from step 1 |
+| forgejo | Cloudflare edge, from step 3 |
+| non-HTTP names, internal `.lan` | CrowdSec + firewall bouncer, unchanged |
 
 ## What changed, and why this document was rewritten
 
@@ -76,12 +90,40 @@ flowchart TD
 
 Two layers, and we already own both.
 
-**Edge, Cloudflare, no code.** Bot Fight Mode is running. Turning on the
-`crawler_protection` categories makes it act on declared AI crawlers, and
-`ai_search` is the category covering OpenAI's `OAI-SearchBot`. One WAF custom
-rule with the Managed Challenge action covers declared crawler user-agents; the
-free plan allows 5 rules with every action except Log. Managed robots.txt makes
-Cloudflare publish and maintain the crawler directives so we never curate them.
+**Edge, Cloudflare, no code.** Turning on the `crawler_protection` categories
+makes the edge act on declared AI crawlers across every proxied host.
+Cloudflare defines the categories as Search ("crawlers that collect or index
+your content to answer questions about it later"), Agent ("automated activity
+acting in real time on a person's behalf") and Training. Whether OpenAI's
+`OAI-SearchBot` is classified Search is not yet verified. One WAF custom rule
+with the Managed Challenge action covers declared crawler user-agents; the free
+plan allows 5 rules with every action except Log, and no regex. Managed
+robots.txt makes Cloudflare publish and maintain the crawler directives so we
+never curate them.
+
+**Bot Fight Mode comes off.** It is on today, and on the free plan it cannot be
+excepted. Cloudflare documents that "You cannot bypass or skip Bot Fight Mode
+using WAF custom rules or Page Rules", that exceptions "for example, your own
+API clients or monitoring tools" require Super Bot Fight Mode (Pro and above),
+that JavaScript Detections "is automatically enabled and cannot be disabled",
+and that these products "may challenge API or mobile app traffic".
+
+Our own automation is exactly that traffic, and most of it lives on Forgejo:
+Woodpecker, the agent service polling `/api/v1/*`, Python clients, git over
+HTTPS. WAF custom rules support Skip, so they can carry the same intent with
+exceptions we control.
+
+What this gives up is genuine. Bot Fight Mode detects "simple bots from cloud
+hosting providers and headless browsers" heuristically, which no `contains`
+match on a user-agent will reproduce. The `crawler_protection` categories and
+the CrowdSec layer cover part of that gap, not all of it. The trade is accepted
+because an unexceptable filter in front of our own CI is a worse failure mode
+than a missed crawler.
+
+Whether the `crawler_protection` categories work independently of Bot Fight
+Mode is not established from the documentation. The order in step 1 settles it
+by observation: enable the categories first, confirm they act, then disable Bot
+Fight Mode and confirm they still do. Both are single reversible API calls.
 
 **Origin, CrowdSec, already built.** Unchanged. It catches what the edge
 misses, covers non-proxied hosts, and remains the enforcement path for our own
@@ -126,13 +168,16 @@ actually stops.
 | Where challenge decisions are made | Cloudflare's edge, for every proxied host |
 | Custom challenge code | None. The previous plugin-based Turnstile layer is dropped |
 | Edge controls to enable | `crawler_protection` AI categories, a WAF Managed Challenge rule, managed robots.txt |
-| Forgejo | Enable SSH, move remotes, then proxy the hostname |
+| Forgejo | Enable SSH, move **all** remotes including CI, then proxy the hostname |
+| Bot Fight Mode | Disable. No exceptions possible on our plan, and our own automation is the traffic at risk |
 | CrowdSec | Keep as-is, behind the edge |
 | Static AS32934 list | Retire once the edge is proven, not before |
 
 ## Sequence
 
-1. **Turn on the three edge controls.** Proxied hosts only, immediate, no code.
+1. **Turn on the three edge controls, then take Bot Fight Mode off.** In that
+   order, so we learn whether the AI categories depend on it. Applies to all
+   ~110 proxied hosts immediately, no code.
 2. **Enable SSH on Forgejo** and move remotes on this box, in CI and in
    Woodpecker.
 3. **Proxy `forgejo.viktorbarzin.me`.**
@@ -142,15 +187,23 @@ actually stops.
 
 ## Risks
 
-**Bot Fight Mode is already on and is known to challenge legitimate automated
-clients.** Proxying Forgejo brings our own API consumers, CI and agent traffic
-under it for the first time. This is the most likely source of breakage and the
-reason step 3 follows step 2 rather than leading.
+**Removing Bot Fight Mode reduces protection on the ~110 hosts that have it
+today.** It is running now with no reported problems, so step 1 trades a working
+generic filter for targeted rules that we have not yet proven. If the WAF rules
+turn out to catch materially less, the honest options are to accept it, or to
+put Bot Fight Mode back and leave Forgejo unproxied.
 
-**The API still goes over HTTPS.** SSH fixes git push, but release asset uploads
-and LFS over HTTPS stay under the 100 MB cap once Forgejo is proxied. We
-observed zero release downloads in 24h, and did not manage to measure our
-largest upload, so this is a known unknown rather than a measured risk.
+**The API still goes over HTTPS.** Moving every git remote to SSH takes git
+entirely off the proxy, so neither the 100 MB cap nor the 100-second read
+timeout applies to clone, fetch or push. Release asset uploads and LFS over
+HTTPS remain under the 100 MB cap once Forgejo is proxied. We observed zero
+release downloads in 24h and did not manage to measure our largest upload, so
+this is a known unknown rather than a measured risk.
+
+**Cloudflare's proxy read timeout is 100 seconds and Enterprise-only to raise.**
+Cloudflare's own advice for long requests is a DNS-only subdomain. Moving CI
+clones to SSH removes the exposure; leaving any git operation on HTTPS keeps
+it.
 
 **Free-plan WAF rules have no regex support.** Matching is limited to operators
 such as `contains`, which is enough for user-agent matching but constrains
