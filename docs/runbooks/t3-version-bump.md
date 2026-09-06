@@ -2,7 +2,10 @@
 
 t3 on the devvm **auto-tracks the `latest` npm dist-tag** (Viktor, 2026-09-06;
 it tracked `nightly` from 2026-06-16, and was pinned before that), via the daily
-`t3-autoupdate` timer. Every bump is GATED so a bad build self-heals instead of
+`agent-update` timer, which runs the Claude Code, codex and t3 updaters in
+sequence at 03:30 (t3 had its own timer until 2026-09-06; the script and
+`t3-autoupdate.service` are unchanged and still runnable by hand). Every bump is
+GATED so a bad build self-heals instead of
 repeating 2026-06-09. This reverses
 the post-incident pin decision — read `2026-06-09-t3-nightly-autoupdate-auth-outage.md`
 for why every guard below exists. t3 is still pre-1.0 and ships breaking changes
