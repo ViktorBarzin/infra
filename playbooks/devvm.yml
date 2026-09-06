@@ -414,6 +414,55 @@
         - docker-disk-gc.timer
         - networkd-dhcp-watchdog.timer
 
+    # ---- 7a2) the codex CLI, and keeping it current -------------------------
+    # Added 2026-09-06. Nothing in this repo installed codex: setup-devvm.sh and
+    # the section above cover only the shared auth at /opt/codex-shared and the
+    # auth-backup units, so the package itself was a hand install that a rebuilt
+    # box would not have had. It was found at 0.144.3 from 2026-07-13 while npm
+    # latest was 0.153.4 from 2026-09-04.
+    #
+    # `state: latest`, not a version, because Viktor wants these agent binaries
+    # always at latest (2026-09-06). Codex fetches its model list from the
+    # server, so an old CLI shows an old list even for an account entitled to
+    # more, which is how a newly released model went missing. The one pinned
+    # tool in this fleet is t3, held at v0.0.24 for a real regression; that is
+    # the bar for a pin.
+    #
+    # A playbook run alone would leave the box current only as often as someone
+    # runs it, so the timer below carries it the rest of the time.
+    - name: Install the codex CLI at the latest published version
+      community.general.npm:
+        name: "@openai/codex"
+        global: true
+        state: latest
+
+    - name: Install the codex updater
+      ansible.builtin.copy:
+        src: files/devvm/codex-update
+        dest: /usr/local/bin/codex-update
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Install the codex updater units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - codex-update.service
+        - codex-update.timer
+      notify: reload systemd
+
+    - name: Enable the codex updater timer
+      ansible.builtin.systemd_service:
+        name: codex-update.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
     # ---- 7b) nightly refresh of the mattpocock skill set --------------------
     # Added 2026-08-30. The skills are a working dependency of how sessions run
     # here, and upstream ships behaviour changes most weeks, so they drifted two
