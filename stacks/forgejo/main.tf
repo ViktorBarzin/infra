@@ -150,6 +150,42 @@ resource "kubernetes_deployment" "forgejo" {
             name  = "FORGEJO__server__ROOT_URL"
             value = "https://forgejo.viktorbarzin.me"
           }
+          # Built-in SSH server, added 2026-09-06 so git stops travelling over
+          # HTTPS. That matters because forgejo.viktorbarzin.me is moving behind
+          # Cloudflare for crawler protection, and Cloudflare caps request
+          # bodies at 100 MB on our plan while a full push of infra.git is
+          # 183 MB. SSH does not pass through Cloudflare at all, so neither the
+          # body cap nor the 100 s first-byte timeout applies to git.
+          #
+          # The container runs as uid 1000 and cannot bind a privileged port, so
+          # it listens on 2222 and the LoadBalancer Service maps 22 onto it.
+          # SSH_PORT is what Forgejo prints in clone URLs, hence 22.
+          #
+          # SSH_DOMAIN is deliberately NOT forgejo.viktorbarzin.me: once that
+          # name is proxied it resolves to Cloudflare addresses, which carry no
+          # SSH. git.viktorbarzin.me is an A record straight to the WAN IP.
+          #
+          # Authentication is public-key only. Forgejo's built-in server
+          # registers a PublicKeyHandler and no password or
+          # keyboard-interactive handler (modules/ssh/ssh.go), so there is no
+          # credential to brute force. CrowdSec's nftables bouncer covers the
+          # address reputation side on non-HTTP traffic.
+          env {
+            name  = "FORGEJO__server__START_SSH_SERVER"
+            value = "true"
+          }
+          env {
+            name  = "FORGEJO__server__SSH_DOMAIN"
+            value = "git.viktorbarzin.me"
+          }
+          env {
+            name  = "FORGEJO__server__SSH_PORT"
+            value = "22"
+          }
+          env {
+            name  = "FORGEJO__server__SSH_LISTEN_PORT"
+            value = "2222"
+          }
           # Open self-service registration. Native local sign-up is allowed
           # (ALLOW_ONLY_EXTERNAL_REGISTRATION=false) alongside the existing
           # Authentik OAuth2 login. Bot abuse is gated by Cloudflare Turnstile
@@ -388,6 +424,11 @@ resource "kubernetes_deployment" "forgejo" {
             container_port = 3000
             protocol       = "TCP"
           }
+          port {
+            name           = "ssh"
+            container_port = 2222
+            protocol       = "TCP"
+          }
         }
         volume {
           name = "data"
@@ -435,6 +476,60 @@ resource "kubernetes_service" "forgejo" {
     }
   }
 }
+# SSH endpoint for git, added 2026-09-06. Shares the 10.0.20.200 MetalLB
+# address with the other non-HTTP services (xray-reality, dolt, postgresql-lb,
+# shadowsocks and friends) via the allow-shared-ip annotation.
+#
+# Reachability mirrors the vlmcs pattern in stacks/kms:
+#   external: git.viktorbarzin.me -> 176.12.22.76 -> pfSense WAN NAT :22 -> 10.0.20.200:22
+#   internal: git.viktorbarzin.me -> 10.0.20.200 direct (Technitium split-horizon)
+# The pfSense forward is a manual out-of-band step; it is not managed here.
+resource "kubernetes_service" "forgejo_ssh" {
+  metadata {
+    name      = "forgejo-ssh"
+    namespace = kubernetes_namespace.forgejo.metadata[0].name
+    labels = {
+      "app" = "forgejo"
+    }
+    annotations = {
+      "metallb.universe.tf/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip"          = "shared"
+    }
+  }
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
+  spec {
+    type = "LoadBalancer"
+    selector = {
+      app = "forgejo"
+    }
+    port {
+      name        = "ssh"
+      port        = 22
+      target_port = 2222
+      protocol    = "TCP"
+    }
+  }
+}
+
+# A-only, non-proxied. Cloudflare's proxy carries HTTP(S) only, and this name
+# exists precisely so git bypasses it. No AAAA: the IPv6 tunnel does not
+# forward 22, and an AAAA would send v6-preferring clients somewhere that
+# cannot answer. Same shape as cloudflare_record.vlmcs in stacks/kms.
+resource "cloudflare_record" "git" {
+  name            = "git"
+  content         = "176.12.22.76" # public_ip (mirrors config.tfvars / ingress_factory default)
+  proxied         = false
+  ttl             = 1
+  type            = "A"
+  zone_id         = "fd2c5dd4efe8fe38958944e74d0ced6d" # cloudflare_zone_id
+  allow_overwrite = true
+}
+
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # Git + OCI registry (/v2/) — native clients (git, docker/podman) use HTTP
