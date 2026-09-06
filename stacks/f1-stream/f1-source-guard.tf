@@ -177,9 +177,23 @@ resource "kubernetes_cron_job_v1" "f1_stream_source_guard" {
               # and nothing dispatches. On the new image it execs the guard
               # unchanged. So the apply is inert until the code is present, and
               # arms itself on the next rollout with no second apply.
+              # The gate EXPIRES. Left open-ended it is a silent kill switch:
+              # any later image where that import fails for any reason (module
+              # renamed, moved, a packaging change that drops it) would skip
+              # every hour with exit 0 and nobody would learn the guard had
+              # stopped. Past the cutoff a failed import exits 1 instead, so the
+              # CronJob starts failing visibly. The window only has to cover the
+              # gap between this apply and the f1-stream rollout, which is
+              # minutes; a week is generous.
               command = ["/bin/sh", "-c", <<-EOT
+                GATE_UNTIL="2026-09-13"
                 if ! python -c 'import backend.chrome_fleet' 2>/dev/null; then
-                  echo "image predates the playback guard (no backend.chrome_fleet) - skipping this run"
+                  TODAY=$(date -u +%Y-%m-%d)
+                  if [ "$TODAY" \> "$GATE_UNTIL" ]; then
+                    echo "image still predates the playback guard (no backend.chrome_fleet) after $GATE_UNTIL - failing loudly rather than skipping forever"
+                    exit 1
+                  fi
+                  echo "image predates the playback guard (no backend.chrome_fleet) - skipping this run, gate open until $GATE_UNTIL"
                   exit 0
                 fi
                 exec python -m backend.guard

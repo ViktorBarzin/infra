@@ -232,12 +232,24 @@ Post exactly once, at the end of your run, in all three of these cases:
 | pushed, did not recover, reverted | `f1-source <key>: repair did NOT recover the source. Reverted <sha>. viktor/infra#<N> still open.` |
 | stopped without pushing | `f1-source <key>: could not repair. <where you stopped>. viktor/infra#<N> still open, needs-human.` |
 
+Write your one-line message to `/tmp/slack.txt` first; the block below reads it
+and nothing else creates it.
+
 ```bash
+# 1. your message, exactly one of the three rows above, filled in
+cat > /tmp/slack.txt <<'MSG'
+f1-source <key>: repaired and verified. <what changed>. viktor/infra#<N> closed.
+MSG
+
+# 2. post it
 HOOK=$(vault kv get -field=alertmanager_slack_api_url secret/viktor)
 python3 -c 'import json,sys; print(json.dumps({"text": sys.stdin.read()}))' \
   < /tmp/slack.txt > /tmp/slack.json
-curl -s -X POST -H 'Content-Type: application/json' -d @/tmp/slack.json "$HOOK"
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  -H 'Content-Type: application/json' -d @/tmp/slack.json "$HOOK"
 ```
+
+A 200 means it posted. Anything else, say so in your report.
 
 Same webhook the guard and Alertmanager use, so no new hook and no new Slack
 app. Never echo `$HOOK`. If the post fails, say so in your report rather than
