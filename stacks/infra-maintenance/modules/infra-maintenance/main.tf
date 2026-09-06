@@ -253,14 +253,31 @@ resource "kubernetes_cron_job_v1" "defrag-etcd" {
   }
 }
 
-# Clean up evicted/failed pods cluster-wide daily
+# Clean up evicted/failed pods cluster-wide, and reap finished CronJob pods.
+#
+# The Succeeded half was added 2026-09-06. 31 CronJobs across ~20 stacks carry no
+# ttlSecondsAfterFinished, so their Completed pods sit at whatever
+# successfulJobsHistoryLimit allows: 106 cluster-wide when this was written, led
+# by descheduler (10), tripit (13) and monitoring (12).
+#
+# They hold no scheduler reservation. kube-state-metrics keeps publishing
+# kube_pod_container_resource_requests for them until the pod object is GC'd, so
+# the raw request sum read 151.6 GiB against the 134.4 GiB the scheduler actually
+# holds. That 17.2 GiB of phantom is how a 54 GiB "unused memory" gap was read off
+# a dashboard. ClusterCannotTolerateNonGpuNodeLoss already filters on pod phase
+# for the same reason (2026-08-08, when it flapped for days and drove a real
+# 4Gi->3Gi cut to prometheus chasing an unreal problem); this fixes the number at
+# the source instead, and covers any CronJob added later without a TTL.
+#
+# The 1-hour floor keeps a just-finished job inspectable with `kubectl get pods`.
+# Anything older is in Loki for 30 days regardless.
 resource "kubernetes_cron_job_v1" "cleanup-failed-pods" {
   metadata {
     name      = "cleanup-failed-pods"
     namespace = "default"
   }
   spec {
-    schedule                      = "0 2 * * *"
+    schedule                      = "17 * * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 1
     concurrency_policy            = "Forbid"
@@ -269,6 +286,7 @@ resource "kubernetes_cron_job_v1" "cleanup-failed-pods" {
         name = "cleanup-failed-pods"
       }
       spec {
+        ttl_seconds_after_finished = 600
         template {
           metadata {
             name = "cleanup-failed-pods"
@@ -276,9 +294,25 @@ resource "kubernetes_cron_job_v1" "cleanup-failed-pods" {
           spec {
             service_account_name = kubernetes_service_account.cleanup_sa.metadata[0].name
             container {
-              name    = "cleanup"
-              image   = "bitnami/kubectl:latest"
-              command = ["/bin/sh", "-c", "kubectl delete pods -A --field-selector=status.phase=Failed --ignore-not-found"]
+              name  = "cleanup"
+              image = "bitnami/kubectl:latest"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -u
+                kubectl delete pods -A --field-selector=status.phase=Failed --ignore-not-found
+
+                # Succeeded pods older than an hour. finishedAt comes from the first
+                # container status; a pod without one is skipped rather than guessed at.
+                now=$(date +%s)
+                kubectl get pods -A --field-selector=status.phase=Succeeded \
+                  -o go-template='{{range .items}}{{.metadata.namespace}} {{.metadata.name}} {{if .status.containerStatuses}}{{with (index .status.containerStatuses 0).state.terminated}}{{.finishedAt}}{{end}}{{end}}{{"\n"}}{{end}}' \
+                | while read -r ns name fin; do
+                    [ -n "$fin" ] || continue
+                    end=$(date -d "$fin" +%s 2>/dev/null) || continue
+                    [ $((now - end)) -gt 3600 ] || continue
+                    kubectl -n "$ns" delete pod "$name" --ignore-not-found
+                  done
+              EOT
+              ]
             }
             restart_policy = "Never"
           }
