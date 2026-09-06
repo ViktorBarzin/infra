@@ -359,6 +359,21 @@
       - priority: 2000001000
         shutdownGracePeriodSeconds: 15
 
+    # The other half of that ladder, and the half nothing was reconciling.
+    # kubelet takes a systemd inhibitor lock at startup and asks logind to delay
+    # shutdown long enough to run the ladder; logind caps that request at
+    # InhibitDelayMaxSec and grants the smaller of the two. The ladder totals
+    # 215s, so a node whose logind sits at the 5s default runs 5s of it and
+    # force-kills the rest, databases included.
+    #
+    # 480s is what all six nodes have carried since 2026-07-20, verified live on
+    # 2026-09-06 off the D-Bus property (InhibitDelayMaxUSec 480000000) rather
+    # than off the file. It was applied by hand and declared in no playbook, so a
+    # rebuilt node came back at 5s with nothing saying so. That is bead
+    # code-myto, and it is an erasure risk for P1 code-xgcg: the priority-ordered
+    # drain the graceful-shutdown design assumes is only real while this holds.
+    kubelet_logind_inhibit_seconds: 480
+
     # Unioned with whatever the node already has, never replaced — the same shape
     # as the deleted script's `sorted(set(existing) | {'net.ipv4.ip_forward'})`.
     #
@@ -730,6 +745,58 @@
         backup: true
         validate: python3 -c "import yaml,sys;c=yaml.safe_load(open(sys.argv[1]));sys.exit(0 if c.get('kind')=='KubeletConfiguration' else 1)" %s
       when: kubelet_config_merged != kubelet_config_current
+      tags: kubelet
+
+    # ---- logind -----------------------------------------------------------
+    # Deliberately NO handler and no restart, for a stronger reason than the
+    # kubelet file above. Restarting systemd-logind drops the inhibitor locks it
+    # holds, including the one kubelet took at startup to reserve its shutdown
+    # window. Bouncing logind to apply a shutdown setting would disarm the very
+    # drain the setting exists to protect, until kubelet noticed and
+    # re-registered. The file is written and the next boot reads it, which is the
+    # only moment the value is consulted anyway.
+    - name: logind admits a delay long enough for the kubelet shutdown ladder
+      ansible.builtin.copy:
+        dest: /etc/systemd/logind.conf.d/zz-kubelet-shutdown.conf
+        content: |
+          [Login]
+          InhibitDelayMaxSec={{ kubelet_logind_inhibit_seconds }}
+        owner: root
+        group: root
+        mode: "0644"
+      register: logind_dropin
+      tags: kubelet
+
+    # Read the LIVE property, not the file, the same way the kubelet checks above
+    # read /configz. A file saying 480 proves nothing about a logind that started
+    # before the file was written, which is exactly the state a rebuilt node is
+    # in until it reboots.
+    - name: Read the delay logind is actually enforcing
+      ansible.builtin.command:
+        cmd: >-
+          busctl get-property org.freedesktop.login1 /org/freedesktop/login1
+          org.freedesktop.login1.Manager InhibitDelayMaxUSec
+      changed_when: false
+      # Read-only, so it runs in check mode too. Without this the assert below
+      # has no stdout to read and a --check run fails on its own scaffolding
+      # rather than on anything about the node.
+      check_mode: false
+      register: logind_live
+      tags: kubelet
+
+    # Assert only when this run did not touch the file. A run that has just
+    # written it is EXPECTED to disagree until the node reboots, and failing
+    # there would make a correct first-time provision look broken.
+    - name: The enforced delay is the one declared
+      ansible.builtin.assert:
+        that:
+          - logind_live.stdout.split()[-1] | int == kubelet_logind_inhibit_seconds * 1000000
+        fail_msg: >-
+          logind is enforcing {{ logind_live.stdout.split()[-1] | int // 1000000 }}s
+          against {{ kubelet_logind_inhibit_seconds }}s declared. The kubelet
+          ladder totals 215s, so a shutdown would be cut short and pods above the
+          cut force-killed. Reboot this node to pick up the drop-in.
+      when: not logind_dropin.changed
       tags: kubelet
 
     # ---- containerd -------------------------------------------------------
