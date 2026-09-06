@@ -716,11 +716,11 @@ serverFiles:
             regex: 'container_tasks_state|container_memory_failures_total'
             action: drop
           - source_labels: [__name__]
-            regex: 'container_fs_.*|container_blkio_.*|container_pressure_.*|container_spec_.*|container_ulimits_soft|container_file_descriptors|container_threads|container_threads_max|container_sockets|container_processes|container_last_seen|machine_nvm_.*|machine_swap_bytes|machine_cpu_physical_cores|machine_cpu_sockets|container_network_(receive|transmit)_(errors|packets_dropped)_total|container_cpu_(load_average_10s|load_d_average_10s|system_seconds_total|user_seconds_total)|container_memory_(cache|failcnt|kernel_usage|mapped_file|max_usage_bytes|rss|swap|total_active_file_bytes|total_inactive_file_bytes)'
+            regex: 'container_fs_.*|container_blkio_.*|container_pressure_.*|container_spec_.*|container_ulimits_soft|container_file_descriptors|container_threads|container_threads_max|container_sockets|container_processes|container_last_seen|machine_nvm_.*|machine_swap_bytes|machine_cpu_physical_cores|machine_cpu_sockets|container_network_(receive|transmit)_(errors|packets_dropped)_total|container_cpu_(load_average_10s|load_d_average_10s|system_seconds_total|user_seconds_total)|container_memory_(cache|failcnt|kernel_usage|mapped_file|rss|swap|total_active_file_bytes|total_inactive_file_bytes)'
             action: drop
           # Whitelist: only keep essential cAdvisor metrics
           - source_labels: [__name__]
-            regex: 'container_cpu_usage_seconds_total|container_cpu_cfs_throttled_seconds_total|container_memory_working_set_bytes|container_network_receive_bytes_total|container_network_transmit_bytes_total|container_oom_events_total|container_spec_memory_limit_bytes|container_start_time_seconds|machine_cpu_cores|machine_memory_bytes'
+            regex: 'container_cpu_usage_seconds_total|container_cpu_cfs_throttled_seconds_total|container_memory_working_set_bytes|container_memory_max_usage_bytes|container_network_receive_bytes_total|container_network_transmit_bytes_total|container_oom_events_total|container_spec_memory_limit_bytes|container_start_time_seconds|machine_cpu_cores|machine_memory_bytes'
             action: keep
       - job_name: kubernetes-service-endpoints
         honor_labels: true
@@ -2600,9 +2600,19 @@ serverFiles:
               description: "Check the deployment's image reference — often a stale tag, a removed registry, or a credentials mismatch. `kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}` shows the pull error."
           # N-1 capacity check (topology-agnostic — auto-tracks node add/remove/drain).
           # If the most-loaded non-GPU worker died, would its memory REQUESTS
-          # reschedule onto the remaining Ready + schedulable workers (incl. the GPU
-          # node, whose taint is soft/PreferNoSchedule)? Fires when that worker holds
-          # more memory requests than the rest of the eligible pool has free.
+          # reschedule onto the remaining Ready + schedulable workers? Fires when that
+          # worker holds more memory requests than the rest of the eligible pool has
+          # free.
+          #
+          # The GPU node is excluded from BOTH halves. It was excluded from the
+          # numerator only until 2026-09-06, on the comment's belief that its taint
+          # was soft/PreferNoSchedule. It is not: `kubectl get node k8s-node1
+          # -o jsonpath='{.spec.taints}'` reads nvidia.com/gpu:NoSchedule, so a pod
+          # evicted from a dead worker cannot land there without a toleration.
+          # Counting its free space as absorbing capacity made the denominator read
+          # 22.911 GiB healthier than reality (37.02 GiB claimed vs 14.11 GiB real:
+          # node2 3.264 + node3 4.143 + node4 4.404 + node5 2.295, measured
+          # 2026-09-06), which is the direction that HIDES a genuine shortfall.
           # Node selection is dynamic via metrics: GPU node by nvidia_com_gpu capacity,
           # drained/cordoned by kube_node_spec_unschedulable, down by the Ready
           # condition. The control-plane is excluded by name (node!~"k8s-master.*")
@@ -2651,6 +2661,7 @@ serverFiles:
                   * on(node) (kube_node_status_condition{condition="Ready",status="true"} == 1)
                 )
                 unless on(node) (kube_node_spec_unschedulable == 1)
+                unless on(node) (kube_node_status_capacity{resource="nvidia_com_gpu"} > 0)
               )
             for: 15m
             # keep_firing_for: headroom sits close to the line, so ordinary pod
@@ -2673,6 +2684,80 @@ serverFiles:
                 Remediation: right-size the top memory reservers with `krr` (trim
                 over-provisioned requests — e.g. claude-agent, stirling-pdf, traefik,
                 authentik-worker), or add/return a worker node.
+          # NodeLowFreeMemory — defined 2026-09-06. The name was already in two
+          # inhibit_rules target lists (NodeDown and NodeMaintenanceInProgress,
+          # see alertmanager.config above) but no rule ever produced it, so both
+          # inhibitions suppressed an alert that could not fire.
+          #
+          # This watches FREE memory on the node, which is a different question
+          # from the request accounting ClusterCannotTolerateNonGpuNodeLoss asks.
+          # Requests can sit at 93% while the node is half idle, and the reverse
+          # is also possible: every container here is Burstable, so actual use can
+          # run past the sum of requests without the scheduler noticing.
+          #
+          # Threshold. 4 GiB is proposed, not settled. The 90-day floor of
+          # node_memory_MemAvailable_bytes across the six nodes is 8.93 GiB, so
+          # 4 GiB is a genuine excursion rather than a routine dip, and it sits far
+          # above kubelet's evictionHard of memory.available<100Mi — the point is
+          # to be told long before eviction, not as it starts. Revisit if it proves
+          # noisy.
+          #
+          # Scope. k8s nodes only. node-exporter also scrapes devvm, rpi-sofia,
+          # mx2, registry-cache and the Proxmox host, whose free-memory profiles
+          # are unrelated and would page for normal behaviour.
+          - alert: NodeLowFreeMemory
+            expr: node_memory_MemAvailable_bytes{node=~"k8s-.*"} < 4 * 1024 * 1024 * 1024
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.node }} has under 4 GiB of available memory"
+              description: |
+                node_memory_MemAvailable_bytes on {{ $labels.node }} has been below
+                4 GiB for 10 minutes (currently {{ $value | humanize1024 }}B). This is
+                real memory, not request accounting, so it can go low while
+                `kubectl describe node` still shows request headroom.
+                Check what grew: `homelab metrics query 'topk(10,
+                container_memory_working_set_bytes{node="{{ $labels.node }}"})'`.
+                Kubelet starts evicting at memory.available<100Mi.
+          # ContainerNearOOM — defined 2026-09-06. Several docs referred to this
+          # alert for months (docs/architecture/monitoring.md and .claude/CLAUDE.md
+          # both recorded that it did NOT exist), and the gap it leaves is that
+          # nothing warns before a container is killed: ContainerOOMKilled and
+          # KernelOOMKiller are both post-mortem signals.
+          #
+          # severity: info is deliberate. It routes to slack-info, whose
+          # repeat_interval is 8760h, so a container that lives permanently near
+          # its limit posts once rather than re-pinging. Several will fire on the
+          # first evaluation and that is correct rather than noise: measured
+          # 2026-09-06, loki sits at 100.0% of its 4Gi limit, prometheus-server at
+          # 94.7%, and traefik, crowdsec-agent and error-pages have all been
+          # OOMKilled recently. Promote to warning once that backlog is worked
+          # through and the alert is normally silent.
+          #
+          # working_set is the same signal kubelet's own OOM accounting uses, so
+          # this ratio is the one that predicts a kill. It cannot see a spike
+          # shorter than the 5-minute scrape; container_memory_max_usage_bytes,
+          # re-enabled in the same change as this rule, is the companion that can.
+          - alert: ContainerNearOOM
+            expr: |
+              container_memory_working_set_bytes{container!="",container!="POD"}
+              / on(namespace,pod,container) group_left()
+              kube_pod_container_resource_limits{resource="memory",unit="byte"}
+              > 0.85
+            for: 15m
+            labels:
+              severity: info
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) is at {{ $value | humanizePercentage }} of its memory limit"
+              description: |
+                The container has held above 85% of its memory limit for 15 minutes.
+                It has not been killed, which is why nothing else reports it.
+                Either the limit is too tight for what the workload legitimately
+                needs, or the workload is leaking. Check the high-water mark
+                (`container_memory_max_usage_bytes`) and the 30-day shape before
+                changing anything — a 7-day window has under-read a periodic job by
+                more than 70x here.
       # Goldmane edge-aggregator (ADR-0014 / infra #58, #61): the durable
       # who-talks-to-whom trail. The aggregator pod has NO /metrics endpoint,
       # so its health is inferred from kube-state-metrics signals — the trail

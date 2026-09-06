@@ -354,7 +354,9 @@ spec:
 #### Infrastructure Alerts
 - **OOMKill**: Container killed due to out-of-memory
 - **PodReplicaMismatch**: Deployment/StatefulSet replica count doesn't match desired
-- **ClusterCannotTolerateNonGpuNodeLoss**: N-1 memory-request headroom — the busiest non-GPU node's requests exceed the free capacity on the rest of the pool (the real headroom alert; `ClusterMemoryRequestsHigh`/`ContainerNearOOM` never existed)
+- **ClusterCannotTolerateNonGpuNodeLoss**: N-1 memory-request headroom — the busiest non-GPU node's requests exceed the free capacity on the rest of the pool. Both halves of the expression exclude the GPU node as of 2026-09-06; before that the denominator counted k8s-node1's free space as able to absorb a failed worker, which it cannot, because its `nvidia.com/gpu` taint is NoSchedule. That read the denominator 22.911 GiB healthier than reality. (`ClusterMemoryRequestsHigh` still does not exist.)
+- **NodeLowFreeMemory**: `node_memory_MemAvailable_bytes` on a k8s node under 4 GiB for 10m. Defined 2026-09-06; the name had been in two `inhibit_rules` target lists since before that with no rule producing it. This watches real free memory, which is a different question from the request accounting above.
+- **ContainerNearOOM**: working set above 85% of the container's memory limit for 15m, severity `info` so it routes to `slack-info` and posts once rather than re-pinging. Defined 2026-09-06; it is the only pre-mortem memory signal, since `ContainerOOMKilled` and `KernelOOMKiller` both report a kill that already happened.
 - **ContainerOOMKilled**: a container was OOM-killed
 - **PodStuckPending**: pod scheduled-but-not-starting / unschedulable (FailedMount / attach-wedge / image-pull / resource)
 - **CPUTemp**: CPU temperature threshold exceeded
