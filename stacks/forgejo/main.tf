@@ -592,7 +592,28 @@ module "ingress" {
   #
   # Regained by proxying: Cloudflare's managed robots.txt, which makes
   # /robots.txt serve 200 instead of 404.
-  dns_type        = "proxied"
+  #
+  # REVERTED 2026-09-06 (infra#91). The re-proxy did break an external
+  # integration exactly as the note above warned: terminal-lobby's release
+  # runs on GitHub Actions (off-infra per ADR-0002) and its final step PUTs the
+  # built .deb to https://forgejo.viktorbarzin.me/api/packages/viktor/debian/...
+  # from a runner IP. Once forgejo went behind the edge, Cloudflare Bot Fight
+  # Mode 403'd that PUT (56 ms, edge, never reached Forgejo) and nothing
+  # deployed to the devvm. Bot Fight Mode cannot be excepted on the free plan,
+  # so there is no proxied-and-working middle ground for this hostname.
+  #
+  # The crawler argument for proxying does not actually hold: the 2026-09-03
+  # measurement recorded above found Cloudflare passes the Meta crawlers
+  # straight through (they spoof Chrome UAs; CF gates on ASN/rDNS), and the real
+  # block is our CrowdSec static Meta blocklist, which is unaffected by this
+  # flag. So non-proxied keeps the crawler defence and un-breaks external CI;
+  # the only thing given up is Cloudflare's managed /robots.txt.
+  #
+  # To re-proxy later WITHOUT breaking CI, give the off-infra publish step an
+  # origin-direct path (curl --resolve forgejo.viktorbarzin.me:443:176.12.22.76,
+  # or a dedicated non-proxied packages hostname) so it skips the edge. That is
+  # a terminal-lobby-repo change; do it there first, then flip this back.
+  dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
   tls_secret_name = var.tls_secret_name
