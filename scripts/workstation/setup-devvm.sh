@@ -142,6 +142,11 @@ log "claude OTel resource attributes (/etc/profile.d/26 + /etc/zsh/zshenv hook)"
 #     A fresh box has no user state to migrate or sessions to break, so install the
 #     current release directly; the gated tracker owns it thereafter. Keep T3_TRACK in
 #     sync with t3-autoupdate.sh. To freeze/revert: `touch /etc/t3-autoupdate.freeze`.
+#     SCHEDULE: t3-autoupdate has no timer of its own since 2026-09-06. One
+#     agent-update.timer (playbooks/devvm.yml) runs the Claude Code, codex and t3
+#     updaters in sequence at 03:30 — Viktor: "we don't need separate jobs for
+#     updates". t3-autoupdate.service stays installed and startable by hand,
+#     which is what the runbook's manual steps use.
 T3_TRACK="${T3_TRACK:-latest}"
 want_t3="$(npm view "t3@$T3_TRACK" version 2>/dev/null | tail -1)"
 if [[ -n "$want_t3" && "$(t3 --version 2>/dev/null | awk '{print $NF}' | sed 's/^v//')" != "$want_t3" ]]; then
@@ -293,7 +298,7 @@ fi
 #     t3-serve@ is a TEMPLATE (enabled per-user by the provisioner, not here).
 for u in t3-serve@.service \
          claude-auth-sync@.service claude-auth-sync@.timer \
-         t3-autoupdate.service t3-autoupdate.timer \
+         t3-autoupdate.service \
          t3-migrate-idle.service t3-migrate-idle.timer \
          t3-watchdog.service t3-watchdog.timer \
          t3-cgroup-snap.service \
@@ -316,7 +321,7 @@ done
 log "playwright: template units + snapshot-refresh script installed (per-user enable in provisioner)"
 systemctl daemon-reload
 systemctl enable --now t3-dispatch.service \
-  t3-autoupdate.timer t3-backup-state.timer t3-provision-users.timer t3-migrate-idle.timer t3-watchdog.timer t3-cgroup-snap.service >/dev/null 2>&1 || \
+  t3-backup-state.timer t3-provision-users.timer t3-migrate-idle.timer t3-watchdog.timer t3-cgroup-snap.service >/dev/null 2>&1 || \
   log "WARN: some units failed to enable (check: systemctl status t3-dispatch t3-*.timer)"
 log "service units installed + enabled (t3-dispatch + timers; t3-serve@ per-user)"
 
