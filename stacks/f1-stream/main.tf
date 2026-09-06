@@ -504,31 +504,15 @@ module "anubis" {
       - name: f1-data-routes
         path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|schedule|streams)(/|\?|$)
         action: ALLOW
-      # Prometheus exposition (added 2026-09-06 with the monitoring that ended
-      # the ten-day silent outage). Unauthenticated by design: Prometheus can
-      # send no session cookie and solve no proof-of-work, and the data here is
-      # stream counts and timestamps per source.
-      #
-      # Precautionary, not proven necessary — the honest state of it. The
-      # in-cluster scrape does NOT pass through Anubis at all: the `f1-stream`
-      # job in stacks/monitoring reaches the app Service directly
-      # (f1.f1-stream.svc.cluster.local:80) and Anubis fronts only the Ingress.
-      # And a plain curl of https://f1.viktorbarzin.me/metrics already got
-      # through without this rule when it was written (measured 2026-09-06:
-      # HTTP 200, `server: uvicorn`, the SvelteKit shell rather than a
-      # challenge page) — one of the imported allow-lists above covers that
-      # client. The rule exists so the answer does not depend on which
-      # User-Agent asks.
-      #
-      # What it guards against is the quiet failure mode: with no /metrics
-      # route, FastAPI's `/{path}` catch-all serves the SPA shell, so the path
-      # answers 200 text/html. A scraper pointed at the public hostname reads
-      # that as a malformed exposition while `up` stays 1 — a target that looks
-      # alive and carries no data, which is the same silence this whole change
-      # exists to end.
-      - name: f1-metrics
-        path_regex: ^/metrics$
-        action: ALLOW
+      # NOTE: /metrics is deliberately NOT allow-listed here. The Prometheus
+      # scrape reaches the app Service directly at
+      # f1.f1-stream.svc.cluster.local:80 and never passes through Anubis,
+      # which fronts only the Ingress. An ALLOW rule would therefore buy the
+      # scrape nothing and would publish per-source stream counts and
+      # timestamps on the public hostname for no reason. If the exposition ever
+      # needs to be reachable from outside the cluster, that is a deliberate
+      # decision to take on its own rather than a side effect of adding a
+      # scrape target.
       # Allow non-GET methods unconditionally — AI scrapers GET the body,
       # they don't POST. Mutating XHRs and CORS preflight need to bypass.
       - name: allow-non-get-methods

@@ -5749,7 +5749,14 @@ serverFiles:
             expr: |
               (sum(f1_streams_served) or on() vector(0)) == 0
               and on() f1_extraction_last_run_timestamp_seconds > 0
-            for: 2h
+            # 12h is Viktor's choice, asked directly on 2026-09-06 when offered
+            # 20m / 2h / 12h. It still catches the failure that prompted all of
+            # this: during the 2026-08-26..09-05 outage 156 consecutive runs
+            # came back empty, so this fires on day one rather than day nine.
+            # What it gives up is a Friday-evening break surfacing before
+            # Saturday morning, which he accepted because the repair agent is
+            # autonomous and race weekends are the playback guard's job.
+            for: 12h
             keep_firing_for: 6h
             labels:
               severity: warning
@@ -5791,7 +5798,12 @@ serverFiles:
           # cadence is 5 min, so this is loose by design — it should not fire
           # on a slow run holding a chrome-fleet lease.
           - alert: F1ExtractionStalled
-            expr: (time() - f1_extraction_last_run_timestamp_seconds) > 7200
+            # Same `> 0` guard as F1SourceStale, and for the same reason: this
+            # gauge reads 0 until the first extraction completes after a pod
+            # restart, so without it every deploy fires this instantly.
+            expr: |
+              (time() - f1_extraction_last_run_timestamp_seconds) > 7200
+              and f1_extraction_last_run_timestamp_seconds > 0
             for: 15m
             labels:
               severity: warning
@@ -5819,13 +5831,27 @@ serverFiles:
           # The `> 0` guard is load-bearing: the contract makes 0 mean "never
           # succeeded", and time() - 0 is 56 years, so without it this fires
           # instantly for any source that has not yet had a first success.
+          # severity=info ON PURPOSE. Asked directly on 2026-09-06, Viktor
+          # chose "repair silently, tell me only if the fix fails" for a
+          # single dead source while the site still plays. info routes to
+          # #alerts with repeat_interval 8760h, so this posts one line and
+          # never nags while the repair agent works, and the guard's own
+          # Slack message covers the case where that repair fails.
+          #
+          # Not removed altogether, because Prometheus is the only thing
+          # watching midweek: the playback guard is calendar-gated to race
+          # weekends, so without this a source dying on a Tuesday is seen by
+          # nobody until Friday.
           - alert: F1SourceStale
+            # The age must be the LEFT operand: `A and B` returns the samples
+            # of A, so with the operands the other way round $value renders the
+            # raw unix timestamp and the Slack line reads "dry for 56.7 years".
             expr: |
-              f1_source_last_success_timestamp_seconds{source=~"aceztrims"} > 0
-              and (time() - f1_source_last_success_timestamp_seconds{source=~"aceztrims"}) > 21600
+              (time() - f1_source_last_success_timestamp_seconds{source=~"aceztrims"}) > 21600
+              and f1_source_last_success_timestamp_seconds{source=~"aceztrims"} > 0
             for: 30m
             labels:
-              severity: warning
+              severity: info
             annotations:
               summary: "f1-stream source {{ $labels.source }} has produced no streams in {{ $value | humanizeDuration }} (normal gap is one 30-min cycle)"
               description: "This source publishes around the clock — measured 1-2 streams on every one of 284 extraction runs over 2026-08-18..08-23, including 02:00 UTC midweek — so six hours of nothing means its extractor or its upstream has changed. This is the shape aceztrims broke in on 2026-08-26, when the embed host swapped a base64 encodedUrl blob for a pair of XORed hex strings and the resolver returned nothing while the page still looked fine."
@@ -5838,11 +5864,22 @@ serverFiles:
           # 2h = 4 consecutive failed cycles at the idle cadence. Upstreams
           # rate-limit and time out transiently, so a single bad run must not
           # page; four in a row is a change, not weather.
+          # severity=info ON PURPOSE. Asked directly on 2026-09-06, Viktor
+          # chose "repair silently, tell me only if the fix fails" for a
+          # single dead source while the site still plays. info routes to
+          # #alerts with repeat_interval 8760h, so this posts one line and
+          # never nags while the repair agent works, and the guard's own
+          # Slack message covers the case where that repair fails.
+          #
+          # Not removed altogether, because Prometheus is the only thing
+          # watching midweek: the playback guard is calendar-gated to race
+          # weekends, so without this a source dying on a Tuesday is seen by
+          # nobody until Friday.
           - alert: F1SourceExtractionErroring
             expr: f1_source_last_extraction_ok == 0
             for: 2h
             labels:
-              severity: warning
+              severity: info
             annotations:
               summary: "f1-stream extractor for {{ $labels.source }} has been raising for 2h"
               description: "This source's last four extraction attempts ended in an exception rather than returning a (possibly empty) list, so the site has lost it entirely. Unlike an empty result, this is wrong in any season — pitsport returning nothing between race weekends is normal, pitsport throwing is not. That is the exact 2026-09-05 failure: pitsport moved to /v1/live-now and 404'd the paths the extractor still asked for. Read the traceback in the f1-stream pod logs before assuming the upstream is down."
