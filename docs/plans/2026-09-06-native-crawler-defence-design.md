@@ -101,33 +101,42 @@ plan allows 5 rules with every action except Log, and no regex. Managed
 robots.txt makes Cloudflare publish and maintain the crawler directives so we
 never curate them.
 
-**Bot Fight Mode comes off.** It is on today, and on the free plan it cannot be
-excepted. Cloudflare documents that "You cannot bypass or skip Bot Fight Mode
-using WAF custom rules or Page Rules", that exceptions "for example, your own
-API clients or monitoring tools" require Super Bot Fight Mode (Pro and above),
-that JavaScript Detections "is automatically enabled and cannot be disabled",
-and that these products "may challenge API or mobile app traffic".
+**Bot Fight Mode stays on.** It is running today, and on the free plan it is the
+only control that detects undeclared automation. Cloudflare describes it as
+catching "simple bots from cloud hosting providers and headless browsers". The
+paid detection that would do this better, bot score and JA3/JA4 fingerprinting,
+requires Enterprise with Bot Management, so on our plan Bot Fight Mode is the
+detector for exactly the crawl shape Meta used on 2026-09-02, when it declared
+itself nowhere.
 
-Our own automation is exactly that traffic, and most of it lives on Forgejo:
-Woodpecker, the agent service polling `/api/v1/*`, Python clients, git over
-HTTPS. WAF custom rules support Skip, so they can carry the same intent with
-exceptions we control.
+It carries a real constraint. Cloudflare documents that "You cannot bypass or
+skip Bot Fight Mode using WAF custom rules or Page Rules", that exceptions "for
+example, your own API clients or monitoring tools" require Super Bot Fight Mode
+(Pro and above), that JavaScript Detections "is automatically enabled and cannot
+be disabled", and that these products "may challenge API or mobile app traffic".
 
-What this gives up is genuine. Bot Fight Mode detects "simple bots from cloud
-hosting providers and headless browsers" heuristically, which no `contains`
-match on a user-agent will reproduce. The `crawler_protection` categories and
-the CrowdSec layer cover part of that gap, not all of it. The trade is accepted
-because an unexceptable filter in front of our own CI is a worse failure mode
-than a missed crawler.
+That constraint does not bite here, because split DNS keeps our own automation
+off the edge entirely:
 
-Whether the `crawler_protection` categories work independently of Bot Fight
-Mode is not established from the documentation. The order in step 1 settles it
-by observation: enable the categories first, confirm they act, then disable Bot
-Fight Mode and confirm they still do. Both are single reversible API calls.
+| client | resolves `forgejo.viktorbarzin.me` to |
+|---|---|
+| in-cluster pods (Woodpecker, agent service) | 10.111.111.95, the service IP |
+| devvm and WireGuard clients | 10.0.20.203, the internal Traefik LB |
+| external clients | the public record |
 
-**Origin, CrowdSec, already built.** Unchanged. It catches what the edge
-misses, covers non-proxied hosts, and remains the enforcement path for our own
-scenarios.
+Woodpecker, the agent service, the devvm and anything arriving over WireGuard
+reach Forgejo without a Cloudflare hop. Proxying the public name exposes only
+genuinely external traffic to Bot Fight Mode, which is crawlers, search engines
+and occasional human browsing.
+
+An earlier revision of this document proposed disabling Bot Fight Mode to
+protect our own API clients. That reasoning did not survive checking where those
+clients actually resolve.
+
+The residual risk is that we cannot enumerate every external automated client,
+and if one is challenged there is no exception mechanism on this plan. That is
+accepted as smaller than losing the only detector we have for crawlers that do
+not declare themselves.
 
 ### Forgejo
 
@@ -169,15 +178,14 @@ actually stops.
 | Custom challenge code | None. The previous plugin-based Turnstile layer is dropped |
 | Edge controls to enable | `crawler_protection` AI categories, a WAF Managed Challenge rule, managed robots.txt |
 | Forgejo | Enable SSH, move **all** remotes including CI, then proxy the hostname |
-| Bot Fight Mode | Disable. No exceptions possible on our plan, and our own automation is the traffic at risk |
+| Bot Fight Mode | Keep enabled. The only free detector for undeclared crawlers, and split DNS keeps our own automation off the edge |
 | CrowdSec | Keep as-is, behind the edge |
 | Static AS32934 list | Retire once the edge is proven, not before |
 
 ## Sequence
 
-1. **Turn on the three edge controls, then take Bot Fight Mode off.** In that
-   order, so we learn whether the AI categories depend on it. Applies to all
-   ~110 proxied hosts immediately, no code.
+1. **Turn on the three edge controls.** Bot Fight Mode stays as it is. Applies
+   to all ~110 proxied hosts immediately, no code.
 2. **Enable SSH on Forgejo** and move remotes on this box, in CI and in
    Woodpecker.
 3. **Proxy `forgejo.viktorbarzin.me`.**
@@ -187,11 +195,17 @@ actually stops.
 
 ## Risks
 
-**Removing Bot Fight Mode reduces protection on the ~110 hosts that have it
-today.** It is running now with no reported problems, so step 1 trades a working
-generic filter for targeted rules that we have not yet proven. If the WAF rules
-turn out to catch materially less, the honest options are to accept it, or to
-put Bot Fight Mode back and leave Forgejo unproxied.
+**Bot Fight Mode cannot be excepted, and Forgejo joins it in step 3.** Split DNS
+means our own automation never meets it, but any external automated client we
+have not thought of would be challenged with no way to exempt it. The signal
+would be an external integration failing after step 3, and the remedy is to
+unproxy Forgejo again.
+
+**The detection we most want is the detection we cannot buy.** Undeclared
+crawlers are caught on this plan only by Bot Fight Mode's heuristics. Bot score
+and JA3/JA4 fingerprinting need Enterprise with Bot Management. If Meta returns
+in its 2026-09-02 form, declaring nothing, the edge may not stop it and the
+CrowdSec `/64` detector becomes the thing that matters.
 
 **The API still goes over HTTPS.** Moving every git remote to SSH takes git
 entirely off the proxy, so neither the 100 MB cap nor the 100-second read
