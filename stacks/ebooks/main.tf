@@ -932,6 +932,16 @@ resource "kubernetes_deployment" "book_search" {
             name  = "GOODREADS_KINDLE_EMAIL"
             value = var.goodreads_kindle_email
           }
+          # The iOS Shortcut sends a recipient NAME, not an address. Only the
+          # first attachment in a shortcut's HTTP header dictionary resolves,
+          # so the api key is the one variable it can carry and everything else
+          # it sends is a literal string. Holding the addresses here also keeps
+          # them out of the shortcut file, which /shortcut serves without
+          # authentication, and lets one change without a reinstall.
+          env {
+            name  = "KINDLE_RECIPIENTS"
+            value = "anca:${var.goodreads_kindle_email}"
+          }
           env {
             name = "QBITTORRENT_PASS"
             value_from {
