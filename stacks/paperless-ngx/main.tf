@@ -109,6 +109,14 @@ resource "kubernetes_deployment" "paperless-ngx" {
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
+      # Semver-ORDERED major tracking, so Keel performs the 2.20.15 -> 3.x jump
+      # and can only ever move upward. Kyverno's inject-keel-annotations adds
+      # "patch" with +() (only-if-absent), so this explicit value wins, and it
+      # is deliberately absent from ignore_changes below so Terraform owns it.
+      #
+      # NEVER "force" here: force ignores semver ordering and rolled this exact
+      # deployment 2.20.15 -> 1.5.0 within minutes on 2026-07-14.
+      "keel.sh/policy" = "major"
     }
   }
   spec {
@@ -134,7 +142,9 @@ resource "kubernetes_deployment" "paperless-ngx" {
       }
       spec {
         container {
-          image = "ghcr.io/paperless-ngx/paperless-ngx:2.20.14"
+          # Seed only. The live tag is Keel's (image is in ignore_changes
+          # below); this records the intended floor for a fresh apply.
+          image = "ghcr.io/paperless-ngx/paperless-ngx:3.1.3"
           name  = "paperless-ngx"
           env {
             name = "PAPERLESS_REDIS"
@@ -269,7 +279,8 @@ resource "kubernetes_deployment" "paperless-ngx" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
+      # keel.sh/policy is NOT ignored: it is set to "major" above and Terraform
+      # owns it, so the patch->major flip actually reconciles.
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
