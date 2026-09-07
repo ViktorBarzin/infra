@@ -271,6 +271,22 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
           # in London reports being blocked.
           - "137.220.71.46"
         cidr:
+          # Meta CORPORATE egress, Viktor's work VPN. Added 2026-09-07 after
+          # finding he was blocked from his own sites twice over whenever it was
+          # on: this /44 was inside the static Meta-ASN blocklist (removed from
+          # it in the same commit), AND viktor/forgejo-crawl-slow had separately
+          # banned 2620:10d:c092:400::4:2f8a, a single address inside it, which
+          # was him browsing.
+          #
+          # This is NOT the crawler. The crawl runs from 2a03:2880::/32; corp
+          # egress is a different prefix, so exempting it costs nothing against
+          # the swarm. The occupants are employees on a managed network.
+          #
+          # NOTE the two halves are both needed and do different jobs: a
+          # whitelist is PARSER-STAGE, so it stops scenarios from CREATING
+          # decisions but does nothing about an already-imported one. Removing
+          # the range from the static list is what lifts the existing block.
+          - "2620:10d:c090::/44"
           # Never ban internal/cluster/LAN/tailnet sources. Enforcement (edge
           # Worker + firewall-bouncer) drops on real source IP, so an internal
           # range slipping into a decision could blackhole legit traffic — this
@@ -676,7 +692,6 @@ resource "kubernetes_config_map" "crowdsec_static_blocklist" {
       199.201.64.0/22
       204.15.20.0/22
       2620:0:1c00::/40
-      2620:10d:c090::/44
       2a03:2880::/32
       2a03:2887:ff00::/48
       2a03:2887:ff02::/47
