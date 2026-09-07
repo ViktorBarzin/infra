@@ -175,9 +175,30 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
     # addresses are in the whitelist. That makes it the one router where a tight
     # threshold costs almost nothing.
     #
-    # Bans the INDIVIDUAL IP (default scope), Viktor's call — no range bans, so
-    # a false positive affects one address for 4h and `homelab crowdsec unban`
-    # lifts it in ~33s.
+    # GROUPS AND BANS BY IPv6 /64 since 2026-09-07, so the scenario can carry
+    # the load on its own and the static Meta blocklist can retire.
+    #
+    # Why: Meta gives every crawler address its own /64, so grouping by the full
+    # address handed each one its own bucket and ~10 free pages before it
+    # filled. With 393 distinct addresses observed in 24h that is ~3,900 pages
+    # per pass. Measured live on 2026-09-06: with the static list removed and
+    # this scenario grouping per-address, Meta was served 84 requests with 200
+    # in 15 minutes (~336/hr). Down 30x from the 9,300-11,000/hr of the
+    # original incident, but not zero.
+    #
+    # A single IPv6 /64 is one customer allocation, the IPv4-address equivalent,
+    # so this is not the range-banning Viktor ruled out: IPv4 sources still get
+    # per-address treatment via the conditional below. IpToRange truncates in
+    # Go's net stack (netip.Addr.Prefix), so compressed forms like 2a03:2880::1
+    # normalise correctly — string splitting on colons does not, because
+    # Traefik logs RFC 5952 compressed addresses.
+    #
+    # The Range-scoped decision is routed by the existing
+    # default_range_remediation profile, and the Traefik plugin already enforces
+    # scope Range. Nothing else had to change.
+    #
+    # A false positive now affects one /64 for 4h; `homelab crowdsec unban
+    # <cidr>` lifts it in ~33s (CIDR support landed in homelab CLI v0.21.2).
     "forgejo-crawl-slow.yaml" : <<-YAML
       type: leaky
       name: viktor/forgejo-crawl-slow
@@ -191,7 +212,10 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
       # and inflate the count; sizing it above capacity keeps one page worth
       # exactly one token.
       cache_size: 50
-      groupby: "evt.Meta.source_ip"
+      groupby: 'IsIPV6(evt.Meta.source_ip) ? IpToRange(evt.Meta.source_ip, "/64") : evt.Meta.source_ip'
+      scope:
+        type: Range
+        expression: 'IsIPV6(evt.Meta.source_ip) ? IpToRange(evt.Meta.source_ip, "/64") : evt.Meta.source_ip + "/32"'
       blackhole: 5m
       labels:
         confidence: 2
