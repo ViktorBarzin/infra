@@ -294,15 +294,25 @@ resource "kubernetes_deployment" "paperless-ngx" {
           #
           # The startup probe carries the long budget: this container installs
           # tesseract language packs, runs Django migrations, and rebuilds the
-          # search index when the schema changes, which is minutes on 11k
-          # documents. 60 x 10s = 10 minutes before it gives up.
+          # search index when the schema changes.
+          #
+          # 40 minutes, and that is measured rather than padded. The 2.20 -> 3.x
+          # upgrade runs migration 0016_sha256_checksums, which re-reads every
+          # document off the encrypted volume to rehash it: 11,334 files at
+          # about 10 per second is 19 minutes on its own, before the remaining
+          # nine migrations and the search index rebuild. A 10-minute budget
+          # killed it at 8% on the first attempt.
+          #
+          # A probe cannot be changed on a running pod, so raising this mid-way
+          # costs the whole migration and starts it again. Size it for the
+          # slowest thing this container ever does at boot, not the usual case.
           startup_probe {
             http_get {
               path = "/accounts/login/"
               port = 8000
             }
             period_seconds    = 10
-            failure_threshold = 60
+            failure_threshold = 240
           }
           readiness_probe {
             http_get {
