@@ -225,6 +225,16 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_OCR_SKIP_ARCHIVE_FILE"
             value = "with_text"
           }
+          # Granian web workers. The image defaults this to 1
+          # (/etc/s6-overlay/s6-rc.d/svc-webserver/run), so a single slow
+          # request blocks the whole page load: measured 2026-09-07, the
+          # documents list fired 13 API calls that queued behind one 10.7s
+          # /api/tasks/ response instead of overlapping. 3 keeps headroom under
+          # the 8Gi ceiling (1 worker sat at ~2.1Gi with celery alongside).
+          env {
+            name  = "PAPERLESS_WEBSERVER_WORKERS"
+            value = "3"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/usr/src/paperless/data"
