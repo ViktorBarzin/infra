@@ -180,6 +180,25 @@ resource "kubernetes_deployment" "paperless-ngx" {
               }
             }
           }
+          # REQUIRED from 3.0 onward. 2.20 fell back to the literal
+          # "change-me" with a warning; 3.x raises ImproperlyConfigured at
+          # settings import, so the container dies during init-migrations and
+          # never starts a webserver. Generated 2026-09-07 and stored at Vault
+          # secret/paperless-ngx -> secret_key, which the ExternalSecret pulls
+          # in wholesale with dataFrom.
+          #
+          # Rotating it invalidates every existing session cookie and every
+          # signed URL, so users get logged out. API tokens are unaffected
+          # (they are DRF rows, not signed values).
+          env {
+            name = "PAPERLESS_SECRET_KEY"
+            value_from {
+              secret_key_ref {
+                name = "paperless-ngx-secrets"
+                key  = "secret_key"
+              }
+            }
+          }
           env {
             name  = "PAPERLESS_CSRF_TRUSTED_ORIGINS"
             value = "https://paperless-ngx.viktorbarzin.me,https://pdf.viktorbarzin.me"
@@ -265,6 +284,34 @@ resource "kubernetes_deployment" "paperless-ngx" {
 
           port {
             container_port = 8000
+          }
+
+          # This Deployment had no probes at all until 2026-09-07, so the only
+          # health signal was "the s6 supervisor is still running" — which it
+          # is even when every service under it failed. A 3.1.3 rollout whose
+          # container died at init-migrations reported Ready=true for minutes
+          # while every request 502'd, and the rollout was recorded a success.
+          #
+          # The startup probe carries the long budget: this container installs
+          # tesseract language packs, runs Django migrations, and rebuilds the
+          # search index when the schema changes, which is minutes on 11k
+          # documents. 60 x 10s = 10 minutes before it gives up.
+          startup_probe {
+            http_get {
+              path = "/accounts/login/"
+              port = 8000
+            }
+            period_seconds    = 10
+            failure_threshold = 60
+          }
+          readiness_probe {
+            http_get {
+              path = "/accounts/login/"
+              port = 8000
+            }
+            period_seconds    = 10
+            timeout_seconds   = 5
+            failure_threshold = 3
           }
         }
         volume {
