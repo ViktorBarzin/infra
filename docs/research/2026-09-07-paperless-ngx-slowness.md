@@ -4,7 +4,7 @@ Date: 2026-09-07, with the tags root cause added 2026-09-08
 Scope: `pdf.viktorbarzin.me`, ns `paperless-ngx`. Investigated on 2.20.15; the
 installation now runs 3.1.3 on the shared CNPG Postgres.
 Status: done. All six recommendations were carried out, including the Postgres
-migration. One cause is upstream and its report is pending. See "What was
+migration. One cause is upstream and is reported as #14035. See "What was
 done" at the end.
 
 ## Summary
@@ -46,7 +46,7 @@ flowchart TD
     L["<b>Cold page load — 11.5 s</b>"]
     L --> C1["<b>Cause 1</b> · 25,726 stale task rows · 10.7 s<br/>fixed — backlog acknowledged"]
     C1 --> C2["<b>Cause 2</b> · content in the DISTINCT · 1.41 s x2<br/>fixed — moved to Postgres"]
-    C2 --> C3["<b>Cause 3</b> · whole vocabulary each load · 2.6 s<br/>open — upstream, report pending"]
+    C2 --> C3["<b>Cause 3</b> · whole vocabulary each load · 2.6 s<br/>open — reported as #14035"]
     C3 --> D["<b>Documents list — 330 ms</b><br/>tags call still 4.4 s"]
 
     classDef fixed fill:#1a4d2e,stroke:#2d7a4a,color:#e8f5e9
@@ -203,17 +203,25 @@ An early return when a tag has no children takes the serialization step from
 not carrying a local patch for it — the image stays stock, which is what keeps
 Keel `major` safe.
 
-**Reporting this upstream has a constraint worth knowing before you try.** A
-first attempt ([#14034](https://github.com/paperless-ngx/paperless-ngx/issues/14034))
-was created through the REST API and closed within minutes by their issue bot,
-which requires the `bug`/`unconfirmed` labels that only GitHub's own form
-applies. An outside contributor cannot set those labels through the API, so the
-form has to be submitted in a browser. Two rules in their `CONTRIBUTING.md` also
-shape what such a report may contain: anything written in whole or part by an AI
-tool must say so, and a report generated that way must describe observed
-behaviour only, without code analysis, root-cause reasoning or a suggested fix.
-The analysis above therefore stays in this document; the upstream report carries
-the timings and the reproduction.
+Reported upstream as
+[paperless-ngx#14035](https://github.com/paperless-ngx/paperless-ngx/issues/14035).
+
+**Filing it took two attempts, and the reason is worth knowing before anyone
+tries again.** The first ([#14034](https://github.com/paperless-ngx/paperless-ngx/issues/14034))
+was created through the REST API and their issue bot closed it four minutes
+later. The bot checks for the `bug`/`unconfirmed` labels that GitHub applies a
+second or two after a form submission, and an outside contributor's `labels`
+field is silently dropped by the API, so no API-created issue can ever pass. The
+form has to be submitted in a browser; #14035 went through the cluster's headful
+Chrome and kept both labels.
+
+Two rules in their `CONTRIBUTING.md` also shape what such a report may contain:
+anything written in whole or part by an AI tool must say so, and a report
+written that way must describe observed behaviour only, without code analysis,
+root-cause reasoning or a suggested fix. The live form carries a fifth
+confirmation checkbox for exactly this that the copy on `main` does not. So the
+analysis above stays in this document, and the upstream report carries the
+timings, the scaling curve and the reproduction.
 
 ## Why tag search is hard to find
 
