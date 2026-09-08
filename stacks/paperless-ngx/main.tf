@@ -5,6 +5,7 @@ variable "tls_secret_name" {
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
+variable "postgresql_host" { type = string }
 
 data "vault_kv_secret_v2" "secrets" {
   mount = "secret"
@@ -178,9 +179,12 @@ resource "kubernetes_deployment" "paperless-ngx" {
           app = "paperless-ngx"
         }
         annotations = {
-          "diun.enable"                    = "true"
-          "diun.include_tags"              = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
-          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis-master.redis:6379"
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
+          # Waits on Postgres now, not MySQL. Left pointing at MySQL the pod
+          # would block on a database it no longer uses, and would start
+          # happily while the one it does use was down.
+          "dependency.kyverno.io/wait-for" = "pg-cluster-rw.dbaas:5432,redis-master.redis:6379"
         }
       }
       spec {
@@ -198,28 +202,49 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_REDIS_PREFIX"
             value = "paperless-ngx"
           }
+          # Moved off the shared MySQL onto pg-cluster on 2026-09-08.
+          #
+          # WHY, and do not undo this casually: paperless 3.x annotates every
+          # row of the documents list with a correlated subquery resolving
+          # effective_content, for a document-versions feature nothing here
+          # uses (all 11,334 rows have root_document_id NULL). On MySQL that
+          # query took 6,971 ms warm; on Postgres, same rows, same 319 MB of
+          # text, it is 396 ms. Measured, not estimated, and upstream's own
+          # numbers agree. Postgres TOASTs the content column out of line so a
+          # subquery matching zero rows costs nothing; MySQL materialises it.
+          #
+          # Neither an index nor prefer_ordering_index=off fixes it, both were
+          # tried and measured. The two upstream PRs that would have are one
+          # closed unmerged (#13875) and one open draft (#13789).
+          #
+          # Database name uses underscores, unlike the hyphenated MySQL one,
+          # to match every other role on this cluster.
           env {
             name  = "PAPERLESS_DBENGINE"
-            value = "mariadb"
+            value = "postgresql"
           }
           env {
             name  = "PAPERLESS_DBHOST"
-            value = var.mysql_host
+            value = var.postgresql_host
           }
           env {
             name  = "PAPERLESS_DBNAME"
-            value = "paperless-ngx"
+            value = "paperless_ngx"
           }
           env {
             name  = "PAPERLESS_DBUSER"
-            value = "paperless-ngx"
+            value = "paperless_ngx"
           }
+          # From the ExternalSecret, NOT a literal. The Vault static role
+          # rotates this weekly and the Reloader annotation on this deployment
+          # restarts the pod when it changes; a literal would work until the
+          # first rotation and then fail auth.
           env {
             name = "PAPERLESS_DBPASS"
             value_from {
               secret_key_ref {
-                name = "paperless-ngx-secrets"
-                key  = "db_password"
+                name = "paperless-ngx-db-creds"
+                key  = "password"
               }
             }
           }
