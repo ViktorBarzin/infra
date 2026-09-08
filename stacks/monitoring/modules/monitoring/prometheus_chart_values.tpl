@@ -4731,6 +4731,43 @@ serverFiles:
           # curl had a timeout and a wedged run sat Running until the next day's
           # schedule replaced it, silently losing a day's sync while the
           # pushgateway still showed the previous run's success.
+          # A PSD2 consent lasts 90 days and renewing one needs the account
+          # holder's own bank MFA, so this is the one bank-sync alert that has to
+          # arrive BEFORE the failure. On 2026-07-18..07-24 anca's consents expired
+          # and the nightly job wrote nothing for seven nights; BankSyncStale
+          # reported it 48h in and nothing had warned. 14 days covers two weekends,
+          # which is what re-authorising three banks by phone realistically needs.
+          - alert: BankSyncConsentExpiring
+            expr: |
+              (bank_sync_consent_expiry_timestamp - time()) < 1209600
+              and
+              (bank_sync_consent_expiry_timestamp - time()) > 0
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Bank sync ({{ $labels.instance }}): {{ $labels.institution }} consent expires in {{ $value | humanizeDuration }}. Re-authorise in Actual: Settings -> Bank Sync -> the account -> re-link, which needs the account holder's bank login and MFA."
+          # Separate from the warning because the remedy is the same but the state is
+          # not: past expiry the nightly import returns ITEM_ERROR and no transaction
+          # arrives at all, so this is the one that should wake somebody.
+          - alert: BankSyncConsentExpired
+            expr: (bank_sync_consent_expiry_timestamp - time()) <= 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Bank sync ({{ $labels.instance }}): {{ $labels.institution }} consent HAS EXPIRED. Imports for its accounts are dead until it is re-authorised by hand in Actual."
+          # The check needs a GoCardless API credential that lives in each Actual
+          # server's own account.sqlite and is copied into secret/actualbudget.
+          # Rotating it in the web UI without updating Vault lands here rather than
+          # silently leaving the two alerts above with no series to evaluate.
+          - alert: BankSyncConsentCheckFailing
+            expr: bank_sync_consent_check_success == 0
+            for: 26h
+            labels:
+              severity: info
+            annotations:
+              summary: "Bank sync ({{ $labels.instance }}): the GoCardless consent-expiry check did not complete, so consent expiry is currently unmonitored for this instance. Usually a stale gocardless_secret_id/_key in secret/actualbudget."
           - alert: BankSyncSlow
             expr: bank_sync_duration_seconds > 300
             for: 5m
