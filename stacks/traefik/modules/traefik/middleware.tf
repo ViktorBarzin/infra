@@ -750,3 +750,78 @@ resource "kubernetes_manifest" "middleware_android_emulator_rate_limit" {
 
   depends_on = [helm_release.traefik]
 }
+
+# f1-stream video rate limit. Separate from the shared `rate-limit` above
+# because f1 serves HLS, and HLS is a request-per-segment protocol rather than
+# a page load.
+#
+# Why a separate middleware and not a bump to the shared one: 115 ingresses
+# reference `rate-limit`, and raising it for all of them to suit one video host
+# would remove a limit those hosts still want.
+#
+# Two problems it fixes, in order of severity.
+#
+# 1. THE BUCKET KEY. The shared `rate-limit` sets no `sourceCriterion`, so
+#    Traefik falls back to an IPStrategy over "the request's remote address
+#    field" (rate_limiter.go New(): a nil SourceCriterion becomes
+#    &dynamic.IPStrategy{}). Behind the cloudflared tunnel that remote address
+#    is the cloudflared pod, so every viewer on the planet shares ONE bucket of
+#    10 req/s. `requestHeaderName = "X-Real-Ip"` moves the key to the real
+#    client. This works because ingress_factory auto-attaches the `real-ip`
+#    plugin FIRST for every anubis-* backend and extra_middlewares are appended
+#    LAST, so real-ip has already stamped X-Real-Ip by the time this runs —
+#    on the tunnel path from Cf-Connecting-Ip, on the grey-cloud path from the
+#    unspoofable TCP peer (real-ip-plugin/main.go:125 sets it unconditionally
+#    once the peer parses). Order is load-bearing: reached before real-ip, the
+#    oxy header extractor returns "" for every request and they all share one
+#    bucket again — no error, just silent collapse (oxy utils/source.go
+#    makeHeaderExtractor returns req.Header.Get() with no missing-header check).
+#    NOTE the collapse this fixes is pre-existing for the five other proxied
+#    Anubis hosts (blog, jsoncrack, cyberchef, homepage, real-estate-crawler);
+#    fixing it here does not fix it for them.
+#
+# 2. THE CEILING. Measured against the app's own constants rather than guessed:
+#      - live ladder: SEGMENT_SECONDS = 4, PLAYLIST_LENGTH = 6
+#        (f1-stream backend/transcode.py:75, :91)
+#      - replay ladder: SEGMENT_SECONDS = 6, three rungs
+#        (backend/replays/library.py:51, :87), and the upstream feeds run 6s too
+#        (backend/pdt.py:75-77)
+#    So one viewer costs ~0.5 req/s live (a segment plus a media-playlist
+#    refresh every 4s) and ~0.33 req/s on a replay. The bursts are what bite:
+#    a cold start with p2p-media-loader prefetching a 20-30s buffer pulls ~8
+#    segments plus two playlists at once, a replay seek fires a Range storm,
+#    and the SvelteKit SPA shell has the same parallel-asset shape that already
+#    pushed actualbudget, tripit, health, authentik, dawarich and noVNC off the
+#    default 10/50.
+#    average 200 / burst 2000 (per second — Traefik's default period) is ~80x
+#    the worst realistic steady state (a five-person watch party sharing one
+#    CGNAT egress, ~2.5 req/s) and ~25x its worst burst. Deliberately loose:
+#    a 429 on a segment is a stall mid-race, the request itself is a static
+#    file read or a proxy pass, and abuse is already covered by CrowdSec at the
+#    entrypoint, the Anubis PoW on the HTML and the x402 gateway. Sits between
+#    the 100/1000 SPA family and immich's 1000/20000.
+#
+# RIGHTSIZING NOTE: do not fold this back into the shared 10/50. The numbers
+# above are the reason it exists, and the sourceCriterion is not optional on a
+# tunnelled host.
+resource "kubernetes_manifest" "middleware_f1_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "f1-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 200
+        burst   = 2000
+        sourceCriterion = {
+          requestHeaderName = "X-Real-Ip"
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}

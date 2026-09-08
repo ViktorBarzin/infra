@@ -339,6 +339,33 @@ resource "kubernetes_deployment" "f1-stream" {
             name  = "REPLAY_CACHE_CAP_GB"
             value = "150"
           }
+          # Peer-assisted delivery. The backend injects these into the served
+          # HTML shell as `window.__F1_CONFIG__` (backend/runtime_config.py),
+          # rather than the frontend baking them at build time, because the
+          # frontend is built once into the image while the tracker URL is
+          # deployment config that follows the ingress.
+          #
+          # UNSET MEANS OFF, deliberately: p2pSettings treats a missing tracker
+          # list as "peer-assist disabled", so a viewer then pulls every segment
+          # over HTTP exactly as before. That keeps a feature which opens WebRTC
+          # connections between viewers' browsers behind a single env var.
+          #
+          # The tracker is the in-cluster wt-tracker (see wt-tracker.tf), served
+          # on this same host under /tracker, so it follows f1 through the
+          # Cloudflare cutover with no second decision.
+          env {
+            name  = "P2P_TRACKERS"
+            value = "wss://f1.viktorbarzin.me/tracker"
+          }
+          # STUN only, no TURN. A STUN server learns a candidate address and
+          # carries no media, so this leaks less than the segment request that
+          # follows it; TURN would relay the video itself and defeat the point.
+          # Google's public STUN is used because it costs nothing and we do not
+          # run one — if that ever matters, coturn in-cluster is the swap.
+          env {
+            name  = "P2P_STUN"
+            value = "stun:stun.l.google.com:19302"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
@@ -519,6 +546,82 @@ module "anubis" {
       # needs to be reachable from outside the cluster, that is a deliberate
       # decision to take on its own rather than a side effect of adding a
       # scrape target.
+      # Link previews for shared moments and party invites (design doc
+      # 2026-09-08, "Crawler access"). Scoped to the three share shapes and
+      # nothing else, so a spoofed preview user-agent earns one Open Graph page
+      # and no more of the site:
+      #   /s/<id>            share page — OG tags plus a visible fallback link
+      #   /s/<id>/thumb.jpg  the ffmpeg frame grab at T (replays only)
+      #   /p/<id>            party join page, same shape so a pasted party link
+      #                      also previews
+      # These are backend routes on purpose: `ssr = false` in
+      # frontend/src/routes/+layout.js means the SvelteKit app cannot emit
+      # og:title or og:image at all, so without an ALLOW here a preview bot
+      # reaches the PoW interstitial and the paste renders as nothing.
+      #
+      # ONE `expression` RATHER THAN path_regex + user_agent_regex. That pairing
+      # is the obvious shape and Anubis rejects it: v1.25.0 (the tag running
+      # here) returns ErrBotMustHaveUserAgentOrPathNotBoth from
+      # lib/config/config.go when a rule sets both, and one invalid rule fails
+      # the WHOLE policy document — that takes f1 down rather than just losing
+      # previews. A CEL `all:` block ANDs the same two conditions and validates.
+      #
+      # The CEL matcher is also the narrower one. Anubis's PathChecker tests the
+      # client-supplied X-Original-URI header BEFORE r.URL.Path
+      # (lib/policy/checker.go), so any `path_regex` ALLOW can be widened by a
+      # client that sends `X-Original-URI: /s/aaaaaa` while requesting something
+      # else entirely. The CEL `path` variable is r.URL.Path only
+      # (lib/policy/celchecker.go, ResolveName), so this rule can only match the
+      # path actually being served.
+      #
+      # `[.]` and not `\.` for the literal dot. The regex travels through a
+      # Terraform heredoc, then YAML, then a CEL string literal, and `\.` is not
+      # a valid CEL escape sequence. A character class means the pattern carries
+      # zero backslashes and there is no escaping left to get wrong — please
+      # leave it as a class.
+      #
+      # The anchors, the {6,64} bound and the charset are what keep this from
+      # widening: without them the rule would ALLOW any two-segment path. Ids
+      # are opaque base64url minted with `secrets`, which is the charset here.
+      # Both trailing-slash forms match because the frontend sets
+      # trailingSlash = 'always'.
+      #
+      # POSITION MATTERS — do not move this above the imports. Anubis takes the
+      # first matching rule (lib/policy/policy.go), so with this rule here
+      # `_deny-pathological` and `ai-block-aggressive` still DENY ClaudeBot,
+      # GPTBot, Bytespider, PerplexityBot, meta-externalagent and the rest on
+      # the share path as well. That ordering is the only reason the generic
+      # `bot` substring is safe. What it does still admit is an undeclared SEO
+      # crawler that already holds the link; it cannot find one by guessing, and
+      # one OG page is all it gets.
+      #
+      # On the named agents: `whatsapp` covers Signal too, because Signal
+      # fetches previews with `User-Agent: WhatsApp/2` (signalapp/Signal-Android
+      # issue 13522 — deliberate, long-standing), so there is no separate Signal
+      # token to match. `facebookexternalhit` is the Messenger / WhatsApp
+      # desktop / Instagram preview fetcher and is listed; `meta-externalagent`
+      # is Meta's AI crawler and is deliberately NOT, since ai-catchall above
+      # denies it and should keep doing so. iMessage has no entry at all: its
+      # fetcher sends a plain Safari user-agent and cannot be distinguished from
+      # a person, so an iMessage paste falls through to the challenge. Nothing
+      # here can fix that.
+      - name: f1-share-link-previews
+        action: ALLOW
+        expression:
+          all:
+            # The charset includes ':' because a REPLAY share id is not an
+            # opaque minted token: it is `<reddit_post_id>:<session_type>`
+            # (e.g. `1abc2de:sprint_quali`), which is already durable, so those
+            # links need no registry round trip. The frontend deliberately
+            # decodes the colon back into the path (`shareLink.js` does
+            # `encodeURIComponent(id).replace(/%3A/g, ':')`), so a charset
+            # without ':' would miss EVERY replay preview while still matching
+            # live ones — a silent half-failure. ':' is legal in a path segment
+            # (RFC 3986 pchar). Kept minimal on purpose: no '.', which would
+            # widen this toward dot-segments for no gain, and '-' stays last in
+            # the class so it is a literal rather than a range.
+            - 'path.matches("^/(s|p)/[A-Za-z0-9_:-]{6,64}(/thumb[.]jpg)?/?$")'
+            - 'userAgent.matches("(?i)(bot|crawler|spider|preview|whatsapp|facebookexternalhit|facebookcatalog|telegram|discord|slack|twitter|skypeuripreview|linkedin|embedly|iframely|mastodon|vkshare)")'
       # Allow non-GET methods unconditionally — AI scrapers GET the body,
       # they don't POST. Mutating XHRs and CORS preflight need to bypass.
       - name: allow-non-get-methods
@@ -562,9 +665,10 @@ module "ingress_admin_login" {
 }
 
 module "ingress" {
-  source       = "../../modules/kubernetes/ingress_factory"
-  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type     = "non-proxied"
+  source   = "../../modules/kubernetes/ingress_factory"
+  auth     = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  dns_type = "non-proxied"
+  # ^^^ THE CLOUDFLARE CUTOVER IS THIS ONE LINE. See the block below.
   namespace    = kubernetes_namespace.f1-stream.metadata[0].name
   name         = "f1"
   service_name = module.anubis.service_name
@@ -572,9 +676,23 @@ module "ingress" {
   # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
   # ingress_factory for anubis-* backends. f1 is non-proxied (pfSense
   # PROXY-protocol) so the peer is already the real client.
-  tls_secret_name   = var.tls_secret_name
-  anti_ai_scraping  = false
-  extra_middlewares = ["traefik-x402@kubernetescrd"]
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false
+  # Video rate limiting, not page-load rate limiting. The shared `rate-limit`
+  # (10/s, burst 50) is detached and `traefik-f1-rate-limit` (200/s, burst
+  # 2000, keyed on X-Real-Ip) attached in its place — the shared one has no
+  # sourceCriterion, so behind the cloudflared tunnel every viewer on the site
+  # shares ONE 10 req/s bucket keyed on the cloudflared pod, and HLS asks for a
+  # segment every 4-6s per viewer. Full arithmetic and the ordering constraint
+  # are in stacks/traefik/modules/traefik/middleware.tf next to the resource.
+  # extra_middlewares are appended LAST by the factory, which is what puts this
+  # after the auto-attached real-ip and guarantees X-Real-Ip is already
+  # stamped when the limiter reads it.
+  skip_default_rate_limit = true
+  extra_middlewares = [
+    "traefik-x402@kubernetescrd",
+    "traefik-f1-rate-limit@kubernetescrd",
+  ]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "F1 Stream"
