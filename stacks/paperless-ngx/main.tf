@@ -62,6 +62,46 @@ resource "kubernetes_manifest" "external_secret" {
   }
   depends_on = [kubernetes_namespace.paperless-ngx]
 }
+# Postgres credential, rotated weekly by the Vault database engine (static role
+# `pg-paperless-ngx`). Separate from the ExternalSecret above because that one
+# reads the KV path with dataFrom; this reads the database engine, which is a
+# different ClusterSecretStore and a different refresh interval.
+#
+# The deployment carries a Reloader annotation for this secret. Without it the
+# app keeps the old password after every rotation and fails auth, because
+# PAPERLESS_DBPASS is read once at startup and never re-read.
+resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "paperless-ngx-db-creds"
+      namespace = "paperless-ngx"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "paperless-ngx-db-creds"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-paperless-ngx"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.paperless-ngx]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.paperless-ngx.metadata[0].name
@@ -109,6 +149,9 @@ resource "kubernetes_deployment" "paperless-ngx" {
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
+      # The Postgres password rotates weekly and PAPERLESS_DBPASS is read once
+      # at startup, so without this the app fails auth every seventh day.
+      "secret.reloader.stakater.com/reload" = "paperless-ngx-db-creds"
       # Semver-ORDERED major tracking, so Keel performs the 2.20.15 -> 3.x jump
       # and can only ever move upward. Kyverno's inject-keel-annotations adds
       # "patch" with +() (only-if-absent), so this explicit value wins, and it
@@ -250,9 +293,15 @@ resource "kubernetes_deployment" "paperless-ngx" {
           # text layer (born-digital PDFs + office->PDF via Gotenberg). Kept as
           # standing config after the 2026-06/07 Emo bulk import: big speed/IO
           # saver, harmless for scanned docs (they still OCR+archive).
+          #
+          # Renamed in 3.0, which decoupled OCR control from archive control.
+          # PAPERLESS_OCR_SKIP_ARCHIVE_FILE still parsed but did nothing, and
+          # 3.1.3 says so at startup: "is set but has no effect". "auto" is the
+          # 3.x spelling of the old "with_text" and is also the default; it is
+          # written out so the intent survives a future default change.
           env {
-            name  = "PAPERLESS_OCR_SKIP_ARCHIVE_FILE"
-            value = "with_text"
+            name  = "PAPERLESS_ARCHIVE_FILE_GENERATION"
+            value = "auto"
           }
           # Granian web workers. The image defaults this to 1
           # (/etc/s6-overlay/s6-rc.d/svc-webserver/run), so a single slow

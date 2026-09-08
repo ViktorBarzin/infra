@@ -1472,6 +1472,35 @@ resource "null_resource" "pg_payslip_ingest_db" {
   }
 }
 
+# Create paperless_ngx database. Paperless moved off the shared MySQL on
+# 2026-09-08: 3.x annotates every documents-list row with an effective_content
+# correlated subquery, which costs 6.2s on MySQL against 1.9ms here, because
+# Postgres TOASTs the 319MB content column out of line. Underscores, not the
+# hyphenated MySQL name, to match every other role on this cluster.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-paperless-ngx`, 7d rotation).
+resource "null_resource" "pg_paperless_ngx_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "paperless_ngx"
+    username = "paperless_ngx"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'paperless_ngx'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE paperless_ngx WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'paperless_ngx'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE paperless_ngx OWNER paperless_ngx"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE paperless_ngx TO paperless_ngx"
+        '
+    EOT
+  }
+}
+
 # Create job_hunter database for the job-hunter scraper service.
 # Role password is managed by Vault Database Secrets Engine (static role `pg-job-hunter`, 7d rotation).
 resource "null_resource" "pg_job_hunter_db" {
