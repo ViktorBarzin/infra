@@ -15,7 +15,7 @@ resource "kubernetes_namespace" "homepage" {
     name = "homepage"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -83,6 +83,14 @@ resource "kubernetes_deployment" "cache_proxy" {
   metadata {
     name      = "homepage-cache"
     namespace = kubernetes_namespace.homepage.metadata[0].name
+    labels = {
+      # Declared because the sync-tier-label-from-namespace Kyverno policy
+      # stamps `tier` live. With no labels block at all, Terraform managed the
+      # map as empty and planned to strip it on every run while the policy
+      # re-added it — perma-drift, and this Deployment was one of the stacks in
+      # the 2026-08-17 drift report for exactly that reason.
+      tier = local.tiers.aux
+    }
   }
   spec {
     replicas = 1
@@ -156,14 +164,16 @@ module "anubis" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  namespace         = kubernetes_namespace.homepage.metadata[0].name
-  name              = "homepage"
-  host              = "home"
-  dns_type          = "proxied"
-  service_name      = module.anubis.service_name
-  port              = module.anubis.service_port
+  source       = "../../modules/kubernetes/ingress_factory"
+  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  namespace    = kubernetes_namespace.homepage.metadata[0].name
+  name         = "homepage"
+  host         = "home"
+  dns_type     = "proxied"
+  service_name = module.anubis.service_name
+  port         = module.anubis.service_port
+  # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
+  # ingress_factory for anubis-* backends — no per-site wiring needed.
   extra_middlewares = ["traefik-x402@kubernetescrd"]
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false

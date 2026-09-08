@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<title>viktorbarzin.me — temporarily unreachable</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#1c1e21;--muted:#5f6570;--card:#ffffff;--edge:#e3e6ea;--up:#2e9e5b;--down:#d64545;--link:#2563eb}
+@media (prefers-color-scheme:dark){:root{--bg:#101215;--fg:#e8eaed;--muted:#9aa1ab;--card:#181b1f;--edge:#262a30;--up:#3fbf72;--down:#e05d5d;--link:#7aa2ff}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:24px}
+main{max-width:560px;width:100%;background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:32px 36px}
+h1{font-size:1.35rem;margin:0 0 12px;display:flex;align-items:center}
+p{margin:0 0 12px;color:var(--muted)}
+p.lead{color:var(--fg)}
+a{color:var(--link)}
+.pulse{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--down);margin-right:10px;flex:none}
+ul{list-style:none;margin:16px 0 0;padding:12px 0 0;border-top:1px solid var(--edge);display:none}
+ul.show{display:block}
+li{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.92rem}
+li .dot{width:8px;height:8px;border-radius:50%;flex:none}
+li.up .dot{background:var(--up)}
+li.down .dot{background:var(--down)}
+li.down{color:var(--down)}
+small{display:block;margin-top:18px;color:var(--muted);font-size:.8rem}
+</style>
+</head>
+<body>
+<main>
+<h1><span class="pulse"></span>Temporarily unreachable</h1>
+<p class="lead">viktorbarzin.me services can't be reached right now.
+You've landed on the offsite failover (mx2, Frankfurt), which runs
+independently of the homelab and keeps mail and this page alive during
+the outage.</p>
+<p>Live details: <a href="https://status.viktorbarzin.me">status.viktorbarzin.me</a></p>
+<ul id="svc"></ul>
+<small id="ts"></small>
+</main>
+<script>
+(function(){
+  document.getElementById('ts').textContent='Rendered '+new Date().toLocaleString();
+  fetch('https://status.viktorbarzin.me/api/v1/endpoints/statuses')
+    .then(function(r){if(!r.ok){throw new Error('bad status')}return r.json()})
+    .then(function(all){
+      var list=all.filter(function(e){return e.group==='services'});
+      if(!list.length){return}
+      var ul=document.getElementById('svc');
+      list.forEach(function(e){
+        var up=e.results&&e.results.length&&e.results[e.results.length-1].success;
+        var li=document.createElement('li');
+        li.className=up?'up':'down';
+        var dot=document.createElement('span');
+        dot.className='dot';
+        li.appendChild(dot);
+        li.appendChild(document.createTextNode(e.name+(up?'':' — unreachable')));
+        ul.appendChild(li);
+      });
+      ul.className='show';
+    })
+    .catch(function(){});
+})();
+</script>
+</body>
+</html>

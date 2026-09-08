@@ -86,10 +86,56 @@ Signin latency is dominated by screen count and round trips, not server time
   use the explicit-consent flow (it re-prompted every 4 weeks per app).
 - **Live tuning via `server.env`/`worker.env`** (the `authentik.*` Helm values
   are inert due to `existingSecret`): 3 gunicorn workers, 30m flow-plan cache,
-  15m policy cache, 60s persistent DB connections.
+  15m policy cache, gunicorn `max_requests=10000`/jitter=1000 (recycle
+  hardening — decorrelates the 9 workers' recycles from PG blips). **No
+  `CONN_MAX_AGE`** — persistent Django connections pin a PgBouncer server conn
+  1:1 and saturate the session-mode pool (reverted 2026-06-10).
 - **Static assets cached immutable**: `/static` ingress carve-out adds
   `Cache-Control: public, max-age=31536000, immutable` (assets are
   version-fingerprinted; authentik itself sends no max-age).
+- **Rate-limit carve-out** (2026-06-28): `/` and `/static` use a dedicated
+  `authentik-rate-limit` (100/1000) instead of the shared 10/50 default — the
+  login SPA cold-loads ~70 flow-executor chunks from `/static`; the default
+  burst 429'd the tail and a failed ES-module import left a blank login screen.
+- **Readiness tolerance** (2026-06-28): server `readinessProbe.failureThreshold:8`
+  (~80s, was the chart-default ~30s). The probe (`/-/health/ready/`) queries the
+  DB; too-tight tolerance let a sub-60s PG/pgbouncer transient return 503 on all
+  3 server pods at once → Traefik had no healthy backend → 502/503/504 (episodic
+  blank login + 30s hangs). 80s absorbs a full CNPG failover reconnect. Sessions
+  + cache are PostgreSQL-only since Redis was removed in 2026.2 (no external-cache
+  option), so request-serving is coupled to PG — this survives a short transient,
+  not a total CNPG outage.
+- **Rolling-update strategy** (2026-06-28): the chart key is `deploymentStrategy`
+  (the repo's old `strategy:` key was silently inert → live ran the chart-default
+  25%/25% and dropped a server pod out of rotation on every roll). Now
+  `maxSurge:1/maxUnavailable:0` keeps all 3 ready throughout a roll.
+- **Old-browser login (SFE)** (2026-06-28): authentik's modern flow SPA is ES2022
+  and renders a **blank login** on Safari/WebKit ≤16.3 (every iOS browser shares
+  the system WebKit, so it's not browser-choice — e.g. iPadOS ≤15). The overlay
+  image patches `flows/views/interface.py::compat_needs_sfe()` to also serve
+  authentik's built-in no-JS **Simplified Flow Executor** (SFE, ES5) to old Safari
+  **and any iOS browser** (Chrome/Firefox on iOS are WebKit skins) on iOS ≤16.3,
+  so those clients get the *real* authentik login (password + MFA + reputation —
+  no auth downgrade). The SFE can't render Identification-stage **sources**
+  (authentik limitation), so the patch also injects static social-login `<a>`
+  links into `flow-sfe.html` (→ `/source/oauth/login/<slug>/`, plain redirects) —
+  required for password-less accounts (e.g. Google-only users). A Traefik
+  basic-auth fallback was rejected: it would have put a single spoofable-UA
+  password in front of `vbarzin→wizard` (passwordless root on the devvm). See
+  `stacks/authentik/patch-compat-sfe.py`.
+- **SFE + forced-WebAuthn MFA gotcha** (2026-06-28): the `default-authentication-flow`
+  MFA stage (`not_configured_action=configure`, `conf_stages=[webauthn]`) force-enrols
+  a WebAuthn passkey for any **password**-path user with no MFA device — but the SFE
+  **cannot render WebAuthn** (enrol *or* validate), so that user gets
+  `unsupported state: ak-stage-authenticator-webauthn`. Two escape hatches, **no MFA
+  downgrade**: (1) **social login** — sources run `default-source-authentication`
+  (UserLoginStage only, **no MFA stage**), so the SFE's "Continue with <provider>"
+  button always completes; (2) **enrol TOTP** — the SFE *can* validate TOTP codes, and
+  ≥1 confirmed device flips the stage from force-enrol to validate. User MFA devices are
+  runtime data (not Terraform): enrol via `ak shell`
+  (`TOTPDevice.objects.create(user=…, confirmed=True)`) and store the secret in the
+  user's own Vaultwarden item. (Done for emo — the Google-only iPadOS-15 case: TOTP in
+  his `authentik.viktorbarzin.me` Bitwarden item; e2e-verified the BW code is accepted.)
 - **Outpost**: 2 replicas, `log_level=info` (was 1 replica at `trace`).
 - **auth-proxy nginx**: upstream `keepalive 32` + HTTP/1.1 — no per-request
   TCP setup on the forward-auth subrequest path.
@@ -107,6 +153,8 @@ All new users must use an invitation link to register. The invitation-enrollment
 5. **enrollment-login** - Auto-login after creation
 
 Group membership is auto-assigned from the invitation's `fixed_data` field. This prevents open registration while maintaining SSO convenience.
+
+**Google social signup is a special case (2026-07-25, `stacks/authentik/google-social-signup.tf`).** An Authentik invitation lives in the flow *plan*, which is abandoned when the browser leaves for Google's OAuth screen — so a social signup that starts on `invitation-enrollment` returns from `/source/oauth/callback/google/` with no `itoken` and the InvitationStage denies with *"Invalid invite/invite not found."* This is why invite-gated Google signup never worked through the shared flow. Fix: the **Google source's `enrollment_flow` is a dedicated `google-proxy-enrollment`** (write + login, no password prompt). The invite is bridged across the OAuth redirect via the **Postgres cache keyed by the round-trip-stable browser session key**: a `capture-proxy-invite` policy on the invite landing sets `proxy_invite_ok:<session_key>` iff the itoken resolves to a proxy invite, and a `validate-proxy-invite` policy on the enrollment write-stage denies unless that flag is set — otherwise it stamps `attributes.proxy_only=true` + a username (the invitation's `fixed_data` does NOT reach the user on this path, so proxy_only is set by the policy, not the invite) and posts to Slack `#alerts`. A direct hit on the Google source with no invite is denied. GitHub/Facebook still route social enrollment through `invitation-enrollment` and share the original broken-invite limitation.
 
 ### OIDC Applications
 
@@ -149,8 +197,10 @@ Because OIDC SSO is blocked, the web dashboard at `k8s.viktorbarzin.me` uses a
 
 1. **Authentik forward-auth** (`auth=required`) gates access AND injects
    `X-authentik-username` (the user's email). The `admin-services-restriction`
-   policy admits `Home Server Admins` plus `kubernetes-admins` /
-   `kubernetes-power-users` / `kubernetes-namespace-owners` for this host
+   policy (a generated **default-deny host→groups table**, ADR-0023) admits this
+   host's `allowed_groups` — for `k8s` that's `kubernetes-admins` /
+   `kubernetes-power-users` / `kubernetes-namespace-owners` + `Home Server Admins`
+   (admins also always pass via the break-glass bypass)
    (`stacks/authentik/admin-services-restriction.tf`).
 2. **Token-injector** (`stacks/k8s-dashboard/dashboard_injector.tf`): an nginx
    that maps `X-authentik-username` → that user's ServiceAccount token and sets
@@ -178,7 +228,12 @@ apiserver-OIDC fix.
 - **authentik Admins** - Full Authentik admin UI access
 - **Headscale Users** - Can access Headscale control plane
 - **Home Server Admins** - Admin access to homelab services
-- **Wrongmove Users** - Access to Wrongmove real estate app
+- **Wrongmove Users** - Access to Wrongmove real estate app. Adding someone here
+  is two steps: the group, plus reserving their row in the app database — see
+  `docs/runbooks/wrongmove-user-onboarding.md`. Wrongmove signup is open to
+  anyone, and it matches accounts by email whichever issuer vouched for them, so
+  an SSO member with no row yet can have their address registered by someone
+  else first.
 - **kubernetes-admins** - K8s cluster-admin role
 - **kubernetes-power-users** - K8s read-mostly access
 - **kubernetes-namespace-owners** - K8s namespace-scoped admin

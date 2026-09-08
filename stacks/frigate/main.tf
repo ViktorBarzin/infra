@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "frigate" {
   metadata {
     name = "frigate"
     labels = {
-      tier = local.tiers.gpu
+      tier               = local.tiers.gpu
       "keel.sh/enrolled" = "true"
     }
     # labels = {
@@ -58,11 +58,12 @@ resource "kubernetes_persistent_volume_claim" "config_encrypted" {
 }
 
 module "nfs_media_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "frigate-media-host"
-  namespace  = kubernetes_namespace.frigate.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/frigate/media"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "frigate-media-host"
+  namespace          = kubernetes_namespace.frigate.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/frigate/media"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "frigate" {
@@ -106,7 +107,7 @@ resource "kubernetes_deployment" "frigate" {
         container {
           # image = "ghcr.io/blakeblackshear/frigate:stable"
           # image = "ghcr.io/blakeblackshear/frigate:stable-tensorrt"
-          image = "ghcr.io/blakeblackshear/frigate:0.17.0-beta1-tensorrt"
+          image = "ghcr.io/blakeblackshear/frigate:0.17.2-tensorrt"
           name  = "frigate"
 
           resources {
@@ -117,6 +118,13 @@ resource "kubernetes_deployment" "frigate" {
             limits = {
               memory           = "10Gi"
               "nvidia.com/gpu" = "1"
+              # GPU VRAM budget (ADR-0016): detector + ffmpeg decode across 12
+              # processes, +NVDEC headroom for the vermont-garage camera
+              # (ADR-0017). Raised 2300 -> 2800 on 2026-08-31: measured
+              # steady 2611 MiB / 7-day peak 2689, so the old figure put
+              # frigate permanently over contract and made it a legitimate
+              # recycle target once enforcement went live.
+              "viktorbarzin.me/gpumem" = "2800"
             }
           }
           env {
@@ -275,26 +283,66 @@ resource "kubernetes_service" "frigate-rtsp" {
     labels = {
       "app" = "frigate"
     }
+    annotations = {
+      # Dedicated MetalLB IP for go2rtc L4 traffic (RTSP restream + WebRTC).
+      # Pool 10.0.20.200-220; .200 shared, .201 Technitium, .202 KMS, .203
+      # Traefik -> .204 is the first free address (CONFIRM no conflict before
+      # merge). Gives HA Sofia (192.168.1.8) + LAN browsers a STABLE endpoint
+      # reachable cross-VLAN, instead of the Traefik HTTP(S) ingress which
+      # cannot carry RTSP/WebRTC. This is what unblocks native Frigate live in
+      # HA (today only go2rtc-MSE-over-Traefik works).
+      "metallb.io/loadBalancerIPs" = "10.0.20.204"
+    }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
-    type = "NodePort" # Should always live on node1 where the gpu is
+    # Was NodePort. ETP=Local: the Frigate pod is pinned to the GPU node, so
+    # MetalLB advertises .204 only from that node -> no SNAT, real client IP
+    # preserved (same pattern as Traefik .203 / KMS .202).
+    type                    = "LoadBalancer"
+    external_traffic_policy = "Local"
     selector = {
       app = "frigate"
     }
+    # item 2 - RTSP restream reachable from HA for native HLS. Companion (NOT
+    # Terraform): in HA -> Frigate integration set
+    #   rtsp_url_template = rtsp://10.0.20.204:8554/{{ name }}
     port {
       name        = "rtsp-tcp"
       target_port = 8554
       port        = 8554
       protocol    = "TCP"
-      node_port   = 30554
     }
     port {
       name        = "rtsp-udp"
       target_port = 8554
       port        = 8554
       protocol    = "UDP"
-      node_port   = 30554
+    }
+    # item 1 - go2rtc WebRTC. Container already listens on 8555 TCP+UDP but no
+    # Service exposed it, so WebRTC live in HA could never connect. Companion
+    # (NOT Terraform; lives in config.yml on the frigate-config PVC):
+    #   go2rtc:
+    #     webrtc:
+    #       candidates:
+    #         - 10.0.20.204:8555
+    port {
+      name        = "webrtc-tcp"
+      target_port = 8555
+      port        = 8555
+      protocol    = "TCP"
+    }
+    port {
+      name        = "webrtc-udp"
+      target_port = 8555
+      port        = 8555
+      protocol    = "UDP"
     }
   }
 }

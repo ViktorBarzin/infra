@@ -3,6 +3,19 @@
 	<p>70+ services running on the cluster. Here are the most commonly used:</p>
 
 	<section>
+		<h2>Cluster Access</h2>
+		<table>
+			<thead><tr><th>Service</th><th>URL</th><th>Description</th></tr></thead>
+			<tbody>
+			<tr><td>Web Terminal</td><td><a href="https://t3.viktorbarzin.me">t3.viktorbarzin.me</a></td><td>Browser shell on the shared workstation — kubectl, Vault &amp; your repos preinstalled (zero setup)</td></tr>
+			<tr><td>Kubernetes Dashboard</td><td><a href="https://k8s.viktorbarzin.me">k8s.viktorbarzin.me</a></td><td>Point-and-click view of your workloads, auto-authenticated (zero setup)</td></tr>
+			<tr><td>Access Portal</td><td><a href="https://k8s-portal.viktorbarzin.me">k8s-portal.viktorbarzin.me</a></td><td>This portal — onboarding, kubeconfig download, setup script</td></tr>
+			<tr><td>Vault</td><td><a href="https://vault.viktorbarzin.me">vault.viktorbarzin.me</a></td><td>Secrets &amp; dynamic credentials — <code>vault login -method=oidc</code></td></tr>
+			</tbody>
+		</table>
+	</section>
+
+	<section>
 		<h2>Core Services</h2>
 		<table>
 			<thead><tr><th>Service</th><th>URL</th><th>Description</th></tr></thead>
@@ -22,7 +35,7 @@
 			<tbody>
 			<tr><td>Nextcloud</td><td><a href="https://nextcloud.viktorbarzin.me">nextcloud.viktorbarzin.me</a></td><td>File storage, calendar, contacts</td></tr>
 			<tr><td>Immich</td><td><a href="https://immich.viktorbarzin.me">immich.viktorbarzin.me</a></td><td>Photo library (Google Photos alternative)</td></tr>
-			<tr><td>Vaultwarden</td><td><a href="https://vault.viktorbarzin.me">vault.viktorbarzin.me</a></td><td>Password manager</td></tr>
+			<tr><td>Vaultwarden</td><td><a href="https://vaultwarden.viktorbarzin.me">vaultwarden.viktorbarzin.me</a></td><td>Password manager</td></tr>
 			<tr><td>Paperless-ngx</td><td><a href="https://pdf.viktorbarzin.me">pdf.viktorbarzin.me</a></td><td>Document management</td></tr>
 			<tr><td>Navidrome</td><td><a href="https://music.viktorbarzin.me">music.viktorbarzin.me</a></td><td>Music streaming</td></tr>
 			<tr><td>Tandoor</td><td><a href="https://recipes.viktorbarzin.me">recipes.viktorbarzin.me</a></td><td>Recipe manager</td></tr>

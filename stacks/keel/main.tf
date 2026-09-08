@@ -38,7 +38,7 @@ resource "helm_release" "keel" {
   chart      = "keel"
   # Latest stable per `helm search repo keel/keel -l` 2026-05-16
   # (app version 0.21.1). 1.0.6 doesn't exist — verify before bumping.
-  version    = "1.2.0"
+  version = "1.2.0"
 
   # Atomic mitigates partial-deploy state. Keel itself is exempt from
   # auto-update (Kyverno mutate excludes the keel namespace), so it only
@@ -80,16 +80,15 @@ resource "helm_release" "keel" {
     persistence = {
       enabled = false
     }
-    # Slack notifications: post every rollout to the configured channel.
-    # Bot token from Vault (secret/viktor -> slack_bot_token). The Keel
-    # chart sets SLACK_BOT_TOKEN, SLACK_CHANNELS, etc. on the deployment
-    # from these values.
+    # Direct Slack notifications DISABLED (2026-07-02): at notificationLevel
+    # info Keel posted every rollout event to #general, and a stuck update
+    # (gotenberg blocked by require-trusted-registries) re-posted the same
+    # failure EVERY HOURLY POLL for days. Failure visibility now comes from
+    # the KeelUpdateFailing Loki-ruler alert (stacks/monitoring loki.tf),
+    # which rides the alert-on-change routing: one Slack notification plus
+    # the daily digest — never an hourly drip.
     slack = {
-      enabled  = true
-      botToken = data.vault_kv_secret_v2.viktor.data["slack_bot_token"]
-      channel  = "general"
-      # No approval flow — opt-out-pure means everything auto-rolls.
-      # If we ever introduce gated rollouts, set approvalsChannel here.
+      enabled = false
     }
     # Keel uses each watched Deployment's own imagePullSecrets to query
     # its registry. Forgejo creds (`registry-credentials`) are auto-synced

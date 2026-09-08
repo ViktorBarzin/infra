@@ -12,6 +12,7 @@
 | Headscale | OAuth2/OIDC | implicit consent |
 | Immich | OAuth2/OIDC | implicit consent |
 | Kubernetes | OAuth2/OIDC (public) | implicit consent |
+| Kubernetes (agent sessions) | OAuth2/OIDC (public) | implicit consent |
 | Kubernetes Dashboard | OAuth2/OIDC (confidential) | implicit consent |
 | linkwarden | OAuth2/OIDC | implicit consent |
 | Vault | OAuth2/OIDC | implicit consent |
@@ -25,19 +26,47 @@
 > expiring consent screen (re-shown every 4 weeks per app) only slowed
 > first-time signin.
 
+> **Kubernetes** (public client `kubernetes`, UI-created Feb 2026): what every
+> user's kubelogin kubeconfig authenticates with
+> (`scripts/t3-provision-users.sh`). **Described in Terraform since 2026-09-01**
+> (`stacks/rbac/authentik-kubernetes.tf`) with `import` blocks gated off by
+> `manage_kubernetes_oidc_app`; adoption plans `2 to import, 0 to change`, so it
+> is a deliberate human step rather than something a CI apply performs.
+>
+> **Kubernetes (agent sessions)** (public client `kubernetes-agent`, TF-managed in
+> the same file, 2026-09-01): the separate identity for agent contexts, design
+> step 4. The apiserver maps its claims under the `agent:` prefix, so an agent
+> reaches the API as `agent:<email>` in `agent:kubernetes-*` groups and matches
+> only the `agent:*` RBAC bindings. **The apiserver does not trust this issuer
+> yet** — that is `agent_oidc_enabled` in `stacks/rbac/modules/rbac/apiserver-oidc.tf`,
+> default false, performed per `docs/runbooks/apiserver-oidc-agent-identity.md`.
+>
 > **Kubernetes Dashboard** (TF-managed in `stacks/k8s-dashboard/authentik.tf`):
 > confidential client `k8s-dashboard`, built for seamless dashboard SSO via
-> oauth2-proxy. **Currently IDLE** — the apiserver rejects all OIDC tokens (see
-> `docs/plans/2026-06-04-k8s-dashboard-sso-design.md` §12), so the dashboard runs
-> on forward-auth + token-paste instead and oauth2-proxy is unwired. Kept for a
-> future SSO retry once apiserver OIDC is fixed.
+> oauth2-proxy. The **"apiserver rejects all OIDC tokens"** note here was true when
+> written and is no longer: verified 2026-09-01, the apiserver carries
+> `--authentication-config` with BOTH the `kubernetes` and `k8s-dashboard`
+> issuers, rendered by Terraform and byte-identical to the node (sha256
+> `bdefc260…97e16`, cross-checked against the apiserver's own
+> `apiserver_authentication_config_controller_last_config_info` metric). Whether
+> oauth2-proxy itself is wired up was not re-checked. Separately, there were zero
+> OIDC-authenticated audit events in the 24 h to 2026-09-01, so the path is
+> configured and unused.
 >
 > **admin-services-restriction** policy (TF-managed in
-> `stacks/authentik/admin-services-restriction.tf`, adopted 2026-06-04): gates the
-> 15 admin-only hostnames to `Home Server Admins`, with a carve-out admitting the
-> `kubernetes-*` RBAC groups to `k8s.viktorbarzin.me` (dashboard login page).
+> `stacks/authentik/admin-services-restriction.tf`): since infra#84 / ADR-0023
+> (2026-07-26) this is a **generated default-deny host→groups table**, no longer a
+> hardcoded admin-host list. It reads every forward-auth ingress's
+> `authentik.viktorbarzin.me/allowed-groups` annotation (declared via
+> `ingress_factory allowed_groups`, default `["Home Server Admins"]`) and grants iff
+> the user is in one of that host's groups; unlisted host / no match → **denied**. A
+> **break-glass bypass** admits `authentik Admins` / `Home Server Admins` before the
+> table (owner can't lock out). Non-default rows: `proxy`→Proxy Users, `k8s`→
+> kubernetes-* groups, `t3`→T3 Users, `chrome`/`chrome-fleet`→Chrome Users,
+> `postiz`→Postiz Users. Design:
+> `docs/plans/2026-07-26-authentik-forward-auth-group-authorization-design.md`.
 
-## Groups (9)
+## Groups (16)
 | Group | Parent | Superuser | Purpose |
 |-------|--------|-----------|---------|
 | Allow Login Users | -- | No | Parent group for login-permitted users |
@@ -45,10 +74,17 @@
 | Headscale Users | Allow Login Users | No | VPN access |
 | Home Server Admins | Allow Login Users | No | Server admin access |
 | Wrongmove Users | Allow Login Users | No | Real-estate app access |
-| kubernetes-admins | -- | No | K8s cluster-admin RBAC |
-| kubernetes-power-users | -- | No | K8s power-user RBAC |
+| kubernetes-admins | -- | No | K8s cluster-admin RBAC (group-keyed binding `oidc-group-kubernetes-admins` since 2026-09-01) |
+| kubernetes-power-users | -- | No | K8s power-user RBAC (read-only per ADR-0005) |
 | kubernetes-namespace-owners | -- | No | K8s namespace-owner RBAC |
 | Task Submitters | -- | No | Task submission access |
+| Proxy Users | -- | No | `proxy.viktorbarzin.me` remote browser ONLY (parentless — confined; ADR-0023) |
+| T3 Users | -- | No | `t3.viktorbarzin.me` Workstation |
+| TripIt Users | -- | No | TripIt app (OIDC binding, infra#82) |
+| Postiz Users | -- | No | `postiz.viktorbarzin.me` |
+| Chrome Users | -- | No | `chrome`/`chrome-fleet` shared browser (ADR-0023; deliberately tighter than admin) |
+| Forgejo Users | -- | No | Forgejo (OIDC binding) |
+| Public Guests | -- | No | anonymous `public` outpost auto-bind (`guest`) |
 
 ## Users (8 real)
 | Username | Name | Type | Groups |
@@ -63,10 +99,10 @@
 | kadir.tugan@gmail.com | Kadir | internal | Wrongmove Users |
 
 ## Login Sources
-- **Google** (OAuth) -- user matching by identifier
+- **Google** (OAuth) -- user matching by identifier. **Enrollment flow = `google-proxy-enrollment`** (TF: `stacks/authentik/google-social-signup.tf`), NOT `invitation-enrollment`. Invite-gated proxy self-signup: a `capture-proxy-invite` policy on the invite landing stashes "valid proxy invite seen" in the session-keyed Postgres cache (`proxy_invite_ok:<session_key>`, the only thing that survives the Google OAuth round-trip — the flow plan / itoken do not); `validate-proxy-invite` on the enrollment write-stage DENIES unless that flag is set, else stamps `attributes.proxy_only=true` + a username (from the Google email) and posts to Slack `#alerts` synchronously. A direct hit on `/source/oauth/login/google/` with no invite is denied. WHY this exists: an Authentik invitation can't ride through the source OAuth redirect, so the original invite-gated social signup never worked (memory #10194 residual). The source→flow linkage is set at runtime (source is not TF-managed).
 - **GitHub** (OAuth) -- user matching by email_link
 - **Facebook** (OAuth) -- user matching by email_link
-- All sources use `invitation-enrollment` as enrollment flow (new users require invitation)
+- GitHub/Facebook still use `invitation-enrollment` as enrollment flow (new users require invitation) — and are subject to the SAME broken-invite-through-OAuth limitation as Google was; only Google has the session-cache bridge so far.
 
 ## Authorization Flows
 - **Explicit consent** (`default-provider-authorization-explicit-consent`): Shows consent screen — no provider uses it since 2026-06-10

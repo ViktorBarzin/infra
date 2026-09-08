@@ -44,6 +44,24 @@ Success writes no secrets to the journal. The user's private log records `OK` in
 `~/.local/state/claude-auth-sync/sync.log`; journald receives the same status with
 `identifier=claude-auth-sync` for Loki alerting.
 
+## Opting a user out
+
+A roster member who has a devvm account but does not use Claude here should carry
+`claude_auth: false` in `scripts/workstation/roster.yaml`. If they are not using
+the devvm **at all**, prefer `parked: true` instead — it covers this timer plus
+`t3-serve@`, `playwright-mcp@` and `playwright-snapshot-refresh@`, which otherwise
+keep running for an unused account (`parked` implies `claude_auth: false`). Without it the per-user
+timer validates a credential that was never created, fails every ~6h, and raises
+`WorkstationClaudeAuthInvalid` continuously with nothing anyone can act on —
+`ancamilea` did exactly that from 2026-08-10 until the flag was added on 2026-08-16.
+
+The provisioner **disables** the timer while the flag is false rather than merely
+skipping it, because the hourly reconcile also runs against users who already have
+it enabled. Nothing else is removed: the account, clone, `t3-serve@` instance,
+scoped Vault token and Vault policy all stay, so setting the flag back to `true`
+re-enables the timer on the next reconcile. A user who then completes the login in
+step 3 above needs no other change.
+
 ## Automatic recovery
 
 `claude auth status` is not a sufficient health check: it can report logged in
@@ -80,8 +98,90 @@ sudo --preserve-env=VAULT_ADDR,VAULT_TOKEN /usr/local/bin/t3-provision-users
 ```
 
 Never copy another user's `.credentials.json` or scoped Vault token. Never restore
-the old shared `CLAUDE_CODE_OAUTH_TOKEN`; environment credentials outrank per-user
-login and would silently collapse all users onto one identity.
+a **shared** `CLAUDE_CODE_OAUTH_TOKEN` across users; environment credentials
+outrank per-user login and would silently collapse all users onto one identity.
+(A **per-user**, non-rotating setup-token tied to the user's OWN Enterprise
+identity is a different, sanctioned thing — see "Long-lived per-user token" below.)
+
+## Long-lived per-user token (heavy concurrent-agent users)
+
+The six-hourly renewal above assumes Claude owns refresh-token rotation in a
+single `~/.claude/.credentials.json`. A user who runs **many concurrent Claude
+sessions** (interactive tmux panes + their `t3-serve` instance + always-on
+`start-claude.sh` agents) breaks that assumption: when the shared access token
+expires, the processes refresh **simultaneously**, the OAuth server rotates the
+refresh token, and the losing writer persists an **empty** refresh token —
+logging the user out roughly every access-token lifetime (~8h). Re-issuing the
+credential does not help; the race recurs.
+
+The fix is a **per-user, long-lived setup-token** (`sk-ant-oat01-…`, ~1y,
+**non-rotating**). With `CLAUDE_CODE_OAUTH_TOKEN` set, Claude uses it directly and
+never touches `.credentials.json` — so there is nothing to race on. This is the
+user's OWN Enterprise identity (scope `user:inference`; local MCP servers are
+client-side and unaffected), stored only in their OWN Vault path — **NOT** the
+forbidden shared token, and it never crosses OS users.
+
+**Enable it (one-time, per user):**
+
+1. The user mints their own token (interactive Enterprise SSO):
+
+   ```bash
+   claude setup-token        # opens an SSO URL; paste the code back -> prints sk-ant-oat01-…
+   ```
+
+2. An admin stores it in that user's Vault path (MERGE, never `kv put` — siblings
+   like `claude_ai_oauth_json` / `vaultwarden_*` must survive):
+
+   ```bash
+   vault kv patch -method=rw secret/workstation/claude-users/<os-user> \
+     setup_token=sk-ant-oat01-…
+   ```
+
+3. Materialize + activate (or just wait ≤6h for the timer):
+
+   ```bash
+   systemctl start claude-auth-sync@<os-user>.service
+   ```
+
+   `claude-auth-sync` writes `~/.config/claude-auth-sync/claude-oauth.env`
+   (`CLAUDE_CODE_OAUTH_TOKEN=…`, mode 0600) and, while a token is present, **skips**
+   the rotating-credential validate/backup/restore (so no false
+   `WorkstationClaudeAuthInvalid`). `start-claude.sh` and `t3-serve@.service` load
+   that env file.
+
+   **Already-running sessions cut over WITHOUT a restart.** Processes launched
+   before activation never see the env var — they authenticate from
+   `~/.claude/.credentials.json`, which claude re-reads at access-token expiry.
+   The sync therefore also backfills the setup-token into that file as a
+   far-future `accessToken` (claude accepts an `sk-ant-oat01` there; proven live
+   2026-07-07). Pre-existing agents pick it up at their next natural credential
+   re-read, and a legacy writer that clobbers the file (the refresh-race wipe
+   pattern) self-heals on the next 6-hourly sync. Idempotent — no rewrite while
+   the file already carries the token.
+
+   **Interactive shells** load the token too, via `/etc/profile.d/25-claude-oauth-token.sh`
+   (installed by `setup-devvm.sh`). Note: Debian's `/etc/zsh/zprofile` does **not**
+   source `/etc/profile`, so that snippet is also sourced from `/etc/zsh/zshenv`
+   (read on every zsh invocation) — otherwise a plain interactive `claude` in a zsh
+   terminal would miss the token and print `Not logged in · Please run /login` even
+   while the user's agents run fine (their env is set by `start-claude.sh`). Both are
+   per-user (`$HOME`), guarded, and a no-op for users without a setup-token.
+
+   **Backup / don't-lose-it:** the `setup_token` lives in the user's Vault path
+   `secret/workstation/claude-users/<user>`; it is (a) written with `kv patch
+   -method=rw` (MERGE — never clobbers `claude_ai_oauth_json` / `vaultwarden_*`
+   siblings), (b) versioned by Vault KV v2 with `max_versions=50` on these paths
+   (an accidental overwrite is recoverable via `vault kv get -version=<n>` / `kv
+   rollback`), and (c) captured in the weekly `vault-raft-backup` snapshot (→ NFS →
+   Synology offsite). Once a `setup_token` is active, `claude-auth-sync` stops the
+   6-hourly write to this path, so the token version stays stable.
+
+**Disable it:** clear the field (`vault kv patch -method=rw
+secret/workstation/claude-users/<os-user> setup_token=""`) — the next sync removes
+the env file and the user reverts to the per-user SSO credential flow.
+
+**Rotate before expiry:** setup-tokens expire 1y after mint. Re-mint (step 1) and
+re-store (step 2); the env file refreshes on the next sync.
 
 ## Verification
 

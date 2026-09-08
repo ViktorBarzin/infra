@@ -1,4 +1,16 @@
-# THE single source of truth for the devvm Workstation lifecycle (onboard -> offboard).
+# The devvm Workstation POLICY TABLE, keyed by user.
+#
+# WHO has access is decided in Authentik's `T3 Users` group (2026-08-17), not here:
+# .woodpecker/t3-membership-sync.yml reconciles the rows below to match that group
+# every 15 minutes — adding a floor-tier row (namespace-owner) for a new member and
+# commenting out the row of anyone who left. So a row for someone outside the group
+# is inert, and DELETING a row does not remove access: it resets that person to the
+# floor and the sync writes the row back. Remove access by removing them from the
+# group.
+#
+# What lives here is everything a group membership cannot say — tier, namespaces,
+# k8s_user, code layout, repos, parked — because `tier` is a privilege grant that is
+# reviewed in a diff and cross-checked against Vault k8s_users.
 # Consumed by roster_engine.py (derive/validate) + t3-provision-users.sh (apply).
 #
 # os_user (the map KEY, pinned) -> authentik_user . k8s_user . tier . namespaces
@@ -18,12 +30,68 @@
 #                                   viktor/<name> with the user's own PAT.
 #                                   A single-layout ~/code is auto-migrated.
 #
+# Optional per-user parking (all tiers):
+#   parked: false (default) - normal: all per-user daemons run
+#   parked: true            - the account and everything on disk STAY, but none
+#                             of the per-user daemons run: t3-serve@,
+#                             playwright-mcp@, playwright-snapshot-refresh@ and
+#                             claude-auth-sync@ (parked implies claude_auth:
+#                             false). For someone who has an account here but is
+#                             not using the box. The provisioner DISABLES these
+#                             rather than skipping them, so an already-running
+#                             instance actually stops. Fully reversible: set back
+#                             to false and the next reconcile restores all of it.
+#
+# Optional per-user Claude auth (all tiers):
+#   claude_auth: true (default) - enable claude-auth-sync@<user>.timer, which
+#                                 validates the user's own Claude credential
+#                                 every ~6h and backs it up to their Vault path
+#   claude_auth: false          - do NOT run that timer for this user. Use when
+#                                 someone has an account here but does not use
+#                                 Claude on this box: the timer would validate a
+#                                 credential that was never created, fail every
+#                                 run, and raise WorkstationClaudeAuthInvalid
+#                                 forever with nothing to fix. Reversible — the
+#                                 provisioner disables the timer while false and
+#                                 re-enables it when set back to true.
+#
 # wizard IS listed (as admin): the reconcile REGENERATES /etc/ttyd-user-map +
 # dispatch.json from this file, so omitting him would drop his t3 instance. The
 # provisioner skips account/group/clone mutations for already-existing users, so
 # listing him is safe (he keeps his unlocked tree + cluster-admin untouched).
+#
+# ONE THING ONBOARDING NEEDS THAT IS NOT IN THIS FILE (2026-08-17): the web
+# terminal's per-user sudo grant, terminal-lobby's devvm/sudoers.d-ttyd-users,
+# is hand-maintained there by decision — this file says who exists, that file
+# says which binaries may run as them. A user added here reaches the lobby and
+# sees their sidebar, but every terminal attach fails until that file gains their
+# line and terminal-lobby is deployed. The identity map itself is generated from
+# here and from nowhere else: terminal-lobby carried a second copy until
+# 2026-08-17, which its deploy installed over the generated one.
 users:
   wizard:    {authentik_user: vbarzin,     k8s_user: wizard, tier: admin}                                          # base config author + cluster-admin
   emo:       {authentik_user: emil.barzin, k8s_user: emo,    tier: power-user}                                     # NET-NEW k8s_users entry (add as power-user before provisioning)
-  ancamilea: {authentik_user: ancaelena98, k8s_user: anca,   tier: namespace-owner, namespaces: [plotting-book], code_layout: workspace, repos: [tripit]}   # ALREADY provisioned in-cluster -- assert, don't re-create
+# ancamilea: {authentik_user: ancaelena98, k8s_user: anca,   tier: namespace-owner, namespaces: [plotting-book], code_layout: workspace, repos: [tripit], parked: true}
+  #  REMOVED 2026-08-17 (Viktor: "remove anca from t3 users") -- the reversible
+  #  cut from docs/runbooks/offboard-user.md part A1, one step past the parking of
+  #  2026-08-16. She had an account here, never used it, and never completed the
+  #  one-time Claude SSO. Her line is left COMMENTED rather than deleted so
+  #  bringing her back is one edit; the reconcile treats commented and absent
+  #  identically.
+  #
+  #  What this removal does, automatically, on the next reconcile: drops her from
+  #  /etc/ttyd-user-map + /etc/t3-serve/dispatch.json, so t3-dispatch answers 403
+  #  and the web terminal no longer knows the identity. Her Authentik "T3 Users"
+  #  membership went in the same commit (stacks/authentik/t3-users.tf) -- that
+  #  group was her only door to this box, since she is not in "Home Server
+  #  Admins". Her idle `test` tmux session was killed and dropped from the
+  #  restore manifest.
+  #
+  #  What is deliberately NOT done (the destructive half, still available):
+  #  the account, /home/ancamilea, both workspace clones, her sticky T3 port and
+  #  her scoped Vault token/policy all STAY; login is not locked and her Forgejo
+  #  access is untouched. roster_engine.offboard_plan computes `userdel_archive`
+  #  for a user who leaves this file, and the provisioner NEVER applies it.
+  #  Her cluster side is separate and unchanged: k8s_user `anca`, tier
+  #  namespace-owner, namespace plotting-book, still in Vault k8s_users.
 # gheorghe:  {authentik_user: vabbit81,    k8s_user: vabbit81, tier: namespace-owner, namespaces: [vabbit81]}      # already a cluster ns-owner; uncomment to give him a devvm workstation

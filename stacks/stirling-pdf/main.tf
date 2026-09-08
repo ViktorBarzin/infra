@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "stirling-pdf" {
     name = "stirling-pdf"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -62,6 +62,27 @@ resource "kubernetes_deployment" "stirling-pdf" {
     labels = {
       app  = "stirling-pdf"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "stirling-pdf"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
+    }
+    # v1→v2 upgrade (2026-07-16): auto-track latest SAFELY via the semver-ordered
+    # `major` policy — NOT `force`. force ignores semver ordering and rolled
+    # paperless-ngx 2.20.15→1.5.0 within minutes (2026-07-14, memory #9838); it
+    # is house-banned on upstream multi-tag repos and stirlingtools/stirling-pdf
+    # is exactly that. `major` auto-takes every HIGHER semver (incl. future
+    # majors), is monotonic so it can never roll backward, and performs the
+    # initial 0.33.1→2.x jump itself. These keys are intentionally OUT of
+    # ignore_changes below so TF reconciles the live patch→major flip; Kyverno's
+    # +(keel.sh/policy)=patch is add-if-absent, so this explicit value wins.
+    annotations = {
+      "keel.sh/policy"       = "major"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/pollSchedule" = "@every 1h"
     }
   }
   spec {
@@ -82,20 +103,75 @@ resource "kubernetes_deployment" "stirling-pdf" {
       }
       spec {
         container {
-          image = "stirlingtools/stirling-pdf:latest"
+          # Semver seed for Keel's `major` policy (recreate-correct only — Keel
+          # owns the LIVE tag via ignore_changes and bumps 0.33.1→this→newer).
+          # `latest` == v2 today; a semver tag (not `:latest`) is required so
+          # the semver policy has an ordered base to compare on a fresh recreate.
+          image = "stirlingtools/stirling-pdf:2.13.2"
           name  = "stirling-pdf"
+          # v2's entrypoint DYNAMICALLY sizes the JVM from the container memory
+          # LIMIT: at 1Gi it caps MaxMetaspaceSize=128m, too small for v2's class
+          # graph → OutOfMemoryError: Metaspace → -XX:+ExitOnOutOfMemoryError
+          # crashloop (verified live 2026-07-16). At 2Gi it sets MaxMeta=192m and
+          # boots in ~28s.
+          #
+          # Auth (2026-07-16): Stirling's OWN login, LOCAL username/password
+          # ONLY. OIDC/SSO was attempted but Stirling PAYWALLS OAuth2 (Server
+          # tier, $99/mo) — the free tier blocked auto-user-creation ("no paid
+          # license for auto-creation" → login loop), so SSO was removed
+          # (Viktor, zero-cost rule). Existing local accounts live in the
+          # embedded H2 DB (/configs/stirling-pdf-DB-*.mv.db). Ingress auth="app":
+          # Stirling's login is the single gate (Cloudflare + CrowdSec front it;
+          # anti-AI on). Probe stays on the auth-free /api/v1/info/status.
+          env {
+            name  = "SECURITY_ENABLELOGIN"
+            value = "true"
+          }
+          env {
+            name  = "SECURITY_LOGINMETHOD"
+            value = "normal" # local username/password only (SSO is paywalled)
+          }
           resources {
+            # Tier-4-aux Burstable (request < limit); CPU request only (no
+            # cluster-wide CPU limits). 2Gi is the metaspace floor for v2, not
+            # slack — do not drop below it. Watch with krr; bump if heavy
+            # OCR/office-conversion pushes past it.
             requests = {
-              cpu    = "25m"
-              memory = "1536Mi"
+              cpu    = "250m"
+              memory = "768Mi"
             }
             limits = {
-              memory = "1536Mi"
+              memory = "2Gi"
             }
           }
 
           port {
             container_port = 8080
+          }
+          # JVM cold-start on a Sablier wake is ~15-25s. Without probes the pod
+          # reports Ready the instant the process starts, so Sablier forwards
+          # the held request into a not-yet-serving JVM → 502. startup gates a
+          # ~120s boot budget; readiness keeps the pod out of the Service until
+          # it serves. Probe /api/v1/info/status — the auth-free health endpoint
+          # (/ is login-gated on the standard image; status stays 200 regardless).
+          startup_probe {
+            http_get {
+              path = "/api/v1/info/status"
+              port = 8080
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 3
+            failure_threshold     = 40
+            timeout_seconds       = 3
+          }
+          readiness_probe {
+            http_get {
+              path = "/api/v1/info/status"
+              port = 8080
+            }
+            period_seconds    = 10
+            timeout_seconds   = 3
+            failure_threshold = 3
           }
           volume_mount {
             name       = "configs"
@@ -114,14 +190,15 @@ resource "kubernetes_deployment" "stirling-pdf" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      # keel.sh/policy|trigger|pollSchedule are NOT ignored here — TF owns them
+      # so the explicit `major` policy above reconciles over Kyverno's
+      # add-if-absent `patch` default and flips the live deployment (2026-07-16).
       metadata[0].annotations["keel.sh/match-tag"],
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -148,8 +225,15 @@ resource "kubernetes_service" "stirling-pdf" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "stirling-pdf"
+  }
+  # auth = "app": Stirling's own local login (enableLogin=true, loginMethod=normal)
+  # is the gate. SSO/OIDC was dropped — Stirling paywalls OAuth2 ($99/mo), blocked
+  # on the free tier. Cloudflare + CrowdSec front the login page; anti-AI on.
+  auth            = "app"
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.stirling-pdf.metadata[0].name
   name            = "stirling-pdf"

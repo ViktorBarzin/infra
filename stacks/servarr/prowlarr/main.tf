@@ -37,11 +37,12 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 }
 
 module "nfs_downloads_host" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-prowlarr-downloads-host"
-  namespace  = "servarr"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/servarr/downloads"
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "servarr-prowlarr-downloads-host"
+  namespace          = "servarr"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/servarr/downloads"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "prowlarr" {

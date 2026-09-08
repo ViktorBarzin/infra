@@ -29,7 +29,12 @@ resource "kubernetes_namespace" "authentik" {
     labels = {
       tier                               = var.tier
       "resource-governance/custom-quota" = "true"
-      "keel.sh/enrolled"                 = "true"
+      # Keel intentionally NOT enrolled: server+worker run our custom overlay image
+      # (ghcr.io/viktorbarzin/authentik-server — see values.yaml global.image +
+      # stacks/authentik/Dockerfile). The tag is pinned explicitly and bumped
+      # manually (rebuild the overlay FROM the new authentik version + repoint), so
+      # a Keel auto-bump would only risk re-introducing the upstream tag / the
+      # 2026-06-10 downgrade-boot-storm class. Re-enroll only if the overlay is dropped.
     }
   }
   lifecycle {
@@ -62,7 +67,10 @@ resource "helm_release" "authentik" {
   chart      = "authentik"
   # version    = "2025.10.3"
   # version    = "2025.12.4"
-  version = "2026.2.2"
+  # version    = "2026.2.2"
+  # version    = "2026.5.6"
+  # version    = "2026.8.0"
+  version = "2026.8.1"
   atomic  = true
   timeout = 6000
 
@@ -82,6 +90,11 @@ module "ingress" {
   service_name     = "goauthentik-server"
   tls_secret_name  = var.tls_secret_name
   anti_ai_scraping = false
+  # Swap the shared 10/50 default limiter for a dedicated 100/1000 carve-out:
+  # the login SPA + flow-executor API burst on a cold load otherwise 429s into
+  # a blank screen (see traefik middleware "authentik-rate-limit").
+  skip_default_rate_limit = true
+  extra_middlewares       = ["traefik-authentik-rate-limit@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Authentik"
@@ -100,9 +113,11 @@ module "ingress-outpost" {
   # Authentik forward-auth outpost callback path — protecting this with
   # forward-auth would loop the outpost back onto itself.
   # auth = "none": Authentik outpost callback path for forward-auth flow; protecting with forward-auth creates circular dependency.
-  auth             = "none"
-  namespace        = kubernetes_namespace.authentik.metadata[0].name
-  name             = "authentik-outpost"
+  auth      = "none"
+  namespace = kubernetes_namespace.authentik.metadata[0].name
+  name      = "authentik-outpost"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   host             = "authentik"
   service_name     = "ak-outpost-authentik-embedded-outpost"
   port             = 9000
@@ -140,14 +155,21 @@ module "ingress-static" {
   # Same-host path carve-out of the public authentik UI ingress above, only
   # adding the cache-headers middleware for the static asset prefix.
   # auth = "none": versioned static assets of the (already public) Authentik login UI.
-  auth              = "none"
-  namespace         = kubernetes_namespace.authentik.metadata[0].name
-  name              = "authentik-static"
-  host              = "authentik"
-  service_name      = "goauthentik-server"
-  ingress_path      = ["/static"]
-  tls_secret_name   = var.tls_secret_name
-  anti_ai_scraping  = false
-  homepage_enabled  = false
-  extra_middlewares = ["authentik-static-cache-headers@kubernetescrd"]
+  auth             = "none"
+  namespace        = kubernetes_namespace.authentik.metadata[0].name
+  name             = "authentik-static"
+  host             = "authentik"
+  service_name     = "goauthentik-server"
+  ingress_path     = ["/static"]
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false
+  homepage_enabled = false
+  # /static serves ALL the SPA JS/CSS chunks; the default 10/50 limiter 429s the
+  # cold-load fan-out → blank screen. Dedicated 100/1000 carve-out (note the two
+  # namespaces: cache-headers is in ns authentik, rate-limit is in ns traefik).
+  skip_default_rate_limit = true
+  extra_middlewares = [
+    "authentik-static-cache-headers@kubernetescrd",
+    "traefik-authentik-rate-limit@kubernetescrd",
+  ]
 }

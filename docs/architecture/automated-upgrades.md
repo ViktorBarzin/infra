@@ -128,7 +128,7 @@ The agent handles all three version patterns in Terraform:
 
 - **Slack**: All upgrade events reported (start, success, failure, rollback)
 - **Git**: Detailed commit messages with changelog summaries, risk level, backup status
-- **DIUN Slack**: Independent Slack channel for raw version detection (separate from upgrade agent)
+- **DIUN Slack**: REMOVED 2026-07-02 (per-tag @channel pings in #image-updates; human cadence is the weekly upgrade report). The n8n webhook feed to the upgrade agent is unchanged.
 
 ## Bulk Upgrades
 
@@ -262,8 +262,8 @@ envsubst on /template/job-template.yaml | kubectl apply -f -
   │ spawns Job 0 = k8s-upgrade-preflight-<target_version>
   ▼
 
-Job 0 — preflight       (pinned: first worker)
-Job 1 — master upgrade  (pinned: first worker)     drains k8s-master
+Job 0 — preflight       (pinned: first worker = node1; +nvidia.com/gpu tol)
+Job 1 — master upgrade  (pinned: first worker = node1; +nvidia.com/gpu tol)  drains k8s-master
 Job 2..N — worker       (pinned: k8s-master)       drains each worker still off-target
                                                    ← control-plane toleration; one Job
                                                      per worker, enumerated live from
@@ -316,9 +316,9 @@ each Job's pod and its drain target are always different nodes.
   + separately-tracked image; CoreDNS is pinned off Keel via `keel.sh/policy=never`).
   See the runbook's "CoreDNS is NOT upgraded by kubeadm here".
 - **Four Upgrade Gates alerts**:
-  - `K8sVersionSkew` — kubelet/apiserver `gitVersion` count >1 for 30m. Catches a half-done rollout.
-  - `EtcdPreUpgradeSnapshotMissing` — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight failing silently.
-  - `K8sUpgradeStalled` — `k8s_upgrade_in_flight==1 && time()-k8s_upgrade_started_timestamp > 5400` for 5m. Catches a chain Job dying without spawning its successor.
+  - `K8sVersionSkew` — `count(count by (kubelet_version)(kube_node_info)) > 1 unless on() (<chain job>.active>0)` for 15m. Catches a half-done rollout **at rest**. Rebuilt 2026-07-25 off `kube_node_info` (the old `kubernetes_build_info{job=~"kubernetes-nodes|kubernetes-apiservers"}` source was never scraped → the alert could never fire, RC5); the `unless active>0` guard suppresses it only during a genuinely-running phase.
+  - `EtcdPreUpgradeSnapshotMissing` — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight failing silently. (Deliberately NOT given the live-Job guard — its snapshot runs while the master Job is Active.)
+  - `K8sUpgradeStalled` — `k8s_upgrade_in_flight==1 && time()-started > 14400 && sum(<chain job>.active)>0` for 5m. Catches a chain Job **genuinely running** >4h. Hardened 2026-07-25 with the live-Job guard + 90m→4h — the old latch-only expr fired forever on any leaked `in_flight=1` (also blocking kured); a leaked latch is auto-cleared by the detection reconcile within 12h.
   - `K8sUpgradeChainJobFailed` — `(kube_job_status_failed{namespace="k8s-upgrade",job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*",reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0) unless on() (k8s_upgrade_blocked == 1)` for 15m (warning). Catches a phase Job that terminally failed **before `in_flight` was set** (the preflight gates exit pre-metric) — invisible to the two `in_flight`-based alerts above; this was the blind spot behind the 5-day 1.34.9 preflight wedge. Reason-scoped so a retry-success doesn't false-positive (and so it doesn't needlessly block kured). The `unless k8s_upgrade_blocked == 1` clause (2026-06-21) excludes a deliberate compat-gate refusal (owned by `K8sUpgradeBlocked`) so a block doesn't double-fire as a wedge.
 - **Pushgateway metrics**:
   - `k8s_upgrade_in_flight` (set in preflight, cleared in postflight)
@@ -326,6 +326,7 @@ each Job's pod and its drain target are always different nodes.
   - `k8s_upgrade_started_timestamp` (set in preflight; used by `K8sUpgradeStalled`)
   - `k8s_upgrade_available{kind,running,target}` (pushed by detection CronJob)
   - `k8s_version_check_last_run_timestamp` (staleness watchdog)
+- **Leaked-latch reconcile** (2026-07-25): the detection CronJob, at the start of every run, clears a stale `k8s_upgrade_in_flight=1` (no active chain Job AND >12h) by DELETEing the Pushgateway `k8s-version-upgrade` group + stale ns annotations + terminal chain Jobs. Ground-truth via `kubectl`, so it survives a SIGKILL that a shell `trap` cannot. The pipeline's own criticals (`K8sUpgradeStalled`, `EtcdPreUpgradeSnapshotMissing`) are also in the preflight halt-on-alert ignore-list so a still-firing self-emitted critical can't deadlock the very preflight that would clear it (RC3).
 
 ### Source of truth
 
@@ -345,7 +346,7 @@ The cluster has a single control plane (no HA). A failed `kubeadm upgrade apply`
 
 - **Mandatory etcd snapshot before every run** (even patch). Recovery point if master breaks.
 - **Halt-on-alert before every drain**. Reuses the same Prometheus ignore-list regex kured uses — any unrelated cluster-health alert blocks. Three gate alerts catch upgrade-specific half-states (version skew, missing snapshot, stalled chain).
-- **Job pinning eliminates self-preemption**. Each Job's pod runs on a node that is NOT its drain target: the master-drain Job runs on the first worker; every worker-drain Job runs on k8s-master (already upgraded, control-plane toleration). The worker set is enumerated live from `kubectl get nodes`, so new nodes are covered with no script change; SSH targets are node InternalIPs (no DNS dependency).
+- **Job pinning eliminates self-preemption**. Each Job's pod runs on a node that is NOT its drain target: the master-drain Job runs on the first worker; every worker-drain Job runs on k8s-master (already upgraded, control-plane toleration). The worker set is enumerated live from `kubectl get nodes`, so new nodes are covered with no script change; SSH targets are node InternalIPs (no DNS dependency). **The first worker is k8s-node1, which carries `nvidia.com/gpu:NoSchedule` (flipped from PreferNoSchedule 2026-07-19, code-j3tx), so the preflight and master-drain Jobs also carry a matching GPU toleration — without it they hang Pending indefinitely (fixed 2026-07-24 after a ~5-day preflight stall surfaced by a cluster health check).**
 - **Sequential workers with 10-min inter-node soak**. Same risk-bounding as the 24h OS-reboot soak, but tightened because kubelet failures surface within minutes — not hours.
 - **Master upgrade goes first, workers last**. If master breaks, the cluster is already degraded so further worker upgrades would just delay recovery. By upgrading master first, we either succeed (workers can roll afterward) or fail loud (operator triages before any worker is touched).
 - **No auto-rollback**. kubeadm doesn't support clean downgrade; the snapshot + manual apt rollback in the runbook is the recovery path.

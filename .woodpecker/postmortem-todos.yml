@@ -28,6 +28,7 @@ steps:
         from_secret: slack_webhook
     commands:
       - apk add --no-cache curl
-      - "curl -sf -X POST https://hooks.slack.com/services/$SLACK_WEBHOOK -H 'Content-Type: application/json' -d '{\"text\": \"Post-mortem TODO pipeline completed\"}' || true"
+      - "curl -sf -X POST https://hooks.slack.com/services/$SLACK_WEBHOOK -H 'Content-Type: application/json' -d '{\"text\": \":red_circle: Post-mortem TODO pipeline FAILED\"}' || true"
     when:
-      - status: [success, failure]
+      # Failure-only (Viktor 2026-07-02): CI notifies on failed runs only.
+      - status: [failure]

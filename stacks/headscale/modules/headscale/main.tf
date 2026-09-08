@@ -91,6 +91,15 @@ resource "kubernetes_deployment" "headscale" {
 
     annotations = {
       "reloader.stakater.com/search" = "true"
+
+      # Codified 2026-08-03 (was live-only drift that every apply wanted to
+      # strip). headscale tracks the upstream multi-tag juanfont/headscale repo,
+      # so the policy MUST stay `patch` — `force` deploys whatever tag a Keel
+      # poll happens to pick regardless of semver order (that is what rolled
+      # paperless-ngx 2.20.15 -> 1.5.0, memory #9838).
+      "keel.sh/policy"       = "patch"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/pollSchedule" = "@every 1h"
     }
   }
   spec {
@@ -116,8 +125,8 @@ resource "kubernetes_deployment" "headscale" {
       }
       spec {
         container {
-          image = "headscale/headscale:0.28.0"
-          # image   = "headscale/headscale:0.28.0-debug" # -debug is for debug images
+          image = "headscale/headscale:0.29.3"
+          # image   = "headscale/headscale:0.29.3-debug" # -debug is for debug images
           name    = "headscale"
           command = ["headscale", "serve"]
 
@@ -259,7 +268,10 @@ resource "kubernetes_deployment" "headscale" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [spec[0].template[0].spec[0].dns_config,
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[1].image, # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 resource "kubernetes_service" "headscale" {
@@ -368,15 +380,17 @@ resource "kubernetes_manifest" "derp_ingress_route" {
 }
 
 module "ingress-ui" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  auth            = "required"
-  namespace       = kubernetes_namespace.headscale.metadata[0].name
-  name            = "headscale-ui"
-  host            = "headscale"
-  service_name    = "headscale"
-  port            = 80
-  ingress_path    = ["/web"]
-  tls_secret_name = var.tls_secret_name
+  source    = "../../../../modules/kubernetes/ingress_factory"
+  auth      = "required"
+  namespace = kubernetes_namespace.headscale.metadata[0].name
+  name      = "headscale-ui"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "headscale"
+  service_name     = "headscale"
+  port             = 80
+  ingress_path     = ["/web"]
+  tls_secret_name  = var.tls_secret_name
 }
 
 resource "kubernetes_service" "headscale-server" {
@@ -392,6 +406,12 @@ resource "kubernetes_service" "headscale-server" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type                    = "LoadBalancer"
     external_traffic_policy = "Cluster"
@@ -427,6 +447,21 @@ resource "kubernetes_config_map" "headscale-config" {
     }
   }
 
+  # All three come from Vault (secret/platform), so their contents are not
+  # visible here. One arrangement in them is easy to undo by accident:
+  #
+  #   The home DERP region (999) is declared BY HAND in derp.yaml, with
+  #   automatically_add_embedded_derp_region set to false. DERP itself stays on
+  #   443 through Traefik, but the region's stunport points at coturn (3478),
+  #   not at headscale's own embedded STUN (3479). Measured 2026-08-30: the
+  #   embedded STUN answers nothing on any path — the LB IP, the pod IP from
+  #   two different nodes including its own, and the public IP via the WAN
+  #   hairpin all time out — while coturn answers correctly and, because it
+  #   sits on a dedicated LB IP with ETP=Local, reports the real client
+  #   address instead of a cluster node IP.
+  #
+  # Turning the auto-add flag back on would silently replace the hand-written
+  # region with one pointing back at 3479 and break NAT traversal again.
   data = {
     "config.yaml" = var.headscale_config
     "acl.yaml"    = var.headscale_acl

@@ -1,21 +1,36 @@
-# `homelab vault` onboarding (per-user Vaultwarden access)
+# `homelab vault` onboarding (Vaultwarden access + `vault kv` infra secrets)
 
 ## Scope
 
-`homelab vault` gives each devvm roster user no-HITL access to **their own**
-Vaultwarden vault (and any Organization Collection shared with their account)
-from the command line. It shells out to the official `bw` CLI; the user's
-Vaultwarden credentials live only in their isolated Vault path
-`secret/workstation/claude-users/<os-user>` and are decrypted as that OS user —
-the admin never sees them.
+`homelab vault` fronts **two unrelated secret stores** — the name collides, so
+the command keeps them clearly separated:
+
+- **Vaultwarden** — your personal *password manager* (logins/passwords/TOTP).
+  The verbs below give each devvm roster user no-HITL access to **their own**
+  Vaultwarden vault (and any Organization Collection shared with their account).
+  It shells out to the official `bw` CLI; the user's Vaultwarden credentials live
+  only in their isolated Vault path `secret/workstation/claude-users/<os-user>`
+  and are decrypted as that OS user — the admin never sees them.
+- **HashiCorp Vault / OpenBao** — the homelab *infra* secrets store (the
+  `secret/…` KV mount at `vault.viktorbarzin.me`), under `homelab vault kv`.
+  These use the caller's **own** Vault token (`vault login -method=oidc` →
+  `~/.vault-token`), **not** the scoped Vaultwarden token (which only reads the
+  `claude-users/<user>` path); access is whatever your Vault policy grants.
 
 ```text
+# Vaultwarden (password manager)
 homelab vault setup             one-time: store VW email + master password + API key
 homelab vault status            configured / unlocked / reachable (no secrets)
 homelab vault list [--search Q]  item names (no secrets)
 homelab vault get <name> [--field password|username|uri|notes|totp] [--json]
+homelab vault get <name> --all  all fields (incl. custom) as JSON; pipe it (| jq)
 homelab vault code <name>       current TOTP code
 homelab vault lock              lock / log out the local bw session
+
+# HashiCorp Vault / OpenBao (infra secrets; uses your own OIDC token)
+homelab vault kv get <path> [--field K]   read an infra KV secret
+homelab vault kv list <path>              list sub-paths
+homelab vault kv put <path> <key>         write one key (value via stdin; merges)
 ```
 
 ## How auth works (why a non-admin can use it)
@@ -23,18 +38,28 @@ homelab vault lock              lock / log out the local bw session
 `homelab vault` runs `vault` as the calling user. It resolves a Vault token in
 this order (`ensureVaultToken`, `cli/cmd_vault.go`):
 
-1. an explicit `$VAULT_TOKEN`, then
-2. a native `~/.vault-token` (what admins carry), then
-3. the per-user **scoped token** that `claude-auth-sync` maintains at
-   `~/.config/claude-auth-sync/vault-token` (policy `workstation-claude-<user>`).
+1. an explicit `$VAULT_TOKEN` (a deliberate override), then
+2. the per-user **scoped token** that `claude-auth-sync` maintains at
+   `~/.config/claude-auth-sync/vault-token` (policy `workstation-claude-<user>`), then
+3. a native `~/.vault-token` (admins who carry one; non-admins usually don't).
+
+**The scoped token deliberately beats `~/.vault-token`.** This tool only touches
+your own `secret/workstation/claude-users/<user>` path, and a power-user who ran
+`vault login -method=oidc` carries a read-only `~/.vault-token` (capability
+`deny` on that path); letting it win would shadow the scoped token and fail every
+op with `403 permission denied` (this is exactly what bit emo, 2026-06-28). The
+CLI also **self-defaults `VAULT_ADDR`** to `https://vault.viktorbarzin.me` when
+unset, so it works from non-login shells (tmux panes, AFK agent subprocesses)
+that never sourced `/etc/environment` — otherwise every `vault` child hits the
+`127.0.0.1:8200` default and fails `connection refused` (exit 2).
 
 That scoped policy grants exactly `create`/`read`/`update` on the user's own
 `secret/workstation/claude-users/<user>` path — no `patch` capability — so the
 tool writes with `vault kv patch -method=rw` (read-modify-write), falling back to
 `kv put` only when the path does not exist yet. This preserves the
 `claude_ai_oauth_json` key that [claude-auth-sync](claude-auth-renew-workstation.md)
-co-locates there. (Both bugs that previously made this admin-only were fixed
-2026-06-27.)
+co-locates there. (The admin-only bugs were fixed 2026-06-27; the
+`VAULT_ADDR`/token-precedence bugs above were fixed 2026-06-28.)
 
 ## Prerequisites (per user)
 
@@ -62,8 +87,9 @@ bw --version            # confirm /usr/bin/bw resolves
 After landing a `cli/` change, rebuild the binary so users pick it up:
 
 ```bash
+# version is stamped from cli/VERSION, exactly as setup-devvm.sh does it
 sudo bash -c 'cd /home/wizard/code/infra/cli && \
-  go build -ldflags "-X main.version=$(git -C /home/wizard/code/infra describe --tags --always 2>/dev/null || echo dev)" \
+  go build -ldflags "-X main.version=$(cat VERSION 2>/dev/null || echo dev)" \
   -o /usr/local/bin/homelab .'
 ```
 
@@ -119,3 +145,20 @@ VAULT_TOKEN="$(sudo cat /home/<user>/.config/claude-auth-sync/vault-token)" \
 sudo -u <user> -i bw --version        # /usr/bin/bw resolves for the user
 sudo -u <user> -i homelab vault status
 ```
+
+## Troubleshooting
+
+**`homelab vault setup` (or any verb) fails with `exit status 2`** — older
+binaries swallowed the underlying `vault` error; the message now includes it.
+Two historical causes (both fixed in-CLI 2026-06-28, kept here for diagnosis):
+
+- `... connection refused` to `127.0.0.1:8200` → `VAULT_ADDR` wasn't set in the
+  caller's shell. The CLI now self-defaults it, but if you see this on an old
+  binary: `export VAULT_ADDR=https://vault.viktorbarzin.me`.
+- `403 permission denied` on `PUT .../secret/data/workstation/claude-users/<user>`
+  → a stale read-only `~/.vault-token` (e.g. from `vault login -method=oidc`,
+  policy `default`, capability `deny` on that path) was shadowing the scoped
+  token. The CLI now prefers the scoped token; on an old binary, `rm
+  ~/.vault-token` (or `unset VAULT_TOKEN`) and retry. Confirm with
+  `VAULT_TOKEN="$(sudo cat /home/<user>/.config/claude-auth-sync/vault-token)" vault token capabilities secret/data/workstation/claude-users/<user>`
+  → must be `create, read, update`.

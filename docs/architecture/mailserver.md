@@ -19,6 +19,8 @@ One Deployment, one pod, two sets of Postfix `master.cf` services + Dovecot `ine
 flowchart TB
     %% External ingress path
     SENDER[Sending MTA<br/>arbitrary public IP] -->|MX lookup + SMTP<br/>:25| MX[mail.viktorbarzin.me<br/>A 176.12.22.76]
+    SENDER -.->|primary unreachable →<br/>MX pri 20| MX2[mx2.viktorbarzin.me<br/>Oracle Always-Free<br/>92.5.132.215<br/>queue ≤30d — ADR-0019]
+    MX2 -.->|drain: SMTP in WireGuard<br/>10.3.2.10 → 10.0.20.1:25<br/>UDP :51821| HAP
     MX --> PF[pfSense WAN<br/>vtnet0 192.168.1.2]
     PF -->|NAT rdr<br/>WAN:25/465/587/993<br/>→ 10.0.20.1:same| HAP
     HAP[pfSense HAProxy<br/>4 TCP frontends on 10.0.20.1<br/>send-proxy-v2 to backends]
@@ -144,7 +146,26 @@ Internet → MX: mail.viktorbarzin.me (priority 1)
          → Rspamd (spam + DKIM + DMARC) → Dovecot → mailbox
 ```
 
-No backup MX. If the server is down, sender MTAs queue and retry for 4-5 days per SMTP standards (RFC 5321).
+**Backup MX (since 2026-07-08, ADR-0019):** `mx2.viktorbarzin.me` (MX pri 20) —
+a Postfix store-and-forward relay on an Oracle Always-Free VM (reserved IP
+`92.5.132.215`, Frankfurt AD-3). When the primary is unreachable, senders fall
+to mx2, which accepts everything for the domain (catch-all semantics, no
+reputation 5xx) and queues up to **30 days**, then drains to the primary over a
+WireGuard tunnel (`10.3.2.10 → 10.0.20.1:25`, i.e. straight into the HAProxy
+frontend above — UDP-encapsulated, so Oracle's egress-25 block doesn't apply
+and no extra WAN port exists). The primary permits the PTR-less tunnel IP via
+`check_client_access cidr:/tmp/docker-mailserver/backup-mx-permit.cidr`
+prepended to `smtpd_sender_restrictions`, and exempts it from anvil limits so
+large drains aren't throttled. **Filtering parity (2026-07-08):** mx2 runs
+postscreen (pregreet + Spamhaus defer, 4xx-only via `soft_bounce`) + the
+primary's anvil limits + FCrDNS; drained mail is scored by the primary's
+rspamd against the ORIGINAL sender IP (`external_relay` ip_map), with the
+action ladder capped at add_header (`force_actions` on the `BACKUP_MX_DRAIN`
+symbol — a 5xx to the drain would make mx2 bounce into a void, i.e. silent
+loss) and policyd-spf skipping the tunnel IP (it would otherwise 550
+strict-SPF senders). Sender MTAs' own 1–5 day retry (RFC 5321) remains the
+fallback beneath that. Full as-built + recreate + parity details:
+[`runbooks/backup-mx.md`](../runbooks/backup-mx.md).
 
 ### Outbound
 ```
@@ -161,6 +182,17 @@ https://mail.viktorbarzin.me → Traefik → Roundcubemail
   DB: MySQL (mysql.dbaas.svc.cluster.local)
 ```
 
+### Paperless ingest mailbox (docs@)
+
+`docs@viktorbarzin.me` is a dedicated real mailbox (explicit self-alias in
+`extra/aliases.txt` so the `@domain → spam@` catch-all doesn't shadow it) that
+paperless-ngx polls over IMAP; family members forward document emails to it
+and the sender maps 1:1 to a paperless account. A per-user Dovecot sieve
+(`docs-at-viktorbarzin.me.dovecot.sieve` in the `mailserver.config` ConfigMap,
+mounted as `/tmp/docker-mailserver/docs@viktorbarzin.me.dovecot.sieve`)
+discards mail from non-allowlisted senders at delivery. Full flow, sender map,
+and add-a-sender procedure: [`runbooks/paperless-mail-ingest.md`](../runbooks/paperless-mail-ingest.md).
+
 ## DNS Records
 
 All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.tf`.
@@ -168,6 +200,8 @@ All managed in Terraform at `stacks/cloudflared/modules/cloudflared/cloudflare.t
 | Type | Name | Value | Purpose |
 |------|------|-------|---------|
 | MX | `viktorbarzin.me` | `mail.viktorbarzin.me` (pri 1) | Inbound mail routing |
+| MX | `viktorbarzin.me` | `mx2.viktorbarzin.me` (pri 20) | Backup MX (ADR-0019, since 2026-07-08) — senders fall to it when the primary is unreachable |
+| A | `mx2.viktorbarzin.me` | `92.5.132.215` (non-proxied) | Backup MX — OCI reserved public IP (stable across VM stop/start) |
 | A | `mail.viktorbarzin.me` | `176.12.22.76` (non-proxied) | Mail server IP |
 | AAAA | `mail.viktorbarzin.me` | `2001:470:6e:43d::2` | IPv6 (HE tunnel) |
 | TXT (SPF) | `viktorbarzin.me` | `v=spf1 include:spf.brevo.com ~all` | Authorize Brevo for outbound (soft-fail during cutover; was `include:mailgun.org -all` until 2026-04-18 Brevo migration) |
@@ -201,7 +235,9 @@ docker-mailserver ships Fail2ban, but it is explicitly disabled here: `ENABLE_FA
 - DKIM signing (selector `mail`, 2048-bit RSA)
 - DMARC verification on inbound mail
 - Auto-learns from Junk folder movements (`RSPAMD_LEARN=1`)
-- SRS (Sender Rewriting Scheme) enabled for forwarded mail
+- SRS **disabled** (2026-07-08, permanent): postsrsd 1.10 deterministically
+  busy-loops on restart, 451-ing all mail; see Troubleshooting. Externally-
+  forwarding aliases forward with the original envelope sender.
 
 ### Postfix Rate Limiting
 ```
@@ -233,6 +269,15 @@ Push secrets (`BREVO_API_KEY`, `EMAIL_MONITOR_IMAP_PASSWORD`) come from External
 | EmailRoundtripFailing | Probe failing for 30m | warning |
 | EmailRoundtripStale | No success in >80m (60m threshold + for:20m) | warning |
 | EmailRoundtripNeverRun | Metric absent for 40m | warning |
+| BackupMxDown | mx2:25 blackbox TCP probe down 15m | warning |
+| BackupMxQueueStuck | mx2 deferred queue >0 for 2h WHILE primary up (drain broken; outage backlog deliberately doesn't fire) | warning |
+
+Backup-MX scrape jobs (2026-07-08): `backup-mx-smtp` (blackbox `tcp_connect` →
+`92.5.132.215:25`) and `backup-mx-node` (node_exporter + `postfix_queue_size`
+textfile on `:9100`, reachable only from the homelab WAN /32 per the OCI
+security list). Note: since mx2 exists, a *transient* primary blip can route
+the roundtrip probe's mail via mx2 — it then arrives minutes late through the
+drain, so `EmailRoundtripFailing` can mean "delayed via backup MX", not lost.
 
 ### Uptime Kuma Monitors
 - TCP SMTP on `176.12.22.76:25` — full external path (DNS → WAN → pfSense HAProxy → mailserver)
@@ -269,17 +314,23 @@ Push secrets (`BREVO_API_KEY`, `EMAIL_MONITOR_IMAP_PASSWORD`) come from External
 | `mailserver-data-encrypted` | 2Gi (auto-resize 5Gi) | `proxmox-lvm-encrypted` (LUKS2) | Maildir + Postfix queue + state + logs |
 | `roundcubemail-html-encrypted` | 1Gi | `proxmox-lvm-encrypted` | Roundcube PHP code + user session data |
 | `roundcubemail-enigma-encrypted` | 1Gi | `proxmox-lvm-encrypted` | Roundcube Enigma (PGP) user keys |
-| `mailserver-backup-host` (RWX) | 10Gi | `nfs-truenas` (historical SC name, Proxmox host NFS) | `mailserver-backup` CronJob destination (`/srv/nfs/mailserver-backup/<YYYY-WW>/`) |
-| `roundcube-backup-host` (RWX) | 10Gi | `nfs-truenas` (historical SC name, Proxmox host NFS) | `roundcube-backup` CronJob destination |
+| `mailserver-backup-host` (RWX) | 10Gi | `nfs-truenas` (historical SC name, Proxmox host NFS) — still to move to `nfs-pve`; held back because the share is ~51G | `mailserver-backup` CronJob destination (`/srv/nfs/mailserver-backup/<YYYY-WW>/`) |
+| `roundcube-backup-host` (RWX) | 10Gi | `nfs-pve` (Proxmox host NFS; moved from `nfs-truenas` on 2026-09-01) | `roundcube-backup` CronJob destination |
 
 **Backup**: daily `mailserver-backup` + `roundcube-backup` CronJobs rsync data PVCs to NFS. NFS directory is picked up by the PVE host's inotify-driven `/usr/local/bin/offsite-sync-backup` which pushes to Synology (weekly). See [Storage & Backup Architecture](storage.md) for the 3-2-1 flow.
 
 ## Decisions & Rationale
 
-### No Backup MX
-- **Alternatives considered**: ForwardEmail (free relay), Cloudflare Email Routing, Dynu Store/Forward
-- **Decision**: Direct MX only. ForwardEmail relay was evaluated (2026-04-12) and abandoned — its anti-spoofing enforcement rejects legitimate forwarded mail regardless of SPF configuration. Cloudflare Email Routing can't store-and-forward (pass-through proxy only). Dynu ($9.99/yr) is a viable future option.
-- **Tradeoff**: If server is down, mail delivery relies on sender MTA retry queues (4-5 days standard). No immediate forwarding to a backup address.
+### Backup MX (SUPERSEDED "No Backup MX" 2026-07-08 — ADR-0019)
+- **Now HAS a backup MX**: `mx2.viktorbarzin.me` (MX pri 20), a Postfix
+  store-and-forward relay on an Oracle Always-Free VM, queuing ≤30 days and
+  draining to the primary over a WireGuard tunnel (`10.3.2.10 → 10.0.20.1:25`).
+  As-built + recreate procedure: [`runbooks/backup-mx.md`](../runbooks/backup-mx.md);
+  decision + alternatives (ForwardEmail/CF Email Routing/Dynu/Rollernet all
+  rejected): [ADR-0019](../adr/0019-backup-mx-self-hosted-oracle-relay.md).
+- **Historical (pre-2026-07-08)**: direct MX only; outages relied on sender-MTA
+  retry (1–5 days). ForwardEmail (2026-04-12) abandoned (anti-spoofing rejected
+  forwarded mail); CF Email Routing can't store-and-forward.
 
 ### Brevo for Outbound (migrated from Mailgun 2026-04-12)
 - **Decision**: All outbound relays through Brevo EU (ex-Sendinblue). 300 emails/day free tier (3x Mailgun's 100/day).
@@ -299,6 +350,36 @@ Push secrets (`BREVO_API_KEY`, `EMAIL_MONITOR_IMAP_PASSWORD`) come from External
 - **Runbook**: [`runbooks/mailserver-pfsense-haproxy.md`](../runbooks/mailserver-pfsense-haproxy.md).
 
 ## Troubleshooting
+
+### All mail tempfailing with `451 4.3.0 queue file write error` (postsrsd spin)
+
+Seen 2026-07-03 right after a pod restart. Signature in `/var/log/mail/mail.log`:
+`postfix/cleanup: warning: tcp:localhost:10001 lookup error` +
+`sender_canonical_maps map lookup problem ... message not accepted, try again later`.
+Cause: **postsrsd** (SRS daemon, `sender_canonical_maps = tcp:localhost:10001`)
+came up spinning at 100% CPU without binding 10001/10002 — supervisor shows it
+`RUNNING` but `ss -ltn | grep 1000` is empty and its log is empty. Postfix then
+tempfails every message (inbound AND submission); senders retry so nothing is
+lost, and the roundtrip probe alerts within the hour.
+Fix (2026-07-03): `supervisorctl restart postsrsd`; if it spun again,
+`kubectl -n mailserver delete pod` for a full re-init healed it.
+**UPDATE 2026-07-08 — that remedy NO LONGER heals it, and SRS is now DISABLED.**
+An ADR-0019 backup-mx O5 pod restart re-triggered the spin, but this time
+postsrsd busy-loops at ~100% CPU without binding on EVERY fresh start —
+verified independent of invocation, explicit args, secret regeneration, and
+pod re-create (it spins as root before dropping privs, i.e. stuck in early
+init). With `sender_canonical_maps = tcp:localhost:10001` that 451-defers ALL
+mail on any restart — a latent SEV. Resolved by setting **`ENABLE_SRS = "0"`**
+(`stacks/mailserver/modules/mailserver/main.tf`), which stops postsrsd and
+unsets the canonical maps, so mail is durable across restarts. Cost: SPF-safe
+envelope rewriting for the ~3 externally-forwarding aliases (they now forward
+with the original envelope sender, which may fail SPF at the destination).
+**DECISION 2026-07-08 (Viktor): SRS stays OFF permanently** — the only real
+fix is postsrsd 2.x, which is socketmap-only and has no official container
+image, so it would mean building `ghcr.io/viktorbarzin/postsrsd` + running it
+as a sidecar; not worth that for ~3 aliases. postsrsd 1.10 is left unused; do
+NOT flip `ENABLE_SRS` back to 1 (it re-arms the 451-all-mail spin). Root cause
+of the 1.10 spin still unpinned.
 
 ### Inbound mail not arriving
 1. **DNS/MX**: `dig MX viktorbarzin.me +short` → should show `mail.viktorbarzin.me`
@@ -328,8 +409,10 @@ Push secrets (`BREVO_API_KEY`, `EMAIL_MONITOR_IMAP_PASSWORD`) come from External
 
 ## Related
 
+- [Backup MX runbook](../runbooks/backup-mx.md) — mx2 as-built, one-command recreate, drain ops (ADR-0019)
 - [Monitoring Architecture](monitoring.md) — alert definitions, Uptime Kuma
 - [Networking Architecture](networking.md) — MetalLB, pfSense NAT, Cloudflare DNS
+- [VPN Architecture](vpn.md) — the WireGuard fabric the backup-MX drain rides
 - [Security Architecture](security.md) — CrowdSec deployment
 - [Secrets Management](secrets.md) — Vault paths for mail credentials
 - [Mailserver Hardening Plan](../plans/2026-02-23-mailserver-hardening-plan.md) — historical

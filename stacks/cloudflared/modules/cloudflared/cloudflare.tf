@@ -100,6 +100,28 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "sof" {
   }
 }
 
+# Wildcard: ONE proxied CNAME serves every proxied hostname (2026-07-09).
+# The tunnel config above already routes *.viktorbarzin.me → Traefik, which
+# routes by Host header — per-name CNAMEs added nothing but a DNS answer while
+# eating the free-plan 200-records-per-zone cap (hit on 2026-07-04, blocked a
+# deploy). DNS wildcard semantics: any name with an explicit record (apex,
+# non-proxied A/AAAA, "internal" shadows) wins over the wildcard; only
+# recordless names fall through to it. Consequences, accepted deliberately:
+#   - unknown/typo'd subdomains resolve and get Traefik's 404 (was NXDOMAIN);
+#   - a .me ingress with NO record is now publicly reachable — "dark by
+#     missing DNS" is dead; internal-only names MUST use dns_type="internal"
+#     (see docs/adr/0021).
+# The apex is NOT covered by a wildcard — stacks/blog keeps its explicit "@"
+# record via the ingress_factory apex carve-out.
+resource "cloudflare_record" "wildcard" {
+  content = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
+  name    = "*"
+  proxied = true
+  ttl     = 1
+  type    = "CNAME"
+  zone_id = var.cloudflare_zone_id
+}
+
 resource "cloudflare_record" "dns_record" {
   # count   = length(var.cloudflare_proxied_names)
   # name    = var.cloudflare_proxied_names[count.index]
@@ -128,15 +150,13 @@ resource "cloudflare_record" "non_proxied_dns_record" {
 }
 
 
-resource "cloudflare_record" "non_proxied_dns_record_ipv6" {
-  for_each = local.cloudflare_non_proxied_names_map
-  name     = each.key
-  content  = var.public_ipv6
-  proxied  = false
-  ttl      = 1
-  type     = "AAAA"
-  zone_id  = var.cloudflare_zone_id
-}
+# No AAAA for the central non-proxied names (removed 2026-07-09): they serve
+# non-web ports — wireguard 51820/udp, coturn 3478, xray-reality 7443 — that
+# the IPv6 ingress bridge (pfSense HAProxy: 443/80 + mail only, see
+# docs/architecture/networking.md → "IPv6 Ingress") never carries. Their AAAA
+# records pointed v6-preferring clients at closed ports (WireGuard does not
+# fall back to A). Web/mail AAAA records come from ingress_factory
+# "non-proxied" instances, which stay dual-stack.
 
 resource "cloudflare_record" "mail_mx" {
   content  = "mail.viktorbarzin.me"
@@ -146,6 +166,79 @@ resource "cloudflare_record" "mail_mx" {
   type     = "MX"
   priority = 1
   zone_id  = var.cloudflare_zone_id
+}
+
+# Backup MX host (ADR-0019) — the Oracle Always-Free relay. IP is the OCI
+# RESERVED public IP (stable across VM stop/start; owned by stacks/backup-mx).
+resource "cloudflare_record" "backup_mx_a" {
+  content = "92.5.132.215"
+  name    = "mx2.viktorbarzin.me"
+  proxied = false
+  ttl     = 1
+  type    = "A"
+  zone_id = var.cloudflare_zone_id
+}
+
+# dnstt DNS tunnel (VPN OCI PoP-2, vpn.viktorbarzin.me config portal,
+# 2026-07-13): delegate t.viktorbarzin.me to mx2, which runs dnstt-server on
+# :53/udp. A dnstt client encodes its tunnelled TCP stream into
+# <data>.t.viktorbarzin.me query labels sent through ANY recursive/DoH resolver;
+# the recursion is referred here and mx2 answers — so the tunnel rides plain DNS
+# and works on networks where only DNS/DoH escapes (the transport of last
+# resort). Nameserver is mx2.viktorbarzin.me, already A→92.5.132.215
+# (backup_mx_a above) so it is in-zone glue. NS records are never proxied.
+resource "cloudflare_record" "dnstt_ns" {
+  content = "mx2.viktorbarzin.me"
+  name    = "t"
+  ttl     = 1
+  type    = "NS"
+  zone_id = var.cloudflare_zone_id
+}
+
+# Backup MX at priority 20 — senders fall to it only when the primary (pri 1)
+# is unreachable. ARMED now that the drain path works end-to-end (gate O3:
+# mx2's WireGuard tunnel IP 10.3.2.10 is whitelisted past the primary's PTR
+# check). mx2 queues up to 30 days and drains to the primary on recovery.
+resource "cloudflare_record" "backup_mx_mx" {
+  content  = "mx2.viktorbarzin.me"
+  name     = "viktorbarzin.me"
+  proxied  = false
+  ttl      = 1
+  type     = "MX"
+  priority = 20
+  zone_id  = var.cloudflare_zone_id
+}
+
+# Status page (ADR-0020) — gatus on mx2, the same Oracle Always-Free VM as the
+# backup MX (stacks/backup-mx owns the host; same OCI reserved IP as
+# backup_mx_a above). MUST stay grey-cloud: the page's whole job is to be up
+# when the homelab AND the tunnel are down, so it cannot ride the CF
+# proxy→tunnel path; grey also means the outage-failover Worker's subrequest
+# to https://status.viktorbarzin.me/error.html goes straight to mx2 and can
+# never re-enter a Worker route (routes only see proxied traffic — no
+# recursion possible). Do NOT re-add "status" to cloudflare_proxied_names.
+resource "cloudflare_record" "status_a" {
+  content = "92.5.132.215"
+  name    = "status"
+  proxied = false
+  ttl     = 1
+  type    = "A"
+  zone_id = var.cloudflare_zone_id
+}
+
+# Permanent synthetic origin-unreachable host (ADR-0020) — proxied CNAME to a
+# tunnel UUID that does not exist, so Cloudflare answers 530/1033 for it
+# forever. Lets us verify the outage-failover Worker end-to-end (see
+# worker.tf) without touching real traffic or waiting for a real outage. One
+# permanent DNS record + a trickle of Worker requests — negligible cost,
+# deliberate.
+resource "cloudflare_record" "test_failover" {
+  content = "00000000-0000-0000-0000-000000000000.cfargotunnel.com"
+  name    = "test-failover"
+  proxied = true
+  ttl     = 1
+  type    = "CNAME"
+  zone_id = var.cloudflare_zone_id
 }
 
 
@@ -162,7 +255,7 @@ resource "cloudflare_record" "mail_spf" {
 }
 
 resource "cloudflare_record" "mail_domainkey_rspamd" {
-  content = "\"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs9XHeFBKhUAEJSikXx+P49Q3nEBbnaSpn6h/9TqIhKaZWSVa2uGUGYQieNdon7DEJZ0VFo0Tvm3/UFsy2qF7ZmF+E/+N8EmkcPrMlxgJT281dpk5DxrZ+kbzw/DosfHH71K6vCLB4rSexzxJHaAx0AUddI3bFUJGjMgCXXCMZF+p8YCx+DDGPIXz2FOTtlJlR7aeZ2xXavwE/lBfI3MLnsq7X+GhPjQEax070nndOdZI0S8HpZkVxdGWl1N2Ec6LukYm2RiUkEMMQHSYX7WF3JBc+CGqUyd706Iy/5oeC3UGwZSM2uLkrp8YBjmw/h1rAeyv/ITt6ZXraP/cIMRiVQIDAQAB\""
+  content = "\"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs9XHeFBKhUAEJSikXx+P49Q3nEBbnaSpn6h/9TqIhKaZWSVa2uGUGYQieNdon7DEJZ0VFo0Tvm3/UFsy2qF7ZmF+E/+N8EmkcPrMlxgJT281dpk5DxrZ+kbzw/DosfHH71K6vCLB4rSexzxJHaAx0AUddI3bFUJGjMgCXXCMZF+p8YCx+DDGPIX\" \"z2FOTtlJlR7aeZ2xXavwE/lBfI3MLnsq7X+GhPjQEax070nndOdZI0S8HpZkVxdGWl1N2Ec6LukYm2RiUkEMMQHSYX7WF3JBc+CGqUyd706Iy/5oeC3UGwZSM2uLkrp8YBjmw/h1rAeyv/ITt6ZXraP/cIMRiVQIDAQAB\""
   name    = "mail._domainkey.viktorbarzin.me"
   proxied = false
   ttl     = 1
@@ -235,7 +328,18 @@ resource "cloudflare_record" "keyserver" {
   zone_id  = var.cloudflare_zone_id
 }
 
-# Enable HTTP/3 (QUIC) for Cloudflare-proxied domains
+# bridge.viktorbarzin.me (Cloudflare Pages, "мост" school site) moved to
+# stacks/valia-sites (ADR-0018) — all Valia-site records live there now.
+# State handoff was a manual `tg state rm` (2026-07-03): the CI terraform
+# (<1.7) rejects removed{} blocks even at the stack root, so declarative
+# forget wasn't available. valia-sites imported the live record by id.
+
+# Enable HTTP/3 (QUIC) for Cloudflare-proxied domains.
+#
+# Briefly switched off on 2026-08-31 while we chased truncated Immich
+# downloads. QUIC was not the cause: an 11-agent investigation excluded every
+# server-side candidate by measurement, and the truncation is terminated at the
+# client end. Turned back on the same day.
 resource "cloudflare_zone_settings_override" "http3" {
   zone_id = var.cloudflare_zone_id
 

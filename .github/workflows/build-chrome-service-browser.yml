@@ -1,11 +1,12 @@
 name: Build chrome-service-browser
 
 # ADR-0002: infra-owned image built off-infra on GHA → ghcr. Playwright base +
-# real Google Chrome (proprietary H.264/AAC codecs) for the chrome-service
-# browser container, so the noVNC view can play H.264 video (Reels). Rebuilds
-# are rare → dispatch + path trigger. NOTE: after the first push, set the ghcr
-# package `chrome-service-browser` to PUBLIC (same as chrome-service-novnc) so
-# the pod pulls it without credentials.
+# real Google Chrome (proprietary H.264/AAC codecs) for the chrome-service POOL
+# WORKERS, so H.264 video (Reels) plays for whoever drives them. Since 2026-08-11
+# the master browser runs neko's own google-chrome image instead; this image is
+# the pool's. Rebuilds are rare → dispatch + path trigger. NOTE: after the first
+# push, set the ghcr package `chrome-service-browser` to PUBLIC so the pod pulls
+# it without credentials.
 on:
   push:
     branches: [master]

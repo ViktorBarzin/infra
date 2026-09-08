@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Nightly k8s-upgrade report -> Slack.
+"""Weekly k8s-upgrade report -> Slack.
 
-Runs each morning (CronJob k8s-upgrade-nightly-report) after the 23:00 UTC
-version-check chain has finished. Reads the chain's Pushgateway gauges + live
-cluster state and posts ONE concise, actionable report to Slack so the
-autonomous upgrader's nightly outcome — and any blocker holding it back — is
-visible at a glance during the upgrade-cleanup window.
+Runs Monday morning (CronJob k8s-upgrade-nightly-report — historical name kept)
+after the Sunday-night version-check chain has finished. Reads the chain's
+Pushgateway gauges + live cluster state and posts ONE concise, actionable report
+to Slack so the autonomous upgrader's weekly outcome — and any blocker holding it
+back — is visible at a glance during the upgrade-cleanup window.
 
 Outcomes it distinguishes:
   ⚪ no upgrade needed     — cluster already at the latest supported patch
   🔴 BLOCKED              — compat gate refused the target; lists live reasons
   🟢 UPGRADED             — all nodes now on the detected target
   🟡 in progress / passed — gate passed, chain mid-flight (or partial)
-  ⚠️  detector STALE       — the 23:00 detector did not run last night
+  ⚠️  detector STALE       — the weekly (Sun 23:00) detector did not run
 
 Read-only. The pure helpers (parse_metrics / select / fmt_age / compose_report)
 are unit-tested in test_nightly_report.py; all I/O (kubectl, Pushgateway, the
@@ -28,7 +28,7 @@ import urllib.request
 PUSHGW = os.environ.get("PUSHGW", "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics")
 SLACK_FILE = os.environ.get("SLACK_FILE", "/secrets/k8s-upgrade/slack_webhook")
 SCRIPTS_DIR = os.environ.get("SCRIPTS_DIR", "/scripts")
-STALE_SECONDS = 90000  # ~25h: a nightly detector older than this didn't run last night
+STALE_SECONDS = 90000  # ~25h: report runs Mon ~7h after the Sun-night check, so >25h ⇒ the weekly check didn't fire
 
 _METRIC_RE = re.compile(r"^(?P<name>\w+)(?:\{(?P<labels>[^}]*)\})?\s+(?P<value>[-+0-9.eE]+)\s*$")
 _LABEL_RE = re.compile(r'(\w+)="([^"]*)"')
@@ -69,6 +69,29 @@ def fmt_age(seconds):
     return f"{seconds / 86400:.1f}d ago"
 
 
+def _render_reasons(blocker_reasons):
+    """Group compat-gate reason lines by their [ACTIONABLE]/[WAITING]/[PINNED]
+    tag into labelled sections, stripping the tag from each bullet. Untagged
+    lines (older reason format) fall back to a generic 'Blockers' list. PURE.
+    Returns a list of message lines."""
+    lines = [r.strip() for r in (blocker_reasons or "").splitlines() if r.strip()]
+    out, shown = [], set()
+    for title, tag in (("Action needed", "[ACTIONABLE]"),
+                       ("Waiting on upstream", "[WAITING]"),
+                       ("Pinned (held by us)", "[PINNED]")):
+        sub = [l for l in lines if l.startswith(tag)]
+        if sub:
+            out.append(f"{title}:")
+            for l in sub:
+                shown.add(l)
+                out.append(f"  • {l[len(tag):].strip()}")
+    rest = [l for l in lines if l not in shown]
+    if rest:
+        out.append("Blockers:")
+        out.extend(f"  • {l}" for l in rest)
+    return out
+
+
 def compose_report(now_ts, nodes, metrics, blocker_reasons, jobs):
     """Build the Slack message text from gathered facts. PURE.
 
@@ -98,6 +121,7 @@ def compose_report(now_ts, nodes, metrics, blocker_reasons, jobs):
 
     avail = [(lbl, val) for lbl, val in select(metrics, "k8s_upgrade_available") if val == 1]
     blocked = any(val == 1 for _, val in select(metrics, "k8s_upgrade_blocked"))
+    held = any(val == 1 for _, val in select(metrics, "k8s_upgrade_held"))
 
     if avail:
         lbl = avail[0][0]
@@ -105,7 +129,12 @@ def compose_report(now_ts, nodes, metrics, blocker_reasons, jobs):
         kind = lbl.get("kind", "?")
         tgt_line = f"Detected target: *{target}* ({kind})"
         if blocked:
-            headline = f"🔴 BLOCKED — compat gate refused {target}"
+            # actionable block — an addon upgrade would clear it (K8sUpgradeBlocked fired)
+            headline = f"🔴 BLOCKED (action needed) — {target}"
+        elif held:
+            # waiting on upstream and/or a pinned addon — nothing to do but wait;
+            # intentionally NO alert, this nightly line is the only signal
+            headline = f"⏸️ HELD — {target} not yet upgradable"
         elif len(versions) == 1 and target == versions[0]:
             headline = f"🟢 UPGRADED — all nodes now on {target}"
         else:
@@ -120,12 +149,8 @@ def compose_report(now_ts, nodes, metrics, blocker_reasons, jobs):
 
     msg = [f"*[k8s-upgrade nightly]* {headline}", node_line, run_line, tgt_line]
 
-    if blocked and blocker_reasons:
-        msg.append("Blockers (live):")
-        for r in blocker_reasons.splitlines():
-            r = r.strip()
-            if r:
-                msg.append(f"  • {r}")
+    if (blocked or held) and blocker_reasons:
+        msg.extend(_render_reasons(blocker_reasons))
 
     if jobs:
         msg.append("Chain jobs (recent):")
@@ -213,7 +238,8 @@ def main():
 
     avail = [(lbl, val) for lbl, val in select(metrics, "k8s_upgrade_available") if val == 1]
     blocked = any(val == 1 for _, val in select(metrics, "k8s_upgrade_blocked"))
-    reasons = get_blocker_reasons(avail[0][0].get("target", "")) if (avail and blocked) else None
+    held = any(val == 1 for _, val in select(metrics, "k8s_upgrade_held"))
+    reasons = get_blocker_reasons(avail[0][0].get("target", "")) if (avail and (blocked or held)) else None
 
     msg = compose_report(now_ts, nodes, metrics, reasons, jobs)
     post_slack(msg)

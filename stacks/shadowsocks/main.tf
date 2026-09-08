@@ -6,7 +6,7 @@ resource "kubernetes_namespace" "shadowsocks" {
   metadata {
     name = "shadowsocks"
     labels = {
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
     # TLS termination seems iffy - I get pfsense MiTM-ing
@@ -32,7 +32,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "shadowsocks"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -147,6 +147,12 @@ resource "kubernetes_service" "mailserver" { # rename me
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type                    = "LoadBalancer"
     external_traffic_policy = "Cluster"

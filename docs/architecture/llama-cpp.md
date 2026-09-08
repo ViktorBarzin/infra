@@ -43,6 +43,22 @@ ecosystem polish (Go/JS SDKs, langchain-ollama, n8n nodes, HA built-in)
 — the latter is mooted by fronting llama.cpp with **LiteLLM** at the
 gateway.
 
+**2026-08-21 — a sharper version of the same reason.** Asked whether we
+could just use Ollama to try Qwen3.8-27B, the answer turned out to be a
+concrete instance of the staleness pattern above rather than a preference.
+Qwen3.8's Gated DeltaNet layers only compute correctly on llama.cpp from
+about **b10450**, and an older build fails by emitting fluent-but-wrong
+tokens rather than by erroring ([llama.cpp
+#27164](https://github.com/ggml-org/llama.cpp/discussions/27164)). Ollama
+vendors its own llama.cpp fork, so on a new architecture it is behind
+upstream by an amount you cannot read off the model page — and the failure
+you would get is a silent quality one that looks like a bad quant. We run
+b10524 pinned by digest, which is newer than we would have got, and
+llama-swap serves its own web UI, which covers the "just try it by hand"
+use case that prompted the question — it was exposed for that trial and
+taken down afterwards (see Endpoints). Ollama's ecosystem-polish advantage is unchanged;
+it is simply not what was needed here.
+
 ## Components
 
 | Component | Resource | Purpose |
@@ -71,8 +87,8 @@ for the initial deployment.
 The llama-swap pod requests `nvidia.com/gpu: 1`, but the T4 is
 **time-sliced** by the NVIDIA device plugin — several pods on k8s-node1
 each hold a `nvidia.com/gpu: 1` slice and run **concurrently**:
-`llama-swap`, `immich.immich-machine-learning`, `immich.immich-server`
-(NVENC transcode), and `frigate`. Time-slicing shares *compute* but
+`llama-swap`, `immich.immich-machine-learning`, `immich.immich-worker`
+(NVENC transcode; ex `immich-server` — worker split 2026-07-12), and `frigate`. Time-slicing shares *compute* but
 **not memory** — the 16 GB VRAM is a single unpartitioned pool, so one
 greedy tenant can starve all the others.
 
@@ -99,20 +115,73 @@ kubectl scale -n immich deploy/immich-machine-learning --replicas=1
 
 | ID | HF repo | Quant | Ctx | mmproj |
 |----|---------|-------|-----|--------|
-| `qwen3-8b` | `Qwen/Qwen3-8B-GGUF` | Q4_K_M | 16384 | no (text-only) |
+| `qwen3-8b` | `unsloth/Qwen3-8B-GGUF` | Q4_K_M | 16384 | no (text-only) |
 | `qwen3vl-8b` | `Qwen/Qwen3-VL-8B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
-| `minicpm-v-4-5` | `openbmb/MiniCPM-V-4_5-gguf` | Q4_K_M | 3072 | yes |
 | `qwen3vl-4b` | `Qwen/Qwen3-VL-4B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
+| `qwen38-27b` | `unsloth/Qwen3.8-27B-GGUF` | UD-Q2_K_XL | 8192 | no (text-only) |
+
+`qwen38-27b` is **interactive-only — no consumer should point at it.** It
+needs immich-ml scaled to 0 to fit (~9670 MiB resident; with frigate and
+immich-ml up, free VRAM lands under the ADR-0016 watchdog floor and the
+watchdog recycles llama-swap mid-conversation). It runs at 8.2 tok/s
+against qwen3-8b's 33, so it is a curiosity rather than an upgrade — see
+the round-3 row in
+`docs/research/2026-07-16-local-llm-sota-and-upgrade.md` §0.1. `ttl = 600`
+means it unloads 10 minutes after the last message, so a forgotten immich
+pause stops mattering on its own.
+
+(`minicpm-v-4-5` was dropped 2026-07-16 — unused, "nothing special" in the
+2026-05-10 benchmark.)
 
 `qwen3-8b` (text-only) is the Tier-0 triage model for
-`recruiter-responder`; the `qwen3vl-*` / `minicpm-v` models serve the
-vision use cases.
+`recruiter-responder`, and the enrichment + RAG-answer model for
+`paperless-ai`; the `qwen3vl-*` models serve the vision use cases.
+
+**`qwen3-8b` runs with `--reasoning off`** (2026-07-13). Qwen3 defaults
+to thinking under `--jinja`, which returns an *empty* `message.content`
+(all output lands in `reasoning_content`), usually exhausts `max_tokens`
+mid-thought, and makes every call ~50x slower — paperless-ai's JSON
+enrichment failed outright on it. The flag is scoped to `qwen3-8b` in
+the `stacks/llama-cpp/main.tf` cmd builder (gated on `text_only`, currently
+just `qwen3-8b`); vision models keep default reasoning. Per-request `chat_template_kwargs: {enable_thinking:false}`
+is the deprecated equivalent (recruiter-responder still sends it —
+harmless). If a future consumer genuinely needs chain-of-thought from
+this model, add a separate llama-swap model alias rather than flipping
+the shared default.
 
 llama.cpp build pinned via the `llama-swap:cuda` image (ships a
 recent llama.cpp ≥ b9095, which includes Qwen3-VL projection fix
 [#20899](https://github.com/ggml-org/llama.cpp/issues/20899) and
 mtmd Flash-Attention regression fix
 [#16962](https://github.com/ggml-org/llama.cpp/issues/16962)).
+
+### Text-model upgrade evaluation (2026-07-16 — all rejected)
+
+qwen3-8b was benchmarked on-card against five candidates across two rounds (the
+second from a deep HF-survey workflow); all lost on this **Turing (SM 7.5) T4**,
+so qwen3-8b stays (33 tok/s gen, f16 KV, the fastest usable text model this GPU
+supports today):
+
+- **q8_0 KV cache** — ~40–70× slower *generation* (Turing has no quantized-KV
+  fused flash-attn kernel, so even symmetric q8_0/q8_0 falls off the fast path;
+  prefill stayed fine). Do **not** re-enable KV-quant on the T4.
+- **qwen3.5-9b** — ~0.5 tok/s generation regardless of KV; the `qwen3_5`
+  architecture loads and runs on b9879 but has no performant CUDA path on
+  SM 7.5 yet. Revisit if/when upstream optimizes it.
+- **gemma-4 12b / e4b** — 12b too big for the contended card (partial CPU
+  offload → slow prefill); e4b was faster + ~⅓ the VRAM but weaker on
+  paperless-ai enrichment (mislabeled correspondent) and wraps JSON in
+  ` ```fences `.
+- **granite-4.1-8b + qwen3-4b-2507** (round 2, deep HF survey) — granite's DENSE
+  arch IS fast on Turing (35 tok/s) but only **tied** qwen3-8b on a 5-doc
+  real-document correspondent A/B (incl. Bulgarian) while still fencing JSON +
+  a ~64 s cold-prefill warmup; qwen3-4b mislabeled correspondent. Neither a
+  clear win. (Aside confirmed here: paperless-ai's `SYSTEM_PROMPT` already says
+  *"correspondent = the sender, never the recipient"* — extraction is already
+  correct in prod; no prompt change was needed.)
+
+Method, numbers, and the broader SoTA survey:
+`docs/research/2026-07-16-local-llm-sota-and-upgrade.md`.
 
 ## Endpoints
 
@@ -124,11 +193,20 @@ mtmd Flash-Attention regression fix
   on `/v1/chat/completions`)
 - `GET /metrics` — Prometheus
 - `GET /health` — 200 once a model is fully loaded; 503 during load
+- `GET /ui/` — llama-swap serves its own web UI here (`/` 302-redirects to
+  it). **Not exposed.** It was published at `llm.viktorbarzin.me` behind
+  Authentik on 2026-08-21 for the Qwen3.8-27B trial and removed the same day
+  once that finished. Two reasons it is not worth leaving up by default: the
+  UI can load and *unload* models, so browsing it while a consumer job runs
+  can evict that job's model; and llama-swap holds one model at a time, so
+  every interactive use competes with the six consumers below. To use it
+  again, re-add an `ingress_factory` module (`auth = "required"`, service
+  `llama-swap`, port 8080) or port-forward the Service.
 
 ## Known issues / decisions
 
 - **Cluster-wide GPU contention** — the T4 is time-sliced across
-  llama-swap, immich-ml, immich-server, and frigate; compute is shared
+  llama-swap, immich-ml, immich-worker, and frigate; compute is shared
   but the 16 GB VRAM is **not** isolated, so any tenant can OOM the
   others (see "GPU allocation" + the 2026-06-02 post-mortem). No hard
   memory partitioning is wired in (T4 has no MIG; MPS memory limits are

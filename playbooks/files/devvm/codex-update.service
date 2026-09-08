@@ -1,0 +1,14 @@
+[Unit]
+Description=Keep the codex CLI at the latest published version
+Documentation=https://www.npmjs.com/package/@openai/codex
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/codex-update
+StandardOutput=journal
+StandardError=journal
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=20min

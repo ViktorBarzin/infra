@@ -7,6 +7,12 @@ terraform {
     kubernetes = {
       source = "hashicorp/kubernetes"
     }
+    # For kubectl_manifest.sablier — raw SSA apply without the hashicorp
+    # provider's plan-time type inference (beads code-e2dp workaround class).
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
   }
 }
 
@@ -115,6 +121,49 @@ variable "extra_middlewares" {
   type    = list(string)
   default = []
 }
+variable "sablier" {
+  type = object({
+    group             = optional(string)            # sablier group; defaults to var.name
+    session_duration  = optional(string, "3h")      # idle window before the group parks (ADR-0022 default)
+    strategy          = optional(string, "dynamic") # "dynamic" (loading page, browser UIs — default) | "blocking" (hold the request, API paths)
+    display_name      = optional(string)            # loading-page title; defaults to var.name
+    theme             = optional(string, "ghost")   # sablier embedded theme: ghost | hacker-terminal | matrix | shuffle
+    refresh_frequency = optional(string, "5s")      # loading-page poll cadence
+    blocking_timeout  = optional(string, "5m")      # (strategy=blocking) how long the held request waits
+  })
+  default     = null
+  description = <<-EOT
+    Scale-to-zero enrollment (ADR-0022). Non-null emits a per-ingress sablier
+    Middleware CR and appends it to the router chain AFTER the auth
+    middleware, so unauthenticated scanners never wake the app.
+    Strategy (revised 2026-07-12, Viktor): DEFAULT = "dynamic" — an instant
+    themed loading page that polls and swaps to the app when ready (no held
+    request, no CF 524 on slow boots, endpoint races absorbed by the poll).
+    Set strategy = "blocking" per service for programmatic/API paths where
+    an HTML interstitial would break the client.
+    The TARGET Deployment(s) must also carry the `sablier.enable: "true"` +
+    `sablier.group: <group>` + `sablier.ready-after: "5s"` labels (the
+    settling delay covers Traefik's endpoint-propagation lag after readiness)
+    and put `spec[0].replicas` under lifecycle.ignore_changes (marker:
+    # SABLIER_MANAGED_REPLICAS) — the module only owns the request-path half.
+    Probe exclusion: Uptime Kuma / blackbox / Go-http-client UAs get an
+    immediate 200 without waking anything — enrolled monitors are shallow by
+    design; the deep signal is the SablierWakeFailed alert (stacks/monitoring).
+    Keyword-type monitors must be switched to status-only at enrollment.
+  EOT
+  validation {
+    # try(), not `var.sablier == null || …`. Terraform 1.5.7 dereferences
+    # var.sablier.strategy even when var.sablier is null, so the null guard on
+    # the left of the || does not save it and every plan of a consumer that does
+    # not enrol in sablier fails. 1.15.4 short-circuits correctly, which is why
+    # CI never saw this — but the claude-agent-service image still ships 1.5.7,
+    # so the autonomous fixer could not plan most stacks in this repo (infra#60).
+    # try() cannot dereference a null and yields the same default, so the check
+    # still rejects a bad strategy on every version.
+    condition     = contains(["dynamic", "blocking"], try(var.sablier.strategy, "dynamic"))
+    error_message = "sablier.strategy must be \"dynamic\" or \"blocking\"."
+  }
+}
 variable "skip_default_rate_limit" {
   type    = bool
   default = false
@@ -124,23 +173,45 @@ variable "anti_ai_scraping" {
   default = null # null = auto (enabled when not protected, disabled when protected)
 }
 
+# Forward-auth authorization (ADR-0023). Only meaningful when auth = "required":
+# the Authentik groups permitted to reach this host. Stamped as an annotation
+# (authentik.viktorbarzin.me/allowed-groups) that the authentik stack reads at
+# apply time to render the default-deny host->groups table in the
+# admin-services-restriction policy. Access is GROUP MEMBERSHIP ONLY.
+# Default ["Home Server Admins"]: a new admin tool is reachable by admins the
+# moment it deploys and denied to everyone else. Widen per-app for non-admin
+# access (e.g. ["TripIt Users", "Home Server Admins"]).
+variable "allowed_groups" {
+  type    = list(string)
+  default = ["Home Server Admins"]
+}
+
 variable "dns_type" {
   type        = string
   default     = "none"
-  description = "Cloudflare DNS: 'proxied' (CNAME to tunnel), 'non-proxied' (A/AAAA to public IP), or 'none'"
+  description = <<-EOT
+    Cloudflare DNS: 'proxied' (CNAME to tunnel), 'non-proxied' (A/AAAA to
+    public IP), 'internal' (A to the internal Traefik LB IP — resolvable from
+    any resolver but only ROUTABLE from home LANs / WG sites / VPN; the record
+    is a reachability pointer, NOT a gate: pair it with an ipAllowList via
+    extra_middlewares, e.g. traefik-home-lans-only@kubernetescrd, because
+    direct-to-WAN-IP requests with the right SNI still hit Traefik), or 'none'.
+  EOT
   validation {
-    condition     = contains(["proxied", "non-proxied", "none"], var.dns_type)
-    error_message = "dns_type must be 'proxied', 'non-proxied', or 'none'."
+    condition     = contains(["proxied", "non-proxied", "internal", "none"], var.dns_type)
+    error_message = "dns_type must be 'proxied', 'non-proxied', 'internal', or 'none'."
   }
 }
 
 # Uptime Kuma external monitor: when true, annotate the ingress so the
 # external-monitor-sync CronJob creates a `[External] <name>` monitor pointing
-# at https://<host>. Null means "follow dns_type" — enabled when proxied.
+# at https://<host>. Null means "follow dns_type" — enabled when the ingress
+# has a PUBLIC DNS record (proxied or non-proxied; 'internal' records are not
+# externally reachable, so no external monitor).
 variable "external_monitor" {
   type        = bool
   default     = null
-  description = "Enable Uptime Kuma external monitor. null = auto (enabled when dns_type == 'proxied')."
+  description = "Enable Uptime Kuma external monitor. null = auto (enabled when dns_type is 'proxied' or 'non-proxied')."
 }
 
 variable "external_monitor_name" {
@@ -171,14 +242,31 @@ variable "public_ipv6" {
   default = "2001:470:6e:43d::2"
 }
 
+# Internal Traefik LB IP used by dns_type = "internal" records. Tracks the
+# dedicated MetalLB IP from stacks/traefik (ETP=Local). A future LB renumber
+# must update this default alongside the split-horizon apex record — see
+# docs/plans/2026-05-30-traefik-dedicated-ip-etp-local-*.
+variable "internal_lb_ip" {
+  type    = string
+  default = "10.0.20.203"
+}
+
 variable "homepage_group" {
   type    = string
   default = null # auto-detect from namespace
 }
 
 variable "homepage_enabled" {
-  type    = bool
-  default = true
+  type        = bool
+  default     = true
+  description = <<-EOT
+    Emit gethomepage.dev/* annotations so the ingress gets a tile on
+    home.viktorbarzin.me. CONVENTION (dedupe sweep 2026-07-14): every
+    SECONDARY ingress of an app — path carve-outs, API/webhook hosts,
+    protocol endpoints, probe targets — must set this to false, otherwise
+    the directory shows duplicate tiles for one service (and the guessed
+    default icon of a multi-word name is a broken image). One app, one tile.
+  EOT
 }
 
 locals {
@@ -200,9 +288,19 @@ locals {
     null
   )
 
+  # Forward-auth authorization annotation (ADR-0023). Only forward-auth
+  # (auth = "required") ingresses carry it; the authentik stack reads it to
+  # build the default-deny host->groups table. Emitting it on every required
+  # ingress (via the var default) keeps that table complete by construction.
+  allowed_groups_annotations = var.auth == "required" ? {
+    "authentik.viktorbarzin.me/allowed-groups" = join(",", var.allowed_groups)
+  } : {}
+
   # External monitor enabled by default when the ingress has a public DNS
-  # record (either CF-proxied or direct A/AAAA). Explicit bool overrides.
-  effective_external_monitor = var.external_monitor != null ? var.external_monitor : (var.dns_type != "none")
+  # record (either CF-proxied or direct A/AAAA). 'internal' records resolve
+  # publicly but are unroutable from outside, so they get no external monitor.
+  # Explicit bool overrides.
+  effective_external_monitor = var.external_monitor != null ? var.external_monitor : (var.dns_type == "proxied" || var.dns_type == "non-proxied")
 
   # Emit the annotation when effective is true (positive signal), or when the
   # caller explicitly set external_monitor=false (opt-out). When the caller
@@ -301,7 +399,13 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
     name      = var.name
     namespace = var.namespace
     annotations = merge({
-      "traefik.ingress.kubernetes.io/router.middlewares" = join(",", compact(concat([
+      "traefik.ingress.kubernetes.io/router.middlewares" = join(",", distinct(compact(concat([
+        # Anubis-fronted ingresses (service_name = "anubis-*") auto-attach the
+        # real-ip plugin FIRST, so Anubis binds its cookie to a stable,
+        # client-unspoofable X-Real-Ip with zero per-site wiring. Carve-out
+        # ingresses that point at the bare backend (not anubis-*) correctly skip
+        # it. distinct() dedupes if a site also lists real-ip in extra_middlewares.
+        var.service_name != null && startswith(var.service_name, "anubis-") ? "traefik-real-ip@kubernetescrd" : null,
         "traefik-retry@kubernetescrd",
         "traefik-error-pages@kubernetescrd",
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
@@ -310,13 +414,17 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         local.effective_anti_ai ? "traefik-anti-ai-headers@kubernetescrd" : null,
         local.auth_middleware,
         var.allow_local_access_only ? "traefik-local-only@kubernetescrd" : null,
+        # sablier sits AFTER every gate (auth, ip-allowlist) so only admitted
+        # requests can wake a parked workload (ADR-0022).
+        var.sablier != null ? "${var.namespace}-sablier-${var.name}@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
         var.max_body_size != null ? "${var.namespace}-buffering-${var.name}@kubernetescrd" : null,
-      ], var.extra_middlewares)))
+      ], var.extra_middlewares))))
       "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
       }, local.homepage_defaults, var.extra_annotations,
       var.dns_type != "none" ? { "cloudflare.viktorbarzin.me/dns-type" = var.dns_type } : {},
       local.external_monitor_annotations,
+      local.allowed_groups_annotations,
     )
   }
 
@@ -390,10 +498,79 @@ resource "kubernetes_manifest" "buffering" {
   }
 }
 
+# Scale-to-zero wake middleware — created per service when sablier is set
+# (ADR-0022). Strategy default = dynamic (revised 2026-07-12): an instant
+# themed loading page that polls until the workload is ready, then loads the
+# app — visitors see progress instead of a held connection, slow boots can't
+# hit the Cloudflare ~100s cap, and the endpoint-propagation race is absorbed
+# by the poll cadence. strategy = "blocking" remains for API-shaped paths.
+# failOpen=true: if the Sablier API is down the plugin passes requests
+# through — running apps stay reachable, parked ones 503 until it returns.
+# kubectl_manifest (NOT kubernetes_manifest): the hashicorp provider's
+# plan-time type inference breaks on IN-PLACE SHAPE CHANGES of free-form CRD
+# fields ("Provider produced inconsistent result after apply" when the
+# blocking block became dynamic, 2026-07-12) — the same provider bug class
+# the repo already works around with gavinbunney/kubectl (beads code-e2dp).
+resource "kubectl_manifest" "sablier" {
+  count = var.sablier != null ? 1 : 0
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "sablier-${var.name}"
+      namespace = var.namespace
+    }
+    spec = {
+      plugin = {
+        sablier = merge(
+          {
+            sablierUrl      = "http://sablier.sablier.svc.cluster.local:10000"
+            group           = coalesce(var.sablier.group, var.name)
+            sessionDuration = var.sablier.session_duration
+            failOpen        = true
+            # Monitors must never wake a parked workload NOR refresh its
+            # session: matching UAs get an immediate 200 (Go regexps).
+            # Uptime-Kuma = external monitors; Go-http-client = blackbox-
+            # exporter's default UA (and stray Go probes — enrolled apps have
+            # no legit Go-client consumers; revisit if one appears).
+            ignoreUserAgent = [
+              "(?i)uptime-?kuma",
+              "(?i)blackbox",
+              "Go-http-client",
+            ]
+          },
+          var.sablier.strategy == "blocking" ? {
+            blocking = {
+              timeout = var.sablier.blocking_timeout
+            }
+            } : {
+            dynamic = {
+              displayName      = coalesce(var.sablier.display_name, var.name)
+              showDetails      = true
+              theme            = var.sablier.theme
+              refreshFrequency = var.sablier.refresh_frequency
+            }
+          }
+        )
+      }
+    }
+  })
+}
+
 # Cloudflare DNS records — created automatically when dns_type is set.
-# Proxied: CNAME to Cloudflare tunnel. Non-proxied: A + AAAA to public IP.
+# Non-proxied: A + AAAA to public IP. Internal: A to the internal LB.
+#
+# Proxied hostnames ride the zone-wide * wildcard CNAME (ADR-0021, declared
+# in stacks/cloudflared) — dns_type = "proxied" still means "publicly served
+# via the Cloudflare tunnel" and still drives the external-monitor
+# annotation, but creates NO per-name record (the free plan caps the zone at
+# 200 records; per-name CNAMEs duplicated the tunnel's *.viktorbarzin.me
+# catch-all). ONE exception: a DNS wildcard never matches the zone apex, so
+# the root-domain ingress (stacks/blog, effective host == root_domain →
+# dns_name "@") keeps its explicit record.
 resource "cloudflare_record" "proxied" {
-  count           = var.dns_type == "proxied" ? 1 : 0
+  count           = var.dns_type == "proxied" && local.dns_name == "@" ? 1 : 0
   name            = local.dns_name
   content         = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
   proxied         = true
@@ -421,6 +598,22 @@ resource "cloudflare_record" "non_proxied_aaaa" {
   proxied         = false
   ttl             = 1
   type            = "AAAA"
+  zone_id         = var.cloudflare_zone_id
+  allow_overwrite = true
+}
+
+# 'internal': a publicly-resolvable A record carrying the INTERNAL Traefik LB
+# IP. Outsiders resolve it but can't route to it; home-LAN/WG-site/VPN clients
+# reach Traefik directly (the WG spokes policy-route 10.0.0.0/8 through the
+# tunnel), so kiosk devices with baked-in URLs need no DNS overrides anywhere.
+# IPv4-only on purpose: the spokes route no internal IPv6 range.
+resource "cloudflare_record" "internal_a" {
+  count           = var.dns_type == "internal" ? 1 : 0
+  name            = local.dns_name
+  content         = var.internal_lb_ip
+  proxied         = false
+  ttl             = 1
+  type            = "A"
   zone_id         = var.cloudflare_zone_id
   allow_overwrite = true
 }

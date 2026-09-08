@@ -3,11 +3,11 @@
 ## Overview
 
 Kubernetes component versions (`kubeadm`/`kubelet`/`kubectl`) on the 7 K8s
-nodes (k8s-master + k8s-node1..6) are upgraded automatically by a nightly
+nodes (k8s-master + k8s-node1..6) are upgraded automatically by a weekly
 detection CronJob that seeds a chain of small phase Jobs. Each Job is **pinned to a node that is NOT its
 drain target** — so no pod in the chain can preempt itself.
 
-The chain (23:00 UTC nightly):
+The chain (weekly Sunday 23:00 UTC):
 
 ```
 detection CronJob → preflight Job → master Job → one worker Job per worker (enumerated live) → postflight Job
@@ -16,7 +16,7 @@ detection CronJob → preflight Job → master Job → one worker Job per worker
 This is **independent** of the OS-side `unattended-upgrades + kured`
 pipeline (see `k8s-node-auto-upgrades.md`). They do not share rollouts.
 Schedules can overlap (kured runs daily 02:00-06:00 London; detection
-here runs 23:00 UTC nightly) — when a kured reboot lands within 24h of the
+here runs weekly Sunday 23:00 UTC) — when a kured reboot lands within 24h of the
 Sunday detection, the `RecentNodeReboot` alert in the Upgrade Gates
 group blocks the version-upgrade preflight, so the chain self-defers
 to the next Sunday rather than rolling on top of a half-fresh node.
@@ -24,7 +24,7 @@ to the next Sunday rather than rolling on top of a half-fresh node.
 ## Architecture
 
 ```
-k8s-version-check CronJob   (23:00 UTC nightly, k8s-upgrade ns, SA: k8s-upgrade-job)
+k8s-version-check CronJob   (weekly Sunday 23:00 UTC, k8s-upgrade ns, SA: k8s-upgrade-job)
   │ kubectl get nodes  → running version
   │ ssh master 'apt-cache madison kubeadm'  → latest patch (within current minor)
   │ HEAD pkgs.k8s.io/.../v<NEXT_MINOR>/deb/Release  → next minor available?
@@ -35,8 +35,8 @@ envsubst on /template/job-template.yaml  | kubectl apply -f -
   │ creates k8s-upgrade-preflight-<target_version>
   ▼
 
-Job 0 — preflight       (pinned: k8s-node1)
-  ├── compat-gate: addon/API/containerd support for target (else BLOCK+alert)
+Job 0 — preflight       (pinned: k8s-node1, +nvidia.com/gpu:NoSchedule toleration)
+  ├── compat-gate: addon/API/containerd support for target (else BLOCK-actionable+alert / HOLD-quiet)
   ├── All nodes Ready + no Mem/Disk pressure
   ├── halt-on-alert (kured-style ignore-list)
   ├── 24h-quiet baseline (no Ready transitions <24h ago)
@@ -46,7 +46,7 @@ Job 0 — preflight       (pinned: k8s-node1)
   ├── Push k8s_upgrade_in_flight=1, k8s_upgrade_started_timestamp=$(date +%s)
   ├── Trigger backup-etcd Job, wait, verify snapshot byte count
   ├── SSH master: containerd skew fix (if master < workers)
-  ├── SSH all 7 nodes: apt repo URL rewrite (only kind=minor)
+  ├── SSH all 6 nodes: apt repo URL rewrite (only kind=minor)
   └── spawn_next → k8s-upgrade-master-<target_version>
   ▼
 
@@ -114,18 +114,36 @@ inert for a patch (no API removal or containerd floor occurs inside a minor).
 
 This is the **"auto-upgrade when we can, halt + alert when we can't"** contract.
 
-**On a block**, the gate:
-- pushes `k8s_upgrade_blocked=1` to Pushgateway (→ the `K8sUpgradeBlocked`
-  Prometheus alert),
-- Slacks the **specific reasons** (which addon/API/node, current vs required), and
-- **halts the chain** — it exits **non-fatal** (the upgrade simply isn't safe yet,
-  this is not a failure). Because the block happens **before any mutation, no
-  rollback is involved**; nothing was changed.
+**The gate classifies each refusal** (2026-06-28) so it only cries wolf when
+there's something to do — `compat-gate.py` exit code + a `[TAG]` on every reason:
 
-**To clear a block**: upgrade the named addon (or migrate the API caller off the
-deprecated group/version, or bump containerd on the named node) so the offending
-condition no longer holds. The **next nightly run then proceeds automatically** —
-no manual chain restart needed.
+- **`[ACTIONABLE]`** (exit 2) — a newer version of the lagging addon **exists in
+  the compat matrix** and upgrading it would clear the block (or an in-use
+  deprecated API must be migrated / a node's containerd bumped).
+- **`[WAITING]`** (exit 4 = held) — **no released addon version supports the
+  target yet** (e.g. kyverno/ESO behind a brand-new k8s minor). Only an upstream
+  release can clear it.
+- **`[PINNED]`** (exit 4 = held) — a supporting version exists but the addon is
+  **deliberately pinned** in the matrix (`"pinned": true`, e.g. gpu-operator,
+  whose bump is coupled to a newer NVIDIA driver image + Ubuntu/kernel).
+- **Held wins on a mix**: if any blocker is waiting/pinned the whole target is
+  held — acting on the actionable ones wouldn't unblock it yet.
+
+**On any refusal** the preflight pushes the verdict gauge (`k8s_upgrade_blocked=1`
+for actionable, `k8s_upgrade_held=1` for held), sets `HALT_CHAIN` so the chain
+doesn't advance, and **exits 0 — the Job Completes cleanly** (a refusal is a
+decision, not a failure: no Failed Job, no `K8sUpgradeChainJobFailed`). It's
+before any mutation, so no rollback. Reasons (grouped by class) appear in the
+**morning weekly report**, not a per-run Slack.
+
+- **Actionable** → `K8sUpgradeBlocked` fires (once, via alert-on-change). Clear
+  it by doing the named upgrade/migration; the next weekly run proceeds.
+- **Held** → **deliberately NO alert** — only the weekly report's `⏸️ HELD`
+  line, because it can't be actioned now (a nightly alert would cry wolf). It
+  clears itself once upstream ships support (refresh `addon-compat.json`) or the
+  pin is lifted (delete `pinned`+`pin_reason`). The detector re-evaluates every
+  night, silently re-spawning the refused-but-Complete preflight (so a cleared
+  block is picked up next run, not after the 7d Job TTL).
 
 The **compat matrix** lives in
 `stacks/k8s-version-upgrade/scripts/addon-compat.json` — a map of `addon → highest
@@ -153,7 +171,7 @@ it current**; the gate reads it on every run. Gate logic:
 | **ConfigMap `k8s-upgrade-job-template`** | Mounts `/template/job-template.yaml` — universal Job manifest with envsubst placeholders. Rendered by upgrade-step.sh and the detection CronJob via `envsubst | kubectl apply`. |
 | **ServiceAccount `k8s-upgrade-job`** | Used by both the detection CronJob and every chain Job. ClusterRole binding grants: nodes get/list/patch, pods/eviction create, pods delete, batch/jobs CRUD, PDB list (for predrain_unstick), CronJob get (snapshot trigger), namespaces patch on `k8s-upgrade` only. Namespace-scoped Role binding grants secrets:get on `k8s-upgrade-creds`. |
 | **ExternalSecret `k8s-upgrade-creds`** | Syncs `secret/k8s-upgrade/{ssh_key, slack_webhook}` from Vault. Mounted into every Job at `/secrets/k8s-upgrade`. |
-| **CronJob `k8s-version-check`** | 23:00 UTC nightly. Probes apt + pkgs.k8s.io for target. If found, renders Job 0 from `job-template.yaml` and applies it. |
+| **CronJob `k8s-version-check`** | weekly Sunday 23:00 UTC. Probes apt + pkgs.k8s.io for target. If found, renders Job 0 from `job-template.yaml` and applies it. |
 
 ### Pushgateway metrics
 
@@ -162,34 +180,44 @@ Pushed by upgrade-step.sh during phase execution; observed by the
 
 | Metric | Pushed by | Cleared by |
 |---|---|---|
-| `k8s_upgrade_in_flight` (1/0) | preflight Job (set to 1) | postflight Job (set to 0) |
-| `k8s_upgrade_started_timestamp` (epoch s) | preflight Job | postflight Job (set to 0) |
+| `k8s_upgrade_in_flight` (1/0) | preflight Job (set to 1) | postflight Job (set to 0); **detection-CronJob reconcile** DELETEs the whole group when the latch is set with no active chain Job for >12h (leaked-latch self-heal, 2026-07-25) |
+| `k8s_upgrade_started_timestamp` (epoch s) | preflight Job | postflight Job (set to 0); reconcile (group DELETE) |
 | `k8s_upgrade_snapshot_taken` (1/0) | preflight Job (set to 1 after Job=`pre-upgrade-etcd-*` completes with `Backup done:` log of ≥1 KiB) | postflight Job (0) |
+| `k8s_upgrade_blocked` (1/0) | preflight Job — set 1 on an **actionable** compat refusal (→ `K8sUpgradeBlocked`) | preflight (definitive each run; 0 when safe) / postflight (0) |
+| `k8s_upgrade_held` (1/0) | preflight Job — set 1 on a **held** (waiting-upstream/pinned) refusal; **no alert** | preflight (definitive each run; 0 when safe) / postflight (0) |
 | `k8s_upgrade_available{kind,running,target}` | detection CronJob | next detection run (overwrite) |
 | `k8s_version_check_last_run_timestamp` | detection CronJob | (cumulative) |
 
 ### Upgrade Gates alerts (`Upgrade Gates` group in prometheus_chart_values.tpl)
 
-- **`K8sVersionSkew`** — distinct kubelet/apiserver `gitVersion` count > 1 for 30m. Catches a half-done rollout.
-- **`EtcdPreUpgradeSnapshotMissing`** — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight Stage 2 failing silently.
-- **`K8sUpgradeStalled`** — `k8s_upgrade_in_flight==1 && time()-k8s_upgrade_started_timestamp > 5400` for 5m. Catches a Job in the chain dying without spawning its successor.
-- **`K8sUpgradeChainJobFailed`** — `(kube_job_status_failed{namespace="k8s-upgrade",job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*",reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0) unless on() (k8s_upgrade_blocked == 1)` for 15m (warning). Catches a phase Job that **terminally failed before `k8s_upgrade_in_flight` was set** — the preflight gates exit pre-metric, so the two `in_flight`-based alerts above are blind to a failed preflight (this is what hid the 5-day 1.34.9 wedge on 2026-06-12). Reason-scoped to terminal job conditions so a retry-success doesn't false-positive (a bare failed-pod-count would otherwise also block kured for the Job's 7d TTL). The `unless k8s_upgrade_blocked == 1` clause (added 2026-06-21) excludes a preflight that failed because the **compat gate deliberately refused** the target — that's owned by `K8sUpgradeBlocked` and was double-firing here; a genuine wedge exits without setting the blocked gauge, so it still fires.
-- **`K8sUpgradeBlocked`** — `k8s_upgrade_blocked == 1` (warning). A k8s **auto-upgrade was refused** by the compat gate because a critical addon, an in-use deprecated API, or a node's containerd is too old for the detected target. The **specific reasons are in Slack**; clear it by upgrading the named addon / migrating the API caller / bumping containerd, after which the next nightly run proceeds (see "Auto-upgrade compat gate"). No upgrade was attempted, so this is not a half-done-rollout alert.
+- **`K8sVersionSkew`** — `count(count by (kubelet_version)(kube_node_info)) > 1 unless on() (<chain job>.active > 0)` for 15m (warning). Catches a half-done rollout **at rest** (master ahead of workers after an interrupted chain — the resting state a leaked-latch incident leaves). **REBUILT 2026-07-25**: the old expr keyed on `kubernetes_build_info{job=~"kubernetes-nodes|kubernetes-apiservers"}`, which is **not scraped anywhere**, so this alert could never fire and the half-done state had no working detector (RC5). Rebuilt on `kube_node_info.kubelet_version`. The `unless … active>0` guard suppresses it only during a genuinely-running phase (keyed on active>0, not mere series existence — lingering terminal Jobs do not mask a real skew); it fails open and is Pushgateway-independent.
+- **`EtcdPreUpgradeSnapshotMissing`** — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight Stage 2 failing silently. (Deliberately **not** given the live-Job guard: its snapshot runs while the master Job is Active, so a guard would only mask a real failure — the reconcile below clears any leaked latch for it instead.)
+- **`K8sUpgradeStalled`** — `k8s_upgrade_in_flight==1 && time()-k8s_upgrade_started_timestamp > 14400 && sum(<chain job>.active) > 0` for 5m. Catches a chain Job **genuinely running** >4h. **HARDENED 2026-07-25**: the old latch-only expr (`> 5400`, no live-Job check) fired **forever** whenever any interruption between preflight and postflight leaked `in_flight=1` (killswitch, `set -e` abort, hung drain, SIGKILL on a node reboot, spawn_next failure, or a manual off-schedule partial run) — a false critical that **also blocked kured** (RC1/RC2/RC4). The live-Job guard now requires a chain Job to actually be running; a leaked latch is cleared by the reconcile within 12h. Threshold 90m→4h so a slow-but-healthy full run doesn't false-page.
+- **`K8sUpgradeChainJobFailed`** — `kube_job_status_failed{namespace="k8s-upgrade",job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*",reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0` for 15m (warning). Catches a phase Job that **terminally failed before `k8s_upgrade_in_flight` was set** — the preflight gates exit pre-metric, so the two `in_flight`-based alerts above are blind to a failed preflight (this is what hid the 5-day 1.34.9 wedge on 2026-06-12). Reason-scoped to terminal job conditions so a retry-success doesn't false-positive (a bare failed-pod-count would otherwise also block kured for the Job's 7d TTL). The old `unless on() (k8s_upgrade_blocked == 1)` clause was **dropped 2026-06-28**: compat-gate refusals now Complete cleanly (exit 0) instead of Failing, so a terminally-Failed chain Job again means a genuine wedge with nothing to exclude.
+- **`K8sUpgradeBlocked`** — `k8s_upgrade_blocked == 1` (warning). An **ACTIONABLE** compat-gate refusal — a newer version of the lagging addon exists and upgrading it would clear the block (or an in-use deprecated API must be migrated / a node's containerd bumped). Reasons (grouped by class) are in the **morning weekly report**; clear it by doing the named upgrade/migration, after which the next weekly run proceeds (see "Auto-upgrade compat gate"). No upgrade was attempted, so this is not a half-done-rollout alert. **There is deliberately NO companion alert for the held verdict** (`k8s_upgrade_held=1` — waiting-on-upstream / pinned): nothing can be actioned now, so it is surfaced only by the weekly report's `⏸️ HELD` line.
+
+**Leaked-latch self-heal (2026-07-25).** `k8s_upgrade_in_flight` is set in the preflight pod and cleared only in the postflight pod, N Job-hops away, on a never-expiring Pushgateway gauge — so ANY interruption between them (killswitch, `set -e` abort, hung drain, SIGKILL on a node reboot/eviction, spawn_next failure, or a manual off-schedule partial run) froze the latch at 1 and fired `K8sUpgradeStalled` forever, which also blocked kured (recurring root cause across ≥3 incidents). Two-layer fix:
+1. **Alert accuracy** — `K8sUpgradeStalled` now ANDs a live-Job guard (`sum(<chain job>.active) > 0`) so a bare stale latch cannot fire it, and `K8sVersionSkew` is the Pushgateway-independent at-rest backstop (see above).
+2. **Ground-truth reconcile** — the detection CronJob (`main.tf`), at the start of every run, reads live chain Jobs via `kubectl` + the latch from Pushgateway; if **no chain Job is Active AND `in_flight==1` AND started >12h ago**, it DELETEs the `k8s-version-upgrade` Pushgateway group (also clearing the orphan `target_minor`), removes the stale `viktorbarzin.me/k8s-upgrade-*` ns annotations, and deletes terminal chain Jobs (so the "chain advanced" skip can't strand a fresh spawn). Because it uses `kubectl` (not a metric) for Job presence, it survives SIGKILL/eviction that a shell `trap` cannot. The 12h + no-active-Job guard means a live or mid-chain run is never touched.
+3. **Deadlock break** — the pipeline's own criticals (`K8sUpgradeStalled`, `EtcdPreUpgradeSnapshotMissing`) are in the preflight halt-on-alert ignore-list (`$HALT_IGNORE` in `upgrade-step.sh`), so a still-firing self-emitted critical can't abort the very preflight that would clear it (RC3).
+
+This makes the manual Pushgateway reset (below) rarely necessary.
 - The first four alerts ALSO block kured (same `--prometheus-url` halt-on-alert mechanism) so the OS-reboot pipeline can't run on top of a half-done version upgrade.
 
-### Nightly upgrade report (Slack)
+### Weekly upgrade report (Slack)
 
 CronJob `k8s-upgrade-nightly-report` (k8s-upgrade ns, `var.report_schedule`,
-default `7 6 * * *` = 06:07 UTC — after the 23:00 chain, before the 08:00 London
-alert-digest) posts ONE Slack summary each morning of the previous night's run:
+default `7 6 * * 1` = Monday 06:07 UTC — after the Sunday-night chain, before the
+08:00 London alert-digest; historical CronJob name kept) posts ONE Slack summary
+each Monday of the past week's run:
 running version, detector freshness, detected target + kind, the outcome
-(⚪ no upgrade needed / 🔴 blocked + live blocker reasons / 🟢 upgraded /
-🟡 in progress / ⚠️ detector stale), and recent chain jobs. Read-only — it reads
+(⚪ no upgrade needed / 🔴 blocked-actionable + reasons / ⏸️ held = waiting-upstream/pinned /
+🟢 upgraded / 🟡 in progress / ⚠️ detector stale), and recent chain jobs. Read-only — it reads
 the Pushgateway gauges + live nodes/jobs and re-runs `compat-gate.py` for fresh
 blocker reasons; reuses the chain's SA + `slack_webhook` + scripts ConfigMap.
 Logic + unit tests: `scripts/nightly-report.py`, `scripts/test_nightly_report.py`.
 This is the day-to-day visibility layer (it does NOT replace the alerts above —
-those fire on problems; this reports the outcome every night). Manual run:
+those fire on problems; this reports the outcome every week). Manual run:
 `kubectl -n k8s-upgrade create job --from=cronjob/k8s-upgrade-nightly-report nightly-report-test`
 (name it WITHOUT a `k8s-upgrade-{phase}-` prefix so a failure can't trip
 `K8sUpgradeChainJobFailed`).
@@ -327,8 +355,10 @@ EOF
 
 ### Kill a stuck Job (chain halted mid-flight)
 A phase Job that dies without spawning its successor halts the chain. Two alerts
-surface it: `K8sUpgradeStalled` (a mid-chain Job that died with `in_flight=1`,
-after 90 min) and `K8sUpgradeChainJobFailed` (any phase that terminally failed,
+surface it: `K8sUpgradeStalled` (a chain Job genuinely running with `in_flight=1`
+for >4h — hardened 2026-07-25 with a live-Job guard so a leaked latch no longer
+false-fires, and auto-cleared by the detection reconcile within 12h) and
+`K8sUpgradeChainJobFailed` (any phase that terminally failed,
 after 15 min — including a **preflight** that aborted before `in_flight` was set,
 which `K8sUpgradeStalled` cannot see).
 
@@ -336,7 +366,7 @@ which `K8sUpgradeStalled` cannot see).
 `spawn_next` delete + re-spawn a terminally-Failed Job instead of skipping it on
 name-existence (retry-on-failure), so a transient preflight gate — e.g. a spurious
 critical alert like the ttyd web-terminal probe that wedged 1.34.9 for 5 days —
-clears on the next daily cycle. A mid-chain phase that keeps failing still needs
+clears on the next weekly cycle. A mid-chain phase that keeps failing still needs
 manual recovery: fix the root cause, then:
 
 ```bash

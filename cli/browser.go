@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,11 +19,15 @@ import (
 	"time"
 )
 
-// playwrightVersion pins the node CDP client to the chrome-service image minor
-// (mcr.microsoft.com/playwright:v1.48.0-noble → Chromium 130). connect_over_cdp
-// speaks the browser's CDP, so the client minor must track the server minor;
-// see docs/architecture/chrome-service.md "Image pin".
-const playwrightVersion = "1.48.2"
+// The node CDP client is patchright-core — a playwright-core drop-in that avoids
+// the Runtime.enable leak Cloudflare/DataDome fingerprint (design D10). connect
+// _over_cdp is version-tolerant and the chrome-service browser is real Chrome
+// (newer than the old 1.48 Chromium pin), so tracking a current patchright is
+// correct; see docs/architecture/chrome-service.md.
+const (
+	clientPackage = "patchright-core"
+	clientVersion = "1.61.1"
+)
 
 // defaultBrowserTimeout is how long (seconds) to wait for the port-forwarded CDP
 // endpoint to become ready before giving up.
@@ -30,8 +35,10 @@ const defaultBrowserTimeout = 60
 
 const (
 	chromeServiceNamespace = "chrome-service"
-	chromeServiceName      = "chrome-service"
+	chromeServiceName      = "chrome-service" // the always-on MASTER (identity browser)
 	chromeServiceCDPPort   = 9222
+	brokerServiceName      = "chrome-fleet" // the pool broker Service
+	brokerAPIPort          = 8080
 )
 
 // stealthJS is vendored verbatim from stacks/chrome-service/files/stealth.js (the
@@ -52,10 +59,14 @@ type browserOpts struct {
 	mode      string // "run" | "open"
 	script    string // path to the user Playwright script (run mode)
 	url       string // initial URL (run: optional; open: required positional)
-	sharedCtx bool   // use the warmed persistent profile instead of a fresh context
+	sharedCtx bool   // use the warmed persistent profile on the MASTER (bypasses the pool)
 	keepOpen  bool   // leave the created context/pages open on exit
 	port      int    // explicit local port for the forward (0 = auto)
 	timeout   int    // CDP readiness timeout, seconds
+	viewport  string // explicit "W,H" viewport override (default: runner's 1920,1080)
+	tall      bool   // tall snapshot viewport (1280x2000) for lazy-loaded/virtualized DOM
+	noSeed    bool   // pool: do NOT seed the master's cookies (pure clean context)
+	seedPath  string // runtime: path to the fetched seed file (set by the pool path)
 	help      bool
 }
 
@@ -79,6 +90,17 @@ func parseBrowserArgs(mode string, args []string) (browserOpts, error) {
 			o.sharedCtx = true
 		case a == "--keep-open":
 			o.keepOpen = true
+		case a == "--tall":
+			o.tall = true
+		case a == "--no-seed":
+			o.noSeed = true
+		case a == "--viewport":
+			if i+1 < len(args) {
+				o.viewport = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--viewport="):
+			o.viewport = strings.TrimPrefix(a, "--viewport=")
 		case a == "--url":
 			if i+1 < len(args) {
 				o.url = args[i+1]
@@ -159,12 +181,14 @@ func cdpHealthy(jsonBody []byte) (browser string, healthy bool, err error) {
 	return v.Browser, healthy, nil
 }
 
-// buildPortForwardArgs is the kubectl invocation that exposes chrome-service's
-// CDP locally. port-forward tunnels API-server→pod, so it bypasses the :9222
-// NetworkPolicy that gates in-cluster callers.
-func buildPortForwardArgs(localPort int) []string {
+// buildPortForwardArgs is the kubectl invocation that exposes a chrome-service
+// target locally. target is "svc/chrome-service" (master CDP), "svc/chrome-fleet"
+// (broker API), or "pod/<worker>" (a specific pool worker's CDP). port-forward
+// tunnels API-server→pod, so it bypasses the NetworkPolicy that gates in-cluster
+// callers and works for a named pod under the existing pods/portforward grant.
+func buildPortForwardArgs(target string, localPort, remotePort int) []string {
 	return []string{"-n", chromeServiceNamespace, "port-forward",
-		"svc/" + chromeServiceName, fmt.Sprintf("%d:%d", localPort, chromeServiceCDPPort)}
+		target, fmt.Sprintf("%d:%d", localPort, remotePort)}
 }
 
 // browserClientPackageJSON is the auto-managed manifest for the pinned node CDP
@@ -175,10 +199,19 @@ func browserClientPackageJSON() string {
   "private": true,
   "description": "Pinned CDP client for 'homelab browser' — auto-managed, do not edit.",
   "dependencies": {
-    "playwright-core": "%s"
+    "%s": "%s"
   }
 }
-`, playwrightVersion)
+`, clientPackage, clientVersion)
+}
+
+// resolveViewport picks the effective "W,H" for a fresh context: --tall wins,
+// then an explicit --viewport, else "" (the runner defaults to 1920x1080).
+func resolveViewport(o browserOpts) string {
+	if o.tall {
+		return "1280,2000"
+	}
+	return o.viewport
 }
 
 // freePort asks the kernel for an unused ephemeral TCP port.
@@ -207,7 +240,7 @@ func browserClientDir() (string, error) {
 // installedPlaywrightVersion reads the version of the playwright-core already
 // installed in dir, or "" if absent/unreadable.
 func installedPlaywrightVersion(dir string) string {
-	b, err := os.ReadFile(filepath.Join(dir, "node_modules", "playwright-core", "package.json"))
+	b, err := os.ReadFile(filepath.Join(dir, "node_modules", clientPackage, "package.json"))
 	if err != nil {
 		return ""
 	}
@@ -237,19 +270,19 @@ func ensureBrowserClient(dir string) error {
 			return err
 		}
 	}
-	if installedPlaywrightVersion(dir) == playwrightVersion {
+	if installedPlaywrightVersion(dir) == clientVersion {
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "homelab browser: installing pinned playwright-core@%s (one-time, ~a few seconds)…\n", playwrightVersion)
+	fmt.Fprintf(os.Stderr, "homelab browser: installing pinned %s@%s (one-time, ~a few seconds)…\n", clientPackage, clientVersion)
 	cmd := exec.Command("npm", "install", "--no-audit", "--no-fund", "--silent")
 	cmd.Dir = dir
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("npm install playwright-core@%s in %s: %w (is node/npm installed?)", playwrightVersion, dir, err)
+		return fmt.Errorf("npm install %s@%s in %s: %w (is node/npm installed?)", clientPackage, clientVersion, dir, err)
 	}
-	if got := installedPlaywrightVersion(dir); got != playwrightVersion {
-		return fmt.Errorf("playwright-core install mismatch in %s: want %s, got %q", dir, playwrightVersion, got)
+	if got := installedPlaywrightVersion(dir); got != clientVersion {
+		return fmt.Errorf("%s install mismatch in %s: want %s, got %q", clientPackage, dir, clientVersion, got)
 	}
 	return nil
 }
@@ -286,18 +319,39 @@ func waitForCDP(cdpURL string, timeout time.Duration) (string, error) {
 	return "", lastErr
 }
 
-// runBrowser is the orchestration: pick a port, ensure the pinned client, start
-// (and ALWAYS tear down) a CDP port-forward, wait for readiness, then run node.
-func runBrowser(o browserOpts) error {
-	port := o.port
-	if port == 0 {
-		p, err := freePort()
-		if err != nil {
-			return fmt.Errorf("pick local port: %w", err)
-		}
-		port = p
+// startForward starts a kubectl port-forward to target's remotePort on a fresh
+// local port, in its own process group so the whole tree dies on teardown. It
+// does NOT wait for readiness — the caller polls the specific endpoint.
+func startForward(target string, remotePort int) (localPort int, teardown func(), logbuf *strings.Builder, err error) {
+	localPort, err = freePort()
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("pick local port: %w", err)
 	}
+	pf := exec.Command("kubectl", buildPortForwardArgs(target, localPort, remotePort)...)
+	pf.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	logbuf = &strings.Builder{}
+	pf.Stdout = logbuf
+	pf.Stderr = logbuf
+	if err = pf.Start(); err != nil {
+		return 0, nil, logbuf, fmt.Errorf("start kubectl port-forward %s (kubeconfig set?): %w", target, err)
+	}
+	var once sync.Once
+	teardown = func() {
+		once.Do(func() {
+			if pf.Process != nil {
+				_ = syscall.Kill(-pf.Process.Pid, syscall.SIGKILL)
+			}
+			_ = pf.Wait()
+		})
+	}
+	return localPort, teardown, logbuf, nil
+}
 
+// runBrowser is the orchestration: ensure the pinned client, acquire a session
+// (pool worker by default; the MASTER for --shared-context or if the broker is
+// down), then run the node runner against its CDP. All port-forwards + the pool
+// session are ALWAYS torn down.
+func runBrowser(o browserOpts) error {
 	dir, err := browserClientDir()
 	if err != nil {
 		return err
@@ -306,46 +360,261 @@ func runBrowser(o browserOpts) error {
 		return err
 	}
 
-	// Start the forward in its own process group so the whole tree dies on cleanup.
-	pf := exec.Command("kubectl", buildPortForwardArgs(port)...)
-	pf.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	var pfLog strings.Builder
-	pf.Stdout = &pfLog
-	pf.Stderr = &pfLog
-	if err := pf.Start(); err != nil {
-		return fmt.Errorf("start kubectl port-forward (kubeconfig set?): %w", err)
+	var teardowns []func()
+	var tdMu sync.Mutex
+	addTeardown := func(f func()) { tdMu.Lock(); teardowns = append(teardowns, f); tdMu.Unlock() }
+	cleanup := func() {
+		tdMu.Lock()
+		defer tdMu.Unlock()
+		for i := len(teardowns) - 1; i >= 0; i-- {
+			teardowns[i]()
+		}
 	}
+	defer cleanup()
 
-	var once sync.Once
-	teardown := func() {
-		once.Do(func() {
-			if pf.Process != nil {
-				_ = syscall.Kill(-pf.Process.Pid, syscall.SIGKILL)
-			}
-			_ = pf.Wait()
-		})
-	}
-	defer teardown()
-
-	// Tear down on Ctrl-C / SIGTERM too, then exit non-zero.
+	// Tear down every forward + release on Ctrl-C / SIGTERM too.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigCh)
 	go func() {
 		if _, ok := <-sigCh; ok {
-			teardown()
+			cleanup()
 			os.Exit(130)
 		}
 	}()
 
-	cdpURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	browser, err := waitForCDP(cdpURL, time.Duration(o.timeout)*time.Second)
-	if err != nil {
-		return fmt.Errorf("chrome-service CDP not ready on %s: %w\n--- port-forward log ---\n%s", cdpURL, err, pfLog.String())
+	var cdpURL string
+	usePool := !o.sharedCtx
+	if usePool {
+		url, err := setupPoolSession(&o, addTeardown)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "homelab browser: pool unavailable (%v); falling back to the master browser\n", err)
+			usePool = false
+		} else {
+			cdpURL = url
+		}
 	}
-	fmt.Fprintf(os.Stderr, "homelab browser: connected to %s via %s\n", browser, cdpURL)
+	if !usePool {
+		port, td, logbuf, err := startForward("svc/"+chromeServiceName, chromeServiceCDPPort)
+		if err != nil {
+			return err
+		}
+		addTeardown(td)
+		cdpURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+		browser, err := waitForCDP(cdpURL, time.Duration(o.timeout)*time.Second)
+		if err != nil {
+			return fmt.Errorf("chrome-service CDP not ready on %s: %w\n--- port-forward log ---\n%s", cdpURL, err, logbuf.String())
+		}
+		fmt.Fprintf(os.Stderr, "homelab browser: connected to %s via %s (master)\n", browser, cdpURL)
+	}
 
 	return runBrowserNode(dir, cdpURL, o)
+}
+
+// setupPoolSession port-forwards the broker, acquires a worker, seeds it from the
+// master (unless --no-seed), port-forwards that worker's CDP, and returns its
+// local CDP URL. It registers teardowns (forwards + release) via addTeardown and
+// mutates o.seedPath with the fetched seed file. Any error means "fall back to
+// the master" — the caller handles that.
+func setupPoolSession(o *browserOpts, addTeardown func(func())) (string, error) {
+	bport, btd, blog, err := startForward("svc/"+brokerServiceName, brokerAPIPort)
+	if err != nil {
+		return "", err
+	}
+	addTeardown(btd)
+	brokerBase := fmt.Sprintf("http://127.0.0.1:%d", bport)
+	if err := waitHTTP(brokerBase+"/healthz", 20*time.Second); err != nil {
+		return "", fmt.Errorf("broker not reachable: %w\n--- port-forward log ---\n%s", err, blog.String())
+	}
+	pod, session, err := acquireSession(brokerBase, sessionOwner(), sessionPurpose(*o))
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(os.Stderr, "homelab browser: acquired pool session %s (pod %s)\n", session, pod)
+	// release the session when the run ends (or on signal) — best-effort.
+	addTeardown(func() { releaseSession(brokerBase, session) })
+
+	if !o.noSeed {
+		seedFile := filepath.Join(os.TempDir(), fmt.Sprintf("homelab-browser-seed-%d.json", os.Getpid()))
+		if err := fetchSeed(brokerBase, seedFile); err != nil {
+			fmt.Fprintf(os.Stderr, "homelab browser: seed fetch failed (%v); continuing with a clean context\n", err)
+		} else {
+			o.seedPath = seedFile
+			addTeardown(func() { _ = os.Remove(seedFile) })
+		}
+	}
+
+	wport, wtd, wlog, err := startForward("pod/"+pod, chromeServiceCDPPort)
+	if err != nil {
+		return "", err
+	}
+	addTeardown(wtd)
+	cdpURL := fmt.Sprintf("http://127.0.0.1:%d", wport)
+	browser, err := waitForCDP(cdpURL, time.Duration(o.timeout)*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("worker CDP not ready on %s: %w\n--- port-forward log ---\n%s", cdpURL, err, wlog.String())
+	}
+	fmt.Fprintf(os.Stderr, "homelab browser: connected to %s via %s (pool worker %s)\n", browser, cdpURL, pod)
+	return cdpURL, nil
+}
+
+// --- broker client -------------------------------------------------------
+
+// sessionOwner labels the pool session with the invoking OS user (mirrors the
+// presence model). Falls back to $USER / "unknown".
+func sessionOwner() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return u.Username
+	}
+	if v := os.Getenv("USER"); v != "" {
+		return v
+	}
+	return "unknown"
+}
+
+// sessionPurpose is a short human hint for FleetView: the script name (run) or
+// the target URL (open).
+func sessionPurpose(o browserOpts) string {
+	if o.mode == "open" && o.url != "" {
+		return "open " + o.url
+	}
+	if o.script != "" {
+		return "run " + filepath.Base(o.script)
+	}
+	return "homelab browser " + o.mode
+}
+
+// waitHTTP polls url until it returns any 2xx, or the timeout elapses.
+func waitHTTP(url string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 3 * time.Second}
+	var lastErr error
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err != nil {
+			lastErr = err
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode/100 == 2 {
+			return nil
+		}
+		lastErr = fmt.Errorf("status %d", resp.StatusCode)
+		time.Sleep(300 * time.Millisecond)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("timed out after %s", timeout)
+	}
+	return lastErr
+}
+
+// parseAcquire reads the broker's /acquire response into (pod, cdpPort, session).
+// An {"error":...} body (e.g. pool at capacity) is surfaced as an error.
+func parseAcquire(body []byte) (pod string, port int, session string, err error) {
+	var v struct {
+		Pod     string `json:"pod"`
+		CDPPort int    `json:"cdpPort"`
+		Session string `json:"session"`
+		Error   string `json:"error"`
+	}
+	if e := json.Unmarshal(body, &v); e != nil {
+		return "", 0, "", fmt.Errorf("parse /acquire response: %w", e)
+	}
+	if v.Error != "" {
+		return "", 0, "", fmt.Errorf("broker: %s", v.Error)
+	}
+	if v.Pod == "" || v.Session == "" {
+		return "", 0, "", fmt.Errorf("broker /acquire returned no pod/session: %s", string(body))
+	}
+	return v.Pod, v.CDPPort, v.Session, nil
+}
+
+// acquireSession asks the broker for a worker; returns its pod name + session id.
+func acquireSession(brokerBase, owner, purpose string) (pod, session string, err error) {
+	reqBody, _ := json.Marshal(map[string]string{"owner": owner, "purpose": purpose})
+	client := &http.Client{Timeout: 90 * time.Second} // create+ready can take a few s
+	resp, err := client.Post(brokerBase+"/acquire", "application/json", strings.NewReader(string(reqBody)))
+	if err != nil {
+		return "", "", fmt.Errorf("POST /acquire: %w", err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	pod, _, session, err = parseAcquire(b)
+	return pod, session, err
+}
+
+// releaseSession tells the broker to reap/return the worker. Best-effort.
+func releaseSession(brokerBase, session string) {
+	reqBody, _ := json.Marshal(map[string]string{"session": session})
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Post(brokerBase+"/release", "application/json", strings.NewReader(string(reqBody)))
+	if err == nil {
+		resp.Body.Close()
+	}
+}
+
+// fetchSeed downloads the broker's on-demand storage_state export to dest.
+func fetchSeed(brokerBase, dest string) error {
+	client := &http.Client{Timeout: 40 * time.Second}
+	resp, err := client.Get(brokerBase + "/seed")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("seed status %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dest, b, 0o600)
+}
+
+// listSessions port-forwards the broker and prints the live pool session table.
+func listSessions() error {
+	bport, btd, blog, err := startForward("svc/"+brokerServiceName, brokerAPIPort)
+	if err != nil {
+		return err
+	}
+	defer btd()
+	brokerBase := fmt.Sprintf("http://127.0.0.1:%d", bport)
+	if err := waitHTTP(brokerBase+"/healthz", 20*time.Second); err != nil {
+		return fmt.Errorf("broker not reachable: %w\n--- port-forward log ---\n%s", err, blog.String())
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(brokerBase + "/sessions")
+	if err != nil {
+		return fmt.Errorf("GET /sessions: %w", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Sessions []struct {
+			Owner, Purpose, Session, URL, Name string
+			Ready                              bool
+		} `json:"sessions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return fmt.Errorf("decode /sessions: %w", err)
+	}
+	active := 0
+	fmt.Printf("%-14s  %-6s  %-24s  %s\n", "OWNER", "READY", "POD", "PURPOSE / URL")
+	for _, s := range out.Sessions {
+		if s.Session == "" {
+			continue // idle/warm worker, not a claimed session
+		}
+		active++
+		detail := s.Purpose
+		if s.URL != "" {
+			detail = s.URL
+		}
+		fmt.Printf("%-14s  %-6t  %-24s  %s\n", s.Owner, s.Ready, s.Name, detail)
+	}
+	if active == 0 {
+		fmt.Println("(no active pool sessions)")
+	}
+	return nil
 }
 
 // runBrowserNode invokes the managed node runner with inputs passed via env.
@@ -374,6 +643,12 @@ func runBrowserNode(dir, cdpURL string, o browserOpts) error {
 	}
 	if o.keepOpen {
 		env = append(env, "HOMELAB_BROWSER_KEEP_OPEN=1")
+	}
+	if vp := resolveViewport(o); vp != "" {
+		env = append(env, "HOMELAB_VIEWPORT="+vp)
+	}
+	if o.seedPath != "" {
+		env = append(env, "HOMELAB_STORAGE_STATE="+o.seedPath)
 	}
 	if o.mode == "open" {
 		shot := filepath.Join(os.TempDir(), fmt.Sprintf("homelab-browser-%d.png", os.Getpid()))

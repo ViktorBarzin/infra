@@ -69,7 +69,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -113,13 +113,16 @@ resource "kubernetes_manifest" "external_secret" {
             property = "actualbudget_api_key"
           }
         },
-        {
-          secretKey = "ACTUALBUDGET_ENCRYPTION_PASSWORD"
-          remoteRef = {
-            key      = "payslip-ingest"
-            property = "actualbudget_encryption_password"
-          }
-        },
+        # ACTUALBUDGET_ENCRYPTION_PASSWORD is deliberately NOT wired (2026-08-16).
+        # Vault does hold `actualbudget_encryption_password`, but neither budget
+        # file is end-to-end encrypted (encrypt_keyid is null on both
+        # actual-servers) and actual-http-api branches on the header's mere
+        # PRESENCE: with it, every request takes the full downloadBudget() path —
+        # re-download, decrypt and a ~20 MB backup zip — instead of the cheap
+        # loadBudget()+sync(). Measured on a ~118 MB file: 110,000 ms (timeout)
+        # with the header vs 108 ms without. payslip-ingest treats the variable as
+        # optional as of commit 5f6c00d and omits the header when it is unset.
+        # Re-add this block only if the budget file is ever genuinely encrypted.
         {
           secretKey = "ACTUALBUDGET_BUDGET_SYNC_ID"
           remoteRef = {
@@ -316,7 +319,13 @@ resource "kubernetes_deployment" "payslip_ingest" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Stakater Reloader stamps this on every secret-triggered restart. The
+      # 2026-08-14 switch to reloadStrategy = annotations (stacks/reloader) moved
+      # the marker onto this pod-template annotation on the expectation that
+      # Terraform does not manage it, but it does wherever the pod template
+      # declares annotations, so it planned as a removal on every run.
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
@@ -364,13 +373,15 @@ resource "kubernetes_cron_job_v1" "actualbudget_payroll_sync" {
     namespace = kubernetes_namespace.payslip_ingest.metadata[0].name
   }
   spec {
-    # Suspended 2026-05-12 — chronic JobFailed with
-    # `KeyError: 'ACTUALBUDGET_API_KEY'` / `..._ENCRYPTION_PASSWORD`.
-    # Vault `secret/payslip-ingest` now has `actualbudget_api_key` and
-    # `actualbudget_budget_sync_id` (copied from `secret/fire-planner`),
-    # but `actualbudget_encryption_password` is still missing. Unsuspend
-    # by removing this line once the encryption password is in Vault.
-    suspend                       = true
+    # Unsuspended 2026-08-16. History: suspended 2026-05-12 on chronic JobFailed
+    # with `KeyError: 'ACTUALBUDGET_API_KEY'` / `..._ENCRYPTION_PASSWORD`, to be
+    # lifted "once the encryption password is in Vault". That framing turned out
+    # to be the wrong fix on both halves — the Vault key had since been added
+    # (the ExternalSecret syncs all six keys), and the encryption password was
+    # never actually needed, since neither budget file is encrypted. The client
+    # now treats it as optional and omits the header (see the ExternalSecret
+    # block above for why sending it is harmful).
+    suspend                       = false
     schedule                      = "0 2 * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
@@ -539,3 +550,124 @@ resource "kubernetes_config_map" "grafana_payslips_datasource" {
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
 # CI retrigger v2 2026-05-16T13:46:35+00:00
+
+# Payslip freshness exporter -> Pushgateway (code-oqyb, 2026-09-04).
+#
+# WHY THIS EXISTS. Payslips reach Paperless only because Viktor forwards or
+# uploads the PDF; there is no Workday or Meta-side automation in the path.
+# That manual step stopped after 2026-05-29 and nothing noticed for 98 days.
+# The payslip-ingest webhook and the actualbudget-payroll-sync CronJob both
+# kept succeeding the whole time, because "no new payslip document" is a
+# perfectly healthy run for either of them. So the signal cannot come from a
+# job's exit code — it has to come from the DATA, which is what this exports.
+#
+# WHY pay_date AND NOT a deposit-vs-payslip COMPARISON. Both were on the table.
+# Comparing external_meta_deposits against payslip proves he was paid and no
+# payslip followed, which is a more specific statement. It also depends on two
+# more moving parts staying healthy — the ActualBudget bank sync and the
+# payroll-sync CronJob above — and a break in either one mutes the alert
+# instead of firing it. Freshness of max(pay_date) depends on one number in one
+# table and degrades in the safe direction: if this exporter dies, Pushgateway
+# keeps serving the last value, that value keeps ageing, and PayslipStale still
+# fires. The deposit date is exported alongside as context for the alert text
+# and Panel 14, not as the trigger.
+resource "kubernetes_cron_job_v1" "payslip_freshness_export" {
+  metadata {
+    name      = "payslip-freshness-export"
+    namespace = kubernetes_namespace.payslip_ingest.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    # Every 6h rather than daily: the threshold is 40 days, so run frequency
+    # does not affect detection, but it does decide how long the alert keeps
+    # firing AFTER Viktor files the missing payslips. 6h means it clears the
+    # same day instead of the next.
+    schedule                      = "17 */6 * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 300
+
+    job_template {
+      metadata {
+        labels = local.labels
+      }
+      spec {
+        backoff_limit              = 2
+        active_deadline_seconds    = 300
+        ttl_seconds_after_finished = 86400
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            restart_policy = "OnFailure"
+            container {
+              name  = "export"
+              image = "alpine:3.20"
+
+              # DB_CONNECTION_STRING lives here.
+              env_from {
+                secret_ref {
+                  name = "payslip-ingest-db-creds"
+                }
+              }
+
+              command = ["/bin/sh", "-c", <<EOT
+set -eu
+apk add --no-cache postgresql16-client curl >/dev/null 2>&1
+
+# The app stores a SQLAlchemy URL. psql does not understand the +asyncpg
+# driver suffix, so strip it.
+PSQL_URL=$(echo "$DB_CONNECTION_STRING" | sed 's|+asyncpg||')
+
+PAY=$(psql "$PSQL_URL" -tAc "SELECT coalesce(extract(epoch from max(pay_date)::timestamptz), 0)::bigint FROM payslip_ingest.payslip")
+DEP=$(psql "$PSQL_URL" -tAc "SELECT coalesce(extract(epoch from max(deposit_date)::timestamptz), 0)::bigint FROM payslip_ingest.external_meta_deposits")
+
+# A query that came back empty or zero is a BROKEN RUN, not a stale payslip.
+# Pushing a 0 here would read as 1970 and fire PayslipStale for the wrong
+# reason; failing instead leaves the last good value in place to age while
+# PayslipFreshnessExportStale reports the real fault.
+if [ -z "$PAY" ] || [ "$PAY" = "0" ]; then echo "ERROR: no max(pay_date) from payslip_ingest.payslip"; exit 1; fi
+if [ -z "$DEP" ] || [ "$DEP" = "0" ]; then echo "ERROR: no max(deposit_date) from payslip_ingest.external_meta_deposits"; exit 1; fi
+
+echo "latest pay_date epoch=$PAY  latest deposit_date epoch=$DEP"
+
+printf '%s\n' \
+  "# HELP payslip_latest_pay_date_timestamp_seconds pay_date of the newest row in payslip_ingest.payslip." \
+  "# TYPE payslip_latest_pay_date_timestamp_seconds gauge" \
+  "payslip_latest_pay_date_timestamp_seconds $PAY" \
+  "# HELP payslip_latest_deposit_date_timestamp_seconds deposit_date of the newest Meta payroll deposit in payslip_ingest.external_meta_deposits." \
+  "# TYPE payslip_latest_deposit_date_timestamp_seconds gauge" \
+  "payslip_latest_deposit_date_timestamp_seconds $DEP" \
+  "# HELP payslip_freshness_last_success_timestamp_seconds when this exporter last read both tables successfully." \
+  "# TYPE payslip_freshness_last_success_timestamp_seconds gauge" \
+  "payslip_freshness_last_success_timestamp_seconds $(date +%s)" \
+  | curl -sf --max-time 20 --data-binary @- \
+      "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/payslip-freshness"
+EOT
+              ]
+
+              resources {
+                requests = {
+                  cpu    = "25m"
+                  memory = "64Mi"
+                }
+                limits = {
+                  memory = "128Mi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+
+  depends_on = [kubernetes_manifest.db_external_secret]
+}

@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -269,6 +271,29 @@ func TestEnsureVaultTokenKeepsExplicitEnv(t *testing.T) {
 	}
 }
 
+func TestEnsureVaultTokenPrefersScopedOverFile(t *testing.T) {
+	// Regression: a power-user's read-only OIDC ~/.vault-token must NOT shadow the
+	// purpose-built scoped token (emo's setup hit 403 because it did, 2026-06-28).
+	dir := t.TempDir()
+	cfg := dir + "/.config/claude-auth-sync"
+	if err := os.MkdirAll(cfg, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg+"/vault-token", []byte("SCOPED-TOK"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/.vault-token", []byte("STALE-OIDC-TOK"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+	t.Setenv("VAULT_TOKEN", "")
+
+	ensureVaultToken()
+	if got := os.Getenv("VAULT_TOKEN"); got != "SCOPED-TOK" {
+		t.Fatalf("VAULT_TOKEN = %q, want the scoped token to win over a stale ~/.vault-token", got)
+	}
+}
+
 func TestScopedTokenPath(t *testing.T) {
 	if got := scopedTokenPath("/home/emo"); got != "/home/emo/.config/claude-auth-sync/vault-token" {
 		t.Fatalf("scopedTokenPath = %q", got)
@@ -276,9 +301,10 @@ func TestScopedTokenPath(t *testing.T) {
 }
 
 func TestVaultTokenSource(t *testing.T) {
-	// Precedence: explicit $VAULT_TOKEN > ~/.vault-token (vault CLI native) >
-	// the claude-auth-sync per-user scoped token. This is what lets a non-admin
-	// workstation user (no ambient token) reach their own Vault path.
+	// Precedence: explicit $VAULT_TOKEN > the claude-auth-sync per-user scoped
+	// token > a native ~/.vault-token. Scoped beats the file so a power-user's
+	// read-only OIDC ~/.vault-token can't shadow the scoped token on the user's
+	// own path (emo, 2026-06-28).
 	cases := []struct {
 		name             string
 		env              string
@@ -287,10 +313,11 @@ func TestVaultTokenSource(t *testing.T) {
 		wantTok, wantSrc string
 	}{
 		{"explicit env wins", "abc", true, "S", "", "env"},
-		{"vault-token file used natively", "", true, "S", "", "file"},
-		{"scoped fallback for non-admin", "", false, "S-TOK", "S-TOK", "scoped"},
+		{"scoped beats a stale ~/.vault-token", "", true, "S-TOK", "S-TOK", "scoped"},
+		{"scoped used when no file", "", false, "S-TOK", "S-TOK", "scoped"},
+		{"native ~/.vault-token only when no scoped", "", true, "", "", "file"},
 		{"scoped value is trimmed", "", false, "  S-TOK\n", "S-TOK", "scoped"},
-		{"whitespace-only scoped is no token", "", false, "  \n", "", "none"},
+		{"whitespace-only scoped falls back to file", "", true, "  \n", "", "file"},
 		{"nothing configured", "", false, "", "", "none"},
 	}
 	for _, c := range cases {
@@ -299,6 +326,66 @@ func TestVaultTokenSource(t *testing.T) {
 			t.Errorf("%s: vaultTokenSource(%q,%v,%q) = (%q,%q), want (%q,%q)",
 				c.name, c.env, c.haveVaultToken, c.scoped, tok, src, c.wantTok, c.wantSrc)
 		}
+	}
+}
+
+func TestVaultAddrToSet(t *testing.T) {
+	// homelab vault is invoked by AFK agent sessions (non-login shells that
+	// never sourced /etc/environment), so the CLI must self-default VAULT_ADDR
+	// rather than rely on the ambient env — else every `vault` child hits the
+	// 127.0.0.1:8200 default and fails "connection refused" (exit 2).
+	cases := []struct {
+		name, env, want string
+	}{
+		{"unset -> default", "", vaultAddrDefault},
+		{"whitespace-only -> default", "  \n", vaultAddrDefault},
+		{"explicit kept (empty = leave alone)", "https://vault.example.com", ""},
+	}
+	for _, c := range cases {
+		if got := vaultAddrToSet(c.env); got != c.want {
+			t.Errorf("%s: vaultAddrToSet(%q) = %q, want %q", c.name, c.env, got, c.want)
+		}
+	}
+}
+
+func TestEnsureVaultTokenSetsDefaultAddr(t *testing.T) {
+	dir := t.TempDir() // no scoped token, no ~/.vault-token
+	t.Setenv("HOME", dir)
+	t.Setenv("VAULT_TOKEN", "")
+	t.Setenv("VAULT_ADDR", "") // emo's non-login-shell situation
+
+	ensureVaultToken()
+	if got := os.Getenv("VAULT_ADDR"); got != vaultAddrDefault {
+		t.Fatalf("VAULT_ADDR = %q, want default %q to be exported", got, vaultAddrDefault)
+	}
+}
+
+func TestEnsureVaultTokenKeepsExplicitAddr(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("VAULT_TOKEN", "")
+	t.Setenv("VAULT_ADDR", "https://vault.example.com")
+
+	ensureVaultToken()
+	if got := os.Getenv("VAULT_ADDR"); got != "https://vault.example.com" {
+		t.Fatalf("VAULT_ADDR = %q, must not override an explicit addr", got)
+	}
+}
+
+func TestAugmentErrSurfacesStderr(t *testing.T) {
+	if got := augmentErr(nil, []byte("ignored")); got != nil {
+		t.Fatalf("augmentErr(nil, …) = %v, want nil", got)
+	}
+	base := errors.New("exit status 2")
+	got := augmentErr(base, []byte("  dial tcp 127.0.0.1:8200: connect: connection refused\n"))
+	if got == nil || !strings.Contains(got.Error(), "connection refused") || !strings.Contains(got.Error(), "exit status 2") {
+		t.Fatalf("augmentErr did not surface stderr: %v", got)
+	}
+	if !errors.Is(got, base) {
+		t.Fatal("augmentErr lost the wrapped error (errors.Is failed)")
+	}
+	if got := augmentErr(base, []byte("   ")); got != base {
+		t.Fatalf("augmentErr with blank stderr = %v, want the original error unchanged", got)
 	}
 }
 
@@ -532,5 +619,439 @@ func TestGetValueFlow(t *testing.T) {
 	val, err := getValue(f.run, "emo", uid, getOpts{name: "github", field: "password"})
 	if err != nil || val != "p@ss" {
 		t.Fatalf("getValue = %q, %v", val, err)
+	}
+}
+
+// --- vault get --all (browse all fields) ----------------------------------
+
+func TestParseGetArgsAll(t *testing.T) {
+	o, err := parseGetArgs([]string{"github", "--all"})
+	if err != nil || o.name != "github" || !o.all {
+		t.Fatalf("parseGetArgs(--all) = %+v err=%v", o, err)
+	}
+	// --all must skip --field validation (field is irrelevant for a full dump).
+	if _, err := parseGetArgs([]string{"github", "--all", "--field", "evil"}); err != nil {
+		t.Fatalf("--all must ignore an otherwise-invalid --field, got err=%v", err)
+	}
+	// A name is still required.
+	if _, err := parseGetArgs([]string{"--all"}); err == nil {
+		t.Fatal("get --all with no name must error")
+	}
+	// Without --all, the field allowlist still applies.
+	if _, err := parseGetArgs([]string{"github", "--field", "evil"}); err == nil {
+		t.Fatal("invalid --field without --all must still error")
+	}
+}
+
+func TestBwItemArgs(t *testing.T) {
+	argv := bwItemArgs("github")
+	if !reflect.DeepEqual(argv, []string{"get", "item", "github"}) {
+		t.Fatalf("bwItemArgs = %v", argv)
+	}
+	for _, a := range argv {
+		if strings.Contains(a, "SESSION") || a == "--session" {
+			t.Fatalf("session must travel via env, not argv: %v", argv)
+		}
+	}
+}
+
+// a representative `bw get item` payload: login fields, multiple URIs, a TOTP
+// seed, notes, custom fields (text/hidden/boolean), plus bw internals that MUST
+// be dropped (id/object/reprompt/passwordHistory).
+const sampleLoginItemJSON = `{
+  "object":"item","id":"abc-123","folderId":null,"type":1,"reprompt":0,
+  "name":"GitHub","notes":"my notes","favorite":false,
+  "fields":[
+    {"name":"PIN","value":"1234","type":1},
+    {"name":"endpoint","value":"https://api.gh","type":0},
+    {"name":"enabled","value":"true","type":2}
+  ],
+  "login":{
+    "username":"octocat","password":"hunter2",
+    "totp":"otpauth://totp/GitHub:octocat?secret=SEEDSEEDSEED",
+    "uris":[{"match":null,"uri":"https://github.com"},{"match":null,"uri":"https://gist.github.com"}]
+  },
+  "passwordHistory":[{"password":"OLD-PASSWORD-XYZ"}]
+}`
+
+func TestNormalizeItemLogin(t *testing.T) {
+	n, err := normalizeItem(sampleLoginItemJSON)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	if n.Name != "GitHub" || n.Username != "octocat" || n.Password != "hunter2" || n.Notes != "my notes" {
+		t.Fatalf("standard fields wrong: %+v", n)
+	}
+	if !n.TOTP {
+		t.Fatal("TOTP presence flag must be true when a seed exists")
+	}
+	if !reflect.DeepEqual(n.URIs, []string{"https://github.com", "https://gist.github.com"}) {
+		t.Fatalf("URIs = %v", n.URIs)
+	}
+	want := map[string]string{"PIN": "1234", "endpoint": "https://api.gh", "enabled": "true"}
+	if !reflect.DeepEqual(n.Fields, want) {
+		t.Fatalf("custom fields = %v want %v", n.Fields, want)
+	}
+}
+
+// The load-bearing security test: the raw TOTP seed (more powerful than a
+// one-time code) and the password history must NEVER appear in the dump.
+func TestNormalizeItemNeverLeaksSeedOrHistory(t *testing.T) {
+	n, err := normalizeItem(sampleLoginItemJSON)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	out, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, leak := range []string{"SEEDSEEDSEED", "otpauth", "OLD-PASSWORD-XYZ", "passwordHistory", "abc-123"} {
+		if strings.Contains(string(out), leak) {
+			t.Fatalf("dump leaked %q: %s", leak, out)
+		}
+	}
+}
+
+func TestNormalizeItemNoTOTP(t *testing.T) {
+	n, err := normalizeItem(`{"name":"X","type":1,"login":{"username":"u","password":"p"}}`)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	if n.TOTP {
+		t.Fatal("TOTP must be false when no seed present")
+	}
+	out, _ := json.Marshal(n)
+	if strings.Contains(string(out), "totp") {
+		t.Fatalf("no-totp item must omit the totp key entirely: %s", out)
+	}
+}
+
+func TestNormalizeItemEmptyStandardFieldsOmitted(t *testing.T) {
+	n, err := normalizeItem(`{"name":"Bare","type":1,"login":{"username":"","password":"","totp":"","uris":[]},"fields":[{"name":"only","value":"x","type":0}]}`)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	out, _ := json.Marshal(n)
+	for _, k := range []string{"username", "password", "uris", "notes", "totp"} {
+		if strings.Contains(string(out), `"`+k+`"`) {
+			t.Fatalf("empty standard field %q must be omitted: %s", k, out)
+		}
+	}
+	if !strings.Contains(string(out), `"name":"Bare"`) || !strings.Contains(string(out), `"only":"x"`) {
+		t.Fatalf("name + custom field must survive: %s", out)
+	}
+}
+
+func TestNormalizeItemSecureNoteNullLogin(t *testing.T) {
+	// type 2 (secure note): login is null — must not panic; notes + custom fields survive.
+	n, err := normalizeItem(`{"name":"SN","type":2,"notes":"secret note","login":null,"fields":[{"name":"k","value":"v","type":1}]}`)
+	if err != nil {
+		t.Fatalf("normalizeItem(null login): %v", err)
+	}
+	if n.Name != "SN" || n.Notes != "secret note" || n.Fields["k"] != "v" {
+		t.Fatalf("secure-note normalize wrong: %+v", n)
+	}
+	if n.Username != "" || n.Password != "" || n.TOTP {
+		t.Fatalf("login fields must be empty for a login-less item: %+v", n)
+	}
+}
+
+func TestNormalizeItemDuplicateCustomNames(t *testing.T) {
+	// Bitwarden permits duplicate custom-field names; a JSON object can't hold
+	// dups, so last-wins (documented).
+	n, err := normalizeItem(`{"name":"D","fields":[{"name":"k","value":"first","type":0},{"name":"k","value":"second","type":0}]}`)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	if n.Fields["k"] != "second" {
+		t.Fatalf("duplicate custom names must be last-wins, got %q", n.Fields["k"])
+	}
+}
+
+func TestNormalizeItemLinkedFieldSkipped(t *testing.T) {
+	// type 3 (linked) fields reference another field and carry a null value —
+	// they are not real data and must be skipped.
+	n, err := normalizeItem(`{"name":"L","login":{"username":"u"},"fields":[{"name":"linked","value":null,"type":3},{"name":"real","value":"r","type":0}]}`)
+	if err != nil {
+		t.Fatalf("normalizeItem: %v", err)
+	}
+	if _, ok := n.Fields["linked"]; ok {
+		t.Fatalf("linked field must be skipped: %v", n.Fields)
+	}
+	if n.Fields["real"] != "r" {
+		t.Fatalf("real custom field dropped: %v", n.Fields)
+	}
+}
+
+func TestNormalizeItemMalformed(t *testing.T) {
+	if _, err := normalizeItem("not json"); err == nil {
+		t.Fatal("malformed item JSON must error")
+	}
+}
+
+// getItem opens a session and runs `bw get item <name>`, returning raw JSON.
+func TestGetItemFlow(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{
+		"vault kv get -field=vaultwarden_master_password secret/workstation/claude-users/emo": "pw",
+		"vault kv get -field=vaultwarden_client_id secret/workstation/claude-users/emo":       "user.x",
+		"vault kv get -field=vaultwarden_client_secret secret/workstation/claude-users/emo":   "cs",
+		"bw status":          `{"status":"locked"}`,
+		"bw unlock":          "SESS",
+		"bw get item github": sampleLoginItemJSON,
+	}}
+	uid := fmt.Sprintf("%d", os.Getuid())
+	raw, err := getItem(f.run, "emo", uid, "github")
+	if err != nil || !strings.Contains(raw, `"name":"GitHub"`) {
+		t.Fatalf("getItem = %q, %v", raw, err)
+	}
+	// The session key must reach bw via env, never argv.
+	for _, call := range f.calls {
+		for _, arg := range call {
+			if strings.Contains(arg, "SESS") {
+				t.Errorf("session leaked into argv: %v", call)
+			}
+		}
+	}
+}
+
+func TestVaultHelpMentionsAll(t *testing.T) {
+	if !strings.Contains(vaultHelp(), "--all") {
+		t.Error("vault help must document --all")
+	}
+}
+
+// --- bw sync on read (freshness) ------------------------------------------
+
+func TestBwSyncArgs(t *testing.T) {
+	if got := bwSyncArgs(); !reflect.DeepEqual(got, []string{"sync"}) {
+		t.Fatalf("bwSyncArgs = %v", got)
+	}
+}
+
+// Every read opens a session that first `bw sync`s, so reads reflect the latest
+// server-side values: `bw unlock` is local-only, so without a sync a persisted
+// (already-logged-in) session serves a stale local cache.
+func TestOpenSessionSyncsBeforeRead(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{
+		"vault kv get -field=vaultwarden_master_password secret/workstation/claude-users/emo": "pw",
+		"vault kv get -field=vaultwarden_client_id secret/workstation/claude-users/emo":       "user.x",
+		"vault kv get -field=vaultwarden_client_secret secret/workstation/claude-users/emo":   "cs",
+		"bw status":              `{"status":"locked"}`,
+		"bw unlock":              "SESS",
+		"bw sync":                "Syncing complete.",
+		"bw get password github": "p@ss",
+	}}
+	uid := fmt.Sprintf("%d", os.Getuid())
+	if _, err := getValue(f.run, "emo", uid, getOpts{name: "github", field: "password"}); err != nil {
+		t.Fatalf("getValue: %v", err)
+	}
+	idx := func(prefix string) int {
+		for i, c := range f.calls {
+			if strings.HasPrefix(strings.Join(c, " "), prefix) {
+				return i
+			}
+		}
+		return -1
+	}
+	syncAt, unlockAt, getAt := idx("bw sync"), idx("bw unlock"), idx("bw get password github")
+	if syncAt < 0 {
+		t.Fatal("expected a `bw sync` before the read")
+	}
+	if !(unlockAt < syncAt && syncAt < getAt) {
+		t.Fatalf("order wrong: unlock=%d sync=%d get=%d (want unlock<sync<get)", unlockAt, syncAt, getAt)
+	}
+}
+
+// Sync is best-effort: a transient sync failure must NOT fail the read — the
+// cached value is still returned (a stderr warning is emitted, not asserted here).
+func TestReadSucceedsWhenSyncFails(t *testing.T) {
+	f := &fakeRunner{
+		out: map[string]string{
+			"vault kv get -field=vaultwarden_master_password secret/workstation/claude-users/emo": "pw",
+			"vault kv get -field=vaultwarden_client_id secret/workstation/claude-users/emo":       "user.x",
+			"vault kv get -field=vaultwarden_client_secret secret/workstation/claude-users/emo":   "cs",
+			"bw status":              `{"status":"locked"}`,
+			"bw unlock":              "SESS",
+			"bw get password github": "p@ss",
+		},
+		err: map[string]error{"bw sync": errors.New("Failed to sync: network error")},
+	}
+	uid := fmt.Sprintf("%d", os.Getuid())
+	val, err := getValue(f.run, "emo", uid, getOpts{name: "github", field: "password"})
+	if err != nil || val != "p@ss" {
+		t.Fatalf("read must succeed despite a sync failure: val=%q err=%v", val, err)
+	}
+}
+
+// --- vault kv (HashiCorp Vault / OpenBao infra secrets) --------------------
+
+func TestVaultKVCommandsRegistered(t *testing.T) {
+	want := map[string]Tier{
+		"vault kv get":  TierRead,
+		"vault kv list": TierRead,
+		"vault kv put":  TierWrite,
+	}
+	got := map[string]Tier{}
+	for _, c := range vaultCommands() {
+		got[c.name()] = c.Tier
+	}
+	for name, tier := range want {
+		if got[name] != tier {
+			t.Errorf("command %q: tier=%q, want %q", name, got[name], tier)
+		}
+	}
+}
+
+func TestVaultKVArgs(t *testing.T) {
+	if got := vaultKVGetFieldArgs("secret/viktor", "github_pat"); !reflect.DeepEqual(got, []string{"kv", "get", "-field=github_pat", "secret/viktor"}) {
+		t.Fatalf("vaultKVGetFieldArgs = %v", got)
+	}
+	if got := vaultKVGetJSONArgs("secret/viktor"); !reflect.DeepEqual(got, []string{"kv", "get", "-format=json", "secret/viktor"}) {
+		t.Fatalf("vaultKVGetJSONArgs = %v", got)
+	}
+	if got := vaultKVListArgs("secret/"); !reflect.DeepEqual(got, []string{"kv", "list", "-format=json", "secret/"}) {
+		t.Fatalf("vaultKVListArgs = %v", got)
+	}
+	// create (path absent) → put; merge (path present) → patch -method=rw. Either
+	// way the VALUE travels via the `key=-` stdin form, never argv.
+	create := vaultKVPutArgs(false, "secret/x", "api_key")
+	if !reflect.DeepEqual(create, []string{"kv", "put", "secret/x", "api_key=-"}) {
+		t.Fatalf("vaultKVPutArgs(create) = %v", create)
+	}
+	merge := vaultKVPutArgs(true, "secret/x", "api_key")
+	if !reflect.DeepEqual(merge, []string{"kv", "patch", "-method=rw", "secret/x", "api_key=-"}) {
+		t.Fatalf("vaultKVPutArgs(merge) = %v", merge)
+	}
+	for _, args := range [][]string{create, merge} {
+		for _, a := range args {
+			if strings.Contains(a, "SECRETVALUE") || strings.HasSuffix(a, "=SECRETVALUE") {
+				t.Fatalf("value must not appear in argv: %v", args)
+			}
+		}
+	}
+}
+
+func TestExtractKVData(t *testing.T) {
+	// `vault kv get -format=json` wraps the secret in {"data":{"data":{...},"metadata":{...}}}.
+	env := `{"request_id":"x","data":{"data":{"github_pat":"ghp_abc","email":"e@x.me"},"metadata":{"version":3}}}`
+	out, err := extractKVData(env)
+	if err != nil {
+		t.Fatalf("extractKVData: %v", err)
+	}
+	// Round-trip to a map so key order doesn't matter.
+	var m map[string]string
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("result not a JSON object: %q (%v)", out, err)
+	}
+	if m["github_pat"] != "ghp_abc" || m["email"] != "e@x.me" {
+		t.Fatalf("extractKVData inner data wrong: %v", m)
+	}
+	// metadata must NOT leak into the output.
+	if strings.Contains(out, "metadata") || strings.Contains(out, "request_id") {
+		t.Fatalf("envelope internals leaked: %s", out)
+	}
+	if _, err := extractKVData("not json"); err == nil {
+		t.Fatal("malformed envelope must error")
+	}
+}
+
+func TestParseKVList(t *testing.T) {
+	keys, err := parseKVList(`["app1","app2/","viktor"]`)
+	if err != nil {
+		t.Fatalf("parseKVList: %v", err)
+	}
+	if !reflect.DeepEqual(keys, []string{"app1", "app2/", "viktor"}) {
+		t.Fatalf("parseKVList = %v", keys)
+	}
+	if _, err := parseKVList("not json"); err == nil {
+		t.Fatal("malformed list must error")
+	}
+}
+
+func TestKVGetFieldFlow(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{
+		"vault kv get -field=github_pat secret/viktor": "ghp_secret",
+	}}
+	val, err := kvGetField(f.run, "secret/viktor", "github_pat")
+	if err != nil || val != "ghp_secret" {
+		t.Fatalf("kvGetField = %q, %v", val, err)
+	}
+}
+
+func TestKVListFlow(t *testing.T) {
+	f := &fakeRunner{out: map[string]string{
+		"vault kv list -format=json secret/": `["app1","app2/"]`,
+	}}
+	keys, err := kvList(f.run, "secret/")
+	if err != nil || !reflect.DeepEqual(keys, []string{"app1", "app2/"}) {
+		t.Fatalf("kvList = %v, %v", keys, err)
+	}
+}
+
+// kvPut creates the path on first write and merges thereafter, with the value on
+// stdin only (mirrors writeCreds). Never plain `kv patch` (needs the patch cap).
+func TestKVPutCreatesThenMerges(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		exists     bool
+		wantCreate bool
+	}{
+		{"absent path → create (put)", false, true},
+		{"present path → merge (patch -rw)", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdinCalls []recStdin
+			run := func(name string, argv, envv []string) (string, error) {
+				if len(argv) >= 2 && argv[0] == "kv" && argv[1] == "get" {
+					if tc.exists {
+						return `{"data":{"data":{}}}`, nil
+					}
+					return "", fmt.Errorf("No value found at secret/x")
+				}
+				return "", nil
+			}
+			runStdin := func(name string, argv, envv []string, stdin string) (string, error) {
+				stdinCalls = append(stdinCalls, recStdin{append([]string{name}, argv...), stdin})
+				return "", nil
+			}
+			if err := kvPut(run, runStdin, "secret/x", "api_key", "SECRETVALUE"); err != nil {
+				t.Fatalf("kvPut: %v", err)
+			}
+			if len(stdinCalls) != 1 {
+				t.Fatalf("want exactly 1 stdin write, got %d", len(stdinCalls))
+			}
+			sc := stdinCalls[0]
+			joined := strings.Join(sc.argv, " ")
+			if tc.wantCreate && !strings.Contains(joined, "kv put") {
+				t.Fatalf("absent path must use `kv put`: %v", sc.argv)
+			}
+			if !tc.wantCreate && !strings.Contains(joined, "kv patch -method=rw") {
+				t.Fatalf("present path must merge via `kv patch -method=rw`: %v", sc.argv)
+			}
+			if strings.Contains(joined, "kv patch") && !strings.Contains(joined, "-method=rw") {
+				t.Fatalf("must never use plain `kv patch`: %v", sc.argv)
+			}
+			if sc.stdin != "SECRETVALUE" {
+				t.Fatalf("value must travel via stdin, got %q", sc.stdin)
+			}
+			for _, a := range sc.argv {
+				if strings.Contains(a, "SECRETVALUE") {
+					t.Fatalf("value leaked into argv: %v", sc.argv)
+				}
+			}
+		})
+	}
+}
+
+func TestVaultHelpMentionsBothSystems(t *testing.T) {
+	h := vaultHelp()
+	for _, want := range []string{"Vaultwarden", "vault kv"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("vault help must mention %q (distinguish the two systems)", want)
+		}
+	}
+	// Must name the infra-secrets system so the distinction is unambiguous.
+	if !strings.Contains(h, "HashiCorp") && !strings.Contains(h, "OpenBao") {
+		t.Error("vault help must name HashiCorp Vault / OpenBao (the infra secrets store)")
 	}
 }

@@ -42,14 +42,14 @@ locals {
   # STORAGE_DIR points at the RWX NFS PVC — the app's default ./var is not
   # writable by the non-root user.
   app_env = {
-    AUTH_MODE     = "normal"
+    AUTH_MODE = "normal"
     # Open-signup abuse controls sit behind Traefik (tripit ADR-0028, #95): trust
     # the proxy's X-Forwarded-For so the per-IP rate-limit keys on the real client,
     # not the shared ingress pod IP. (The PoW captcha is the primary control.)
     TRUST_FORWARDED_FOR = "true"
-    OIDC_ISSUER   = "https://authentik.viktorbarzin.me/application/o/tripit-app/"
-    OIDC_JWKS_URL = "https://authentik.viktorbarzin.me/application/o/tripit-app/jwks/"
-    OIDC_AUDIENCE = "tripit-app"
+    OIDC_ISSUER         = "https://authentik.viktorbarzin.me/application/o/tripit-app/"
+    OIDC_JWKS_URL       = "https://authentik.viktorbarzin.me/application/o/tripit-app/jwks/"
+    OIDC_AUDIENCE       = "tripit-app"
     # OTA Web bundles (ADR-0014): the signed zip URL must point at the
     # bearer-only host — the in-app request-derived base would be wrong
     # behind the proxy (uvicorn doesn't trust forwarded headers).
@@ -70,15 +70,15 @@ locals {
     WEATHER_PROVIDER = "openmeteo"
     # Geocodes lodging addresses -> coords for the per-city itinerary weather
     # (Open-Meteo keyless geocoding API; results cached in the geocode_cache table).
-    GEOCODER_PROVIDER   = "openmeteo"
-    PUSH_PROVIDER       = "webpush"
+    GEOCODER_PROVIDER = "openmeteo"
+    PUSH_PROVIDER     = "webpush"
     # Real LLM on the Deployment too (was fake): in-app reel-URL paste (#120) and
     # booking share run ingest in the web pod. llama-cpp primary + claude-agent
     # fallback (ADR-0033). qwen3-8b segfaults on the current llama-swap image, so
     # use qwen3vl-8b (matches the ingest-plans CronJob).
-    LLM_MODE            = "llamacpp"
-    LLM_MODEL           = "qwen3vl-8b"
-    LLM_ENDPOINT        = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+    LLM_MODE     = "llamacpp"
+    LLM_MODEL    = "qwen3vl-8b"
+    LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
     # Reel-route POI geocoding (ADR-0031/0033) for the in-app paste path too.
     REEL_GEOCODER_PROVIDER = "nominatim"
     # The REEL FETCHER (ADR-0031): anonymous IG/TikTok read via yt-dlp (the IG
@@ -86,7 +86,7 @@ locals {
     # unset = yt-dlp only, which works). Was UNSET -> FakeReelExtractor returned a
     # CANNED caption, so every pasted/forwarded reel produced a DUMMY place.
     # Verified: yt-dlp reads a real IG /p/ caption from the cluster, no doc_id.
-    REEL_PROVIDER = "anonymous"
+    REEL_PROVIDER       = "anonymous"
     MAIL_INGEST_ENABLED = "false"
     # Outbound mail (native-auth signup-verification + account recovery, linked-
     # email verification, trip-share invites) — submitted via the cluster
@@ -112,15 +112,32 @@ locals {
     TTS_MODE     = "openai_compatible"
     TTS_BASE_URL = "http://chatterbox-tts.tts.svc.cluster.local:8000"
     TTS_MODEL    = "chatterbox"
-    # Live flight-fare scrape (tripit ADR-0007, issue #18): Playwright driving
-    # the SHARED chrome-service browser over CDP (no per-pod browser). The
-    # provider rate-limits (30s min interval), caches 6h, backs off 300s on
-    # failure, and degrades to manual entry — never blocks the grid. NOTE:
-    # FareMode `playwright` only exists in images >= the #18 slice; setting
-    # this against an older image crash-loops on the unknown enum (old pods
-    # keep serving), so the env landed AFTER that image rolled out.
-    FARE_PROVIDER = "playwright"
+    # Flight FARE source for Decision cells + Routing leg pricing (tripit
+    # ADR-0046, code-3zue). `fli` hits Google Flights' internal RPC over plain
+    # HTTP — dozens of priced results per sub-second call, no browser, and NO
+    # min-interval gate, so Routing (ADR-0024) can price many legs concurrently.
+    # This SUPERSEDES the old `playwright` Google-Flights browser scrape (issue
+    # #18), which priced everything None in prod: fli is bulk-friendly where the
+    # browser was not. NOTE: FareMode `fli` only exists in images >= the ADR-0046
+    # code-3zue slice (live in 3005b3dd), so this env landed AFTER that rollout —
+    # same image-first hold-order as before (an older image crash-loops on the
+    # unknown enum). fli needs no CDP/browser; FARE_CDP_URL is retained only for
+    # a manual revert to FARE_PROVIDER=playwright and is otherwise unused.
+    FARE_PROVIDER = "fli"
     FARE_CDP_URL  = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+    # Live flight-Offer search (tripit ADR-0046): concrete flights (airline,
+    # times, stops, price, fare brand, cabin/checked bag counts) scraped from
+    # Momondo via the SHARED in-cluster FlareSolverr in ns servarr — the *arr
+    # indexers' Cloudflare-bypass browser (a real browser that renders Momondo's
+    # SPA; verified rendering result cards from the cluster egress IP with no
+    # Cloudflare challenge). Same rate-limit/cache/back-off + degrade-to-empty
+    # contract as FARE_PROVIDER; one serial shared browser, so this is for
+    # low-volume individual (route,date) lookups only, never bulk sweeps. NOTE:
+    # OfferMode `momondo` only exists in images >= the ADR-0046 offer slice
+    # (live in dec7b61e), so this env lands AFTER that rollout — same image-first
+    # hold-order as FARE_PROVIDER (an older image would crash-loop on the enum).
+    OFFER_PROVIDER         = "momondo"
+    OFFER_FLARESOLVERR_URL = "http://flaresolverr.servarr.svc.cluster.local:80/v1"
     # Live lodging-price scrape (tripit ADR-0025, issue #78): the lodging twin of
     # FARE_PROVIDER — Playwright driving the SHARED chrome-service browser over CDP
     # to read Booking.com + Airbnb nightly rates. Same rate-limit/cache/back-off +
@@ -130,6 +147,14 @@ locals {
     # that rollout — same image-first hold-order as FARE/CALENDAR/RESEARCH above.
     LODGING_PROVIDER = "playwright"
     LODGING_CDP_URL  = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+    # Anonymous Booking.com property SEARCH (GET /api/lodging/search, `tripit
+    # lodging search`) — distinct from LODGING_PROVIDER above, which prices ONE
+    # representative area rate. Calls Booking.com's own FullSearch GraphQL over
+    # plain HTTP: no browser, no cookies, no credentials, so there is nothing to
+    # configure but the switch. Defaults OFF in the app so tests and local dev
+    # never call out; prod opts in here. Stays SIGNED OUT deliberately — prices
+    # are public (geniusLevel 0) and no account is ever attached.
+    LODGING_SEARCH_ENABLED = "1"
     # Calendar-conflict column (tripit issue #19): read the owner's Nextcloud
     # calendar over CalDAV to flag date clashes on a planning Option. Base +
     # user are non-secret; the app-password arrives via tripit-secrets. Same
@@ -175,6 +200,12 @@ locals {
     STORY_SOURCE_MODE        = "web"
     SCRIPT_WRITER_MODE       = "chat"
     PLACE_RESOLVER_MODE      = "wikipedia"
+    # Saved Place preview photos (tripit ADR-0035/0040): the Wikipedia lead-image
+    # fetcher behind manual-add-time photos and the backfill sweep. Same fake-
+    # default gap as the resolver above — never set, so prod silently ran the
+    # fake and hand-added places (and any backfill) would store placeholder
+    # PNGs instead of real photos.
+    PLACE_PHOTO_PROVIDER = "wikipedia"
   }
 }
 
@@ -341,13 +372,14 @@ resource "kubernetes_manifest" "db_external_secret" {
 # same document store, hence RWX). Lives under /srv/nfs on the Proxmox host,
 # so the daily-backup pipeline auto-discovers and versions it.
 module "documents_nfs" {
-  source       = "../../modules/kubernetes/nfs_volume"
-  name         = "tripit-documents-host"
-  namespace    = kubernetes_namespace.tripit.metadata[0].name
-  nfs_server   = var.nfs_server
-  nfs_path     = "/srv/nfs/tripit-documents"
-  storage      = "5Gi"
-  access_modes = ["ReadWriteMany"]
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "tripit-documents-host"
+  namespace          = kubernetes_namespace.tripit.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/tripit-documents"
+  storage            = "5Gi"
+  access_modes       = ["ReadWriteMany"]
+  storage_class_name = "nfs-pve"
 }
 
 # RWO encrypted PVC for the PERSONAL document vault (passports, IDs). Separate
@@ -378,6 +410,37 @@ resource "kubernetes_persistent_volume_claim" "personal_documents" {
   lifecycle {
     # Autoresizer grows requests.storage up to storage_limit; PVCs can't shrink.
     ignore_changes = [spec[0].resources[0].requests]
+  }
+}
+
+locals {
+  mail_listener_labels = {
+    app       = "tripit-mail-listener"
+    component = "mail-listener"
+  }
+
+  # Shared verbatim by the realtime listener and the 15-minute repair CronJob
+  # so their extraction/routing behavior cannot drift.
+  mail_ingest_env = {
+    LLM_MODE     = "llamacpp"
+    LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
+    # Text extraction needs the 8B model to retain flight numbers. qwen3-8b
+    # crashes on the current CUDA image, while qwen3vl-8b is proven live.
+    # Attachments share it: qwen3vl-4b is retired, and both VLMs were served
+    # with the same 3072-token context, so this is token-neutral and stops
+    # mail ingest swapping models within one email (ADR-0033 fallback remains).
+    LLM_MODEL           = "qwen3vl-8b"
+    LLM_VISION_MODEL    = "qwen3vl-8b"
+    MAIL_INGEST_ENABLED = "true"
+    # Forwarded Reels require POI-level Nominatim, isolated from the global
+    # city-level OpenMeteo geocoder used by weather/tours (ADR-0031).
+    REEL_GEOCODER_PROVIDER = "nominatim"
+    IMAP_HOST              = "mailserver.mailserver.svc.cluster.local"
+    IMAP_PORT              = "993"
+    IMAP_USER              = "spam@viktorbarzin.me"
+    IMAP_FOLDER            = "INBOX"
+    IMAP_USE_SSL           = "true"
+    IMAP_SEARCH            = "TO \"plans@viktorbarzin.me\""
   }
 }
 
@@ -552,14 +615,150 @@ resource "kubernetes_deployment" "tripit" {
   ]
 }
 
+# Realtime email trigger (#134): Dovecot IMAP IDLE wakes this dedicated worker,
+# which runs the SAME reconciliation as ingest-plans. Distinct labels are
+# load-bearing: service/tripit selects app=tripit and must never route HTTP to
+# this non-HTTP pod. Recreate keeps one listener; the PostgreSQL advisory lease
+# still serializes it against the repair CronJob.
+resource "kubernetes_deployment" "mail_listener" {
+  metadata {
+    name      = "tripit-mail-listener"
+    namespace = kubernetes_namespace.tripit.metadata[0].name
+    labels = merge(local.mail_listener_labels, {
+      tier = local.tiers.aux
+    })
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
+  }
+
+  spec {
+    replicas                  = 1
+    progress_deadline_seconds = 900
+    strategy {
+      type = "Recreate"
+    }
+
+    selector {
+      match_labels = local.mail_listener_labels
+    }
+
+    template {
+      metadata {
+        labels = local.mail_listener_labels
+      }
+
+      spec {
+        termination_grace_period_seconds = 600
+
+        image_pull_secrets {
+          name = "registry-credentials"
+        }
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
+
+        container {
+          name    = "listener"
+          image   = local.image
+          command = ["python", "-m", "tripit_api", "listen-mail"]
+
+          env_from {
+            secret_ref { name = "tripit-secrets" }
+          }
+          env_from {
+            secret_ref { name = "tripit-db-creds" }
+          }
+
+          dynamic "env" {
+            for_each = merge(local.app_env, local.mail_ingest_env)
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+
+          # spam@ mailbox password; explicit env overrides the unrelated Gmail
+          # IMAP_PASSWORD that arrives through tripit-secrets env_from.
+          env {
+            name = "IMAP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "tripit-secrets"
+                key  = "PLANS_IMAP_PASSWORD"
+              }
+            }
+          }
+
+          volume_mount {
+            name       = "documents"
+            mount_path = "/data/documents"
+          }
+
+          readiness_probe {
+            exec {
+              command = ["sh", "-c", "test -f /tmp/tripit-mail-listener-ready"]
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 5
+            failure_threshold     = 3
+          }
+
+          resources {
+            requests = { cpu = "50m", memory = "256Mi" }
+            limits   = { memory = "512Mi" }
+          }
+        }
+
+        volume {
+          name = "documents"
+          persistent_volume_claim {
+            claim_name = module.documents_nfs.claim_name
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — deploy pipeline manages SHA
+      metadata[0].annotations["kubernetes.io/change-cause"],
+      metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    ]
+  }
+
+  depends_on = [
+    kubernetes_manifest.external_secret,
+    kubernetes_manifest.db_external_secret,
+  ]
+}
+
 # Worker CronJobs share the app image + secret/env wiring. Defined via a map so
 # the jobs stay identical except for schedule, subcommand, and the suspend flag.
 locals {
   cronjobs = {
-    # Hourly (not */30) to stay within AeroDataBox's free 600-unit/month quota:
-    # the sweep spends 1 unit per soon-departing flight per run. On-demand reads
-    # (the segment status endpoint) still refresh on a 30-min staleness window
-    # when the user opens the app, so this only paces background change-detection.
+    # Hourly, which is the fastest tier flight_poller.py will actually spend a
+    # call on. The sweep decides per flight: hourly inside 24h of departure,
+    # two-hourly out to the 48h POLL_HORIZON, nothing beyond it. So the schedule
+    # is the carrier and the pacing in the code is the bill.
+    #
+    # An AeroDataBox call costs 2 units, not 1 — the adapter asks for
+    # withLocation and the position data is billed on top. Measured on the live
+    # plan counter 2026-09-04: 300 requests had spent all 600 units. A flight
+    # therefore costs 36 calls = 72 units end to end, so Viktor's measured rate
+    # (26 flights over the 12 months to 2026-09, peak 5 in a month) spends 360
+    # units in a peak month, 60% of the 600-unit BASIC plan, and only breaks past
+    # ~8 flights in one month. Sweeps with nothing due make no call at all, so
+    # idle weeks cost nothing. Polling every in-window flight on every run, which
+    # is what ran before, cost ~720 units for a single flight and hit 100% of the
+    # quota on 2026-09-04.
     poll-flights = {
       schedule  = "0 * * * *"
       command   = ["python", "-m", "tripit_api", "poll-flights"]
@@ -574,8 +773,9 @@ locals {
     }
     # Forward-to-parse — the SOLE ingest channel: forward any booking
     # confirmation to plans@viktorbarzin.me (which the @viktorbarzin.me catch-all
-    # delivers into the spam@ mailbox), and this job ingests it. Polls spam@
-    # read-only, filtered by IMAP SEARCH to mail addressed To plans@ — so only
+    # delivers into the spam@ mailbox). The realtime listener is the normal
+    # trigger; this remains the independent 15-minute repair path. Both poll
+    # spam@ read-only, filtered by IMAP SEARCH to mail addressed To plans@, so only
     # deliberate forwards are processed, not the rest of the catch-all junk. The
     # sender is routed to a registered user (primary email or a verified linked
     # address); mail from anyone else is ignored — there is no default-owner
@@ -591,40 +791,20 @@ locals {
       command            = ["python", "-m", "tripit_api", "ingest-mail"]
       suspend            = false
       imap_pw_secret_key = "PLANS_IMAP_PASSWORD"
-      extra_env = {
-        LLM_MODE     = "llamacpp"
-        LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
-        # Text body extraction uses an 8B model (reliably emits flight_number);
-        # boarding-pass image attachments use the 4B vision model. llama-swap loads
-        # each on demand. Was qwen3vl-4b for both, which dropped flight numbers and
-        # duplicated schedule-change emails (2026-06-16). Switched qwen3-8b ->
-        # qwen3vl-8b (2026-06-22): the qwen3-8b GGUF SEGFAULTS on the current
-        # llama-swap :cuda image ("failed to create context"), which broke ALL mail
-        # ingest; qwen3vl-8b loads and extracts flight numbers + places reliably.
-        # (ADR-0033 adds a claude-agent-service fallback for the next llama outage.)
-        LLM_MODEL           = "qwen3vl-8b"
-        LLM_VISION_MODEL    = "qwen3vl-4b"
-        MAIL_INGEST_ENABLED = "true"
-        # Reel→Wishlist ingest (tripit ADR-0031): geocode forwarded-reel venues at
-        # POI level via Nominatim (venue -> lat/lon + city + country), isolated from
-        # the global GEOCODER_PROVIDER=openmeteo which stays city-level for
-        # weather/tours. Only this CronJob runs the reel route (ingest-mail).
-        REEL_GEOCODER_PROVIDER = "nominatim"
-        IMAP_HOST           = "mailserver.mailserver.svc.cluster.local"
-        IMAP_PORT           = "993"
-        IMAP_USER           = "spam@viktorbarzin.me"
-        IMAP_FOLDER         = "INBOX"
-        IMAP_USE_SSL        = "true"
-        IMAP_SEARCH         = "TO \"plans@viktorbarzin.me\""
-      }
+      # A sweep is normally <90s; with concurrency_policy=Forbid a hung run would
+      # block every future sweep, so bound it (2026-07-15 ingest resilience).
+      active_deadline_seconds = 600
+      extra_env               = local.mail_ingest_env
     }
     # Proactive nudges (travel-agent merged into tripit, beads code-muqi).
     # London-local schedules (timeZone honoured by K8s 1.27+). NUDGES_ENABLED
-    # gates the workers; Slack + Dawarich providers selected here. The app_env
-    # base already sets WEATHER_PROVIDER=openmeteo + PUSH_PROVIDER=webpush.
-    # SLACK_BOT_TOKEN + DAWARICH_API_KEY arrive via env_from tripit-secrets;
-    # SLACK_CHANNEL (#travel) falls back to the config default. DAWARICH_BASE_URL
-    # uses the PUBLIC host deliberately: Dawarich is a Rails app whose host
+    # gates the workers. Delivery is PWA web-push ONLY — Slack nudge fan-out was
+    # retired once PWA notifications covered the same ground, so SLACK_PROVIDER is
+    # left at its `fake` default here (the SLACK_BOT_TOKEN in tripit-secrets still
+    # backs the inbound planner Slack webhook, not nudges). The app_env base
+    # already sets WEATHER_PROVIDER=openmeteo + PUSH_PROVIDER=webpush;
+    # DAWARICH_API_KEY arrives via env_from tripit-secrets. DAWARICH_BASE_URL uses
+    # the PUBLIC host deliberately: Dawarich is a Rails app whose host
     # authorization 403s the in-cluster *.svc Host header, so we reach it through
     # the ingress (auth=none, api_key-gated) instead.
     transport-nudge = {
@@ -634,7 +814,6 @@ locals {
       suspend  = false
       extra_env = {
         NUDGES_ENABLED    = "true"
-        SLACK_PROVIDER    = "slack"
         LOCATION_PROVIDER = "dawarich"
         DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
       }
@@ -646,7 +825,6 @@ locals {
       suspend  = false
       extra_env = {
         NUDGES_ENABLED    = "true"
-        SLACK_PROVIDER    = "slack"
         LOCATION_PROVIDER = "dawarich"
         DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
       }
@@ -697,7 +875,11 @@ resource "kubernetes_cron_job_v1" "tripit_worker" {
         labels = local.labels
       }
       spec {
-        backoff_limit              = 1
+        # 1 gave only 2 pod attempts ~10s apart, so a sub-minute cluster-DNS /
+        # IMAP blip failed the whole job (the 2026-07-15 ingest failures). 3
+        # attempts span the K8s backoff window past a typical blip.
+        backoff_limit              = 3
+        active_deadline_seconds    = lookup(each.value, "active_deadline_seconds", null)
         ttl_seconds_after_finished = 86400
         template {
           metadata {
@@ -810,16 +992,17 @@ resource "kubernetes_service" "tripit" {
 
 # Main host — the SPA shell is served PUBLICLY so an unauthenticated visitor
 # gets the app's own landing page (Log in / Sign up) instead of a forced
-# Authentik 302 (tripit ADR-0020). The app gates itself (it probes /api/me); all
-# data + the authenticated surface live under /api, which module.ingress_app_api
-# below keeps behind forward-auth. The static SPA assets carry no secrets and no
+# Authentik 302. The app gates itself (it probes /api/me); all data + the
+# authenticated surface live under /api, which module.ingress_app_api below
+# serves under TripIt's OWN session auth (tripit ADR-0028 #96 — Authentik
+# forward-auth was removed). The static SPA assets carry no secrets and no
 # auth-trusting code, and strip-auth-headers ensures a spoofed X-authentik-* can
 # never reach the backend through this public path.
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": serves the public SPA shell + landing page; the app gates
-  # itself and every data route lives behind /api (kept under forward-auth by
-  # module.ingress_app_api). Static assets are non-sensitive.
+  # itself and every data route lives behind /api (self-authenticated by
+  # module.ingress_app_api, tripit ADR-0028). Static assets are non-sensitive.
   auth             = "none"
   anti_ai_scraping = false # installable PWA, not scrapable content — Anubis PoW would break it
   dns_type         = "proxied"
@@ -834,6 +1017,11 @@ module "ingress" {
     "traefik-strip-auth-headers@kubernetescrd",
     "traefik-tripit-rate-limit@kubernetescrd",
   ]
+  extra_annotations = {
+    "gethomepage.dev/description" = "Self-hosted travel itinerary planner"
+    "gethomepage.dev/icon" = "mdi-airplane-takeoff"
+    "gethomepage.dev/name" = "TripIt"
+  }
 }
 
 # /api is served by TripIt's OWN authentication now (ADR-0028 #96 cutover):
@@ -859,6 +1047,8 @@ module "ingress_app_api" {
   dns_type         = "none" # main module.ingress owns the DNS record for this host
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-app-api"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = "tripit"
   full_host        = "tripit.viktorbarzin.me"
   ingress_path     = ["/api"]
@@ -876,16 +1066,18 @@ module "ingress_app_api" {
 # Service and never needs to be public); split out of the /api ingress by the
 # #96 cutover, which made /api self-authenticated.
 module "ingress_metrics" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
-  dns_type        = "none"
-  namespace       = kubernetes_namespace.tripit.metadata[0].name
-  name            = "tripit-metrics"
-  service_name    = "tripit"
-  full_host       = "tripit.viktorbarzin.me"
-  ingress_path    = ["/metrics"]
-  port            = 8080
-  tls_secret_name = var.tls_secret_name
+  source    = "../../modules/kubernetes/ingress_factory"
+  auth      = "required"
+  dns_type  = "none"
+  namespace = kubernetes_namespace.tripit.metadata[0].name
+  name      = "tripit-metrics"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  service_name     = "tripit"
+  full_host        = "tripit.viktorbarzin.me"
+  ingress_path     = ["/metrics"]
+  port             = 8080
+  tls_secret_name  = var.tls_secret_name
 }
 
 # Calendar feed carve-out for the same host: path /api/calendar served by the
@@ -901,6 +1093,8 @@ module "ingress_calendar" {
   dns_type         = "none" # main `module.ingress` owns the DNS record for this host
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-calendar"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = "tripit"
   full_host        = "tripit.viktorbarzin.me"
   ingress_path     = ["/api/calendar"]
@@ -921,6 +1115,8 @@ module "ingress_emails_confirm" {
   dns_type         = "none" # main `module.ingress` owns the DNS record for this host
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-emails-confirm"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = "tripit"
   full_host        = "tripit.viktorbarzin.me"
   ingress_path     = ["/api/emails/confirm"]
@@ -940,6 +1136,8 @@ module "ingress_planner_slack" {
   dns_type         = "none" # main `module.ingress` owns the DNS record for this host
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-planner-slack"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = "tripit"
   full_host        = "tripit.viktorbarzin.me"
   ingress_path     = ["/api/planner/slack"]
@@ -963,6 +1161,8 @@ module "ingress_api" {
   dns_type         = "proxied"
   namespace        = kubernetes_namespace.tripit.metadata[0].name
   name             = "tripit-api"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = "tripit"
   port             = 8080
   tls_secret_name  = var.tls_secret_name

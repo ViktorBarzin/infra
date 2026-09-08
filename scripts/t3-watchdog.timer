@@ -1,0 +1,12 @@
+[Unit]
+Description=Minutely t3-serve wedge watchdog
+
+[Timer]
+OnCalendar=minutely
+# Default AccuracySec=1min would smear ticks; keep detection latency predictable.
+AccuracySec=10s
+# Persistent deliberately omitted (matches t3-autoupdate.timer): a minutely
+# timer needs no catch-up firing.
+
+[Install]
+WantedBy=timers.target

@@ -74,9 +74,35 @@ resource "kubernetes_config_map" "redis_v2_conf" {
       # silently evicted queue jobs.
       maxmemory-policy volatile-lru
 
-      save 900 1
-      save 300 100
-      save 60 10000
+      # RDB auto-snapshots cut to ONE lazy save point (2026-08-16, code-oflt).
+      # Was `save 900 1 / 300 100 / 60 10000`. With `appendonly yes` Redis
+      # recovers from appendonlydir/ and never reads dump.rdb, so the old
+      # cadence wrote a full copy of the dataset that nothing read back.
+      # Measured over this pod's 8.9-day life: rdb_saves=3462 (~390/day, the
+      # `save 60 10000` rule saturating its 60s floor — 19 saves in one
+      # sampled hour) against 155.6 GB written by the redis process, of which
+      # RDB is ~131 GB (~14.7 GB/day) and AOF ~25 GB (~2.8 GB/day). At device
+      # level this PVC (dm-266) averaged 18.3 GB/day over 30d on the
+      # IOPS-bound sdc RAID1, and redis is essentially all of it.
+      #
+      # `save 3600 1` keeps ~94% of that saving (~24 dumps/day) while keeping
+      # two properties that `save ""` gives up:
+      #   1. dump.rdb stays <=1h stale instead of <=7 days (the weekly backup
+      #      CronJob's interval). That only matters when the AOF will not
+      #      load, which has happened here — the 2026-05-26 node2 unclean
+      #      reboot corrupted an incremental AOF, which is why
+      #      aof-load-corrupt-tail-max-size exists below. That knob only
+      #      tolerates <=1KB of tail garbage; past that the operator boots
+      #      from dump.rdb.
+      #   2. Redis performs a final blocking SAVE on clean SIGTERM only when
+      #      at least one save point is configured, so every pod roll leaves
+      #      a fresh dump.rdb rather than a stale one.
+      # Durability is unchanged-or-better either way: appendfsync everysec
+      # caps loss at ~1s versus the ~4min the old RDB cadence delivered.
+      # Explicit BGSAVE is unaffected by save points, so the weekly
+      # redis-backup CronJob below still works. DO NOT restore the old
+      # three save points while appendonly is yes.
+      save 3600 1
       rdbcompression yes
       rdbchecksum yes
       stop-writes-on-bgsave-error no
@@ -152,11 +178,12 @@ resource "kubernetes_service" "redis_master" {
 }
 
 module "nfs_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "redis-backup-host"
-  namespace  = kubernetes_namespace.redis.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/redis-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "redis-backup-host"
+  namespace          = kubernetes_namespace.redis.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/redis-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_stateful_set_v1" "redis_v2" {
@@ -165,12 +192,18 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
     namespace = kubernetes_namespace.redis.metadata[0].name
     labels = {
       app = "redis-v2"
-      # Keel opt-out: a :8-alpine -> :8.0.6-alpine patch bump (also a
-      # semantic downgrade) rejected `aof-load-corrupt-tail-max-size` and
-      # crashed redis. Both LABEL + ANNOTATION required for full opt-out.
-      "keel.sh/policy" = "never"
+      # Declared because the sync-tier-label-from-namespace Kyverno policy
+      # stamps it live; without it every apply strips the label and the
+      # policy re-adds it (perma-drift that fed provider identity bugs).
+      tier = var.tier
     }
     annotations = {
+      # Keel opt-out: a :8-alpine -> :8.0.6-alpine patch bump (also a semantic
+      # downgrade) rejected `aof-load-corrupt-tail-max-size` and crashed redis.
+      # This annotation is the whole opt-out — it is what Keel reads AND what
+      # the Kyverno exclude selects on. A matching LABEL sat in the block above
+      # until 2026-08-17, when the exclude moved off labels (a keel.sh/* label
+      # is drift on any stack declaring a `labels` map).
       "keel.sh/policy" = "never"
     }
   }
@@ -200,11 +233,27 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
         }
       }
       spec {
-        termination_grace_period_seconds = 30
+        # 90s (was 30) so a slow AOF/RDB flush finishes cleanly on shutdown
+        # instead of self-SIGKILLing at 30 (2026-07-19 shutdown tuning).
+        termination_grace_period_seconds = 90
 
         container {
-          name    = "redis"
-          image   = "docker.io/library/redis:8-alpine"
+          name = "redis"
+          # PINNED, and it must stay pinned. `redis:8-alpine` is a floating
+          # tag and imagePullPolicy is IfNotPresent, so the version that
+          # actually ran was decided by whatever each NODE happened to have
+          # cached. On 2026-08-16 a config change rolled this pod from its
+          # old node onto k8s-node3, which still had 8.8.0 cached; the AOF
+          # base file on the PVC had been written by 8.10.0 (RDB format
+          # version 15), so the older binary refused it with "Can't handle
+          # RDB format version 15 / AOF loading aborted" and crashlooped.
+          # Nothing was corrupted -- an RDB/AOF is simply not readable by a
+          # binary older than the one that wrote it, and a floating tag makes
+          # that downgrade a coin-flip on every reschedule. An immutable tag
+          # removes the whole class. Bump this deliberately (and never
+          # downwards) after checking the release notes; Keel is opted out
+          # below for the same reason.
+          image   = "docker.io/library/redis:8.10.0-alpine"
           command = ["redis-server", "/etc/redis/redis.conf"]
 
           port {
@@ -322,7 +371,13 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
 
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    ]
   }
 }
 
@@ -401,5 +456,126 @@ resource "kubernetes_cron_job_v1" "redis-backup" {
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+#### NetworkPolicy — who may reach redis-master
+#
+# This instance runs WITHOUT requirepass. That was risk-accepted in the
+# 2026-04-19 rework (bead code-iho) on the assumption that a NetworkPolicy
+# fenced the port off; no such policy existed until now, so every one of the
+# 151 namespaces in the cluster could read and write the shared session store.
+# Viktor's ruling (2026-09-04) on code-iho: ship the fence, keep the port
+# unauthenticated. An 18-client simultaneous credential change risks logging
+# the whole estate out of its session store, and buys less than the fence does.
+#
+# The allow-list below was derived from live state on 2026-09-04, not from the
+# bead (whose "17 clients" was stale). Three sources, unioned:
+#
+#   1. redis-cli CLIENT LIST on redis-v2-0, every remote addr resolved against
+#      RUNNING pods only. Pod IPs get recycled, and resolving against all pods
+#      including Completed ones wrongly named technitium and tts as clients.
+#   2. Cluster-wide scan of ConfigMap and Secret contents for redis-master,
+#      which is how authentik surfaced (AUTHENTIK_REDIS__HOST arrives via
+#      secret/goauthentik, so it is absent from the pod spec) and how the
+#      uptime-kuma Redis monitor surfaced.
+#   3. Deployment specs of parked workloads, for clients that are configured
+#      and scaled to zero rather than gone.
+#
+# CONNECTED at the snapshot (12): cyberchef, dawarich, f1-stream, homepage,
+#   immich, jsoncrack, kms, nextcloud, paperless-ngx, realestate-crawler,
+#   trading-bot, website. The single-connection ones are Anubis sidecars using
+#   redis as their shared challenge store.
+# CONFIGURED but idle (3): authentik (5 running pods carry the env; it opens
+#   connections lazily), redis itself (the redis-backup CronJob below runs
+#   weekly and connects to redis-master.redis), uptime-kuma (Redis monitor).
+# PARKED at 0/0 replicas but configured (4): affine, grampsweb, netbox, ytdlp
+#   (its yt-highlights deployment). Each live Deployment spec still names
+#   redis-master, so scaling one back up must not hit a closed port. Drop a
+#   name here if its stack is ever retired.
+#
+# Two extra rules cover the exporter sidecar on 9121: Prometheus scrapes the
+# pod IP directly from the monitoring namespace, and the sidecar's httpGet
+# liveness probe is dialled by kubelet from the node's own address, which is
+# not a pod and so needs the node CIDR rather than a namespace selector.
+# Losing either would restart redis, which is the outcome this policy exists
+# to avoid.
+#
+# Ingress-only: egress is deliberately left unpoliced, and no pod restarts.
+locals {
+  redis_client_namespaces = [
+    "affine",
+    "authentik",
+    "cyberchef",
+    "dawarich",
+    "f1-stream",
+    "grampsweb",
+    "homepage",
+    "immich",
+    "jsoncrack",
+    "kms",
+    "netbox",
+    "nextcloud",
+    "paperless-ngx",
+    "realestate-crawler",
+    "redis",
+    "trading-bot",
+    "uptime-kuma",
+    "website",
+    "ytdlp",
+  ]
+}
+
+resource "kubernetes_network_policy_v1" "redis_ingress" {
+  metadata {
+    name      = "redis-client-namespaces"
+    namespace = kubernetes_namespace.redis.metadata[0].name
+  }
+  spec {
+    pod_selector {
+      match_labels = { app = "redis-v2" }
+    }
+    policy_types = ["Ingress"]
+
+    ingress {
+      dynamic "from" {
+        for_each = local.redis_client_namespaces
+        content {
+          namespace_selector {
+            match_labels = { "kubernetes.io/metadata.name" = from.value }
+          }
+        }
+      }
+      ports {
+        port     = "6379"
+        protocol = "TCP"
+      }
+    }
+
+    # redis_exporter scrape from Prometheus.
+    ingress {
+      from {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "monitoring" }
+        }
+      }
+      ports {
+        port     = "9121"
+        protocol = "TCP"
+      }
+    }
+
+    # redis_exporter httpGet liveness probe, dialled by kubelet from the node.
+    ingress {
+      from {
+        ip_block {
+          cidr = "10.0.20.0/24"
+        }
+      }
+      ports {
+        port     = "9121"
+        protocol = "TCP"
+      }
+    }
   }
 }

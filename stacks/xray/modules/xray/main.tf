@@ -88,9 +88,8 @@ resource "kubernetes_deployment" "xray" {
       }
       spec {
         container {
-          image             = "teddysun/xray"
-          name              = "xray"
-          image_pull_policy = "IfNotPresent"
+          image = "teddysun/xray"
+          name  = "xray"
           port {
             container_port = 7443 // reality
             protocol       = "TCP"
@@ -152,7 +151,14 @@ resource "kubernetes_deployment" "xray" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 
@@ -197,6 +203,12 @@ resource "kubernetes_service" "xray-reality" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type = "LoadBalancer"
     selector = {
@@ -214,29 +226,33 @@ module "ingress_ws" {
   source = "../../../../modules/kubernetes/ingress_factory"
   # VPN protocol (WebSocket transport) — native xray clients, not browsers.
   # auth = "none": VPN protocol (WebSocket transport) — native xray clients, not browsers; forward-auth incompatible.
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.xray.metadata[0].name
-  name            = "xray-ws"
-  service_name    = "xray"
-  host            = "xray-ws"
-  port            = 8443
-  tls_secret_name = var.tls_secret_name
+  auth      = "none"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.xray.metadata[0].name
+  name      = "xray-ws"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  service_name     = "xray"
+  host             = "xray-ws"
+  port             = 8443
+  tls_secret_name  = var.tls_secret_name
 }
 
 module "ingress_grpc" {
   source = "../../../../modules/kubernetes/ingress_factory"
   # VPN protocol (gRPC transport) — native xray clients, not browsers.
   # auth = "none": VPN protocol (gRPC transport) — native xray clients, not browsers; forward-auth incompatible.
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.xray.metadata[0].name
-  name            = "xray-grpc"
-  service_name    = "xray"
-  host            = "xray-grpc"
-  port            = 9443
-  tls_secret_name = var.tls_secret_name
-  ingress_path    = ["/grpc-vpn"]
+  auth      = "none"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.xray.metadata[0].name
+  name      = "xray-grpc"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  service_name     = "xray"
+  host             = "xray-grpc"
+  port             = 9443
+  tls_secret_name  = var.tls_secret_name
+  ingress_path     = ["/grpc-vpn"]
   extra_annotations = {
     "traefik.ingress.kubernetes.io/service.serversscheme" = "h2c"
   }

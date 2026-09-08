@@ -43,7 +43,7 @@ resource "kubernetes_namespace" "ytdlp" {
     name = "ytdlp"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -59,20 +59,46 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# Both volumes below moved nfs-truenas -> nfs-pve as part of the class rename
+# (bead code-yizt, Class A). Worth knowing before touching them again:
+#
+# The two storage classes are BYTE-IDENTICAL. Both nfs-truenas and nfs-pve are
+# nfs.csi.k8s.io with server 192.168.1.127 and share /srv/nfs, so this rename
+# moves no data whatsoever. What makes it a "Class A" change is only that
+# storageClassName is immutable on a PVC, so Terraform must destroy and
+# recreate the claim, and the pvc-protection finalizer holds that while a pod
+# mounts it.
+#
+# That is exactly how this stack got stuck: an apply on 2026-09-04 at 05:13 UTC
+# deleted the ytdlp-data-host PVC while the pod was still running, so it sat
+# Terminating for nine hours. The service kept working, because a mounted PVC
+# still serves, but it was one restart away from failing to mount. Cleared on
+# 2026-09-04 by scaling the deployment to 0, letting the PVC finish deleting,
+# deleting the two Released PVs, and re-applying.
+#
+# Deleting those PVs is safe and does not touch the files: both carry
+# reclaimPolicy Retain, and the module hardcodes nfs_path, so the recreated PV
+# points back at the same directory. Verified across the operation:
+# /srv/nfs/ytdlp 121M / 25 files and /srv/nfs/ytdlp-highlights 3.2G / 21 files,
+# identical before and after.
+#
+# If you change storage_class_name here again, scale the deployment to 0 FIRST.
 module "nfs_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ytdlp-data-host"
-  namespace  = kubernetes_namespace.ytdlp.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/ytdlp"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ytdlp-data-host"
+  namespace          = kubernetes_namespace.ytdlp.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/ytdlp"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_highlights_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ytdlp-highlights-data-host"
-  namespace  = kubernetes_namespace.ytdlp.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/ytdlp-highlights"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ytdlp-highlights-data-host"
+  namespace          = kubernetes_namespace.ytdlp.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/ytdlp-highlights"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "ytdlp" {
@@ -108,10 +134,21 @@ resource "kubernetes_deployment" "ytdlp" {
         container {
           image = "tzahi12345/youtubedl-material:nightly"
           name  = "ytdlp"
+          # requests 512Mi -> 256Mi on 2026-09-04 (bead code-hn6k). Measured
+          # peak working set over 30 days is 165Mi, a third of the old request.
+          # 256Mi is 1.5x that peak.
+          #
+          # An earlier version of this comment said the deployment is
+          # Sablier-parked at 0 replicas most of the time. It is not: it runs
+          # 1/1 and has for 248 days, so the reservation is real and worth
+          # taking back.
+          #
+          # The LIMIT stays at 512Mi. Request and limit were equal before, so a
+          # download that needs more headroom has exactly as much as it did.
           resources {
             requests = {
               cpu    = "25m"
-              memory = "512Mi"
+              memory = "256Mi"
             }
             limits = {
               memory = "512Mi"
@@ -217,6 +254,17 @@ resource "kubernetes_deployment" "yt_highlights" {
     labels = {
       app  = "yt-highlights"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022), added 2026-08-31. This is a
+      # request-driven FastAPI service that recorded ZERO VRAM use across the 7
+      # days to 2026-08-31 — 24h of its logs contained only /health probes —
+      # while holding a T4 time-slice the whole time. Parked at 0 replicas it
+      # holds nothing.
+      "sablier.enable" = "true"
+      "sablier.group"  = "yt-highlights"
+      # 180s: the liveness probe below already allows initial_delay_seconds=180
+      # because this container loads torch weights before it can serve, so the
+      # held request must wait at least as long or it lands on a cold pod.
+      "sablier.ready-after" = "180s"
     }
     annotations = {
       "diun.enable"                = "true"
@@ -249,9 +297,8 @@ resource "kubernetes_deployment" "yt_highlights" {
           effect = "NoSchedule"
         }
         container {
-          name              = "yt-highlights"
-          image             = "viktorbarzin/yt-highlights:v20-20260127"
-          image_pull_policy = "Always"
+          name  = "yt-highlights"
+          image = "viktorbarzin/yt-highlights:v20-20260127"
           port {
             container_port = 8000
           }
@@ -312,6 +359,11 @@ resource "kubernetes_deployment" "yt_highlights" {
           }
           resources {
             limits = {
+              # No gpumem seat: Sablier parks this at 0 replicas when idle
+              # (2026-08-31), and a parked pod requests nothing. Awake it bursts
+              # into real slack. Give it a measured seat if it ever becomes
+              # always-on — ADR-0016's undeclared-tenant gap is otherwise what
+              # the Kyverno require-gpumem policy (audit mode) now reports on.
               "nvidia.com/gpu" = "1"
             }
           }
@@ -346,6 +398,7 @@ resource "kubernetes_deployment" "yt_highlights" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -372,7 +425,11 @@ resource "kubernetes_service" "yt_highlights" {
 }
 
 module "highlights_ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, then the group's idle park.
+  sablier = {
+    group = "yt-highlights"
+  }
   dns_type        = "non-proxied"
   namespace       = kubernetes_namespace.ytdlp.metadata[0].name
   name            = "yt-highlights"

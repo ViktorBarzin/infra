@@ -14,10 +14,15 @@ variable "nfs_server" { type = string }
 locals {
   _account_set   = keys(var.mailserver_accounts)
   _virtual_lines = split("\n", format("%s%s", var.postfix_account_aliases, file("${path.module}/extra/aliases.txt")))
+  # NOTE: the length guard must live in a ternary, not a leading `&&` operand.
+  # Terraform only short-circuits && / || from v1.6 — on the older terraform
+  # pinned in the infra-ci image, `split(" ", line)[1]` was still evaluated
+  # for blank/comment lines and failed the whole plan with "Invalid index"
+  # (first hit by CI pipeline #469, 2026-07-03). A conditional expression is
+  # lazy on every terraform version.
   postfix_virtual = join("\n", [
     for line in local._virtual_lines : line
-    if !(
-      length(split(" ", line)) == 2 &&
+    if length(split(" ", line)) != 2 ? true : !(
       contains(local._account_set, split(" ", line)[0]) &&
       contains(local._account_set, split(" ", line)[1]) &&
       split(" ", line)[0] != split(" ", line)[1]
@@ -76,7 +81,19 @@ resource "kubernetes_config_map" "mailserver_env_config" {
     ENABLE_OPENDMARC                       = "0"
     ENABLE_RSPAMD_REDIS                    = "0"
     RSPAMD_LEARN                           = "1"
-    ENABLE_SRS                             = "1"
+    # DISABLED 2026-07-08: postsrsd 1.10 deterministically busy-loops at ~100%
+    # CPU without binding tcp:10001/10002 on a fresh start (independent of args
+    # / secret / node) — so sender_canonical_maps=tcp:10001 makes postfix 451
+    # ALL mail after any pod restart. This is the chronic spin noted in
+    # mailserver.md (2026-07-03), but the documented remedy (restart/delete pod)
+    # NO LONGER heals it. Disabled to keep mail durable across restarts; the
+    # cost is SPF-safe envelope rewriting for the handful of externally-
+    # forwarding aliases. Triggered by the ADR-0019 backup-mx O5 scale-to-zero
+    # test. DECISION 2026-07-08 (Viktor): leave SRS OFF permanently — the fix
+    # needs postsrsd 2.x (socketmap-only; no official image, so it'd mean
+    # building ghcr.io/viktorbarzin/postsrsd + a sidecar), not worth it for ~3
+    # forwarding aliases. postsrsd 1.10 stays unused.
+    ENABLE_SRS                             = "0"
     FETCHMAIL_POLL                         = "120"
     ONE_DIR                                = "1"
     OVERRIDE_HOSTNAME                      = "mail.viktorbarzin.me"
@@ -110,6 +127,21 @@ resource "kubernetes_config_map" "mailserver_config" {
     "postfix-main.cf"     = var.postfix_cf
     "postfix-virtual.cf"  = local.postfix_virtual
 
+    # backup-mx (ADR-0019): permit the Oracle relay's WireGuard tunnel IP
+    # (10.3.2.10) past reject_unknown_client_hostname — a private tunnel IP has
+    # no PTR, so the drain would otherwise 450-defer forever. A cidr map is read
+    # directly (no postmap). `OK` clears only the client/helo/sender phase;
+    # relay control (smtpd_relay_restrictions) still applies, so this grants NO
+    # relay ability — deliberately NOT using mynetworks. See postfix_cf where it
+    # is wired into smtpd_sender_restrictions.
+    "backup-mx-permit.cidr" = "10.3.2.10/32 OK\n"
+
+    # Per-user Dovecot sieve for the paperless-ngx ingest mailbox: DMS installs
+    # any /tmp/docker-mailserver/<login>.dovecot.sieve at startup. ConfigMap
+    # keys can't contain '@', so the key is sanitized ("-at-") and the
+    # volume_mount below restores the real filename.
+    "docs-at-viktorbarzin.me.dovecot.sieve" = file("${path.module}/extra/docs-at-viktorbarzin.me.dovecot.sieve")
+
     KeyTable      = "mail._domainkey.viktorbarzin.me viktorbarzin.me:mail:/etc/opendkim/keys/viktorbarzin.me-mail.key\n"
     SigningTable  = "*@viktorbarzin.me mail._domainkey.viktorbarzin.me\n"
     TrustedHosts  = "127.0.0.1\nlocalhost\n"
@@ -128,6 +160,42 @@ resource "kubernetes_config_map" "mailserver_config" {
         viktorbarzin.me {
             path = "/tmp/docker-mailserver/rspamd/dkim/viktorbarzin.me/mail.private";
             selector = "mail";
+        }
+    }
+    EOF
+    # Rspamd: score mail drained from the backup MX (ADR-0019) against the
+    # ORIGINAL sender IP, not the WireGuard tunnel IP. Without this, rspamd
+    # treats 10.3.2.10 as local (local_addrs covers 10/8) and skips the scan
+    # entirely — verified 2026-07-08 on the O5 drained mail (no X-Spamd
+    # headers, no milter consult): the backup MX was a clean bypass around
+    # spam filtering. ip_map strategy: hops whose IP is in the map are
+    # skipped; the first unrecognized Received IP (the one mx2 stamped for
+    # the real client) becomes the scan subject — RBL/reputation parity with
+    # direct mail. Direct mail is untouched (first hop already unrecognized).
+    "external_relay.conf" = <<-EOF
+    enabled = true;
+    rules {
+        BACKUP_MX_DRAIN {
+            strategy = "ip_map";
+            ip_map = ["10.3.2.10/32"];
+        }
+    }
+    EOF
+    # Rspamd force_actions: cap the drain stream's action ladder at
+    # add_header (tag + fold), never reject — a 5xx to the drain makes mx2
+    # bounce, and mx2 can never deliver a DSN (egress 25 blocked), so a
+    # false-positive reject would be SILENT mail loss (ADR-0019 never-lose
+    # rule). Keyed on the BACKUP_MX_DRAIN symbol the external_relay rule
+    # stamps — a settings ip=10.3.2.10 match does NOT work here (verified
+    # 2026-07-08: external_relay rewrites the IP before settings match it).
+    # force_actions is a post-filter, so it sees the final verdict.
+    "force_actions.conf" = <<-EOF
+    rules {
+        BACKUP_MX_DRAIN_NO_REJECT {
+            action = "add header";
+            expression = "BACKUP_MX_DRAIN";
+            require_action = ["reject", "soft reject"];
+            message = "capped to add_header: backup-MX drain is never rejected (ADR-0019)";
         }
     }
     EOF
@@ -266,6 +334,18 @@ resource "kubernetes_config_map" "mailserver_user_patches" {
         -o smtpd_upstream_proxy_timeout=5s
       PFXEOF
       fi
+
+      # ADR-0019 backup-mx drain: policyd-spf evaluates SPF against the
+      # CONNECTING IP, which for drained mail is the WireGuard tunnel IP
+      # 10.3.2.10 — any strict-SPF (-all) sender domain gets 550'd at RCPT
+      # and the mail is silently lost (mx2 cannot deliver a DSN). Skip the
+      # tunnel IP; SPF for drained mail is evaluated by rspamd against the
+      # ORIGINAL client IP via external_relay. Found empirically 2026-07-08
+      # (a -all test sender bounced on the drain).
+      SPF_CONF=/etc/postfix-policyd-spf-python/policyd-spf.conf
+      if ! grep -q '10.3.2.10' "$SPF_CONF"; then
+        sed -i 's|^skip_addresses = .*|&,10.3.2.10/32|' "$SPF_CONF"
+      fi
     EOT
   }
 }
@@ -400,8 +480,20 @@ resource "kubernetes_deployment" "mailserver" {
           }
           volume_mount {
             name       = "config"
+            mount_path = "/tmp/docker-mailserver/backup-mx-permit.cidr"
+            sub_path   = "backup-mx-permit.cidr"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
             mount_path = "/tmp/docker-mailserver/postfix-virtual.cf"
             sub_path   = "postfix-virtual.cf"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/docs@viktorbarzin.me.dovecot.sieve"
+            sub_path   = "docs-at-viktorbarzin.me.dovecot.sieve"
             read_only  = true
           }
           volume_mount {
@@ -455,6 +547,18 @@ resource "kubernetes_deployment" "mailserver" {
             name       = "config"
             mount_path = "/tmp/docker-mailserver/rspamd/override.d/dkim_signing.conf"
             sub_path   = "dkim_signing.conf"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/rspamd/override.d/external_relay.conf"
+            sub_path   = "external_relay.conf"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/tmp/docker-mailserver/rspamd/override.d/force_actions.conf"
+            sub_path   = "force_actions.conf"
             read_only  = true
           }
           volume_mount {
@@ -811,7 +915,7 @@ resource "kubernetes_manifest" "email_roundtrip_monitor_secrets" {
       namespace = kubernetes_namespace.mailserver.metadata[0].name
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -1075,11 +1179,12 @@ sys.exit(0 if (success and not both_pushes_failed) else 1)
 # requires DNS changes, hence backup is critical.
 # =============================================================================
 module "nfs_mailserver_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "mailserver-backup-host"
-  namespace  = kubernetes_namespace.mailserver.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/mailserver-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "mailserver-backup-host"
+  namespace          = kubernetes_namespace.mailserver.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/mailserver-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_cron_job_v1" "mailserver-backup" {
@@ -1126,7 +1231,7 @@ resource "kubernetes_cron_job_v1" "mailserver-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 week=$(date +"%Y-%W")
-                prev_week=$(date -d "-7 days" +"%Y-%W" 2>/dev/null || echo "")
+                prev_week=$(date -d @$(( $(date +%s) - 604800 )) +"%Y-%W")
                 dst=/backup/$week
                 mkdir -p "$dst"
 
@@ -1148,7 +1253,7 @@ resource "kubernetes_cron_job_v1" "mailserver-backup" {
                 done
 
                 # Rotate — keep 8 weekly snapshots (~2 months)
-                find /backup -maxdepth 1 -mindepth 1 -type d -regex '.*/[0-9]+-[0-9]+$' | sort | head -n -8 | xargs -r rm -rf
+                find /backup -maxdepth 1 -mindepth 1 -type d -regex '.*/[0-9][0-9]*-[0-9][0-9]*$' | sort | head -n -8 | xargs -r rm -rf
 
                 _dur=$(($(date +%s) - _t0))
                 _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
@@ -1234,11 +1339,12 @@ resource "kubernetes_cron_job_v1" "mailserver-backup" {
 #   - writes to /srv/nfs/roundcube-backup/<YYYY-WW>/{html,enigma}/
 # =============================================================================
 module "nfs_roundcube_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "roundcube-backup-host"
-  namespace  = kubernetes_namespace.mailserver.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/roundcube-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "roundcube-backup-host"
+  namespace          = kubernetes_namespace.mailserver.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/roundcube-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_cron_job_v1" "roundcube-backup" {
@@ -1287,7 +1393,7 @@ resource "kubernetes_cron_job_v1" "roundcube-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 week=$(date +"%Y-%W")
-                prev_week=$(date -d "-7 days" +"%Y-%W" 2>/dev/null || echo "")
+                prev_week=$(date -d @$(( $(date +%s) - 604800 )) +"%Y-%W")
                 dst=/backup/$week
                 mkdir -p "$dst"
 
@@ -1308,7 +1414,7 @@ resource "kubernetes_cron_job_v1" "roundcube-backup" {
                 done
 
                 # Rotate — keep 8 weekly snapshots (~2 months)
-                find /backup -maxdepth 1 -mindepth 1 -type d -regex '.*/[0-9]+-[0-9]+$' | sort | head -n -8 | xargs -r rm -rf
+                find /backup -maxdepth 1 -mindepth 1 -type d -regex '.*/[0-9][0-9]*-[0-9][0-9]*$' | sort | head -n -8 | xargs -r rm -rf
 
                 _dur=$(($(date +%s) - _t0))
                 _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)

@@ -43,6 +43,11 @@ small no matter how much traffic flows.
   history.
 - In-cluster: `Service goldmane:7443` (gRPC/mTLS), `Service whisker:8081`
   (HTTP), both in `calico-system`.
+- **DNS fix + self-heal:** whisker's egress to the kube-dns ClusterIP is allowed
+  by `whisker-allow-dns-clusterip` (`stacks/calico`) — without it the UI goes
+  empty after any gRPC-stream break (see Troubleshooting → "Whisker UI empty").
+  The `whisker-watchdog` CronJob (every 10 min) is a backstop that restarts
+  whisker if its backend ever wedges for another reason.
 
 ### CNPG `goldmane_edges` — durable
 - Postgres DB `goldmane_edges` on the CNPG cluster
@@ -148,8 +153,22 @@ on Goldmane's live serving cert, so no `GOLDMANE_SERVER_NAME` /
 
 ## How to query who-talks-to-whom
 
-`psql` into the DB (creds: Vault static role `static-creds/pg-goldmane-edges`, or
-exec a CNPG pod). All queries are against the single `edge` table.
+**Quickest — the `homelab edges` CLI** (the investigation helper; read-only
+SELECT against the DB via the dbaas primary pod, no creds/SQL to remember):
+
+```
+homelab edges --ns <ns>         # edges touching <ns> (either direction)
+homelab edges --peers-of <ns>   # <ns>'s distinct peer namespaces
+homelab edges --src <ns>        # <ns>'s egress peers   (--dst <ns> for ingress)
+homelab edges --new-since 24h   # edges first seen in the last day (or a date)
+homelab edges --denied          # blocked / lateral-movement attempts
+homelab edges --json [...]      # machine-readable, for agents/pipelines
+homelab edges --help            # full flag list
+```
+
+For ad-hoc SQL, `psql` into the DB (creds: Vault static role
+`static-creds/pg-goldmane-edges`, or exec a CNPG pod). All queries are against
+the single `edge` table.
 
 ```sql
 -- Everything talking to a namespace (inbound), most-active first
@@ -180,11 +199,13 @@ the `edge` table intentionally aggregates that away.
 
 The durable edge set is a faster, identity-stamped data source for the existing
 **observe-then-enforce** egress effort (beads `code-8ywc`; snapshot
-`docs/architecture/wave1-egress-observation-2026-05-22.md`) than the original
+`docs/architecture/wave1-egress-observation-2026-09-04.md`) than the original
 iptables-`LOG` → journald → Loki path (ADR-0014 consequence: "Enforcement gains
 a better data source"). It replaces the *internal* (namespace-to-namespace) leg
-of the allowlist; **external/public-internet egress is NOT in this table** (empty
-dst namespace, dropped) — for those destinations keep using the Calico flow-log
+of the allowlist; **external/public-internet egress is NOT in this table**
+(a destination with no namespace is normalised to the sentinel `dst_ns = '-'`,
+which records that a namespace egressed off-cluster but never to where — 141
+such rows across 139 source namespaces as of 2026-09-04) — for those destinations keep using the Calico flow-log
 path described in security.md.
 
 **Per-namespace internal egress allowlist** — the set of in-cluster namespaces a
@@ -222,7 +243,7 @@ the external destinations still come from the Wave-1 observation snapshot.
 the phased per-namespace default-deny rollout (starting `recruiter-responder`)
 is tracked under `code-8ywc`. Cross-links:
 [security.md → NetworkPolicy Default-Deny Egress](../architecture/security.md#networkpolicy-default-deny-egress-wave-1--observe-then-enforce-tier-34),
-[wave1-egress-observation-2026-05-22.md](../architecture/wave1-egress-observation-2026-05-22.md),
+[wave1-egress-observation-2026-09-04.md](../architecture/wave1-egress-observation-2026-09-04.md),
 [ADR-0014](../adr/0014-service-identity-and-east-west-observability.md).
 
 > **Caveat (same as the Wave-1 snapshot):** an edge only exists if it was
@@ -258,6 +279,31 @@ brand-new ingress host is also invisible to LAN split-horizon until the hourly
 `curl -sSI --resolve whisker.viktorbarzin.me:443:10.0.20.203 https://whisker.viktorbarzin.me`
 (expect a 302 to Authentik — the gate working).
 
+**Whisker UI empty (but reachable — 302s to Authentik fine).** ROOT CAUSE (the
+2026-06-28 incident): the operator's own `whisker` NetworkPolicy is
+policyTypes:[Ingress,**Egress**], and its egress allows DNS only to the kube-dns
+*pods* (podSelector `k8s-app=kube-dns`). But whisker-backend resolves
+`goldmane.calico-system.svc` via the kube-dns **ClusterIP** (10.96.0.10), and
+**Calico drops UDP DNS to a ClusterIP under a podSelector-only egress rule**.
+Verified: from the whisker pod's netns, ClusterIP DNS = 100% timeout while direct
+kube-dns *pod-IP* DNS = OK, and a pod with no egress policy resolves fine.
+whisker-backend resolves goldmane ONCE in the brief startup window before the
+policy programs, holds its long-lived gRPC stream, and only re-resolves when that
+stream breaks (e.g. a node-reboot blip) — at which point the blocked ClusterIP
+DNS wedges its Go resolver (`failed to stream flows` / `code = Unavailable: dns
+... i/o timeout` forever) and the UI goes blank. The durable **aggregator is a
+SEPARATE pod in its own (unrestricted) namespace** and is unaffected.
+
+FIX (applied 2026-06-28): `kubernetes_network_policy_v1.whisker_allow_dns_clusterip`
+(`stacks/calico`) — an additive egress NP allowing whisker → the kube-dns
+ClusterIP (`10.96.0.10/32`) on 53/UDP+TCP; k8s egress policies are additive so
+the operator NP is untouched. Backstop: the `whisker-watchdog` CronJob restarts
+the pod if it ever wedges for another reason. Immediate manual heal:
+`kubectl -n calico-system delete pod -l k8s-app=whisker`. Diagnose by comparing,
+from the whisker pod's netns, `nslookup goldmane.calico-system.svc.cluster.local
+10.96.0.10` (the ClusterIP — times out if the NP fix is missing) against the same
+query aimed at a kube-dns *pod IP* (always works).
+
 **No new `last_seen` updates / `AggregatorDown` firing.** Check the `aggregate`
 pod logs (`kubectl logs -n goldmane-edge-aggregator deploy/goldmane-edge-aggregator`).
 Common causes, in order:
@@ -279,11 +325,12 @@ pods after a day, so check soon after a failed run. With `SLACK_WEBHOOK_URL`
 empty the binary forces a dry-run (no post) — verify the `goldmane-edges-slack`
 ExternalSecret resolved. A dry run / smoke test: run the image with `args:
 ["digest"]` + `DRY_RUN=1` to print the message instead of POSTing.
-> Known state (2026-06-25): the digest CronJob's first Job **failed** and it has
-> never successfully posted (`lastSuccessfulTime` empty) — the digest leg is the
-> live gap; `DigestFailing` is catching it. Edges still land in the DB via the
-> `aggregate` Deployment; only the `#alerts` digest notification is affected.
-> Investigation/fix belongs to the aggregator slice (#58/#60), not monitoring.
+> Resolved (2026-06-28): the digest posts cleanly to `#alerts`
+> (`lastSuccessfulTime` current, `DigestFailing` clear; e.g. the 2026-06-28 08:00
+> London run reported "8 new edges in last 24h"). The 2026-06-25 failures were
+> the `#security` channel override returning HTTP 404 — the shared
+> `alertmanager_slack_api_url` webhook's Slack app isn't a member of `#security`;
+> consolidating all Slack output to `#alerts` fixed it.
 
 **No edges at all in the table.** Confirm Goldmane is enabled
 (`kubectl get goldmane,whisker -A`) and `calico-node` rolled with the
@@ -295,7 +342,7 @@ completed; confirm the aggregator pod is `Running` and not `ImagePullBackOff`
 - [ADR-0014 — Service identity & east-west observability](../adr/0014-service-identity-and-east-west-observability.md)
 - [security.md — NetworkPolicy Default-Deny Egress + east-west flow observability](../architecture/security.md)
 - [monitoring.md — east-west flow observability + alerts](../architecture/monitoring.md)
-- [wave1-egress-observation-2026-05-22.md](../architecture/wave1-egress-observation-2026-05-22.md)
+- [wave1-egress-observation-2026-09-04.md](../architecture/wave1-egress-observation-2026-09-04.md)
 - `CONTEXT.md` glossary — **Service identity**, **Goldmane / Whisker**
 - Code: `~/code/goldmane-edge-aggregator` (`README.md`, `DEPLOY.md`); stacks
   `stacks/goldmane-edge-aggregator`, `stacks/calico`

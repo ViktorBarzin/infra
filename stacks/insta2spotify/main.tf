@@ -8,8 +8,8 @@ resource "kubernetes_namespace" "insta2spotify" {
   metadata {
     name = "insta2spotify"
     labels = {
-      "istio-injection" = "disabled"
-      tier              = local.tiers.aux
+      "istio-injection"  = "disabled"
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -31,7 +31,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "insta2spotify"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -53,12 +53,13 @@ resource "kubernetes_manifest" "external_secret" {
 # insta2spotify is config-only, no embedded DB. See
 # docs/plans/2026-06-05-block-storage-harden-nfs-design.md
 module "nfs_insta2spotify" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "insta2spotify-data-nfs"
-  namespace  = kubernetes_namespace.insta2spotify.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/insta2spotify"
-  storage    = "5Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "insta2spotify-data-nfs"
+  namespace          = kubernetes_namespace.insta2spotify.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/insta2spotify"
+  storage            = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "insta2spotify" {
@@ -178,11 +179,11 @@ resource "kubernetes_deployment" "insta2spotify" {
           }
           resources {
             limits = {
-              memory = "2Gi"
+              memory = "256Mi"
             }
             requests = {
               cpu    = "50m"
-              memory = "512Mi"
+              memory = "160Mi"
             }
           }
         }
@@ -257,16 +258,18 @@ module "ingress" {
 # endpoints; `auth = "public"` would 302+cookie-dance and break CORS
 # preflight, so we stay at `auth = "none"`.
 module "ingress_api" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.insta2spotify.metadata[0].name
-  name            = "insta2spotify-api"
-  host            = "insta2spotify"
-  service_name    = "insta2spotify"
-  tls_secret_name = var.tls_secret_name
+  source    = "../../modules/kubernetes/ingress_factory"
+  namespace = kubernetes_namespace.insta2spotify.metadata[0].name
+  name      = "insta2spotify-api"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "insta2spotify"
+  service_name     = "insta2spotify"
+  tls_secret_name  = var.tls_secret_name
   # auth = "none": API endpoints consumed by browser fetch() XHRs; forward-auth 302 breaks CORS preflight.
-  auth            = "none"
-  ingress_path    = ["/api/identify", "/api/auth", "/api/health", "/api/history"]
-  max_body_size   = "50m"
+  auth          = "none"
+  ingress_path  = ["/api/identify", "/api/auth", "/api/health", "/api/history"]
+  max_body_size = "50m"
 }
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)

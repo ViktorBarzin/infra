@@ -15,7 +15,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "novelapp"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -38,7 +38,7 @@ resource "kubernetes_namespace" "novelapp" {
     name = "novelapp"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -87,6 +87,9 @@ resource "kubernetes_deployment" "novelapp" {
     name      = "novelapp"
     namespace = kubernetes_namespace.novelapp.metadata[0].name
     labels = {
+      # Deliberately NOT sablier-enrolled (un-enrolled 2026-07-14, Viktor):
+      # shared with Gheorghe — cold starts hurt him; keep always-on
+      # at 640Mi (see resources note re the 320Mi OOM loop). Do not re-enroll.
       app  = "novelapp"
       tier = local.tiers.aux
     }
@@ -109,10 +112,10 @@ resource "kubernetes_deployment" "novelapp" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      metadata[0].annotations["kubernetes.io/change-cause"],         # Keel writes this on each auto-upgrade
-      metadata[0].annotations["deployment.kubernetes.io/revision"],  # K8s increments this on every rollout
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      metadata[0].annotations["kubernetes.io/change-cause"],              # Keel writes this on each auto-upgrade
+      metadata[0].annotations["deployment.kubernetes.io/revision"],       # K8s increments this on every rollout
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1 — Keel writes on update
     ]
   }
@@ -140,8 +143,8 @@ resource "kubernetes_deployment" "novelapp" {
           }
         }
         container {
-          image             = "mghee/novelapp:v1.1.3"
-          name              = "novelapp"
+          image = "mghee/novelapp:v1.1.3"
+          name  = "novelapp"
           # IfNotPresent is correct now that the tag is a pinned semver (Keel
           # bumps the tag string on upgrade -> a new tag always pulls fresh).
           # Always was only needed back when this tracked the mutable :latest.
@@ -209,6 +212,13 @@ resource "kubernetes_deployment" "novelapp" {
             container_port = 3000
           }
           resources {
+            # 640Mi (reverted from the 2026-07-14 320Mi right-size). The 320Mi
+            # was sized from the IDLE working set (~156Mi, 2x) with no headroom
+            # for request-time spikes; under real traffic novelapp (public Next.js,
+            # SSR) briefly spikes past 320Mi and the cgroup OOM-killer killed it
+            # ~10x/23h once it was restored to always-on (steady WS ~200Mi but
+            # the spikes are sub-scrape so metrics never showed >211Mi). 640Mi is
+            # the proven pre-right-size value. Do not re-trim from idle metrics.
             requests = {
               memory = "640Mi"
               cpu    = "10m"
@@ -250,8 +260,12 @@ module "ingress" {
   # (AUTH_URL/AUTH_SECRET/GOOGLE_CLIENT_{ID,SECRET} env vars above). Putting
   # Authentik forward-auth in front double-gates the app and breaks iOS/Android
   # webview clients that can't complete the Authentik 302/cookie dance.
-  auth            = "app"
-  dns_type        = "non-proxied"
+  auth = "app"
+  # ADR-0026 / code-6m20: grey because forward-auth broke the NextAuth /
+  # Google OAuth flow and the mobile webviews. That is a Traefik concern,
+  # not a Cloudflare one. Proxied rides the zone-wide wildcard CNAME
+  # (ADR-0021) and creates no A/AAAA record.
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.novelapp.metadata[0].name
   name            = "novelapp"
   tls_secret_name = var.tls_secret_name

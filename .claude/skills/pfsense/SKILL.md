@@ -34,7 +34,14 @@ date: 2026-02-14
 | lan | Management VMs | vtnet1 | 10.0.10.1/24 | VLAN 10 |
 | opt1 | Kubernetes | vtnet2 | 10.0.20.1/24 | VLAN 20 |
 | opt2 | WireGuard | tun_wg0 | 10.3.2.1/24 | VPN tunnel |
-| tailscale0 | Tailscale | tailscale0 | 100.64.0.x | Headscale mesh |
+| opt4 | CCTV | vtnet3 | 10.0.30.1/24 | VLAN 30 (ADR-0017) |
+| tailscale0 | Tailscale | tailscale0 | 100.64.0.9 | Headscale subnet router (NOT an assigned pfSense interface — it is in the `Tailscale` ifgroup, which has no config members, so **firewall rules bound to it do not render**; see the design doc) |
+
+**Tailscale subnet router:** pfSense advertises six homelab routes + an exit node
+on the tailnet as node `pfsense` / `100.64.0.9` / `tag:infra` (never expires).
+Reproducer `playbooks/pfsense-tailscale.yml`; runbook
+`docs/runbooks/pfsense-tailscale-subnet-router.md`. Do NOT re-register via
+interactive OIDC — that inherits a 180-day expiry and cannot carry the tag.
 
 ## CLI Script
 

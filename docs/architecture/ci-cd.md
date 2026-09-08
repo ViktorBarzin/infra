@@ -93,8 +93,8 @@ can't reach Forgejo's public hairpin.
 
 | Visibility | Packages | Pull mechanism |
 |------------|----------|----------------|
-| **Public** | beadboard, nextcloud-todos, claude-agent-service, claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway, chrome-service-novnc, android-emulator | Anonymous |
-| **Private** | f1-stream, job-hunter, instagram-poster, payslip-ingest, wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli, infra-ci | `ghcr-credentials` dockerconfigjson |
+| **Public** | beadboard, nextcloud-todos, claude-agent-service, claude-memory-mcp, kms-website, freedify, tuya_bridge, x402-gateway, android-emulator | Anonymous |
+| **Private** | f1-stream, job-hunter, instagram-poster, payslip-ingest, wealthfolio-sync, fire-planner, recruiter-responder, tripit, infra-cli, infra-ci, k8s-portal, excalidraw-library | `ghcr-credentials` dockerconfigjson |
 
 Private-image pulls use the `ghcr-credentials` dockerconfigjson, cloned by the
 kyverno stack's `sync-ghcr-credentials` ClusterPolicy to an explicit
@@ -115,8 +115,66 @@ claude-agent-service, claude-memory-mcp, kms-website, Freedify,
 instagram-poster, payslip-ingest, broker-sync (image name `wealthfolio-sync`),
 fire-planner, recruiter-responder, x402-gateway — plus **tripit** (the original
 pilot, 2026-06-09). Earlier public-repo apps already on GHA (Website,
-k8s-portal, apple-health-data, audiblez-web, plotting-book, insta2spotify,
+k8s-portal, apple-health-data, audiblez-web, insta2spotify,
 audiobook-search) now also land on ghcr.
+
+**plotting-book** is a special case (a GitHub-first repo owned by Anca,
+ADR-0003): the build runs in *her* GitHub repo
+(`PassionProjectsAnca/Plotting-Your-Dream-Book`) and pushes to **private
+`ghcr.io/passionprojectsanca/book-plotter`** — under her org's ghcr namespace,
+not `viktorbarzin`, using the workflow's built-in `GITHUB_TOKEN` (no shared
+PAT). The cluster pulls it via the Kyverno-synced `ghcr-credentials` secret (the
+`plotting-book` namespace is on the allowlist; the shared `ghcr_pull_token` has
+read access). Migrated off public DockerHub (`viktorbarzin/book-plotter`) on
+2026-06-27. The Woodpecker deploy hook (repo 43, registered to Anca's repo) is
+unchanged. Flow:
+
+```text
+ DEVELOP ───────────────────────────────────────────────────────────────────────
+   Anca (Codex / t3 web agent)
+        │  git push → main
+        ▼
+ ┌──────────────────────────────────────────────────────────────┐
+ │ GitHub: PassionProjectsAnca/Plotting-Your-Dream-Book (private)│  ← canonical
+ │   .github/workflows/build-and-deploy.yml     on: push → main  │
+ └───────────────────────────┬──────────────────────────────────┘
+                             │  GitHub Actions runner (off-infra build · ADR-0002)
+        ┌────────────────────┴─────────────────────────────────┐
+        ▼                                                        ▼
+ ┌─────────────────────────────────────────────┐      ╔═══════════════════════════════════════╗
+ │ build job                                   │ push ║  GHCR · PRIVATE package                ║
+ │  • svu next --always → tag vX.Y.Z (→ repo)  │═════▶║  ghcr.io/passionprojectsanca/         ║
+ │  • buildx linux/amd64, provenance:false     │ tags ║       book-plotter  :vX.Y.Z  :latest  ║
+ │  • login ghcr (GITHUB_TOKEN, packages:write)│      ╚═══════════════════╤═══════════════════╝
+ │  • delete-package-versions (keep newest 10) │                          │
+ └───────────────────────┬─────────────────────┘                          │ pull (private,
+                         ▼  deploy job  [gate: repo var DEPLOY_ENABLED ≠ "false"]  via secret)
+   POST ci.viktorbarzin.me/api/repos/43/pipelines {IMAGE_TAG, IMAGE_NAME}         │
+                         ▼                                                         │
+ ┌─────────────────────────────────────────────────────────────┐                 │
+ │ Woodpecker repo 43 · .woodpecker/deploy.yml (event: manual)  │                 │
+ │   kubectl set image deployment/plotting-book = <ghcr>:vX.Y.Z │                 │
+ │   kubectl rollout status                                     │                 │
+ └───────────────────────────┬─────────────────────────────────┘                 │
+                             ▼                                                     │
+ ═══════════════ Kubernetes · ns: plotting-book ════════════════════════════      │
+ ┌─────────────────────────────────────────────────────────────┐                 │
+ │ Deployment plotting-book  (Recreate · image = ignore_changes)│                 │
+ │   imagePullSecrets: ghcr-credentials ────────pull───────────┼─────────────────┘
+ │   Pod → Express :3001  +  SQLite on PVC (proxmox-lvm)        │
+ └─────────────────────────────────────────────────────────────┘
+   guards / supporting:
+     • Kyverno require-trusted-registries [Enforce] → ghcr.io/* ALLOWED   (admission)
+     • Keel policy=patch @1h → watches GHCR via ghcr-credentials          (backstop)
+     • ghcr-credentials ⇐ Kyverno generate-clone ⇐ Vault secret/viktor/ghcr_pull_token
+
+ ═══════════════ Serving path (unchanged) ══════════════════════════════════
+   Browser ─▶ plotting-book.viktorbarzin.me  (non-proxied DNS → Traefik .203)
+           ─▶ Authentik forward-auth (gate) ─▶ Service :80 ─▶ Pod :3001
+```
+
+Governance: the Deployment + Kyverno allowlist are Terraform (`stacks/plotting-book`,
+`stacks/kyverno`); the live image *tag* is CI-owned (`ignore_changes`).
 
 ### Infra-owned images (issues #29 / #30)
 
@@ -126,10 +184,11 @@ reconciled — the workflows were added to the GitHub lineage via PR):
 
 | Image | Workflow | Destination |
 |-------|----------|-------------|
-| chrome-service-novnc | `build-chrome-service-novnc.yml` | public `ghcr.io/viktorbarzin/chrome-service-novnc` |
 | android-emulator | `build-android-emulator.yml` | public `ghcr.io/viktorbarzin/android-emulator` |
 | infra CLI | `build-cli.yml` | DockerHub `viktorbarzin/infra` (kept) + `ghcr.io/viktorbarzin/infra-cli` |
 | infra-ci | `build-infra-ci.yml` | private `ghcr.io/viktorbarzin/infra-ci` |
+| k8s-portal | `build-k8s-portal.yml` | private `ghcr.io/viktorbarzin/k8s-portal` (Keel rolls `:latest` digests) |
+| excalidraw-library | `build-excalidraw.yml` | private `ghcr.io/viktorbarzin/excalidraw-library` (Keel rolls `:latest` digests; DockerHub `:v4` frozen as rollback) |
 
 **`infra-ci`** is the image the `.woodpecker/default.yml` apply step and
 `drift-detection.yml` run in (proven by pipelines 165/166). `chatterbox-tts` is
@@ -163,18 +222,145 @@ Woodpecker is **deploy + cluster-touching steps only**:
 | Pipeline | File | Purpose |
 |----------|------|---------|
 | per-app deploy | `.woodpecker/deploy.yml` (each repo) | `kubectl set image` + Slack notify (event: **manual**) |
-| terragrunt apply | `.woodpecker/default.yml` | Changed-stacks apply on push to master (runs in `infra-ci`) |
-| certbot | `.woodpecker/renew-tls.yml` | TLS renewal cron |
-| drift-detection | `.woodpecker/drift-detection.yml` | Nightly Terraform drift (runs in `infra-ci`) |
+| terragrunt apply | `.woodpecker/default.yml` | Changed-stacks apply on push to master (runs in `infra-ci`). **Skips Tier-0 `vault`** — it's human-applied via OIDC; the CI `ci` role lacks Vault-admin perms (`sys/mounts`, `sys/policies/acl`) so a CI apply 403s. **Since 2026-09-02 (infra#84) the skip is loud**: the run records the stack, posts to Slack naming the commit and the remediation (`cd stacks/vault && ../../scripts/tg apply`), and pushes the `ci_stack_pending_human_apply` gauge, which `CIStackPendingHumanApply` alerts on after 2h. The run still exits **0** — a deliberate skip is not a failure, and turning ~4 of 32 runs red for correct behaviour trains people to ignore red |
+| certbot | `.woodpecker/renew-tls.yml` | TLS renewal cron. Schedule `@weekly` (Sunday 00:00) |
+| drift-detection | `.woodpecker/drift-detection.yml` | Terraform drift, **`0 4 * * *`** (was `@daily`/00:00 until 2026-08-16, which collided with `renew-tls`). Runs in `infra-ci`. **Skips Tier-0 `vault`** (its `plan` 403s under the `ci` role and would fail the whole run). Re-plans drifted stacks against current master before reporting, and lists the changed **resources** per stack via `scripts/drift-report.py` — see "Reading a drift report" below. Known gap: drift-detection remains **blind to vault**, so a hand-applied vault change is neither verified nor reported by the nightly run |
 | provision-user | `.woodpecker/provision-user.yml` | Add namespace-owner user from Vault spec |
 | registry-config-sync | `.woodpecker/registry-config-sync.yml` | SCP `modules/docker-registry/*` → `10.0.20.10` on change |
 | pve-nfs-exports-sync | `.woodpecker/pve-nfs-exports-sync.yml` | Sync `scripts/pve-nfs-exports` → `/etc/exports` on PVE |
-| issue-automation | `.woodpecker/issue-automation.yml` | Triage + respond to `ViktorBarzin/infra` GitHub issues |
 | postmortem-todos | `.woodpecker/postmortem-todos.yml` | Auto-resolve safe TODOs from new post-mortems |
 | k8s-portal | `.woodpecker/k8s-portal.yml` | Path-filtered deploy for the portal |
 | breakglass-infra-ci | `.woodpecker/breakglass-infra-ci.yml` | **Manual** ghcr pull-and-save of infra-ci to the registry VM |
 
 **No build/test pipeline exists on any repo.** Do not (re)introduce one.
+
+### Reading a drift report (2026-08-16)
+
+The nightly run posts the changed **resources** per stack, not just a list of
+stack names, because a count alone cannot distinguish a one-line certificate
+diff from a stack about to recreate 115 DNS routes — and cannot be
+sanity-checked at all. Formatting and parsing live in `scripts/drift-report.py`
+(unit tests: `python3 scripts/drift_report_test.py`) rather than in the pipeline
+YAML, which has a long history of Woodpecker `${...}` expansion, `set -e`, ANSI
+and line-prefix bugs that are untestable in place.
+
+```
+cloudflared — +115 -11
+    + 115 × module.cloudflared.cloudflare_worker_route.outage_failover_host
+    - 10 × module.cloudflared.cloudflare_worker_route.outage_failover_carveout
+```
+
+Three things the report tells you that the old count could not:
+
+- **Symbols** are `+` created, `-` destroyed, `~` updated in-place, `±` replaced.
+  A stack showing only `±` on `null_resource` is almost always a
+  `triggers = { always = timestamp() }` resource, which can never plan clean by
+  construction. As of 2026-09-03 there is exactly ONE left, `monitoring`, and it
+  is deliberate: `null_resource.grafana_admin_only_folder_acl` re-asserts the
+  folder ACL on every apply so that a permission edited in the Grafana UI is put
+  back, and nothing else enforces that. Treat a `±` there as expected.
+
+  `infra`, `technitium` and `dbaas` used to be listed here too. As of 2026-09-03
+  none of them contains a `timestamp()` or `uuid()` trigger any more, checked by
+  grep across the whole `stacks/` tree. `technitium`'s gate had its `always`
+  trigger removed once its four digest triggers were shown to cover every real
+  rollout, with Prometheus watching DNS health continuously in between (commit
+  `3e75f574`); `technitium` and `tts` were each re-planned afterwards and both
+  report `No changes`. `infra` was separately resolved earlier the same day.
+  `dbaas` was not re-planned, so treat "no nondeterministic trigger" as the
+  claim there rather than "plans clean".
+
+  Before treating any remaining `±` as unavoidable, check whether the trigger is
+  doing work nothing else does, as `monitoring`'s is.
+- **"Could not be planned" is separate from "differs"**, and means state
+  unknown. When the errored stacks form a contiguous **alphabetical tail** the
+  report says the run most likely aborted partway and the counts are incomplete.
+  Tier-1 stacks read state from CNPG, so a Postgres blip mid-run fails every
+  stack after it. On 2026-08-16 that produced 29 errors and 79 "drifting", which
+  read as a mass revert; re-planning six by hand returned five clean.
+- **The commit planned against** is named. The run clones master once and then
+  plans for hours, so anything committed mid-run — notably the `renew-tls`
+  certificate commit at ~00:06 — leaves later stacks diffing against a tree that
+  no longer exists. If a wave of stacks all show the same `module.tls_secret`
+  change, check that commit before believing it.
+
+#### The confirmation pass (2026-08-16)
+
+Drifted stacks are **re-planned against current master** before anything is
+reported. The first pass finds candidates; the second decides. A stack that
+comes back clean on the re-plan was a stale checkout, not drift, and is counted
+as clean — so the metrics, the Slack report and `DriftStacksMany` all see the
+confirmed set.
+
+This exists because the first pass compares a frozen checkout against a cluster
+that CI keeps applying newer commits to. The worked example: `renew-tls-certificate`
+(`@weekly`, Sunday 00:00) and `drift-detection` were both registered at 00:00, so
+on renewal Sundays they started together. On 2026-08-16 the run cloned at 00:01,
+the new wildcard certificate was committed at 00:06 and pushed into 150 of 151
+namespaces by 00:11, and every stack planned afterwards reported
+`module.tls_secret.kubernetes_secret.tls_secret will be updated in-place`. **79 of
+the run's 92 changed resources were that one secret** — 126 stacks manage it —
+while `ac`, planned in the first minute, was clean. Genuine drift that night was
+about six stacks.
+
+Two follow-on changes: the cron moved from `@daily` (00:00) to **`0 4 * * *`**, which
+separates it from `renew-tls` and from the PVE backup chain; and metrics are emitted
+*after* the confirmation pass rather than inside the plan loop, so a reclassified
+stack needs no metric rewritten (the Pushgateway is also read once for the
+first-seen timestamps instead of once per drifted stack). `drift_stack_first_seen`
+is preserved across runs, so `DriftUnaddressed` ages a stack that genuinely keeps
+drifting.
+
+The read-back is fussier than it looks. The Pushgateway does not serve a metric
+in the shape you pushed it: it adds `instance` and `job` grouping labels, sorts
+the label set, and renders the value as a Go float
+(`drift_stack_first_seen{instance="",job="drift-detection",stack="monitoring"}
+1.788494507e+09`). The lookup compared the whole label set as a literal string
+against what the run had pushed, so it matched nothing, every drifted stack was
+stamped as first seen at the current run, and `drift_stack_age_hours` read 0 for
+every stack from the day the metric was added until 2026-09-04. Anything else
+reading a metric back off the gateway wants to match on the metric name plus the
+label it cares about, and to parse the value as a float rather than feeding it to
+shell arithmetic. Ages accumulate from the first run after the fix; the earlier
+first-seen history was overwritten nightly and is only recoverable from
+`drift_stack_state` in Prometheus.
+
+**Errored stacks are deliberately not re-planned** — "could not be planned" is a
+different signal from "differs", and re-running a failing plan does not make the
+result more trustworthy. A backend blip part-way through a run therefore still
+costs the remaining stacks their result for that night.
+
+### `default.yml` apply: dual-registration de-dup + reliability (2026-06-28)
+
+infra is registered in Woodpecker on **both** the canonical Forgejo repo (id 82)
+and the legacy GitHub mirror (id 1), and **both fire `default.yml` on every
+push**. Left unguarded, two `terragrunt apply` runs race each other for the
+per-stack PG state lock — historically the #1 source of `Error acquiring the
+state lock` failures and push-supersede "killed" runs.
+
+- **Forge guard** (first command in the `apply` step): the push-apply runs **only
+  on the canonical Forgejo forge**; on the GitHub mirror it logs `[forge-guard]`
+  and `exit 0`s. Detection: `CI_REPO_URL`/`CI_FORGE_URL` contains `github.com` →
+  skip. Fail-open (unknown forge still applies). The mirror keeps running the
+  **crons** (drift-detection, renew-tls, …), which live on repo 1 — only its
+  duplicate push-apply no-ops. (Crons were NOT moved; deactivating repo 1 would
+  have killed them.)
+- **Lock-skip matches both tiers**: a stack whose apply hits a lock is SKIPPED,
+  not failed. The grep now matches the Tier-0 Vault message (`is locked by`) **and**
+  the Tier-1 PG-backend message (`Error acquiring the state lock` / `already
+  locked`) — the PG case was previously miscounted as a hard failure.
+- **Transient retry** (bounded, 3 attempts): only provider-registry download
+  timeouts (`Failed to install provider` / `Client.Timeout`) and Vault 5xx are
+  retried. Config errors (missing arg, invalid index) and helm `atomic` timeouts
+  are NOT retried — they fail fast.
+
+A pre-apply off-infra validate gate was evaluated and rejected: `terraform
+validate` runs without state but catches ~0 of the observed failures (they are
+provider-config-from-Vault-data, server-side-apply conflicts, helm installs, and
+lock contention — all invisible to static validate), and `plan` cannot run
+off-infra (no Vault/PG access). `terragrunt apply` already fails at its plan
+phase without mutating on config errors, so a separate in-pipeline plan-gate was
+also dropped as redundant.
 
 ### Woodpecker API
 
@@ -203,7 +389,9 @@ The infra repo runs on Woodpecker via **two** forge registrations: the Forgejo
 forge (repo id 82, registered 2026-06-08) and the legacy GitHub forge (repo id
 1). Pushes to **Forgejo** `master` fire `.woodpecker/default.yml`
 (changed-stacks terragrunt apply, in `infra-ci`) plus the `notify-nonadmin-push`
-Slack audit step. Operational facts (2026-06-10):
+Slack audit step. **Slack policy (2026-07-02): every infra pipeline posts only
+on FAILURE** (plus the non-admin audit post and drift/error findings) — routine
+successful runs are silent. Operational facts (2026-06-10):
 
 - **Webhook URL is the IN-CLUSTER service**:
   `http://woodpecker-server.woodpecker.svc.cluster.local/api/hook?...` (PATCHed
@@ -285,7 +473,8 @@ steps:
   notify:
     image: plugins/slack
     when:
-      status: [success, failure]
+      # Failure-only (2026-07-02 policy): CI notifies about failed runs only.
+      status: [failure]
 ```
 
 ### CI/CD secrets sync

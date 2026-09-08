@@ -1,0 +1,53 @@
+#!/bin/bash
+# Single-app KasmVNC session: run Chrome as the whole "desktop". The restart
+# loop survives a browser crash without killing the pod. Profile persists on the
+# per-user PVC mounted at /config (Chrome writes to /config/profile).
+export HOME=/config
+export DISPLAY=${DISPLAY:-:1}
+mkdir -p /config/profile
+
+# Chrome persists a per-profile fullscreen window state, and --start-maximized
+# does NOT override it — a browser last left fullscreen reopens fullscreen with
+# no address bar/tabs (users can't navigate). After each launch, force the window
+# out of fullscreen and maximize it (openbox is EWMH-compliant), so the address
+# bar is always visible. Runs only briefly at startup, so the user can still
+# fullscreen e.g. a video afterwards.
+force_windowed() {
+  for _ in $(seq 1 15); do
+    sleep 2
+    WID=$(xdotool search --onlyvisible --class google-chrome 2>/dev/null | head -1)
+    [ -z "$WID" ] && continue
+    # Chrome re-applies its OWN fullscreen after a wmctrl remove, so toggle it off
+    # the way Chrome understands: send F11 (verified live), then maximize.
+    if xprop -id "$WID" _NET_WM_STATE 2>/dev/null | grep -q _NET_WM_STATE_FULLSCREEN; then
+      xdotool windowactivate --sync "$WID" 2>/dev/null
+      xdotool key --clearmodifiers F11 2>/dev/null
+      sleep 1
+      wmctrl -i -r "$WID" -b add,maximized_vert,maximized_horz 2>/dev/null
+    fi
+  done
+}
+
+while true; do
+  # Only (re)launch when NO chrome process is alive. Without this guard, if
+  # chrome exits but leaves an orphan holding the /config/profile singleton lock
+  # (a crash — the very case this loop recovers from), the next launch just hands
+  # the URL to the surviving instance ("Opening in existing browser session") and
+  # returns immediately, so the loop spins and opens a new about:blank tab every
+  # 2s (tab flood). Waiting for chrome to be truly gone makes relaunch a real
+  # crash-recovery, not a tab spammer.
+  if pgrep -x chrome >/dev/null 2>&1; then
+    sleep 3
+    continue
+  fi
+  force_windowed &
+  /usr/bin/google-chrome-stable \
+    --no-sandbox --disable-dev-shm-usage \
+    --user-data-dir=/config/profile \
+    --no-first-run --no-default-browser-check \
+    --hide-crash-restore-bubble \
+    --password-store=basic --use-mock-keychain \
+    --start-maximized about:blank
+  kill %1 2>/dev/null
+  sleep 2
+done

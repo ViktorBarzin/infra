@@ -48,7 +48,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "openclaw"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -59,19 +59,6 @@ resource "kubernetes_manifest" "external_secret" {
       dataFrom = [{
         extract = {
           key = "openclaw"
-        }
-      }]
-      # Cross-path key: the nextcloud-todos-api plugin authenticates to the
-      # nextcloud-todos service with ITS bearer token, which lives in
-      # secret/nextcloud-todos (not secret/openclaw). Pull just that one key
-      # into openclaw-secrets so the plugin's NEXTCLOUD_TODOS_TOKEN env can
-      # secret_key_ref it (same model as the recruiter plugin, whose token
-      # happens to already live under secret/openclaw).
-      data = [{
-        secretKey = "nextcloud_todos_bearer_token"
-        remoteRef = {
-          key      = "nextcloud-todos"
-          property = "webhook_bearer_token"
         }
       }]
     }
@@ -218,7 +205,7 @@ resource "kubernetes_config_map" "openclaw_config" {
         }
       }
       plugins = {
-        allow = ["memory-core", "recruiter-api", "nextcloud-todos-api"]
+        allow = ["memory-core", "recruiter-api"]
         slots = { memory = "memory-core" }
         load = {
           # /app/extensions is the legacy bundled-plugins path; OpenClaw
@@ -320,11 +307,12 @@ resource "kubernetes_config_map" "openclaw_exporter" {
 }
 
 module "nfs_tools_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openclaw-tools-host"
-  namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/openclaw/tools"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "openclaw-tools-host"
+  namespace          = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/openclaw/tools"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_persistent_volume_claim" "home_proxmox" {
@@ -357,11 +345,12 @@ resource "kubernetes_persistent_volume_claim" "home_proxmox" {
 }
 
 module "nfs_workspace_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openclaw-workspace-host"
-  namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/openclaw/workspace"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "openclaw-workspace-host"
+  namespace          = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/openclaw/workspace"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
@@ -409,7 +398,26 @@ resource "kubernetes_deployment" "openclaw" {
     strategy {
       type = "Recreate"
     }
-    replicas = 1
+    # PARKED 2026-09-04 (Viktor, bead code-hn6k). Scaled to 0 as a one-week
+    # reversibility test before deciding whether to decommission properly.
+    #
+    # Why: the cluster cannot drain a node because memory REQUESTS are
+    # oversubscribed while actual use sits at 41-54%, and this namespace
+    # reserves 2,560 MiB across five containers. Measured over 30 days the
+    # openclaw container peaked at 1,111 MiB and burnt 2,325 CPU-seconds in
+    # 7 days, about 0.4% of a core, while restarting 15 times.
+    #
+    # Evidence it is not in use: every "telegram" line in 30 days of Loki is a
+    # startup banner (15 restarts x 4 lines), with no message traffic;
+    # recruiter-responder, one of its consumers, has been at 0/0 replicas for
+    # 111 days; and nextcloud-todos shows no approval-card dispatches.
+    #
+    # Deliberately a park, not a removal. Five stacks still reference this
+    # namespace (nextcloud-todos, recruiter-responder, n8n,
+    # tuya-bridge/saksii_poller, monitoring's dashboard + walloff probe +
+    # scrape), and unpicking those is the real work. If nothing misses it in a
+    # week, that removal gets its own change. Reverting is this one line.
+    replicas = 0
     selector {
       match_labels = {
         app = "openclaw"
@@ -545,31 +553,18 @@ resource "kubernetes_deployment" "openclaw" {
           }
         }
 
-        # Init 3b: install the nextcloud-todos-api OpenClaw plugin from the
-        # nextcloud-todos image into NFS extensions/. Plugin lifecycle is
-        # coupled to the nextcloud-todos image tag — bumping that tag
-        # re-installs the plugin on next openclaw pod restart. Same pattern as
-        # install-recruiter-plugin above.
+        # Remove the retired nextcloud-todos integration from the persistent
+        # extensions directory. Keeping this cleanup idempotent prevents an
+        # older NFS snapshot from silently restoring the plugin on a restart.
         init_container {
-          name = "install-nextcloud-todos-plugin"
-          # SHA-pinned (not :latest) because the node's imagePullPolicy is
-          # IfNotPresent: a cached stale :latest meant the plugin manifest
-          # (configSchema fix) never got pulled. An uncached SHA forces the
-          # pull. Bump this when the openclaw plugin in nextcloud-todos changes.
-          image             = "ghcr.io/viktorbarzin/nextcloud-todos:latest"
-          image_pull_policy = "Always"
+          name  = "remove-nextcloud-todos-plugin"
+          image = "busybox:1.37"
           command = ["sh", "-c", <<-EOT
             set -eu
-            mkdir -p /home/node/.openclaw/extensions/nextcloud-todos-api
-            cp -r /app/openclaw-plugin/. /home/node/.openclaw/extensions/nextcloud-todos-api/
-            chown -R 1000:1000 /home/node/.openclaw/extensions/nextcloud-todos-api
-            echo "nextcloud-todos-api plugin installed at /home/node/.openclaw/extensions/nextcloud-todos-api"
-            ls -la /home/node/.openclaw/extensions/nextcloud-todos-api
+            rm -rf /home/node/.openclaw/extensions/nextcloud-todos-api
+            echo "nextcloud-todos-api plugin removed"
           EOT
           ]
-          # /home/node/.openclaw is uid 1000 on NFS; nextcloud-todos image
-          # otherwise drops to uid 10001 which can't write or chown. Run as
-          # root so mkdir + chown succeed.
           security_context {
             run_as_user = 0
           }
@@ -1195,21 +1190,18 @@ resource "kubernetes_deployment" "openclaw" {
             # the allow list. --allow-unconfigured then loads them at gateway
             # start WITHOUT needing the slow `plugins enable` step.
             node openclaw.mjs doctor --fix 2>/dev/null
-            echo '{"plugins":{"allow":["memory-core","recruiter-api","nextcloud-todos-api","telegram","openrouter","brave","openai","codex"]}}' \
+            echo '{"plugins":{"allow":["memory-core","recruiter-api","telegram","openrouter","brave","openai","codex"]}}' \
               | timeout 20 node openclaw.mjs config patch --stdin 2>/dev/null || true
             # SLOW/optional steps run in the BACKGROUND so they can NEVER delay
-            # the gateway past its readiness/liveness window. (2026-06-04: with
-            # these inline, `plugins enable nextcloud-todos-api` hung on an npm
-            # install on the tight openclaw-home PVC and the cumulative waits
-            # tripped liveness → crashloop. The gateway loads plugins from
-            # plugins.allow above regardless; mcp servers register async.)
+            # the gateway past its readiness/liveness window. The gateway loads
+            # plugins from plugins.allow above regardless; mcp servers register
+            # asynchronously.
             (
               timeout 30 node openclaw.mjs models set nim/meta/llama-3.1-70b-instruct 2>/dev/null
               timeout 30 node openclaw.mjs mcp set ha "{\"url\":\"$HA_SOFIA_MCP_URL\",\"transport\":\"streamable-http\"}" 2>/dev/null
               timeout 30 node openclaw.mjs mcp set context7 '{"command":"npx","args":["-y","@upstash/context7-mcp"]}' 2>/dev/null
               timeout 30 node openclaw.mjs mcp set playwright '{"url":"http://localhost:3000/mcp","transport":"streamable-http"}' 2>/dev/null
               timeout 120 node openclaw.mjs plugins enable recruiter-api 2>/dev/null
-              timeout 120 node openclaw.mjs plugins enable nextcloud-todos-api 2>/dev/null
               timeout 120 node openclaw.mjs memory index --force 2>/dev/null
             ) >/dev/null 2>&1 &
             exec node openclaw.mjs gateway --allow-unconfigured --bind lan
@@ -1321,25 +1313,7 @@ resource "kubernetes_deployment" "openclaw" {
               }
             }
           }
-          # nextcloud-todos API — consumed by the nextcloud-todos-api plugin
-          # (mounted into /home/node/.openclaw/extensions/nextcloud-todos-api/
-          # via the install-nextcloud-todos-plugin init container above).
-          env {
-            name  = "NEXTCLOUD_TODOS_URL"
-            value = "http://nextcloud-todos.nextcloud-todos.svc.cluster.local:8080"
-          }
-          env {
-            name = "NEXTCLOUD_TODOS_TOKEN"
-            value_from {
-              secret_key_ref {
-                name     = "openclaw-secrets"
-                key      = "nextcloud_todos_bearer_token"
-                optional = true
-              }
-            }
-          }
           # Telegram chat ID for the recruiter-api plugin's announcement loop.
-          # Also consumed by the nextcloud-todos-api plugin (shared chat).
           env {
             name = "VIKTOR_CHAT_ID"
             value_from {
@@ -1569,7 +1543,19 @@ resource "kubernetes_deployment" "openclaw" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      # container[2] is openclaw-exporter, the only one floating a tag
+      # (python:3.12-slim). container[0] pins openclaw itself — leave it to TF.
+      spec[0].template[0].spec[0].container[2].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[1].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[3].image, # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 
@@ -1728,7 +1714,10 @@ resource "kubernetes_deployment" "task_webhook" {
     }
   }
   spec {
-    replicas = 1
+    # Parked alongside the openclaw deployment above, same date and reasoning.
+    # It exists only to receive callbacks for openclaw tasks, so with openclaw
+    # at 0 it has nothing to serve. 64 MiB.
+    replicas = 0
     selector {
       match_labels = {
         app = "task-webhook"
@@ -1774,7 +1763,14 @@ resource "kubernetes_deployment" "task_webhook" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 
@@ -1797,17 +1793,10 @@ resource "kubernetes_service" "task_webhook" {
   }
 }
 
-module "task_webhook_ingress" {
-  source = "../../modules/kubernetes/ingress_factory"
-  # auth = "none": inbound Forgejo webhook receiver - machine sender (no Authentik SSO cookie); receiver filters on payload action + bot-user
-  auth             = "none"
-  namespace        = kubernetes_namespace.openclaw.metadata[0].name
-  name             = "task-webhook"
-  tls_secret_name  = var.tls_secret_name
-  host             = "task-webhook"
-  port             = 80
-  external_monitor = false
-}
+# The public ingress for task-webhook was removed 2026-07-09: the Forgejo
+# webhook calls the cluster-local Service (task-webhook.openclaw.svc) directly,
+# nothing referenced the public hostname, and with the wildcard DNS record an
+# unauthenticated job-creation endpoint must not be publicly routable.
 
 # --- Shared ServiceAccount: grants pod-exec into the openclaw pod ---
 # Used by the task_processor CronJob (below). Previously also used by the
@@ -1867,7 +1856,27 @@ resource "kubernetes_cron_job_v1" "task_processor" {
     }
   }
   spec {
-    schedule                      = "*/5 * * * *"
+    schedule = "*/5 * * * *"
+    # SUSPENDED 2026-08-16 (Viktor). Every run logs "No pending issues to
+    # process" — it polls Forgejo for issues to hand to OpenClaw and there have
+    # been none. At */5 that is 288 pod creations a day, and on this host pod
+    # churn is the cost that matters: each create/destroy writes containerd
+    # overlay layers, a kubelet pod dir, /var/log/pods and a systemd transient
+    # scope plus the ext4 journal metadata for all of it — small random writes,
+    # and k8s node root disks are 43% of sdc's write IOPS with cronjob churn as
+    # the driver.
+    #
+    # Nothing else is touched: the OpenClaw Deployment, its config, the
+    # task-processor script in the pod and the daily memory-sync CronJob all
+    # stay exactly as they are. Remove this line to resume polling, or exec the
+    # script by hand for a one-off:
+    #   kubectl exec -n openclaw deploy/openclaw -c openclaw -- \
+    #     bash /workspace/infra/scripts/task-processor.sh
+    #
+    # NOTE the openclaw namespace does not ship to Loki, so there is no
+    # queryable history here — this was decided on live pod output plus the
+    # absence of any Forgejo issue queued for the agent.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
@@ -1996,8 +2005,14 @@ resource "kubernetes_cron_job_v1" "memory_sync" {
         }
       }
       spec {
-        active_deadline_seconds    = 600
-        backoff_limit              = 0
+        active_deadline_seconds = 600
+        # Was 0, raised to 2 on 2026-09-03. The body is two kubectl execs into
+        # the openclaw pod, so it fails whenever that pod happens to be
+        # restarting or the node is stalling on IO, and at backoff_limit 0 a
+        # single such moment marked the Job Failed and paged. The sync is
+        # idempotent and concurrency_policy is Forbid, so retrying inside the
+        # 600s deadline is free.
+        backoff_limit              = 2
         ttl_seconds_after_finished = 86400
         template {
           metadata {
@@ -2253,4 +2268,8 @@ module "openlobster_ingress" {
   host            = "openlobster"
   port            = 80
   auth            = "required"
+  extra_annotations = {
+    "gethomepage.dev/icon"        = "openclaw.png"
+    "gethomepage.dev/description" = "Multi-user Telegram AI assistant (trial)"
+  }
 }

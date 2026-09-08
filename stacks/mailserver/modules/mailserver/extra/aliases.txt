@@ -19,3 +19,12 @@ plans@viktorbarzin.me spam@viktorbarzin.me
 # to trips@, or every verification/recovery send is rejected (550 sender). Also
 # routes any inbound trips@ to spam@.
 trips@viktorbarzin.me spam@viktorbarzin.me
+
+# docs@ -> docs@: explicit self-alias for the paperless-ngx ingest MAILBOX
+# (a real account in secret/platform.mailserver_accounts). Without this the
+# @domain catch-all above (Vault-side aliases) rewrites docs@ to spam@ and the
+# mail lands in the TripIt-swept catch-all mailbox instead. Same pattern as
+# me@ -> me@. Delivery-time sender allowlist: docs-at-viktorbarzin.me
+# .dovecot.sieve (mounted as docs@viktorbarzin.me.dovecot.sieve).
+# Runbook: docs/runbooks/paperless-mail-ingest.md
+docs@viktorbarzin.me docs@viktorbarzin.me

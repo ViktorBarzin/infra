@@ -1,0 +1,337 @@
+# =============================================================================
+# GPU VRAM protection — scheduler extended-resource budget + runtime watchdog
+# =============================================================================
+# See docs/adr/0016-gpu-vram-extended-resource-budget.md. The T4 is time-sliced
+# (nvidia.com/gpu = a scheduling turn, NOT memory), so the scheduler is blind to
+# VRAM and tenants can overallocate the card (post-mortem 2026-06-02: immich-ml's
+# onnxruntime arena 2->10.7 GiB starved llama-swap). MIG is impossible on Turing;
+# HAMi/MPS were rejected (ADR-0016). Instead, two repo-native layers, NO
+# device-plugin/driver change, time-slicing untouched:
+#   1. Budget  — advertise a node extended resource `viktorbarzin.me/gpumem`;
+#                each GPU tenant declares resources.limits gpumem; the scheduler
+#                refuses to co-schedule past the card (overflow -> Pending).
+#   2. Watchdog — when ACTUAL free VRAM < floor, recycle the biggest tenant that
+#                is OVER its declared budget (contract enforcement; the teeth the
+#                schedule-time budget lacks).
+# =============================================================================
+
+variable "gpumem_resource" {
+  type        = string
+  default     = "viktorbarzin.me/gpumem"
+  description = "Custom node extended-resource name advertised for GPU memory budgeting (integer MiB)."
+}
+
+variable "gpumem_total_mib" {
+  type        = number
+  default     = 14000
+  description = "Schedulable GPU-memory budget advertised on the GPU node = ~15360 MiB physical minus ~1.4 GiB driver/CUDA-context/exporter slack. Sum of all tenants' declared gpumem must stay <= this."
+}
+
+variable "watchdog_gpu_total_mib" {
+  type        = number
+  default     = 15360
+  description = "PHYSICAL T4 framebuffer (MiB). The watchdog computes free = this - sum(gpu_pod_memory_used_bytes); distinct from gpumem_total_mib (the scheduler budget)."
+}
+
+variable "watchdog_floor_mib" {
+  type        = number
+  default     = 1536
+  description = "The watchdog acts only when actual free VRAM drops below this floor (genuine pressure), so a tenant may burst into real slack without being recycled."
+}
+
+variable "watchdog_dry_run" {
+  type        = bool
+  default     = false
+  description = "When true the watchdog logs the recycle it WOULD do but does not delete the pod. Shipped true for the observe-then-enforce period; flipped to false 2026-08-31 after 60 days of correct dry-run decisions (see docs/plans/2026-08-31-gpu-vram-admission-and-oom-observability.md)."
+}
+
+variable "watchdog_cuda_oom_alertname" {
+  type        = string
+  default     = "GpuCudaOom"
+  description = "Loki-ruler alert the watchdog reads from Alertmanager as its contention signal for SEATLESS tenants. llama-swap declares no gpumem by design and frigate fails inside a running pod, so neither ever appears as Pending; this is how their starvation becomes visible to the guard."
+}
+
+# Alertmanager's ClusterIP, for the same reason EXPORTER_URL is an IP: cluster
+# DNS does not resolve from the nvidia namespace (2026-07-06), so the watchdog
+# cannot reach prometheus-alertmanager.monitoring.svc by name. Read the live
+# Service rather than hardcoding, so a re-created Service is picked up on the
+# next apply.
+data "kubernetes_service" "alertmanager" {
+  metadata {
+    name      = "prometheus-alertmanager"
+    namespace = "monitoring"
+  }
+}
+
+locals {
+  gpumem_json_pointer = "/status/capacity/${replace(var.gpumem_resource, "/", "~1")}"
+
+  alertmanager_alerts_url = format(
+    "http://%s:%s/api/v2/alerts",
+    data.kubernetes_service.alertmanager.spec[0].cluster_ip,
+    data.kubernetes_service.alertmanager.spec[0].port[0].port,
+  )
+}
+
+# --- 1a. Advertise the extended resource at apply time (immediate) ------------
+# Mirrors the gpu_node_config null_resource (local-exec kubectl). Runs from the
+# apply environment, dynamic over GPU-labelled nodes so it follows the card.
+# `op:add` on an existing key replaces -> idempotent. wait/ordering: this MUST
+# succeed before any consumer stack declares gpumem, or those pods are
+# unschedulable (extended resource not advertised by any node).
+resource "null_resource" "advertise_gpumem" {
+  provisioner "local-exec" {
+    # bash, not the default /bin/sh: dash (Ubuntu sh) rejects `set -o pipefail`
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      for node in $(kubectl get nodes -l nvidia.com/gpu.present=true -o jsonpath='{.items[*].metadata.name}'); do
+        echo "advertising ${var.gpumem_resource}=${var.gpumem_total_mib} on $node"
+        kubectl patch node "$node" --subresource=status --type=json \
+          -p="[{\"op\":\"add\",\"path\":\"${local.gpumem_json_pointer}\",\"value\":\"${var.gpumem_total_mib}\"}]"
+      done
+    EOT
+  }
+  triggers = {
+    gpumem_total = var.gpumem_total_mib
+    resource     = var.gpumem_resource
+    command_hash = "advertise-gpumem-v1"
+  }
+  depends_on = [helm_release.nvidia-gpu-operator]
+}
+
+# --- 1b. Re-assert the extended resource periodically (drift / node rejoin) ---
+# A node object that is deleted + re-registered loses manually-advertised
+# extended resources. Hourly re-assert (low churn; node rejoin is rare).
+resource "kubernetes_service_account" "gpumem_reconcile" {
+  metadata {
+    name      = "gpumem-reconcile"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
+  }
+}
+
+resource "kubernetes_cluster_role" "gpumem_reconcile" {
+  metadata { name = "gpumem-reconcile" }
+  rule {
+    api_groups = [""]
+    resources  = ["nodes"]
+    verbs      = ["get", "list", "patch"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["nodes/status"]
+    verbs      = ["get", "patch", "update"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "gpumem_reconcile" {
+  metadata { name = "gpumem-reconcile" }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.gpumem_reconcile.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.gpumem_reconcile.metadata[0].name
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "gpumem_reconcile" {
+  metadata {
+    name      = "gpumem-reconcile"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
+    labels    = { app = "gpumem-reconcile", tier = var.tier }
+  }
+  spec {
+    schedule                      = "0 * * * *" # hourly re-assert
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 1
+    job_template {
+      metadata { labels = { app = "gpumem-reconcile" } }
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 300
+        template {
+          metadata { labels = { app = "gpumem-reconcile" } }
+          spec {
+            service_account_name = kubernetes_service_account.gpumem_reconcile.metadata[0].name
+            restart_policy       = "Never"
+            container {
+              name    = "reconcile"
+              image   = "bitnami/kubectl:latest"
+              command = ["/bin/bash", "-c"]
+              args = [<<-EOT
+                set -euo pipefail
+                for node in $(kubectl get nodes -l nvidia.com/gpu.present=true -o jsonpath='{.items[*].metadata.name}'); do
+                  echo "re-asserting ${var.gpumem_resource}=${var.gpumem_total_mib} on $node"
+                  kubectl patch node "$node" --subresource=status --type=json \
+                    -p="[{\"op\":\"add\",\"path\":\"${local.gpumem_json_pointer}\",\"value\":\"${var.gpumem_total_mib}\"}]"
+                done
+              EOT
+              ]
+              resources {
+                requests = { cpu = "10m", memory = "64Mi" }
+                limits   = { memory = "64Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+  depends_on = [null_resource.advertise_gpumem]
+}
+
+# --- 2. Watchdog: recycle the biggest over-budget tenant under VRAM pressure --
+resource "kubernetes_config_map" "gpu_vram_watchdog_script" {
+  metadata {
+    name      = "gpu-vram-watchdog-script"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
+  }
+  data = {
+    # watchdog.py is extracted to a real file (infra#80 workstream C) so its pure
+    # logic (parse_gpumem_quantity, select_offender) is unit-tested
+    # (watchdog_test.py). This is what fixes the int("5k") quantity-parse bug that
+    # silently dropped round-thousand tenants (llama-swap "5k", immich-worker "3k")
+    # from the watchdog offender set. Deployed code == tested code.
+    "watchdog.py" = file("${path.module}/watchdog.py")
+  }
+}
+
+resource "kubernetes_service_account" "gpu_vram_watchdog" {
+  metadata {
+    name      = "gpu-vram-watchdog"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
+  }
+}
+
+resource "kubernetes_cluster_role" "gpu_vram_watchdog" {
+  metadata { name = "gpu-vram-watchdog" }
+  rule {
+    # find the GPU node — GET /api/v1/nodes?labelSelector=nvidia.com/gpu.present=true
+    # (first api() call every tick; missing since ADR-0016, masked by the broken DNS)
+    api_groups = [""]
+    resources  = ["nodes"]
+    verbs      = ["get", "list"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get", "list"]
+  }
+  # delete = the recycle. Broad (cluster-wide) but the script only ever targets
+  # a GPU-node pod that is over its declared gpumem budget under VRAM pressure.
+  # Far less privileged than existing cluster-admin tooling (woodpecker-agent).
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["delete"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "gpu_vram_watchdog" {
+  metadata { name = "gpu-vram-watchdog" }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.gpu_vram_watchdog.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.gpu_vram_watchdog.metadata[0].name
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
+  }
+}
+
+# Long-running Deployment with an internal sleep loop (NOT an every-minute
+# CronJob) to avoid etcd pod-churn — one pod, the gpu-pod-exporter pattern.
+resource "kubernetes_deployment" "gpu_vram_watchdog" {
+  metadata {
+    name      = "gpu-vram-watchdog"
+    namespace = kubernetes_namespace.nvidia.metadata[0].name
+    labels    = { app = "gpu-vram-watchdog", tier = var.tier }
+  }
+  spec {
+    replicas = 1
+    selector { match_labels = { app = "gpu-vram-watchdog" } }
+    strategy { type = "Recreate" }
+    template {
+      metadata { labels = { app = "gpu-vram-watchdog" } }
+      spec {
+        service_account_name = kubernetes_service_account.gpu_vram_watchdog.metadata[0].name
+        container {
+          name    = "watchdog"
+          image   = "python:3.12-alpine"
+          command = ["python3", "/scripts/watchdog.py"]
+          env {
+            name  = "GPUMEM_RESOURCE"
+            value = var.gpumem_resource
+          }
+          env {
+            name  = "GPU_TOTAL_MIB"
+            value = tostring(var.watchdog_gpu_total_mib)
+          }
+          env {
+            name  = "FLOOR_MIB"
+            value = tostring(var.watchdog_floor_mib)
+          }
+          env {
+            name  = "DRY_RUN"
+            value = tostring(var.watchdog_dry_run)
+          }
+          env {
+            # Same broken nvidia-ns DNS as K8S above — target the exporter by its
+            # stable ClusterIP instead of the DNS name the script defaults to, so
+            # scrape_used_mib() works (per-pod VRAM attribution) without resolution.
+            name  = "EXPORTER_URL"
+            value = "http://${kubernetes_service.gpu_pod_exporter.spec[0].cluster_ip}:80/metrics"
+          }
+          env {
+            # Contention signal for seatless tenants, by ClusterIP for the same
+            # DNS reason. A read failure here degrades the guard to the
+            # emergency floor rather than assuming the card is calm.
+            name  = "ALERTMANAGER_URL"
+            value = local.alertmanager_alerts_url
+          }
+          env {
+            name  = "CUDA_OOM_ALERTNAME"
+            value = var.watchdog_cuda_oom_alertname
+          }
+          volume_mount {
+            name       = "script"
+            mount_path = "/scripts"
+            read_only  = true
+          }
+          resources {
+            requests = { cpu = "10m", memory = "96Mi" }
+            limits   = { memory = "128Mi" }
+          }
+        }
+        volume {
+          name = "script"
+          config_map {
+            name         = kubernetes_config_map.gpu_vram_watchdog_script.metadata[0].name
+            default_mode = "0755"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].template[0].spec[0].dns_config,
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
+  }
+  depends_on = [kubernetes_cluster_role_binding.gpu_vram_watchdog]
+}

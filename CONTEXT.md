@@ -1,6 +1,6 @@
 # Infra
 
-Terragrunt-managed homelab declaring a 7-node Kubernetes cluster (1 control plane + 6 workers) on a single Proxmox host. Vault is the secrets source of truth; everything else flows from this repo via `scripts/tg apply`.
+Terragrunt-managed homelab declaring a 6-node Kubernetes cluster (1 control plane + 5 workers) on a single Proxmox host. Vault is the secrets source of truth; everything else flows from this repo via `scripts/tg apply`.
 
 ## Language
 
@@ -30,10 +30,14 @@ _Avoid_: calling it a "Module" unqualified (it isn't reusable); "submodule".
 Terraform state-backend partition. **Tier 0** = bootstrap Stacks (`infra`, `platform`, `cnpg`, `vault`, `dbaas`, `external-secrets`) on local SOPS-encrypted state. **Tier 1** = every other Stack, on PG-backed state.
 _Avoid_: "phase", "bootstrap stack" — say Tier 0 explicitly.
 
+**Corpus**:
+The set of repositories the repowise Service indexes, together with their derived per-repo indexes. Defined by a **rule** — every Forgejo `viktor/*` repo that is neither archived nor empty — and re-derived on every reconcile pass, so it is never a curated list that can drift. Repos living only on GitHub are outside it; mirroring one to Forgejo is what admits it. The Corpus describes **master as last indexed**, not anyone's working tree.
+_Avoid_: "workspace" (collides with **Workstation** and with `~/code` as a workspace directory, and near-collides with a git worktree — repowise's own CLI still says `repowise workspace`, but our prose says Corpus); "the index" for the whole set (that is the derived artefact, not the membership).
+
 ### Cluster
 
 **Node**:
-A K8s cluster VM — `k8s-master` (control plane) plus `k8s-node1..6` (workers). Default reading of the bare word "node" in this repo.
+A K8s cluster VM — `k8s-master` (control plane) plus `k8s-node1..5` (workers); `k8s-node6` was decommissioned 2026-07-01. Default reading of the bare word "node" in this repo.
 _Avoid_: "k8s node" (redundant), "host" (ambiguous).
 
 **PVE node** / **PVE host**:
@@ -55,6 +59,46 @@ _Avoid_: "core service" (collides with the `0-core-*` Namespace tier name).
 **Namespace-owner**:
 A non-admin identity declared in `secret/platform → k8s_users` (JSON map). Owns one or more namespaces and one or more public subdomains. Also drives a **Workstation profile** (an identity has both a cluster facet and a workstation facet).
 _Avoid_: bare "user", "tenant".
+
+### Scaling
+
+**Parked**:
+A Service at `replicas=0` with all state preserved (PVCs, Service, Ingress, secrets) — reversibly off, one flip from revival. The standing decommission posture; parking is never deletion.
+_Avoid_: "disabled", "shut down", "removed" (all imply state loss or ceremony a park doesn't have).
+
+**Enrolled** (scale-to-zero):
+A Service opted into Sablier wake-on-request (ADR-0022): sablier middleware on its ingress + `sablier.enable`/`sablier.group` labels on its Deployment, `replicas` under `ignore_changes` (`# SABLIER_MANAGED_REPLICAS`). An Enrolled Service parks itself on session expiry and wakes on the first real request; its Uptime Kuma monitor is shallow by design.
+_Avoid_: "autoscaled" (no HPA anywhere — this is 0↔N wake, not load scaling); confusing with **GPU demand-gate** (gate = admit on free VRAM via CronJob; enrollment = wake on HTTP request — a workload must not be under both).
+
+**Wake**:
+The 0→N scale-up of an Enrolled Service triggered by the first request through the sablier middleware, which holds that request (blocking strategy) until the pod is ready.
+_Avoid_: "cold start" for the whole event (cold start is the *duration* the wake costs, not the act).
+
+**Sablier session**:
+The per-group activity window (default 3h) that every real, non-probe request refreshes; expiry parks the group. Held only in Sablier's memory — and on restart Sablier PARKS every enrolled workload without a live session (`auto-stop-on-startup`, the deliberate clean-slate), so a restart means "everything enrolled re-wakes on its next request", not "windows continue".
+_Avoid_: reading "session" as a user/auth session (it's per-Service-group, shared by all visitors); assuming sessions survive a Sablier restart.
+
+### GPU sharing
+
+**GPU slice**:
+One unit of `nvidia.com/gpu` on the time-sliced Tesla T4 — a **scheduling turn, NOT a memory allocation**. The device plugin advertises the card ×100; a pod requesting `nvidia.com/gpu: 1` gets GPU *access*, with zero guarantee about how much of the 16 GB VRAM it may use. "Overallocate GPU memory" is a real failure precisely because a slice carries no memory accounting.
+_Avoid_: reading a GPU slice as a memory reservation or a fraction of the card; "vGPU" (we run no vGPU/MIG/MPS — see ADR-0016).
+
+**GPU memory budget**:
+The custom node-level extended resource **`viktorbarzin.me/gpumem`** (integer MiB) that makes the scheduler VRAM-aware (ADR-0016). The GPU node advertises a total (~14000 MiB = physical minus driver/context slack); each GPU tenant declares `resources.limits."viktorbarzin.me/gpumem"`; being non-overcommittable, the scheduler refuses to co-schedule past the card (overflow → `Pending`). A *schedule-time* reservation, **not** a runtime cap — it stops pile-on, not a single tenant's runaway.
+_Avoid_: treating it as a hard CUDA cap (it isn't — that's what the **GPU watchdog** is for); confusing it with the `nvidia.com/gpu` slice (orthogonal axes: access vs memory accounting).
+
+**GPU watchdog**:
+The `gpu-vram-watchdog` CronJob (nvidia ns) that supplies the runtime teeth the **GPU memory budget** lacks: when *actual* free VRAM (`gpu_pod_memory_used_bytes`) drops below a floor, it recycles the biggest tenant that is **over its declared budget**. Enforces the budget as a contract, acts only under pressure (so bursting into genuine slack is fine), and is what bounds the 2026-06-02 immich-ml runaway class.
+_Avoid_: expecting it to act on priority (it enforces the *budget*, since co-tenants often share one PriorityClass); expecting instant prevention (it corrects with a detection lag — soft, by design).
+
+**GPU demand-gate**:
+The scale-0↔1 admission CronJobs (`stacks/tts`) that bring a best-effort *batch* GPU tenant (chatterbox-tts) up only when free VRAM ≥ a floor and idle it back down — letting on-demand tenants fill real slack without holding a reserved **GPU memory budget** seat.
+_Avoid_: using it for interactive tenants (cold-load lag — portal-stt is warm-resident instead); conflating it with the **GPU watchdog** (gate = admit on free VRAM; watchdog = recycle on over-budget pressure).
+
+**gpu-workload priority**:
+The `gpu-workload` PriorityClass (1,200,000) auto-stamped on every GPU pod by the Kyverno `inject-gpu-workload-priority` policy — the exclude list (`tts`) drops to `tier-2-gpu` (600,000) so it loses node-pressure eviction first. Governs *Kubernetes node* eviction order, **not** VRAM (VRAM is the budget + watchdog's job).
+_Avoid_: assuming it protects VRAM; it is a scheduling/eviction priority on node memory/CPU pressure.
 
 ### Workstation (multi-user devvm)
 
@@ -84,7 +128,8 @@ _Avoid_: treating it as a per-user seed target (it is a live shared source, not 
 
 **Infra visibility**:
 What a non-admin **Workstation** may SEE of the infra: the public repo **code** and the person's own **RBAC**-scoped view of the live cluster (kubectl / dashboard within their namespaces). Explicitly excludes the **git-crypt** secrets (`terraform.tfvars`, `secrets/`) and any out-of-scope mutation. The boundary that "respect their permissions" enforces — violated today because `~/code` is one git-crypt-*unlocked* tree shared via the `code-shared` group.
-_Avoid_: reading "see the infra" as access to secrets or apply rights.
+**Deliberately widened 2026-08-14 (Viktor):** every **Workstation** holds an MCP token for the repowise Service, so a non-admin can query architecture, dependency graph, git history and code health across the whole **Corpus** — including the 24 private repos. The git-crypt exclusion is unaffected (those files are ciphertext in the indexed clone), and the widening is code/architecture knowledge, not credentials or apply rights. Revocation is per-holder: drop that token from `bearer_tokens` in Vault `secret/repowise` and re-apply.
+_Avoid_: reading "see the infra" as access to secrets or apply rights; citing the pre-2026-08-14 "public repo code only" scope as still complete.
 
 ### Networking
 
@@ -96,9 +141,21 @@ _Avoid_: "external", "outside".
 `viktorbarzin.lan`, served by Technitium DNS. Resolves only inside the homelab network.
 _Avoid_: bare "lan", "private", "intranet".
 
+**Segment**:
+One isolated L2/L3 network with pfSense as its gateway — realised as a Proxmox-bridge-level tag feeding one dedicated untagged pfSense interface (dManagementsVms 10.0.10.0/24 = vmbr1 tag 10, dKubernetes 10.0.20.0/24 = vmbr1 tag 20, dCCTV 10.0.30.0/24 = vmbr0 tag 30). pfSense itself never terminates 802.1Q.
+_Avoid_: "VLAN" as the primary name (the tags 10/20/30 are transport detail; the Segment is the concept).
+
+**CCTV segment**:
+The untrusted camera **Segment** (`dCCTV`) — devices in it may be pulled from (RTSP/ISAPI) but may initiate nothing except NTP to their gateway. Deliberately outside every trusted source-IP allowlist (ADR-0017).
+_Avoid_: "camera VLAN", "CCTV LAN".
+
 **Ingress auth**:
 The `auth = "..."` parameter on `ingress_factory` — a discrete *mode*, not a ranked tier — one of `required` (Authentik forward-auth gates every request), `app` (the backend owns its login), `public` (anonymous Authentik binding for audit only), or `none` (Anubis-fronted content, or native-client API). Default `required` (fail-closed).
 _Avoid_: "auth tier" / "auth mode" — refer to it by the canonical key, `auth` (e.g. `auth = "required"`). "tier" is reserved for State tier and Namespace tier.
+
+**allowed_groups / Forward-auth authorization table** (ADR-0023):
+The `allowed_groups = [...]` parameter on `ingress_factory` (default `["Home Server Admins"]`), meaningful when `auth = "required"`: the Authentik **groups** permitted to reach that host. It is stamped as an ingress annotation; the `authentik` stack reads the live Ingress inventory at apply time and renders every `(host → allowed groups)` pair into the **default-deny** `admin-services-restriction` expression policy. Unlisted host, or a user in none of a host's groups → denied. Supersedes the legacy catch-all whose only distinction was ~17 admin hosts vs "any authenticated user."
+_Avoid_: thinking of forward-auth apps as individual Authentik *Applications* (they share one `forward_domain` catch-all — per-app authz lives in the table, not native bindings); per-identity allow-lists or user attributes (**access is group membership, always**).
 
 **Authentik outpost**:
 A standalone Authentik deployment that terminates the proxy/auth flow for a specific binding model. The repo runs two distinct ones: the default outpost (used by `auth = "required"`) and the `public` outpost (anonymous binding, used by `auth = "public"`).
@@ -109,8 +166,8 @@ The channel by which non-proxied **public domain** traffic reaches the cluster, 
 _Avoid_: "the tunnel" without "Cloudflared" (could mean Headscale).
 
 **Ingress chain**:
-The opinionated stack of Traefik middlewares that `ingress_factory` layers onto every Ingress. Slots, in order: forward-auth (per **Ingress auth**) → anti-AI scraping (default-on when no Authentik is in the path) → CrowdSec bouncer (fail-open) → retry (2× / 100ms) → rate-limit (429, not 503). Adding or removing a middleware is a Stack-level choice, but the chain order is convention.
-_Avoid_: "middleware list", "Traefik chain". The Anubis PoW gate is upstream of this chain, not inside it.
+The opinionated stack of Traefik middlewares that `ingress_factory` layers onto every Ingress. Slots, in order: forward-auth (per **Ingress auth**) → anti-AI scraping (default-on when no Authentik is in the path) → retry (2× / 100ms) → rate-limit (429, not 503). Adding or removing a middleware is a Stack-level choice, but the chain order is convention.
+_Avoid_: "middleware list", "Traefik chain". The Anubis PoW gate is upstream of this chain, not inside it. So is the **CrowdSec bouncer** (fail-open): it is an ENTRYPOINT middleware on `websecure`, prepended to every router on the entrypoint, so it is deliberately not one of these per-Ingress slots — that is what lets it cover the catchall and the hand-rolled ingresses too.
 
 **MetalLB / LB IP**:
 The bare-metal load-balancer that assigns external IPs to `type=LoadBalancer` Services. Two IPs matter: the **shared LB IP** `10.0.20.200` (~10 services — PG state-backend, headscale, wireguard, coturn, xray… — all `externalTrafficPolicy: Cluster`) and **Traefik's dedicated LB IP** `10.0.20.203` (`externalTrafficPolicy: Local`). Traefik runs on its own IP because ETP:Local preserves the **real client IP** (for CrowdSec) and enables QUIC, and MetalLB forbids mixed ETP on one shared IP.
@@ -196,6 +253,31 @@ _Avoid_: adding a Forgejo remote "for consistency"; treating one as a **Canonica
 Forgejo's built-in container registry — since ADR-0002 a frozen archive holding one last-known-good tag per **Service**, not a build target; owned images live on ghcr.io.
 _Avoid_: "private registry" (collides with the registry VM's pull-through caches); pushing new images to it.
 
+**Pull-through cache**:
+The caching mirror tier on the registry VM that **Node**s pull upstream images through, wired per-registry in each node's `/etc/containerd/certs.d`, with the upstream registry listed as a fallback host so a cache failure degrades rather than blocks. Its nginx layer is there for **request collapsing** — concurrent requests for one blob are folded into a single upstream fetch — which is a separate job from caching, and `proxy_cache_min_uses 2` means a low hit ratio is the configured behaviour rather than a sign the tier is idle.
+_Avoid_: "private registry" (that was decommissioned 2026-05-07); judging the nginx tier by hit ratio; treating a 200 from `/v2/` as a health signal — that path is a static version probe that never touches storage, so it answers 200 while every content request fails on a full disk.
+
+**Registry mirror**:
+The node-side half of a **Pull-through cache**: an `/etc/containerd/certs.d/<registry>/hosts.toml` entry telling containerd to try the cache before the real registry. Declared in `playbooks/k8s-node-tuning.yml` as `registry_mirrors`, and checked hourly for drift by `scripts/k8s-node-drift-check`, which reports rather than re-applies. Read per pull rather than at containerd startup, so a change needs no restart.
+_Avoid_: treating "we have a cache" as meaning nodes use it. Until 2026-09-03 four of six nodes had no mirror for quay.io or registry.k8s.io and pulled them straight from the internet while the caches sat unused, and one cache was pointed at the wrong registry entirely. The cache existing and the cache being reached are separate facts, each worth checking.
+
+**Drop-in override**:
+A `/etc/containerd/conf.d/*.toml` file silently winning over `/etc/containerd/config.toml`, because containerd merges imports last-wins per key. Only node1 has one, `99-nvidia.toml`, which the nvidia toolkit writes as a whole-config snapshot of `containerd config dump` rather than a minimal patch, so it pins keys it has no interest in.
+_Avoid_: verifying a containerd setting by reading the file you edited. Read `containerd config dump`, which is the merged result the runtime actually uses — three settings were found overridden this way, each after the file looked correct.
+
+**Cold pull** / **Warm pull**:
+A **Cold pull** fetches layers absent from the node's containerd store over the network; a **Warm pull** finds them already there. The gap is three orders of magnitude — 6m24.561s against 405 ms for the same 3,216.9 MB image on the same node — and the store lives on the node's persistent root filesystem, so a reboot is a Warm pull.
+_Avoid_: "boot time" and "image pull" unqualified — say which, because the answer to "large images are slow to start" depends entirely on it, and reasoning about reboots as though they were Cold pulls has led to work aimed at the wrong stage.
+
+**Cache-busting commit**:
+A commit whose layer ordering gives a large, otherwise-unchanged layer a new digest, so it re-ships in full. BuildKit re-executes every layer above a cache miss, and re-executing a `COPY` re-tars its content with a fresh mtime, so placing a source-dependent layer above a fat one is enough — the fat layer's own inputs need not change. Measured at 3,023.8 MB of 3,067 MB re-shipping per commit on one owned image.
+_Avoid_: reading a changed `diff_id` as proof the content changed (it hashes the tar, and tar headers carry mtime); assuming a `CACHED` producer stage means its output layer held.
+
+**Image GC cliff**:
+Mass image eviction when kubelet crosses `imageGCHighThresholdPercent`, reclaiming in one pass rather than draining gradually — 130 images and 56.8567 GiB in a single 4m38s pass on the GPU node on 2026-09-01, which is what turns each later reschedule into a **Cold pull**. Distinct from age-based collection, which `imageMaximumGCAge` drives; that read `0s` (disabled) until 2026-09-03 and is now `168h` on all six nodes, so unreferenced tags are collected gradually instead of accumulating until the threshold discards them together.
+_Avoid_: reading a FALLING disk-usage figure as the fix working. A cliff and a working retention setting both make the number go down, and they are indistinguishable from the number alone — node5 falling 83.3% to 76% was the cliff firing, not the settings. Check for a pass in the same window and whether the unique-digest count dropped, since retention lowers it gradually and a threshold pass does it in seconds.
+_Avoid_: conflating it with pod eviction (no pod was evicted); reading a recovered `DiskPressure` condition as evidence nothing happened.
+
 **Keel**:
 The **poll-driven** rollout orchestrator — watches registries for new image tags and rolls the matching Deployments automatically. The actor behind "auto-upgrade" for upstream images, and a redundant net for owned apps (already rolled on push by **Woodpecker deploy**).
 _Avoid_: conflating with **Woodpecker deploy** (push-driven, fires on commit) or **Diun** (watches but only notifies). Never point Keel / `set image` at operator-managed StatefulSets.
@@ -206,6 +288,20 @@ _Avoid_: expecting Diun to deploy; conflating with **Keel**.
 
 **Anubis**:
 A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content-bearing sites without app-level auth (blog, wiki, landing pages). Never in front of Git, WebDAV, CalDAV, or API endpoints (clients can't solve PoW).
+
+### Externally-authored sites
+
+**Valia site**:
+A small public static site authored by Valia (Viktor's mother, external to the infra) and hosted for her under `<name>.viktorbarzin.me`. Its source of truth is a **Content folder** she owns; the live site is a mirror of that folder, fresh within ~10 minutes. Hosted **off-infra** (Cloudflare Pages) by decision: a homelab outage freezes content but never takes her sites down. Viktor picks the English subdomain name per site at registration (her folder names stay Bulgarian). Current instances: `stem95su`, `bridge`.
+_Avoid_: "school site" (the family may grow beyond school projects); treating the deployed copy as editable — edits land only in the **Content folder**.
+
+**Content folder**:
+The Google Drive folder (or subfolder) Valia shares with `vbarzin@gmail.com` holding one **Valia site**'s files. Strictly read-only from the infra side — nothing ever writes back to her Drive. Empty or half-uploaded folder states must never wipe a live site.
+_Avoid_: syncing a folder root when the servable content lives in a subfolder (stem95su serves `stem claude/files/`, not the folder root).
+
+**Entry file**:
+The HTML file a **Valia site** serves at `/`. Defaults to `index.html`; per-site override when she names it differently (stem95su: `stem_board.html`). The override is a registration-time setting, not a constraint on her authoring.
+_Avoid_: asking Valia to rename her files to fit hosting conventions.
 
 ## Relationships
 
@@ -218,6 +314,7 @@ A PoW reverse-proxy issuing a 30-day JWT cookie, used in front of public content
 - A **Service**'s image reaches the cluster via **Woodpecker deploy** (push-driven, on commit) or **Keel** (poll-driven, on a new registry tag); **Diun** only notifies. Operator-managed StatefulSets are rolled by neither.
 - An owned **Service**'s image is built by GitHub Actions from the **Canonical repo**'s **GitHub mirror** and hosted on ghcr.io (ADR-0002); the **Forgejo registry** keeps only a frozen last-known-good tag per **Service**.
 - Tier-1 **State tier** state and ~12 app databases share one **CNPG** `pg-cluster`, reached through **PgBouncer**; their credentials rotate via the `vault-database` store.
+- A **Valia site** mirrors exactly one **Content folder** and serves exactly one **Entry file** at `/`; the folder is hers, the subdomain name is Viktor's, the hosting is off-infra.
 
 ## Example dialogue
 

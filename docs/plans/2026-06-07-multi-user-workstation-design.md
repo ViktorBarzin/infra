@@ -170,6 +170,16 @@ Design principle: **every bit of devvm setup is an idempotent git script** — n
   - **AMENDED AGAIN 2026-06-10 (later) — allow-then-audit.** Viktor granted emo (`ebarzin`) direct master push ("he's allowed to make any change; what matters is tracking what changed and why"). The PR gate is dropped FOR WHITELISTED USERS; tracking is enforced instead: agent-written commit messages must carry the user's plain-language intent (the WHY), a `notify-nonadmin-push` Slack step in `.woodpecker/default.yml` surfaces every non-admin master push, `[ci skip]` is forbidden for non-admins, and force-push stays disabled (append-only history). Accepted consequence: emo's pushes auto-apply changed stacks via CI. Branch protection + the PR fallback remain for non-whitelisted users.
 - **ADR-0005 — Power-user = cluster-wide read-only (no Secrets), via a NEW dedicated ClusterRole.** Re-widens cross-tenant READ for the trusted power-user tier only — but via a NEW `oidc-power-user-readonly` ClusterRole (get/list/watch, NO `secrets`), NOT the existing `oidc-power-user` (which grants read+write+Secrets and is unbound). Bound to the user's OIDC identity (kubelogin) — the apiserver accepts Authentik OIDC for the `kubernetes` audience; the dashboard's SA-token pattern is for the dashboard UI only.
 - **ADR-0006 — The roster is the single source of truth for the FULL lifecycle.** `roster.yaml` drives onboard *and* offboard; `/etc/ttyd-user-map`, `dispatch.json`, and Authentik `T3 Users` membership are *derived* from it, and tier is *validated* against `k8s_users` (fail-loud on mismatch). Rejected: hand-maintaining the four membership lists in parallel (guaranteed drift). Offboarding is first-class + staged (reversible cut → cluster revoke → gated `userdel`), not an afterthought.
+  - *Amended 2026-08-17:* the direction between the roster and the group is now
+    INVERTED. Authentik `T3 Users` membership is the source of truth for WHO has
+    access, and `roster.yaml` is a policy table keyed by user — rows are written and
+    commented out to follow membership (`.woodpecker/t3-membership-sync.yml`). The
+    rest of this decision stands: `/etc/ttyd-user-map` and `dispatch.json` are still
+    derived, tier is still validated against `k8s_users` fail-loud, and offboarding is
+    still staged — the reversible cut is now applied automatically, and `userdel` is
+    still gated. Consequence: deleting a roster row no longer removes access; it resets
+    that person to the floor tier. See
+    `2026-08-17-t3-membership-driven-provisioning-design.md`.
 - **ADR-0007 — Add swap + a capacity budget to the devvm before onboarding active users.** A shared 24 GB / **0-swap** host OOM-kills live sessions under multi-user load (wizard alone runs ~20). Swap + a max-concurrent ceiling are prerequisites, not follow-ups.
 
 ## Out of scope / deferred

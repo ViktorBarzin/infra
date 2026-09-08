@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Cluster health check script.
-# Runs 45 diagnostic checks against the Kubernetes cluster and prints
+# Runs 50 diagnostic checks against the Kubernetes cluster and prints
 # a colour-coded report with PASS / WARN / FAIL for each section.
 #
 # Usage: ./scripts/cluster_healthcheck.sh [--fix] [--quiet|-q] [--json] [--kubeconfig <path>]
@@ -27,7 +27,10 @@ KUBECONFIG_PATH="${KUBECONFIG:-${HOME}/.kube/config}"
 [[ -f "$KUBECONFIG_PATH" ]] || KUBECONFIG_PATH="$(pwd)/config"
 KUBECTL=""
 JSON_RESULTS=()
-TOTAL_CHECKS=48
+TOTAL_CHECKS=50
+# Check functions that returned without emitting a json_add record. Populated
+# by the serial loop and by replay_check_outputs; read by assert_check_arity.
+MISSING_CHECKS=()
 
 # Parallel execution settings. Each check function is self-contained — it
 # only reads cluster state and mutates the in-memory counters / JSON_RESULTS
@@ -74,6 +77,51 @@ count_lines() {
     else
         echo "$input" | wc -l | tr -d ' '
     fi
+}
+
+# Read one field out of Vault, retrying before giving up.
+#
+# Every caller used to do a single `vault kv get ... || true`, so one blip
+# reads as "the secret is not there". On 2026-09-03 a transient read blanked
+# six checks in one run: the three token/password reads plus the four HA
+# checks behind ha_sofia_available, which needs haos_api_token to answer yes.
+# Three attempts with a short backoff turn a blip into a slower read. A
+# genuinely absent secret still returns empty after the last attempt, so the
+# caller's WARN-and-skip path still reports honestly.
+#
+# Always exits 0 — callers substitute it and test the value, and a non-zero
+# status inside $(...) would trip `set -e`.
+vault_field() {
+    local field="$1" path="${2:-secret/viktor}" attempt=1 value=""
+    if ! command -v vault >/dev/null 2>&1; then
+        echo ""
+        return 0
+    fi
+    while (( attempt <= 3 )); do
+        value=$(vault kv get -field="$field" "$path" 2>/dev/null) || value=""
+        if [[ -n "$value" ]]; then
+            printf '%s' "$value"
+            return 0
+        fi
+        if (( attempt < 3 )); then
+            sleep "$attempt"
+        fi
+        attempt=$((attempt + 1))
+    done
+    echo ""
+    return 0
+}
+
+# Median of the numeric arguments, for latency probes where one sample is
+# noise. With an even count it returns the upper of the two middle values,
+# which keeps a degraded reading from being averaged away.
+#
+# Why it exists: check 46 timed the Immich ANN query once and FAILed above
+# 1.5s, on a probe that is noisy by nature. 15 samples on 2026-09-03 spread
+# 134-1144 ms around a ~316 ms median — spacing them 3s apart made no
+# difference — and one 2.05s draw from that tail turned the whole board red.
+median() {
+    printf '%s\n' "$@" | sort -n | awk '{v[NR]=$1} END{if (NR > 0) print v[int(NR/2)+1]}'
 }
 
 # --- Parallel runner ---
@@ -143,8 +191,14 @@ replay_check_outputs() {
     # Replay temp files in numeric index order so the report reads exactly
     # like the serial run did. Marker lines re-populate counters; everything
     # else is forwarded to stdout.
-    local f line stripped
+    #
+    # A check that dies inside its subshell before json_add leaves an .out file
+    # with no JSON marker in it. `wait -n || true` swallows the exit status, so
+    # that used to be invisible — one run emitted 49 of 50 checks and nothing
+    # said so. Record the name here; assert_check_arity reports it.
+    local f line stripped base fn saw_json
     while IFS= read -r f; do
+        saw_json=false
         while IFS= read -r line || [[ -n "$line" ]]; do
             case "$line" in
                 "${PARALLEL_MARKER}PASS:"*)
@@ -161,13 +215,43 @@ replay_check_outputs() {
                     ;;
                 "${PARALLEL_MARKER}JSON:"*)
                     JSON_RESULTS+=("${line#${PARALLEL_MARKER}JSON:}")
+                    saw_json=true
                     ;;
                 *)
                     printf '%s\n' "$line"
                     ;;
             esac
         done < "$f"
+        if [[ "$saw_json" != true ]]; then
+            # Filenames are <zero-padded index>_<check function name>.out
+            base="${f##*/}"
+            base="${base%.out}"
+            fn="${base#*_}"
+            MISSING_CHECKS+=("$fn")
+        fi
     done < <(find "$TMP_DIR" -maxdepth 1 -type f -name '*.out' | sort)
+}
+
+# Every check calls json_add exactly once, so the report should carry one
+# record per entry in the canonical checks[] array. TOTAL_CHECKS only ever fed
+# the "[n/50]" section labels — nothing compared the emitted JSON against it,
+# so a check that vanished mid-run just left the board one shorter and silent.
+assert_check_arity() {
+    local expected="$1" actual="${#JSON_RESULTS[@]}" detail
+    if (( actual == expected )); then
+        return 0
+    fi
+    if (( ${#MISSING_CHECKS[@]} > 0 )); then
+        detail="only $actual/$expected checks reported — no result from: ${MISSING_CHECKS[*]}"
+    else
+        detail="only $actual/$expected checks reported — could not identify which"
+    fi
+    if [[ "$JSON" != true ]]; then
+        echo ""
+        echo -e "${BOLD}Check arity${NC}"
+    fi
+    warn "$detail"
+    json_add "healthcheck_arity" "WARN" "$detail"
 }
 
 # --- Argument parsing ---
@@ -484,11 +568,138 @@ check_pvcs() {
         fi
     done <<< "$pvcs"
 
-    if [[ "$had_issue" == false ]]; then
-        pass "All PVCs Bound"
-        json_add "pvcs" "PASS" "All Bound"
+    # --- Phase 2: FREE SPACE ------------------------------------------------
+    # Bound says a PVC has a volume; it says nothing about whether that volume
+    # has room left. A 99.91%-full 5Gi PVC that had already hit its
+    # resize.topolvm.io/storage_limit ceiling took the Technitium DNS primary
+    # down for 27.6h on 2026-08-04 and this check reported "All Bound" the whole
+    # time. Usage comes from kubelet's volume stats via Prometheus.
+    #
+    # COVERAGE CAVEAT: kubelet only exports stats for volumes mounted by a
+    # RUNNING pod (~124 of 159 PVCs today). So this catches a volume FILLING —
+    # the early warning that was missing here — but goes blind once the pod it
+    # belongs to is already crashlooping. Unmonitored PVCs are reported rather
+    # than silently skipped, so the gap is visible.
+    local space_result
+    space_result=$($KUBECTL exec -n monitoring deploy/prometheus-server -- \
+        wget -qO- 'http://localhost:9090/api/v1/query?query=100*(1-kubelet_volume_stats_available_bytes/kubelet_volume_stats_capacity_bytes)' 2>/dev/null || true)
+
+    # PVCs backed by the Synology (192.168.1.13) are excluded from the fullness
+    # thresholds below, because that filesystem already has its own dedicated
+    # alerts and this check can only mislabel it.
+    #
+    # These are static NFS shares whose PVC request is nominal, so kubelet
+    # reports the BACKING FILESYSTEM rather than the claim. navidrome-music
+    # requests 10Gi but its PV points at server 192.168.1.13 share
+    # /volume1/music, so on 2026-09-01 it reported "91.1% full" for a 5.76 TB
+    # volume with 0.51 TB free. Nothing about that is a PVC problem, and the
+    # autoresizer can never act on it.
+    #
+    # /volume1 IS covered, independently and correctly, by
+    # OffsiteDestinationFillingUp (<6% free) and OffsiteDestinationAlmostFull
+    # (<4%) reading the offsite_dest_* gauges offsite-sync-backup pushes. Those
+    # exist because the same volume hit 99% on 2026-08-06 and surfaced only
+    # through this PVC by accident; the accident has since been replaced by
+    # real coverage, so the accident can go.
+    #
+    # Keyed on the backing SERVER, not on volume size: a size threshold would
+    # also silence the 61 PVCs on the shared TrueNAS export at 192.168.1.127,
+    # which have no equivalent capacity alert and must keep this one.
+    # Deliberately NOT removed from the monitored/unmonitored counts: the
+    # telemetry exists, it is simply not judged by a threshold that cannot apply.
+    local synology_pvcs
+    synology_pvcs=$($KUBECTL get pv -o json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for p in d.get("items", []):
+    spec = p.get("spec", {})
+    csi = spec.get("csi") or {}
+    srv = (csi.get("volumeAttributes") or {}).get("server") or (spec.get("nfs") or {}).get("server")
+    ref = spec.get("claimRef") or {}
+    if srv == "192.168.1.13" and ref.get("namespace") and ref.get("name"):
+        print(ref["namespace"] + "/" + ref["name"])
+' 2>/dev/null || true)
+    export SYNOLOGY_PVCS="$synology_pvcs"
+
+    local space_status="PASS" space_detail="" full_list=""
+    if [[ -z "$space_result" ]]; then
+        space_status="WARN"
+        space_detail="usage unknown (Prometheus unreachable)"
     else
-        json_add "pvcs" "FAIL" "$detail"
+        # WARN >=90% (the autoresizer's own 10%-free trigger point: at or past it
+        # a managed PVC should already have grown, so still being here means it is
+        # unmanaged or has hit its ceiling), FAIL >=97% (imminent ENOSPC).
+        full_list=$(echo "$space_result" | python3 -c '
+import json, os, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+skip = set(x for x in (os.environ.get("SYNOLOGY_PVCS") or "").split() if x)
+rows = []
+for r in data.get("data", {}).get("result", []):
+    m = r.get("metric", {})
+    ns = m.get("namespace", "?")
+    pvc = m.get("persistentvolumeclaim", "?")
+    if ns + "/" + pvc in skip:
+        continue
+    try:
+        pct = float(r["value"][1])
+    except (KeyError, IndexError, ValueError):
+        continue
+    if pct >= 90:
+        rows.append((pct, ns, pvc))
+rows.sort(reverse=True)
+for pct, ns, pvc in rows:
+    sev = "FAIL" if pct >= 97 else "WARN"
+    print(f"{sev}:{ns}/{pvc}:{pct:.1f}")
+' 2>/dev/null || true)
+
+        if [[ -n "$full_list" ]]; then
+            while IFS= read -r row; do
+                [[ -z "$row" ]] && continue
+                local sev target pct
+                sev=${row%%:*}
+                target=$(echo "$row" | cut -d: -f2)
+                pct=$(echo "$row" | cut -d: -f3)
+                [[ "$had_issue" == false && "$QUIET" == true ]] && section_always 8 "PVC Status"
+                if [[ "$sev" == "FAIL" ]]; then
+                    fail "$target: ${pct}% full"
+                    space_status="FAIL"
+                else
+                    warn "$target: ${pct}% full"
+                    [[ "$space_status" == "PASS" ]] && space_status="WARN"
+                fi
+                space_detail+="$target=${pct}%; "
+                had_issue=true
+            done <<< "$full_list"
+        fi
+    fi
+
+    # Surface the monitoring gap so "no full PVCs" is never mistaken for
+    # "every PVC was checked".
+    local total_pvcs monitored_pvcs unmonitored
+    total_pvcs=$(echo "$pvcs" | grep -c . || true)
+    monitored_pvcs=$(echo "$space_result" | python3 -c '
+import json, sys
+try:
+    print(len(json.load(sys.stdin).get("data", {}).get("result", [])))
+except Exception:
+    print(0)
+' 2>/dev/null || echo 0)
+    unmonitored=$((total_pvcs - monitored_pvcs))
+    [[ "$unmonitored" -lt 0 ]] && unmonitored=0
+
+    if [[ "$had_issue" == false ]]; then
+        pass "All $total_pvcs PVCs Bound; none >=90% full ($monitored_pvcs with usage stats, $unmonitored unmonitored)"
+        json_add "pvcs" "PASS" "All Bound; ${monitored_pvcs}/${total_pvcs} usage-monitored, $unmonitored unmonitored"
+    elif [[ "$space_status" == "FAIL" || -n "$detail" ]]; then
+        json_add "pvcs" "FAIL" "${detail}${space_detail}(${unmonitored} PVCs unmonitored)"
+    else
+        json_add "pvcs" "WARN" "${space_detail}(${unmonitored} PVCs unmonitored)"
     fi
 }
 
@@ -737,10 +948,11 @@ check_uptime_kuma() {
     section 14 "Uptime Kuma Monitors"
     local result
 
-    # Get password from Vault (or env var fallback)
+    # Get password from Vault (or env var fallback). vault_field retries, so a
+    # transient read no longer reads as "no password" and blanks this check.
     local uk_pass="${UPTIME_KUMA_PASSWORD:-}"
     if [[ -z "$uk_pass" ]]; then
-        uk_pass=$(vault kv get -field=uptime_kuma_admin_password secret/viktor 2>/dev/null) || true
+        uk_pass=$(vault_field uptime_kuma_admin_password)
     fi
     if [[ -z "$uk_pass" ]]; then
         warn "Uptime Kuma: password not available (set UPTIME_KUMA_PASSWORD or vault login)"
@@ -1203,15 +1415,42 @@ check_dns() {
     local internal_ok=false external_ok=false detail=""
 
     # Test DNS from inside the cluster via kubectl exec (MetalLB IPs may not be
-    # reachable from outside the L2 network)
+    # reachable from outside the L2 network).
+    #
+    # This check answers "is DNS SERVING?", which is NOT the same question as "is
+    # the primary healthy?" (that is check 7's job). So: exec from any RUNNING
+    # pod behind the DNS service and resolve against the SERVICE ClusterIP
+    # 10.96.0.53, not 127.0.0.1 on an arbitrarily-picked pod.
+    #
+    # It used to take items[0] of `-l app=technitium` (the primary only) and query
+    # 127.0.0.1. Any non-Running primary — Evicted, Completed, or CrashLoopBackOff —
+    # made the exec fail and reported "both failed" while secondary + tertiary were
+    # happily serving every client in the cluster. False-FAILed on 2026-06-24
+    # (eviction storm) and again for 27.6h on 2026-08-04 (primary crashloop on a
+    # full config PVC). The label `dns-server=true` is the technitium-dns Service's
+    # own selector, so it covers primary, secondary and tertiary alike.
+    # Must select on the Ready CONDITION, not status.phase: a CrashLoopBackOff
+    # pod still reports phase=Running (only its container is down), so a
+    # phase-based filter happily hands back the dead primary and the exec fails
+    # with "container not found" — the exact false-FAIL this rewrite removes.
     local dns_pod
-    dns_pod=$($KUBECTL get pods -n technitium -l app=technitium -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    dns_pod=$($KUBECTL get pods -n technitium -l dns-server=true \
+        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' 2>/dev/null \
+        | awk '$2=="True"{print $1; exit}')
+
+    # Fall back to the old selector so a label rename degrades to the previous
+    # behaviour rather than a hard false-FAIL.
+    if [[ -z "$dns_pod" ]]; then
+        dns_pod=$($KUBECTL get pods -n technitium -l app=technitium \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' 2>/dev/null \
+            | awk '$2=="True"{print $1; exit}')
+    fi
 
     if [[ -n "$dns_pod" ]]; then
-        if $KUBECTL exec -n technitium "$dns_pod" -- nslookup viktorbarzin.me 127.0.0.1 &>/dev/null; then
+        if $KUBECTL exec -n technitium "$dns_pod" -- nslookup viktorbarzin.me 10.96.0.53 &>/dev/null; then
             internal_ok=true
         fi
-        if $KUBECTL exec -n technitium "$dns_pod" -- nslookup google.com 127.0.0.1 &>/dev/null; then
+        if $KUBECTL exec -n technitium "$dns_pod" -- nslookup google.com 10.96.0.53 &>/dev/null; then
             external_ok=true
         fi
     fi
@@ -1466,9 +1705,14 @@ ha_sofia_available() {
     fi
     if [[ -z "${HOME_ASSISTANT_SOFIA_TOKEN:-}" ]]; then
         if command -v vault >/dev/null 2>&1 && [[ -n "${VAULT_TOKEN:-}${HOME:-}" ]]; then
+            # Retried: this one read gates FIVE checks (the four HA checks plus
+            # the dashboard), so a single failed read used to take out all of
+            # them at once.
             local t
-            t=$(vault kv get -field=haos_api_token secret/viktor 2>/dev/null || true)
-            [[ -n "$t" ]] && export HOME_ASSISTANT_SOFIA_TOKEN="$t"
+            t=$(vault_field haos_api_token)
+            if [[ -n "$t" ]]; then
+                export HOME_ASSISTANT_SOFIA_TOKEN="$t"
+            fi
         fi
     fi
     [[ -n "${HOME_ASSISTANT_SOFIA_TOKEN:-}" ]] || return 1
@@ -2311,14 +2555,18 @@ ts = None
 for line in sys.stdin:
     if line.startswith("#"):
         continue
-    if "backup_last_success_timestamp" in line and "offsite-backup-sync" in line:
+    if "backup_last_success_timestamp" in line and "offsite-backup-sync" in line and ts is None:
         m = re.search(r"\s([0-9.eE+]+)\s*$", line.strip())
         if m:
             try:
                 ts = float(m.group(1))
-                break
             except ValueError:
                 pass
+    # NOTE: intentionally NO early `break` — the parent shell runs `set -o pipefail`,
+    # so exiting stdin early makes the upstream `echo "$metrics"` take SIGPIPE and the
+    # whole $(...) exit non-zero -> a spurious "Parse error" (WARN) whenever this
+    # metric was not the last line. The `ts is None` guard keeps first-match
+    # semantics while draining to EOF. (Fixed 2026-07-26.)
 if ts is None:
     print("missing")
 else:
@@ -2995,11 +3243,23 @@ PYEOF
 }
 
 # --- 46. Immich Smart (Context) Search ---
-# Smart search = ML embedding (kept warm by clip-keepalive) + a pgvector ANN
+# Smart search = ML embedding (kept warm by the warmup step of immich-search-probe) + a pgvector ANN
 # query over the vchord clip_index. The index must stay resident in PG
-# shared_buffers (kept warm by clip-index-prewarm); if it decays out of cache a
+# shared_buffers (kept warm by the prewarm step of immich-search-probe); if it decays out of cache a
 # query pays a ~1.8s cold storage read instead of ~4ms warm. We measure both
 # the live ANN latency and the clip_index residency to catch the regression.
+#
+# The latency is the MEDIAN of three samples, not one. The probe is noisy on its
+# own: 15 samples on 2026-09-03 spread 134-1144 ms around a ~316 ms median,
+# whether taken back-to-back or 3s apart, and a single 2.05s draw FAILed the
+# board by itself. A median needs two of three samples to be slow before it
+# moves, which is the difference between a regression and a draw from the tail.
+# The residency probe stays single-sample — buffer occupancy does not jitter
+# the same way.
+#
+# The 500 ms WARN threshold below sits inside that spread, so this check still
+# flaps PASS/WARN on a healthy cluster. Deliberately left alone: it warns, it
+# does not fail, and re-siting it wants a baseline longer than one afternoon.
 check_immich_search() {
     section 46 "Immich Smart Search"
     local pg pct dur_ms dur detail=""
@@ -3019,21 +3279,33 @@ check_immich_search() {
     pct=$($KUBECTL exec -n immich -c immich-postgresql "$pg" -- psql -U postgres -d immich -tAc \
         "SELECT COALESCE(round(100.0*count(*)*8192/greatest(pg_relation_size('clip_index'::regclass),1),1),0) FROM pg_buffercache b JOIN pg_class c ON b.relfilenode=pg_relation_filenode(c.oid) WHERE c.relname='clip_index'" 2>/dev/null | tr -d ' ' || true)
 
-    # Representative random-vector ANN latency, measured in-pod (excludes exec overhead)
-    dur_ms=$($KUBECTL exec -n immich -c immich-postgresql "$pg" -- bash -c \
-        's=$(date +%s%3N); psql -U postgres -d immich -tAc "SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) x" >/dev/null 2>&1; e=$(date +%s%3N); echo $((e-s))' 2>/dev/null | tr -d ' ' || true)
+    # Representative random-vector ANN latency, measured in-pod (excludes exec
+    # overhead). Three samples; the median is what the thresholds below judge.
+    # Same `|| true` guard as the residency probe above.
+    local -a samples=()
+    local sample
+    for _ in 1 2 3; do
+        sample=$($KUBECTL exec -n immich -c immich-postgresql "$pg" -- bash -c \
+            's=$(date +%s%3N); psql -U postgres -d immich -tAc "SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) x" >/dev/null 2>&1; e=$(date +%s%3N); echo $((e-s))' 2>/dev/null | tr -d ' ' || true)
+        if [[ "$sample" =~ ^[0-9]+$ ]]; then
+            samples+=("$sample")
+        fi
+    done
 
-    if ! [[ "$dur_ms" =~ ^[0-9]+$ ]]; then
+    if (( ${#samples[@]} == 0 )); then
         warn "Smart-search probe query failed (clip_index residency: ${pct:-?}%)"
         json_add "immich_search" "WARN" "probe query failed; residency=${pct:-?}%"
         return 0
     fi
+    dur_ms=$(median "${samples[@]}")
     dur=$(awk "BEGIN{printf \"%.2f\", $dur_ms/1000}")
-    detail="latency=${dur}s clip_index_resident=${pct:-?}%"
+    local samples_str
+    samples_str=$(IFS=/; echo "${samples[*]}")
+    detail="latency=${dur}s (median of ${samples_str} ms) clip_index_resident=${pct:-?}%"
 
     if (( dur_ms > 1500 )); then
         [[ "$QUIET" == true ]] && section_always 46 "Immich Smart Search"
-        fail "Smart search SLOW: $detail — clip_index likely evicted; check clip-index-prewarm CronJob"
+        fail "Smart search SLOW: $detail — clip_index likely evicted; check the immich-search-probe CronJob (it does the prewarm)"
         json_add "immich_search" "FAIL" "$detail"
     elif [[ "$pct" =~ ^[0-9.]+$ ]] && awk "BEGIN{exit !($pct < 50)}"; then
         [[ "$QUIET" == true ]] && section_always 46 "Immich Smart Search"
@@ -3064,16 +3336,52 @@ check_immich_search() {
 #   real == tracked, real < 20            -> PASS
 #   drift (real > tracked), or real 20-24 -> WARN  (ghosts / approaching cap)
 #   real >= 25 (near the 28 LUN cap)      -> FAIL  (imminent query-pci wedge)
+#   leaked throttle-group object          -> FAIL  (that LUN slot is poisoned)
 check_csi_ghost_drift() {
     section 47 "Proxmox CSI — Ghost-Disk Drift"
 
     # Single `qm list` (not once per VM) + one `qm config` per VM — keeps this
     # under a few seconds so it doesn't blow the parallel runner's budget.
+    # For running VMs with CSI disks, ALSO count the disks the live QEMU
+    # process actually carries (`info block` via qm monitor): a disk present
+    # in the config but absent from the runtime is a WEDGED HOTPLUG (the
+    # device_add never landed — QMP-timeout class) and every k8s mount of
+    # that volume fails with "device /dev/disk/by-id/wwn-... is not found"
+    # until the VM reboots (2026-07-12 n8n/k8s-node5 incident, memory #9580).
+    # The runtime grep uses `vm-+9999-+pvc` because runtime paths can render
+    # device-mapper style with doubled dashes (vm--9999--pvc...).
+    #
+    # THIRD layer (added 2026-08-04): count LEAKED `throttle-drive-scsiN` QEMU
+    # objects — a throttle-group whose scsiN is NOT in the VM config. Proxmox
+    # wraps every disk in a throttle filter; a detach that removes the device
+    # but leaves the block node behind strands both the node AND its throttle
+    # object, and QEMU then rejects every future attach to that slot with
+    # `object-add failed - attempt to add duplicate property throttle-drive-scsiN`.
+    # proxmox-csi SWALLOWS that HTTP 400 (logs "volume published", k8s fires
+    # SuccessfulAttachVolume), so the pod just hangs in ContainerCreating on
+    # "device /dev/disk/by-id/wwn-... is not found" forever. The slot stays
+    # poisoned until someone runs `drive_del`+`object_del` — it is invisible to
+    # the config/runtime/VolumeAttachment comparison above, because all three
+    # agree (2026-08-04 stirling-pdf incident on k8s-node3/VM203 scsi2, which
+    # had been silently poisoned since the 2026-06-27 aiostreams half-attach).
+    # Scoped to VMs that already carry CSI disks, same as the runtime probe.
     local raw
     raw=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
-        root@192.168.1.127 'qm list 2>/dev/null | awk "NR>1{print \$1, \$2}" | while read -r vmid name; do
+        root@192.168.1.127 'qm list 2>/dev/null | awk "NR>1{print \$1, \$2, \$3}" | while read -r vmid name vstatus; do
             cnt=$(qm config "$vmid" 2>/dev/null | grep -cE "^scsi[0-9]+:.*vm-9999-pvc")
-            echo "$vmid|$name|$cnt"
+            rt=-1
+            lk=-1
+            if [ "$vstatus" = "running" ] && [ "$cnt" -gt 0 ]; then
+                rt=$(echo "info block" | timeout 8 qm monitor "$vmid" 2>/dev/null | grep -cE "vm-+9999-+pvc")
+                slots=$(qm config "$vmid" 2>/dev/null | grep -oE "^scsi[0-9]+" | sort -u)
+                objs=$(echo "qom-list /objects" | timeout 8 qm monitor "$vmid" 2>/dev/null \
+                    | grep -oE "throttle-drive-scsi[0-9]+" | sed "s/throttle-drive-//" | sort -u)
+                lk=0
+                for o in $objs; do
+                    echo "$slots" | grep -qx "$o" || lk=$((lk+1))
+                done
+            fi
+            echo "$vmid|$name|$cnt|$rt|$lk"
         done' 2>/dev/null || true)
 
     if [[ -z "$raw" ]]; then
@@ -3105,20 +3413,37 @@ worst = "PASS"
 rows = []
 for line in os.environ["SSH_RAW"].splitlines():
     parts = line.strip().split("|")
-    if len(parts) != 3:
+    if len(parts) != 5:
         continue
-    vmid, name, cnt = parts[0], parts[1], parts[2]
+    vmid, name, cnt, rt, lk = parts[0], parts[1], parts[2], parts[3], parts[4]
     if not cnt.isdigit():
         continue
     real = int(cnt)
+    try:
+        runtime = int(rt)
+    except ValueError:
+        runtime = -1
+    # -1 = leak scan didn't run (VM stopped / no CSI disks / monitor timeout).
+    try:
+        leaked = int(lk)
+    except ValueError:
+        leaked = -1
     # Only nodes that are k8s worker VMs (name matches a node with attachments
     # or looks like a k8s node) are interesting; skip non-k8s VMs with 0 disks.
     if real == 0 and name not in tracked:
         continue
     trk = tracked.get(name, 0)
     drift = real - trk
+    # Config-present but runtime-absent = wedged hotplug: every new mount on
+    # this node WILL fail until the VM reboots. runtime == -1 means the
+    # runtime was unreadable (VM stopped / qm monitor timeout) — skip the
+    # comparison rather than false-failing.
+    wedged = (real - runtime) if runtime >= 0 else 0
+    # A leaked throttle-group permanently poisons that LUN slot: the next
+    # attach to it fails host-side while proxmox-csi still reports success.
+    leak = leaked if leaked > 0 else 0
     status = "PASS"
-    if real >= 25:
+    if wedged > 0 or leak > 0 or real >= 25:
         status = "FAIL"
     elif drift > 0 or real >= 20:
         status = "WARN"
@@ -3127,7 +3452,11 @@ for line in os.environ["SSH_RAW"].splitlines():
     elif status == "WARN" and worst != "FAIL":
         worst = "WARN"
     if status != "PASS":
-        rows.append(f"{name}: real={real} tracked={trk} ghosts={drift}")
+        rt_str = str(runtime) if runtime >= 0 else "n/a"
+        rows.append(
+            f"{name}: real={real} runtime={rt_str} tracked={trk} "
+            f"ghosts={drift} wedged={wedged} leaked={leak}"
+        )
 
 print(worst)
 print(" | ".join(rows) if rows else "all nodes reconciled")
@@ -3141,7 +3470,18 @@ PYEOF
     case "$status" in
         FAIL)
             [[ "$QUIET" == true ]] && section_always 47 "Proxmox CSI — Ghost-Disk Drift"
-            fail "Ghost-disk drift near LUN cap: $detail"
+            fail "CSI disk drift (wedged hotplug, poisoned LUN slot and/or near LUN cap): $detail"
+            # leaked>0 is permanent until cleared by hand and is invisible to
+            # every other layer — spell out the two-step fix inline.
+            if [[ "$detail" == *"leaked="* && "$detail" != *"leaked=0"* ]]; then
+                info "  Poisoned LUN slot(s): a leaked QEMU throttle-group blocks every future"
+                info "  attach there (proxmox-csi reports success anyway). On the PVE host find"
+                info "  the orphan:  echo 'qom-list /objects' | qm monitor <vmid> | grep throttle-drive"
+                info "  vs  qm config <vmid> | grep '^scsi'  — then clear it (data-safe, no reboot):"
+                info "    echo 'drive_del drive-scsiN'            | qm monitor <vmid>"
+                info "    echo 'object_del throttle-drive-scsiN'  | qm monitor <vmid>"
+                info "  object_del alone fails 'in use' — the block node must go first."
+            fi
             json_add "csi_ghost_drift" "FAIL" "$detail"
             ;;
         WARN)
@@ -3150,7 +3490,7 @@ PYEOF
             json_add "csi_ghost_drift" "WARN" "$detail"
             ;;
         *)
-            pass "No CSI ghost-disk drift — every node's scsi disks match k8s attachments"
+            pass "No CSI drift — config, QEMU runtime, throttle objects and k8s attachments all match"
             json_add "csi_ghost_drift" "PASS" "reconciled"
             ;;
     esac
@@ -3194,7 +3534,322 @@ check_goldmane_aggregator() {
     fi
 }
 
+# --- 49. Slack — #alerts Recent Alerts ---
+#
+# All alerting lanes post into the #alerts Slack channel (Alertmanager
+# critical/warning/info + the [SECURITY/*] receiver, the daily alert +
+# goldmane-edges digests, woodpecker CI notices, KMS activation, diun).
+# This check reads the channel over the Slack Web API so the health board
+# surfaces what has been alerting recently without opening Slack.
+#
+# Messages in the window (default 2h, HEALTHCHECK_SLACK_WINDOW_HOURS to
+# override) are classified: Alertmanager alert events — attachment title/
+# fallback tagged [CRITICAL]/[WARNING]/[INFO]/[SECURITY/<SEV>]/[RESOLVED]
+# per the receivers in prometheus_chart_values.tpl — vs everything else
+# (digests, CI pushes, ... = "other traffic", never treated as firing).
+# WARN when any alert is net-FIRING (its latest event in the window is a
+# firing one, with no later [RESOLVED] for the same alertname) or when the
+# channel is noisy (>20 messages in the window); PASS otherwise. Missing
+# token / unreachable Slack API degrades to WARN-and-skip (same convention
+# as the Uptime Kuma password and HA Sofia token dependencies). The token
+# is read from Vault and passed to python via the environment only — it
+# must never appear on a command line or in output.
+check_slack_alerts() {
+    section 49 "Slack — #alerts Recent Alerts"
+    local window_hours="${HEALTHCHECK_SLACK_WINDOW_HOURS:-2}"
+
+    # Token from env override or Vault (mirrors UPTIME_KUMA_PASSWORD).
+    local slack_token="${SLACK_BOT_TOKEN:-}"
+    if [[ -z "$slack_token" ]]; then
+        slack_token=$(vault_field slack_bot_token)
+    fi
+    if [[ -z "$slack_token" ]]; then
+        [[ "$QUIET" == true ]] && section_always 49 "Slack — #alerts Recent Alerts"
+        warn "Slack bot token not available (set SLACK_BOT_TOKEN or vault login) — skipping"
+        json_add "slack_alerts" "WARN" "token not available"
+        return 0
+    fi
+
+    local result
+    result=$(SLACK_BOT_TOKEN="$slack_token" SLACK_WINDOW_HOURS="$window_hours" python3 << 'SLACK_ALERTS_EOF' 2>/dev/null
+import os
+import re
+import sys
+import time
+
+import requests
+
+API = "https://slack.com/api"
+
+
+def die(reason):
+    # Single parseable line; "|" is the bash-side field separator.
+    print("ERR|" + str(reason).replace("|", "/")[:160])
+    sys.exit(0)
+
+
+try:
+    token = os.environ["SLACK_BOT_TOKEN"]
+    window_h = float(os.environ.get("SLACK_WINDOW_HOURS", "2"))
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Resolve the #alerts channel id. types MUST stay public_channel only:
+    # the bot token lacks groups:read, and including private_channel makes
+    # conversations.list fail with missing_scope.
+    channel_id = None
+    cursor = ""
+    for _ in range(10):
+        params = {"types": "public_channel", "limit": 200, "exclude_archived": "true"}
+        if cursor:
+            params["cursor"] = cursor
+        resp = requests.get(f"{API}/conversations.list", headers=headers, params=params, timeout=15).json()
+        if not resp.get("ok"):
+            die(f"conversations.list: {resp.get('error', 'bad response')}")
+        for chan in resp.get("channels", []):
+            if chan.get("name") == "alerts":
+                channel_id = chan["id"]
+                break
+        cursor = (resp.get("response_metadata") or {}).get("next_cursor", "")
+        if channel_id or not cursor:
+            break
+    if not channel_id:
+        die("channel #alerts not found")
+
+    oldest = time.time() - window_h * 3600
+    resp = requests.get(
+        f"{API}/conversations.history",
+        headers=headers,
+        params={"channel": channel_id, "oldest": f"{oldest:.6f}", "limit": 100},
+        timeout=15,
+    ).json()
+    if not resp.get("ok"):
+        die(f"conversations.history: {resp.get('error', 'bad response')}")
+    messages = resp.get("messages", [])
+except Exception as exc:  # any failure degrades to WARN-and-skip upstream
+    die(f"{type(exc).__name__}: {exc}")
+
+# Alertmanager receiver formats (slack-critical/-warning/-info/-security in
+# stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl):
+#   [CRITICAL] <alertname> (n) / [WARNING] ... / [SECURITY/<SEV>] ...  -> firing
+#   [RESOLVED] <alertname> (n)                                         -> resolved
+#   [INFO] <alertname> (n) — resolves are titled [RESOLVED] like the other
+#          receivers since 2026-07-10; the colour check below still
+#          classifies pre-change history ([INFO] title + good colour).
+# Slack normalises named attachment colours to bare hex: danger=a30200,
+# warning=daa038, good=2eb886 (info firing posts literal 439FE0).
+# [FIRING:n] is accepted too in case a receiver reverts to the stock
+# Alertmanager template. Messages without such a tag (woodpecker CI,
+# daily digests, KMS activation, diun, ...) count as other traffic.
+TAG_RE = re.compile(
+    r"^\[?(CRITICAL|WARNING|INFO|RESOLVED|SECURITY[/-][A-Z]+|FIRING(?::\d+)?)\]?:?\s+(\S+)"
+)
+GOOD_COLORS = {"good", "2eb886"}
+
+latest = {}  # alertname -> (ts, state); newest event wins
+alert_msgs = 0
+for msg in messages:
+    ts = float(msg.get("ts", 0))
+    for att in msg.get("attachments", []) or []:
+        tag = name = None
+        for field in (att.get("title"), att.get("fallback")):
+            m = TAG_RE.match((field or "").strip())
+            if m:
+                tag, name = m.group(1), m.group(2)
+                break
+        if not tag:
+            continue
+        color = (att.get("color") or "").lstrip("#").lower()
+        if tag == "RESOLVED" or (tag == "INFO" and color in GOOD_COLORS):
+            state = "resolved"
+        else:
+            state = "firing"
+        alert_msgs += 1
+        if name not in latest or ts > latest[name][0]:
+            latest[name] = (ts, state)
+        break  # one attachment per Alertmanager message — count each message once
+
+net_firing = sorted(n for n, (_, state) in latest.items() if state == "firing")
+print(f"OK|{len(messages)}|{alert_msgs}|{len(messages) - alert_msgs}|{len(net_firing)}|{','.join(net_firing)}")
+SLACK_ALERTS_EOF
+    ) || true
+    result=${result%%$'\n'*}
+
+    local status total alert_events other net_count net_names
+    IFS='|' read -r status total alert_events other net_count net_names <<< "$result"
+
+    if [[ "$status" != "OK" || ! "$total" =~ ^[0-9]+$ || ! "$net_count" =~ ^[0-9]+$ ]]; then
+        [[ "$QUIET" == true ]] && section_always 49 "Slack — #alerts Recent Alerts"
+        # For ERR results the reason rides in the second field.
+        warn "Slack API unavailable (${total:-no response}) — skipping"
+        json_add "slack_alerts" "WARN" "Slack API unavailable: ${total:-no response}"
+        return 0
+    fi
+
+    local traffic="${total} msg(s) in last ${window_hours}h: ${alert_events} alert event(s), ${other} other"
+    local reason=""
+    if [[ "$net_count" -gt 0 ]]; then
+        reason="${net_count} net-FIRING alert(s): ${net_names}"
+    fi
+    if [[ "$total" -gt 20 ]]; then
+        [[ -n "$reason" ]] && reason+="; "
+        reason+="noisy channel (${total} messages > 20)"
+    fi
+
+    if [[ -n "$reason" ]]; then
+        [[ "$QUIET" == true ]] && section_always 49 "Slack — #alerts Recent Alerts"
+        warn "$reason — $traffic"
+        json_add "slack_alerts" "WARN" "$reason — $traffic"
+    else
+        pass "No net-firing alerts — $traffic"
+        json_add "slack_alerts" "PASS" "$traffic"
+    fi
+}
+
+# --- 50. Proxmox CSI — failed attach tasks ---
+#
+# proxmox-csi does NOT surface Proxmox API failures. When `qm set --scsiN`
+# returns HTTP 400 (poisoned LUN slot, `no free lun`, a query-pci timeout,
+# a storage error), the controller still logs "ControllerPublishVolume:
+# volume published" and k8s still fires a SuccessfulAttachVolume event — so a
+# hard, permanent host-side failure presents to an operator only as a pod
+# hanging in ContainerCreating on "device /dev/disk/by-id/wwn-... not found".
+# That mismatch cost ~3 days on the 2026-08-04 stirling-pdf incident.
+#
+# The PVE task log is the ground truth the CSI throws away: every attach is a
+# `qmconfig` task run by the csi@pve!csi-token user, with its real status. This
+# check reads it directly and reports what the CSI hid.
+#   no failed csi qmconfig tasks in window  -> PASS
+#   failures present                        -> WARN (FAIL if any in last 1h,
+#                                              i.e. an attach is wedged NOW)
+check_csi_failed_tasks() {
+    section 50 "Proxmox CSI — Failed Attach Tasks"
+
+    local window_h=24
+    local raw
+    # `pvesh get /nodes/<n>/tasks` is node-scoped; --limit is generous because
+    # the CSI is chatty (every attach AND detach is a qmconfig task).
+    raw=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+        root@192.168.1.127 "pvesh get /nodes/pve/tasks --limit 400 --output-format json 2>/dev/null" 2>/dev/null || true)
+
+    if [[ -z "$raw" ]]; then
+        [[ "$QUIET" == true ]] && section_always 50 "Proxmox CSI — Failed Attach Tasks"
+        warn "Could not read PVE task log from 192.168.1.127 (SSH)"
+        json_add "csi_failed_tasks" "WARN" "SSH failed"
+        return 0
+    fi
+
+    local result
+    result=$(PVE_TASKS="$raw" WINDOW_H="$window_h" python3 << 'CSITASK_EOF' 2>/dev/null
+import json, os, time
+
+try:
+    tasks = json.loads(os.environ["PVE_TASKS"])
+except Exception:
+    print("WARN")
+    print("could not parse PVE task JSON")
+    raise SystemExit(0)
+
+now = time.time()
+window = float(os.environ.get("WINDOW_H", "24")) * 3600
+recent_cut = 3600  # a failure this fresh means an attach is wedged right now
+
+fails, urgent = [], 0
+for t in tasks:
+    # Only the CSI's own disk attach/detach calls.
+    if t.get("type") != "qmconfig":
+        continue
+    if "csi" not in str(t.get("tokenid", "")) and "csi" not in str(t.get("user", "")):
+        continue
+    status = str(t.get("status", ""))
+    if not status or status == "OK":
+        continue
+    age = now - float(t.get("starttime", 0) or 0)
+    if age > window:
+        continue
+    if age <= recent_cut:
+        urgent += 1
+    # Compress the Proxmox error to its distinguishing clause.
+    msg = status.replace("Parameter verification failed.", "").strip()
+    fails.append((t.get("id", "?"), msg[:120], int(age / 60)))
+
+if not fails:
+    print("PASS")
+    print("no failed proxmox-csi attach tasks in the last %gh" % (window / 3600))
+    raise SystemExit(0)
+
+# Collapse duplicates — a poisoned slot re-fails on every retry.
+seen = {}
+for vmid, msg, age_m in fails:
+    key = (vmid, msg)
+    if key not in seen:
+        seen[key] = [0, age_m]
+    seen[key][0] += 1
+    seen[key][1] = min(seen[key][1], age_m)
+
+rows = [
+    "VM %s x%d (newest %dm ago): %s" % (vmid, cnt, age_m, msg)
+    for (vmid, msg), (cnt, age_m) in sorted(seen.items(), key=lambda kv: kv[1][1])
+]
+print("FAIL" if urgent else "WARN")
+print(" | ".join(rows[:4]))
+CSITASK_EOF
+) || result=$'WARN\npython parse failed'
+
+    local status detail
+    status=$(echo "$result" | head -1)
+    detail=$(echo "$result" | sed -n '2p')
+
+    case "$status" in
+        FAIL)
+            [[ "$QUIET" == true ]] && section_always 50 "Proxmox CSI — Failed Attach Tasks"
+            fail "proxmox-csi attach FAILED host-side within the last hour (k8s was told it succeeded): $detail"
+            info "  Any pod waiting on that volume is stuck in ContainerCreating and will not recover."
+            info "  A 'duplicate property throttle-drive-scsiN' message means a poisoned LUN slot — see check 47."
+            json_add "csi_failed_tasks" "FAIL" "$detail"
+            ;;
+        WARN)
+            [[ "$QUIET" == true ]] && section_always 50 "Proxmox CSI — Failed Attach Tasks"
+            warn "proxmox-csi attach failures in the PVE task log (reported as success to k8s): $detail"
+            json_add "csi_failed_tasks" "WARN" "$detail"
+            ;;
+        *)
+            pass "$detail"
+            json_add "csi_failed_tasks" "PASS" "$detail"
+            ;;
+    esac
+}
+
 # --- Summary ---
+
+# Recompute the summary counters from the per-check JSON records.
+#
+# pass()/warn()/fail() increment once per FINDING, and several checks call
+# them in per-item loops (one fail per broken DaemonSet, per hot node, ...),
+# so the raw counters count findings, not checks — a single bad check could
+# add 9 to FAIL_COUNT while the checks[] array (json_add fires exactly once
+# per check, in every output mode) records one FAIL. That skew made the
+# JSON summary report e.g. pass:39/warn:7/fail:18 while checks[] held
+# 34/7/7. Deriving the final counters from JSON_RESULTS makes the summary,
+# the human report and the exit code all agree with checks[]: one unit per
+# check. The per-finding [PASS]/[WARN]/[FAIL] report lines are unaffected.
+recompute_check_counters() {
+    PASS_COUNT=0
+    WARN_COUNT=0
+    FAIL_COUNT=0
+    local r status
+    for r in "${JSON_RESULTS[@]}"; do
+        # Extract the value of the "status" field. Detail strings are
+        # json-escaped, so the raw sequence "status":" cannot occur in them.
+        status="${r#*\"status\":\"}"
+        status="${status%%\"*}"
+        case "$status" in
+            PASS) PASS_COUNT=$((PASS_COUNT + 1)) ;;
+            WARN) WARN_COUNT=$((WARN_COUNT + 1)) ;;
+            FAIL) FAIL_COUNT=$((FAIL_COUNT + 1)) ;;
+        esac
+    done
+}
+
 print_summary() {
     if [[ "$JSON" == true ]]; then
         echo "{"
@@ -3263,6 +3918,7 @@ main() {
         check_external_replicas check_external_divergence check_pve_thermals
         check_pve_load check_external_traefik_5xx check_ha_status_dashboard
         check_immich_search check_csi_ghost_drift check_goldmane_aggregator
+        check_slack_alerts check_csi_failed_tasks
     )
 
     # Auto-fix mutates cluster state inside individual checks — keep that
@@ -3286,11 +3942,23 @@ main() {
         run_checks_parallel "${checks[@]}"
         replay_check_outputs
     else
-        local fn
+        local fn before
         for fn in "${checks[@]}"; do
+            before=${#JSON_RESULTS[@]}
             "$fn"
+            if (( ${#JSON_RESULTS[@]} == before )); then
+                MISSING_CHECKS+=("$fn")
+            fi
         done
     fi
+
+    # Summary + exit code count one unit per CHECK (from the json_add
+    # records), not per finding — see recompute_check_counters.
+    recompute_check_counters
+
+    # Runs after the counters so its own WARN lands in them, and before the
+    # summary so it appears in both the human report and the JSON checks[].
+    assert_check_arity "${#checks[@]}"
 
     print_summary
 

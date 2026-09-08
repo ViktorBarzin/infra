@@ -49,7 +49,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -66,17 +66,18 @@ resource "kubernetes_manifest" "external_secret" {
           }
         },
         {
-          # Forgejo push token for opening PRs on forgejo.viktorbarzin.me
-          # (exec agent uses the Forgejo API via curl + $FORGEJO_TOKEN, and
-          # git push over HTTPS via the url.insteadOf rewrite in git-init).
-          # SECURITY: this is the viktor-scoped admin PAT (write:package +
-          # repo) shared by Woodpecker — see secret/ci/global/forgejo_push_token.
-          # The shared claude-agent pod (all agents on it) can now push to
-          # and open PRs against any repo this token can reach.
+          # Forgejo REPO-scoped PAT (read+write:repository) so the exec agent can
+          # clone/branch/push Forgejo repos and open PRs via the API. The old
+          # forgejo_push_token here was package-registry-scoped ONLY (no
+          # read/write:repository), so git clone/push + the PR API silently 403'd.
+          # secret/ci/global/forgejo_repo_token is viktor's git PAT (2026-07-25).
+          # SECURITY: the shared claude-agent pod (all agents) can now clone/push
+          # + open PRs on any Forgejo repo this PAT reaches — f1-source-fixer needs
+          # it to land f1-stream link fixes on the canonical Forgejo master.
           secretKey = "FORGEJO_TOKEN"
           remoteRef = {
             key      = "ci/global"
-            property = "forgejo_push_token"
+            property = "forgejo_repo_token"
           }
         },
         {
@@ -84,6 +85,49 @@ resource "kubernetes_manifest" "external_secret" {
           remoteRef = {
             key      = "claude-agent-service"
             property = "api_bearer_token"
+          }
+        },
+        {
+          # The fixer's own Forgejo identity: the `infra-agent` bot account's PAT
+          # (write:repository + write:issue, minted 2026-08-25). Deliberately NOT
+          # viktor's PAT — every comment, label, commit and close the fixer makes
+          # is attributed to the bot, which is also what makes the webhook's loop
+          # guard a one-line author check.
+          secretKey = "FIXER_FORGEJO_TOKEN"
+          remoteRef = {
+            key      = "claude-agent-service"
+            property = "forgejo_agent_token"
+          }
+        },
+        {
+          # HMAC secret shared with the Forgejo webhook on viktor/infra. Without
+          # it the receiver refuses every delivery: an unsigned endpoint that
+          # dispatches a cluster-write agent is not a state worth having.
+          secretKey = "FIXER_WEBHOOK_SECRET"
+          remoteRef = {
+            key      = "claude-agent-service"
+            property = "fixer_webhook_secret"
+          }
+        },
+        {
+          # Memory API key, so a run can recall what earlier runs learned and
+          # record what it learned itself. Without it every run starts blind
+          # about faults it has already diagnosed once.
+          secretKey = "MEMORY_API_KEY"
+          remoteRef = {
+            key      = "claude-memory"
+            property = "api_key"
+          }
+        },
+        {
+          # Doorbell publish token. This ntfy is NTFY_AUTH_DEFAULT_ACCESS=deny-all,
+          # so an unauthenticated POST is a 403 and no escalation reaches anyone.
+          # The token belongs to a dedicated `fixer` user with WRITE-ONLY access to
+          # the single `fixer` topic — not the admin account.
+          secretKey = "FIXER_NTFY_TOKEN"
+          remoteRef = {
+            key      = "claude-agent-service"
+            property = "fixer_ntfy_token"
           }
         },
         {
@@ -313,12 +357,13 @@ resource "kubernetes_cluster_role_binding" "claude_agent_exec" {
 # per-job *workspaces* are isolated (own clone under /workspace/jobs/<id>),
 # but /persistent is shared.
 module "persistent" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "claude-agent-persistent"
-  namespace  = kubernetes_namespace.claude_agent.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/claude-agent-persistent"
-  storage    = "5Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "claude-agent-persistent"
+  namespace          = kubernetes_namespace.claude_agent.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/claude-agent-persistent"
+  storage            = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # --- Deployment ---
@@ -436,11 +481,44 @@ resource "kubernetes_deployment" "claude_agent" {
               git config --global url."https://$${FORGEJO_TOKEN}@forgejo.viktorbarzin.me/".insteadOf "https://forgejo.viktorbarzin.me/"
             fi
 
-            # Clone or update repo
+            # The FIXER pushes as ITSELF, not as viktor. A longer prefix wins in
+            # git's insteadOf matching, so this narrows viktor/infra to the
+            # infra-agent bot while every other Forgejo repo keeps the rule
+            # above (the bot is a collaborator on viktor/infra only, so a
+            # blanket switch would break the other agents on this pod).
+            #
+            # Attribution is the point: the bot already authors every comment,
+            # label and close on an issue, and a commit pushed with someone
+            # else's credential makes the audit trail say something untrue.
+            # infra-agent is on master's push whitelist as of 2026-08-26.
+            if [ -n "$${FIXER_FORGEJO_TOKEN}" ]; then
+              git config --global url."https://infra-agent:$${FIXER_FORGEJO_TOKEN}@forgejo.viktorbarzin.me/viktor/infra".insteadOf "https://forgejo.viktorbarzin.me/viktor/infra"
+            fi
+
+            # Clone or update repo — from FORGEJO, which is canonical.
+            #
+            # This used to clone the GitHub MIRROR, and that silently threw away
+            # an agent's work: a fix pushed to the mirror is downstream of
+            # Forgejo, so the next Forgejo->GitHub sync force-overwrites it. The
+            # 2026-08-28 drill caught it — the run committed c526d61f, pushed it
+            # to github.com, reported success (the push really did exit 0), and
+            # the commit is now on no branch anywhere. `ref #N` was wrong for the
+            # same reason: it resolved against GitHub's issue numbers, not the
+            # tracker the run was dispatched from.
+            #
+            # The credential lives in the remote URL rather than an insteadOf
+            # rule, because git config set HERE belongs to the init container and
+            # never reaches the container the agent runs in. That is also why the
+            # rules above are inert for pushes; they are kept only for anything
+            # the init container itself does.
+            FORGEJO_ORIGIN="https://infra-agent:$${FIXER_FORGEJO_TOKEN}@forgejo.viktorbarzin.me/viktor/infra.git"
             if [ ! -d /workspace/infra/.git ]; then
-              git clone https://$${GITHUB_TOKEN}@github.com/ViktorBarzin/infra.git /workspace/infra
+              git clone "$${FORGEJO_ORIGIN}" /workspace/infra
             else
               cd /workspace/infra
+              # Repoint an existing clone, so a pod that survives this change
+              # stops pushing to the mirror.
+              git remote set-url origin "$${FORGEJO_ORIGIN}"
               git fetch origin
               git reset --hard origin/master
             fi
@@ -571,6 +649,102 @@ resource "kubernetes_deployment" "claude_agent" {
             value = "terraform-state"
           }
 
+          # ------------------------------------------------------------------ #
+          # The fixer — a `broken` issue on Forgejo repairs itself.
+          # docs: claude-agent-service/docs/2026-08-25-forgejo-fixer-design.md
+          #
+          # ARMED. Both gates are deliberate and independent (the loop ships
+          # disabled): AFK_KILL_SWITCH must be false AND AFK_ALLOWLIST must name
+          # the repo. Setting either back disables the fixer without touching
+          # code — that is the global brake. The per-issue brake is the `paused`
+          # label, which needs no deploy at all.
+          # ------------------------------------------------------------------ #
+          env {
+            name  = "AFK_KILL_SWITCH"
+            value = "false"
+          }
+          env {
+            name  = "AFK_ALLOWLIST"
+            value = "infra"
+          }
+          env {
+            name  = "AFK_READY_LABEL"
+            value = "broken"
+          }
+
+          # No budget or timeout ceiling on a fixer run (design decision 14): a
+          # hard diagnosis is never truncated, and burn rate is bounded by the
+          # per-repo lock — one run at a time — instead. Leaving
+          # FIXER_MAX_BUDGET_USD / FIXER_TIMEOUT_SECONDS unset is what expresses
+          # that; setting either puts a ceiling back.
+          env {
+            name  = "FIXER_FORGEJO_API"
+            value = "https://forgejo.viktorbarzin.me/api/v1"
+          }
+          env {
+            name  = "FIXER_FORGEJO_WEB"
+            value = "https://forgejo.viktorbarzin.me"
+          }
+          env {
+            name  = "FIXER_FORGEJO_OWNER"
+            value = "viktor"
+          }
+          env {
+            name  = "FIXER_BOT_ACTOR"
+            value = "infra-agent"
+          }
+          env {
+            name  = "FIXER_AGENT"
+            value = "issue-responder"
+          }
+          # The homelab CLI reads these. Reachability verified from this pod:
+          # loki.viktorbarzin.lan resolves and answers, claude-memory answers 200.
+          env {
+            name  = "MEMORY_API_URL"
+            value = "https://claude-memory.viktorbarzin.me"
+          }
+          env {
+            name  = "CLAUDE_MEMORY_API_URL"
+            value = "https://claude-memory.viktorbarzin.me"
+          }
+          env {
+            name = "CLAUDE_MEMORY_API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "claude-agent-secrets"
+                key  = "MEMORY_API_KEY"
+              }
+            }
+          }
+
+          env {
+            name  = "FIXER_NTFY_URL"
+            value = "https://ntfy.viktorbarzin.me"
+          }
+          env {
+            name  = "FIXER_NTFY_TOPIC"
+            value = "fixer"
+          }
+          # Woodpecker is the decisive CI stage for infra: .woodpecker/default.yml
+          # runs on push and is what applies the change.
+          env {
+            name  = "FIXER_WOODPECKER_URL"
+            value = "http://woodpecker-server.woodpecker.svc.cluster.local"
+          }
+          env {
+            name  = "FIXER_WOODPECKER_REPO_ID"
+            value = "1"
+          }
+          env {
+            name = "FIXER_WOODPECKER_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "claude-agent-secrets"
+                key  = "WOODPECKER_API_TOKEN"
+              }
+            }
+          }
+
           # NOTE on MCP: the HA MCP URL (secret — its path segment is the auth
           # token) arrives as env `HA_MCP_URL` via the claude-agent-secrets
           # ExternalSecret (env_from above), sourced from Vault
@@ -635,10 +809,10 @@ resource "kubernetes_deployment" "claude_agent" {
           resources {
             requests = {
               cpu    = "1"
-              memory = "2Gi"
+              memory = "640Mi"
             }
             limits = {
-              memory = "12Gi"
+              memory = "3Gi"
             }
           }
         }
@@ -746,7 +920,15 @@ resource "kubernetes_deployment" "claude_agent" {
   }
 
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].template[0].spec[0].dns_config,
+      spec[0].template[0].spec[0].container[1].image, # KEEL_IGNORE_IMAGE
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+    ]                                                                     # KYVERNO_LIFECYCLE_V1
   }
 }
 
@@ -757,6 +939,17 @@ resource "kubernetes_service" "claude_agent" {
     name      = "claude-agent-service"
     namespace = kubernetes_namespace.claude_agent.metadata[0].name
     labels    = local.labels
+    annotations = {
+      # This service has no ingress, so external-monitor-sync never sees it and
+      # nothing in Uptime Kuma watched it. These annotations make
+      # internal-monitor-sync create `[Internal] claude-agent-service`, probing
+      # http://claude-agent-service.claude-agent.svc.cluster.local:8080/health
+      # every 5 minutes. Same endpoint the kubelet probes, so a monitor going
+      # red means the pod is failing its own readiness check.
+      "uptime.viktorbarzin.me/internal-monitor"      = "true"
+      "uptime.viktorbarzin.me/internal-monitor-name" = "claude-agent-service"
+      "uptime.viktorbarzin.me/internal-monitor-path" = "/health"
+    }
   }
 
   spec {
@@ -869,5 +1062,155 @@ resource "kubernetes_cron_job_v1" "claude_oauth_expiry_monitor" {
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# -----------------------------------------------------------------------------
+# fixer-tick — the half of the fixer loop a webhook cannot do
+# -----------------------------------------------------------------------------
+# The webhook dispatches immediately when the repo is free. This tick covers the
+# two things it cannot: DRAINING a `broken` issue that arrived while a run held
+# the per-repo lock, and FOLLOWING a pushed commit through CI — turning a red
+# pipeline into a corrective turn (fix forward, never revert).
+#
+# It holds no state. What is in flight is the `agent-in-progress` label on the
+# issue, and where each run got to is a hidden footer on its own comment, so a
+# tick in a fresh pod resumes exactly where the last one stopped.
+#
+# Design: claude-agent-service/docs/2026-08-25-forgejo-fixer-design.md
+#
+# concurrency_policy Forbid: two ticks would race on the same lock and could
+# double-dispatch. A skipped tick costs at most one interval of latency.
+resource "kubernetes_cron_job_v1" "fixer_tick" {
+  metadata {
+    name      = "fixer-tick"
+    namespace = kubernetes_namespace.claude_agent.metadata[0].name
+    labels    = local.labels
+  }
+
+  spec {
+    schedule                      = "*/2 * * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    starting_deadline_seconds     = 60
+
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit              = 0
+        ttl_seconds_after_finished = 600
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            restart_policy       = "Never"
+            service_account_name = kubernetes_service_account.claude_agent.metadata[0].name
+            container {
+              name  = "tick"
+              image = "${local.image}:${local.image_tag}"
+              # The app is baked at /srv (the server runs uvicorn --app-dir /srv),
+              # so a bare `python3 -m app.fixer.tick` from / cannot import it.
+              working_dir = "/srv"
+              command     = ["python3", "-m", "app.fixer.tick"]
+
+              # Every FIXER_*/AFK_* value and both secrets come from the same
+              # places the service itself reads them, so the tick and the
+              # webhook can never disagree about the trigger label, the bot
+              # identity, or whether the loop is armed.
+              env_from {
+                secret_ref {
+                  name = "claude-agent-secrets"
+                }
+              }
+              env {
+                name  = "FIXER_SERVICE_URL"
+                value = "http://claude-agent-service.${local.namespace}.svc.cluster.local:8080"
+              }
+              env {
+                name  = "AFK_KILL_SWITCH"
+                value = "false"
+              }
+              env {
+                name  = "AFK_ALLOWLIST"
+                value = "infra"
+              }
+              env {
+                name  = "AFK_READY_LABEL"
+                value = "broken"
+              }
+              env {
+                name  = "FIXER_FORGEJO_API"
+                value = "https://forgejo.viktorbarzin.me/api/v1"
+              }
+              env {
+                name  = "FIXER_FORGEJO_WEB"
+                value = "https://forgejo.viktorbarzin.me"
+              }
+              env {
+                name  = "FIXER_FORGEJO_OWNER"
+                value = "viktor"
+              }
+              env {
+                name  = "FIXER_BOT_ACTOR"
+                value = "infra-agent"
+              }
+              env {
+                name  = "FIXER_AGENT"
+                value = "issue-responder"
+              }
+              env {
+                name  = "FIXER_NTFY_URL"
+                value = "https://ntfy.viktorbarzin.me"
+              }
+              env {
+                name  = "FIXER_NTFY_TOPIC"
+                value = "fixer"
+              }
+              env {
+                name  = "FIXER_WOODPECKER_URL"
+                value = "http://woodpecker-server.woodpecker.svc.cluster.local"
+              }
+              env {
+                name  = "FIXER_WOODPECKER_REPO_ID"
+                value = "1"
+              }
+              env {
+                name = "FIXER_WOODPECKER_TOKEN"
+                value_from {
+                  secret_key_ref {
+                    name = "claude-agent-secrets"
+                    key  = "WOODPECKER_API_TOKEN"
+                  }
+                }
+              }
+
+              resources {
+                requests = { cpu = "20m", memory = "64Mi" }
+                limits   = { memory = "192Mi" }
+              }
+
+              # The tick reads and writes the same run state the service does:
+              # run logs under /persistent/fixer-runs, and any cross-tick marker
+              # a watch needs. Each tick is a fresh pod, so a path that is not
+              # on this volume does not survive to the next tick. The claim is
+              # RWX, so mounting it here alongside the Deployment is fine.
+              volume_mount {
+                name       = "persistent"
+                mount_path = "/persistent"
+              }
+            }
+
+            volume {
+              name = "persistent"
+              persistent_volume_claim {
+                claim_name = module.persistent.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }

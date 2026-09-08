@@ -61,6 +61,13 @@ resource "kubernetes_deployment" "health" {
     labels = {
       app  = "health"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "health"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
@@ -128,6 +135,38 @@ resource "kubernetes_deployment" "health" {
             name  = "COOKIE_SECURE"
             value = "true"
           }
+          # Web Push VAPID identity (health repo ADR-0010): signs the
+          # rest-timer notifications that reach a locked iPhone (and mirror to
+          # a paired Apple Watch). All three from Vault secret/health via the
+          # kv ExternalSecret below; the app fails closed (feature off) when
+          # any is absent.
+          env {
+            name = "PUSH_VAPID_PRIVATE_KEY"
+            value_from {
+              secret_key_ref {
+                name = "health-kv-secrets"
+                key  = "push_vapid_private_key"
+              }
+            }
+          }
+          env {
+            name = "PUSH_VAPID_PUBLIC_KEY"
+            value_from {
+              secret_key_ref {
+                name = "health-kv-secrets"
+                key  = "push_vapid_public_key"
+              }
+            }
+          }
+          env {
+            name = "PUSH_VAPID_SUBJECT"
+            value_from {
+              secret_key_ref {
+                name = "health-kv-secrets"
+                key  = "push_vapid_subject"
+              }
+            }
+          }
           env {
             # ADR-0008 (health repo): identity for the internal LAN test host.
             # Only reached when no X-authentik-email header is present — i.e. via
@@ -164,7 +203,13 @@ resource "kubernetes_deployment" "health" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Stakater Reloader stamps this on every secret-triggered restart. The
+      # 2026-08-14 switch to reloadStrategy = annotations (stacks/reloader) moved
+      # the marker onto this pod-template annotation on the expectation that
+      # Terraform does not manage it, but it does wherever the pod template
+      # declares annotations, so it planned as a removal on every run.
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
@@ -173,6 +218,7 @@ resource "kubernetes_deployment" "health" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -195,13 +241,29 @@ resource "kubernetes_service" "health" {
       port        = 80
       target_port = 3000
     }
+    port {
+      # The FastAPI port, exposed ONLY for the health-api ingest route
+      # (ADR-0012) — the public host's /api/ingest goes straight to uvicorn,
+      # skipping the SvelteKit hop whose global CSRF guard rejects the
+      # Shortcut's cross-origin text/plain POST.
+      name        = "api"
+      port        = 8000
+      target_port = 8000
+    }
   }
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  auth            = "required"
-  dns_type        = "non-proxied"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "health"
+  }
+  auth = "required"
+  # ADR-0026 / code-6m20: auth-grey host. Dashboard UI behind Authentik,
+  # small JSON payloads. Proxied rides the zone-wide wildcard CNAME
+  # (ADR-0021) and creates no A/AAAA record.
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.health.metadata[0].name
   name            = "health"
   tls_secret_name = var.tls_secret_name
@@ -230,6 +292,10 @@ module "ingress" {
 # (ADR-0008). Same `health` deployment; acts as DEV_AUTH_EMAIL=vbarzin@gmail.com.
 module "ingress_test" {
   source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "health"
+  }
   # auth = "none": LAN-only (allow_local_access_only) test host — no public
   # exposure; the public health.viktorbarzin.me ingress above stays
   # auth="required". No user data gate here by design — it serves the real app
@@ -244,6 +310,46 @@ module "ingress_test" {
   ssl_redirect            = false
   max_body_size           = "100m"
   anti_ai_scraping        = false
+  extra_annotations = {
+    "gethomepage.dev/enabled" = "false"
+  }
+}
+
+# https://health-api.viktorbarzin.me — PUBLIC auth-free push-ingest host
+# (health repo ADR-0012, plan 2026-07-14-apple-health-auto-sync). Serves ONLY
+# /api/ingest: the iOS Shortcut automations (workout-end + morning) POST the
+# user's Apple Health samples here with a per-user bearer token the app
+# validates itself (SHA-256 at rest, revocable in Settings). auth = "none"
+# because Shortcuts cannot do the forward-auth dance; the spoofing hole that
+# opens is closed twice — strip-auth-headers removes any client-injected
+# X-authentik-* before the app sees it, and the path allowlist keeps every
+# other route unreachable on this host. Sablier "blocking": a programmatic
+# POST must be held while the pod wakes, never answered with the wake page.
+module "ingress_api" {
+  source = "../../modules/kubernetes/ingress_factory"
+  sablier = {
+    group    = "health"
+    strategy = "blocking"
+  }
+  # auth = "none": bearer-token push-ingest endpoint (health ADR-0012) — iOS
+  # Shortcuts can't do the forward-auth dance; the app validates per-user
+  # hashed tokens itself, strip-auth-headers kills spoofed X-authentik-*, and
+  # the /api/ingest path allowlist keeps every other route unreachable here.
+  auth = "none"
+  # ADR-0026 / code-6m20: the reason for auth = "none" above is that
+  # forward-auth breaks the iOS Shortcuts bearer-token push. That is a
+  # Traefik concern; Cloudflare's proxy adds no auth. The ingest bodies are
+  # small JSON, far under the 104,857,600-byte edge cap measured in ADR-0026.
+  # Proxied creates no A/AAAA record (ADR-0021).
+  dns_type          = "proxied"
+  namespace         = kubernetes_namespace.health.metadata[0].name
+  name              = "health-api"
+  service_name      = kubernetes_service.health.metadata[0].name
+  tls_secret_name   = var.tls_secret_name
+  ingress_path      = ["/api/ingest"]
+  port              = "8000"
+  max_body_size     = "5m"
+  extra_middlewares = ["traefik-strip-auth-headers@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled" = "false"
   }
@@ -298,7 +404,7 @@ resource "kubernetes_manifest" "external_secret_kv" {
       namespace = "health"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -306,13 +412,36 @@ resource "kubernetes_manifest" "external_secret_kv" {
       target = {
         name = "health-kv-secrets"
       }
-      data = [{
-        secretKey = "secret_key"
-        remoteRef = {
-          key      = "health"
-          property = "secret_key"
-        }
-      }]
+      data = [
+        {
+          secretKey = "secret_key"
+          remoteRef = {
+            key      = "health"
+            property = "secret_key"
+          }
+        },
+        {
+          secretKey = "push_vapid_private_key"
+          remoteRef = {
+            key      = "health"
+            property = "push_vapid_private_key"
+          }
+        },
+        {
+          secretKey = "push_vapid_public_key"
+          remoteRef = {
+            key      = "health"
+            property = "push_vapid_public_key"
+          }
+        },
+        {
+          secretKey = "push_vapid_subject"
+          remoteRef = {
+            key      = "health"
+            property = "push_vapid_subject"
+          }
+        },
+      ]
     }
   }
   depends_on = [kubernetes_namespace.health]

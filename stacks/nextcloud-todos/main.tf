@@ -17,7 +17,7 @@ locals {
   # ghcr (public package — anonymous pulls). Running tag is managed by the
   # Woodpecker deploy (kubectl set image); both image refs below are
   # ignore_changes'd, so this base only matters on (re)create.
-  image     = "ghcr.io/viktorbarzin/nextcloud-todos:${var.image_tag}"
+  image = "ghcr.io/viktorbarzin/nextcloud-todos:${var.image_tag}"
   labels = {
     app = "nextcloud-todos"
   }
@@ -69,7 +69,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -168,14 +168,6 @@ resource "kubernetes_deployment" "nextcloud_todos" {
     template {
       metadata {
         labels = local.labels
-        annotations = {
-          # Prometheus scrapes the service-endpoints (annotations live on the
-          # Service below); the pod annotations here let the kubernetes-pods
-          # SD job also discover /metrics directly.
-          "prometheus.io/scrape" = "true"
-          "prometheus.io/path"   = "/metrics"
-          "prometheus.io/port"   = "8080"
-        }
       }
 
       spec {
@@ -229,6 +221,12 @@ resource "kubernetes_deployment" "nextcloud_todos" {
             name  = "LIST_ALLOWLIST"
             value = "Personal"
           }
+          # Noticing lists: skipped by the classifier, routed to the ideation
+          # runner (ideas appended onto the todo; learn/romance course).
+          env {
+            name  = "IDEATION_ALLOWLIST"
+            value = "Noticing File"
+          }
           # Tier-0 LLM classifier
           env {
             name  = "LLAMA_SWAP_URL"
@@ -278,7 +276,13 @@ resource "kubernetes_deployment" "nextcloud_todos" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Stakater Reloader stamps this on every secret-triggered restart. The
+      # 2026-08-14 switch to reloadStrategy = annotations (stacks/reloader) moved
+      # the marker onto this pod-template annotation on the expectation that
+      # Terraform does not manage it, but it does wherever the pod template
+      # declares annotations, so it planned as a removal on every run.
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
@@ -302,12 +306,6 @@ resource "kubernetes_service" "nextcloud_todos" {
     name      = "nextcloud-todos"
     namespace = kubernetes_namespace.nextcloud_todos.metadata[0].name
     labels    = local.labels
-    annotations = {
-      # Prometheus kubernetes-service-endpoints SD scrapes /metrics here.
-      "prometheus.io/scrape" = "true"
-      "prometheus.io/path"   = "/metrics"
-      "prometheus.io/port"   = "8080"
-    }
   }
 
   spec {
@@ -340,11 +338,16 @@ module "ingress" {
   auth             = "none"
   anti_ai_scraping = false
   dns_type         = "proxied"
+  external_monitor = false
   namespace        = kubernetes_namespace.nextcloud_todos.metadata[0].name
   name             = "nextcloud-todos"
   port             = 8080
   ingress_path     = ["/cb"]
   tls_secret_name  = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/description" = "Nextcloud task automation"
+    "gethomepage.dev/icon"        = "nextcloud.png"
+  }
 }
 
 # =============================================================================

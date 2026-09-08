@@ -55,6 +55,14 @@ Last updated: 2026-06-01
 > - **`anca-elements-mirror.{sh,service,timer}` retired**, subsumed into the new **`nfs-mirror`** weekly job covering all critical NFS subtrees (anca-elements + ~80 services) → sda.
 > - **Synology `/Backup/Viki/nfs/<svc>/` orphan cleanup** — 84 dirs renamed in-place (btrfs metadata-only) to `/Backup/Viki/pve-backup/<svc>/` so daily-incremental Step 1 sees them as pre-existing and only ships deltas. No re-transfer.
 > - **Synology snapshot retention 7d → 3d**, all 8 backlog snapshots deleted via `sudo synosharesnapshot delete Backup ...`. Reclaimed ~800G btrfs (98% → 83% used). DSM API was blocked by 2FA; `sudo` over the existing `Administrator` SSH key worked with the Vault-stored password.
+>   **⚠️ CORRECTION (2026-08-06): the retention half of this never took effect.** It was set via
+>   `snap_auto_remove_keep_days` in `sharesnap.conf`, which is inert — the authoritative policy
+>   (`synoretention/Share#/Backup/policy`) stayed at `retainDay=7`. The identical near-full
+>   incident recurred on 2026-08-06. That day retention was set to 3 for real via
+>   `synoretentionconf --set-policy`, then **deliberately restored to 7 by Viktor** — the space
+>   problem was the un-collapsed hardlinks (`-H`, commit `f88742ba`) and the absent capacity
+>   alerting, not the retention depth. **Live value is 7.** The snapshot deletion half of this
+>   entry was real; the credential pointer is also stale (see the snapshot-management section).
 > - **Manifest mechanism extended**: `nfs-mirror` now appends its transferred file list to `/mnt/backup/.changed-files` so daily Step 1 incremental picks it up (was previously only fed by `daily-backup`).
 
 ## Overview
@@ -77,7 +85,7 @@ The **bypass list** (leg 2) is just `/srv/nfs/immich/` — too big for sda (1.5 
   - `Synology/Backup/Viki/nfs/` — immich only (post-2026-05-26)
   - `Synology/Backup/Viki/nfs-ssd/` — **immich-ML only (2026-06-01)**; ollama/llamacpp dropped (re-pullable models, live-only on the SSD)
 
-**VM image backups (added 2026-06-09)**: the hand-managed Linux VMs (those NOT in Terraform — see `compute.md`) were historically **not imaged at all** — only their *contents* reached backup if they happened to host a PVC/NFS path. `vzdump-vms` now takes a daily live `vzdump --mode snapshot` of each configured VMID → `/mnt/backup/vzdump/` (Copy 2), carried offsite by the monthly offsite-sync full pass (Copy 3). **Currently enabled for VMID 102 (devvm)** — the shared workstation, whose per-user home dirs + local-only git repos are otherwise irreplaceable. Extend via `VZDUMP_VMIDS` in the unit. See "VM Image Backups (vzdump)" under How It Works.
+**VM image backups (added 2026-06-09)**: the hand-managed Linux VMs (those NOT in Terraform — see `compute.md`) were historically **not imaged at all** — only their *contents* reached backup if they happened to host a PVC/NFS path. `vzdump-vms` takes a weekly (Sunday 01:00) live `vzdump --mode snapshot` of each configured VMID → `/mnt/backup/vzdump/` (Copy 2), carried offsite by the monthly offsite-sync full pass (Copy 3). It was nightly until 2026-08-16; day-to-day cover for devvm is now `devvm-home-backup` (daily 03:30), and the image is the bare-metal restore floor. **Currently enabled for VMID 102 (devvm)** — the shared workstation, whose per-user home dirs + local-only git repos are otherwise irreplaceable. Extend via `VZDUMP_VMIDS` in the unit. See "VM Image Backups (vzdump)" under How It Works.
 
 ## Architecture Diagram
 
@@ -210,14 +218,15 @@ graph LR
         T0000["00:00 LVM thin snapshots<br/>(lvm-pvc-snapshot)<br/>sdc PVCs CoW"]
         T0015["00:15 PostgreSQL per-DB dumps<br/>(CronJob)"]
         T0045["00:45 MySQL per-DB dumps<br/>(CronJob)"]
-        T0100["01:00 vzdump-vms<br/>live image of hand-managed VMs<br/>(devvm) → sda /mnt/backup/vzdump/"]
+        T0100["Sun 01:00 vzdump-vms (WEEKLY)<br/>live image of hand-managed VMs<br/>(devvm) → sda /mnt/backup/vzdump/<br/>bare-metal restore floor"]
         T0200["02:00 nfs-mirror (daily)<br/>sdc /srv/nfs/* → sda /mnt/backup/<svc>/<br/>~10-20 min steady state"]
+        T0330["03:30 devvm-home-backup<br/>rsync --link-dest incremental<br/>devvm /home → sda /mnt/backup/devvm-home/"]
         T0500["05:00 daily-backup<br/>mount LVM snapshots ro<br/>rsync PVC files → /mnt/backup/pvc-data/<br/>+ sqlite + pfsense + pve-config"]
         T0600["06:00 offsite-sync-backup<br/>Step 1: sda → Synology /Viki/pve-backup/<br/>Step 2: sdc/immich + nfs-ssd → /Viki/nfs[-ssd]/"]
         T1200["12:00 LVM thin snapshots (midday)<br/>second daily snapshot"]
     end
 
-    T0000 --> T0015 --> T0045 --> T0100 --> T0200 --> T0500 --> T0600 --> T1200
+    T0000 --> T0015 --> T0045 --> T0100 --> T0200 --> T0330 --> T0500 --> T0600 --> T1200
     INO -.->|change events feed Step 2| T0600
 
     style Nightly fill:#ffe0b2
@@ -325,7 +334,8 @@ graph LR
 | NFS Change Tracker | Continuous (inotifywait) | PVE host: `nfs-change-tracker.service` | Logs changed NFS file paths to `/mnt/backup/.nfs-changes.log` |
 | pfSense Backup | Daily 05:00 + daily-backup | PVE host: SSH + API | config.xml + full filesystem tar |
 | Offsite Sync | Daily 06:00 (after daily-backup) | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
-| VM Image Backup (vzdump) | Daily 01:00, keep 3 | PVE host: `vzdump-vms` | Live `vzdump` of hand-managed VMs (devvm) → `/mnt/backup/vzdump/` |
+| VM Image Backup (vzdump) | **Weekly Sun 01:00**, keep 3 | PVE host: `vzdump-vms` | Live `vzdump` of hand-managed VMs (devvm) → `/mnt/backup/vzdump/`. Bare-metal restore floor; daily protection is `devvm-home-backup` |
+| devvm /home (incremental) | Daily 03:30, keep 14 | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
 | PostgreSQL Backup (full) | Daily 00:00, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
 | PostgreSQL Backup (per-db) | Daily 00:15, 14d retention | CronJob in `dbaas` namespace | pg_dump -Fc per database → `/backup/per-db/<db>/` |
 | MySQL Backup (full) | Daily 00:30, 14d retention | CronJob in `dbaas` namespace | mysqldump --all-databases |
@@ -343,7 +353,7 @@ graph LR
 
 Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62 Proxmox CSI PVCs. These are CoW snapshots — instant creation, minimal overhead, sharing the thin pool's free space.
 
-**Script**: `/usr/local/bin/lvm-pvc-snapshot` on PVE host (source: `infra/scripts/lvm-pvc-snapshot.sh`). Deploy: `scp infra/scripts/lvm-pvc-snapshot.sh root@192.168.1.127:/usr/local/bin/lvm-pvc-snapshot`
+**Script**: `/usr/local/bin/lvm-pvc-snapshot` on PVE host (source: `infra/scripts/lvm-pvc-snapshot.sh`, unit `infra/scripts/lvm-pvc-snapshot.service`, timer `infra/scripts/lvm-pvc-snapshot.timer`). **Deploy is CI, not a person** — see "Deploying the PVE host scripts" below.
 **Schedule**: Daily 03:00 via systemd timer, 7-day retention
 **Discovery**: Auto-discovers PVC LVs matching `vm-*-pvc-*` pattern in VG `pve` thin pool `data`
 
@@ -360,13 +370,15 @@ Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62
 
 The hand-managed Linux VMs are **intentionally not in Terraform** (telmate/bpg provider bugs — see `compute.md`) and were historically **not imaged at all**: nothing took a whole-disk backup of the VM itself. For most that is acceptable — k8s nodes are reprovisioned from cloud-init and their data lives in PVCs covered above. But **devvm** (the shared multi-user Claude Code workstation, VMID 102) holds irreplaceable state that lives nowhere else: per-user home dirs (`~/.claude`, `~/.t3`, shell history), manually-installed tooling, and **local-only git repos** — the monorepo root at `/home/wizard/code` has no git remote. A lost devvm disk = unrecoverable.
 
-**Script**: `/usr/local/bin/vzdump-vms` on PVE host (source: `infra/scripts/vzdump-vms.sh`). Deploy: `scp infra/scripts/vzdump-vms.sh root@192.168.1.127:/usr/local/bin/vzdump-vms` + `scp infra/scripts/vzdump-vms.{service,timer} root@192.168.1.127:/etc/systemd/system/`, then `systemctl daemon-reload && systemctl enable --now vzdump-vms.timer`.
-**Schedule**: Daily 01:00 via systemd timer — ahead of the other backup jobs so the fresh image is on sda before offsite-sync runs.
+**Script**: `/usr/local/bin/vzdump-vms` on PVE host (source: `infra/scripts/vzdump-vms.sh`). Deploy: push to master — `.woodpecker/pve-scripts-sync.yml` copies the script and its units to the host (see "Deploying the PVE host scripts" below). It was `scp` by hand until 2026-09-03.
+**Schedule**: **Weekly, Sunday 01:00** via systemd timer — ahead of the other backup jobs so a fresh image is on sda before offsite-sync runs. Nightly until 2026-08-16, when a full `.vma` re-reading devvm's whole 228 GiB disk every night turned out to be ~40% of all reads on sdc; `devvm-home-backup` took over the daily job.
 **Mode**: `vzdump --mode snapshot` — live, no downtime. devvm has the qemu guest agent enabled (`agent: 1`), so the snapshot is **filesystem-consistent** (fs-freeze) rather than merely crash-consistent. Runs `Nice=10` + `IOSchedulingClass=idle` + `--ionice 7` so it never starves etcd on the contended sdc IO domain.
 **Scope**: VMIDs in `VZDUMP_VMIDS` (default `102` = devvm). Add VMIDs there to image other hand-managed VMs.
 **Retention**: `KEEP=3` newest dumps per VMID on sda (`/mnt/backup/vzdump/`); each devvm image is ~35-50 GB zstd.
-**Critical dependency**: `nfs-mirror` MUST keep `--exclude='/vzdump/'`. Its nightly `rsync -rlt --delete /srv/nfs/ → /mnt/backup/` treats any `/mnt/backup` dir with no `/srv/nfs` counterpart as an orphan and deletes it — this silently reaped the first two vzdump images at 02:00 on 2026-06-10 before the exclude was added (same reason `pvc-data`/`pfsense`/`pve-config`/`sqlite-backup` are excluded).
-**Offsite**: deliberately **NOT** appended to the incremental offsite manifest — it never deletes, so daily multi-GB images would accumulate unbounded on Synology. Instead the **monthly offsite-sync full pass (days 1-7)** mirrors all of `/mnt/backup` (including `vzdump/`) to Synology with `--delete`, bounded to local retention. So Copy 2 (sda) refreshes **daily**; Copy 3 (Synology) refreshes **monthly**.
+**Critical dependency**: `nfs-mirror` MUST keep `--exclude='/vzdump/'` **and `--exclude='/devvm-home/'`**. Its nightly `rsync -rlt --delete /srv/nfs/ → /mnt/backup/` treats any `/mnt/backup` dir with no `/srv/nfs` counterpart as an orphan and deletes it — this silently reaped the first two vzdump images at 02:00 on 2026-06-10 before the exclude was added (same reason `pvc-data`/`pfsense`/`pve-config`/`sqlite-backup` are excluded).
+
+**It happened again.** `devvm-home-backup` landed 2026-08-16 without a matching exclude, so `nfs-mirror` reaped its generations nightly for the next 19 days. Measured 2026-09-04: generations `2026-08-31` through `2026-09-03` held **0 entries under `wizard/`** against 87 in `2026-09-04`, and their mtimes (02:05-02:11) sat just after this job's 02:00 slot. Only the current night's generation ever survived, so retention was **1 day, not 14**. Fixed the same day by adding `/devvm-home/`. **Anything new written under `/mnt/backup/` needs its own exclude line here on the same commit** — that is the whole lesson from both incidents.
+**Offsite**: deliberately **NOT** appended to the incremental offsite manifest — it never deletes, so daily multi-GB images would accumulate unbounded on Synology. Instead the **monthly offsite-sync full pass (days 1-7)** mirrors all of `/mnt/backup` (including `vzdump/`) to Synology with `--delete`, bounded to local retention. So Copy 2 (sda) refreshes **weekly**; Copy 3 (Synology) refreshes **monthly**.
 **Monitoring**: pushes `vzdump_last_run_timestamp` / `vzdump_last_status` / `vzdump_last_success_timestamp` to Pushgateway job `vzdump-backup`. Alerts `VzdumpBackupStale` (>~50h since last success), `VzdumpBackupNeverRun`, `VzdumpBackupFailing` (status≠0) are defined in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` (the 3-2-1 group) — **effective on the next `monitoring` stack apply** (metrics already flow, so the alerts arm immediately once applied).
 **Restore**: on the PVE host, `qmrestore /mnt/backup/vzdump/vzdump-qemu-<vmid>-<ts>.vma.zst <vmid>` — restore to a spare VMID first if the original still exists, then swap disks; or use the PVE UI (add `/mnt/backup` as a dir storage with content=backup → Restore).
 
@@ -374,7 +386,7 @@ The hand-managed Linux VMs are **intentionally not in Terraform** (telmate/bpg p
 
 **Backup disk**: sda (1.1TB RAID1 SAS) → VG `backup` → LV `data` → ext4 → mounted at `/mnt/backup` on PVE host. Dedicated backup disk, independent of live storage.
 
-**Script**: `/usr/local/bin/daily-backup` on PVE host (source: `infra/scripts/daily-backup.sh`)
+**Script**: `/usr/local/bin/daily-backup` on PVE host (source: `infra/scripts/daily-backup.sh`, unit + timer alongside it). **Deploy is CI** — see "Deploying the PVE host scripts" below.
 **Schedule**: Daily 05:00 via systemd timer
 **Retention**: 4 weekly versions (weeks 0-3 via `--link-dest` hardlink dedup)
 
@@ -451,7 +463,7 @@ This provides both frequent backups (every 6h) AND continuous integrity monitori
 
 ### Layer 3: Offsite Sync to Synology NAS
 
-**Script**: `/usr/local/bin/offsite-sync-backup` on PVE host (source: `infra/scripts/offsite-sync-backup`)
+**Script**: `/usr/local/bin/offsite-sync-backup` on PVE host (source: `infra/scripts/offsite-sync-backup.sh`, unit + timer alongside it). **Deploy is CI** — see "Deploying the PVE host scripts" below.
 **Schedule**: Daily 06:00 via systemd timer (After=daily-backup.service)
 
 Two-step offsite sync:
@@ -506,35 +518,131 @@ Pushes `nfs_mirror_last_run_timestamp` + `nfs_mirror_last_status` + `nfs_mirror_
 
 ### Synology snapshot management
 
-Synology DSM keeps daily btrfs snapshots of every shared folder (the `Backup` share most importantly). Retention is configured per-share in DSM's Snapshot Replication app, and persists in `synosharesnapshot shareconf`.
+Synology DSM keeps daily btrfs snapshots of every shared folder (the `Backup` share most importantly). Retention is configured per-share in DSM's Snapshot Replication app.
 
-**Current settings** (`Backup` share, 2026-05-24): daily at 02:00, **`snap_auto_remove_keep_days=3`** (tightened from 7 to reduce the window where deleted data continues to consume space).
+> ### ⚠️ Two config files. Only one of them does anything.
+>
+> **AUTHORITATIVE** — `/usr/syno/etc/synoretention/Share#/<share>/policy`, managed by
+> `/usr/syno/bin/synoretentionconf`. This is what `synoretainer` actually enforces:
+>
+> ```bash
+> synoretentionconf --get "Share#" Backup                  # read
+> synoretentionconf --set-policy "Share#" Backup retain_by_day 7   # write
+> ```
+>
+> **INERT** — `snap_auto_remove_keep_days` / `snap_auto_remove_enable` in
+> `/usr/syno/etc/sharesnap/sharesnap.conf`. These read like the retention knob and are
+> *not*. Setting them changes nothing.
+>
+> **This cost us a repeat incident.** On 2026-05-24 retention was "tightened 7d → 3d" by
+> setting `snap_auto_remove_keep_days=3` — and documented here as done. The real policy
+> stayed at `retainDay=7`, so the volume kept 7 days of snapshots and hit 99% again on
+> 2026-08-06 (103 GiB free, ~1 day from stopping the offsite leg). Both the 2026-05-24 note
+> above and this section asserted 3 days for ~10 weeks while the system did 7.
+>
+> Whenever you touch retention, verify with `synoretentionconf --get` — never trust
+> `sharesnap.conf`, and never trust the docs alone.
+
+**Current settings** (`Backup` share, verified 2026-08-06 via `synoretentionconf --get`):
+daily snapshot, `Policy type: 64 (Retain by day)`, **`RetainDay=7`**. Contrast: `homes` and
+`Emo shared` are `retainDay=28`, `music` is 7.
+
+> **7 days is a deliberate choice, not the old bug.** During the 2026-08-06 incident retention
+> was briefly set to 3, then **restored to 7 by Viktor the same day** — 7 days of rollback depth
+> on the offsite copy is worth the space. The earlier 7 was an *accident* (the 3 never applied);
+> this 7 is a decision. Don't "fix" it back to 3.
+>
+> What makes 7 affordable now, where it wasn't before:
+> 1. **`-H` on the offsite rsync** (commit `f88742ba`) — the weekly `pvc-data` generations were
+>    landing as independent full copies (124G real vs 300G apparent). That ~176 GiB of pure
+>    duplication was the bulk of what 7 days of snapshots had to pin.
+> 2. **Real capacity alerts** (below) — the volume is no longer unmonitored, so a refill is
+>    caught days out instead of surfacing at 99%.
+>
+> If it fills again *with* those in place, the honest next lever is capacity (the DS218 is a
+> 2-bay at 5.3 TB and the Immich mirror grows), not shaving retention.
+
+**Snapshot count runs at retention+1** — the daily snapshot is created at the same 00:00 tick
+that `synoretainer` prunes, so `RetainDay=7` steady-state shows 8. Don't read that as drift.
 
 Snapshots are CoW — deleting a file from the live filesystem does NOT free its blocks while any retained snapshot references them. Reclaim only happens after ALL referencing snapshots roll off.
 
 **DSM Web API is gated by 2FA (FIDO/OTP)** — programmatic snapshot management has to go via SSH + sudo instead:
 
+**The password is in VAULTWARDEN, not HashiCorp Vault** (corrected 2026-08-06 — the old
+`vault kv get -field=synology_admin_password secret/viktor` documented here returns EMPTY and
+no such key exists under `secret/`; that dead pointer cost a handoff mid-incident). Note there
+are TWO Vaultwarden items named `nas.viktorbarzin.me` — disambiguate on `username=Administrator`
+(the other is Anca's).
+
 ```bash
-# Password is in Vault: secret/viktor → synology_admin_password
-PASS=$(VAULT_ADDR=https://vault.viktorbarzin.me vault kv get -field=synology_admin_password secret/viktor)
+PW=$(homelab vault get e993c4e1-6e22-4fe8-a52d-2a5214d9d0c0 --field password)
 
-# List snapshots on the Backup share
-ssh Administrator@192.168.1.13 "echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot list Backup"
+# Pass the secret on ssh STDIN, never inside the remote command string:
+# `ssh host "echo '$PW' | sudo -S ..."` FAILS ("no password was provided") and would
+# also leak the password into the remote process args.
+printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
+  'sudo -S -p "" /usr/syno/sbin/synosharesnapshot list Backup'
 
-# Bulk delete ALL snapshots (reclaims everything once btrfs cleaner runs)
-ssh Administrator@192.168.1.13 "
-  SNAPS=\$(echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot list Backup 2>/dev/null \
-    | grep -oE 'GMT-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
-  echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot delete Backup \$SNAPS
-"
+# Delete specific snapshots (space-separated; keep the newest few)
+printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
+  'sudo -S -p "" /usr/syno/sbin/synosharesnapshot delete Backup GMT-2026.08.01-21.00.02 ...'
 
-# Tighten retention
-ssh Administrator@192.168.1.13 "echo '$PASS' | sudo -S /usr/syno/sbin/synosharesnapshot shareconf set Backup snap_auto_remove_keep_days=3"
+# Read / change retention (AUTHORITATIVE — not sharesnap.conf)
+printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
+  'sudo -S -p "" /usr/syno/bin/synoretentionconf --get "Share#" Backup'
+printf '%s\n' "$PW" | ssh Administrator@192.168.1.13 \
+  'sudo -S -p "" /usr/syno/bin/synoretentionconf --set-policy "Share#" Backup retain_by_day 7'
 ```
 
-The btrfs cleaner thread reclaims async — `df` may lag the snapshot-delete by minutes (typical reclaim rate observed 2026-05-24: ~300 MB/s sustained, with bursts of 800 GB in 2 minutes).
+For a multi-line remote script, feed the password as line 1 and the script after it —
+`sudo` consumes the first line, `bash -s` reads the rest:
+
+```bash
+{ printf '%s\n' "$PW"; printf '%s' "$SCRIPT"; } | ssh Administrator@192.168.1.13 'sudo -S -p "" bash -s'
+```
+
+**Reclaim is ASYNCHRONOUS.** `synosharesnapshot delete` prints `Success!` instantly, but the
+btrfs cleaner frees extents in the background — `df` lags by minutes (2026-08-06: deleting 5
+snapshots took the volume 99% → 90% in ~3 min and settled at 83%/957 GiB free over the next
+hour; 2026-05-24 saw ~300 MB/s sustained with 800 GB bursts). Don't treat a flat `df` as failure.
+
+**Sizing tip**: use `df` or `btrfs qgroup show` — a `du` over `/volume1` does NOT finish on the
+DS218 (runs killed at 900 s and 2400 s on 2026-08-06). Measure hardlink-aware sizes from the
+PVE side instead (`du -sh` vs `du -slh` on `/mnt/backup/pvc-data`).
 
 > Memory: id=2673-2676 (Synology snapshot retention gotcha — deletion vs reclaim timing).
+
+### Deploying the PVE host scripts
+
+`lvm-pvc-snapshot`, `daily-backup`, `offsite-sync-backup`, `devvm-home-backup`,
+`vzdump-vms` and `nfs-mirror` deploy from git through Woodpecker, not by hand. Push a
+change to any of the eighteen files under `infra/scripts/` (`<name>.sh`, `<name>.service`,
+`<name>.timer`) and
+`.woodpecker/pve-scripts-sync.yml` copies the script to `/usr/local/bin/<name>`, the units
+to `/etc/systemd/system/`, runs `bash -n` on each script, then `systemctl daemon-reload`
+and prints the timer list. Failures post to Slack.
+
+The pipeline follows `pve-nfs-exports-sync.yml` and uses the same `pve_ssh_key` repo
+secret (private key mirrored in Vault `secret/woodpecker/pve_ssh_key`).
+
+Why it exists: these scripts carried an `scp` invocation in this document and depended on
+someone remembering to run it, so a committed change could sit undeployed. Added
+2026-09-03 (code-kpk0) for the first three, after `lvm-pvc-snapshot.service` turned out to
+exist on the host and in no repository at all (code-3ni). All nine files were
+byte-identical between repo and host when the pipeline landed, so its first run changed
+nothing.
+
+`devvm-home-backup` and `vzdump-vms` joined the same day. `devvm-home-backup` had no
+deploy path at all — neither CI nor Ansible carried it — so its repo copy was the one
+nobody kept in step with the host. `vzdump-vms` was byte-identical to the host copy
+(md5 `e1b06d5b3862fa62edf826e274e4b1fc`), so adding it closed a drift window rather than
+changing anything.
+
+`nfs-mirror` joined 2026-09-04, the last one still deployed by hand. All three of its
+files were byte-identical between repo and host when it joined.
+
+Nothing in this set is deployed by hand any more.
 
 ## Configuration
 
@@ -545,15 +653,18 @@ The btrfs cleaner thread reclaims async — `df` may lag the snapshot-delete by 
 | `/usr/local/bin/lvm-pvc-snapshot` | PVE host: LVM snapshot creation + restore |
 | `/usr/local/bin/daily-backup` | PVE host: PVC file copy + auto SQLite backup + pfSense |
 | `/usr/local/bin/offsite-sync-backup` | PVE host: two-step rsync to Synology (sda + NFS via inotify) |
-| `/usr/local/bin/vzdump-vms` | PVE host: daily live `vzdump` image of hand-managed VMs (devvm) → `/mnt/backup/vzdump/` |
+| `/usr/local/bin/vzdump-vms` | PVE host: **weekly** live `vzdump` image of hand-managed VMs (devvm) → `/mnt/backup/vzdump/` |
+| `/usr/local/bin/devvm-home-backup` | PVE host: daily incremental `rsync --link-dest` of devvm `/home` → `/mnt/backup/devvm-home/`. ~29 GB per generation after the 2026-09-03 exclude fix (was 37 GB — virtualenvs and four SDK caches were slipping through) |
 | `/mnt/backup/` | PVE host: sda mount point (1.1TB backup disk) |
 | `/mnt/backup/vzdump/` | PVE host: vzdump VM images (keep 3 per VMID), mirrored offsite monthly |
+| `/mnt/backup/devvm-home/` | PVE host: devvm `/home` hardlink generations (keep 14), mirrored offsite monthly (`-H` preserves the link farm) |
 | `/mnt/backup/.nfs-changes.log` | NFS change log from inotifywait, consumed by offsite-sync |
 | `/etc/systemd/system/nfs-change-tracker.service` | inotifywait watcher for `/srv/nfs` + `/srv/nfs-ssd` |
 | `/etc/systemd/system/lvm-pvc-snapshot.timer` | Daily 03:00 (LVM snapshots) |
 | `/etc/systemd/system/daily-backup.timer` | Daily 05:00 (file backup) |
 | `/etc/systemd/system/offsite-sync-backup.timer` | Daily 06:00 (offsite sync) |
-| `/etc/systemd/system/vzdump-vms.timer` | Daily 01:00 (VM image backup) |
+| `/etc/systemd/system/devvm-home-backup.timer` | Daily 03:30 (devvm /home incremental) |
+| `/etc/systemd/system/vzdump-vms.timer` | **Weekly Sun 01:00** (VM image backup) |
 | `/etc/systemd/system/vzdump-vms.service` | oneshot: `vzdump-vms` (source `infra/scripts/vzdump-vms.{sh,service,timer}`) |
 | `/usr/local/bin/nfs-mirror` | PVE host: daily 02:00 mirror of /srv/nfs/* → sda /mnt/backup/<svc>/ (Layer 3a) |
 | `/etc/systemd/system/nfs-mirror.timer` | Daily 02:00 (NFS local mirror to sda) |
@@ -934,7 +1045,7 @@ the 2026-04-22 backup_offsite_sync FAIL (node3 kubelet hiccup at
 | **Other apps not enumerated above** | ✓¹ | ✓¹ | varies | ✓ | proxmox-lvm / proxmox-lvm-encrypted |
 | **Postiz** (bundled bitnami PG on local-path) | — | — | ✓ daily pg_dump → NFS | ✓ | local-path + NFS |
 | **Hand-managed VMs (not in Terraform)** |
-| devvm (workstation, VMID 102) | — | — | ✓ daily vzdump image | ✓ monthly | local-lvm (sdc) |
+| devvm (workstation, VMID 102) | — | — | ✓ daily `/home` rsync + weekly vzdump image | ✓ monthly | local-lvm (sdc) |
 | Other hand-managed VMs (HA 103, registry 220, k8s nodes) | — | — | — gap² | — | local-lvm — see note² |
 | **Media (NFS)** |
 | Immich (~800GB) | — | — | — | ✓ | NFS |

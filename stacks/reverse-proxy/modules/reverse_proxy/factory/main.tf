@@ -65,10 +65,10 @@ variable "skip_global_rate_limit" {
 variable "dns_type" {
   type        = string
   default     = "none"
-  description = "Cloudflare DNS: 'proxied' (CNAME to tunnel), 'non-proxied' (A/AAAA to public IP), or 'none'"
+  description = "Cloudflare DNS: 'proxied' (CNAME to tunnel), 'non-proxied' (A/AAAA to public IP), 'internal' (A to the internal Traefik LB IP — shadows the * wildcard, resolvable everywhere but routable only from home LANs/WG/VPN; pair with traefik-home-lans-only), or 'none'"
   validation {
-    condition     = contains(["proxied", "non-proxied", "none"], var.dns_type)
-    error_message = "dns_type must be 'proxied', 'non-proxied', or 'none'."
+    condition     = contains(["proxied", "non-proxied", "internal", "none"], var.dns_type)
+    error_message = "dns_type must be 'proxied', 'non-proxied', 'internal', or 'none'."
   }
 }
 
@@ -101,6 +101,14 @@ variable "public_ip" {
 variable "public_ipv6" {
   type    = string
   default = "2001:470:6e:43d::2"
+}
+
+# Internal Traefik LB IP used by dns_type = "internal" records — same value
+# and caveats as modules/kubernetes/ingress_factory (tracks the dedicated
+# MetalLB IP from stacks/traefik, ETP=Local).
+variable "internal_lb_ip" {
+  type    = string
+  default = "10.0.20.203"
 }
 
 
@@ -212,7 +220,10 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.skip_global_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         var.protected ? "traefik-authentik-forward-auth@kubernetescrd" : null,
-        var.strip_auth_headers ? "traefik-strip-auth-headers@kubernetescrd" : null,
+        # keep-fallback variant on purpose: forward-auth runs on the line above,
+        # so X-Auth-Fallback on this request came from our auth layer, not the
+        # client, and blanking it would delete the break-glass marker.
+        var.strip_auth_headers ? "traefik-strip-auth-headers-keep-fallback@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
       ], var.extra_middlewares)))
       "traefik.ingress.kubernetes.io/router.entrypoints"       = "websecure"
@@ -274,16 +285,11 @@ resource "kubernetes_manifest" "custom_csp" {
 }
 
 # Cloudflare DNS records — created automatically when dns_type is set.
-resource "cloudflare_record" "proxied" {
-  count           = var.dns_type == "proxied" ? 1 : 0
-  name            = var.name
-  content         = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
-  proxied         = true
-  ttl             = 1
-  type            = "CNAME"
-  zone_id         = var.cloudflare_zone_id
-  allow_overwrite = true
-}
+# Proxied hostnames create NO record: they ride the zone-wide * wildcard
+# CNAME (ADR-0021, stacks/cloudflared). dns_type = "proxied" still records
+# intent and drives the external-monitor annotation. (This factory never
+# serves the apex, so unlike modules/kubernetes/ingress_factory there is no
+# "@" carve-out.)
 
 resource "cloudflare_record" "non_proxied_a" {
   count           = var.dns_type == "non-proxied" ? 1 : 0
@@ -303,6 +309,22 @@ resource "cloudflare_record" "non_proxied_aaaa" {
   proxied         = false
   ttl             = 1
   type            = "AAAA"
+  zone_id         = var.cloudflare_zone_id
+  allow_overwrite = true
+}
+
+# 'internal': a publicly-resolvable A record carrying the INTERNAL Traefik LB
+# IP. Shadows the * wildcard CNAME (an explicit record wins over the
+# wildcard), so the name stays unreachable from outside while home-LAN/WG/VPN
+# clients resolve and route to Traefik directly. Mirrors
+# modules/kubernetes/ingress_factory's internal_a.
+resource "cloudflare_record" "internal_a" {
+  count           = var.dns_type == "internal" ? 1 : 0
+  name            = var.name
+  content         = var.internal_lb_ip
+  proxied         = false
+  ttl             = 1
+  type            = "A"
   zone_id         = var.cloudflare_zone_id
   allow_overwrite = true
 }

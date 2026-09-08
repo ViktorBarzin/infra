@@ -161,8 +161,11 @@ resource "kubernetes_service" "k8s_portal" {
 }
 
 module "ingress" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  dns_type        = "non-proxied"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # ADR-0026 / code-6m20: auth-grey host, no recorded reason for the direct
+  # path. Small admin UI behind Authentik forward-auth. Proxied rides the
+  # zone-wide wildcard CNAME (ADR-0021) and creates no A/AAAA record.
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.k8s_portal.metadata[0].name
   name            = "k8s-portal"
   tls_secret_name = var.tls_secret_name
@@ -181,13 +184,15 @@ module "ingress" {
 # curl-able without auth). `auth = "public"` would 302+cookie-dance on
 # first visit, breaking automation that doesn't preserve cookies.
 module "ingress_setup_script" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  namespace       = kubernetes_namespace.k8s_portal.metadata[0].name
-  name            = "k8s-portal-setup"
-  host            = "k8s-portal"
-  service_name    = "k8s-portal"
-  ingress_path    = ["/setup/script", "/agent"]
-  tls_secret_name = var.tls_secret_name
+  source    = "../../../../modules/kubernetes/ingress_factory"
+  namespace = kubernetes_namespace.k8s_portal.metadata[0].name
+  name      = "k8s-portal-setup"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "k8s-portal"
+  service_name     = "k8s-portal"
+  ingress_path     = ["/setup/script", "/agent"]
+  tls_secret_name  = var.tls_secret_name
   # auth = "none": Setup script + agent endpoint must be curl-able without auth (no cookies preserved in automation).
   auth = "none"
 }

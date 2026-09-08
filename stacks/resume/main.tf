@@ -24,7 +24,7 @@ resource "kubernetes_namespace" "resume" {
   metadata {
     name = local.namespace
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -52,7 +52,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "resume"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -78,10 +78,20 @@ resource "kubernetes_deployment" "printer" {
     labels = {
       app  = "printer"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): wakes/parks together with the
+      # resume app (one sablier group) — resume's PDF printing depends on it.
+      "sablier.enable" = "true"
+      "sablier.group"  = "resume"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
     }
   }
   spec {
-    replicas = 0 # Scaled down — browserless chromium causes node OOM
+    # Sablier-managed 0<->1 (group "resume"): parked when idle, woken by the
+    # first request through the resume ingress. 0 here = parked default on
+    # (re)create; live value is under ignore_changes.
+    replicas = 0
     selector {
       match_labels = {
         app = "printer"
@@ -115,13 +125,18 @@ resource "kubernetes_deployment" "printer" {
             value = "10"
           }
 
+          # Chromium cannot boot in the old 128Mi limit — the pod crash-looped
+          # on the first sablier wake (2026-07-12; this pair was hand-parked in
+          # March precisely for OOM). Burstable with a hard 1Gi cap: enough to
+          # render PDFs, can never eat the node like the uncapped incident,
+          # and costs nothing while parked (the scale-to-zero point).
           resources {
             requests = {
-              memory = "128Mi"
+              memory = "256Mi"
               cpu    = "25m"
             }
             limits = {
-              memory = "128Mi"
+              memory = "1Gi"
             }
           }
 
@@ -158,6 +173,7 @@ resource "kubernetes_deployment" "printer" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -186,6 +202,7 @@ module "nfs_data_host" {
   nfs_path     = "/srv/nfs/resume"
   storage      = "1Gi"
   access_modes = ["ReadWriteOnce"]
+  storage_class_name = "nfs-pve"
 }
 
 # Reactive Resume app
@@ -196,10 +213,18 @@ resource "kubernetes_deployment" "resume" {
     labels = {
       app  = "resume"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): group "resume" = resume + printer.
+      "sablier.enable" = "true"
+      "sablier.group"  = "resume"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
     }
   }
   spec {
-    replicas = 0 # Scaled down with printer — depends on browserless chromium
+    # Sablier-managed 0<->1 (group "resume"): first request through the
+    # ingress wakes both this and printer; 3h idle parks them again.
+    replicas = 0
     strategy {
       type = "Recreate"
     }
@@ -296,13 +321,15 @@ resource "kubernetes_deployment" "resume" {
             mount_path = "/app/data"
           }
 
+          # OOMKilled at the old 64Mi on the first sablier wake (2026-07-12) —
+          # reactive-resume v5 needs more to boot. Burstable, tier 4-aux.
           resources {
             requests = {
-              memory = "64Mi"
+              memory = "128Mi"
               cpu    = "15m"
             }
             limits = {
-              memory = "64Mi"
+              memory = "256Mi"
             }
           }
 
@@ -345,6 +372,7 @@ resource "kubernetes_deployment" "resume" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -375,6 +403,11 @@ module "ingress" {
   namespace       = kubernetes_namespace.resume.metadata[0].name
   name            = "resume"
   tls_secret_name = var.tls_secret_name
+  # Scale-to-zero pilot (ADR-0022): first request wakes the resume group
+  # (resume + printer), 3h idle parks it. Held-request wake, no waiting page.
+  sablier = {
+    group = "resume"
+  }
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Resume"

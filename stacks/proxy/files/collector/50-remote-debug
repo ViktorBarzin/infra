@@ -1,0 +1,6 @@
+# Proxy visit tracking (spec infra#83). Sourced by /usr/bin/chromium, which
+# appends $CHROMIUM_FLAGS to the browser launch. Exposing the DevTools port on
+# loopback lets the in-pod visit-collector sidecar log page visits over CDP.
+# The port binds 127.0.0.1 only (stock chromium ignores --remote-debugging-address),
+# so it is reachable only from within the pod's network namespace.
+export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --remote-debugging-port=9222"

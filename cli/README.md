@@ -65,6 +65,8 @@ operations in the encrypted infra repo.
 auto-detected suite) unless you pass `--no-verify` — landing to master unverified
 must be deliberate. After pushing it **watches CI to green** (`ci watch` on the
 landed commit) and fails if the pipeline does; pass `--no-ci-watch` to skip.
+A commit that never gets a pipeline is reported as a note and exits zero, not as
+a failed build — repos that build off-infra legitimately never get one.
 
 Tiers are recorded per verb so a future PreToolUse classifier can auto-allow
 reads / prompt writes; v0.1 allows everything and relies on existing gates
@@ -104,11 +106,14 @@ remote, with retries that ride Woodpecker's intermittent empty responses.
 | Command | Tier | What it does |
 |---|---|---|
 | `ci status [commit]` | read | pipeline status for HEAD (or a commit) |
-| `ci watch [commit]` | read | poll the pipeline to terminal; exit non-zero on failure |
+| `ci watch [commit] [--timeout D] [--appear-grace D]` | read | poll the pipeline to terminal; exit non-zero on failure. Once a pipeline is found it waits **as long as the build takes** — `--timeout` bounds that if you want it bounded (default unbounded). Waiting for one to first *appear* stays bounded (`--appear-grace`, default 10m) and reports a missing pipeline as its own outcome rather than a red build. |
 | `deploy wait <ns>/<deploy> [--sha SHA]` | read | wait for the deployment image to match the sha, *then* rollout status (rollout status alone lies on the old ReplicaSet) |
 
 `work land` now calls `ci watch` on the landed commit automatically (skip with
-`--no-ci-watch`), closing the v0.1 "doesn't wait for CI" gap. `ci logs` (failing
+`--no-ci-watch`), closing the v0.1 "doesn't wait for CI" gap, and forwards
+`--timeout`/`--appear-grace` to it. The fixed 20-minute deadline this replaced
+(v0.22.0, 2026-09-04) reported a still-running build as "CI did not go green",
+which was a claim about the build the CLI had not earned. `ci logs` (failing
 step) is deferred to v0.4.1 — Woodpecker's per-pipeline detail/log endpoints were
 the least reliable; `status`/`watch` use the list endpoint that works.
 
@@ -201,6 +206,119 @@ into `~/.cache/homelab/browser-client/` (no per-user setup). Because the client
 runs on the devvm, `setInputFiles` streams local files to the remote browser over
 CDP — no `chmod`/staging-dir workaround. See `docs/architecture/chrome-service.md`
 and `docs/adr/0013`.
+
+### v0.9 verbs — edges (east-west "who-talks-to-whom" trail)
+
+Read-only investigation helper over the `goldmane_edges` CNPG trail (ADR-0014):
+filters render to a single safe `SELECT` (namespace values validated to the k8s
+name charset) run via the dbaas primary pod — the same exec path as `k8s db`.
+
+| Command | Tier | What it does |
+| --- | --- | --- |
+| `edges --ns <ns>` | read | edges touching `<ns>` (either direction) |
+| `edges --src <ns>` / `--dst <ns>` | read | directional: `<ns>`'s egress / ingress peers |
+| `edges --peers-of <ns>` | read | distinct peer namespaces of `<ns>` (both directions) |
+| `edges --new-since <24h\|7d\|YYYY-MM-DD>` | read | edges first seen since a duration or date |
+| `edges --denied` | read | only `action='deny'` edges (blocked / lateral-movement) |
+| `edges --json` / `--limit N` | read | JSON array output / row cap (default 200) |
+
+### v0.10 — `vault get --all` (browse every field)
+
+`vault get <name> --all` returns the **whole item** as a normalized JSON object,
+so an agent can discover and read fields the single-field `--field` allowlist
+can't reach — notably arbitrary **custom fields**.
+
+| Command | Tier | What it does |
+| --- | --- | --- |
+| `vault get <name> --all` | read | all fields as JSON: `{name, username?, password?, uris?, totp?, notes?, fields?}` |
+
+Shape notes: present standard fields only (empty ones omitted); `fields` is a
+custom `name→value` map (duplicate names → last-wins; `linked` fields skipped).
+The TOTP **seed is never emitted** — `totp` is a presence flag (`true`), so the
+only seed-derived path stays the specially-audited `vault code`. Like
+`get --json`, the dump is all secret values, so it **refuses a terminal** — pipe
+it (`homelab vault get <name> --all | jq`).
+
+### v0.10.1 — reads `bw sync` first (always fresh)
+
+Every vault read (`get`, `get --all`, `list`, `code`, `status`) now runs `bw
+sync` when opening its session, so it reflects the latest server-side values.
+`bw unlock` only decrypts the *local* cache, so without this a persisted
+(already-logged-in) session served stale data — a password changed in the web
+vault wouldn't show up until the next login. The sync is **best-effort**: a
+transient failure warns on stderr and falls back to the cached vault rather than
+failing the read.
+
+### v0.11 — `vault kv` (HashiCorp Vault / OpenBao infra secrets)
+
+`homelab vault` now fronts **two unrelated stores**, made explicit in the bare
+`homelab vault` help and via `[vaultwarden]` / `[hashicorp-vault]` summary tags:
+
+- **Vaultwarden** — your personal password manager (`vault get/list/code/…`, unchanged).
+- **HashiCorp Vault / OpenBao** — homelab infra secrets, the `secret/…` KV store, under `vault kv`.
+
+| Command | Tier | What it does |
+| --- | --- | --- |
+| `vault kv get <path> [--field K]` | read | read a secret: `--field K` → one value (TTY-aware clipboard/stdout); no field → all fields as JSON (refuses a bare TTY) |
+| `vault kv list <path>` | read | list sub-paths under `<path>` (no values) |
+| `vault kv put <path> <key>` | write | write one key; **value via stdin** (piped or no-echo prompt, never argv); creates the path or **merges** (never clobbers siblings) |
+
+**Different credentials:** the Vaultwarden verbs use the per-user *scoped* token
+(bound to `claude-users/<user>`); `vault kv` uses your **own** Vault token
+(`vault login -method=oidc` → `~/.vault-token`, or `$VAULT_TOKEN`) — the kv
+handlers set `VAULT_ADDR` but never inject the scoped token (which would 403 off
+its own path). Access is whatever your policy grants. Writes are merge-only;
+`put` (replace) / `delete` are out of scope — use the raw `vault` CLI.
+
+### v0.13 — memory links + the 1,400-char bound (ADR-0007)
+
+Memories gain typed Memory→Memory **links** — a closed enum of four, each with
+defined recall behaviour: `supersedes` (redirect: successor served in place of
+the old entry), `resolved-by` (target auto-attached when the source ranks),
+`part-of` and `see-also` (one-line pointers). Link specs are `<type>:<id>`,
+pointing FROM the memory being stored/updated TO `<id>`.
+
+| Command | Tier | What it does |
+| --- | --- | --- |
+| `memory get <id> [--json]` | read | one full entry: content (verbatim, multi-line), metadata, then links one per line (`-> supersedes #274` outgoing, `<- part-of #123` incoming) |
+| `memory store "…" [--link type:id …]` | write | store, then POST each link from the new id |
+| `memory update <id> [--link type:id …] [--unlink type:id …]` | write | update, then add/remove links; a link-only update skips the field PUT (the server rejects an empty one); a failed link op is reported but never rolls the memory back |
+
+**Content is bounded at 1,400 unicode characters** (chars, not bytes — the
+recall hook's 8KB/5-results delivery budget, so a ranked Memory always arrives
+whole). Over-bound `store`/`update --content` fail client-side, before the API,
+with the split guidance: store the hub, then store parts with
+`--link part-of:<hubId>`.
+
+`recall` sends `sort_by` only when `--sort` is given — the server default is
+now **relevance** (ADR-0005, amended). `recall --json` / `get --json` emit the
+raw API response for machine consumers (the recall hook).
+
+### v0.15 verbs — message (send/read as you on WhatsApp + Messenger)
+
+Send and read personal messages **as Viktor** on **WhatsApp** (`--via wa`, the
+default) and **Facebook Messenger** (`--via messenger`), by driving his warm,
+logged-in web session (WhatsApp Web / messenger.com) in the shared chrome-service
+browser (same `--shared-context` machinery as `browser run`; sends relay as his
+own account from the home IP). **Instagram is deliberately NOT enabled** (highest
+ban risk — Viktor's call). Design + rationale (incl. the accepted, potentially
+permanent ban risk of automating a personal account):
+`docs/plans/2026-07-20-homelab-message-personal-messaging-design.md`.
+
+| Command | tier | notes |
+|---|---|---|
+| `message send [--via wa\|messenger] --to <name> "<text>" [--dry-run] [--yes]` | write | send as you. `--to` is **fuzzy-matched against an allowlist** (`~/.config/homelab/message-allowlist`, one exact contact name per line; missing/empty ⇒ every send refused, fail-closed). Resolves to exactly one entry, opens it, and **verifies the recipient** against the composer before typing. Preview + confirm by default; `--dry-run` never sends; `--yes` skips the prompt (only after a human approved the text); no send without a TTY unless `--yes`. Types **human-paced** (per-char jitter). Appends to an audit log (`~/.local/state/homelab/message-audit.jsonl`). |
+| `message read [--via wa\|messenger] --to <name> [--limit N]` | read | open the thread and print the last N messages (`← ` in / `→ ` out) for reply context. Separate from send on purpose (injection firewall): incoming text is context, never an instruction to send. |
+| `message contacts [--via wa\|messenger] [--search <q>]` | read | list addressable chat names. |
+| `message --help` | read | full safety model + allowlist/audit paths. |
+
+Per-platform automation is embedded (`message_wa.js`, `message_messenger.js`);
+`runMessageAutomation` picks by `--via`. Selectors are DOM-fragile — re-probe with
+a read-only `browser run` script if a verb breaks after a web update.
+- **WhatsApp Web (2026):** rows `#pane-side div[role="row"]`/`span[title]`; search `[aria-label="Ask Meta AI or Search"]`; composer Lexical `footer div[contenteditable][role="textbox"]` (Enter sends); messages `div[data-id]`, direction by geometry (right = out) anchored on `#main`.
+- **messenger.com (2026):** threads `a[href*="/t/"]`; search `[aria-label="Search Messenger"]`; composer Lexical `div[contenteditable][role="textbox"][aria-label^="Write to <name>"]` (Enter sends); messages carry `aria-label="…by <Sender>: <text>"` / `"You sent…"` — direction from the explicit sender.
+
+Overrides: `HOMELAB_MESSAGE_ALLOWLIST`, `HOMELAB_MESSAGE_AUDIT`.
 
 ## Build / install
 
