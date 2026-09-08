@@ -39,6 +39,11 @@ locals {
   # non-Authentik response (200/3xx-non-authentik/400/404/426/…) when the
   # carve-out is intact. Probed every 60s; alert fires only on an Authentik 302.
   authentik_walloff_targets = {
+    # vpn-portal /sub token subscription (auth="none" carve-out, stacks/vpn-portal
+    # module.ingress_sub): VPN clients poll it with a per-user token and cannot do
+    # OIDC. A 404 for a bogus token = backend up + not walled off; an Authentik
+    # 302 here would silently break every client's config auto-update.
+    "vpn-portal-sub" = "https://vpn.viktorbarzin.me/sub/uptime-probe"
     # meshcentral agent/relay paths (auth="none"): native mesh-cert clients.
     # /agent.ashx 404s without WebSocket upgrade headers — non-redirect = OK.
     "meshcentral-agent" = "https://meshcentral.viktorbarzin.me/agent.ashx"
@@ -60,6 +65,21 @@ locals {
     # t3 dispatch probe surface (auth="none" path carve-out on /probe): WS echo
     # + healthz for the t3-probe drop-attribution client (stacks/t3code).
     "t3-probe-ws" = "https://t3.viktorbarzin.me/probe/healthz"
+    # t3 native-client descriptor (Authentik-less IngressRoute carve-out,
+    # stacks/t3code kubernetes_manifest.t3_native_ingressroute): the T3 mobile
+    # app fetches this BEFORE it has any credential, so an Authentik 302 here
+    # is exactly the failure that made the app unpairable — it parses the login
+    # HTML as the JSON descriptor and reports an invalid response. The probe
+    # sends no cookie, which is what the carve-out rule keys on.
+    "t3-native-descriptor" = "https://t3.viktorbarzin.me/.well-known/t3/environment"
+    # tasks PWA icons + manifest (auth="none" path carve-out, stacks/tasks
+    # module.ingress_icons): macOS/iOS/Android icon fetchers carry no session
+    # cookies, so an Authentik 302 here breaks Add-to-Dock icons.
+    "tasks-icons" = "https://tasks.viktorbarzin.me/apple-touch-icon.png"
+    # terminal PWA manifest + icons + webfonts (auth="none" path carve-out,
+    # stacks/terminal module.ingress_assets): the manifest fetch is
+    # credential-less by spec and OS icon fetchers carry no session cookies.
+    "terminal-pwa-assets" = "https://terminal.viktorbarzin.me/manifest.webmanifest"
     # NOTE: openclaw task-webhook (auth="none") is intentionally NOT probed — it
     # has no public DNS record (NXDOMAIN, external_monitor=false), so there is no
     # externally GET-able URL to probe. Its carve-out is internal-only.
@@ -118,6 +138,98 @@ resource "kubernetes_config_map" "blackbox_exporter_config" {
             ]
           }
         }
+        # ICMP egress probes (added 2026-06-28 after the 2026-06-27 pfSense
+        # WAN/egress black-hole incident). Drive the wan-gateway-icmp +
+        # internet-egress-icmp scrape jobs (extraScrapeConfigs) — they probe
+        # from INSIDE the cluster, so they traverse the exact node -> pfSense NAT
+        # egress path that failed. ICMP needs CAP_NET_RAW (added to the
+        # deployment container below).
+        icmp_egress = {
+          prober  = "icmp"
+          timeout = "5s"
+          icmp = {
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+          }
+        }
+        # External DNS reachability: a UDP/53 query (cloudflare.com A) sent to a
+        # public resolver target. Fails when egress is down OR the upstream
+        # resolver is unreachable — a distinct failure surface from ICMP.
+        dns_external = {
+          prober  = "dns"
+          timeout = "5s"
+          dns = {
+            transport_protocol    = "udp"
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            query_name            = "cloudflare.com"
+            query_type            = "A"
+            valid_rcodes          = ["NOERROR"]
+          }
+        }
+        # Split-horizon apex canary (added 2026-08-16, replaced the
+        # viktorbarzin-apex-probe CronJob). Technitium serves the apex A record
+        # that ~80 *.viktorbarzin.me CNAMEs resolve through, and it must track
+        # the LIVE Traefik LB IP. When Traefik moved from .200 to .203 on
+        # 2026-05-30 and the record went stale, every fresh image pull silently
+        # degraded to public DNS -> hairpin -> ImagePullBackOff.
+        #
+        # This replaces a CronJob that ran every 5 minutes and `pip install`ed
+        # dnspython + requests on each run — 288 pods and ~4.8 GB of writes a
+        # day to answer one DNS question. As a scrape target it costs neither.
+        #
+        # validate_answer_rrs is what makes it a canary rather than a liveness
+        # check: NOERROR alone would pass on a WRONG address, so the answer must
+        # actually contain the expected LB IP. Update the regexp if Traefik's LB
+        # IP ever moves — and note that moving it without updating here is
+        # exactly the failure this is watching for.
+        dns_apex = {
+          prober  = "dns"
+          timeout = "5s"
+          dns = {
+            transport_protocol    = "udp"
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            query_name            = "viktorbarzin.me"
+            query_type            = "A"
+            valid_rcodes          = ["NOERROR"]
+            validate_answer_rrs = {
+              fail_if_not_matches_regexp = [".*\\s+A\\s+10\\.0\\.20\\.203$"]
+            }
+          }
+        }
+        # TCP connect (added 2026-07-08, ADR-0019): drives the backup-mx-smtp
+        # scrape job — probes mx2.viktorbarzin.me:25 (the Oracle backup MX) from
+        # inside the cluster, i.e. out over the internet to the reserved public
+        # IP. Backend-agnostic TCP handshake; no SMTP dialogue (a plain connect
+        # is enough to know the relay is up).
+        tcp_connect = {
+          prober  = "tcp"
+          timeout = "10s"
+          tcp = {
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+          }
+        }
+        # Plain HTTPS GET expecting a 2xx (added 2026-07-08, ADR-0020): drives
+        # the status-page-https scrape job — probes the public status/failover
+        # page https://status.viktorbarzin.me (nginx + gatus on mx2, grey-cloud
+        # A record) from inside the cluster, i.e. cluster egress -> internet ->
+        # mx2. Named after blackbox's conventional http_2xx module. Follows
+        # redirects (blackbox default); the empty valid_status_codes default
+        # means "2xx only", and fail_if_not_ssl fails a redirect chain that
+        # lands on plain http. TLS/DNS failures fail the probe as usual.
+        http_2xx = {
+          prober  = "http"
+          timeout = "10s"
+          http = {
+            method                = "GET"
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            fail_if_not_ssl       = true
+            valid_http_versions   = ["HTTP/1.1", "HTTP/2.0"]
+          }
+        }
       }
     })
   }
@@ -173,6 +285,15 @@ resource "kubernetes_deployment" "blackbox_exporter" {
             }
             limits = {
               memory = "48Mi"
+            }
+          }
+          # The icmp_egress module needs raw sockets to send ICMP echo. NET_RAW
+          # only — NOT privileged and NOT NET_ADMIN/SYS_ADMIN — so it stays
+          # within the Kyverno wave-1 deny-privileged / restrict-sys-admin
+          # policies. (2026-06-28, pfSense egress monitoring.)
+          security_context {
+            capabilities {
+              add = ["NET_RAW"]
             }
           }
           volume_mount {

@@ -135,6 +135,14 @@ resource "kubernetes_daemon_set_v1" "firewall_bouncer" {
         host_network = true
         dns_policy   = "ClusterFirstWithHostNet"
 
+        # reboot-self-heal Phase 2: tolerate the GPU taint so in-kernel nftables
+        # enforcement still runs on k8s-node1 after nvidia.com/gpu flips to NoSchedule.
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Exists"
+          effect   = "NoSchedule"
+        }
+
         # ---- CLUSTER-WIDE (validation passed) ----------------------------------
         # One-node validation on k8s-node2 passed: kernel nftables sets were
         # created in BOTH the input and forward chains (policy accept), ~31k
@@ -248,6 +256,13 @@ resource "kubernetes_daemon_set_v1" "firewall_bouncer" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+    ]
   }
 }

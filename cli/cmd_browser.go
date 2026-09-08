@@ -16,7 +16,19 @@ func browserCommands() []Command {
 			Summary: "run a Playwright script against headful cluster Chrome: browser run <script.js> [--url U] [--shared-context]", Run: browserRun},
 		{Path: []string{"browser", "open"}, Tier: TierWrite,
 			Summary: "open a URL in headful cluster Chrome; print title + text + screenshot: browser open <url>", Run: browserOpen},
+		{Path: []string{"browser", "ls"}, Tier: TierRead,
+			Summary: "list live pool browser sessions (owner, purpose, current URL, age)", Run: browserLs},
 	}
+}
+
+func browserLs(args []string) error {
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			fmt.Print(browserHelp())
+			return nil
+		}
+	}
+	return listSessions()
 }
 
 func browserTopHelp([]string) error {
@@ -59,8 +71,9 @@ Xvfb. This connects to it via a port-forward + Playwright connect_over_cdp,
 injects the same stealth.js the in-cluster callers use, and runs your script.
 
 USAGE
-  homelab browser run <script.js> [--url URL] [--shared-context] [--keep-open] [--port N] [--timeout S]
+  homelab browser run <script.js> [--url URL] [--shared-context] [--no-seed] [--viewport WxH | --tall] [--keep-open] [--timeout S]
   homelab browser open <url> [--shared-context] [--timeout S]
+  homelab browser ls        # list live pool sessions (owner, current URL, age)
 
 WHEN TO USE THIS — escalation only; DEFAULT to the headless/MCP browser
   Default to the Playwright MCP / headless browser for ALL routine browsing and
@@ -91,11 +104,20 @@ HABITS
   - Uploads stream over CDP via setInputFiles from THIS host — no chmod/staging
     of $HOME needed; just point setInputFiles at a local path.
 
-CONTEXT
-  Default: a FRESH incognito context, closed on exit — safe for the shared
-  browser and concurrent callers (e.g. tripit). Your script does its own login.
-  --shared-context: reuse the warmed PERSISTENT profile (cookies from a manual
-  noVNC login at chrome.viktorbarzin.me) when you need a pre-logged-in session.
+CONTEXT (pool by default)
+  Default: you get your OWN isolated worker pod from the pool (broker at
+  chrome-fleet), seeded read-only with the master's logged-in cookies +
+  localStorage, in a fresh context closed on exit. Concurrent callers never
+  contend; a wedged session is capped to its own pod. If the broker is down this
+  falls back to the shared master browser automatically.
+  --no-seed:         a pure clean context (no master cookies injected).
+  --shared-context:  bypass the pool and reuse the master's warmed PERSISTENT
+                     profile (cookies from a manual noVNC login at
+                     chrome.viktorbarzin.me) — needed for write-back workflows
+                     (e.g. Google Maps saved lists) and IndexedDB-bound auth.
+  --viewport WxH:    context viewport (default 1920x1080 DPR1).
+  --tall:            1280x2000 — pulls more lazy-loaded/virtualized DOM per snapshot.
+  Watch live sessions in FleetView: https://chrome-fleet.viktorbarzin.me
 
 SCRIPT CONTRACT (run mode)
   Your file's body runs with page, context, browser and log() already in scope
@@ -110,8 +132,8 @@ SCRIPT CONTRACT (run mode)
   Run it:  homelab browser run flow.js
 
 NOTES
-  - The Playwright client is pinned to playwright-core@` + playwrightVersion + ` to match the
-    chrome-service image (Chrome 130); installed once into ~/.cache/homelab/.
-  - The port-forward is always torn down, on success and on error.
+  - The CDP client is ` + clientPackage + `@` + clientVersion + ` (a playwright-core drop-in that
+    avoids the Runtime.enable anti-bot leak); installed once into ~/.cache/homelab/.
+  - All port-forwards + the pool session are always torn down, on success and error.
 `
 }

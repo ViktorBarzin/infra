@@ -12,6 +12,26 @@
 	</section>
 
 	<section>
+		<h2>Browser login loops, or kubectl says "Unauthorized"</h2>
+		<p>Command-line SSO (OIDC) login can occasionally be unavailable. You don't have to wait for it — these authenticate a different way and keep working:</p>
+		<ul>
+			<li><a href="https://k8s.viktorbarzin.me">Web dashboard</a> — auto-authenticated, no token to paste</li>
+			<li><a href="https://t3.viktorbarzin.me">Web terminal</a> — its kubectl is already wired up</li>
+		</ul>
+		<p>Let Viktor know so the CLI login path gets fixed.</p>
+	</section>
+
+	<section>
+		<h2>Don't want to set up a local machine at all?</h2>
+		<p>Skip the VPN and CLI install entirely:</p>
+		<ul>
+			<li><a href="https://t3.viktorbarzin.me">t3.viktorbarzin.me</a> — a browser shell with everything preinstalled</li>
+			<li><a href="https://k8s.viktorbarzin.me">k8s.viktorbarzin.me</a> — a point-and-click dashboard</li>
+		</ul>
+		<p>Both just need your Authentik login. See the <a href="/onboarding">Getting Started</a> guide.</p>
+	</section>
+
+	<section>
 		<h2>"Forbidden" or "Permission denied"</h2>
 		<p>You may not have access to that namespace. Your access is scoped to specific namespaces.</p>
 		<p>Try: <code>kubectl get namespaces</code> to see which namespaces you can access.</p>

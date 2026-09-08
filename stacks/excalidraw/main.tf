@@ -10,7 +10,7 @@ resource "kubernetes_namespace" "excalidraw" {
     name = "excalidraw"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -28,13 +28,14 @@ module "tls_secret" {
 }
 
 module "nfs_data_host" {
-  source       = "../../modules/kubernetes/nfs_volume"
-  name         = "excalidraw-data-host"
-  namespace    = kubernetes_namespace.excalidraw.metadata[0].name
-  nfs_server   = var.nfs_server
-  nfs_path     = "/srv/nfs/excalidraw"
-  storage      = "1Gi"
-  access_modes = ["ReadWriteOnce"]
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "excalidraw-data-host"
+  namespace          = kubernetes_namespace.excalidraw.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/excalidraw"
+  storage            = "1Gi"
+  access_modes       = ["ReadWriteOnce"]
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "excalidraw" {
@@ -44,6 +45,22 @@ resource "kubernetes_deployment" "excalidraw" {
     labels = {
       app  = "excalidraw"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "excalidraw"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
+    }
+    # Keel rolls new ghcr:latest digests (k8s-portal pattern). Values here are
+    # recreate-correct seeds only — the keys are in ignore_changes below, so
+    # the live annotations win on an existing deployment.
+    annotations = {
+      "keel.sh/policy"       = "force"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/match-tag"    = "true"
+      "keel.sh/pollSchedule" = "@every 5m"
     }
   }
   spec {
@@ -67,9 +84,19 @@ resource "kubernetes_deployment" "excalidraw" {
         }
       }
       spec {
+        # GHCR pull secret: the ghcr-credentials Secret in this namespace is
+        # cloned in by the kyverno stack's sync-ghcr-credentials ClusterPolicy
+        # (allowlisted private-ghcr namespaces only — ADR-0002). Source of
+        # truth: stacks/kyverno/modules/kyverno/ghcr-credentials.tf.
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
         container {
-          image             = "viktorbarzin/excalidraw-library:v4"
-          image_pull_policy = "IfNotPresent"
+          # ADR-0002: GHA-built (.github/workflows/build-excalidraw.yml),
+          # PRIVATE ghcr; Keel rolls new :latest digests. DockerHub
+          # viktorbarzin/excalidraw-library:v4 is the frozen rollback image.
+          image             = "ghcr.io/viktorbarzin/excalidraw-library:latest"
+          image_pull_policy = "Always"
           name              = "excalidraw"
           port {
             container_port = 8080
@@ -107,7 +134,7 @@ resource "kubernetes_deployment" "excalidraw" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
@@ -116,6 +143,7 @@ resource "kubernetes_deployment" "excalidraw" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -142,7 +170,11 @@ resource "kubernetes_service" "draw" {
 }
 
 module "ingress" {
-  source          = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "excalidraw"
+  }
   dns_type        = "proxied"
   namespace       = kubernetes_namespace.excalidraw.metadata[0].name
   name            = "draw"

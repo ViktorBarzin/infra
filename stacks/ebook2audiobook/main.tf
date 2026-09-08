@@ -16,7 +16,7 @@ resource "kubernetes_namespace" "ebook2audiobook" {
     name = "ebook2audiobook"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.gpu
+      tier               = local.tiers.gpu
       "keel.sh/enrolled" = "true"
     }
   }
@@ -33,6 +33,7 @@ module "nfs_data_host" {
   namespace  = kubernetes_namespace.ebook2audiobook.metadata[0].name
   nfs_server = "192.168.1.127"
   nfs_path   = "/srv/nfs/ebook2audiobook"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_audiblez_data_host" {
@@ -41,6 +42,7 @@ module "nfs_audiblez_data_host" {
   namespace  = kubernetes_namespace.ebook2audiobook.metadata[0].name
   nfs_server = "192.168.1.127"
   nfs_path   = "/srv/nfs/audiblez"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "ebook2audiobook" {
@@ -107,6 +109,25 @@ resource "kubernetes_deployment" "ebook2audiobook" {
           resources {
             limits = {
               "nvidia.com/gpu" = "1"
+              # VRAM seat (ADR-0016). MEASURED 0 MiB HELD, over the exporter's
+              # entire record: an ebook2audiobook-namespace pod was Running every
+              # day from 2026-03-05 to 2026-03-18 while gpu-pod-exporter scraped
+              # (8-169 series per day), and
+              #   count(count_over_time(gpu_pod_memory_used_bytes{namespace="ebook2audiobook"}[26w]))
+              # returns no series at all. These three sit at replicas=0 and load a
+              # TTS model only when someone submits a conversion, so the steady
+              # state genuinely is zero and there is no larger figure to measure
+              # without running a job on a card that has ~1 GiB free today.
+              #
+              # 400 MiB each is therefore a FLOOR, not a measured peak: it is what
+              # fits when all three wake at once against the 1400 MiB of the node's
+              # 14000 MiB budget that the running tenants leave unallocated
+              # (3 x 400 = 1200), so none of them can be made Pending by its own
+              # seat. Re-measure and re-seat from a real conversion the next time
+              # one runs; the watchdog only recycles an over-budget tenant while
+              # free VRAM is under its 1536 MiB floor, so a burst past 400 during
+              # an idle card is allowed rather than killed.
+              "viktorbarzin.me/gpumem" = "400"
             }
           }
         }
@@ -122,7 +143,7 @@ resource "kubernetes_deployment" "ebook2audiobook" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
@@ -319,6 +340,25 @@ resource "kubernetes_deployment" "audiblez" {
           resources {
             limits = {
               "nvidia.com/gpu" = "1"
+              # VRAM seat (ADR-0016). MEASURED 0 MiB HELD, over the exporter's
+              # entire record: an ebook2audiobook-namespace pod was Running every
+              # day from 2026-03-05 to 2026-03-18 while gpu-pod-exporter scraped
+              # (8-169 series per day), and
+              #   count(count_over_time(gpu_pod_memory_used_bytes{namespace="ebook2audiobook"}[26w]))
+              # returns no series at all. These three sit at replicas=0 and load a
+              # TTS model only when someone submits a conversion, so the steady
+              # state genuinely is zero and there is no larger figure to measure
+              # without running a job on a card that has ~1 GiB free today.
+              #
+              # 400 MiB each is therefore a FLOOR, not a measured peak: it is what
+              # fits when all three wake at once against the 1400 MiB of the node's
+              # 14000 MiB budget that the running tenants leave unallocated
+              # (3 x 400 = 1200), so none of them can be made Pending by its own
+              # seat. Re-measure and re-seat from a real conversion the next time
+              # one runs; the watchdog only recycles an over-budget tenant while
+              # free VRAM is under its 1536 MiB floor, so a burst past 400 during
+              # an idle card is allowed rather than killed.
+              "viktorbarzin.me/gpumem" = "400"
             }
           }
         }
@@ -333,7 +373,7 @@ resource "kubernetes_deployment" "audiblez" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
@@ -400,6 +440,25 @@ resource "kubernetes_deployment" "audiblez-web" {
           resources {
             limits = {
               "nvidia.com/gpu" = "1"
+              # VRAM seat (ADR-0016). MEASURED 0 MiB HELD, over the exporter's
+              # entire record: an ebook2audiobook-namespace pod was Running every
+              # day from 2026-03-05 to 2026-03-18 while gpu-pod-exporter scraped
+              # (8-169 series per day), and
+              #   count(count_over_time(gpu_pod_memory_used_bytes{namespace="ebook2audiobook"}[26w]))
+              # returns no series at all. These three sit at replicas=0 and load a
+              # TTS model only when someone submits a conversion, so the steady
+              # state genuinely is zero and there is no larger figure to measure
+              # without running a job on a card that has ~1 GiB free today.
+              #
+              # 400 MiB each is therefore a FLOOR, not a measured peak: it is what
+              # fits when all three wake at once against the 1400 MiB of the node's
+              # 14000 MiB budget that the running tenants leave unallocated
+              # (3 x 400 = 1200), so none of them can be made Pending by its own
+              # seat. Re-measure and re-seat from a real conversion the next time
+              # one runs; the watchdog only recycles an over-budget tenant while
+              # free VRAM is under its 1536 MiB floor, so a burst past 400 during
+              # an idle card is allowed rather than killed.
+              "viktorbarzin.me/gpumem" = "400"
             }
           }
 
@@ -432,7 +491,7 @@ resource "kubernetes_deployment" "audiblez-web" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],

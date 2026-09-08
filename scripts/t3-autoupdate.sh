@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# t3 GATED NIGHTLY TRACKER (daily, via t3-autoupdate.timer).
+# t3 GATED RELEASE TRACKER (daily, via t3-autoupdate.timer).
 #
 # t3 is pre-1.0 and ships breaking schema-migration + pairing-API changes between
 # builds. On 2026-06-09 a blind `npm i -g t3@nightly` migrated every ~/.t3
@@ -8,8 +8,23 @@
 # pinned in response.
 #
 # 2026-06-16 (Viktor's call, risk explicitly accepted): re-enable nightly tracking,
-# but GATED so a bad nightly self-heals instead of breaking everyone. This script
-# now follows the `nightly` npm dist-tag (T3_TRACK) under these guards:
+# but GATED so a bad build self-heals instead of breaking everyone.
+#
+# 2026-09-06 (Viktor: "t3 isn't critical anymore"): the track moves from
+# `nightly` to `latest`. He wants every agent binary on this box at the latest
+# version, and for t3 the LATEST RELEASE is the honest reading of that: the
+# nightly tag is a stream of prereleases, and it is the one that keeps costing
+# us. It caused the 2026-06-09 outage, and on the morning of 2026-09-06
+# 0.0.39-nightly.20260906.1292 failed the pairing health-check and was rolled
+# back to 0.0.38-nightly.20260831.1235 — the guards worked, but the box spent
+# the churn for nothing. `latest` was 0.0.38 the same day, so this is a move
+# forward, not a downgrade: a prerelease sorts BELOW its release.
+#
+# Every guard below stays exactly as it is. They were built for a channel that
+# breaks things, and a release channel is not a reason to trust a build
+# unverified.
+#
+# The script follows the `latest` npm dist-tag (T3_TRACK) under these guards:
 #   - freeze switch (/etc/t3-autoupdate.freeze) + optional hard pin (T3_PIN) for
 #     instant manual revert; a canary failure also self-freezes;
 #   - downgrade-guard (the nightly tag is mutable — never move backward);
@@ -30,7 +45,7 @@
 set -uo pipefail
 
 # ---- autoupdate-specific config (shared config + helpers come from the lib) -----
-T3_TRACK="${T3_TRACK:-nightly}"            # npm dist-tag to follow (nightly | latest)
+T3_TRACK="${T3_TRACK:-latest}"             # npm dist-tag to follow (latest | nightly)
 T3_PIN="${T3_PIN:-}"                        # optional HARD pin to an exact version (disables tracking)
 SMOKE_PORT="${T3_SMOKE_PORT:-3799}"
 DRY_RUN="${T3_DRY_RUN:-0}"
@@ -67,7 +82,7 @@ fi
 
 [ "$target" = "$current" ] && { LOG "already on $T3_TRACK=$current; nothing to do"; exit 0; }
 
-# ---- 2. downgrade + channel guard (mutable nightly tag can point backward) ------
+# ---- 2. downgrade + channel guard (a mutable dist-tag can point backward) ------
 if [ -z "$T3_PIN" ]; then
   newer "$target" "$current" || { LOG "resolved $T3_TRACK=$target is NOT newer than installed $current — refusing downgrade"; exit 0; }
   if [ "$T3_TRACK" = "nightly" ]; then
@@ -102,7 +117,17 @@ health_check() {
   local t3bin="$1" seed="${2:-}" dir logf pid live=0 pair=0 migerr=0 cred ep hdr code seeded=fresh
   dir="$(mktemp -d -p "$TMPROOT")"; mkdir -p "$dir/userdata"; logf="$dir/serve.log"
   if [ -n "$seed" ] && [ -f "$seed" ]; then cp "$seed" "$dir/userdata/state.sqlite"; seeded=populated; fi
-  "$t3bin" serve --host 127.0.0.1 --port "$SMOKE_PORT" --base-dir "$dir" >"$logf" 2>&1 &
+  # --host 0.0.0.0 MUST match how t3-serve@.service binds in production, and is
+  # not merely cosmetic: resolveSessionCookieName() (apps/server/src/auth/utils.ts)
+  # returns the plain `t3_session` ONLY for a remote-reachable host, and
+  # `t3_session_<port>_<instanceHash>` for a loopback one. Smoke-testing on
+  # 127.0.0.1 therefore produced an instance-scoped cookie that the pair grep
+  # below could never match — a FALSE NEGATIVE that silently pinned the fleet at
+  # 0.0.29 for 17 days while every daily run "correctly" rolled 0.0.34 back
+  # (found 2026-08-13, when the mobile app could not hold a session against the
+  # stale server). Binding like production also keeps this gate honest about the
+  # cookie NAME, which is exactly what t3-dispatch hardcodes.
+  "$t3bin" serve --host 0.0.0.0 --port "$SMOKE_PORT" --base-dir "$dir" >"$logf" 2>&1 &
   pid=$!
   for _ in $(seq 1 15); do
     [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$SMOKE_PORT/" 2>/dev/null)" = "200" ] && { live=1; break; }

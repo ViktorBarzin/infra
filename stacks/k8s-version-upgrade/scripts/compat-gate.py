@@ -14,9 +14,20 @@ classes of blocker:
   3. containerd    — every node's containerd >= the target's floor, if the matrix
                      declares one (e.g. the 1.7.x -> k8s 1.37 cliff)
 
+Each reason line is tagged with its class so the caller can act differently:
+  [ACTIONABLE]  a newer addon version (present in the matrix) supports the
+                target — upgrading it clears the block. Also covers removed-API
+                / containerd blocks and the unreadable-version fail-safe.
+  [WAITING]     no released addon version supports the target yet — only an
+                upstream release can clear it (e.g. kyverno/ESO behind a new k8s).
+  [PINNED]      a supporting version exists but the addon is deliberately held
+                (matrix `pinned: true`, e.g. gpu-operator's driver/OS coupling).
+
 Exit 0  = safe, proceed.
-Exit 2  = BLOCKED — prints one human reason per line (caller pushes
-          k8s_upgrade_blocked=1, Slacks the reasons, and halts the chain).
+Exit 2  = BLOCKED, actionable — >=1 blocker, none held. Caller pushes
+          k8s_upgrade_blocked=1 (-> K8sUpgradeBlocked alert) and halts.
+Exit 4  = HELD — >=1 waiting-upstream/pinned blocker (held wins over actionable).
+          Caller pushes k8s_upgrade_held=1 (no alert; nightly report only) and halts.
 Exit 3  = the gate itself errored — caller treats as a block (fail safe).
 
 Read-only: kubectl get + one Prometheus query. No mutations. PROM is overridable
@@ -62,6 +73,20 @@ def running_minor():
     return min(minors) if minors else None
 
 
+def _addon_resolution(a, tgt, running_ver):
+    """For a BLOCKING addon, decide whether a newer matrix version would clear
+    the block. Returns ("actionable", hint) when some version key has
+    max_k8s >= target AND is newer than the running version (upgrading it clears
+    the block); otherwise ("waiting", hint) — nothing released supports the
+    target yet, so only an upstream release can clear it."""
+    sufficient = [floor for floor, mk in a["max_k8s"].items()
+                  if minor(mk) and minor(mk) >= tgt and minor(floor) > minor(running_ver)]
+    if sufficient:
+        best = min(sufficient, key=minor)  # smallest sufficient upgrade
+        return "actionable", f"upgrade {a['name']} to >= {best}"
+    return "waiting", f"no released {a['name']} version supports k8s {tgt[0]}.{tgt[1]} yet"
+
+
 def check_addons(matrix, tgt, running):
     # A target at or below the RUNNING minor (a patch, or a same/lower minor)
     # crosses into no new k8s minor, so every installed addon is already
@@ -77,25 +102,36 @@ def check_addons(matrix, tgt, running):
                     "-o", "jsonpath={.spec.template.spec.containers[*].image}"])
         m = re.search(a["image_re"], img or "")
         if not m:
-            # Fail safe: if we can't read the running version, don't upgrade blind.
-            reasons.append(f"addon {a['name']}: could not read running version "
-                           f"(img='{img or 'not found'}') — refusing to upgrade blind")
+            # Fail safe: can't read the running version → block; a human must
+            # look (ACTIONABLE), never upgrade blind.
+            reasons.append(f"[ACTIONABLE] addon {a['name']}: could not read running "
+                           f"version (img='{img or 'not found'}') — refusing to upgrade blind")
             continue
-        running = m.group(1)  # e.g. "3.26"
+        running_ver = m.group(1)  # e.g. "3.26"
         # max_k8s maps an addon-version floor -> highest supported k8s minor.
         # Pick the highest floor that is <= the running version.
         max_k8s = None
         for floor, mk in sorted(a["max_k8s"].items(), key=lambda kv: minor(kv[0]), reverse=True):
-            if minor(running) >= minor(floor):
+            if minor(running_ver) >= minor(floor):
                 max_k8s = mk
                 break
         if max_k8s is None:
-            reasons.append(f"addon {a['name']} v{running}: below the lowest version "
-                           f"in the compat matrix — unknown k8s support")
+            reasons.append(f"[ACTIONABLE] addon {a['name']} v{running_ver}: below the lowest "
+                           f"version in the compat matrix — unknown k8s support")
             continue
         if tgt > minor(max_k8s):
-            reasons.append(f"addon {a['name']} v{running} supports k8s <= {max_k8s}; "
-                           f"target {tgt[0]}.{tgt[1]} exceeds it — upgrade {a['name']} first")
+            base = (f"addon {a['name']} v{running_ver} supports k8s <= {max_k8s}; "
+                    f"target {tgt[0]}.{tgt[1]} exceeds it")
+            # A deliberately-pinned addon is HELD even if a newer version exists
+            # (e.g. gpu-operator 26.3 supports 1.36 but its driver/OS coupling
+            # means we don't take it yet) — the pin overrides actionable.
+            if a.get("pinned"):
+                why = a.get("pin_reason", "deliberately pinned")
+                reasons.append(f"[PINNED] {base} — pinned ({why}); holding")
+            else:
+                kind, hint = _addon_resolution(a, tgt, running_ver)
+                tag = "ACTIONABLE" if kind == "actionable" else "WAITING"
+                reasons.append(f"[{tag}] {base} — {hint}")
     return reasons
 
 
@@ -109,11 +145,11 @@ def check_removed_apis(tgt):
             rr = lbl.get("removed_release", "")
             if rr and minor(rr) and tgt >= minor(rr):
                 g = lbl.get("group") or "core"
-                reasons.append(f"deprecated API {g}/{lbl.get('version')} "
+                reasons.append(f"[ACTIONABLE] deprecated API {g}/{lbl.get('version')} "
                                f"{lbl.get('resource')} is in use and is removed in "
                                f"k8s {rr} (target {tgt[0]}.{tgt[1]}) — migrate callers first")
     except Exception as e:
-        reasons.append(f"removed-API check could not query Prometheus ({e}) — "
+        reasons.append(f"[ACTIONABLE] removed-API check could not query Prometheus ({e}) — "
                        f"refusing to upgrade blind")
     return reasons
 
@@ -132,9 +168,26 @@ def check_containerd(matrix, tgt):
         name, _, ver = line.partition(" ")
         cv = ver.replace("containerd://", "")
         if minor(cv) and minor(cv) < minor(floor):
-            reasons.append(f"node {name} containerd {cv} < required {floor} "
+            reasons.append(f"[ACTIONABLE] node {name} containerd {cv} < required {floor} "
                            f"for k8s {tgt[0]}.{tgt[1]} — bump containerd first")
     return reasons
+
+
+def held_reason(r):
+    """True for a blocker the cluster cannot act on now: no released version
+    supports the target (WAITING) or the addon is deliberately pinned (PINNED).
+    These are quiet (no alert) — only an upstream release / a manual unpin clears
+    them, so a nightly 'needs attention' alert would be crying wolf."""
+    return r.startswith("[WAITING]") or r.startswith("[PINNED]")
+
+
+def exit_code(reasons):
+    """Map reasons to the gate verdict: 0 safe · 2 actionable block · 4 held.
+    Held WINS over actionable on a mix — if anything is waiting/pinned the target
+    can't proceed yet, so acting on the actionable blockers would be premature."""
+    if not reasons:
+        return 0
+    return 4 if any(held_reason(r) for r in reasons) else 2
 
 
 def main():
@@ -158,9 +211,9 @@ def main():
     if reasons:
         for r in reasons:
             print(r)
-        sys.exit(2)
-    print(f"compat-gate OK: cluster is safe to upgrade to {sys.argv[1]}")
-    sys.exit(0)
+    else:
+        print(f"compat-gate OK: cluster is safe to upgrade to {sys.argv[1]}")
+    sys.exit(exit_code(reasons))
 
 
 if __name__ == "__main__":

@@ -27,13 +27,15 @@
 
 variable "schedule" {
   type = string
-  # Nightly 23:00 UTC (00:00 London) — overnight / low cluster usage, and clear
+  # Weekly Sunday 23:00 UTC (00:00 London) — overnight / low cluster usage, clear
   # of the kured OS-reboot window (01:00-05:00 UTC = 02:00-06:00 London) so the
-  # two drain-pipelines never overlap. Moved from 12:00 UTC noon on 2026-06-17
-  # (Viktor: disruptive node drains should run overnight). Was weekly Sunday
-  # until 2026-05-18. Concurrency bounded by the CronJob's Forbid policy +
-  # retry-on-failure Job-name idempotency.
-  default = "0 23 * * *"
+  # two drain-pipelines never overlap. Cadence history: weekly Sunday until
+  # 2026-05-18 → daily noon → daily 23:00 (2026-06-17) → back to weekly Sunday
+  # (2026-06-28). Rationale for weekly: the actionable-vs-held gate now quiets the
+  # routine "held" churn (e.g. 1.36), so a daily check/attempt buys little; weekly
+  # is enough and patch uptake lags ≤7d (an accepted trade-off). Concurrency
+  # bounded by the CronJob's Forbid policy + retry-on-failure Job-name idempotency.
+  default = "0 23 * * 0"
 }
 
 variable "enabled" {
@@ -41,13 +43,15 @@ variable "enabled" {
   default = true
 }
 
-# Nightly upgrade-report CronJob schedule. 06:07 UTC (07:07 London) — safely
-# after the 23:00 chain has finished (worst case ~02:00) and before the 08:00
-# London alert-digest, so the morning Slack skim shows last night's upgrade
-# outcome + any live blocker. Posts once/day; read-only.
+# Weekly upgrade-report CronJob schedule. Monday 06:07 UTC (07:07 London) — the
+# morning AFTER the Sunday-night check (~7h later, so nightly-report.py's ~25h
+# staleness threshold stays valid AND still flags a missed weekly run), and before
+# the 08:00 London alert-digest so the Monday skim shows the weekly upgrade
+# outcome + any live blocker. Posts once/week; read-only. (The CronJob keeps the
+# historical name k8s-upgrade-nightly-report — not renamed to avoid churn.)
 variable "report_schedule" {
   type    = string
-  default = "7 6 * * *"
+  default = "7 6 * * 1"
 }
 
 # Mirrors `local.image_tag` in stacks/claude-agent-service/main.tf — bump
@@ -105,7 +109,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = kubernetes_namespace.k8s_upgrade.metadata[0].name
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -413,6 +417,44 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   exit 0
                 fi
 
+                # --- Reconcile a leaked in_flight latch (RC1, 2026-07-25) ------------
+                # in_flight is set in the preflight pod and cleared ONLY in the postflight
+                # pod, N Jobs away, on a never-expiring Pushgateway gauge. ANY interruption
+                # between the two (killswitch, set -e abort, hung drain, SIGKILL on a node
+                # reboot/eviction, spawn_next failure, or a manual off-schedule partial run)
+                # freezes in_flight=1 forever -> a false K8sUpgradeStalled that also blocks
+                # kured. kubectl (not the metric) is the ground truth for Job presence, so
+                # this reconcile survives every leak path INCLUDING SIGKILL, which a shell
+                # EXIT trap cannot. Guard: clear only when NO chain Job is Active AND the
+                # latch is set AND its start is >12h stale -> a live or mid-chain run
+                # (fresh start, or a phase Job Active) is NEVER touched. DELETE of the whole
+                # job=k8s-version-upgrade group also drops the orphan target_minor; blocked/
+                # held get re-pushed by the next preflight. Deleting terminal chain Jobs
+                # stops the "chain advanced" skip below from stranding a fresh spawn (the
+                # memory-10190 manual-resume wedge). Runs BEFORE version detection so a
+                # leaked latch is cleared even when the cluster is already up to date.
+                PGMETRICS='http://prometheus-prometheus-pushgateway.monitoring:9091/metrics'
+                PGUP='http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/k8s-version-upgrade'
+                ACTIVE_CHAIN=$(/usr/local/bin/kubectl -n k8s-upgrade get jobs -l app=k8s-upgrade-chain \
+                  -o jsonpath='{range .items[*]}{.status.active}{"\n"}{end}' 2>/dev/null \
+                  | grep -E '^[1-9]' | head -1 || true)
+                PGDATA=$(curl -sf "$PGMETRICS" 2>/dev/null || true)
+                INFLIGHT=$(echo "$PGDATA" | awk '/^k8s_upgrade_in_flight\{/ {printf "%d\n", ($2+0)}' | head -1)
+                STARTED=$(echo "$PGDATA" | awk '/^k8s_upgrade_started_timestamp\{/ {printf "%d\n", ($2+0)}' | head -1)
+                NOW=$(date +%s)
+                if [ -z "$ACTIVE_CHAIN" ] && [ "$INFLIGHT" = "1" ] && [ -n "$STARTED" ] && [ "$STARTED" != "0" ] && [ "$(( NOW - STARTED ))" -gt 43200 ]; then
+                  AGE_H=$(( (NOW - STARTED) / 3600 ))
+                  slack "reconcile: leaked in_flight latch (no active chain Job, started $${AGE_H}h ago) — clearing stale gauge + annotations + terminal Jobs"
+                  echo "reconcile: clearing leaked in_flight latch (stale $${AGE_H}h, no active chain Job)"
+                  curl -sf -X DELETE "$PGUP" >/dev/null 2>&1 || echo "warn: pushgateway group delete failed"
+                  /usr/local/bin/kubectl annotate ns k8s-upgrade \
+                    'viktorbarzin.me/k8s-upgrade-in-flight-' \
+                    'viktorbarzin.me/k8s-upgrade-target-' \
+                    'viktorbarzin.me/k8s-upgrade-snapshot-path-' >/dev/null 2>&1 || true
+                  /usr/local/bin/kubectl -n k8s-upgrade delete job -l app=k8s-upgrade-chain >/dev/null 2>&1 || true
+                fi
+                # --- end reconcile ---------------------------------------------------
+
                 # 1. Detect running version — use the OLDEST kubelet across
                 # all nodes so partial chains (e.g. master upgraded but
                 # workers still pending) don't trick the chain into
@@ -483,45 +525,70 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
                   exit 0
                 fi
 
-                slack "K8s upgrade available: v$RUNNING → v$TARGET ($KIND)"
+                echo "K8s upgrade available: v$RUNNING -> v$TARGET ($KIND)"
 
                 if [ "$DRY_RUN" = "true" ]; then
-                  slack "DRY_RUN — not spawning preflight Job"
+                  slack "DRY_RUN — target v$TARGET detected, not spawning preflight Job"
                   exit 0
                 fi
 
                 # 7. Spawn Job 0 (preflight) via envsubst on the job-template
                 #    Idempotency: deterministic name reconciles via `apply`.
                 JOB_NAME="k8s-upgrade-preflight-$${TARGET//./-}"
+                MASTER_JOB="k8s-upgrade-master-$${TARGET//./-}"
+                ANNOUNCE=yes   # Slack the spawn? Suppressed for silent per-run re-evaluations of a standing gate refusal.
 
-                # Retry-on-failure idempotency: skip only if an existing preflight
-                # Job is Active/Complete. A *Failed* preflight (aborted on a
-                # transient gate, e.g. a spurious critical alert) is deleted and
-                # re-spawned — otherwise its deterministic name + 7d TTL wedges
-                # the entire pipeline until it ages out. (Stuck-pipeline fix
-                # 2026-06-17: a transient critical alert wedged 1.34.9 for 5 days.)
+                # Idempotency + per-run re-evaluation:
+                #   - FAILED preflight (transient gate abort, e.g. a spurious
+                #     critical alert / unhealthy node) -> delete + re-spawn, announced.
+                #   - COMPLETE preflight but NO master Job spawned -> the compat
+                #     gate REFUSED the target (blocked/held now Complete cleanly
+                #     rather than Failing). Re-spawn SILENTLY so the gate re-checks
+                #     each scheduled run (the refusal may have cleared: addon
+                #     upgraded / matrix updated / upstream shipped) WITHOUT per-run Slack noise for a
+                #     standing refusal — the morning report (+ K8sUpgradeBlocked for
+                #     actionable) is the signal.
+                #   - Otherwise (Active, or Complete with the chain advanced) -> skip.
+                # The old "Failed-only re-spawn" left a refused-but-Complete preflight
+                # skipped until its 7d TTL — too slow now that refusals Complete
+                # instead of Failing (2026-06-28). Deterministic names; `apply`
+                # reconciles. (Stuck-pipeline history: a transient critical alert
+                # wedged 1.34.9 for 5 days, 2026-06-17 — hence Failed always re-spawns.)
                 if /usr/local/bin/kubectl -n k8s-upgrade get job "$JOB_NAME" >/dev/null 2>&1; then
                   JOB_FAILED=$(/usr/local/bin/kubectl -n k8s-upgrade get job "$JOB_NAME" \
                     -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)
+                  JOB_COMPLETE=$(/usr/local/bin/kubectl -n k8s-upgrade get job "$JOB_NAME" \
+                    -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)
                   if [ "$JOB_FAILED" = "True" ]; then
                     slack "Preflight Job $JOB_NAME exists but FAILED — deleting and re-spawning"
                     /usr/local/bin/kubectl -n k8s-upgrade delete job "$JOB_NAME" --wait=true >/dev/null 2>&1 || true
+                  elif [ "$JOB_COMPLETE" = "True" ] && ! /usr/local/bin/kubectl -n k8s-upgrade get job "$MASTER_JOB" >/dev/null 2>&1; then
+                    echo "Preflight $JOB_NAME Complete + no master Job (gate refused) — silent per-run re-evaluate"
+                    /usr/local/bin/kubectl -n k8s-upgrade delete job "$JOB_NAME" --wait=true >/dev/null 2>&1 || true
+                    ANNOUNCE=no
                   else
-                    slack "Preflight Job $JOB_NAME already exists (active/complete) — skipping"
+                    echo "Preflight Job $JOB_NAME already exists (active / chain advanced) — skipping"
                     exit 0
                   fi
                 fi
 
+                # Preflight pins to node1 (the "first worker"). Since node1's
+                # nvidia.com/gpu taint was flipped PreferNoSchedule->NoSchedule on
+                # 2026-07-19 (code-j3tx reboot-self-heal), the Job also needs the GPU
+                # toleration or it hangs Pending forever (PodStuckPending, healthcheck
+                # 2026-07-21). Harmless no-op should node1 ever lose the taint.
                 export JOB_NAME PHASE_NEXT=preflight TARGET_NODE_NEXT="" \
                        TARGET_VERSION="$TARGET" TARGET_VERSION_LABEL="$${TARGET//./-}" \
                        KIND="$KIND" IMAGE="$${IMAGE}" \
-                       SCHEDULING_BLOCK=$'      nodeSelector:\n        kubernetes.io/hostname: k8s-node1'
+                       SCHEDULING_BLOCK=$'      nodeSelector:\n        kubernetes.io/hostname: k8s-node1\n      tolerations:\n        - key: nvidia.com/gpu\n          operator: Exists\n          effect: NoSchedule'
 
                 python3 -c 'import os,sys;sys.stdout.write(os.path.expandvars(sys.stdin.read()))' \
                   < /template/job-template.yaml \
                   | /usr/local/bin/kubectl apply -f -
 
-                slack "Spawned $JOB_NAME (target=v$TARGET kind=$KIND)"
+                if [ "$ANNOUNCE" = "yes" ]; then
+                  slack "Spawned $JOB_NAME (target=v$TARGET kind=$KIND)"
+                fi
               EOT
               ]
               env {
@@ -571,7 +638,7 @@ resource "kubernetes_cron_job_v1" "k8s_version_check" {
 #
 # Each morning, after the 23:00 chain has finished, posts ONE concise Slack
 # report of last night's upgrade outcome (no-op / blocked+reasons / upgraded /
-# in-progress) so the autonomous upgrader's nightly result — and any live
+# in-progress) so the autonomous upgrader's weekly result — and any live
 # blocker — is visible at a glance. Read-only: reads the chain's Pushgateway
 # gauges + live nodes/jobs and re-runs compat-gate.py for fresh blocker reasons.
 # Reuses the same SA, creds secret (slack_webhook), and scripts ConfigMap as the

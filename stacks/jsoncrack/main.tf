@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "jsoncrack" {
     name = "jsoncrack"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -31,6 +31,13 @@ resource "kubernetes_deployment" "jsoncrack" {
     labels = {
       app  = "jsoncrack"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
+      # first request through the ingress (design doc 2026-07-12).
+      "sablier.enable" = "true"
+      "sablier.group"  = "jsoncrack"
+      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
+      # propagation so the first forwarded request never hits a 503 race.
+      "sablier.ready-after" = "5s"
     }
   }
   spec {
@@ -68,6 +75,7 @@ resource "kubernetes_deployment" "jsoncrack" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
     ]
   }
 }
@@ -103,13 +111,19 @@ module "anubis" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type          = "proxied"
-  namespace         = kubernetes_namespace.jsoncrack.metadata[0].name
-  name              = "json"
-  service_name      = module.anubis.service_name
-  port              = module.anubis.service_port
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
+  sablier = {
+    group = "jsoncrack"
+  }
+  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  dns_type     = "proxied"
+  namespace    = kubernetes_namespace.jsoncrack.metadata[0].name
+  name         = "json"
+  service_name = module.anubis.service_name
+  port         = module.anubis.service_port
+  # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
+  # ingress_factory for anubis-* backends — no per-site wiring needed.
   extra_middlewares = ["traefik-x402@kubernetescrd"]
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false

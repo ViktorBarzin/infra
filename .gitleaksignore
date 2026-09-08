@@ -9,3 +9,25 @@ stacks/recruiter-responder/secrets/privkey.pem:private-key:1
 # secret is committed.
 stacks/nextcloud-todos/main.tf:curl-auth-user:383
 stacks/nextcloud-todos/main.tf:curl-auth-user:400
+
+# False positive: the `jfrog-identity-token` rule matches the bare 64-hex Xray
+# release SHA256 (XRAY_SHA) in the OCI VPN PoP cloud-init setup script. It is a
+# PUBLIC release checksum (Xray-core v26.3.27 .dgst), not a secret — the actual
+# xray/dnstt secrets are templated from Vault (${oci_*}/${dnstt_privkey}).
+stacks/backup-mx/cloud-init.yaml.tftpl:jfrog-identity-token:613
+
+# False positive: the `generic-api-key` rule matches the base58 decryption key
+# of the PrivateBin golden test vector. It is a real key, but only for a
+# throwaway paste on our own instance whose entire content is the literal text
+# "REFERENCE PASTE from the real UI" (created 2026-08-15, 1-week expiry). It is
+# committed on purpose: the vector proves our paste format still matches what
+# PrivateBin's own frontend produces, which a round-trip test cannot show.
+cli/paste_golden_test.go:generic-api-key:20
+
+# False positive: the `generic-api-key` rule matches the literal filename
+# `99-nvidia.toml` in the CONTEXT.md Drop-in override entry, on entropy 3.52
+# alone. It is the nvidia container toolkit's containerd drop-in, already
+# committed by name in the node-tuning playbook and two docs; the rule fires
+# here because the phrasing puts it after a comma in backticks, which reads
+# like an assignment.
+CONTEXT.md:generic-api-key:265

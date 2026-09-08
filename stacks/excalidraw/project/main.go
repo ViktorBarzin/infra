@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -61,6 +62,21 @@ func getUsername(r *http.Request) string {
 	// Sanitize to prevent directory traversal
 	username = filepath.Base(username)
 	return username
+}
+
+var invalidNameChars = regexp.MustCompile(`[^a-zA-Z0-9-_]`)
+
+// sanitizeName normalizes a user-supplied drawing name into a safe file ID
+// (same charset the dashboard applies on create). Returns "" if nothing
+// meaningful remains.
+func sanitizeName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.TrimSuffix(name, ".excalidraw")
+	name = invalidNameChars.ReplaceAllString(name, "-")
+	if strings.Trim(name, "-") == "" {
+		return ""
+	}
+	return name
 }
 
 // getUserDataDir returns the data directory for a specific user and ensures it exists
@@ -168,6 +184,41 @@ func handleDrawing(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "saved", "id": id})
 
+	case http.MethodPatch:
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+			return
+		}
+		newID := sanitizeName(req.Name)
+		if newID == "" {
+			http.Error(w, "Invalid name", http.StatusBadRequest)
+			return
+		}
+		if _, err := os.Stat(filePath); err != nil {
+			if os.IsNotExist(err) {
+				http.Error(w, "Drawing not found", http.StatusNotFound)
+			} else {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		if newID != id {
+			newPath := filepath.Join(userDataDir, newID+".excalidraw")
+			if _, err := os.Stat(newPath); err == nil {
+				http.Error(w, "A drawing with that name already exists", http.StatusConflict)
+				return
+			}
+			if err := os.Rename(filePath, newPath); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "renamed", "id": newID})
+
 	case http.MethodDelete:
 		if err := os.Remove(filePath); err != nil {
 			if os.IsNotExist(err) {
@@ -264,6 +315,8 @@ const dashboardHTML = `<!DOCTYPE html>
         .btn:hover { background: #5b4cdb; }
         .btn-danger { background: #e74c3c; }
         .btn-danger:hover { background: #c0392b; }
+        .btn-secondary { background: #3d3d5c; }
+        .btn-secondary:hover { background: #4a4a70; }
         .btn-small { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
         .drawings { display: grid; gap: 1rem; }
         .drawing {
@@ -342,11 +395,11 @@ const dashboardHTML = `<!DOCTYPE html>
 
     <div id="modal" class="modal">
         <div class="modal-content">
-            <h2>New Drawing</h2>
+            <h2 id="modal-title">New Drawing</h2>
             <input type="text" id="drawingName" placeholder="Drawing name..." autofocus>
             <div class="modal-actions">
                 <button class="btn" style="background:#444" onclick="hideModal()">Cancel</button>
-                <button class="btn" onclick="createDrawing()">Create</button>
+                <button class="btn" id="modal-confirm" onclick="confirmModal()">Create</button>
             </div>
         </div>
     </div>
@@ -369,31 +422,63 @@ const dashboardHTML = `<!DOCTYPE html>
             }
         }
 
+        function drawingRow(d) {
+            var row = document.createElement('div');
+            row.className = 'drawing';
+
+            var info = document.createElement('div');
+            info.className = 'drawing-info';
+            var nameLink = document.createElement('a');
+            nameLink.className = 'drawing-name';
+            nameLink.href = '/draw/' + encodeURIComponent(d.id);
+            nameLink.textContent = d.name;
+            var meta = document.createElement('div');
+            meta.className = 'drawing-meta';
+            meta.textContent = 'Modified: ' + new Date(d.modified).toLocaleDateString() + ' ' +
+                new Date(d.modified).toLocaleTimeString() + ' - ' + formatSize(d.size);
+            info.appendChild(nameLink);
+            info.appendChild(meta);
+
+            var actions = document.createElement('div');
+            actions.className = 'drawing-actions';
+            var open = document.createElement('a');
+            open.className = 'btn btn-small';
+            open.href = '/draw/' + encodeURIComponent(d.id);
+            open.textContent = 'Open';
+            var rename = document.createElement('button');
+            rename.className = 'btn btn-small btn-secondary';
+            rename.textContent = 'Rename';
+            rename.onclick = function() { showRenameModal(d.id); };
+            var del = document.createElement('button');
+            del.className = 'btn btn-small btn-danger';
+            del.textContent = 'Delete';
+            del.onclick = function() { deleteDrawing(d.id); };
+            actions.appendChild(open);
+            actions.appendChild(rename);
+            actions.appendChild(del);
+
+            row.appendChild(info);
+            row.appendChild(actions);
+            return row;
+        }
+
         async function loadDrawings() {
             const resp = await fetch('/api/drawings');
             const drawings = await resp.json();
             const container = document.getElementById('drawings');
+            container.replaceChildren();
 
             if (!drawings || drawings.length === 0) {
-                container.innerHTML = '<div class="empty">No drawings yet. Create your first one!</div>';
+                var empty = document.createElement('div');
+                empty.className = 'empty';
+                empty.textContent = 'No drawings yet. Create your first one!';
+                container.appendChild(empty);
                 return;
             }
 
-            container.innerHTML = drawings.map(function(d) {
-                return '<div class="drawing">' +
-                    '<div class="drawing-info">' +
-                    '<a href="/draw/' + d.id + '" class="drawing-name">' + d.name + '</a>' +
-                    '<div class="drawing-meta">' +
-                    'Modified: ' + new Date(d.modified).toLocaleDateString() + ' ' + new Date(d.modified).toLocaleTimeString() +
-                    ' - ' + formatSize(d.size) +
-                    '</div>' +
-                    '</div>' +
-                    '<div class="drawing-actions">' +
-                    '<a href="/draw/' + d.id + '" class="btn btn-small">Open</a>' +
-                    '<button class="btn btn-small btn-danger" onclick="deleteDrawing(\'' + d.id + '\')">Delete</button>' +
-                    '</div>' +
-                    '</div>';
-            }).join('');
+            drawings.forEach(function(d) {
+                container.appendChild(drawingRow(d));
+            });
         }
 
         function formatSize(bytes) {
@@ -402,18 +487,64 @@ const dashboardHTML = `<!DOCTYPE html>
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         }
 
-        function showNewModal() {
+        var modalAction = null; // invoked with the input value on confirm
+
+        function showModal(title, confirmLabel, initialValue, action) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-confirm').textContent = confirmLabel;
+            var input = document.getElementById('drawingName');
+            input.value = initialValue || '';
+            modalAction = action;
             document.getElementById('modal').classList.add('active');
-            document.getElementById('drawingName').focus();
+            input.focus();
+            input.select();
+        }
+
+        function showNewModal() {
+            showModal('New Drawing', 'Create', '', createDrawing);
+        }
+
+        function showRenameModal(id) {
+            showModal('Rename Drawing', 'Rename', id, function(value) {
+                renameDrawing(id, value);
+            });
         }
 
         function hideModal() {
             document.getElementById('modal').classList.remove('active');
             document.getElementById('drawingName').value = '';
+            modalAction = null;
         }
 
-        async function createDrawing() {
-            var name = document.getElementById('drawingName').value.trim();
+        function confirmModal() {
+            if (modalAction) modalAction(document.getElementById('drawingName').value);
+        }
+
+        async function renameDrawing(id, newName) {
+            newName = (newName || '').trim();
+            if (!newName || newName === id) {
+                hideModal();
+                return;
+            }
+            var resp = await fetch('/api/drawings/' + encodeURIComponent(id), {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newName })
+            });
+            if (resp.status === 409) {
+                alert('A drawing with that name already exists.');
+                return; // keep the modal open so the user can pick another name
+            }
+            if (!resp.ok) {
+                alert('Rename failed: ' + await resp.text());
+                return;
+            }
+            hideModal();
+            loadDrawings();
+        }
+
+        async function createDrawing(name) {
+            name = (name || '').trim();
             if (!name) {
                 name = 'drawing-' + Date.now();
             }
@@ -446,7 +577,7 @@ const dashboardHTML = `<!DOCTYPE html>
         }
 
         document.getElementById('drawingName').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') createDrawing();
+            if (e.key === 'Enter') confirmModal();
         });
 
         document.getElementById('modal').addEventListener('click', function(e) {

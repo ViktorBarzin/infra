@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# pythonpath="." makes the `app` package importable when running pytest from
+# the project root (no install step needed).
+pythonpath = ["."]
+testpaths = ["tests"]

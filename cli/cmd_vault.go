@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,41 +18,58 @@ import (
 // decryption is done by the official `bw` CLI. See
 // docs/runbooks/homelab-vault-onboarding.md.
 func vaultCommands() []Command {
-	return []Command{
+	cmds := []Command{
+		// Vaultwarden — your personal password manager (logins/passwords/TOTP).
 		{Path: []string{"vault", "setup"}, Tier: TierWrite,
-			Summary: "one-time: store your Vaultwarden master password + API key in your Vault path", Run: vaultSetup},
+			Summary: "[vaultwarden] one-time: store your master password + API key in your Vault path", Run: vaultSetup},
 		{Path: []string{"vault", "status"}, Tier: TierRead,
-			Summary: "show whether your vault is configured/reachable (no secrets)", Run: vaultStatus},
+			Summary: "[vaultwarden] show whether your vault is configured/reachable (no secrets)", Run: vaultStatus},
 		{Path: []string{"vault", "list"}, Tier: TierRead,
-			Summary: "list your item names: vault list [--search Q]", Run: vaultList},
+			Summary: "[vaultwarden] list your item names: vault list [--search Q]", Run: vaultList},
 		{Path: []string{"vault", "get"}, Tier: TierRead,
-			Summary: "fetch one item: vault get <name> [--field password|username|uri|notes|totp] [--json]", Run: vaultGet},
+			Summary: "[vaultwarden] fetch one login: vault get <name> [--field password|username|uri|notes|totp] [--json] [--all]", Run: vaultGet},
 		{Path: []string{"vault", "search"}, Tier: TierRead,
-			Summary: "search your item names: vault search <query>", Run: vaultSearch},
+			Summary: "[vaultwarden] search your item names: vault search <query>", Run: vaultSearch},
 		{Path: []string{"vault", "code"}, Tier: TierRead,
-			Summary: "current TOTP code for an item: vault code <name>", Run: vaultCode},
+			Summary: "[vaultwarden] current TOTP code for an item: vault code <name>", Run: vaultCode},
 		{Path: []string{"vault", "lock"}, Tier: TierWrite,
-			Summary: "lock/log out the local bw session", Run: vaultLock},
+			Summary: "[vaultwarden] lock/log out the local bw session", Run: vaultLock},
 		{Path: []string{"vault"}, Tier: TierRead,
-			Summary: "Vaultwarden access for your own vault (run `homelab vault` for help)",
+			Summary: "two stores: Vaultwarden (logins) + HashiCorp Vault/OpenBao kv (infra secrets) — run `homelab vault` for help",
 			Run:     func([]string) error { fmt.Print(vaultHelp()); return nil }},
 	}
+	// HashiCorp Vault / OpenBao — homelab INFRA secrets (the secret/… KV store).
+	return append(cmds, vaultKVCommands()...)
 }
 
-// vaultHelp is shown for bare `homelab vault`.
+// vaultHelp is shown for bare `homelab vault`. It LEADS with the distinction
+// between the two unrelated "vaults" this command fronts, because the name
+// collides: Vaultwarden (a password manager) vs HashiCorp Vault / OpenBao (the
+// infra secrets store).
 func vaultHelp() string {
-	return `homelab vault — read YOUR OWN Vaultwarden logins (no-HITL after one-time setup)
+	return `homelab vault — two different secret stores under one command:
 
+  • Vaultwarden               your personal PASSWORD MANAGER (logins / passwords / TOTP)
+  • HashiCorp Vault / OpenBao  homelab INFRA secrets (the secret/… KV store)  → 'vault kv …'
+
+── Vaultwarden  (reads YOUR OWN vault; no-HITL after one-time setup) ──
   homelab vault setup             one-time: store your master password + API key in your Vault path
   homelab vault status            configured / unlocked / reachable (no secrets)
   homelab vault list [--search Q] list your item names (no secrets)
   homelab vault get <name> [--field password|username|uri|notes|totp] [--json]
                                   TTY → clipboard (auto-clears); piped → stdout
+  homelab vault get <name> --all  all fields (incl. custom) as JSON; piped only.
+                                  TOTP shown as presence flag — use 'vault code' for a code.
   homelab vault code <name>       current TOTP code
   homelab vault lock              lock / log out the local bw session
 
-Creds live only in your own Vault path; the admin never sees them. Identity is
-your unix UID. Security model: docs/runbooks/homelab-vault-onboarding.md
+── HashiCorp Vault / OpenBao  (infra secrets; uses your own OIDC vault token) ──
+  homelab vault kv get <path> [--field K]   read an infra KV secret
+  homelab vault kv list <path>              list sub-paths
+  homelab vault kv put <path> <key>         write one key (value via stdin)
+
+Vaultwarden creds live only in your own Vault path; the admin never sees them.
+Security model: docs/runbooks/homelab-vault-onboarding.md
 (note: anything running as your user can decrypt your vault — the accepted no-HITL trade).
 `
 }
@@ -79,7 +97,33 @@ func realRunner(name string, argv, envv []string) (string, error) {
 	out, err := cmd.Output()
 	// Trim only the trailing newline the tool appends — NOT all whitespace, so a
 	// fetched secret with significant leading/trailing spaces is preserved.
-	return strings.TrimRight(string(out), "\r\n"), err
+	return strings.TrimRight(string(out), "\r\n"), augmentErr(err, exitStderr(err))
+}
+
+// exitStderr returns the stderr captured by cmd.Output() on a failed exec (it
+// stows it on *exec.ExitError), or nil. The tools we shell out to (vault, bw)
+// write the actionable message there — "connection refused", "permission
+// denied" — which the caller would otherwise never see behind a bare
+// "exit status N".
+func exitStderr(err error) []byte {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.Stderr
+	}
+	return nil
+}
+
+// augmentErr appends captured stderr to an error so failures are diagnosable
+// (not just "exit status 2"). Returns nil when err is nil, and err unchanged
+// when there's no stderr; preserves the wrapped error for errors.Is/As.
+func augmentErr(err error, stderr []byte) error {
+	if err == nil {
+		return nil
+	}
+	if s := strings.TrimSpace(string(stderr)); s != "" {
+		return fmt.Errorf("%w: %s", err, s)
+	}
+	return err
 }
 
 // realRunnerStdin runs a command feeding `stdin` to it, for secret values that
@@ -92,7 +136,7 @@ func realRunnerStdin(name string, argv, envv []string, stdin string) (string, er
 	}
 	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.Output()
-	return strings.TrimRight(string(out), "\r\n"), err
+	return strings.TrimRight(string(out), "\r\n"), augmentErr(err, exitStderr(err))
 }
 
 func vwCredsPath(user string) string { return vwUserPathPrefix + user }
@@ -135,23 +179,55 @@ func scopedTokenPath(home string) string {
 }
 
 // vaultTokenSource decides which Vault token the `vault` child processes should
-// use. Precedence: an explicit $VAULT_TOKEN, then a native ~/.vault-token (what
-// admins carry), then the per-user scoped token claude-auth-sync maintains at
-// scopedTokenPath(HOME) (policy workstation-claude-<user>, which grants exactly
-// the create/read/update this tool needs on the user's own path). Returns the
-// token to export — "" when nothing must be exported because the vault CLI reads
-// the ambient credential natively — plus a source tag for tests/logging.
+// use. Precedence: an explicit $VAULT_TOKEN (deliberate override), then the
+// per-user scoped token claude-auth-sync maintains at scopedTokenPath(HOME)
+// (policy workstation-claude-<user>, which grants exactly the create/read/update
+// this tool needs on the user's own path), then a native ~/.vault-token.
+//
+// The scoped token MUST beat ~/.vault-token: this tool only ever touches the
+// caller's own secret/workstation/claude-users/<user> path, and a power-user who
+// ran `vault login -method=oidc` carries a read-only ~/.vault-token whose
+// capability on that path is `deny` — letting it win shadows the scoped token
+// and every op fails 403/deny (emo, 2026-06-28). ~/.vault-token is only the
+// right credential when there is no scoped token (admins). Returns the token to
+// export — "" when the vault CLI should read the ambient/native credential —
+// plus a source tag for tests/logging.
 func vaultTokenSource(envToken string, haveVaultTokenFile bool, scopedToken string) (token, source string) {
 	switch {
 	case envToken != "":
 		return "", "env"
+	case strings.TrimSpace(scopedToken) != "":
+		return strings.TrimSpace(scopedToken), "scoped"
 	case haveVaultTokenFile:
 		return "", "file"
 	default:
-		if t := strings.TrimSpace(scopedToken); t != "" {
-			return t, "scoped"
-		}
 		return "", "none"
+	}
+}
+
+// vaultAddrDefault is the cluster Vault the workstation talks to. The bw server
+// is likewise hardcoded (openSession), so a sane default here is consistent.
+const vaultAddrDefault = "https://vault.viktorbarzin.me"
+
+// vaultAddrToSet returns the VAULT_ADDR to export when the caller's environment
+// doesn't already set one, else "". homelab vault is invoked by AFK agent
+// sessions — frequently non-login shells (tmux panes, agent subprocesses) that
+// never sourced /etc/environment — so, like claude-auth-sync, the CLI must NOT
+// depend on an ambient VAULT_ADDR; otherwise every `vault` child falls back to
+// the 127.0.0.1:8200 default and fails "connection refused" (exit 2).
+func vaultAddrToSet(envAddr string) string {
+	if strings.TrimSpace(envAddr) == "" {
+		return vaultAddrDefault
+	}
+	return ""
+}
+
+// ensureVaultAddr exports the default VAULT_ADDR when none is set, so the vault
+// child processes reach the cluster Vault regardless of the caller's shell. An
+// explicit VAULT_ADDR (admins, CI) is left untouched.
+func ensureVaultAddr() {
+	if a := vaultAddrToSet(os.Getenv("VAULT_ADDR")); a != "" {
+		os.Setenv("VAULT_ADDR", a)
 	}
 }
 
@@ -167,6 +243,10 @@ func fileNonEmpty(path string) bool {
 // is idempotent and safe for admins, whose explicit $VAULT_TOKEN / ~/.vault-token
 // take precedence and are left untouched.
 func ensureVaultToken() {
+	// Every vault verb funnels through here, so this is the one place that also
+	// guarantees VAULT_ADDR is set (see vaultAddrToSet for why it can't be
+	// assumed from the caller's shell).
+	ensureVaultAddr()
 	home := os.Getenv("HOME")
 	scoped, _ := os.ReadFile(scopedTokenPath(home))
 	tok, src := vaultTokenSource(os.Getenv("VAULT_TOKEN"), home != "" && fileNonEmpty(home+"/.vault-token"), string(scoped))
@@ -207,7 +287,9 @@ func bwSecretEnv(appdata string, c vwCreds, session string) []string {
 func bwLoginArgs() []string                 { return []string{"login", "--apikey"} }
 func bwUnlockArgs() []string                { return []string{"unlock", "--passwordenv", "BW_PASSWORD", "--raw"} }
 func bwGetArgs(field, name string) []string { return []string{"get", field, name} }
+func bwItemArgs(name string) []string       { return []string{"get", "item", name} }
 func bwStatusArgs() []string                { return []string{"status"} }
+func bwSyncArgs() []string                  { return []string{"sync"} }
 
 // bwNeedsLogin parses `bw status` JSON and reports whether a `bw login` is
 // required. Unparseable/empty output → true (safer to attempt login).
@@ -374,13 +456,23 @@ func openSession(run cmdRunner, user, uid string) (session, error) {
 	if err != nil {
 		return session{}, err
 	}
-	return session{env: bwSecretEnv(appdata, creds, sess)}, nil
+	sessEnv := bwSecretEnv(appdata, creds, sess)
+	// Pull the latest server-side state so reads reflect current values. `bw
+	// unlock` only decrypts the LOCAL cache, so a persisted (already-logged-in)
+	// session would otherwise serve stale data until the next login. Best-effort:
+	// a transient sync failure must not break a read — fall back to the cached
+	// vault and warn (status reports reachability separately).
+	if _, err := run("bw", bwSyncArgs(), sessEnv); err != nil {
+		fmt.Fprintln(os.Stderr, "homelab vault: warning: bw sync failed; using cached vault (values may be stale): "+err.Error())
+	}
+	return session{env: sessEnv}, nil
 }
 
 type getOpts struct {
 	name  string
 	field string
 	json  bool
+	all   bool // dump every field (incl. custom) as normalized JSON
 }
 
 var validGetFields = map[string]bool{"password": true, "username": true, "uri": true, "notes": true, "totp": true}
@@ -392,6 +484,8 @@ func parseGetArgs(args []string) (getOpts, error) {
 		switch {
 		case a == "--json":
 			o.json = true
+		case a == "--all":
+			o.all = true
 		case a == "--field" && i+1 < len(args):
 			o.field = args[i+1]
 			i++
@@ -402,9 +496,10 @@ func parseGetArgs(args []string) (getOpts, error) {
 		}
 	}
 	if o.name == "" {
-		return o, fmt.Errorf("usage: homelab vault get <name> [--field password|username|uri|notes|totp] [--json]")
+		return o, fmt.Errorf("usage: homelab vault get <name> [--field password|username|uri|notes|totp] [--json] [--all]")
 	}
-	if !validGetFields[o.field] {
+	// --all dumps the whole item, so --field is irrelevant — skip its allowlist.
+	if !o.all && !validGetFields[o.field] {
 		return o, fmt.Errorf("invalid --field %q (want password|username|uri|notes|totp)", o.field)
 	}
 	return o, nil
@@ -418,6 +513,81 @@ func getValue(run cmdRunner, user, uid string, o getOpts) (string, error) {
 		return "", err
 	}
 	return bwGet(run, s.env, o.field, o.name)
+}
+
+// getItem opens a session and returns the whole item as raw `bw get item` JSON.
+// Used by `get --all`; normalization is a separate, pure step (normalizeItem).
+func getItem(run cmdRunner, user, uid, name string) (string, error) {
+	s, err := openSession(run, user, uid)
+	if err != nil {
+		return "", err
+	}
+	return run("bw", bwItemArgs(name), s.env)
+}
+
+// normalizedItem is the browse-all-fields projection of a Vaultwarden item: the
+// standard login fields that are present, notes, and a flat map of custom field
+// name→value. bw internals (id, object, reprompt, passwordHistory) are dropped,
+// and the TOTP *seed* is reduced to a presence flag — the only seed-derived path
+// stays the specially-audited `vault code` (see the design §10/§16).
+type normalizedItem struct {
+	Name     string            `json:"name"`
+	Username string            `json:"username,omitempty"`
+	Password string            `json:"password,omitempty"`
+	URIs     []string          `json:"uris,omitempty"`
+	TOTP     bool              `json:"totp,omitempty"` // presence only, never the seed
+	Notes    string            `json:"notes,omitempty"`
+	Fields   map[string]string `json:"fields,omitempty"` // custom field name→value
+}
+
+// bwFieldLinked is the Bitwarden custom-field type for a "linked" field: it
+// references another field and carries a null value, so it is not real data.
+const bwFieldLinked = 3
+
+// normalizeItem parses a `bw get item` payload into the browse projection. It is
+// pure (no I/O), so it is the unit-tested heart of `get --all`.
+func normalizeItem(raw string) (normalizedItem, error) {
+	var it struct {
+		Name  string `json:"name"`
+		Notes string `json:"notes"`
+		Login *struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+			Totp     string `json:"totp"`
+			URIs     []struct {
+				URI string `json:"uri"`
+			} `json:"uris"`
+		} `json:"login"`
+		Fields []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+			Type  int    `json:"type"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(raw), &it); err != nil {
+		return normalizedItem{}, fmt.Errorf("parse bw item: %w", err)
+	}
+	n := normalizedItem{Name: it.Name, Notes: it.Notes}
+	if it.Login != nil {
+		n.Username = it.Login.Username
+		n.Password = it.Login.Password
+		n.TOTP = it.Login.Totp != ""
+		for _, u := range it.Login.URIs {
+			if u.URI != "" {
+				n.URIs = append(n.URIs, u.URI)
+			}
+		}
+	}
+	for _, f := range it.Fields {
+		if f.Type == bwFieldLinked {
+			continue // references another field, no value of its own
+		}
+		if n.Fields == nil {
+			n.Fields = map[string]string{}
+		}
+		n.Fields[f.Name] = f.Value // duplicate names: last-wins (rare; documented)
+	}
+	return n, nil
 }
 
 // clipboardDecision picks how to return a secret value. "stdout" prints it (a
@@ -557,7 +727,9 @@ func statusSummary(run cmdRunner, user, uid string) string {
 	if err != nil {
 		return "vault: configured, but unlock/login FAILED (creds stale? run `homelab vault setup`): " + err.Error()
 	}
-	if _, err := run("bw", []string{"sync"}, s.env); err != nil {
+	// openSession already did a best-effort sync; status re-runs it explicitly so
+	// a reachability failure surfaces in this report rather than only on stderr.
+	if _, err := run("bw", bwSyncArgs(), s.env); err != nil {
 		return "vault: configured + unlocked, but sync/reachability failed: " + err.Error()
 	}
 	return "vault: configured, unlocked, reachable ✓"
@@ -726,6 +898,9 @@ func vaultGet(args []string) error {
 	}
 	defer unlock()
 	user := vaultCurrentUser()
+	if o.all {
+		return getAllFields(user, uid, o.name)
+	}
 	val, err := getValue(realRunner, user, uid, o)
 	if err != nil {
 		return err
@@ -739,5 +914,31 @@ func vaultGet(args []string) error {
 		return nil
 	}
 	emitSecret(val)
+	return nil
+}
+
+// getAllFields prints every field of one item as normalized JSON. Like
+// `get --json`, the payload is all secret values, so it refuses a terminal
+// (pipe it). The TOTP seed is never emitted — only a presence flag — so no extra
+// TOTP audit is needed; the op-log uses a distinct verb so a bulk dump is
+// distinguishable from a single-field get (the item name is still never logged).
+func getAllFields(user, uid, name string) error {
+	if !jsonToStdoutOK(stdoutIsTTY()) {
+		return fmt.Errorf("refusing to print all fields as JSON to a terminal; pipe it (e.g. | jq)")
+	}
+	raw, err := getItem(realRunner, user, uid, name)
+	if err != nil {
+		return err
+	}
+	item, err := normalizeItem(raw)
+	if err != nil {
+		return err
+	}
+	out, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	writeOpLog(opRecord{User: user, Verb: "get-all", PID: os.Getpid(), PPID: os.Getppid(), ParentComm: parentComm(os.Getppid()), ItemName: name})
+	fmt.Println(string(out))
 	return nil
 }

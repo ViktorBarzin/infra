@@ -5,9 +5,11 @@
 <main>
 	<h1>Kubernetes Access Portal</h1>
 
-	<div class="callout warning">
-		<strong>VPN Required</strong> — The cluster is on a private network. You need Headscale VPN access before kubectl will work.
-		<a href="/onboarding">See the Getting Started guide</a> for VPN setup instructions.
+	<div class="callout info">
+		<strong>Fastest way in:</strong> open the <a href="https://t3.viktorbarzin.me">web terminal</a> or the
+		<a href="https://k8s.viktorbarzin.me">dashboard</a> and sign in — no install, no VPN needed. Prefer your
+		own machine? The <a href="/onboarding#path-laptop">local-setup guide</a> covers VPN + kubectl, and the
+		<a href="/onboarding">Getting Started page</a> compares all three access paths.
 	</div>
 
 	<section>
@@ -26,6 +28,7 @@
 			<p><strong>Assigned namespaces:</strong> {data.namespaces.join(', ')}</p>
 
 			<h3>Quick Commands</h3>
+			<p>Run these as-is in the <a href="https://t3.viktorbarzin.me">web terminal</a> — it's already signed in as you.</p>
 			<pre>
 # Check your pods
 kubectl get pods -n {data.namespaces[0]}
@@ -47,16 +50,23 @@ vault write kubernetes/creds/{data.namespaces[0]}-deployer \
 
 	<section>
 		<h2>Get Started</h2>
+		<h3>No setup — start now</h3>
+		<ol>
+			<li><a href="https://t3.viktorbarzin.me">Open the web terminal</a> — a ready shell with kubectl, Vault and your repos already set up</li>
+			<li><a href="https://k8s.viktorbarzin.me">Open the dashboard</a> — point-and-click view of your workloads</li>
+		</ol>
+		<h3>On your own machine</h3>
 		<ol>
 			{#if data.role === 'namespace-owner'}
-				<li><a href="/onboarding?role=namespace-owner">Complete the namespace-owner onboarding guide</a></li>
+				<li><a href="/onboarding?role=namespace-owner#path-laptop">Follow the namespace-owner setup</a> (VPN, kubectl, Vault, encrypted state)</li>
 			{:else}
-				<li><a href="/onboarding">Complete the onboarding guide</a> (VPN, kubectl, git)</li>
+				<li><a href="/onboarding#path-laptop">Follow the local setup</a> (VPN, kubectl, git)</li>
 			{/if}
 			<li><a href="/setup">Install kubectl and kubelogin</a></li>
 			<li><a href="/download">Download your kubeconfig</a></li>
 			<li>Run <code>kubectl get namespaces</code> to verify access</li>
 		</ol>
+		<p><a href="/onboarding">Compare all three access paths →</a></p>
 	</section>
 
 	<section>
@@ -91,12 +101,12 @@ vault write kubernetes/creds/{data.namespaces[0]}-deployer \
 		border-radius: 6px;
 		margin: 1rem 0;
 	}
-	.callout.warning {
-		background: #fff3cd;
-		border-left: 4px solid #ffc107;
+	.callout.info {
+		background: #e8f4fd;
+		border-left: 4px solid #2196f3;
 	}
 	.callout a {
-		color: #856404;
+		color: #0d47a1;
 		font-weight: 600;
 	}
 </style>

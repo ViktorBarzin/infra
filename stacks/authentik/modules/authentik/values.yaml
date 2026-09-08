@@ -39,6 +39,16 @@ server:
       value: "3"
     - name: AUTHENTIK_WEB__THREADS
       value: "4"
+    # Gunicorn worker recycle hardening (defaults max_requests=1000/jitter=50).
+    # A worker recycle that coincides with a transient PG/pgbouncer blip stalls
+    # in-flight requests (sessions+cache are on PostgreSQL since Redis was removed
+    # in 2026.2), and with 9 workers recycling on a tight 50-jitter window the
+    # recycles cluster — feeding the episodic all-pods-NotReady 502/504 cascade.
+    # 10x rarer recycles + 20x wider jitter (1000) decorrelate them from DB blips.
+    - name: AUTHENTIK_WEB__MAX_REQUESTS
+      value: "10000"
+    - name: AUTHENTIK_WEB__MAX_REQUESTS_JITTER
+      value: "1000"
     # Cache flow plans for 30m and policy evaluations for 15m (defaults 300s).
     # Authentik 2026.2 stores cache in Postgres, so a TTL hit is still a
     # SELECT — but a single indexed lookup beats re-planning the flow
@@ -66,8 +76,14 @@ server:
       value: "true"
     - name: AUTHENTIK_EMAIL__USERNAME
       value: "noreply@viktorbarzin.me"
+    # Display name is generic ("No Reply"), NOT an app name: this is the GLOBAL
+    # from for ALL Authentik mail — admin notifications (e.g. the
+    # update_available alert) as well as any recovery/enrollment mail — and the
+    # notification transport has no per-message from override. Was "TripIt"
+    # (leaked onto admin notifications); made generic 2026-07-24. The address
+    # noreply@viktorbarzin.me is unchanged, so SASL/SPF/deliverability are too.
     - name: AUTHENTIK_EMAIL__FROM
-      value: "TripIt <noreply@viktorbarzin.me>"
+      value: "No Reply <noreply@viktorbarzin.me>"
     - name: AUTHENTIK_EMAIL__PASSWORD
       valueFrom:
         secretKeyRef:
@@ -87,11 +103,28 @@ server:
   livenessProbe:
     failureThreshold: 6
     timeoutSeconds: 5
-  strategy:
+  # Readiness widened from the chart default (3x10s/3s ~= 30s) to ~80s. The
+  # readiness probe (/-/health/ready/) queries the DB, so a sub-~60s PG/pgbouncer
+  # transient otherwise returns 503 and drops ALL 3 server pods from the Service
+  # at once -> Traefik has no healthy backend -> 502/504 (the episodic blank
+  # screen + 30s hang). 80s absorbs a full CNPG failover reconnect; liveness
+  # still reaps a truly hung pod. Partial override — the chart deep-merges the
+  # httpGet path /-/health/ready/ (same as the livenessProbe override above).
+  readinessProbe:
+    failureThreshold: 8
+    periodSeconds: 10
+    timeoutSeconds: 5
+  # RollingUpdate strategy. The chart key is `deploymentStrategy`, NOT `strategy`
+  # (authentik.server reads .Values.server.deploymentStrategy) — the old
+  # `strategy:` key was silently ignored, so live ran the chart default 25%/25%
+  # and every rolling event dropped a server pod out of rotation, amplifying the
+  # NotReady cascade. maxSurge:1 + maxUnavailable:0 keeps all 3 ready throughout
+  # a roll (PDB minAvailable:2 + ResourceQuota headroom allow the transient pod).
+  deploymentStrategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 0
-      maxUnavailable: 1
+      maxSurge: 1
+      maxUnavailable: 0
   resources:
     requests:
       cpu: 100m
@@ -118,15 +151,44 @@ server:
 global:
   addPrometheusAnnotations: true
   image:
-    # Pin to the Keel-managed live tag. Keel (diun-annotated, keel.sh/enrolled
-    # namespace) bumps the IMAGE between chart releases, while helm defaults
-    # the tag to the chart appVersion — so any helm upgrade silently
-    # DOWNGRADES the running pods to the chart pin (2026-06-10: a values-only
-    # apply rolled live 2026.2.4 back to 2026.2.2 against a 2026.2.4-migrated
-    # DB → boot storm, see docs/post-mortems/2026-06-10-authentik-downgrade-
-    # boot-storm.md). Keep this tag in sync with what Keel has deployed when
-    # touching this chart; clear it only when bumping the chart version itself.
-    tag: "2026.2.4"
+    # CUSTOM OVERLAY: ONE thin patch over the official authentik server image
+    # (see stacks/authentik/Dockerfile): serve authentik's no-JS SFE login to old
+    # Safari/WebKit AND any iOS browser (Chrome/Firefox = WebKit) on iOS<=16.3 so
+    # old devices (e.g. iPadOS<=15) get a working login instead of a blank page,
+    # and inject social-login links into the SFE (it can't render sources; needed
+    # for password-less Google-only accounts). The overlay's other patch, SLOW-1a
+    # (the login-flow select_subclasses() narrowing, ~1.4s -> ~14ms), went
+    # upstream and shipped in 2026.8.1, so it was dropped on 2026-09-02. Built by
+    # .github/workflows/build-authentik.yml to ghcr.io/viktorbarzin/authentik-server
+    # (public package, anonymous pull — no imagePullSecret needed, like the
+    # upstream goauthentik image). Keel is NO LONGER enrolled for this namespace
+    # (see main.tf) so it can't bump/downgrade the tag; helm also defaults the tag
+    # to the chart appVersion (2026.8.1) — so BOTH repository AND tag are pinned
+    # explicitly here to prevent the 2026-06-10 downgrade-boot-storm class.
+    # UPGRADE — learned the hard way on the 2026.2.4 -> 2026.8.0 run (2026-08-19):
+    #  1. NO SKIPPING MINOR LINES. authentik's upgrade docs require landing the
+    #     latest patch of each minor in turn, and it does NOT support downgrade.
+    #     2026.2.4 -> 2026.8.0 was three hops: 2026.2.6, 2026.5.6, 2026.8.0.
+    #     Back the DB up first; a jumped upgrade already cost us a partial
+    #     migration failure once (2025.10 -> 2026.2).
+    #  2. THREE places carry the tag and must move together: the Dockerfile FROM,
+    #     the hardcoded tags in .github/workflows/build-authentik.yml, and this
+    #     tag. Re-verify the guarded patch against the new upstream source.
+    #  3. TWO COMMITS PER HOP, in this order. Push the Dockerfile/workflow change
+    #     first and wait for GHA to publish the tag; only then push this tag plus
+    #     the chart version. CI applies on push and helm_release is atomic, so
+    #     pointing values at a tag GHA has not built yet fails the pull and rolls
+    #     the release back.
+    #  4. The chart line is sparser than the app line (there is no chart 2026.2.6),
+    #     and chart != image: pinning repository+tag here is what lets them differ.
+    #  5. Expect a long first pod. The 2026.5 -> 2026.8 migrations outran
+    #     Woodpecker's step timeout, which killed the pipeline mid-helm-upgrade and
+    #     left the release in pending-upgrade while the rollout finished fine on
+    #     its own. Cure is the #6073 recipe: delete the orphaned
+    #     sh.helm.release.v1.goauthentik.v<N> secret (does not touch pods), then
+    #     re-apply so helm records a clean revision.
+    repository: ghcr.io/viktorbarzin/authentik-server
+    tag: "2026.8.1-patch4"
 
 worker:
   # 2 replicas: workers handle background tasks (LDAP sync, email,
@@ -159,22 +221,46 @@ worker:
       value: "true"
     - name: AUTHENTIK_EMAIL__USERNAME
       value: "noreply@viktorbarzin.me"
+    # Display name is generic ("No Reply"), NOT an app name: this is the GLOBAL
+    # from for ALL Authentik mail — admin notifications (e.g. the
+    # update_available alert) as well as any recovery/enrollment mail — and the
+    # notification transport has no per-message from override. Was "TripIt"
+    # (leaked onto admin notifications); made generic 2026-07-24. The address
+    # noreply@viktorbarzin.me is unchanged, so SASL/SPF/deliverability are too.
     - name: AUTHENTIK_EMAIL__FROM
-      value: "TripIt <noreply@viktorbarzin.me>"
+      value: "No Reply <noreply@viktorbarzin.me>"
     - name: AUTHENTIK_EMAIL__PASSWORD
       valueFrom:
         secretKeyRef:
           name: authentik-email
           key: AUTHENTIK_EMAIL__PASSWORD
-  strategy:
+  # Chart key is `deploymentStrategy`, not `strategy` (see server above). Workers
+  # serve no user traffic, so maxSurge:0/maxUnavailable:1 is fine — this is just
+  # the dead-key cleanup so the declared intent actually takes effect.
+  deploymentStrategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 0
       maxUnavailable: 1
   resources:
     requests:
+      # 1.5Gi -> 896Mi on 2026-09-04 (bead code-hn6k). Measured peak working set
+      # over 30 days across both worker pods is 595Mi, so the old request
+      # reserved 2.6x what the worker has ever used and the cluster could not
+      # drain a node as a result. 896Mi is 1.5x that measured peak.
+      #
+      # The LIMIT deliberately stays at 2Gi, so nothing about what a worker task
+      # may burst to has changed. Lowering a request cannot cause an OOM kill;
+      # the kernel kills on the limit. The only behavioural change is that under
+      # node memory pressure a pod using more than its request is ranked as an
+      # earlier eviction candidate, and the QoS class is unaffected here because
+      # requests and limits already differed, so it was Burstable before and is
+      # Burstable now.
+      #
+      # The SERVER block above is deliberately left at 1.5Gi: it peaked at
+      # 1,070Mi, which is 70% of its request, so there is no slack to take.
       cpu: 100m
-      memory: 1.5Gi
+      memory: 896Mi
     limits:
       memory: 2Gi
   topologySpreadConstraints:

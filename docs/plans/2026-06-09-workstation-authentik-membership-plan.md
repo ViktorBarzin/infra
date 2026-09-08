@@ -2,6 +2,14 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax. This is **infra** work: the engine tasks are real pytest TDD; the host/Authentik tasks "verify" via an idempotent re-run + a smoke check with expected output. Honor the Terraform-only rule for cluster/Authentik changes (`scripts/tg apply`); devvm host scripts are the accepted exception. Claim `host:devvm` before host mutations and `stack:authentik` before applying Authentik.
 
+> **Amended 2026-08-17 — do not execute as written.** This plan's goal shipped on
+> 2026-08-17 by a different route (CI reads the group and commits `roster.yaml`
+> policy rows; the roster was kept rather than retired). See the amendment on
+> [the design doc](./2026-06-09-workstation-authentik-membership-design.md) and
+> [what was built](./2026-08-17-t3-membership-driven-provisioning-design.md). Tasks 1-2
+> (engine) landed in spirit as `os_name_for` / `membership_plan`; Task 3 (a read-only
+> Authentik token on the devvm) was not built and remains the alternative approach.
+
 **Goal:** Make the Authentik `T3 Users` group membership the single source of truth for who gets a devvm workstation account, identified by email; retire `roster.yaml`.
 
 **Architecture:** The provisioner reads `T3 Users` members from the Authentik API (read-only token) instead of `roster.yaml`. A pure engine derives the Linux `os_user` from each member's email (or an `os_user` Authentik attribute override) and produces the same desired-state shape v1 already applies. Workstation access stays fully decoupled from cluster RBAC (`k8s_users` untouched). wizard is special-cased as the admin/owner.

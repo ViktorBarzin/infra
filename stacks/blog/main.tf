@@ -135,12 +135,14 @@ module "anubis" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  namespace         = kubernetes_namespace.website.metadata[0].name
-  name              = "blog"
-  service_name      = module.anubis.service_name
-  port              = module.anubis.service_port
+  source       = "../../modules/kubernetes/ingress_factory"
+  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  namespace    = kubernetes_namespace.website.metadata[0].name
+  name         = "blog"
+  service_name = module.anubis.service_name
+  port         = module.anubis.service_port
+  # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
+  # ingress_factory for anubis-* backends — no per-site wiring needed.
   extra_middlewares = ["traefik-x402@kubernetescrd"]
   full_host         = "viktorbarzin.me"
   dns_type          = "proxied"
@@ -162,9 +164,11 @@ module "ingress" {
 module "ingress_net_diag" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": public read-only static file (curl|bash diagnostic script). No login, no PoW.
-  auth             = "none"
-  namespace        = kubernetes_namespace.website.metadata[0].name
-  name             = "blog-net-diag"
+  auth      = "none"
+  namespace = kubernetes_namespace.website.metadata[0].name
+  name      = "blog-net-diag"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = kubernetes_service.blog.metadata[0].name
   port             = "80"
   ingress_path     = ["/net-diag.sh"]

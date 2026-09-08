@@ -33,9 +33,28 @@ SSH_KEY=/secrets/k8s-upgrade/ssh_key
 SLACK_FILE=/secrets/k8s-upgrade/slack_webhook
 PG='http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/k8s-version-upgrade'
 PROM='http://prometheus-server.monitoring.svc.cluster.local:80'
+
+# Alert names the halt-on-alert gate must NEVER count — including the pipeline's
+# OWN criticals. Each phase's gate aborts on any firing severity=critical alert,
+# and preflight's gate runs BEFORE in_flight is refreshed (step 5, ~line 506). If
+# it counted K8sUpgradeStalled / EtcdPreUpgradeSnapshotMissing (both driven by THIS
+# pipeline's own Pushgateway gauges), a stale/leaked gauge would abort every
+# preflight before it could clear anything — the chain could never resume
+# (self-perpetuating deadlock, RC3, 2026-07-25). RecentNodeReboot (info, redundant
+# with the readiness check) + IngressTTFBCritical are the pre-existing benign
+# ignores. Only CRITICAL alerts reach this filter (halt_on_alert_query selects
+# severity==critical), so warning-level K8sUpgradeChainJobFailed / K8sUpgradeBlocked
+# deliberately do NOT belong here.
+HALT_IGNORE='RecentNodeReboot|IngressTTFBCritical|K8sUpgradeStalled|EtcdPreUpgradeSnapshotMissing'
 KUBECTL=kubectl
 JOB_TEMPLATE=/template/job-template.yaml
 UPDATE_K8S_SH=/scripts/update_k8s.sh
+
+# Set to 1 by record_blocked/record_held when the compat-gate refuses the
+# target. spawn_next() then declines to advance the chain — but the Job still
+# exits 0, because a gate refusal is a DECISION, not a failure (no Failed Job,
+# no K8sUpgradeChainJobFailed). Signalling is via the gauges those recorders push.
+HALT_CHAIN=0
 
 # SSH targets are node InternalIPs, resolved live from `kubectl get nodes` (see
 # ssh_target() below) — the pipeline has NO dependency on node DNS records
@@ -88,17 +107,31 @@ push() {
     | curl -sS --data-binary @- "$PG" || echo "warn: pushgateway push failed"
 }
 
-# Auto-upgrade safety: a preflight compat-gate refusal is a BLOCK, not a crash —
-# the cluster simply isn't ready for this target yet (an addon / in-use API /
-# containerd is too old). Record it (k8s_upgrade_blocked=1 -> K8sUpgradeBlocked
-# alert), Slack the reasons, and halt so a human clears the blocker (or a later
-# run proceeds once it's cleared). This is the "upgrade when we can, alert when
-# we can't" contract.
-block() {
+# Compat-gate verdict recorders. A gate refusal is a DECISION, not a crash: the
+# Job Completes cleanly and the chain simply doesn't advance (spawn_next checks
+# HALT_CHAIN). The two outcomes differ only in how they're signalled:
+#   - record_blocked: ACTIONABLE — a newer addon version would clear it.
+#       k8s_upgrade_blocked=1 -> K8sUpgradeBlocked alert (fires once via
+#       alert-on-change). "upgrade when we can, alert when we can't."
+#   - record_held:    WAITING-ON-UPSTREAM or PINNED — nothing to do but wait.
+#       k8s_upgrade_held=1 -> NO alert; the nightly report's ⏸️ line is the
+#       only signal. This is what stops the nightly cry-wolf for unactionable
+#       blocks (kyverno/ESO behind upstream, gpu-operator pinned).
+# Neither Slacks per-run: the reasons are in the nightly report (it re-runs
+# compat-gate), and per-run Slack was itself a nightly-noise source.
+record_blocked() {
   push k8s_upgrade_blocked 1
-  slack "BLOCKED preflight (target v$TARGET_VERSION) — auto-upgrade halted, needs attention:\n$1"
-  echo "BLOCKED: $1" >&2
-  exit 1
+  push k8s_upgrade_held 0
+  HALT_CHAIN=1
+  echo "BLOCKED (action needed) preflight v$TARGET_VERSION:" >&2
+  printf '%s\n' "$1" >&2
+}
+record_held() {
+  push k8s_upgrade_held 1
+  push k8s_upgrade_blocked 0
+  HALT_CHAIN=1
+  echo "HELD (not yet upgradable — waiting upstream / pinned) preflight v$TARGET_VERSION:" >&2
+  printf '%s\n' "$1" >&2
 }
 
 halt_on_alert_query() {
@@ -116,7 +149,7 @@ halt_on_alert_query() {
   #     mid-chain (apiserver down, etcd down, node not ready, etc.).
   #
   # `extra_ignore` is now mostly historical — kept for backwards compat with
-  # `halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical"`-style calls. With severity-based
+  # `halt_on_alert_query "$HALT_IGNORE"`-style calls. With severity-based
   # filtering, RecentNodeReboot (severity=info) is filtered automatically.
   # We still build the regex for any critical alert the caller wants to
   # explicitly ignore (e.g. a known-broken thing we're aware of).
@@ -256,6 +289,10 @@ case "$PHASE" in
 esac
 
 spawn_next() {
+  if [ "${HALT_CHAIN:-0}" = "1" ]; then
+    echo "Chain halted by compat-gate (blocked/held) — not spawning next phase."
+    return 0
+  fi
   [ -z "$NEXT_PHASE" ] && { echo "End of chain."; return 0; }
 
   local job_name="k8s-upgrade-${NEXT_PHASE}-${TARGET_VERSION//./-}"
@@ -286,8 +323,11 @@ spawn_next() {
       scheduling_block=$'      nodeSelector:\n        kubernetes.io/hostname: k8s-master\n      tolerations:\n        - key: node-role.kubernetes.io/control-plane\n          operator: Exists\n          effect: NoSchedule' ;;
     "")
       scheduling_block="" ;;
+    # A specific worker (the master phase runs on 'worker_nodes | head -1' = node1).
+    # node1's nvidia.com/gpu taint is NoSchedule since 2026-07-19 (code-j3tx), so the
+    # job needs the GPU toleration to land there; harmless no-op on non-GPU workers.
     *)
-      scheduling_block=$'      nodeSelector:\n        kubernetes.io/hostname: '"$NEXT_RUN_ON" ;;
+      scheduling_block=$'      nodeSelector:\n        kubernetes.io/hostname: '"$NEXT_RUN_ON"$'\n      tolerations:\n        - key: nvidia.com/gpu\n          operator: Exists\n          effect: NoSchedule' ;;
   esac
 
   export JOB_NAME="$job_name"
@@ -315,15 +355,37 @@ phase_preflight() {
   # 0. Auto-upgrade compat gate (compat-gate.py): refuse the upgrade if a critical
   #    addon, an in-use deprecated API, or a node's containerd is too old for the
   #    target. Runs FIRST — before any mutation (etcd snapshot, drains) — so a
-  #    block is cheap. Reset the blocked gauge for this run; block() sets it to 1
-  #    only on a refusal. This is what makes unattended minor upgrades safe: the
-  #    chain proceeds when the cluster supports the target and halts+alerts when
-  #    it doesn't (e.g. Calico/ESO/kyverno behind, or a removed API still in use).
-  push k8s_upgrade_blocked 0
+  #    refusal is cheap. The gate CLASSIFIES the refusal (exit code):
+  #      0 safe      -> proceed
+  #      2 actionable -> record_blocked (a newer addon version would clear it)
+  #      4 held       -> record_held (waiting on upstream / a pinned addon)
+  #      3/other err  -> fail-safe: treat as actionable block
+  #    blocked/held push the gauge DEFINITIVELY (one value per run — no pre-reset
+  #    flap that would re-notify the alert nightly) and set HALT_CHAIN so the Job
+  #    Completes cleanly without advancing the chain. This is what makes
+  #    unattended minor upgrades safe AND quiet: proceed when supported, alert
+  #    only when there's something to do, hold silently when there isn't.
   local gate_out gate_rc=0
   gate_out=$(python3 /scripts/compat-gate.py "$TARGET_VERSION" < /scripts/addon-compat.json 2>&1) || gate_rc=$?
-  if [ "$gate_rc" -ne 0 ]; then block "$gate_out"; fi
-  echo "compat-gate passed for v$TARGET_VERSION"
+  case "$gate_rc" in
+    0)
+      push k8s_upgrade_blocked 0
+      push k8s_upgrade_held 0
+      echo "compat-gate passed for v$TARGET_VERSION"
+      ;;
+    4)
+      record_held "$gate_out"
+      return 0
+      ;;
+    2)
+      record_blocked "$gate_out"
+      return 0
+      ;;
+    *)
+      record_blocked "gate ERROR (rc=$gate_rc) — failing safe as an actionable block:"$'\n'"$gate_out"
+      return 0
+      ;;
+  esac
 
   # 1. All nodes Ready + no pressure
   local bad_nodes
@@ -346,7 +408,7 @@ phase_preflight() {
   # is set, often daily). Now skipped — check 3 is the single source of truth
   # for "is the cluster quiet enough to upgrade".
   local alerts
-  alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
+  alerts=$(halt_on_alert_query "$HALT_IGNORE")
   if [ -n "$alerts" ]; then
     slack "ABORT preflight — firing alerts:\n$alerts"
     exit 1
@@ -537,7 +599,7 @@ phase_master() {
   # the chain itself causes node reboots, so this alert firing is expected
   # mid-chain (e.g. master was already upgraded+rebooted before this phase).
   local alerts
-  alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
+  alerts=$(halt_on_alert_query "$HALT_IGNORE")
   [ -n "$alerts" ] && { slack "ABORT master — alerts firing pre-drain: $alerts"; exit 1; }
 
   # Quiesce noisy operators that crashloop when apiserver briefly disappears
@@ -585,7 +647,7 @@ phase_master() {
     exit 1
   fi
 
-  alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
+  alerts=$(halt_on_alert_query "$HALT_IGNORE")
   [ -n "$alerts" ] && { slack "ABORT master — alerts firing post-upgrade: $alerts"; exit 1; }
 
   # Re-apply apiserver OIDC. `kubeadm upgrade apply` regenerates the apiserver
@@ -643,7 +705,7 @@ phase_worker() {
   # just rebooted a node, that's the cause and is expected.
   local attempt alerts
   for attempt in $(seq 1 30); do
-    alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
+    alerts=$(halt_on_alert_query "$HALT_IGNORE")
     [ -z "$alerts" ] && break
     echo "Waiting for alerts to clear (attempt $attempt/30): $alerts"
     sleep 60
@@ -674,7 +736,7 @@ phase_worker() {
   # 10-min soak with halt-on-alert (RecentNodeReboot ignored — we know we restarted it)
   echo "Soaking $TARGET_NODE for 10 min..."
   for i in $(seq 1 10); do
-    alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
+    alerts=$(halt_on_alert_query "$HALT_IGNORE")
     [ -n "$alerts" ] && { slack "ABORT $TARGET_NODE mid-soak — alerts: $alerts"; exit 1; }
     sleep 60
   done
@@ -706,7 +768,7 @@ phase_postflight() {
   # No alerts firing. Ignore RecentNodeReboot — by definition we just
   # rebooted every node; this alert clears naturally in <1h.
   local alerts
-  alerts=$(halt_on_alert_query "RecentNodeReboot|IngressTTFBCritical")
+  alerts=$(halt_on_alert_query "$HALT_IGNORE")
   [ -n "$alerts" ] && slack "Postflight WARN — alerts still firing (cluster on target, please check):\n$alerts"
 
   # Pod-ready ratio
@@ -777,6 +839,8 @@ phase_postflight() {
   push k8s_upgrade_in_flight 0
   push k8s_upgrade_snapshot_taken 0
   push k8s_upgrade_started_timestamp 0
+  push k8s_upgrade_blocked 0
+  push k8s_upgrade_held 0
 
   slack ":white_check_mark: K8s upgrade complete: cluster on v$TARGET_VERSION (pod-ready ratio $ratio)"
 }

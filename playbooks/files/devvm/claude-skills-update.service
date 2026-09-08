@@ -1,0 +1,14 @@
+[Unit]
+Description=Keep devvm users' mattpocock/skills set current
+Documentation=https://github.com/mattpocock/skills
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/claude-skills-update
+StandardOutput=journal
+StandardError=journal
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=20min

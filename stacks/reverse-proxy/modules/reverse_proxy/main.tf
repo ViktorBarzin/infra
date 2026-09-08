@@ -207,10 +207,14 @@ module "valchedrym" {
 
 # https://mladost3.viktorbarzin.me/
 module "mladost3" {
-  source            = "./factory"
-  name              = "mladost3"
-  external_name     = "mladost3.ddns.net"
-  port              = 8080
+  source        = "./factory"
+  name          = "mladost3"
+  external_name = "mladost3.ddns.net"
+  port          = 8080
+  # Internal-only: shadows the * wildcard CNAME (2026-07-09) — without an
+  # explicit record this name would resolve via Cloudflare and go public.
+  dns_type          = "internal"
+  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
   tls_secret_name   = var.tls_secret_name
   depends_on        = [kubernetes_namespace.reverse-proxy]
   external_monitor  = false
@@ -373,6 +377,10 @@ module "ha-london" {
   external_name   = "ha-london.viktorbarzin.lan"
   port            = 8123
   tls_secret_name = var.tls_secret_name
+  # HA-london is parked (VM 103 NIC held link_down); opt its ingress out of the
+  # external-monitor-sync default so it stops the [External] ha-london "down"
+  # alert. Re-enable (drop this) if HA-london comes back online. (2026-07-06)
+  external_monitor = false
   # depends_on on the rate-limit manifest avoids a dangling-reference window
   # that would 404 ha-london traffic (see ha-sofia / memory 768).
   depends_on = [

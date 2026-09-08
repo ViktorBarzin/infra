@@ -64,7 +64,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -106,6 +106,29 @@ resource "kubernetes_manifest" "external_secret" {
           remoteRef = {
             key      = "fire-planner"
             property = "actualbudget_sync_id"
+          }
+        },
+        # Anca's SEPARATE actualbudget instance — drives her half of the
+        # Household/Family FIRE spend (live_anca_or_default in the recompute).
+        {
+          secretKey = "ACTUALBUDGET_ANCA_API_URL"
+          remoteRef = {
+            key      = "fire-planner"
+            property = "actualbudget_anca_api_url"
+          }
+        },
+        {
+          secretKey = "ACTUALBUDGET_ANCA_API_KEY"
+          remoteRef = {
+            key      = "fire-planner"
+            property = "actualbudget_anca_api_key"
+          }
+        },
+        {
+          secretKey = "ACTUALBUDGET_ANCA_SYNC_ID"
+          remoteRef = {
+            key      = "fire-planner"
+            property = "actualbudget_anca_sync_id"
           }
         },
       ]
@@ -249,10 +272,9 @@ resource "kubernetes_deployment" "fire_planner" {
         }
 
         init_container {
-          name              = "alembic-migrate"
-          image             = local.image
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "fire_planner", "migrate"]
+          name    = "alembic-migrate"
+          image   = local.image
+          command = ["python", "-m", "fire_planner", "migrate"]
 
           env_from {
             secret_ref {
@@ -318,10 +340,10 @@ resource "kubernetes_deployment" "fire_planner" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "512Mi"
+              memory = "192Mi"
             }
             limits = {
-              memory = "1024Mi"
+              memory = "320Mi"
             }
           }
         }
@@ -459,6 +481,104 @@ resource "kubernetes_cron_job_v1" "fire_planner_recompute" {
   ]
 }
 
+# Monthly FIRE-countdown target solve on the 2nd at 10:00 UTC (an hour after
+# recompute-all, so account_snapshot is fresh). Binary-searches each Case's FIRE
+# number per country at the 99% Guyton-Klinger bar and upserts fire_target, which
+# the wealth Grafana dashboard's "FIRE Countdown" section reads.
+resource "kubernetes_cron_job_v1" "fire_planner_fire_targets" {
+  metadata {
+    name      = "fire-planner-fire-targets"
+    namespace = kubernetes_namespace.fire_planner.metadata[0].name
+  }
+  spec {
+    schedule                      = "0 10 2 * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 5
+    starting_deadline_seconds     = 600
+
+    job_template {
+      metadata {
+        labels = local.labels
+      }
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 86400
+        # The full country sweep is CPU-bound (binary search × ~22 cities ×
+        # 3 cases). Give it room rather than letting it run forever.
+        #
+        # 3600 -> 10800 on 2026-09-02. The work has not grown; the disk under it
+        # has. The 2026-08-02 run wrote all 88 rows inside the hour with sdc at
+        # 3.8% utilisation. The 2026-09-02 run hit the deadline, retried once and
+        # failed again with sdc at 70% — the shared-spindle contention tracked in
+        # bead code-oflt. The wealth dashboard reads fire_target directly over
+        # Postgres, so a failed run leaves it showing month-old FIRE numbers.
+        #
+        # If it fails again at 10800, do NOT just raise this further. The loop
+        # already logs one line per solved target and the failed run emitted
+        # none, so it completed zero of 88 in a full hour rather than nearly
+        # finishing. That would mean the per-solve DB round-trips are the wall
+        # and the fix belongs in the storage or the solver, not in this number.
+        # Applied 2026-09-02 (pipeline #1406 was cancelled first).
+        active_deadline_seconds = 10800
+        template {
+          metadata {
+            labels = local.labels
+          }
+          spec {
+            restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "registry-credentials"
+            }
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            container {
+              name  = "fire-targets"
+              image = local.image
+              # --horizon 72: Viktor retires ~age 28 and plans to live to 100, so
+              # the portfolio must last 72 years (was the 60y default ≈ to age 88).
+              command = ["python", "-m", "fire_planner", "recompute-fire-targets",
+              "--countries", "all", "--horizon", "72"]
+
+              env_from {
+                secret_ref {
+                  name = "fire-planner-secrets"
+                }
+              }
+              env_from {
+                secret_ref {
+                  name = "fire-planner-db-creds"
+                }
+              }
+
+              resources {
+                requests = {
+                  cpu    = "500m"
+                  memory = "1Gi"
+                }
+                limits = {
+                  memory = "2Gi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+
+  depends_on = [
+    kubernetes_manifest.external_secret,
+    kubernetes_manifest.db_external_secret,
+  ]
+}
+
 # Weekly refresh of the COL cache: walks col_snapshot for rows
 # expiring within 7 days, re-scrapes Numbeo + Expatistan, upserts. With
 # the user-chosen 1-year TTL, a healthy cache has 0 stale rows on most
@@ -565,29 +685,68 @@ module "ingress" {
 # /simulate); read endpoints are open. Acceptable for a personal tool
 # whose only data is anonymous numeric projections.
 module "ingress_api" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  dns_type        = "none"
-  namespace       = kubernetes_namespace.fire_planner.metadata[0].name
-  name            = "fire-planner-api"
-  host            = "fire-planner" # share effective_host with main ingress
-  service_name    = "fire-planner"
-  port            = 8080
-  ingress_path    = ["/api/"]
-  tls_secret_name = var.tls_secret_name
+  source    = "../../modules/kubernetes/ingress_factory"
+  dns_type  = "none"
+  namespace = kubernetes_namespace.fire_planner.metadata[0].name
+  name      = "fire-planner-api"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "fire-planner" # share effective_host with main ingress
+  service_name     = "fire-planner"
+  port             = 8080
+  ingress_path     = ["/api/"]
+  tls_secret_name  = var.tls_secret_name
   # auth = "none": XHR-based API endpoints; forward-auth 302+cookie-dance breaks CORS preflight and browser fetch().
   auth = "none"
 }
 
-# Plan-time read of the ESO-created K8s Secret for Grafana datasource
-# password. First-apply gotcha: must
-# `terragrunt apply -target=kubernetes_manifest.db_external_secret` so
-# the Secret exists before this data source plans.
-data "kubernetes_secret" "fire_planner_db_creds" {
-  metadata {
-    name      = "fire-planner-db-creds"
-    namespace = kubernetes_namespace.fire_planner.metadata[0].name
+# ExternalSecret in the monitoring namespace mirroring the rotating
+# fire_planner DB password. Grafana mounts this via envFromSecrets in
+# monitoring/grafana_chart_values.yaml; the datasource ConfigMap below
+# references it as $__env{FIRE_PLANNER_PG_PASSWORD}. Reloader restarts
+# Grafana whenever ESO updates this secret (on the 7d static-role
+# rotation), so the provisioned datasource never goes stale — replaces
+# the old plan-time `data.kubernetes_secret` bake that broke weekly.
+# Mirrors the wealth-pg / payslips-pg pattern.
+resource "kubernetes_manifest" "grafana_fire_planner_pg_creds" {
+  field_manager {
+    force_conflicts = true
   }
-  depends_on = [kubernetes_manifest.db_external_secret]
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "grafana-fire-planner-pg-creds"
+      namespace = "monitoring"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "grafana-fire-planner-pg-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            FIRE_PLANNER_PG_PASSWORD = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-fire-planner"
+          property = "password"
+        }
+      }]
+    }
+  }
 }
 
 # Grafana datasource for fire_planner PostgreSQL DB.
@@ -624,12 +783,15 @@ resource "kubernetes_config_map" "grafana_fire_planner_datasource" {
           timescaledb     = false
         }
         secureJsonData = {
-          password = data.kubernetes_secret.fire_planner_db_creds.data["DB_PASSWORD"]
+          # Live env from grafana-fire-planner-pg-creds (above), injected into
+          # Grafana via envFromSecrets; reloader refreshes it on rotation.
+          password = "$__env{FIRE_PLANNER_PG_PASSWORD}"
         }
         editable = true
       }]
     })
   }
+  depends_on = [kubernetes_manifest.grafana_fire_planner_pg_creds]
 }
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
@@ -658,8 +820,8 @@ variable "claude_agent_service_url" {
 
 variable "examples_llm_model" {
   type        = string
-  description = "llama-swap model id for the examples LLM primary extractor. Use qwen3-8b when GPU has ≥5GB free; qwen3vl-4b when immich-ml is using ~10GB."
-  default     = "qwen3vl-4b"
+  description = "llama-swap model id for the examples LLM primary extractor. The extractor is text-only, so this is the text model; the app default in fire_planner/examples/llm_extract.py matches."
+  default     = "qwen3-8b"
 }
 
 variable "run_examples_bulk_ingest" {
@@ -895,9 +1057,8 @@ resource "kubernetes_cron_job_v1" "examples_weekly_delta" {
               name = "ghcr-credentials"
             }
             container {
-              name              = "ingest"
-              image             = local.image
-              image_pull_policy = "IfNotPresent"
+              name  = "ingest"
+              image = local.image
               command = ["python", "-m", "fire_planner", "examples", "ingest",
               "--top=week", "--limit=200"]
 

@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "vaultwarden" {
     name = "vaultwarden"
     labels = {
       "istio-injection" : "disabled"
-      tier = var.tier
+      tier               = var.tier
       "keel.sh/enrolled" = "true"
     }
   }
@@ -63,6 +63,12 @@ resource "kubernetes_deployment" "vaultwarden" {
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
+      # Keel auto-update policy: `minor` so 1.x minor releases (e.g. 1.36->1.37)
+      # roll automatically, not only patches. TF-managed here (removed from
+      # ignore_changes below) so it is durable across applies/recreates; Kyverno's
+      # add-if-absent default (`patch`) is preempted by this explicit value.
+      # trigger + pollSchedule stay Kyverno-injected (still ignored below).
+      "keel.sh/policy" = "minor"
     }
   }
   spec {
@@ -87,17 +93,16 @@ resource "kubernetes_deployment" "vaultwarden" {
       }
       spec {
         container {
-          image             = "vaultwarden/server:latest"
-          image_pull_policy = "Always"
-          name              = "vaultwarden"
+          image = "vaultwarden/server:latest"
+          name  = "vaultwarden"
 
           resources {
             requests = {
               cpu    = "10m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
 
@@ -180,14 +185,14 @@ resource "kubernetes_deployment" "vaultwarden" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
+      # keel.sh/policy is TF-managed now (set to "minor" above) — deliberately NOT ignored.
       metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],         # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/match-tag"],             # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["kubernetes.io/change-cause"],    # Keel rewrites this on every rollout
+      metadata[0].annotations["keel.sh/match-tag"],                       # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["kubernetes.io/change-cause"],              # Keel rewrites this on every rollout
     ]
   }
 }
@@ -240,11 +245,12 @@ module "ingress" {
 # -----------------------------------------------------------------------------
 
 module "nfs_vaultwarden_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "vaultwarden-backup-host"
-  namespace  = kubernetes_namespace.vaultwarden.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/vaultwarden-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "vaultwarden-backup-host"
+  namespace          = kubernetes_namespace.vaultwarden.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/vaultwarden-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_cron_job_v1" "vaultwarden-backup" {

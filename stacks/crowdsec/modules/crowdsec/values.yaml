@@ -11,6 +11,12 @@ image:
   tag: "v1.7.8"
 
 agent:
+  # reboot-self-heal Phase 2: tolerate the GPU taint so the log-parsing agent
+  # keeps a pod on k8s-node1 when nvidia.com/gpu flips to NoSchedule.
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
   resources:
     requests:
       cpu: 25m
@@ -20,12 +26,12 @@ agent:
   priorityClassName: "tier-1-cluster"
   # To specify each pod you want to process it logs (pods present in the node)
   acquisition:
-    # The namespace where the pod is located
-    - namespace: traefik
-      # The pod name
-      podName: traefik-*
-      # as in crowdsec configuration, we need to specify the program name so the parser will match and parse logs
-      program: traefik
+    # traefik is NOT here on purpose. The chart hardcodes
+    # poll_without_inotify: false, and with inotify alone the agent keeps
+    # reading a file that has been rotated or replaced by a container restart —
+    # measured blind for hours on 2026-09-03. It is declared instead in
+    # kubernetes_config_map.crowdsec_traefik_acquisition (see main.tf) and
+    # mounted into acquis.d below, with polling enabled.
     # Mailserver logs for SMTP/IMAP brute-force detection
     - namespace: mailserver
       podName: mailserver-*
@@ -54,6 +60,28 @@ agent:
       mountPath: /etc/crowdsec/scenarios/http-429-abuse.yaml
       subPath: "http-429-abuse.yaml"
       readonly: true
+    # These two REPLACE the hub symlink at the same path, which is what makes
+    # them an override rather than a second scenario with a duplicate name. A
+    # ConfigMap key on its own is inert — the mount is what lands the file.
+    # subPath mounts do not refresh on a ConfigMap change, so editing one of
+    # these only takes effect when the agent pods restart; changing this list
+    # does that by itself.
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/http-probing.yaml
+      subPath: "http-probing.yaml"
+      readonly: true
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/http-crawl-non_statics.yaml
+      subPath: "http-crawl-non_statics.yaml"
+      readonly: true
+    # New scenario rather than an override, so it sits alongside the stock one:
+    # the stock rule keeps catching FAST crawlers everywhere, this one catches a
+    # SLOW crawler on forgejo only. Adding a mount restarts the agent pods,
+    # which is what loads it (subPath mounts do not refresh on their own).
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/forgejo-crawl-slow.yaml
+      subPath: "forgejo-crawl-slow.yaml"
+      readonly: true
     - name: whitelist
       mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml
       subPath: "whitelist.yaml"
@@ -61,6 +89,10 @@ agent:
     - name: syslog-acquisition
       mountPath: /etc/crowdsec/acquis.d/syslog.yaml
       subPath: "syslog.yaml"
+      readonly: true
+    - name: traefik-acquisition
+      mountPath: /etc/crowdsec/acquis.d/traefik.yaml
+      subPath: "traefik.yaml"
       readonly: true
   extraVolumes:
     - name: custom-scenarios
@@ -72,6 +104,9 @@ agent:
     - name: syslog-acquisition
       configMap:
         name: crowdsec-syslog-acquisition
+    - name: traefik-acquisition
+      configMap:
+        name: crowdsec-traefik-acquisition
 lapi:
   resources:
     requests:
@@ -126,21 +161,22 @@ lapi:
         secretKeyRef:
           name: crowdsec-lapi-secrets
           key: dbPassword
-    # Register the Traefik bouncer at LAPI startup with the SAME API key the
-    # traefik-stack middleware uses (Vault `ingress_crowdsec_api_key`). Before
-    # this the bouncer was never registered → LAPI returned 403 → the plugin
-    # failed open (updateMaxFailure=-1) and enforced NOTHING (no bans, no
-    # captcha). Idempotent across the 3 LAPI replicas / restarts, and
-    # re-registers automatically if the LAPI DB is ever wiped (the root cause:
-    # the prior manual registration was lost in the MySQL→PostgreSQL migration).
+    # Enforcement bouncers, registered at LAPI startup (idempotent across the 3
+    # replicas / restarts):
+    #   traefik  -> in-process Traefik plugin on the websecure entrypoint. This
+    #               is the only layer that sees the real client IP for
+    #               Cloudflare-PROXIED hosts, which is every HTTP host in the
+    #               zone, so it is where public web traffic is actually enforced.
+    #   firewall -> cs-firewall-bouncer DaemonSet (direct hosts, in-kernel
+    #               nftables drop; sees only the tunnel for proxied traffic).
+    #
+    # The third bouncer, kvsync, is GONE (2026-08-18) along with the Cloudflare
+    # edge list it fed: the Lists API enforces a hard ~72h floor between
+    # successful writes, which left the edge disagreeing with LAPI for 107 of 216
+    # observed hours. Its stale LAPI rows were deleted with `cscli bouncers
+    # delete` — it self-registered one row per CronJob pod IP and had leaked 443.
     - name: BOUNCER_KEY_traefik
-      value: "${INGRESS_CROWDSEC_API_KEY}"
-    # Real enforcement path that replaces the dead Traefik Yaegi plugin:
-    #   kvsync   -> LAPI->Cloudflare-KV sync CronJob (proxied hosts, edge Worker)
-    #   firewall -> cs-firewall-bouncer DaemonSet (direct hosts, in-kernel nftables drop)
-    # Registered at LAPI startup (idempotent across the 3 replicas / restarts).
-    - name: BOUNCER_KEY_kvsync
-      value: "${KVSYNC_CROWDSEC_API_KEY}"
+      value: "${TRAEFIK_CROWDSEC_API_KEY}"
     - name: BOUNCER_KEY_firewall
       value: "${FIREWALL_CROWDSEC_API_KEY}"
   dashboard:
@@ -203,20 +239,29 @@ lapi:
     type: RollingUpdate
   
 config:
-  # Custom profiles: captcha for rate limiting, ban for attacks
+  # Custom profiles: every remediating alert becomes a real ban.
+  #
+  # captcha_remediation was REMOVED on 2026-09-02. It diverted four scenarios
+  # — http-429-abuse, http-403-abuse, http-crawl-non_statics and
+  # http-sensitive-files — to a captcha decision, and captcha is enforced
+  # NOWHERE (the Traefik plugin is ban-only by design, and the Cloudflare edge
+  # channel that might have carried it was retired 2026-08-18). So those four
+  # detected and did nothing.
+  #
+  # It cost us: on 2026-09-02 a Meta crawler swarm walked forgejo's git history
+  # and OOMKilled all three traefik pods plus forgejo. http-crawl-non_statics
+  # fired 60 times throughout and every one of those decisions was discarded as
+  # an inert captcha. Viktor's call to remove it — a soft-fail that fails to
+  # anything is worse than no rule, because the metrics look like coverage.
+  #
+  # These scenarios are genuinely FP-prone, which is why the divert existed.
+  # The mitigation is the trusted-ips whitelist in main.tf, which now pins the
+  # London egress explicitly (that address was self-banned for 363 days once
+  # already). If a legitimate source starts getting banned, whitelist it —
+  # do not reintroduce a remediation that goes nowhere.
   profiles.yaml: |
-    # Captcha for rate limiting and 403 abuse (user can unblock themselves)
-    name: captcha_remediation
-    filters:
-      - Alert.Remediation == true && Alert.GetScope() == "Ip" && Alert.GetScenario() in ["crowdsecurity/http-429-abuse", "crowdsecurity/http-403-abuse", "crowdsecurity/http-crawl-non_statics", "crowdsecurity/http-sensitive-files"]
-    decisions:
-      - type: captcha
-        duration: 4h
-    notifications:
-      - slack_alerts
-    on_success: break
-    ---
-    # Default: Ban for serious attacks (CVE exploits, scanners, brute force)
+    # Ban for serious attacks (CVE exploits, scanners, brute force) AND for the
+    # four ex-captcha scenarios above.
     name: default_ip_remediation
     filters:
       - Alert.Remediation == true && Alert.GetScope() == "Ip"

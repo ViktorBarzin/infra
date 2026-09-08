@@ -7,11 +7,62 @@ locals {
   # model. One Service, one /v1 endpoint, model selected by the
   # OpenAI `model` field. mostlygeek/llama-swap is production-grade
   # (3.9k★, v211, May 2026).
-  llamaswap_image = "ghcr.io/mostlygeek/llama-swap:cuda"
+  # PINNED BY DIGEST (2026-08-21) = the 2026-08-20 :cuda rebuild, llama.cpp
+  # b10524. Terraform now owns this field again (the KEEL_IGNORE_IMAGE
+  # ignore_changes below is gone), because nothing else could select a build:
+  # imagePullPolicy is Kyverno-owned and the keel.sh/* annotations are
+  # Terraform-ignored, so :cuda + a node-cached layer had this pod serving
+  # llama.cpp b9879 from 2026-07-06 for six weeks of rollouts.
+  #
+  # Pinning an inference ENGINE is the safer default regardless of this probe.
+  # Qwen3.8's Gated DeltaNet CUDA path was only correct from ~b10450 and a
+  # wrong build fails by emitting GARBAGE TOKENS rather than erroring
+  # (llama.cpp discussion #27164) — so an engine that changes under us presents
+  # as a model/quant quality regression, which is expensive to diagnose and
+  # reaches real consumers (recruiter-responder, paperless-ai, nextcloud-todos).
+  # A digest also makes IfNotPresent safe and gives Keel no tag to poll, so the
+  # apply/keel fight KEEL_LIFECYCLE_V1 describes cannot restart.
+  #
+  # TO UPGRADE llama.cpp: bump this digest deliberately and check generation
+  # output on each model afterwards. Reverting this commit restores Keel's
+  # hourly :cuda tracking.
+  llamaswap_image = "ghcr.io/mostlygeek/llama-swap@sha256:50c640b15d7914ba356eb1e034680907b6c25eff7bdbe0071d77b907abfc0e0b"
 
-  # Three vision models for the benchmark sweep. All Apache-2.0, all GGUF
-  # Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob). Image long-edge
-  # capped at 1024 px to keep prefill <2s on the T4.
+  # Model set: two vision VLMs (qwen3vl-8b/4b) + one text-only LLM (qwen3-8b).
+  # All Apache-2.0, GGUF Q4_K_M (T4 has no FP8/BF16 — INT4 is the right knob).
+  # Image long-edge capped at 1024 px to keep prefill <2s on the T4.
+  # 2026-07-16 cleanup/eval (docs/research/2026-07-16-local-llm-sota-and-upgrade.md):
+  # dropped unused minicpm-v-4.5. Five text-model upgrade candidates were
+  # evaluated ON-CARD across two rounds and ALL REJECTED, so qwen3-8b (33 tok/s,
+  # f16 KV) stays as the best text model this hardware supports today:
+  #   - q8_0 KV cache: ~40-70x slower generation on Turing (no quantized-KV
+  #     fused FA kernel on SM7.5). Reverted.
+  #   - qwen3.5-9b: ~0.5 tok/s generation (qwen3_5 arch has no performant CUDA
+  #     path on SM7.5 in b9879). Removed.
+  #   - gemma-4 12b + e4b: 12b too big; e4b fast+small but weaker enrichment
+  #     (mislabeled correspondent) + fenced JSON. Removed.
+  #   - granite-4.1-8b + qwen3-4b-2507 (round 2, deep HF survey): granite's dense
+  #     arch IS fast on Turing but only TIED qwen3-8b on a 5-doc correspondent
+  #     A/B (incl. Bulgarian) while still fencing JSON + carrying a cold-prefill
+  #     warmup; qwen3-4b mislabeled correspondent. Neither a clear win. Removed.
+  #   Real finding: a clear "sender not recipient" prompt fixes correspondent for
+  #   qwen3-8b itself — no migration needed.
+  # 2026-08-21 — the interactive qwen38-27b entry was REMOVED again once the
+  # hands-on test finished. It could not safely stay once immich-ml was back:
+  # resident 9670 MiB leaves ~1000 MiB free, under the ADR-0016 watchdog's
+  # 1536 MiB floor, so one click on it in the web UI would have had llama-swap
+  # recycled — possibly mid-job for paperless-ai. To use it again, re-add the
+  # entry AND scale immich-ml to 0 for the session; the numbers are below.
+  # 2026-08-21, round 3 — Qwen3.8-27B (dense 27B, the same Gated DeltaNet hybrid
+  # family as the rejected qwen3.5-9b) tested on-card at UD-IQ1_S and UD-Q2_K_XL
+  # under llama.cpp b10524, then REMOVED. It genuinely runs now — Q2_K_XL gave
+  # 8.2 tok/s decode / 113 tok/s prefill with coherent, accurate output, where
+  # the same architecture managed 0.5 tok/s on b9879 — but 8 tok/s against
+  # qwen3-8b's 33, needing 9670 MiB (immich-ml must scale to 0 for it to fit),
+  # is not a trade worth making for triage and enrichment work. The DeltaNet
+  # CUDA path is correct on Turing now but still unfused, reaching only ~16% of
+  # the card's bandwidth ceiling. Full numbers in
+  # docs/research/2026-07-16-local-llm-sota-and-upgrade.md §0.1.
   #
   # Filenames are matched by glob in the download Job (huggingface_hub
   # snapshot_download with allow_patterns). Stable symlinks model.gguf /
@@ -28,28 +79,14 @@ locals {
       gpu_layers     = 99
       text_only      = false
     }
-    minicpm-v-4-5 = {
-      hf_repo        = "openbmb/MiniCPM-V-4_5-gguf"
-      gguf_pattern   = "*Q4_K_M*.gguf"
-      mmproj_pattern = "*mmproj*.gguf"
-      ctx_size       = 3072
-      gpu_layers     = 99
-      text_only      = false
-    }
-    qwen3vl-4b = {
-      hf_repo        = "Qwen/Qwen3-VL-4B-Instruct-GGUF"
-      gguf_pattern   = "*Q4_K_M*.gguf"
-      mmproj_pattern = "*mmproj*.gguf"
-      ctx_size       = 3072
-      gpu_layers     = 99
-      text_only      = false
-    }
     # Text-only triage / drafting model for recruiter-responder.
     # Q4_K_M, ~4.7GB, 32k native context (capped at 16k here — plenty
     # for recruiter emails + extraction prompt + JSON output).
     # Unsloth's GGUF: well-maintained, includes Q4_K_M. Qwen3 is a
-    # thinking-capable model; recruiter-responder disables thinking via
-    # `enable_thinking=false` in the chat-template kwargs.
+    # thinking-capable model; thinking is force-disabled server-side for
+    # qwen3-8b via `--reasoning off` in the cmd builder below (2026-07-13 — see
+    # that comment). recruiter-responder also sends enable_thinking=false
+    # per-request; the server flag makes it the default for all consumers.
     qwen3-8b = {
       hf_repo        = "unsloth/Qwen3-8B-GGUF"
       gguf_pattern   = "*Q4_K_M*.gguf"
@@ -87,7 +124,22 @@ locals {
           "-np 1",
           "--jinja",
           "-fa on",
-        ]))
+          ],
+          # NB: q8_0 KV-cache quant was tried here 2026-07-16 and REVERTED. On
+          # the T4 (Turing SM7.5) it collapsed generation to ~0.58 tok/s
+          # (~40-70x slower) for BOTH qwen3-8b and qwen3.5-9b — the fused
+          # flash-attn kernel has no quantized-KV path on Turing, so even
+          # symmetric q8_0/q8_0 falls back to a crawl (prefill stayed fast at
+          # ~143 tok/s; generation was the casualty). KV stays f16.
+          # See docs/research/2026-07-16-local-llm-sota-and-upgrade.md.
+          # Thinking-capable Qwen text models: force reasoning OFF. Qwen3/Qwen3.5
+          # default to thinking under --jinja, returning EMPTY message.content
+          # (all output -> reasoning_content) + blowing the token budget:
+          # paperless-ai gets no JSON, every enrichment fails, ~50x slower.
+          # `--reasoning off` is llama.cpp's supported control (deprecates the
+          # enable_thinking chat-template kwarg recruiter-responder sends).
+          # Scoped to text models via text_only; vision keeps default reasoning.
+        cfg.text_only ? ["--reasoning off"] : []))
         ttl           = 600 # unload after 10 min idle
         checkEndpoint = "/health"
       }
@@ -115,19 +167,31 @@ resource "kubernetes_namespace" "llama_cpp" {
 # ~2s vs ~10s on HDD NFS). Page-cache is warmed by the download Job so
 # first inference reads from warm cache.
 module "nfs_models" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "llama-cpp-models"
-  namespace  = kubernetes_namespace.llama_cpp.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs-ssd/llamacpp"
-  storage    = "30Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "llama-cpp-models"
+  namespace          = kubernetes_namespace.llama_cpp.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs-ssd/llamacpp"
+  storage            = "30Gi"
+  storage_class_name = "nfs-pve"
 }
 
-# One-shot download Job. Pulls Q4_K_M GGUF + mmproj for every model in
-# locals.models into /models/<id>/, creates stable model.gguf /
-# mmproj.gguf symlinks, then warms the page cache. Idempotent —
-# huggingface_hub's snapshot_download skips files that already exist
-# with matching size; symlinks are recreated each run.
+# Download Job. Pulls Q4_K_M GGUF + mmproj for every model in locals.models
+# into /models/<id>/, creates stable model.gguf / mmproj.gguf symlinks, then
+# warms the page cache. Idempotent — huggingface_hub's snapshot_download skips
+# files that already exist with matching size; symlinks are recreated each run.
+#
+# NO ttl_seconds_after_finished, deliberately (2026-08-15). It used to be 86400,
+# which deleted the finished Job after a day — so Terraform found it missing and
+# planned to create it again, every day, forever. The Job body was never the
+# problem; the TTL was, because a self-deleting resource can't be reconciled.
+#
+# Letting the finished Job persist costs one completed object in the namespace
+# and keeps locals.models honest: it feeds llama-swap's server config too
+# (-m /models/<id>/model.gguf), so adding a model there changes this Job's spec,
+# Terraform replaces it, and the new model is actually fetched. Deleting the Job
+# instead would have left that half-wired — the server would reference a model
+# nothing had downloaded.
 resource "kubernetes_job_v1" "download_models" {
   metadata {
     name      = "download-models"
@@ -135,8 +199,7 @@ resource "kubernetes_job_v1" "download_models" {
     labels    = local.labels
   }
   spec {
-    backoff_limit              = 2
-    ttl_seconds_after_finished = 86400
+    backoff_limit = 2
     template {
       metadata { labels = local.labels }
       spec {
@@ -171,7 +234,11 @@ resource "kubernetes_job_v1" "download_models" {
                 )
                 # Resolve actual filenames and create stable symlinks so
                 # llama-swap config is filename-agnostic.
-                ggufs = [p for p in glob.glob(f"{local_dir}/*Q4_K_M*.gguf") if "mmproj" not in p.lower()]
+                # Glob by the model's OWN gguf_pattern. This was hardcoded to
+                # *Q4_K_M* until 2026-08-21, which worked only because every
+                # model happened to be Q4_K_M: any other quant downloaded fine
+                # and then failed the symlink step with "no GGUF found".
+                ggufs = [p for p in glob.glob(f"{local_dir}/{cfg['gguf_pattern']}") if "mmproj" not in p.lower()]
                 if not ggufs:
                     raise SystemExit(f"no GGUF found in {local_dir}")
                 gguf_link = f"{local_dir}/model.gguf"
@@ -266,8 +333,11 @@ resource "kubernetes_config_map" "llama_swap_config" {
 
 # Single Deployment running llama-swap. Spawns per-model llama-server
 # subprocesses on demand and unloads them after `ttl` seconds idle.
-# The whole T4 is allocated to this pod via nvidia.com/gpu=1; immich-ml
-# must be scaled to 0 during benchmark runs.
+# nvidia.com/gpu=1 buys ONE time-slice (a scheduling turn, NOT the card's
+# memory) — the T4 is shared with immich-ml/frigate/immich-worker/stremio.
+# VRAM is bounded per-tenant by the gpumem budget + watchdog (ADR-0016), not by
+# scaling co-tenants to 0. llama-swap loads ONE model at a time (no `groups` =
+# swap mode, ttl=600 unloads idle), so its footprint is the largest single model.
 resource "kubernetes_deployment" "llama_swap" {
   metadata {
     name      = "llama-swap"
@@ -312,7 +382,18 @@ resource "kubernetes_deployment" "llama_swap" {
         container {
           name  = "llama-swap"
           image = local.llamaswap_image
-          args  = ["-config", "/app/config.yaml", "-listen", ":8080"]
+          # ulimit -c 0: a crashing llama-server (CUDA OOM under VRAM squeeze)
+          # dumps a ~536MiB core into the writable layer every few seconds —
+          # 2026-07-07 that filled node1 (~148GiB in 50min) and the DiskPressure
+          # eviction storm took out the DNS primary. Crash logs go to stdout.
+          # imagePullPolicy is deliberately NOT set here: the Kyverno
+          # ClusterPolicy `set-image-pull-policy` mutates it at admission
+          # (Always for :latest, IfNotPresent otherwise), so a value set here is
+          # silently rewritten — the apply reports OK and the Deployment
+          # generation never changes. IfNotPresent is correct anyway now that
+          # the image is a digest: a digest names exactly one build, so "if not
+          # present" can only ever pull the build we asked for.
+          command = ["/bin/sh", "-c", "ulimit -c 0 && exec /app/llama-swap -config /app/config.yaml -listen :8080"]
           port {
             container_port = 8080
             name           = "http"
@@ -349,12 +430,31 @@ resource "kubernetes_deployment" "llama_swap" {
           }
           resources {
             requests = {
-              cpu    = "200m"
-              memory = "2Gi"
+              cpu                 = "200m"
+              memory              = "2Gi"
+              "ephemeral-storage" = "1Gi"
             }
             limits = {
-              memory           = "12Gi"
-              "nvidia.com/gpu" = "1"
+              memory = "12Gi"
+              # Blast-radius bound (2026-07-07): runaway writable-layer growth
+              # evicts THIS pod at 10Gi instead of tipping the whole node into
+              # DiskPressure (models live on the PVC; normal usage is <100Mi).
+              "ephemeral-storage" = "10Gi"
+              "nvidia.com/gpu"    = "1"
+              # NO gpumem seat, deliberately (2026-08-31 — this is the
+              # ADR-0016 budget retune the previous comment here deferred).
+              # qwen3-8b @16k needs ~6996 MiB when loaded (4.68 GiB Q4_K_M
+              # weights + ~2.25 GiB KV) and llama-swap is idle almost all the
+              # time, so a reserved 7000 seat would sit unused all day and would
+              # not fit alongside the other residents. It cannot be scaled to
+              # zero by Sablier either: no ingress, and paperless-ai reaches the
+              # ClusterIP directly, so Traefik middleware never sees the request.
+              # So it is an OPPORTUNISTIC tenant — it bursts into real slack,
+              # which exists now that immich-ml is budgeted at its fresh
+              # footprint instead of its arena plateau. The trade is visibility,
+              # not silence: a failed model load raises LlamaSwapModelLoadFailed
+              # and feeds the watchdog's CUDA-OOM contention signal, so a
+              # starved load recycles whoever is over budget.
             }
           }
         }
@@ -382,7 +482,9 @@ resource "kubernetes_deployment" "llama_swap" {
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE
+      # KEEL_IGNORE_IMAGE removed 2026-08-21 — the image is a pinned digest now,
+      # so Terraform owns it and Keel has no tag to poll. Restore this line if
+      # the image ever goes back to a floating tag.
       # KEEL_LIFECYCLE_V1 — stop the apply→keel fight: every keel digest
       # update patches `keel.sh/update-time` on the pod template and
       # `kubernetes.io/change-cause` + bumps the K8s rollout revision on

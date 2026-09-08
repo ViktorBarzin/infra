@@ -32,7 +32,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "wealthfolio"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -113,7 +113,13 @@ resource "random_string" "random" {
 resource "kubernetes_deployment" "wealthfolio" {
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Stakater Reloader stamps this on every secret-triggered restart. The
+      # 2026-08-14 switch to reloadStrategy = annotations (stacks/reloader) moved
+      # the marker onto this pod-template annotation on the expectation that
+      # Terraform does not manage it, but it does wherever the pod template
+      # declares annotations, so it planned as a removal on every run.
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
@@ -158,11 +164,24 @@ resource "kubernetes_deployment" "wealthfolio" {
         }
       }
       spec {
+        # Since 3.3.x upstream ships the image with USER 1000:1000 (3.2.1 ran
+        # as root), but the PVC data predates that and is root-owned. fsGroup
+        # makes kubelet chgrp the volume to 1000 with group-rw at mount, so
+        # the app can write the SQLite DB + WAL. Sidecars/CronJobs unaffected:
+        # backup runs as root, wealthfolio-sync (uid 10001) only reads via
+        # the API; in-tree NFS volumes are skipped by fsGroup entirely.
+        security_context {
+          fs_group               = 1000
+          fs_group_change_policy = "OnRootMismatch"
+        }
         container {
-          # Pinned 2026-05-26: prior live was :3.2.1, Keel rolled it to :2.0
-          # on 2026-05-26 03:13, then truncated to :3.2 at 06:46 (Keel string
-          # match dropped the patch suffix). Restore the patch version.
-          image = "afadil/wealthfolio:3.2.1"
+          # Floor tag only — Keel owns the live tag (image is ignore_changes).
+          # Keel's injected policy is `patch`, so it never crosses minors;
+          # minor/major bumps are manual: update this floor AND roll the
+          # deployment (kubectl set image, the standard deploy mechanism).
+          # History: pinned 3.2.1 on 2026-05-26 after the Keel tag-rewrite
+          # incident (:3.2.1 -> :2.0 -> :3.2); bumped to 3.6.1 on 2026-07-08.
+          image = "afadil/wealthfolio:3.6.1"
           name  = "wealthfolio"
           port {
             container_port = 8080
@@ -208,10 +227,10 @@ resource "kubernetes_deployment" "wealthfolio" {
           resources {
             requests = {
               cpu    = "10m"
-              memory = "256Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "1Gi"
+              memory = "512Mi"
             }
           }
         }
@@ -386,6 +405,12 @@ resource "kubernetes_deployment" "wealthfolio" {
             close NUMERIC NOT NULL,
             currency TEXT
           );
+          CREATE TABLE IF NOT EXISTS quote_prev (
+            asset_id TEXT PRIMARY KEY,
+            day DATE NOT NULL,
+            close NUMERIC NOT NULL,
+            currency TEXT
+          );
           CREATE TABLE IF NOT EXISTS positions_latest (
             asset_id TEXT PRIMARY KEY,
             snapshot_date DATE NOT NULL,
@@ -542,6 +567,24 @@ resource "kubernetes_deployment" "wealthfolio" {
           WHERE rn = 1;
           SQ
 
+          # Previous-day close per asset — the close on the day BEFORE quote_latest's
+          # day (YAHOO-preferred). Powers the "today's change" tile: value now
+          # (quote_latest) vs the prior trading day's close. DENSE_RANK over distinct
+          # days so multiple same-day rows don't collapse the window.
+          sqlite3 -separator $'\t' /tmp/wf-sync/snapshot.db <<'SQ' > /tmp/wf-sync/quote_prev.tsv
+          SELECT asset_id, day, CAST(close AS REAL) AS close, currency
+          FROM (
+            SELECT asset_id, day, close, currency,
+                   DENSE_RANK() OVER (PARTITION BY asset_id ORDER BY day DESC) AS day_rank,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY asset_id, day
+                     ORDER BY CASE source WHEN 'YAHOO' THEN 1 ELSE 2 END
+                   ) AS src_rn
+            FROM quotes
+          )
+          WHERE day_rank = 2 AND src_rn = 1;
+          SQ
+
           # Currently-held positions only, from the TOTAL aggregate snapshot (sums lots across accounts).
           sqlite3 -separator $'\t' /tmp/wf-sync/snapshot.db <<'SQ' > /tmp/wf-sync/positions_latest.tsv
           SELECT je.key AS asset_id,
@@ -559,12 +602,13 @@ resource "kubernetes_deployment" "wealthfolio" {
           # Truncate-and-reload (small tables; simpler than upserts).
           psql -v ON_ERROR_STOP=1 <<SQL
           BEGIN;
-          TRUNCATE accounts, daily_account_valuation, activities, assets, quote_latest, positions_latest;
+          TRUNCATE accounts, daily_account_valuation, activities, assets, quote_latest, quote_prev, positions_latest;
           \copy accounts FROM '/tmp/wf-sync/accounts.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy daily_account_valuation FROM '/tmp/wf-sync/dav.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy activities FROM '/tmp/wf-sync/activities.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy assets FROM '/tmp/wf-sync/assets.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy quote_latest FROM '/tmp/wf-sync/quote_latest.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
+          \copy quote_prev FROM '/tmp/wf-sync/quote_prev.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           \copy positions_latest FROM '/tmp/wf-sync/positions_latest.tsv' WITH (FORMAT csv, DELIMITER E'\t', NULL '');
           COMMIT;
           SQL
@@ -977,3 +1021,5 @@ resource "kubernetes_cron_job_v1" "wealthfolio_daily_sync" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
+
+# rightsizing reconcile 2026-06-29: re-trigger CI apply (memory limit committed in batch 2/3 but #427 was killed mid-apply; local apply blocked on stale backend-init).

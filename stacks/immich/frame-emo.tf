@@ -34,7 +34,9 @@ resource "kubernetes_config_map" "frame_config_emo" {
     Accounts:
         - ImmichServerUrl: http://immich.viktorbarzin.me
           ApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_api_key_emo"]}
-          ImagesFromDays: 730
+          ImagesFromDays: 365
+          ExcludedAlbums:
+            - b703c7e1-943f-44c4-9ebb-ae3ee41473dd
     EOF
   }
 }
@@ -73,15 +75,22 @@ resource "kubernetes_deployment" "immich-frame-emo" {
       }
       spec {
         container {
-          image = "ghcr.io/immichframe/immichframe:v1.0.32.0"
-          name  = "immich-frame-emo"
+          # immich_v3: upstream compat tag for Immich v3 — see frame.tf for the
+          # full story; repin to a versioned tag once upstream releases v3 support.
+          image = "ghcr.io/immichframe/immichframe:v1.0.35.0"
+          # Always-pull: nodes had a STALE cached immich_v3 (pre-v1.0.34,
+          # before Immich-v3 album loading was fixed) and IfNotPresent kept
+          # reusing it, breaking ExcludedAlbums. Force a fresh pull.
+          name = "immich-frame-emo"
           resources {
             requests = {
               cpu    = "10m"
-              memory = "64Mi"
+              memory = "128Mi"
             }
             limits = {
-              memory = "128Mi"
+              # 128Mi OOM-looped the kiosk renderer (steady ~89Mi, spikes past
+              # 128Mi on image load) — raised to 256Mi 2026-07-06.
+              memory = "256Mi"
             }
           }
           port {
@@ -142,14 +151,28 @@ resource "kubernetes_service" "immich-frame-emo" {
 
 module "ingress_emo" {
   source = "../../modules/kubernetes/ingress_factory"
-  # Photo-frame kiosk display on Emo's Portal — headless browser pulling images
-  # via an Immich API key (no user login). Forward-auth would 302 the device to
-  # Authentik with no way to complete login.
-  # auth = "none": photo-frame kiosk; headless browser with API key; no user login.
-  auth            = "none"
-  dns_type        = "proxied"
-  namespace       = "immich"
-  name            = "highlights-immich-emo"
-  tls_secret_name = var.tls_secret_name
-  service_name    = "immich-frame-emo"
+  # Photo-frame kiosk display on Emo's Portal Mini (Sofia LAN) — WebView
+  # pulling images via an Immich API key; no user login possible on the
+  # device. Same LAN-only gating as frame.tf: home-lans-only ipAllowList +
+  # dns_type "internal" (Emo's Portal already resolves this host internally
+  # via Technitium; the public internal-IP record covers any resolver).
+  # LAN-only design: docs/plans/2026-07-04-immich-frame-lan-only-design.md.
+  # auth = "none": kiosk WebView, no user auth by design; gated by the home-lans-only ipAllowList instead.
+  auth     = "none"
+  dns_type = "internal"
+  # Ordering rationale in frame.tf / the middleware definition: error-pages-403
+  # only intercepts what is downstream of it, so it must precede the allowlist.
+  extra_middlewares = ["traefik-error-pages-403@kubernetescrd", "traefik-home-lans-only@kubernetescrd"]
+  # Not externally reachable — explicit opt-out so external-monitor-sync
+  # drops the old [External] monitor instead of default-opting it back in.
+  external_monitor = false
+  namespace        = "immich"
+  name             = "highlights-immich-emo"
+  tls_secret_name  = var.tls_secret_name
+  service_name     = "immich-frame-emo"
+  extra_annotations = {
+    "gethomepage.dev/description" = "Immich photo frame feed for Emo's kiosk"
+    "gethomepage.dev/icon"        = "immich.png"
+    "gethomepage.dev/name"        = "Immich Highlights (Emo)"
+  }
 }

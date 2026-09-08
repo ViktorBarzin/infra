@@ -31,7 +31,7 @@ resource "kubernetes_namespace" "k8s-dashboard" {
     name = "kubernetes-dashboard"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.cluster
+      tier               = local.tiers.cluster
       "keel.sh/enrolled" = "true"
     }
   }
@@ -90,18 +90,25 @@ resource "helm_release" "kubernetes-dashboard" {
 
 
 module "ingress" {
-  source           = "../../modules/kubernetes/ingress_factory"
+  source = "../../modules/kubernetes/ingress_factory"
+  # Scale-to-zero (ADR-0022): loading-page wake, 3h idle park.
+  sablier = {
+    group = "k8s-dashboard"
+  }
   namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
   name      = "kubernetes-dashboard"
   # Route through the token-injector: Authentik forward-auth (auth=required) gates
   # access AND injects X-authentik-username; the injector maps that to the user's
   # ServiceAccount token and sets Authorization: Bearer so the dashboard skips its
   # token-paste login. See dashboard_injector.tf.
-  service_name     = "dashboard-token-injector"
-  host             = "k8s"
-  dns_type         = "proxied"
-  tls_secret_name  = var.tls_secret_name
-  auth             = "required"
+  service_name    = "dashboard-token-injector"
+  host            = "k8s"
+  dns_type        = "proxied"
+  tls_secret_name = var.tls_secret_name
+  auth            = "required"
+  # ADR-0023: k8s RBAC groups reach the dashboard login page (the pasted SA token
+  # is the real gate); admins via bypass. Non-admin namespace-owners need this row.
+  allowed_groups   = ["kubernetes-admins", "kubernetes-power-users", "kubernetes-namespace-owners", "Home Server Admins"]
   backend_protocol = "HTTP"
   port             = 80
   extra_annotations = {
@@ -262,3 +269,32 @@ resource "kubernetes_secret" "kubernetes-dashboard-viewonly-token" {
 # CI retrigger v5 2026-05-16T23:10:38Z
 
 # CI retrigger v6 2026-05-16T23:18:58Z
+
+
+# Sablier enrollment labels for the five Helm-owned dashboard Deployments
+# (ADR-0022, batch 4). The chart exposes no deployment-labels surface, so a
+# field-manager patch stamps them (same pattern as postiz). The two HCL-owned
+# members (dashboard-token-injector, oauth2-proxy) carry their labels in HCL —
+# a kubernetes_labels patch on an HCL-owned Deployment would be stripped by
+# the next apply (labels are an atomic map to the kubernetes provider).
+resource "kubernetes_labels" "dashboard_sablier" {
+  for_each = toset([
+    "kubernetes-dashboard-api",
+    "kubernetes-dashboard-auth",
+    "kubernetes-dashboard-kong",
+    "kubernetes-dashboard-metrics-scraper",
+    "kubernetes-dashboard-web",
+  ])
+  api_version = "apps/v1"
+  kind        = "Deployment"
+  metadata {
+    name      = each.key
+    namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
+  }
+  labels = {
+    "sablier.enable"      = "true"
+    "sablier.group"       = "k8s-dashboard"
+    "sablier.ready-after" = "5s"
+  }
+  depends_on = [helm_release.kubernetes-dashboard]
+}

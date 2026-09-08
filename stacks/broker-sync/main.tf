@@ -39,7 +39,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = kubernetes_namespace.broker_sync.metadata[0].name
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -87,7 +87,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 }
 
 locals {
-  broker_sync_image = "viktorbarzin/broker-sync:${var.image_tag}"
+  broker_sync_image = "ghcr.io/viktorbarzin/wealthfolio-sync:${var.image_tag}"
 
   # Shared env block for every CronJob: auth into Wealthfolio + data path.
   common_env = [
@@ -123,6 +123,9 @@ resource "kubernetes_cron_job_v1" "version_probe" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
             container {
               name    = "broker-sync"
               image   = local.broker_sync_image
@@ -167,6 +170,15 @@ resource "kubernetes_cron_job_v1" "trading212" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            # Pin every job that mounts the shared RWO data volume to one node:
+            # cross-node scheduling forced a nightly detach/attach cycle whose
+            # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
+            # wedges all broker-sync jobs in ContainerCreating (2026-07-01/02).
+            # One node = volume attaches once and stays put.
+            node_selector = { "kubernetes.io/hostname" = "k8s-node4" }
             # See imap cron — without fsGroup=10001 the broker user (uid=10001
             # gid=999) can't write the sqlite3 journal next to /data/sync.db
             # and the dedup.record() call after a successful WF import crashes
@@ -277,6 +289,15 @@ resource "kubernetes_cron_job_v1" "ibkr" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            # Pin every job that mounts the shared RWO data volume to one node:
+            # cross-node scheduling forced a nightly detach/attach cycle whose
+            # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
+            # wedges all broker-sync jobs in ContainerCreating (2026-07-01/02).
+            # One node = volume attaches once and stays put.
+            node_selector = { "kubernetes.io/hostname" = "k8s-node4" }
             security_context {
               fs_group = 10001
             }
@@ -411,6 +432,15 @@ resource "kubernetes_cron_job_v1" "imap" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            # Pin every job that mounts the shared RWO data volume to one node:
+            # cross-node scheduling forced a nightly detach/attach cycle whose
+            # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
+            # wedges all broker-sync jobs in ContainerCreating (2026-07-01/02).
+            # One node = volume attaches once and stays put.
+            node_selector = { "kubernetes.io/hostname" = "k8s-node4" }
             # The broker image's user is uid=10001 gid=999, but the shared
             # data PVC's /data root was created with gid=10001 (legacy from
             # an earlier image build). Without fsGroup the pod can't write
@@ -563,6 +593,15 @@ resource "kubernetes_cron_job_v1" "csv_drop" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            # Pin every job that mounts the shared RWO data volume to one node:
+            # cross-node scheduling forced a nightly detach/attach cycle whose
+            # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
+            # wedges all broker-sync jobs in ContainerCreating (2026-07-01/02).
+            # One node = volume attaches once and stays put.
+            node_selector = { "kubernetes.io/hostname" = "k8s-node4" }
             container {
               name    = "broker-sync"
               image   = local.broker_sync_image
@@ -655,6 +694,15 @@ resource "kubernetes_cron_job_v1" "fx_reconcile" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            # Pin every job that mounts the shared RWO data volume to one node:
+            # cross-node scheduling forced a nightly detach/attach cycle whose
+            # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
+            # wedges all broker-sync jobs in ContainerCreating (2026-07-01/02).
+            # One node = volume attaches once and stays put.
+            node_selector = { "kubernetes.io/hostname" = "k8s-node4" }
             container {
               name    = "broker-sync"
               image   = local.broker_sync_image
@@ -747,6 +795,15 @@ resource "kubernetes_cron_job_v1" "backup" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            # Pin every job that mounts the shared RWO data volume to one node:
+            # cross-node scheduling forced a nightly detach/attach cycle whose
+            # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
+            # wedges all broker-sync jobs in ContainerCreating (2026-07-01/02).
+            # One node = volume attaches once and stays put.
+            node_selector = { "kubernetes.io/hostname" = "k8s-node4" }
             container {
               name  = "backup"
               image = "alpine:3.20"
@@ -850,6 +907,15 @@ resource "kubernetes_cron_job_v1" "fidelity" {
           }
           spec {
             restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            # Pin every job that mounts the shared RWO data volume to one node:
+            # cross-node scheduling forced a nightly detach/attach cycle whose
+            # QMP hotplug intermittently ghost-attaches on disk-heavy VMs and
+            # wedges all broker-sync jobs in ContainerCreating (2026-07-01/02).
+            # One node = volume attaches once and stays put.
+            node_selector = { "kubernetes.io/hostname" = "k8s-node4" }
             # Materialise the JSON storage_state from the projected Secret
             # onto the PVC where Playwright expects to read it. Init container
             # runs as root; the main broker-sync container runs as uid 10001,

@@ -1,0 +1,178 @@
+name: Build repowise
+
+# ADR-0002 / no-local-builds: repowise is a third-party AGPL-3.0 tool that
+# publishes to PyPI but ships no container image, so we build one off-infra on
+# GHA and push it to ghcr. The web UI is a Next.js app that only exists in the
+# upstream git tree (not on PyPI), which is why this builds from a source
+# checkout rather than a plain `pip install`.
+#
+# The package is deliberately PRIVATE. Publishing a derived image of an
+# AGPL-3.0 work would be distribution and would carry a source-offer
+# obligation; keeping it private means we are only ever running it, not
+# conveying it. Pulled via the Kyverno-synced ghcr-credentials allowlist.
+#
+# We build with OUR OWN Dockerfile (stacks/repowise/docker/Dockerfile) against
+# an upstream source checkout, rather than upstream's docker/Dockerfile. Theirs
+# is broken as of v0.42.0: its frontend stage copies only packages/web before
+# `npm install`, so the workspace siblings packages/web depends on
+# (@repowise-dev/api-client, /types, /ui) are looked up in the public registry
+# and 404. Ours follows upstream's own release workflow instead, installing
+# through the root workspace. See that Dockerfile's header for the reasoning
+# and for the two intentional differences (empty NEXT_PUBLIC_REPOWISE_API_URL,
+# pinned uid 10001).
+#
+# A source-layout assertion runs before the build so an upstream reshuffle
+# fails loudly here instead of producing a subtly wrong image.
+#
+# Interpolated values are passed through env: rather than inlined into run:,
+# so nothing from the workflow event reaches a shell unquoted.
+
+on:
+  schedule:
+    # Daily. Upstream ships roughly every other day; this picks up new
+    # versions so Keel (policy=patch) has tags to roll forward onto.
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'repowise version to build (default: latest on PyPI)'
+        required: false
+        type: string
+      force:
+        description: 'Rebuild even if the tag already exists'
+        required: false
+        type: boolean
+        default: false
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/build-repowise.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/viktorbarzin/repowise
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve target version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            version="$INPUT_VERSION"
+            echo "Using dispatch-supplied version: $version"
+          else
+            version="$(curl -fsS https://pypi.org/pypi/repowise/json | jq -r .info.version)"
+            echo "Latest on PyPI: $version"
+          fi
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::refusing to build implausible version '$version'"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip if already built
+        id: exists
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -uo pipefail
+          if [ "${FORCE:-false}" = "true" ]; then
+            echo "forced rebuild"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "${IMAGE}:${VERSION} already exists — nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout our Dockerfile
+        if: steps.exists.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          path: infra
+          persist-credentials: false
+
+      - name: Checkout upstream at the release tag
+        if: steps.exists.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: repowise-dev/repowise
+          ref: v${{ steps.ver.outputs.version }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Assert the upstream source layout is what we build against
+        if: steps.exists.outputs.skip != 'true'
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          fail=0
+          for p in package.json package-lock.json pyproject.toml \
+                   packages/web/package.json packages/api-client/package.json \
+                   packages/types/package.json packages/ui/package.json \
+                   packages/core packages/cli packages/server; do
+            if [ ! -e "$p" ]; then
+              echo "::error::missing expected upstream path: $p"
+              fail=1
+            fi
+          done
+          # The dashboard build resolves siblings through the root workspace;
+          # if web stops being a declared workspace, npm ci silently changes
+          # meaning.
+          python3 - <<'PY' || fail=1
+          import json, sys
+          ws = json.load(open("package.json")).get("workspaces", [])
+          missing = [w for w in ("packages/web", "packages/api-client",
+                                "packages/types", "packages/ui") if w not in ws]
+          if missing:
+              print("::error::root package.json no longer declares: %s" % ", ".join(missing))
+              sys.exit(1)
+          print("workspaces OK: %s" % ws)
+          PY
+          [ "$fail" -eq 0 ] || exit 1
+          echo "upstream layout verified"
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.exists.outputs.skip != 'true'
+
+      - name: Build and push
+        if: steps.exists.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: upstream
+          file: infra/stacks/repowise/docker/Dockerfile
+          platforms: linux/amd64
+          # provenance:false keeps this a single manifest rather than an OCI
+          # index, dodging the orphaned-index-children class of registry bug.
+          provenance: false
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}
+            ${{ env.IMAGE }}:latest
+
+      - name: Prune old versions
+        if: steps.exists.outputs.skip != 'true'
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: repowise
+          package-type: container
+          min-versions-to-keep: 10
+          delete-only-untagged-versions: false

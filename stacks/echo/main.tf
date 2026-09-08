@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "echo" {
     name = "echo"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
   }
@@ -76,7 +76,7 @@ resource "kubernetes_deployment" "echo" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
@@ -120,4 +120,8 @@ module "ingress" {
   namespace       = kubernetes_namespace.echo.metadata[0].name
   name            = "echo"
   tls_secret_name = var.tls_secret_name
+  extra_annotations = {
+    "gethomepage.dev/description" = "Header-reflecting endpoint for ingress smoke tests"
+    "gethomepage.dev/icon"        = "mdi-broadcast"
+  }
 }

@@ -80,6 +80,10 @@ resource "kubernetes_deployment" "kms-web-page" {
       spec[0].template[0].spec[0].dns_config,
       # CI (Woodpecker) manages the live image tag via `kubectl set image`
       spec[0].template[0].spec[0].container[0].image,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }
@@ -113,13 +117,16 @@ module "anubis" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type          = "non-proxied"
-  namespace         = kubernetes_namespace.kms.metadata[0].name
-  name              = "kms"
-  service_name      = module.anubis.service_name
-  port              = module.anubis.service_port
+  source       = "../../modules/kubernetes/ingress_factory"
+  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  dns_type     = "non-proxied"
+  namespace    = kubernetes_namespace.kms.metadata[0].name
+  name         = "kms"
+  service_name = module.anubis.service_name
+  port         = module.anubis.service_port
+  # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
+  # ingress_factory for anubis-* backends. kms is non-proxied (pfSense
+  # PROXY-protocol) so the peer is already the real client.
   extra_middlewares = ["traefik-x402@kubernetescrd"]
   tls_secret_name   = var.tls_secret_name
   anti_ai_scraping  = false
@@ -144,9 +151,11 @@ module "ingress" {
 module "ingress_scripts" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": public read-only static scripts + key list (iwr|iex). No login, no PoW.
-  auth             = "none"
-  namespace        = kubernetes_namespace.kms.metadata[0].name
-  name             = "kms-scripts"
+  auth      = "none"
+  namespace = kubernetes_namespace.kms.metadata[0].name
+  name      = "kms-scripts"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = kubernetes_service.kms-web-page.metadata[0].name
   port             = "80"
   ingress_path     = ["/scripts", "/keys.json"]
@@ -231,7 +240,14 @@ resource "kubernetes_deployment" "kms_diag" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 
@@ -263,9 +279,11 @@ resource "kubernetes_service" "kms_diag" {
 module "ingress_diag" {
   source = "../../modules/kubernetes/ingress_factory"
   # auth = "none": public telemetry collector, no login/PoW
-  auth             = "none"
-  namespace        = kubernetes_namespace.kms.metadata[0].name
-  name             = "kms-diag"
+  auth      = "none"
+  namespace = kubernetes_namespace.kms.metadata[0].name
+  name      = "kms-diag"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
   service_name     = kubernetes_service.kms_diag.metadata[0].name
   port             = "9102"
   ingress_path     = ["/diag"]
@@ -501,6 +519,12 @@ resource "kubernetes_service" "windows_kms" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type                    = "LoadBalancer"
     external_traffic_policy = "Local"

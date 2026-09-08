@@ -118,7 +118,15 @@ resource "kubernetes_deployment" "dashboard_injector" {
   metadata {
     name      = "dashboard-token-injector"
     namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
-    labels    = { app = "dashboard-token-injector" }
+    labels = {
+      app = "dashboard-token-injector"
+      # Scale-to-zero enrollment (ADR-0022, batch 4 — group "k8s-dashboard").
+      # active.replicas=2: sablier wakes the pair, not the default 1.
+      "sablier.enable"          = "true"
+      "sablier.group"           = "k8s-dashboard"
+      "sablier.ready-after"     = "5s"
+      "sablier.active.replicas" = "2"
+    }
   }
   spec {
     replicas = 2
@@ -167,6 +175,13 @@ resource "kubernetes_deployment" "dashboard_injector" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales replicas (ADR-0022)
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }

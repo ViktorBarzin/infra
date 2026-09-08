@@ -18,7 +18,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "realestate-crawler"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -75,12 +75,41 @@ resource "kubernetes_manifest" "db_external_secret" {
   depends_on = [kubernetes_namespace.realestate-crawler]
 }
 
-data "kubernetes_secret" "eso_secrets" {
-  metadata {
-    name      = "real-estate-crawler-secrets"
-    namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
+# Slack webhook for new-signup alerts. Projects the shared incoming webhook at
+# Vault secret/viktor -> alertmanager_slack_api_url, the same one the monitoring
+# alert digest posts with, so #alerts keeps one source for its URL. The app's own
+# notification_settings entry has an empty webhook_url, which is why nothing it
+# sent was ever delivered. Same approach as stacks/goldmane-edge-aggregator.
+resource "kubernetes_manifest" "slack_external_secret" {
+  field_manager {
+    force_conflicts = true
   }
-  depends_on = [kubernetes_manifest.external_secret]
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "realestate-crawler-slack"
+      namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "realestate-crawler-slack"
+      }
+      data = [{
+        secretKey = "SLACK_WEBHOOK_URL"
+        remoteRef = {
+          key      = "viktor"
+          property = "alertmanager_slack_api_url"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.realestate-crawler]
 }
 
 # DockerHub pull-secret — image is private on DockerHub
@@ -129,8 +158,6 @@ resource "kubernetes_manifest" "dockerhub_pull_secret" {
 }
 
 locals {
-  notification_settings = jsondecode(data.kubernetes_secret.eso_secrets.data["notification_settings"])
-
   # Periodic scrape schedules consumed by celery-beat via SCRAPE_SCHEDULES env var.
   # Schema: config/schedule_config.py:ScheduleConfig. Cron fields are UTC.
   # Daily RENT London 1-2 bed £1900-4000 at 03:00 UTC (~04:00 BST).
@@ -169,8 +196,18 @@ resource "kubernetes_namespace" "realestate-crawler" {
     name = "realestate-crawler"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
+      # UN-ENROLLED from Keel 2026-08-03. CI deploys this app by digest-stable
+      # :<sha> tag (.woodpecker/deploy.yml in the app repo), so Keel has no job
+      # here — and it is actively harmful: under the cluster-default
+      # `policy: patch` Keel RESOLVES non-semver tags and rewrites them to a
+      # concrete version. That is how celery silently moved from :latest to :22
+      # (a 2026-02-22 image) and stayed there for five months; the tag string
+      # `realestatecrawler:22` never appears anywhere in this repo's history.
+      # Removing the label stops Kyverno re-stamping keel annotations; the
+      # per-workload `keel.sh/policy = never` below stops the already-tracking
+      # Keel (annotation + label = the documented safe matrix for floating tags).
+      # "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {
@@ -186,11 +223,12 @@ module "tls_secret" {
 }
 
 module "nfs_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "real-estate-crawler-data-host"
-  namespace  = kubernetes_namespace.realestate-crawler.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/real-estate-crawler"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "real-estate-crawler-data-host"
+  namespace          = kubernetes_namespace.realestate-crawler.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/real-estate-crawler"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "realestate-crawler-ui" {
@@ -200,6 +238,9 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
     labels = {
       app  = "realestate-crawler-ui"
       tier = local.tiers.aux
+    }
+    annotations = {
+      "keel.sh/policy" = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
@@ -244,7 +285,11 @@ resource "kubernetes_deployment" "realestate-crawler-ui" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets an immutable :<sha> tag
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
     ]
   }
 }
@@ -270,6 +315,9 @@ resource "kubernetes_service" "realestate-crawler-ui" {
 }
 
 resource "kubernetes_deployment" "realestate-crawler-api" {
+  # SLACK_WEBHOOK_URL is env-injected from the secret below, so it has to exist
+  # before the pod starts or the container fails to schedule.
+  depends_on = [kubernetes_manifest.slack_external_secret]
   metadata {
     name      = "realestate-crawler-api"
     namespace = kubernetes_namespace.realestate-crawler.metadata[0].name
@@ -279,15 +327,25 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
+      "keel.sh/policy"             = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
-    replicas = 1
+    # Two replicas so losing one pod (rollout, eviction, node drain) is not a
+    # full outage. Safe here because the only mount is the RWX NFS PVC.
+    replicas = 2
+    # Roll in place rather than surging. The namespace tier-quota caps
+    # requests.memory at 3Gi and the namespace already requests 2688Mi, so a
+    # third 512Mi api pod cannot be admitted — with max_surge=1 the rollout
+    # wedges on "exceeded quota: tier-quota" and the Deployment never updates.
+    # Replacing one pod at a time needs no headroom, and with two replicas plus
+    # the readiness probe below one pod keeps serving throughout, so this is
+    # still a zero-downtime roll.
     strategy {
       type = "RollingUpdate"
       rolling_update {
-        max_unavailable = 0
-        max_surge       = 1
+        max_unavailable = 1
+        max_surge       = 0
       }
     }
     selector {
@@ -310,9 +368,8 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
           name = "dockerhub-pull-secret"
         }
         container {
-          name              = "realestate-crawler-api"
-          image             = "viktorbarzin/realestatecrawler:latest"
-          image_pull_policy = "Always"
+          name  = "realestate-crawler-api"
+          image = "viktorbarzin/realestatecrawler:latest"
           env {
             name  = "ENV"
             value = "prod"
@@ -351,9 +408,24 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             name  = "OTP_URL"
             value = "http://otp.osm-routing.svc.cluster.local:8080"
           }
+          # New-signup alerts. The app's own notification_settings entry carries
+          # an empty webhook_url, so nothing it sent was ever delivered; this
+          # projects the shared homelab webhook instead (same one the monitoring
+          # alert digest uses) rather than minting a second one.
           env {
-            name  = "SLACK_WEBHOOK_URL"
-            value = local.notification_settings["slack"]["webhook_url"]
+            name = "SLACK_WEBHOOK_URL"
+            value_from {
+              secret_key_ref {
+                name = "realestate-crawler-slack"
+                key  = "SLACK_WEBHOOK_URL"
+              }
+            }
+          }
+          # That webhook posts to its own default channel unless a message names
+          # one, which is how alert_digest.py targets #alerts.
+          env {
+            name  = "SLACK_CHANNEL"
+            value = "#alerts"
           }
           env {
             name  = "WEBAUTHN_RP_ID"
@@ -363,18 +435,98 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
             name  = "WEBAUTHN_ORIGIN"
             value = "https://wrongmove.viktorbarzin.me"
           }
+          # Passkey registration is open to anyone (2026-08-10). The
+          # PASSKEY_ALLOWED_EMAILS allowlist that used to live here is gone: it
+          # was added because app users can call /api/poi/*, believed at the
+          # time to spend Google Maps routing credits, which was corrected the
+          # next day — POI distances run on self-hosted OSRM/OTP.
+          #
+          # What replaced it lives in the app: registration refuses any address
+          # that already has a user row. The Authentik "Wrongmove Users" who
+          # sign in via SSO hold reserved rows so a self-asserted signup cannot
+          # claim their identity — ADDING SOMEONE TO THAT GROUP MEANS INSERTING
+          # THEIR ROW TOO. See docs/runbooks/wrongmove-user-onboarding.md and
+          # realestate-crawler docs/plans/2026-08-10-open-signup-and-signup-alerts.md.
+          # api/config.py gates its production guards on APP_ENV, but this
+          # deployment only ever set ENV, so every guard was inert: the API ran
+          # on the default JWT secret and served /docs publicly. Setting APP_ENV
+          # arms them, which in turn REQUIRES both JWT_SECRET and OIDC_CLIENT_ID
+          # below — config.py raises at import time if either is missing. Keep
+          # all three together.
+          env {
+            name  = "APP_ENV"
+            value = "production"
+          }
+          # Audience for verifying Authentik-issued tokens (api/auth.py passes it
+          # to jwt.decode). Empty until now, so every SSO login failed audience
+          # validation while passkey login kept working. The Authentik app and
+          # provider already existed and the frontend already pointed at them —
+          # only the backend was missing this. Not a secret: the provider is a
+          # public/PKCE client and the same id ships in the frontend bundle.
+          env {
+            name  = "OIDC_CLIENT_ID"
+            value = "5AJKRgcdgVm1OyApBzFkadDFfStW9a555zwv2MOe"
+          }
+          # Signing key for passkey-issued JWTs. Without it api/config.py falls
+          # back to the literal "change-me-in-production" that ships in the repo,
+          # so anyone could mint a token the API accepts (verified against prod
+          # 2026-08-09 — /api/status returned 200 for a locally forged token).
+          env {
+            name = "JWT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = "real-estate-crawler-secrets"
+                key  = "jwt_secret"
+              }
+            }
+          }
           port {
             name           = "http"
             container_port = 5001
             protocol       = "TCP"
           }
+          # The deployment had NO probes, so with maxUnavailable=0 the rollout
+          # still cut traffic: with nothing to gate on, kubelet marks a new pod
+          # Ready the moment the container starts, and the Service sends traffic
+          # before uvicorn has bound the port — the container runs alembic
+          # migrations first, so that window is seconds, not milliseconds. Every
+          # deploy therefore produced a burst of 502/504 and flipped the UI's
+          # health indicator to "Disconnected".
+          #
+          # Both probes target /api/version: unauthenticated by design and it
+          # touches no database, so a DB blip cannot pull every pod out of the
+          # Service at once. Deliberately NO livenessProbe — these handlers do
+          # blocking DB work on the event loop, so a slow query looks identical
+          # to a hung process and liveness would restart a pod that is merely
+          # busy.
+          startup_probe {
+            http_get {
+              path = "/api/version"
+              port = 5001
+            }
+            period_seconds    = 5
+            failure_threshold = 30 # ~150s budget to cover alembic migrations
+          }
+          readiness_probe {
+            http_get {
+              path = "/api/version"
+              port = 5001
+            }
+            period_seconds    = 10
+            timeout_seconds   = 5
+            failure_threshold = 3
+          }
+          # 256Mi OOMKilled the pod on a default-filter /api/listing_geojson
+          # request (rentlisting is ~108k rows; the endpoint caps at 5k features
+          # but still builds them all in memory). Idle RSS measured 173Mi on
+          # 2026-08-09, leaving ~83Mi for any request. Bumped to 512Mi.
           resources {
             requests = {
               cpu    = "15m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
           volume_mount {
@@ -393,7 +545,11 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets an immutable :<sha> tag
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
     ]
   }
 }
@@ -428,13 +584,15 @@ module "anubis" {
 }
 
 module "ingress" {
-  source            = "../../modules/kubernetes/ingress_factory"
-  auth              = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type          = "proxied"
-  namespace         = kubernetes_namespace.realestate-crawler.metadata[0].name
-  name              = "wrongmove"
-  service_name      = module.anubis.service_name
-  port              = module.anubis.service_port
+  source       = "../../modules/kubernetes/ingress_factory"
+  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  dns_type     = "proxied"
+  namespace    = kubernetes_namespace.realestate-crawler.metadata[0].name
+  name         = "wrongmove"
+  service_name = module.anubis.service_name
+  port         = module.anubis.service_port
+  # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
+  # ingress_factory for anubis-* backends — no per-site wiring needed.
   extra_middlewares = ["traefik-x402@kubernetescrd"]
   anti_ai_scraping  = false
   tls_secret_name   = var.tls_secret_name
@@ -479,16 +637,19 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
+      "keel.sh/policy"             = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
     replicas = 1
+    # Recreate, because surging needs a second 1Gi pod and the namespace
+    # tier-quota (3Gi requests.memory) has no room for one — the roll would sit
+    # on "exceeded quota: tier-quota" and the worker would silently stay on its
+    # old image. This is the documented house answer for a quota-tight rollout.
+    # A background Celery worker tolerates the brief gap: Redis holds the queue,
+    # and one worker at a time also avoids two workers overlapping on a task.
     strategy {
-      type = "RollingUpdate"
-      rolling_update {
-        max_unavailable = 0
-        max_surge       = 1
-      }
+      type = "Recreate"
     }
     selector {
       match_labels = {
@@ -509,10 +670,9 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
           name = "dockerhub-pull-secret"
         }
         container {
-          name              = "celery-worker"
-          image             = "viktorbarzin/realestatecrawler:latest"
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info", "--pool=threads"]
+          name    = "celery-worker"
+          image   = "viktorbarzin/realestatecrawler:latest"
+          command = ["python", "-m", "celery", "-A", "celery_app", "worker", "--loglevel=info", "--pool=threads"]
           # 512Mi OOMed during full London RENT 1-2 bed scrape (~76k existing IDs
           # + 10k fetched into memory at concurrency=8 threads). Bumped to 1Gi.
           resources {
@@ -550,10 +710,8 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
             name  = "CELERY_RESULT_BACKEND"
             value = "redis://${var.redis_host}:6379/1"
           }
-          env {
-            name  = "SLACK_WEBHOOK_URL"
-            value = try(local.notification_settings["slack"]["webhook_url"], "")
-          }
+          # No SLACK_WEBHOOK_URL here: no Celery task sends notifications, and
+          # the only caller left is the signup alert on the api deployment.
           env {
             name  = "OSRM_FOOT_URL"
             value = "http://osrm-foot.osm-routing.svc.cluster.local:5000"
@@ -583,14 +741,17 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
+      # keel.sh/policy is NOT ignored any more — this stack now OWNS it (= "never").
+      # While it was ignored, Terraform could not undo the `patch` value kyverno
+      # stamped, which is what let Keel keep rewriting these image tags.
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets :<sha>
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
     ]
   }
 }
@@ -626,6 +787,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
+      "keel.sh/policy"             = "never" # CI owns the image tag (see namespace comment)
     }
   }
   spec {
@@ -706,14 +868,17 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
+      # keel.sh/policy is NOT ignored any more — this stack now OWNS it (= "never").
+      # While it was ignored, Terraform could not undo the `patch` value kyverno
+      # stamped, which is what let Keel keep rewriting these image tags.
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets :<sha>
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
     ]
   }
 }

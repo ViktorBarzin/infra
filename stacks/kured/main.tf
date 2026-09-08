@@ -93,9 +93,46 @@ resource "helm_release" "kured" {
       # false (default) so the regex marks alerts to IGNORE — every other
       # firing alert blocks. See "Upgrade Gates" group in monitoring stack.
       prometheusUrl        = "http://prometheus-server.monitoring.svc.cluster.local:80"
-      alertFilterRegexp    = "^(Watchdog|RebootRequired|KuredNodeWasNotDrained|InfoInhibitor)$"
+      # INVERTED 2026-09-02 to match-only, which is what the "Upgrade Gates"
+      # group above was built for. As an ignore-list this halted every reboot:
+      # the list named five alerts against a standing floor of five to eight
+      # firing warnings, so kured logged "Reboot blocked: 7 active alerts:
+      # [DriftStackErrored DriftStacksMany HDDDailyReadVolume
+      # ImmichSmartSearchSlow JobFailed StrayWorkloadDetected
+      # T3AutoUpdateRolledBack]" and rebooted NO node in the whole retained
+      # window. node2 sat pending-reboot from 2026-07-18, so kernel and libc
+      # updates went untaken on four nodes. Enumerating the noise was never
+      # going to hold, because the floor changes weekly.
+      #
+      # The list below is therefore what SHOULD stop a reboot, not what should
+      # be ignored: the three Upgrade Gates criticals, plus the node and cluster
+      # conditions that mean taking a node out right now makes things worse.
+      #
+      # PVCStuckPending is deliberately NOT here, though it sits in that group.
+      # It is a warning about one namespace's volume rather than a statement
+      # that the cluster cannot lose a node, and it was firing at the time of
+      # writing (chrome-service/chrome-service-backup-host), so including it
+      # would have left kured exactly as deadlocked as before.
+      #
+      # THE FAILURE DIRECTION FLIPS WITH THIS SETTING, so read before editing.
+      # As an ignore-list a typo'd name failed CLOSED (blocked forever). Under
+      # match-only a typo fails OPEN: the name simply never matches and kured
+      # reboots through a condition you meant to gate. Every one of the nine
+      # below was checked to exist as `alert: <name>` in
+      # stacks/monitoring/.../prometheus_chart_values.tpl. EtcdMembersDown and
+      # KubeletDown were considered and left out because neither is defined.
+      # Verify existence when adding to this list.
+      #
+      # Dropped from the old ignore-list, now unnecessary: Watchdog,
+      # RebootRequired, KuredNodeWasNotDrained, InfoInhibitor and
+      # KernelOOMKiller no longer need naming, because anything unnamed is
+      # ignored by default. The 2026-07-27 KernelOOMKiller self-deadlock (the
+      # sentinel gate's own kubectls OOM their cgroup, firing the alert that
+      # blocks the reboot that would quiesce the gate) cannot recur under
+      # match-only for the same reason.
+      alertFilterRegexp    = "^(KubeAPIServerDown|KubeStateMetricsDown|PrometheusRuleEvaluationFailing|NodeDown|NodeConditionBad|NodeDiskPressure|NodeMemoryPressure|NFSCSINodeDown|ClusterCannotTolerateNonGpuNodeLoss)$"
       alertFiringOnly      = true
-      alertFilterMatchOnly = false
+      alertFilterMatchOnly = true
     }
     reboot_days  = "mon,tue,wed,thu,fri,sat,sun"
     window_end   = "06:00"
@@ -107,6 +144,16 @@ resource "helm_release" "kured" {
         "prometheus.io/path"   = "/metrics"
       }
     }
+    # reboot-self-heal Phase 2: the kured chart REPLACES its default
+    # control-plane/master tolerations when `tolerations` is set, so both are
+    # re-listed here (replicating the chart default exactly) alongside the GPU
+    # toleration — kured must still reboot the control-plane AND keep a pod on
+    # the GPU-tainted k8s-node1.
+    tolerations = [
+      { key = "node-role.kubernetes.io/control-plane", effect = "NoSchedule" },
+      { key = "node-role.kubernetes.io/master", effect = "NoSchedule" },
+      { key = "nvidia.com/gpu", operator = "Exists", effect = "NoSchedule" },
+    ]
   })]
 }
 
@@ -212,6 +259,13 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
           key      = "node-role.kubernetes.io/master"
           operator = "Equal"
         }
+        # reboot-self-heal Phase 2: keep the sentinel gate on the GPU-tainted
+        # k8s-node1 when nvidia.com/gpu flips to NoSchedule.
+        toleration {
+          key      = "nvidia.com/gpu"
+          operator = "Exists"
+          effect   = "NoSchedule"
+        }
         container {
           name              = "gate"
           image             = "bitnami/kubectl:latest"
@@ -227,10 +281,15 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
               # cgroup OOM-kills child processes — PID 1 bash survives, so the
               # pod never restarts, it just racks up silent oom_events
               # (149 in 7d / accelerating on k8s-master, 2026-05-30..31).
-              # Exit 0 every MAX_ITER cycles (~6h at 300s) so kubelet restarts
-              # the pod fresh and memory can never accumulate.
+              # Exit 0 every MAX_ITER cycles so kubelet restarts the pod fresh
+              # and memory can never accumulate. Tightened 72->12 (~6h->~1h) on
+              # 2026-07-27: on a node stuck pending-reboot for days (the kured
+              # deadlock, also fixed via the KernelOOMKiller ignore above) the
+              # leak still crossed the 256Mi ceiling within 6h and OOM-killed
+              # ~139 child kubectls/6h. A ~1h reset keeps the cgroup well under
+              # the (now 512Mi) limit so it never OOMs.
               ITER=0
-              MAX_ITER=72
+              MAX_ITER=12
               while true; do
                 ITER=$((ITER + 1))
                 if [ "$ITER" -gt "$MAX_ITER" ]; then
@@ -305,12 +364,13 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
               memory = "32Mi"
             }
             # 64Mi was too tight for the kubectl-heavy hot path (each kubectl
-            # fork is a ~30-50Mi Go binary). Raised to 256Mi 2026-05-31 after
-            # the k8s-master gate pod OOM-killed child kubectls 149x/7d while
-            # master sat in pending-reboot. The self-restart guard (loop above)
-            # is the primary leak fix; this just gives comfortable headroom.
+            # fork is a ~90Mi RSS Go binary). Raised 64->256Mi 2026-05-31, then
+            # 256->512Mi 2026-07-27 after the gate STILL OOM-killed ~139 child
+            # kubectls/6h on a node stuck pending-reboot for days. 512Mi headroom
+            # + the tightened MAX_ITER=12 (~1h reset, loop above) together keep
+            # the cgroup from ever filling to the OOM ceiling.
             limits = {
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
           volume_mount {

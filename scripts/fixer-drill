@@ -1,0 +1,543 @@
+#!/usr/bin/env python3
+"""Break something on purpose, file it, and measure whether the fixer fixes it.
+
+The fixer's own tests prove its plumbing. They cannot tell you whether the AGENT
+diagnoses a real fault and *acts* on it — the failure mode that has actually bitten
+here twice (a run that produced a perfect diagnosis and then ended its turn on a
+plan, and a run escalated two minutes in by a transient fetch). This harness is
+how that question gets answered repeatably instead of by hand.
+
+Each drill:
+
+  1. **snapshots** the exact field it is about to change;
+  2. **breaks** the target for real — a scaled-to-zero deployment, an image tag
+     that cannot be pulled, a Service selector pointing at nothing;
+  3. **files** a `broken` issue as a chosen user, with the evidence a reporter
+     would actually have;
+  4. **watches** to a terminal state, touching nothing — intervening mid-run is
+     what invalidated the first attempt at this;
+  5. **judges by the symptom**, not by the issue: an issue closed while the
+     service is still down is a failure, and so is a fix that arrives only
+     because the harness restored it;
+  6. **restores** whatever the fixer did not, always, including on Ctrl-C.
+
+Report goes to stdout and to a JSON file, one record per drill, so two runs of
+the same suite can be compared after an agent change.
+
+Usage:
+    fixer-drill --list
+    fixer-drill scale-zero                    # one drill
+    fixer-drill --all --as emo                # the suite
+    fixer-drill scale-zero --dry-run          # show what it would break
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+FJ = "https://forgejo.viktorbarzin.me/api/v1"
+REPO = "viktor/infra"
+NS = "changedetection"
+DEPLOY = "changedetection"
+POLL_SECONDS = 20
+DEFAULT_TIMEOUT = 1800
+
+
+# --------------------------------------------------------------------------- #
+# Plumbing.
+# --------------------------------------------------------------------------- #
+def kubectl(*args: str, check: bool = True) -> str:
+    proc = subprocess.run(["kubectl", *args], capture_output=True, text=True, timeout=120)
+    if check and proc.returncode != 0:
+        raise RuntimeError(f"kubectl {' '.join(args)} failed: {proc.stderr.strip()[:200]}")
+    return proc.stdout.strip()
+
+
+def forgejo_token(as_user: str) -> str:
+    """The PAT for whoever is filing. Each devvm user has their own."""
+    home = os.path.expanduser("~") if as_user in ("", os.environ.get("USER", "")) else f"/home/{as_user}"
+    path = os.path.join(home, ".git-credentials")
+    try:
+        with open(path) as fh:
+            for line in fh:
+                if "forgejo" in line:
+                    m = re.match(r"https://([^:]+):([^@]+)@", line.strip())
+                    if m:
+                        return m.group(2)
+    except PermissionError:
+        out = subprocess.run(["sudo", "-n", "-u", as_user, "cat", path],
+                             capture_output=True, text=True, timeout=30).stdout
+        for line in out.splitlines():
+            if "forgejo" in line:
+                m = re.match(r"https://([^:]+):([^@]+)@", line.strip())
+                if m:
+                    return m.group(2)
+    raise SystemExit(f"no forgejo credential for {as_user}")
+
+
+def api(method: str, path: str, token: str, body: dict | None = None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(FJ + path, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", "token " + token)
+    try:
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            raw = resp.read()
+            return resp.status, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        try:
+            return exc.code, json.loads(raw)
+        except ValueError:
+            return exc.code, {"raw": raw[:200].decode("utf-8", "replace")}
+
+
+def label_id(token: str, name: str) -> int:
+    _, labels = api("GET", f"/repos/{REPO}/labels?limit=100", token)
+    for lbl in labels:
+        if lbl["name"] == name:
+            return int(lbl["id"])
+    raise SystemExit(f"label {name} not found")
+
+
+# --------------------------------------------------------------------------- #
+# The drills. Each is break / symptom / healthy? / restore.
+# --------------------------------------------------------------------------- #
+class Drill:
+    name = "base"
+    title = ""
+    what_breaks = ""
+
+    def snapshot(self) -> dict:
+        raise NotImplementedError
+
+    def break_it(self, snap: dict) -> None:
+        raise NotImplementedError
+
+    def healthy(self) -> bool:
+        raise NotImplementedError
+
+    def restore(self, snap: dict) -> None:
+        raise NotImplementedError
+
+    def body(self) -> str:
+        raise NotImplementedError
+
+
+def _ready_replicas() -> int:
+    out = kubectl("-n", NS, "get", "deploy", DEPLOY,
+                  "-o", "jsonpath={.status.readyReplicas}", check=False)
+    return int(out) if out.isdigit() else 0
+
+
+def _container_index() -> int:
+    """Index of the app container.
+
+    This deployment carries a sidecar, and `containers[0]` is the sidecar — so
+    an index-based drill would break the wrong thing and describe the right one.
+    """
+    raw = kubectl("-n", NS, "get", "deploy", DEPLOY,
+                  "-o", "jsonpath={.spec.template.spec.containers[*].name}")
+    names = raw.split()
+    return names.index(DEPLOY) if DEPLOY in names else 0
+
+
+def _endpoints() -> str:
+    return kubectl("-n", NS, "get", "endpoints", DEPLOY,
+                   "-o", "jsonpath={.subsets[*].addresses[*].ip}", check=False)
+
+
+class ScaleZero(Drill):
+    name = "scale-zero"
+    title = f"{DEPLOY} is down — deployment scaled to 0, Service has no endpoints"
+    what_breaks = f"deploy/{DEPLOY} replicas -> 0"
+
+    def snapshot(self):
+        return {"replicas": kubectl("-n", NS, "get", "deploy", DEPLOY,
+                                    "-o", "jsonpath={.spec.replicas}") or "1"}
+
+    def break_it(self, snap):
+        kubectl("-n", NS, "scale", f"deploy/{DEPLOY}", "--replicas=0")
+
+    def healthy(self):
+        return _ready_replicas() >= 1 and bool(_endpoints())
+
+    def restore(self, snap):
+        kubectl("-n", NS, "scale", f"deploy/{DEPLOY}", f"--replicas={snap['replicas']}")
+
+    def body(self):
+        return f"""## Symptom
+
+`{DEPLOY}` is down. The deployment has no running pods and the Service has no
+endpoints, so nothing is behind its ingress.
+
+## Evidence
+
+```
+$ kubectl -n {NS} get deploy {DEPLOY}
+0/0     0            0
+
+$ kubectl -n {NS} get pods
+No resources found in {NS} namespace.
+
+$ kubectl -n {NS} get endpoints
+{DEPLOY}   <none>
+```
+
+## Already ruled out
+
+- No pod exists at all, so this is not a crash loop or an image problem.
+- Other workloads on the same nodes are healthy.
+
+## What I cannot do
+
+I have no write access to that namespace, so I cannot scale it back myself.
+
+## Verify the fix
+
+`kubectl -n {NS} get deploy {DEPLOY}` shows 1/1 and `get endpoints` shows an IP.
+"""
+
+
+class BadImage(Drill):
+    name = "bad-image"
+    title = f"{DEPLOY} pod will not start — ImagePullBackOff on a tag that does not exist"
+    what_breaks = f"deploy/{DEPLOY} image tag -> a nonexistent tag"
+
+    def snapshot(self):
+        i = _container_index()
+        image = kubectl("-n", NS, "get", "deploy", DEPLOY,
+                        "-o", f"jsonpath={{.spec.template.spec.containers[{i}].image}}")
+        name = kubectl("-n", NS, "get", "deploy", DEPLOY,
+                       "-o", f"jsonpath={{.spec.template.spec.containers[{i}].name}}")
+        return {"image": image, "container": name}
+
+    def break_it(self, snap):
+        broken = snap["image"].rsplit(":", 1)[0] + ":does-not-exist-drill"
+        kubectl("-n", NS, "set", "image", f"deploy/{DEPLOY}",
+                f"{snap['container']}={broken}")
+
+    def healthy(self):
+        images = kubectl("-n", NS, "get", "deploy", DEPLOY,
+                         "-o", "jsonpath={.spec.template.spec.containers[*].image}", check=False)
+        return "does-not-exist-drill" not in images and _ready_replicas() >= 1
+
+    def restore(self, snap):
+        kubectl("-n", NS, "set", "image", f"deploy/{DEPLOY}",
+                f"{snap['container']}={snap['image']}")
+
+    def body(self):
+        return f"""## Symptom
+
+`{DEPLOY}` is not serving. The new pod never becomes ready — it sits in
+`ImagePullBackOff` because the deployment references an image tag that does not
+exist in the registry.
+
+## Evidence
+
+```
+$ kubectl -n {NS} get pods
+{DEPLOY}-xxxxx   0/2   ImagePullBackOff   0   2m
+
+$ kubectl -n {NS} describe pod <pod> | tail
+Failed to pull image "...:does-not-exist-drill": not found
+```
+
+## Already ruled out
+
+- Not a resource problem: the pod is scheduled, it cannot pull.
+- The previous pod was running fine on the prior tag.
+
+## What I cannot do
+
+I cannot change the deployment — no write access to that namespace.
+
+## Verify the fix
+
+`kubectl -n {NS} get deploy {DEPLOY}` shows 1/1 ready on a tag that resolves.
+"""
+
+
+class BadSelector(Drill):
+    name = "bad-selector"
+    title = f"{DEPLOY} unreachable — Service has no endpoints although the pod is healthy"
+    what_breaks = f"svc/{DEPLOY} selector -> a label nothing carries"
+
+    def snapshot(self):
+        raw = kubectl("-n", NS, "get", "svc", DEPLOY, "-o", "jsonpath={.spec.selector}")
+        return {"selector": json.loads(raw) if raw else {}}
+
+    def break_it(self, snap):
+        patch = {"spec": {"selector": {"app": "drill-nothing-matches-this"}}}
+        kubectl("-n", NS, "patch", "svc", DEPLOY, "-p", json.dumps(patch))
+
+    def healthy(self):
+        return bool(_endpoints()) and _ready_replicas() >= 1
+
+    def restore(self, snap):
+        # A selector is replaced wholesale, so send the original map back.
+        patch = {"spec": {"selector": snap["selector"]}}
+        kubectl("-n", NS, "patch", "svc", DEPLOY, "-p", json.dumps(patch))
+
+    def body(self):
+        return f"""## Symptom
+
+`{DEPLOY}` is unreachable through its Service, but the pod itself is healthy and
+`Running`. The Service has no endpoints.
+
+## Evidence
+
+```
+$ kubectl -n {NS} get pods
+{DEPLOY}-xxxxx   2/2   Running   0   30d
+
+$ kubectl -n {NS} get endpoints {DEPLOY}
+{DEPLOY}   <none>
+```
+
+So the pod is up and passing its probes, yet nothing is routed to it. That points
+at the Service, not the workload.
+
+## Already ruled out
+
+- Not the pod: it is Running and ready.
+- Not a scale problem: replicas are as expected.
+
+## What I cannot do
+
+No write access to that namespace.
+
+## Verify the fix
+
+`kubectl -n {NS} get endpoints {DEPLOY}` lists the pod IP again.
+"""
+
+
+class CrashLoop(Drill):
+    name = "crashloop"
+    title = f"{DEPLOY} in CrashLoopBackOff — container exits immediately"
+    what_breaks = f"deploy/{DEPLOY} command -> /bin/false"
+
+    def snapshot(self):
+        i = _container_index()
+        raw = kubectl("-n", NS, "get", "deploy", DEPLOY,
+                      "-o", f"jsonpath={{.spec.template.spec.containers[{i}].command}}")
+        name = kubectl("-n", NS, "get", "deploy", DEPLOY,
+                       "-o", f"jsonpath={{.spec.template.spec.containers[{i}].name}}")
+        return {"command": json.loads(raw) if raw else None, "container": name}
+
+    def break_it(self, snap):
+        patch = {"spec": {"template": {"spec": {"containers": [
+            {"name": snap["container"], "command": ["/bin/false"]}]}}}}
+        kubectl("-n", NS, "patch", "deploy", DEPLOY, "-p", json.dumps(patch))
+
+    def healthy(self):
+        raw = kubectl("-n", NS, "get", "deploy", DEPLOY,
+                      "-o", "jsonpath={.spec.template.spec.containers[*].command}", check=False)
+        return "/bin/false" not in (raw or "") and _ready_replicas() >= 1
+
+    def restore(self, snap):
+        # null clears the override and restores the image's own entrypoint.
+        command = snap["command"] if snap["command"] else None
+        patch = {"spec": {"template": {"spec": {"containers": [
+            {"name": snap["container"], "command": command}]}}}}
+        kubectl("-n", NS, "patch", "deploy", DEPLOY, "-p", json.dumps(patch))
+
+    def body(self):
+        return f"""## Symptom
+
+`{DEPLOY}` is in `CrashLoopBackOff`. The container starts and exits immediately,
+so the deployment never becomes available.
+
+## Evidence
+
+```
+$ kubectl -n {NS} get pods
+{DEPLOY}-xxxxx   1/2   CrashLoopBackOff   5   4m
+
+$ kubectl -n {NS} logs <pod> -c {DEPLOY} --previous
+(no output — the process exits at once)
+```
+
+The pod restarts on a backoff and never reaches ready.
+
+## Already ruled out
+
+- Not the image: it pulls fine, the container is created.
+- Not resources: no OOMKill, no eviction.
+
+## What I cannot do
+
+No write access to that namespace.
+
+## Verify the fix
+
+`kubectl -n {NS} get deploy {DEPLOY}` reaches 1/1 with a stable, non-restarting pod.
+"""
+
+
+DRILLS: dict[str, type[Drill]] = {
+    d.name: d for d in (ScaleZero, BadImage, BadSelector, CrashLoop)
+}
+
+
+# --------------------------------------------------------------------------- #
+# Running one drill.
+# --------------------------------------------------------------------------- #
+def wait_for_quiet_queue(token: str, timeout: int = 900) -> bool:
+    """Wait until no run holds the repo, so drills do not queue behind each other."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        _, issues = api("GET", f"/repos/{REPO}/issues?state=open&labels=agent-in-progress&limit=20", token)
+        if not issues:
+            return True
+        time.sleep(POLL_SECONDS)
+    return False
+
+
+def run_drill(drill: Drill, token: str, as_user: str, timeout: int,
+              dry_run: bool = False) -> dict:
+    started = time.time()
+    result = {
+        "drill": drill.name, "filed_as": as_user, "issue": None,
+        "dispatched_s": None, "terminal_s": None, "outcome": "unknown",
+        "fixed_by_agent": False, "restored_by_harness": False, "run_log": None,
+        "summary": None,
+    }
+    print(f"\n=== drill: {drill.name} — {drill.what_breaks} ===")
+
+    if not drill.healthy():
+        print("  target is not healthy to begin with — skipping")
+        result["outcome"] = "skipped-unhealthy-precondition"
+        return result
+
+    snap = drill.snapshot()
+    print(f"  snapshot: {snap}")
+    if dry_run:
+        result["outcome"] = "dry-run"
+        return result
+
+    try:
+        drill.break_it(snap)
+        # Confirm the fault is real before filing: a drill that files against a
+        # healthy service tests nothing and wastes a run.
+        for _ in range(30):
+            if not drill.healthy():
+                break
+            time.sleep(2)
+        else:
+            print("  FAILED to break the target — restoring, not filing")
+            drill.restore(snap)
+            result["outcome"] = "could-not-break"
+            return result
+        print(f"  broken at {time.strftime('%H:%M:%SZ', time.gmtime())}")
+
+        code, issue = api("POST", f"/repos/{REPO}/issues", token, {
+            "title": drill.title,
+            "body": drill.body() + f"\n\n_Filed by `fixer-drill` ({drill.name}) at "
+                                   f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}._\n",
+            "labels": [label_id(token, "broken")],
+        })
+        if code not in (200, 201):
+            raise RuntimeError(f"could not file: HTTP {code} {issue}")
+        number = int(issue["number"])
+        result["issue"] = number
+        print(f"  filed #{number} as {as_user}")
+
+        deadline = time.time() + timeout
+        dispatched = False
+        while time.time() < deadline:
+            _, live = api("GET", f"/repos/{REPO}/issues/{number}", token)
+            labels = {lbl["name"] for lbl in live.get("labels", [])}
+            if not dispatched and "agent-in-progress" in labels:
+                dispatched = True
+                result["dispatched_s"] = round(time.time() - started, 1)
+                print(f"  dispatched after {result['dispatched_s']}s")
+            terminal = live.get("state") == "closed" or "needs-human" in labels
+            if terminal:
+                result["terminal_s"] = round(time.time() - started, 1)
+                result["outcome"] = ("escalated" if "needs-human" in labels else "closed")
+                break
+            time.sleep(POLL_SECONDS)
+        else:
+            result["outcome"] = "timeout"
+
+        # The judgement that matters: is the SYMPTOM gone, before we touch anything?
+        result["fixed_by_agent"] = drill.healthy()
+        print(f"  outcome={result['outcome']} fixed_by_agent={result['fixed_by_agent']}"
+              f" after {result['terminal_s']}s")
+    finally:
+        if not drill.healthy():
+            print("  restoring (the fixer did not)")
+            try:
+                drill.restore(snap)
+                result["restored_by_harness"] = True
+            except Exception as exc:  # noqa: BLE001
+                print(f"  RESTORE FAILED: {exc}")
+                result["restored_by_harness"] = False
+                result["outcome"] += "+restore-failed"
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("drills", nargs="*", help="drill names (see --list)")
+    parser.add_argument("--all", action="store_true", help="run every drill")
+    parser.add_argument("--list", action="store_true", help="list the drills")
+    parser.add_argument("--as", dest="as_user", default=os.environ.get("USER", "wizard"),
+                        help="devvm user to file as (default: you)")
+    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
+                        help="seconds to wait per drill for a terminal state")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="snapshot and report, break nothing")
+    parser.add_argument("--report", default="", help="write the JSON report here")
+    args = parser.parse_args()
+
+    if args.list:
+        for name, cls in DRILLS.items():
+            print(f"  {name:14s} {cls.what_breaks}")
+        return 0
+
+    names = list(DRILLS) if args.all else args.drills
+    if not names:
+        parser.error("name a drill, or pass --all (see --list)")
+    unknown = [n for n in names if n not in DRILLS]
+    if unknown:
+        parser.error(f"unknown drill(s): {', '.join(unknown)}")
+
+    token = forgejo_token(args.as_user)
+    results = []
+    for name in names:
+        if not args.dry_run and not wait_for_quiet_queue(token):
+            print("queue never went quiet — stopping")
+            break
+        results.append(run_drill(DRILLS[name](), token, args.as_user,
+                                 args.timeout, args.dry_run))
+
+    print("\n=== report ===")
+    print(f"{'drill':14s} {'outcome':12s} {'fixed':6s} {'dispatch':9s} {'total':8s} issue")
+    for r in results:
+        print(f"{r['drill']:14s} {str(r['outcome'])[:12]:12s} "
+              f"{str(r['fixed_by_agent']):6s} {str(r['dispatched_s']):9s} "
+              f"{str(r['terminal_s']):8s} #{r['issue']}")
+    fixed = sum(1 for r in results if r["fixed_by_agent"])
+    print(f"\nfixed by the agent: {fixed}/{len(results)}")
+
+    if args.report:
+        with open(args.report, "w") as fh:
+            json.dump({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                       "results": results}, fh, indent=2)
+        print(f"report -> {args.report}")
+    return 0 if fixed == len(results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

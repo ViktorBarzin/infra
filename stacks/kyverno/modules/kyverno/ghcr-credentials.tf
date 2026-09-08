@@ -19,9 +19,15 @@ locals {
     "tuya-bridge",
     "f1-stream",
     "job-hunter",
+    "lesson-harvester",
     "instagram-poster",
     "payslip-ingest",
     "wealthfolio",
+    # broker-sync pulls the same PRIVATE ghcr.io/viktorbarzin/wealthfolio-sync
+    # image; the ADR-0002 migration only allowlisted the wealthfolio namespace,
+    # so broker-sync silently kept running the frozen pre-migration DockerHub
+    # image (its CronJobs lacked pull auth for ghcr).
+    "broker-sync",
     "fire-planner",
     "recruiter-responder",
     # openclaw's install-recruiter-plugin init container pulls the PRIVATE
@@ -34,6 +40,52 @@ locals {
     # goldmane-edge-aggregator: PRIVATE ghcr image pulled by the aggregate
     # Deployment + digest CronJob (ADR-0014, infra#58).
     "goldmane-edge-aggregator",
+    # plotting-book: image migrated from public DockerHub to PRIVATE
+    # ghcr.io/passionprojectsanca/book-plotter (built by GHA in Anca's repo,
+    # under her own org's ghcr). The deployment references the cloned secret.
+    "plotting-book",
+    # excalidraw: infra-owned image migrated from manual DockerHub pushes to
+    # PRIVATE ghcr.io/viktorbarzin/excalidraw-library (ADR-0002, built by
+    # .github/workflows/build-excalidraw.yml). The deployment references the
+    # cloned secret.
+    "excalidraw",
+    # trading-bot: migrated off public DockerHub onto PRIVATE
+    # ghcr.io/viktorbarzin/trading-bot-{service,dashboard} (ADR-0002). The repo
+    # had no build path at all between the in-cluster pipeline's retirement in
+    # June 2026 and this migration. Both Deployments and the migrations Job
+    # reference the cloned secret.
+    "trading-bot",
+    # vpn-portal: PRIVATE ghcr.io/viktorbarzin/vpn-portal (VPN config portal at
+    # vpn.viktorbarzin.me, spec infra#76). Deployment references the cloned
+    # secret; package default-private (GitHub has no visibility API).
+    "vpn-portal",
+    # stremio: PRIVATE ghcr.io/viktorbarzin/stremio-nvenc (NVENC Stremio server,
+    # infra#80). Deployment references the cloned ghcr-credentials secret.
+    "stremio",
+    # proxy: the per-session browser pods pull the PRIVATE
+    # ghcr.io/viktorbarzin/chrome-service-browser image (broker-created Pods
+    # reference the cloned ghcr-credentials secret). The gluetun + noVNC images
+    # are public. Design: docs/plans/2026-07-24-geo-browser-nordvpn-design.md
+    "proxy",
+    # interview-prep-app: PRIVATE ghcr.io/viktorbarzin/interview-prep-app
+    # (static SvelteKit interview-prep PWA). Deployment references the cloned secret.
+    "interview-prep-app",
+    # learning: PRIVATE ghcr.io/viktorbarzin/learning (Learn PWA — the /teach
+    # skill's app; the image bakes personal content, so it stays private).
+    "learning",
+    # pages-publish: PRIVATE ghcr.io/viktorbarzin/pages-publish (markdown →
+    # pages.viktorbarzin.me publish service). Deployment references the cloned secret.
+    "pages-publish",
+    # chesscom-streak: PRIVATE ghcr.io/viktorbarzin/chesscom-streak (daily
+    # Chess.com streak CronJob). Kept private deliberately — a public package
+    # under this name would advertise the automation to the site it runs against.
+    "chesscom-streak",
+    # repowise: PRIVATE ghcr.io/viktorbarzin/repowise (codebase intelligence
+    # over the Forgejo Corpus, built from upstream source by
+    # .github/workflows/build-repowise.yml). Private deliberately — publishing
+    # a derived image of an AGPL-3.0 work would be distribution and carry a
+    # source-offer obligation. Keel also needs this secret to poll the tag list.
+    "repowise",
   ]
 }
 
@@ -53,6 +105,12 @@ resource "kubernetes_secret" "ghcr_credentials" {
         }
       }
     })
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno stamps generate.kyverno.io/clone-source onto
+    # its own clone SOURCE (null value), so Terraform planned to strip it every
+    # run and this stack never went clean. Added 2026-08-14.
+    ignore_changes = [metadata[0].labels]
   }
 }
 
@@ -106,3 +164,6 @@ resource "kubectl_manifest" "sync_ghcr_credentials" {
     kubernetes_cluster_role_binding.kyverno_background_secret_manager,
   ]
 }
+
+# re-fire 2026-07-25: ensure the interview-prep-app allowlist entry is applied
+# (prior pipeline superseded before apply).

@@ -172,7 +172,7 @@ securityContext:
   fsGroupChangePolicy: OnRootMismatch
 
 collabora:
-  enabled: false # Using onlyoffice instead
+  enabled: false # No document server (onlyoffice decommissioned 2026-07-01)
 
 resources:
   limits:

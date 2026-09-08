@@ -19,10 +19,20 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
+# Pin an EXPLICIT session id (and display name) for this conversation. tmux-persist
+# reads --session-id straight from the process args to map a tmux session to its
+# Claude conversation. WITHOUT an explicit id it has to GUESS ("newest transcript by
+# mtime in the cwd-slug dir"), and since every one of a user's sessions shares ONE
+# project dir (all cwd'd in ~/code), that guess collapses many concurrent sessions
+# onto whichever conversation is most active — so a reboot/restore reopens every tab
+# on the SAME conversation. A fresh uuid per launch makes the mapping deterministic.
+# (See scripts/tmux-persist.sh uuid_of_claude.)
+sid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null)"
 name_args=()
+[ -n "$sid" ] && name_args=(--session-id "$sid")
 if [ -n "${TMUX:-}" ]; then
   sess="$(tmux display-message -p '#{session_name}' 2>/dev/null)"
-  [ -n "$sess" ] && name_args=(--name "$sess")
+  [ -n "$sess" ] && name_args+=(--name "$sess")
 fi
 
 cd "$HOME/code" 2>/dev/null || cd "$HOME"
@@ -92,6 +102,15 @@ ensure_onboarding() {
   fi
 }
 ensure_onboarding
+
+# Load a per-user long-lived CLAUDE_CODE_OAUTH_TOKEN if claude-auth-sync has
+# materialized one from this user's own Vault path. A non-rotating setup-token
+# sidesteps the shared ~/.claude/.credentials.json OAuth refresh-token race that
+# logs out users running many concurrent agents (interactive + t3 + always-on).
+# Absent file -> no-op (normal per-user Enterprise-SSO flow). The user's OWN
+# token; never shared between OS users.
+_oauth_env="$HOME/.config/claude-auth-sync/claude-oauth.env"
+if [ -r "$_oauth_env" ]; then set -a; . "$_oauth_env"; set +a; fi
 
 # Deliberately not `exec` so we can branch on the exit code: clean quit ends the
 # pane (ttyd closes the terminal); a crash drops to a shell so the tmux session

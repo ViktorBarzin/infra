@@ -12,7 +12,7 @@ resource "kubernetes_namespace" "webhook-handler" {
   metadata {
     name = "webhook-handler"
     labels = {
-      tier = local.tiers.aux
+      tier               = local.tiers.aux
       "keel.sh/enrolled" = "true"
     }
   }
@@ -302,7 +302,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "webhook-handler"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

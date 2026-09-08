@@ -2,6 +2,67 @@
 
 Last updated: 2026-04-10
 
+> **Amendment (2026-08-03) — pfSense is now a real Tailscale subnet router.**
+> The body below claims Headscale clients already have "full access to the
+> homelab network" (see the Headscale onboarding section's connectivity test).
+> **That was not true.** No tailnet node advertised homelab routes: pfSense had
+> the Tailscale package installed and staged but sat `Logged out` from ~2026-07-18
+> with a spent pre-auth key, and nothing alerted. As of 2026-08-03 it is
+> registered (`100.64.0.9`, `tag:infra`, no expiry) and advertises six routes —
+> `192.168.1.0/24`, `10.0.10.0/24`, `10.0.20.0/24`, `192.168.0.0/24`,
+> `192.168.8.0/24`, `192.168.9.0/24` — plus an exit node, all auto-approved via
+> the ACL's `autoApprovers`.
+>
+> Three corrections that matter when reading the body below:
+> - **The Headscale ACL is no longer in Vault.** Source of truth is
+>   `stacks/headscale/acl.hujson` (**git-crypt** encrypted, main-checkout only),
+>   rendered by `stacks/headscale/main.tf`. `secret/platform.headscale_acl` is a
+>   stale break-glass copy — do not edit it.
+> - **Client `.lan` DNS is `10.0.20.201`, not `10.0.20.200`.** The `dns.split`
+>   entries, the `technitium` `extra_record`, and the ACL `technitium` host all
+>   pointed at `.200`, where nothing listens on :53 — so name-based LAN browsing
+>   could not have worked regardless of routes. Fixed 2026-08-03.
+> - **pfSense runs with `--accept-dns=false --accept-routes=false`** — a firewall
+>   must not take DNS or routes from the VPN control plane.
+>
+> Design + verification evidence + honest limitations:
+> [`docs/plans/2026-08-03-pfsense-tailscale-subnet-router-design.md`](../plans/2026-08-03-pfsense-tailscale-subnet-router-design.md).
+> Operations: [`docs/runbooks/pfsense-tailscale-subnet-router.md`](../runbooks/pfsense-tailscale-subnet-router.md).
+> Reproducer: `playbooks/pfsense-tailscale.yml`. Watchdog: CronJob
+> `tailscale-subnet-router-probe` (every 6 h) → `TailscaleSubnetRouterDown` /
+> `TailscaleLanUnreachableViaTailnet` / `TailscaleSubnetRouterProbeStale`.
+
+> **Amendment (2026-08-16) — outbound egress is now a first-class service.**
+> Everything below concerns INBOUND remote access (getting to the homelab). As
+> of 2026-08-16 there is also a supported OUTBOUND path: any cluster workload
+> can egress through the existing NordVPN subscription by setting
+> `HTTPS_PROXY`/`ALL_PROXY` to
+> `http://proxy-egress-uk.proxy.svc.cluster.local:8888` (SOCKS5 on
+> `socks5h://…:1080`). It needs no privileges, sidecar or netns sharing —
+> gluetun's userspace listener sits inside the tunnel and re-originates the
+> request. One always-on UK gateway serves both this and the remote browsers
+> from a single tunnel. Fails closed. Verified end to end, including that no
+> request leaks to the home address while the gateway is down.
+> **It does not defeat anti-bot walls** — a datacenter exit scores worse than a
+> residential address on ASN reputation; use `homelab browser run` for those.
+> Design: [`docs/plans/2026-08-16-cluster-vpn-egress-service-design.md`](../plans/2026-08-16-cluster-vpn-egress-service-design.md)
+> · contract: `stacks/proxy/README.md`.
+
+> **Amendment (2026-07-13) — not yet folded into the body below (a full rewrite
+> is design Phase 0).** Two additions since this was written:
+> - **mx2 is now VPN PoP-2, not "mail drain only."** The Oracle Always-Free box
+>   also terminates VLESS-REALITY (`:8443`), Shadowsocks (`:8388`), and a dnstt
+>   DNS tunnel (`:53/udp`), all egressing via Oracle's IP — a path that is
+>   neither the home WAN nor Cloudflare (the diversification a censored-network
+>   client needs). Server config + rebuild recipe:
+>   [`backup-mx.md`](../runbooks/backup-mx.md) → "VPN OCI PoP-2".
+> - **A config-distribution portal** ([vpn.viktorbarzin.me](https://vpn.viktorbarzin.me),
+>   `stacks/vpn-portal`) now hands out every proxy config as auto-updating
+>   subscription URLs (grouped by remote: Home / Cloudflare / OCI), registers
+>   WireGuard devices with client-side keygen, and enrolls devices into the
+>   Headscale tailnet on demand (short-lived pre-auth keys). Full design:
+>   [`docs/plans/2026-07-13-vpn-consolidation-config-portal-design.md`](../plans/2026-07-13-vpn-consolidation-config-portal-design.md).
+
 ## Overview
 
 Remote access to the homelab is provided through a hybrid VPN architecture: WireGuard site-to-site tunnels connect physical locations (Sofia, London, Valchedrym), while Headscale (self-hosted Tailscale control server) provides mesh overlay networking for roaming clients. Split DNS architecture ensures resilience: AdGuard serves as the global DNS resolver for all VPN clients, while Technitium handles internal `.lan` domains. This design prevents tunnel dependency for public DNS resolution — if the Cloudflared tunnel goes down, clients can still access the internet.
@@ -16,9 +77,11 @@ graph TB
         Sofia[Sofia pfSense<br/>10.3.2.1<br/>tun_wg0]
         London[London GL-iNet Flint 2<br/>10.3.2.6<br/>192.168.8.0/24]
         Valchedrym[Valchedrym OpenWRT<br/>10.3.2.5<br/>192.168.0.0/24]
+        MX2[mx2 backup MX<br/>10.3.2.10<br/>Oracle Cloud, mail drain only]
 
         Sofia ---|WireGuard Tunnel| London
         Sofia ---|WireGuard Tunnel| Valchedrym
+        Sofia ---|WireGuard Tunnel| MX2
     end
 
     subgraph "Headscale Mesh Overlay"
@@ -92,11 +155,12 @@ sequenceDiagram
 
 ### WireGuard Site-to-Site
 
-Three physical locations are permanently connected via WireGuard in a **hub-and-spoke** topology with Sofia as the hub. A single WireGuard interface (`tun_wg0`) on pfSense carries both peers on the `10.3.2.0/24` tunnel subnet:
+Three physical locations are permanently connected via WireGuard in a **hub-and-spoke** topology with Sofia as the hub. A single WireGuard interface (`tun_wg0`) on pfSense carries all peers on the `10.3.2.0/24` tunnel subnet:
 
 - **Sofia** (hub): `10.3.2.1` — pfSense, K8s cluster on `10.0.20.0/24`, management on `10.0.10.0/24`, LAN on `192.168.1.0/24`
 - **London** (spoke): `10.3.2.6` — GL-iNet Flint 2 (GL-MT6000), LAN `192.168.8.0/24`, guest `192.168.9.0/24`
 - **Valchedrym** (spoke): `10.3.2.5` — OpenWRT router, LAN `192.168.0.0/24`
+- **mx2 / backup MX** (road-warrior peer, since 2026-07-08): `10.3.2.10/32` — the Oracle Always-Free backup-MX relay (ADR-0019). Not a site: no LAN behind it; its side allows only `10.0.20.1/32`. The tunnel exists solely so mx2 can drain queued mail to the mailserver HAProxy (Oracle blocks egress TCP 25; the drain is UDP-encapsulated to pfSense `:51821`). Peer reproducer: `scripts/pfsense-backup-mx-wg.sh` (pfSense WireGuard is hand-configured kernel `wg` via `/usr/local/etc/wireguard/tun_wg0.conf`, not the package). Runbook: [`backup-mx.md`](../runbooks/backup-mx.md).
 
 Routes are configured as static routes on pfSense. London and Valchedrym route Sofia-bound traffic through their WireGuard tunnels. London ↔ Valchedrym traffic transits through Sofia (no direct tunnel).
 
@@ -113,13 +177,24 @@ Headscale is a self-hosted alternative to Tailscale's commercial control plane. 
 - **OIDC authentication**: Users log in via Authentik, no pre-shared keys.
 - **ACL policies**: Fine-grained control over which clients can reach which destinations.
 
-**Client onboarding**:
+**Client onboarding** — self-service, no admin step:
 1. User installs Tailscale client (official macOS/iOS/Android app)
 2. Runs: `tailscale login --login-server https://headscale.viktorbarzin.me`
 3. Browser opens to Authentik SSO login
-4. After successful login, Tailscale presents a registration URL
-5. Admin approves the device via `headscale nodes register --user <username> --key <key>`
-6. Client is added to the mesh, receives IP in 100.64.0.0/10 range
+4. On success the node registers itself and receives an IP in `100.64.0.0/10`
+
+Every family node registers this way (`register_method: OIDC`); the user just has
+to be listed in `oidc.allowed_users`. There is **no** approval round-trip and no
+pre-auth key to hand out — a device enrols the moment its owner completes the
+Authentik login. (`headscale nodes register` was the pre-OIDC flow and is
+deprecated upstream in favour of `headscale auth register`; neither is part of
+normal onboarding here.) Pre-auth keys are reserved for headless rebuilds that
+cannot run a browser — mx2 uses one, see [`backup-mx.md`](../runbooks/backup-mx.md).
+
+**Reachability**: a non-admin user's nodes reach the Sofia LAN, the internet via
+the exit node, and **their own other devices** (the `autogroup:self` rule in
+`acl.hujson`). They do not reach another user's devices. `group:admin` reaches
+everything. Full policy: `stacks/headscale/acl.hujson`.
 
 **Connectivity test**: `ping 10.0.20.100` (Sofia K8s API server) verifies full access to the homelab network.
 
@@ -143,13 +218,23 @@ Headscale is a self-hosted alternative to Tailscale's commercial control plane. 
 
 **Implementation**:
 - **AdGuard DNS**: Global recursive resolver, serves all VPN clients. Includes ad-blocking and malicious domain filtering.
-- **Technitium DNS**: Internal authoritative server for `.viktorbarzin.lan` domains.
+- **Technitium DNS**: Internal authoritative server for `.viktorbarzin.lan`, and a
+  split-horizon view of the public `viktorbarzin.me` zone that answers with internal
+  addresses (Traefik on `10.0.20.203`) instead of the public ones.
 
 **Resolution flow**:
 1. Client queries AdGuard for any domain.
 2. If domain ends in `.lan`, AdGuard forwards to Technitium (10.0.20.201).
 3. For all other domains, AdGuard resolves directly via upstream (Cloudflare 1.1.1.1).
 4. AdGuard caches responses, reducing load on Technitium and upstream.
+
+**Tailnet clients additionally split `viktorbarzin.me` to Technitium** (headscale
+`dns.nameservers.split`, added 2026-08-31). Without it a tailnet client resolves
+`.me` publicly, and public DNS answers every non-Cloudflare-proxied host with our
+own WAN address — so the client has to hairpin off `176.12.22.76`, which NAT
+loopback on the CPE in front of pfSense does not reliably do. The failure is
+partial and reads as flakiness: Cloudflare-proxied hosts keep working because
+their traffic genuinely leaves and returns, while directly-served ones hang.
 
 **Resilience**: Even if the tunnel to Sofia is down, clients can still resolve `google.com`, `github.com`, etc., because AdGuard talks directly to Cloudflare. Only `.lan` domains become unavailable.
 

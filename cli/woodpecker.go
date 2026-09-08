@@ -113,8 +113,31 @@ func (c *wpClient) findPipeline(repoID int, commit string) (wpPipeline, error) {
 	if len(ps) == 0 {
 		return wpPipeline{}, fmt.Errorf("no pipelines for repo %d", repoID)
 	}
+	return pickPipeline(ps, commit)
+}
+
+// newestPipeline returns the highest-numbered pipeline. Do NOT substitute
+// ps[0]: the API's list order is not reliably newest-first when pipelines run
+// concurrently, and on 2026-08-31 that made `ci watch --repo infra` report
+// #1324 (another session's FAILING build) while #1330 already existed. A
+// confident status report about somebody else's pipeline is worse than an error.
+func newestPipeline(ps []wpPipeline) wpPipeline {
+	var best wpPipeline
+	for _, p := range ps {
+		if p.Number > best.Number {
+			best = p
+		}
+	}
+	return best
+}
+
+// pickPipeline resolves which pipeline a status/watch call means: the one for
+// the named commit when there is one, else the newest. A named commit always
+// wins over recency — asking about a commit and being told about a newer
+// unrelated build is the same class of wrong answer.
+func pickPipeline(ps []wpPipeline, commit string) (wpPipeline, error) {
 	if commit == "" {
-		return ps[0], nil
+		return newestPipeline(ps), nil
 	}
 	for _, p := range ps {
 		if strings.HasPrefix(p.Commit, commit) {
@@ -124,8 +147,16 @@ func (c *wpClient) findPipeline(repoID int, commit string) (wpPipeline, error) {
 	return wpPipeline{}, fmt.Errorf("no pipeline for commit %s in the last %d", commit[:min(8, len(commit))], len(ps))
 }
 
-func (c *wpClient) repoID() (int, error) {
-	owner, repo, err := repoOwnerName()
+// repoID resolves the numeric Woodpecker repo id. repoFlag, when non-empty,
+// names a repo other than the cwd one.
+func (c *wpClient) repoID(repoFlag ...string) (int, error) {
+	var owner, repo string
+	var err error
+	if len(repoFlag) > 0 && repoFlag[0] != "" {
+		owner, repo, err = parseRepoFlag(repoFlag[0])
+	} else {
+		owner, repo, err = repoOwnerName()
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -142,6 +173,42 @@ func (c *wpClient) repoID() (int, error) {
 }
 
 // repoOwnerName derives <owner>/<repo> from the cwd git remote.
+// defaultRepoOwner is the Forgejo owner every first-party repo here sits under,
+// so `--repo infra` can mean what people obviously intend.
+const defaultRepoOwner = "viktor"
+
+// parseRepoFlag reads a --repo value: "owner/name", a bare "name" (owner
+// defaulted), or a pasted repo URL. It exists so `ci status`/`ci watch` can
+// address a repo other than the one you are standing in — the study counted 37
+// turns hand-rolling the Woodpecker API for exactly that, 26 of them against
+// infra, because the verb had no way to say which repo.
+func parseRepoFlag(v string) (string, string, error) {
+	v = strings.TrimSpace(v)
+	bad := fmt.Errorf("bad --repo %q: use owner/name, a bare name, or a repo URL", v)
+	if v == "" {
+		return "", "", bad
+	}
+	if strings.Contains(v, "://") {
+		return parseOwnerRepo(v)
+	}
+	v = strings.TrimSuffix(v, ".git")
+	parts := strings.Split(v, "/")
+	switch len(parts) {
+	case 1:
+		if parts[0] == "" {
+			return "", "", bad
+		}
+		return defaultRepoOwner, parts[0], nil
+	case 2:
+		if parts[0] == "" || parts[1] == "" {
+			return "", "", bad
+		}
+		return parts[0], parts[1], nil
+	default:
+		return "", "", bad
+	}
+}
+
 func repoOwnerName() (string, string, error) {
 	cwd, _ := os.Getwd()
 	root, err := gitRepoRoot(cwd)

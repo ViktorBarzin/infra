@@ -74,14 +74,29 @@ resource "null_resource" "gpu_node_config" {
     command = <<-EOT
       set -euo pipefail
       for node in $(kubectl get nodes -l feature.node.kubernetes.io/pci-10de.present=true -o jsonpath='{.items[*].metadata.name}'); do
-        kubectl taint nodes "$node" nvidia.com/gpu=true:PreferNoSchedule --overwrite
+        # `kubectl taint --overwrite` keys on key+EFFECT, so setting NoSchedule
+        # does NOT replace an existing nvidia.com/gpu:PreferNoSchedule taint —
+        # they'd COEXIST (both effects on the node). Remove any stale
+        # PreferNoSchedule first, then set NoSchedule. Both idempotent.
+        kubectl taint nodes "$node" nvidia.com/gpu:PreferNoSchedule- 2>/dev/null || true
+        kubectl taint nodes "$node" nvidia.com/gpu=true:NoSchedule --overwrite
       done
     EOT
   }
 
+  # reboot-self-heal Phase 2 (code-j3tx): flipped PreferNoSchedule -> NoSchedule
+  # so non-GPU pods CANNOT pack the GPU node on a reboot reschedule and starve
+  # frigate/llama-swap (the 2026-07-18 ~3h Pending). NoSchedule does NOT evict
+  # running pods — it only shapes future scheduling — so this is safe to apply
+  # live; it takes effect on the next reschedule/reboot. PREREQUISITE (done): the
+  # 8 non-tolerating system DaemonSets gained an nvidia.com/gpu toleration first
+  # (proxmox-csi-node etc.), else NoSchedule would keep them off node1. GPU
+  # tenants + those DaemonSets tolerate; everything else (immich-postgresql,
+  # CNPG, authentik, ...) has no gpu toleration so NoSchedule alone excludes it
+  # (dedicated anti-affinity would be redundant — omitted).
   triggers = {
     namespace    = kubernetes_namespace.nvidia.metadata[0].name
-    command_hash = "dynamic-taint-v1"
+    command_hash = "dynamic-taint-v3-noschedule-remove-prefer"
   }
 }
 
@@ -130,86 +145,18 @@ resource "helm_release" "nvidia-gpu-operator" {
   depends_on = [kubernetes_config_map.time_slicing_config]
 }
 
-resource "kubernetes_deployment" "nvidia-exporter" {
-  metadata {
-    name      = "nvidia-exporter"
-    namespace = kubernetes_namespace.nvidia.metadata[0].name
-    labels = {
-      app  = "nvidia-exporter"
-      tier = var.tier
-      # 2026-05-26: Keel tag-rewrote :latest → :4.5.2-4.8.1-ubuntu22.04
-      # and the new image OOMs at 192Mi. Adding both LABEL + ANNOTATION
-      # to opt out of Keel cluster-wide auto-update — bump nvidia images
-      # in a separate planned change once we've sized the memory limit.
-      "keel.sh/policy" = "never"
-    }
-    annotations = {
-      "keel.sh/policy" = "never"
-    }
-  }
-  spec {
-    replicas = 1
-    selector {
-      match_labels = {
-        app = "nvidia-exporter"
-      }
-    }
-    template {
-      metadata {
-        labels = {
-          app = "nvidia-exporter"
-        }
-      }
-      spec {
-        node_selector = {
-          "nvidia.com/gpu.present" : "true"
-        }
-        toleration {
-          key      = "nvidia.com/gpu"
-          operator = "Equal"
-          value    = "true"
-          effect   = "NoSchedule"
-        }
-        container {
-          image = "nvidia/dcgm-exporter:latest"
-          name  = "nvidia-exporter"
-          port {
-            container_port = 9400
-          }
-          security_context {
-            privileged = true
-            capabilities {
-              add = ["SYS_ADMIN"]
-            }
-          }
-          resources {
-            requests = {
-              memory = "256Mi"
-            }
-            limits = {
-              # Bumped 192Mi → 512Mi (2026-05-26): dcgm-exporter
-              # 4.5.2-4.8.1-ubuntu22.04 OOMKills at 192Mi. Older versions
-              # ran comfortably under 192Mi but post-bump we need headroom.
-              memory           = "512Mi"
-              "nvidia.com/gpu" = "1"
-            }
-          }
-        }
-        dns_config {
-          option {
-            name  = "ndots"
-            value = "2"
-          }
-        }
-      }
-    }
-  }
-  depends_on = [helm_release.nvidia-gpu-operator]
-  lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
-  }
-}
+# CONSOLIDATED 2026-07-18 (Viktor: "fix the nvidia issues, consolidate tf"):
+# the standalone `nvidia-exporter` dcgm-exporter Deployment was REMOVED. It was
+# redundant with the GPU-operator's own `nvidia-dcgm-exporter` (both dcgm-exporter
+# on the same time-sliced T4) and crashlooped fighting over DCGM's exclusive
+# profiling module after the 2026-07-18 reboot changed init order
+# ("Profiling module returned an unrecoverable error"; post-mortem
+# docs/post-mortems/2026-07-18-sofia-power-outage-unclean-shutdown.md, bead
+# code-9d5p). The Service below now points at the operator's dcgm-exporter pods
+# (app=nvidia-dcgm-exporter, :9400), which serve the same device-level metrics
+# incl. the four HA-Sofia tesla_t4_gpu_* fields (GPU_TEMP/POWER_USAGE/GPU_UTIL/
+# FB_USED, verified live). The Service + ingress keep the stable endpoint so the
+# HA REST sensors + the Prometheus scrape need no repointing.
 
 resource "kubernetes_service" "nvidia-exporter" {
   metadata {
@@ -221,8 +168,11 @@ resource "kubernetes_service" "nvidia-exporter" {
   }
 
   spec {
+    # Points at the GPU-operator's dcgm-exporter pods (see consolidation note
+    # above), not a standalone deployment. Overlapping the operator's own
+    # Service selector is fine — a pod can back multiple Services.
     selector = {
-      app = "nvidia-exporter"
+      app = "nvidia-dcgm-exporter"
     }
     port {
       name        = "http"
@@ -246,6 +196,10 @@ module "ingress" {
   tls_secret_name         = var.tls_secret_name
   allow_local_access_only = true
   ssl_redirect            = false
+  extra_annotations = {
+    "gethomepage.dev/description" = "GPU metrics exporter"
+    "gethomepage.dev/icon"        = "nvidia.png"
+  }
 }
 
 # resource "kubernetes_ingress_v1" "nvidia-exporter" {
@@ -726,6 +680,15 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
   }
 
   depends_on = [helm_release.nvidia-gpu-operator]
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    ]
+  }
 }
 
 resource "kubernetes_service" "gpu_pod_exporter" {

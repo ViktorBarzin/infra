@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "whisper" {
   metadata {
     name = "whisper"
     labels = {
-      tier = local.tiers.gpu
+      tier               = local.tiers.gpu
       "keel.sh/enrolled" = "true"
     }
   }
@@ -33,6 +33,7 @@ module "nfs_data_host" {
   nfs_path     = "/srv/nfs/whisper"
   storage      = "1Gi"
   access_modes = ["ReadWriteMany"]
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "whisper" {

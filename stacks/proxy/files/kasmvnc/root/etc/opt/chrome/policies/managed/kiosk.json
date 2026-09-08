@@ -1,0 +1,4 @@
+{
+  "//": "Suppress Chrome's '--no-sandbox / unsupported flag' security infobar. The browser runs unprivileged in-pod where Chrome's own sandbox can't init, so --no-sandbox is required; this managed policy hides the resulting yellow warning bar cleanly (no --test-type side-effects). infra#81.",
+  "CommandLineFlagSecurityWarningsEnabled": false
+}

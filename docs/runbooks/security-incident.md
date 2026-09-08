@@ -14,13 +14,14 @@ What to do when a wave-1 security alert fires. Each alert links to a Loki query 
 
 ## Allowlist CIDRs
 
-All source-IP-based alerts (K2, K9, V7, S1) reference this list. Update in one place: Terraform variable `security_source_ip_allowlist` in `stacks/monitoring`.
+All source-IP-based alerts (K2, K9, V7, S1) reference this list. It is **inlined as a regex** in each rule's `expr` in `stacks/monitoring/modules/monitoring/loki.tf` (there is no shared `security_source_ip_allowlist` variable — update every rule when the list changes).
 
 - `10.0.20.0/22` — VLAN 20 (cluster + main LAN)
+- `10.0.10.0/24` — VLAN 10 (devvm) — **K2/K9 only** (added 2026-07-06; devvm uses SA-token kubeconfigs, e.g. chrome-service port-forward). Add to V7/S1 if devvm Vault-OIDC / PVE-ssh becomes normal.
 - `192.168.1.0/24` — Proxmox + Sofia LAN
-- K8s pod CIDR (verify at implementation time)
-- K8s service CIDR
-- Headscale tailnet
+- K8s pod CIDR `10.10.0.0/16`
+- K8s service CIDR `10.96.0.0/12`
+- Headscale tailnet `100.64.0.0/10`
 
 **Anything outside = alert.** No public-IP exceptions.
 
@@ -37,19 +38,21 @@ All source-IP-based alerts (K2, K9, V7, S1) reference this list. Update in one p
 **Meaning:** A K8s ServiceAccount token authenticated a request whose `sourceIPs[0]` is not in the pod CIDR or trusted LAN. Stolen SA token used externally.
 
 ```logql
-{job="kube-audit"} | json | user_username =~ "system:serviceaccount:.*" | sourceIPs_0 !~ "10\\.0\\.20\\..*|192\\.168\\.1\\..*"
+{job="kubernetes-audit"} | json user_username="user.username", sourceIPs_0="sourceIPs[0]" | user_username =~ "system:serviceaccount:.*" | sourceIPs_0 != "" | sourceIPs_0 !~ "10\\.0\\.2[0-3]\\..*|192\\.168\\.1\\..*|10\\.0\\.10\\..*|10\\.10\\..*|10\\.(9[6-9]|1[01][0-9]|111)\\..*|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\..*"
 ```
+
+> **Note (2026-07-06):** use **explicit** array extraction `| json sourceIPs_0="sourceIPs[0]"` — a bare `| json` does NOT populate `sourceIPs_0` (arrays aren't auto-indexed), so the old query matched every SA event. The `sourceIPs_0 != ""` guard is required.
 
 **Action:** Identify the SA. Rotate its token (`kubectl delete secret <sa-token-name>` if old-style, or recreate the SA if projected token). Audit the SA's permissions and tighten.
 
-**False positives:** Pod-to-apiserver traffic that egresses and re-enters via NodePort/LB (rare). Investigate the originating workload.
+**False positives:** The devvm (`10.0.10.10`, VLAN 10) legitimately uses SA-token kubeconfigs (e.g. `chrome-service:emo-browser` kubectl port-forward) — allowlisted since 2026-07-06. Pod-to-apiserver traffic that egresses and re-enters via NodePort/LB (rare). Investigate the originating workload.
 
 ### K3 — Secret read in sensitive namespace by unexpected actor
 
 **Meaning:** A Secret in `vault`, `sealed-secrets`, or `external-secrets` namespace was read by an SA NOT in the allowlist (ESO controller, sealed-secrets controller, Vault SA, `me@viktorbarzin.me`).
 
 ```logql
-{job="kube-audit"} | json | verb =~ "get|list" | objectRef_resource = "secrets" | objectRef_namespace =~ "vault|sealed-secrets|external-secrets" | user_username !~ "(me@viktorbarzin.me|system:serviceaccount:external-secrets:.*|system:serviceaccount:sealed-secrets:.*|system:serviceaccount:vault:.*)"
+{job="kubernetes-audit"} | json | verb =~ "get|list" | objectRef_resource = "secrets" | objectRef_namespace =~ "vault|sealed-secrets|external-secrets" | user_username !~ "(me@viktorbarzin.me|system:serviceaccount:external-secrets:.*|system:serviceaccount:sealed-secrets:.*|system:serviceaccount:vault:.*)"
 ```
 
 **Action:** Identify the actor. If a service account, audit its bindings — it shouldn't have RBAC to read those secrets. Revoke the binding. Rotate any secrets that were read.
@@ -59,20 +62,26 @@ All source-IP-based alerts (K2, K9, V7, S1) reference this list. Update in one p
 **Meaning:** Someone `kubectl exec`'d into a pod in `vault`, `kube-system`, `dbaas`, or `cnpg-system`.
 
 ```logql
-{job="kube-audit"} | json | verb = "create" | objectRef_resource = "pods" | objectRef_subresource = "exec" | objectRef_namespace =~ "vault|kube-system|dbaas|cnpg-system" | user_username != "me@viktorbarzin.me"
+{job="kubernetes-audit"} | json | verb = "create" | objectRef_resource = "pods" | objectRef_subresource = "exec" | objectRef_namespace =~ "vault|kube-system|dbaas|cnpg-system" | user_username !~ "^(me@viktorbarzin\\.me|system:serviceaccount:vault:vault-audit-rotate)$"
 ```
 
 **Action:** Determine if Viktor authorized the exec. If unrecognized actor, revoke their access and rotate any credentials they could have read inside the pod.
 
-**False positives:** Break-glass SAs used during incident response — extend the allowlist to include them by SA name.
+Audit events for a ServiceAccount carry bound-token extras under `user.extra` — `authentication.kubernetes.io/pod-name`, `node-name`, and their uids. A token issued to a pod can only be presented with those values, so matching them against a live pod tells you whether the exec came from the workload the SA belongs to or from a copy of its token elsewhere.
+
+**Known benign trigger (2026-09-04):** the `vault-audit-rotate` CronJob runs at 03:30 daily and `stat`/`gzip`/`truncate`s `/vault/audit/vault-audit.log` inside `vault-0`, `vault-1`, `vault-2`. The audit log has no volume to mount, so rotation can only go through `kubectl exec`. It fired K4 nightly from 2026-09-02, the day the CronJob reached the cluster, until `system:serviceaccount:vault:vault-audit-rotate` was added to the exclusion. Its Role is scoped to `resourceNames: [vault-0, vault-1, vault-2]`, so the exclusion cannot mask an exec into any other pod in the namespace.
+
+**False positives:** Break-glass SAs used during incident response. Extend the allowlist by SA name in `stacks/monitoring/modules/monitoring/loki.tf` (K4) rather than widening the namespace selector. When you exclude an SA, check what its Role actually permits first: an exclusion is only as narrow as the RBAC behind it, and scoping the Role with `resourceNames` keeps the blind spot to the pods the job needs.
 
 ### K5 — Mass delete
 
 **Meaning:** Single actor deleted >5 Pods, Secrets, or ConfigMaps in 60 seconds. Either a script gone wrong or destructive intrusion.
 
 ```logql
-sum by (user_username) (count_over_time({job="kube-audit"} | json | verb = "delete" | objectRef_resource =~ "pods|secrets|configmaps" [1m])) > 5
+sum by (user_username) (count_over_time({job="kubernetes-audit"} | json | verb = "delete" | objectRef_resource =~ "pods|secrets|configmaps" | user_username !~ "^system:(node:.+|serviceaccount:(kube-system:(generic-garbage-collector|namespace-controller|daemon-set-controller)|woodpecker:.+|local-path-storage:local-path-provisioner-service-account))$" [1m])) > 5
 ```
+
+> **Note (2026-07-06, extended 2026-07-07):** the rule **excludes legitimate bulk-deleters** — kubelets (`system:node:*`), the kube-system `generic-garbage-collector` + `namespace-controller` + `daemon-set-controller` (replaces evicted DS pods en masse during node-pressure events), woodpecker CI, and the `local-path-storage` provisioner (deletes one helper pod per Woodpecker workspace-PVC teardown — trips >5/60s on any busy CI window) — which otherwise flapped SECURITY/CRITICAL+RESOLVED on every routine cleanup burst. A human (`me@viktorbarzin.me`/`kubernetes-admin`) or an app-namespace SA still fires — an admin bulk-delete (e.g. evicted-corpse cleanup) firing once is expected signal, not a false positive. If another controller starts flapping this alert, add it to the exclusion regex in `stacks/monitoring/modules/monitoring/loki.tf` (K5) rather than widening the whole rule. Before treating any K5 fire as hostile, check for a concurrent eviction storm / CI burst and pull the actor's actual deletes from the audit log (`{job="kubernetes-audit"} | json | verb="delete" | user_username="<actor>"`).
 
 **Action:** Identify actor. If a Terraform apply or known cleanup job, false positive. If unrecognized, suspend the actor's credentials immediately and audit what was deleted.
 
@@ -87,7 +96,7 @@ sum by (user_username) (count_over_time({job="kube-audit"} | json | verb = "dele
 **Meaning:** A new ClusterRole was created with `verbs: ["*"]` and `resources: ["*"]`. Privilege escalation primitive.
 
 ```logql
-{job="kube-audit"} | json | verb = "create" | objectRef_resource = "clusterroles" | requestObject_rules_0_verbs_0 = "*" | requestObject_rules_0_resources_0 = "*"
+{job="kubernetes-audit"} | json | verb = "create" | objectRef_resource = "clusterroles" | requestObject_rules_0_verbs_0 = "*" | requestObject_rules_0_resources_0 = "*"
 ```
 
 **Action:** Verify the change is intentional (some operators install such roles — calico, kyverno). If unrecognized, delete the ClusterRole and audit the creator.
@@ -103,7 +112,7 @@ sum by (user_username) (count_over_time({job="kube-audit"} | json | verb = "dele
 **Meaning:** A request authenticated as `me@viktorbarzin.me` arrived from a source IP outside the allowlist. Stolen OIDC token / kubeconfig.
 
 ```logql
-{job="kube-audit"} | json | user_username = "me@viktorbarzin.me" | sourceIPs_0 !~ "10\\.0\\.20\\..*|192\\.168\\.1\\..*|<pod-cidr>|<headscale-cidr>"
+{job="kubernetes-audit"} | json user_username="user.username", sourceIPs_0="sourceIPs[0]" | user_username = "me@viktorbarzin.me" | sourceIPs_0 != "" | sourceIPs_0 !~ "10\\.0\\.2[0-3]\\..*|192\\.168\\.1\\..*|10\\.0\\.10\\..*|10\\.10\\..*|10\\.(9[6-9]|1[01][0-9]|111)\\..*|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\..*"
 ```
 
 **Action:** Revoke Viktor's OIDC session in Authentik. Rotate Vault OIDC tokens. Audit recent activity from that IP. Verify Viktor's devices for compromise.

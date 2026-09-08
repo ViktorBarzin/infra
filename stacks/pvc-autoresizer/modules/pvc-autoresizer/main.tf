@@ -5,6 +5,11 @@ resource "kubernetes_namespace" "pvc_autoresizer" {
     name = "pvc-autoresizer"
     labels = {
       tier = var.tier
+      # Declared, not ignored: this namespace really is Keel-enrolled (the
+      # controller carries keel.sh/policy=patch), so leaving it out of Terraform
+      # meant every plan proposed removing the label — which would have quietly
+      # un-enrolled the namespace and stopped the auto-upgrades.
+      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

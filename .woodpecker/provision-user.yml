@@ -1,5 +1,14 @@
+# `event: manual` alone matched EVERY manual pipeline, including ones triggered
+# for unrelated reasons (e.g. the issue-automation runs on 2026-08-13). This
+# workflow then ran without USERNAME/EMAIL, validate-inputs correctly rejected
+# the empty input, and the whole pipeline was marked failed — which is what
+# ci-pipeline-health reported for #1921 and #1922. The evaluate guard keeps the
+# validation as a real safety net while only entering the workflow when the
+# caller actually asked to provision someone. Undefined variables compare as
+# empty here, so a manual pipeline without them is skipped rather than failed.
 when:
-  event: manual
+  - event: manual
+    evaluate: 'USERNAME != "" && EMAIL != ""'
 
 clone:
   git:

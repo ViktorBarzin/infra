@@ -1,7 +1,12 @@
 FROM alpine:3.20
 
 # Pin versions to match CI requirements
-ARG TERRAFORM_VERSION=1.5.7
+# 1.15.4 matches the devvm fleet (which has applied every stack on it).
+# The old 1.5.7 pin (last-MPL era) combined with hashicorp/kubernetes 3.x
+# produced provider-side "Missing Resource Identity After Update" failures
+# on redis/dbaas updates that a modern core does not (issue #68) — the
+# old-core + new-provider-SDK pairing is the broken combination.
+ARG TERRAFORM_VERSION=1.15.4
 ARG TERRAGRUNT_VERSION=0.99.4
 ARG SOPS_VERSION=3.9.4
 ARG KUBECTL_VERSION=1.34.0
@@ -17,7 +22,7 @@ RUN apk add --no-cache \
 # Terraform
 RUN curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" \
     -o /tmp/terraform.zip \
-    && unzip /tmp/terraform.zip -d /usr/local/bin/ \
+    && unzip -o /tmp/terraform.zip terraform -d /usr/local/bin/ \
     && rm /tmp/terraform.zip \
     && terraform version
 
@@ -43,7 +48,7 @@ RUN curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/ku
 # because scripts/tg swallows stderr ("vault: not found").
 RUN curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" \
     -o /tmp/vault.zip \
-    && unzip /tmp/vault.zip -d /usr/local/bin/ \
+    && unzip -o /tmp/vault.zip vault -d /usr/local/bin/ \
     && rm /tmp/vault.zip \
     && vault version
 

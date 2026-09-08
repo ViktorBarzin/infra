@@ -16,8 +16,8 @@ resource "kubernetes_namespace" "instagram_poster" {
   metadata {
     name = local.namespace
     labels = {
-      tier              = var.tier
-      "istio-injection" = "disabled"
+      tier               = var.tier
+      "istio-injection"  = "disabled"
       "keel.sh/enrolled" = "true"
     }
   }
@@ -35,6 +35,22 @@ resource "kubernetes_namespace" "instagram_poster" {
 #     - immich_tag_instagram      (optional — auto-resolved if missing)
 #     - immich_tag_posted         (optional — auto-resolved if missing)
 resource "kubernetes_manifest" "external_secret" {
+  # PARKED 2026-08-24 (count = 0), same mechanism as ig_ingest_stories below.
+  # The service is scaled to zero (replicas = 0, both crons suspended), and this
+  # ExternalSecret has never once synced: it asks for ig_graph_long_lived_token,
+  # ig_graph_app_id, ig_graph_app_secret and ig_business_account_id, none of
+  # which exist in Vault's secret/instagram-poster — that holds the older
+  # instagram_app_id / instagram_app_secret / facebook_* names instead. So it has
+  # sat in SecretSyncedError since it was created on 2026-06-22, retrying every
+  # 15m and showing red in every cluster health check, for a service that is off.
+  # Nothing is lost by parking it: refreshTime was null (never a successful
+  # sync), no instagram-poster-secrets Secret was ever created, and
+  # deletionPolicy is Retain regardless.
+  # To revive: drop this `count = 0`, and first seed the four ig_graph_* keys
+  # into Vault secret/instagram-poster (they come from the Meta developer
+  # console) or repoint the remoteRefs at the instagram_app_* names.
+  count = 0
+
   # The external-secrets controller takes server-side-apply ownership of
   # .spec.refreshInterval, so a plain TF apply conflicts. force_conflicts lets
   # TF win (values match, so it's stable) — same pattern as grafana/woodpecker/
@@ -51,7 +67,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -392,7 +408,13 @@ resource "kubernetes_deployment" "instagram_poster" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Stakater Reloader stamps this on every secret-triggered restart. Same
+      # mechanism as the twelve other stacks fixed alongside this one: the
+      # 2026-08-14 reloadStrategy = annotations switch moved the marker onto a
+      # pod-template annotation, which Terraform does manage wherever the
+      # template declares annotations.
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
@@ -437,17 +459,19 @@ resource "kubernetes_service" "instagram_poster" {
 # sits behind Authentik forward-auth — same defense as every other UI on
 # the cluster, no random caller can pop items off the approval queue.
 module "ingress_image_public" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  dns_type        = "proxied"
-  namespace       = kubernetes_namespace.instagram_poster.metadata[0].name
-  name            = "instagram-poster-image"
-  host            = "instagram-poster"
-  tls_secret_name = var.tls_secret_name
+  source    = "../../../../modules/kubernetes/ingress_factory"
+  dns_type  = "proxied"
+  namespace = kubernetes_namespace.instagram_poster.metadata[0].name
+  name      = "instagram-poster-image"
+  # secondary/non-UI ingress: no homepage tile (dedupe sweep 2026-07-14)
+  homepage_enabled = false
+  host             = "instagram-poster"
+  tls_secret_name  = var.tls_secret_name
   # auth = "none": Meta's content fetcher needs to render image derivatives without auth headers (Instagram photos).
-  auth            = "none"
-  ingress_path    = ["/image", "/original"]
-  port            = 80
-  service_name    = "instagram-poster"
+  auth         = "none"
+  ingress_path = ["/image", "/original"]
+  port         = 80
+  service_name = "instagram-poster"
 }
 
 module "ingress_protected" {
@@ -461,6 +485,11 @@ module "ingress_protected" {
   ingress_path    = ["/"]
   port            = 80
   service_name    = "instagram-poster"
+  extra_annotations = {
+    "gethomepage.dev/description" = "Scheduled Instagram posting"
+    "gethomepage.dev/icon"        = "instagram.png"
+    "gethomepage.dev/name"        = "Instagram Poster"
+  }
 }
 
 # IG-archive dedup live ingest. Three CronJobs all curl back into the
@@ -535,7 +564,19 @@ resource "kubernetes_cron_job_v1" "ig_ingest_feed" {
     labels    = local.labels
   }
   spec {
-    schedule                      = "0 */6 * * *"
+    schedule = "0 */6 * * *"
+    # Suspended (2026-08-16) for the same reason the Deployment above is at
+    # replicas = 0 and ig-refresh-token is suspended: the Instagram Graph
+    # integration has been parked since 2026-06-24 pending a Meta long-lived
+    # token. This cron was the one piece of that parking that got missed, so it
+    # kept POSTing every 6h to a Service with no endpoints, failed, exhausted
+    # its backoff_limit and raised JobFailed — three failed Jobs in the last
+    # 12h alone, and every 6h for the ~53 days since the app was scaled down.
+    #
+    # UNSUSPEND TOGETHER WITH `replicas = 1` above and ig-refresh-token: this
+    # job only does `curl POST /ig-ingest`, so on its own against a 0-replica
+    # Deployment it can only ever fail.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
@@ -623,4 +664,139 @@ resource "kubernetes_cron_job_v1" "ig_refresh_token" {
     ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
   }
   depends_on = [kubernetes_deployment.instagram_poster]
+}
+
+# ---------------------------------------------------------------------------
+# Portrait-album sync
+#
+# Immich (v3.1.0) cannot filter by aspect ratio. Its search API exposes camera,
+# date, location, people, tag, rating and filename, and nothing about
+# dimensions; its Workflows can add to an album, but the EXIF filter matches
+# one property at a time as a string, so it cannot divide width by height, and
+# its only triggers (AssetCreate / AssetMetadataExtraction) never revisit
+# photos already in the library.
+#
+# So the ratio is computed in SQL against Immich's Postgres and pushed back
+# through the REST API. One rule covers the 32k-photo backfill, new uploads,
+# and whatever sensor size the next phone has.
+#
+# This runs the instagram-poster IMAGE directly rather than curling the
+# Service: the Deployment is at replicas = 0 (Instagram Graph integration
+# parked 2026-06-24), and this job has no reason to wait for that to come back.
+# ---------------------------------------------------------------------------
+
+# Deliberately NOT reusing instagram-poster-secrets: that ExternalSecret is
+# parked at count = 0 because it asks for four ig_graph_* keys that are not in
+# Vault, so the Secret it targets has never existed. This one asks only for
+# keys that are present in secret/instagram-poster today, so it syncs.
+resource "kubernetes_manifest" "portrait_sync_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "instagram-poster-portrait-sync"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "instagram-poster-portrait-sync"
+      }
+      data = [
+        {
+          secretKey = "IMMICH_API_KEY"
+          remoteRef = { key = "instagram-poster", property = "immich_api_key" }
+        },
+        {
+          secretKey = "IMMICH_PG_HOST"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_host" }
+        },
+        {
+          secretKey = "IMMICH_PG_PORT"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_port" }
+        },
+        {
+          secretKey = "IMMICH_PG_DATABASE"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_database" }
+        },
+        {
+          secretKey = "IMMICH_PG_USER"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_user" }
+        },
+        {
+          secretKey = "IMMICH_PG_PASSWORD"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_password" }
+        },
+      ]
+    }
+  }
+}
+
+resource "kubernetes_cron_job_v1" "portrait_album_sync" {
+  metadata {
+    name      = "portrait-album-sync"
+    namespace = kubernetes_namespace.instagram_poster.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    # Daily at 04:20. The work is proportional to what is NEW (Immich answers
+    # `duplicate` for everything already in the album), so a daily run is a few
+    # seconds after the first one. Off-peak so the 65 batched PUTs don't land
+    # while someone is browsing.
+    schedule                      = "20 4 * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 2
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            security_context {
+              run_as_user     = 10001
+              run_as_group    = 10001
+              run_as_non_root = true
+            }
+            container {
+              name    = "sync"
+              image   = local.image
+              command = ["python", "-m", "instagram_poster.portrait_album", "sync"]
+              env_from {
+                secret_ref {
+                  name = "instagram-poster-portrait-sync"
+                }
+              }
+              env {
+                name  = "IMMICH_BASE_URL"
+                value = "https://immich.viktorbarzin.me"
+              }
+              resources {
+                requests = { cpu = "50m", memory = "128Mi" }
+                # Holds ~32k UUID strings plus the psycopg result; no image
+                # decoding happens here, so this stays far below the app's 1500Mi.
+                limits = { memory = "512Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+  depends_on = [kubernetes_manifest.portrait_sync_external_secret]
 }

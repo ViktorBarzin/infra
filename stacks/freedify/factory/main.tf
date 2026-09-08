@@ -4,6 +4,15 @@ variable "tag" {
   default = "latest"
 }
 variable "tier" { type = string }
+
+# Scaled to 0 on 2026-09-06: 24h of Traefik logs showed 284-286 requests per
+# day on music-viktor and music-emo, which is the Gatus health check's own
+# rate and no organic use. The deployment, ingress and every credential stay
+# declared, so restoring an instance is this one number.
+variable "replicas" {
+  type    = number
+  default = 1
+}
 variable "protected" {
   type    = bool
   default = false
@@ -81,7 +90,7 @@ resource "kubernetes_deployment" "freedify" {
     }
   }
   spec {
-    replicas = 1
+    replicas = var.replicas
     strategy {
       type = "RollingUpdate"
     }
@@ -201,6 +210,10 @@ resource "kubernetes_deployment" "freedify" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — CI deploy pipeline sets :sha8 (ADR-0002)
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }

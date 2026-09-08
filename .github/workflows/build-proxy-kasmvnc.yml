@@ -1,0 +1,37 @@
+name: Build proxy-kasmvnc-browser
+
+# ADR-0002: infra-owned image built off-infra on GHA -> ghcr (public).
+# KasmVNC + Chrome for the proxy per-user browsers (audio + dynamic resolution +
+# FullHD H.264 over the existing WSS ingress). infra#81.
+# Uses only GitHub-controlled values (github.sha) — no untrusted event input.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'stacks/proxy/files/kasmvnc/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: stacks/proxy/files/kasmvnc
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ghcr.io/viktorbarzin/proxy-kasmvnc-browser:latest
+            ghcr.io/viktorbarzin/proxy-kasmvnc-browser:${{ github.sha }}

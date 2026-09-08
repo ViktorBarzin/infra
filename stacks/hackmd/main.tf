@@ -9,7 +9,7 @@ resource "kubernetes_namespace" "hackmd" {
     name = "hackmd"
     labels = {
       "istio-injection" : "disabled"
-      tier = local.tiers.edge
+      tier               = local.tiers.edge
       "keel.sh/enrolled" = "true"
     }
   }
@@ -36,6 +36,7 @@ module "nfs_hackmd" {
   nfs_server = var.nfs_server
   nfs_path   = "/srv/nfs/hackmd"
   storage    = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "hackmd" {
@@ -52,7 +53,9 @@ resource "kubernetes_deployment" "hackmd" {
     }
   }
   spec {
-    replicas = 1
+    # PARKED (2026-07-12, Viktor) — unused; WebSocket-core so it can't
+    # wake-on-request (ADR-0022 ineligible). Revive: set to 1.
+    replicas = 0
     strategy {
       type = "Recreate"
     }

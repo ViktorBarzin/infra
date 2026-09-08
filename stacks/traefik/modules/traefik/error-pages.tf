@@ -163,6 +163,46 @@ resource "kubernetes_manifest" "middleware_error_pages" {
   depends_on = [helm_release.traefik, kubernetes_service.error_pages]
 }
 
+# Errors middleware for 403 — opt-in, for ingresses whose gate is an ipAllowList.
+# Traefik's own ipAllowList denial is a bare text/plain "Forbidden", which is an
+# opaque dead end for a household member who opened a LAN-only host from the
+# wrong network. Attaching this serves the themed error page instead, on the
+# original 403 status.
+#
+# Deliberately NOT merged into the `error-pages` middleware above (500-504):
+# that one rides the DEFAULT ingress_factory chain, so widening it would rewrite
+# every 403 in the cluster — Authentik denials and app/API JSON 403s included.
+# Opt-in per ingress keeps the blast radius at the sites that want it.
+#
+# ORDER MATTERS at the call site: list this BEFORE the ipAllowList in
+# extra_middlewares. A middleware only sees responses from what is downstream of
+# it, and the allowlist short-circuits without calling next — so listed after it,
+# this would never fire. Users: the two immich-frame kiosk ingresses
+# (docs/plans/2026-07-04-immich-frame-lan-only-design.md).
+resource "kubernetes_manifest" "middleware_error_pages_403" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "error-pages-403"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      errors = {
+        status = ["403"]
+        service = {
+          name      = "error-pages"
+          namespace = kubernetes_namespace.traefik.metadata[0].name
+          port      = 8080
+        }
+        query = "/{status}"
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik, kubernetes_service.error_pages]
+}
+
 # Default TLSStore — serves wildcard cert for unknown hosts instead of self-signed fallback
 resource "kubernetes_manifest" "tlsstore_default" {
   manifest = {

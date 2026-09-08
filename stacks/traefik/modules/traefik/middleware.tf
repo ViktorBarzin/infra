@@ -46,6 +46,15 @@ resource "kubernetes_manifest" "middleware_authentik_forward_auth" {
           "X-authentik-email",
           "X-authentik-name",
           "X-authentik-groups",
+          # Break-glass marker. When the embedded outpost 5xxs, the auth-proxy
+          # nginx @fallback_auth block serves the static htpasswd and stamps
+          # `X-authentik-username: admin` plus `X-Auth-Fallback: true`. Without
+          # the header listed here Traefik drops it, so backends and logs see a
+          # basic-auth break-glass principal as an indistinguishable SSO admin.
+          # Listing it also makes it unforgeable: Traefik deletes each listed
+          # header from the client request before copying the auth server's
+          # value, so a client-supplied X-Auth-Fallback never reaches a backend.
+          "X-Auth-Fallback",
           "Set-Cookie",
         ]
       }
@@ -86,6 +95,14 @@ resource "kubernetes_manifest" "middleware_authentik_forward_auth_public" {
           "X-authentik-email",
           "X-authentik-name",
           "X-authentik-groups",
+          # Same break-glass marker as the standard middleware. This tier talks
+          # to the dedicated public outpost directly, so the auth-proxy nginx
+          # fallback cannot fire on it and the header should never be set here.
+          # Listed regardless: Traefik deletes every listed header from the
+          # client request, so this is what stops a client from spoofing
+          # X-Auth-Fallback into a public-tier backend, and it keeps the two
+          # lists identical so a future header addition is not missed on one.
+          "X-Auth-Fallback",
           "Set-Cookie",
         ]
       }
@@ -109,6 +126,41 @@ resource "kubernetes_manifest" "middleware_local_only" {
         sourceRange = [
           "192.168.1.0/24",
           "10.0.0.0/8",
+          "fc00::/7",
+          "fe80::/10",
+        ]
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# IP allowlist for household access across ALL home sites: Sofia LAN + the
+# WireGuard spoke LANs (London, Valchedrym) + 10/8 (VLANs, K8s pods/services,
+# WG tunnel IPs). Deliberately a SEPARATE middleware from `local-only` —
+# widening local-only would grant the remote LANs access to the admin surfaces
+# that use it (Prometheus, iDRAC, Loki, …). Use for family-facing services
+# (e.g. the immich-frame kiosks) that every household device may open but the
+# public internet must not. Pair with ingress_factory `dns_type = "internal"`:
+# a Cloudflare-proxied record would deliver public traffic from cloudflared
+# POD IPs (inside 10/8) and silently bypass this allowlist.
+resource "kubernetes_manifest" "middleware_home_lans_only" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "home-lans-only"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      ipAllowList = {
+        sourceRange = [
+          "192.168.1.0/24", # Sofia LAN (hub site)
+          "10.0.0.0/8",     # VLANs, K8s pod/svc CIDRs, WG tunnel subnet
+          "192.168.8.0/24", # London LAN (via WG tunnel)
+          "192.168.9.0/24", # London GUEST net — the Portal Plus actually leases here (Portal-75AE8F9C2A8A = 192.168.9.198)
+          "192.168.0.0/24", # Valchedrym LAN (via WG tunnel)
           "fc00::/7",
           "fe80::/10",
         ]
@@ -221,7 +273,14 @@ resource "kubernetes_manifest" "servers_transport_insecure" {
 }
 
 # Strip Authentik auth headers/cookies before forwarding to backend
-# Useful for backends (iDRAC, TP-Link) that break when receiving extra headers
+# Useful for backends (iDRAC, TP-Link) that break when receiving extra headers.
+#
+# X-Auth-Fallback is blanked here too, and this is the SAFE DEFAULT. Where this
+# middleware is a route's only anti-spoof control (health/health-api, tripit x3,
+# vpn-portal/vpn-portal-sub) a client could otherwise send X-Auth-Fallback itself
+# and have it reach the backend untouched, claiming the break-glass principal
+# that the nginx auth fallback stamps. Routes where this runs AFTER forward-auth
+# need the genuine marker instead, and use the keep-fallback variant below.
 resource "kubernetes_manifest" "middleware_strip_auth_headers" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -238,9 +297,46 @@ resource "kubernetes_manifest" "middleware_strip_auth_headers" {
           "X-authentik-email"    = ""
           "X-authentik-name"     = ""
           "X-authentik-groups"   = ""
+          "X-Auth-Fallback"      = ""
         }
       }
     }
+  }
+
+  field_manager {
+    force_conflicts = true
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# Same strip, but LEAVES X-Auth-Fallback intact. For routes where this runs after
+# traefik-authentik-forward-auth, so the header was stamped by our own auth layer
+# rather than sent by the client. Used by the reverse-proxy factory (gw, idrac),
+# whose middleware chain puts forward-auth on the line above the strip.
+resource "kubernetes_manifest" "middleware_strip_auth_headers_keep_fallback" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "strip-auth-headers-keep-fallback"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      headers = {
+        customRequestHeaders = {
+          "X-authentik-username" = ""
+          "X-authentik-uid"      = ""
+          "X-authentik-email"    = ""
+          "X-authentik-name"     = ""
+          "X-authentik-groups"   = ""
+        }
+      }
+    }
+  }
+
+  field_manager {
+    force_conflicts = true
   }
 
   depends_on = [helm_release.traefik]
@@ -328,6 +424,60 @@ resource "kubernetes_manifest" "middleware_health_rate_limit" {
     kind       = "Middleware"
     metadata = {
       name      = "health-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 100
+        burst   = 1000
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# Authentik-specific rate limit. The login SPA cold-loads its flow-executor
+# JS/CSS chunks from /static (app-served, not a CDN) plus an API burst on / —
+# ~70 parallel requests on a fresh/empty-cache login. The default 10/50 limiter
+# 429s the tail, and a 429'd ES-module import aborts SPA bootstrap → blank login
+# screen for cold/incognito/cache-cleared clients and any clients sharing a NAT
+# egress IP (sixth instance of the burst pattern, after ha-sofia, ActualBudget,
+# noVNC, tripit and health). authentik was the only first-party SPA still on the
+# default limiter. Burst absorbs a couple of full cold loads back-to-back.
+resource "kubernetes_manifest" "middleware_authentik_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "authentik-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 100
+        burst   = 1000
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# Dawarich-specific rate limit. The Rails app serves all its fingerprinted
+# assets itself (JS/CSS chunks, SVG store badges, favicons, webmanifest) and
+# the map view adds a points/API burst on load — a single page load from one
+# client IP blows past the default 10/50 limiter and 429s the asset tail
+# (seventh instance of the burst pattern, after ha-sofia, ActualBudget, noVNC,
+# tripit, health and authentik). Background location ingestion (OwnTracks
+# bridge + mobile api_key POSTs) rides the same host, so 429s here also risk
+# dropped pings. Burst absorbs a couple of full page loads back-to-back.
+resource "kubernetes_manifest" "middleware_dawarich_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "dawarich-rate-limit"
       namespace = kubernetes_namespace.traefik.metadata[0].name
     }
     spec = {
@@ -433,6 +583,107 @@ resource "kubernetes_manifest" "middleware_x402" {
   }
 
   depends_on = [helm_release.traefik, kubernetes_service.x402_gateway]
+}
+
+# real-ip: rewrites X-Real-Ip to the true client. Trusts Cf-Connecting-Ip only
+# from the cloudflared pod peer (trustedProxyCIDRs = the pod CIDR); for any other
+# peer it sets X-Real-Ip = the TCP peer — so the value is stable AND unspoofable
+# by clients. Attached to every Anubis-fronted site via extra_middlewares (Anubis
+# binds its auth JWT to X-Real-Ip). Replaced the old drop-x-real-ip strip, which
+# fixed the 2026-07-14 home.viktorbarzin.me cookie flap but 500'd header-less
+# requests (no X-Real-Ip and no XFF).
+# MUST be kubectl_manifest, NOT kubernetes_manifest: a plugin-shaped Middleware
+# spec (spec.plugin.<name>) breaks kubernetes_manifest's type inference and
+# taints on every apply — same reason the sablier Middleware uses kubectl.
+resource "kubectl_manifest" "middleware_real_ip" {
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "real-ip"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      plugin = {
+        realip = {
+          trustedProxyCIDRs = ["10.10.0.0/16"]
+        }
+      }
+    }
+  })
+
+  depends_on = [helm_release.traefik]
+}
+
+# crowdsec: enforces CrowdSec ban decisions in-process. Attached to the
+# `websecure` ENTRYPOINT (main.tf), not to individual routers, so it covers all
+# ~195 Ingresses, the 10 IngressRoutes and the catchall without per-ingress
+# wiring — including the hand-rolled ingresses that bypass ingress_factory.
+#
+# Why in-process rather than the Cloudflare edge: every HTTP host in the zone is
+# proxied (`cloudflare_proxied_names = []`), so proxied traffic reaches Traefik
+# from the cloudflared pod and the L3 nftables bouncer only ever sees 10.10.x.x.
+# The edge channel that covered those hosts is throttled by a hard 72h floor
+# between successful Lists-API writes, so the edge list disagreed with LAPI for
+# 107 of 216 observed hours. Here a decision lands within one poll (~30s).
+#
+# Why not ForwardAuth: Traefik's forward.go answers 500/502 when the auth backend
+# is unreachable with no option to allow (which is why auth-proxy and
+# bot-block-proxy exist as shims), and a ForwardAuth backend's RemoteAddr is
+# always a Traefik pod, so it cannot tell a real Cf-Connecting-Ip from a spoofed
+# one. In-process both problems disappear.
+#
+# MUST be kubectl_manifest, NOT kubernetes_manifest: a plugin-shaped Middleware
+# spec (spec.plugin.<name>) breaks kubernetes_manifest's type inference and
+# taints on every apply — same reason real-ip and sablier use kubectl.
+resource "kubectl_manifest" "middleware_crowdsec" {
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "crowdsec"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      plugin = {
+        crowdsec = {
+          lapiUrl = "http://crowdsec-service.crowdsec.svc.cluster.local:8080"
+          lapiKey = var.crowdsec_bouncer_key
+          # Fresh enough that an unban is felt immediately (the whole point of
+          # moving off the edge), cheap because the origin filter below keeps the
+          # response at a few KB.
+          pollSeconds = 30
+          # Origins to ENFORCE. CAPI is deliberately ABSENT: it is ~22.7k
+          # community bans that have never been enforced on proxied hosts, and
+          # its false positives (CGNAT, carrier ranges) would land as
+          # user-visible 403s. It is already dropped in-kernel on direct hosts by
+          # cs-firewall-bouncer. Adding "CAPI" enables it — measure in dryRun
+          # first, and note the snapshot then weighs ~3MB per poll.
+          origins = ["crowdsec", "cscli", "cscli-import", "lists", "console"]
+          # Trust Cf-Connecting-Ip / X-Forwarded-For ONLY from the cloudflared pod
+          # peer; any other peer is judged on its own unspoofable TCP address.
+          # Same model and same CIDR as real-ip.
+          trustedProxyCIDRs = ["10.10.0.0/16"]
+          # Never gate the auth hosts: a false-positive ban must not be able to
+          # wall someone out of the login / WebAuthn flow they would need to fix
+          # it. Carried over from the Cloudflare WAF rule this replaces.
+          skipHosts = ["authentik.viktorbarzin.me", "public-auth.viktorbarzin.me"]
+          # ENFORCING. It landed as dryRun=true first and the measured window was
+          # clean: zero organic would-blocks in an hour, since the enforced set is
+          # currently the 4 non-CAPI decisions (cscli-import scanner IPs). The
+          # only dry-run hits were the deliberate test bans.
+          #
+          # Flip back to true to decide-and-log without blocking. Either way the
+          # decision lines are `[crowdsec-bouncer] action=block|dry-run-block ...`
+          # on the traefik pods' stdout, which is also the alerting surface
+          # (Prometheus counters are not cheaply available inside Yaegi).
+          dryRun = false
+        }
+      }
+    }
+  })
+
+  depends_on = [helm_release.traefik]
 }
 
 # X-Robots-Tag header to discourage compliant AI crawlers

@@ -1,0 +1,12 @@
+[Unit]
+# Design: docs/plans/2026-07-08-t3-watchdog-design.md
+# Runbook: docs/runbooks/t3-watchdog.md
+Description=t3-serve wedge watchdog (probe ports, safe-restart dead/hung instances)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/t3-watchdog
+# NO RuntimeDirectory= : systemd wipes it when a oneshot exits, and the
+# fail-counters/restart-ledger in /run/t3-watchdog must survive between ticks
+# (the script mkdir -p's it itself).

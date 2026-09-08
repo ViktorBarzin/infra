@@ -78,8 +78,8 @@ resource "kubernetes_namespace" "nextcloud" {
       "resource-governance/custom-limitrange" = "true"
       "resource-governance/custom-quota"      = "true"
       # Keel re-enabled 2026-06-01 (was disabled after the 2026-05-26 bump
-      # 32.0.3→32.0.9 stuck the pod in maintenance mode for ~22h). Two
-      # safeguards make auto-upgrade safe, engineered around BOTH failure modes:
+      # 32.0.3→32.0.9 stuck the pod in maintenance mode for ~22h). Three
+      # safeguards make auto-upgrade safe, one per known failure mode:
       #   F1 — interrupted `occ upgrade` (entrypoint copies version.php before
       #        occ upgrade finishes, so a probe-restart mid-upgrade leaves the
       #        DB half-migrated → 503): the nextcloud-watchdog CronJob below
@@ -89,6 +89,12 @@ resource "kubernetes_namespace" "nextcloud" {
       #        Nextcloud refuses the downgrade → CrashLoop (the 2026-06-01
       #        incident): chart_values renders the live tag with a floor, so a
       #        re-render is never below live.
+      #   F3 — `occ upgrade` SUCCEEDS but maintenance mode is never cleared
+      #        (maintenance=true + needsDbUpgrade=false → every client 503s,
+      #        the 2026-08-15 ~20.5h incident; F1's gate does not cover this
+      #        quadrant and /status.php returns 200 in maintenance mode so the
+      #        probes stay green): the watchdog clears the flag once it has
+      #        been set longer than its grace period. See the F3 block below.
       # Scope: the shared Kyverno `inject-keel-annotations` policy stamps
       # keel.sh/policy=patch (+ trigger=poll + pollSchedule) on enrolled
       # workloads. For Nextcloud patch == minor in practice — it only ships
@@ -136,7 +142,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "nextcloud"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -310,29 +316,32 @@ resource "kubernetes_persistent_volume_claim" "nextcloud_data_encrypted" {
 }
 
 module "nfs_nextcloud_backup_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "nextcloud-backup-host"
-  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/nextcloud-backup"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "nextcloud-backup-host"
+  namespace          = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/nextcloud-backup"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_pve_root_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "nextcloud-pve-nfs-root"
-  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs"
-  storage    = "3000Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "nextcloud-pve-nfs-root"
+  namespace          = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs"
+  storage            = "3000Gi"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_pve_ssd_root_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "nextcloud-pve-nfs-ssd-root"
-  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs-ssd"
-  storage    = "100Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "nextcloud-pve-nfs-ssd-root"
+  namespace          = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs-ssd"
+  storage            = "100Gi"
+  storage_class_name = "nfs-pve"
 }
 
 module "ingress" {
@@ -347,6 +356,17 @@ module "ingress" {
   name            = "nextcloud"
   tls_secret_name = var.tls_secret_name
   port            = 8080
+  # Fix Apple CalDAV/CardDAV discovery (2026-07-19). Nextcloud's shipped
+  # .htaccess redirects /.well-known/{caldav,carddav} -> /remote.php/dav/ but
+  # builds the redirect from apache's own scheme; behind Traefik's TLS
+  # termination apache sees http, so it emits an http:// Location. Apple's
+  # ATS-hardened dataaccessd refuses the https->http downgrade, discovery fails
+  # (405 "can't figure out its principalPath") and the account degrades to
+  # read-only (reads work off cached collection URLs, writes never leave the
+  # device). This middleware answers discovery at the ingress with a clean
+  # https redirect, before the request reaches Nextcloud. See
+  # kubernetes_manifest.wellknown_dav_redirect below.
+  extra_middlewares = ["nextcloud-wellknown-dav@kubernetescrd"]
   extra_annotations = {
     "gethomepage.dev/enabled"         = "true"
     "gethomepage.dev/name"            = "Nextcloud"
@@ -358,6 +378,31 @@ module "ingress" {
     "gethomepage.dev/widget.url"      = "https://nextcloud.viktorbarzin.me"
     "gethomepage.dev/widget.username" = local.homepage_credentials["nextcloud"]["username"]
     "gethomepage.dev/widget.password" = local.homepage_credentials["nextcloud"]["password"]
+  }
+}
+
+# Traefik Middleware: answer CalDAV/CardDAV service discovery with a clean
+# *https* redirect so Apple clients (dataaccessd) can resolve their principalPath
+# and push writes. Referenced by module.ingress as
+# "nextcloud-wellknown-dav@kubernetescrd" (Traefik cross-provider ref format
+# "<namespace>-<name>@kubernetescrd"). Root cause + why this lives at Traefik
+# rather than in Nextcloud: see the extra_middlewares comment on module.ingress.
+resource "kubernetes_manifest" "wellknown_dav_redirect" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "wellknown-dav"
+      namespace = kubernetes_namespace.nextcloud.metadata[0].name
+    }
+    spec = {
+      redirectRegex = {
+        # Match the full URL; capture the host so the redirect preserves it.
+        regex       = "^https?://([^/]+)/\\.well-known/(caldav|carddav)/?$"
+        replacement = "https://$${1}/remote.php/dav/"
+        permanent   = true
+      }
+    }
   }
 }
 
@@ -565,7 +610,31 @@ resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
   }
 
   spec {
-    schedule                      = "*/5 * * * *"
+    # */30 since 2026-08-16 (was */5). At 5-minute granularity this was 288 pod
+    # creations a day, and on this host that is not free — each pod create and
+    # destroy writes containerd overlay layers, a kubelet pod dir, /var/log/pods
+    # and a systemd transient scope plus the ext4 journal metadata for all of
+    # it, and k8s node root disks are 43% of sdc's write IOPS with cronjob churn
+    # as the driver.
+    #
+    # Both self-heals below were measured quiet over Loki's full 30-day
+    # retention: 0 runaway detections, 0 restarts, 0 stuck-maintenance clears.
+    # Apache workers ran min 7 / median 11 / max 17 against a threshold of 40,
+    # so the runaway check has ~2.3x headroom before it would even trip.
+    #
+    # It is deliberately SLOWED rather than removed. The maintenance-mode
+    # self-heal is the ONLY detection for a failure that has twice caused a
+    # multi-hour silent outage (~20.5h, and the ~22h 2026-05-26 incident) and
+    # that the health probes structurally CANNOT see — all three hit
+    # /status.php, which answers 200 in maintenance mode, so the pod reads Ready
+    # throughout. Against ~20h undetected, a slower check is still a large win.
+    #
+    # NOTE the interaction with MAINT_GRACE_MIN=30 in the script: it only clears
+    # a flag that has been set for at least 30 minutes, so at a 30-minute
+    # cadence the worst case to clear becomes ~60 minutes rather than ~30. That
+    # is the accepted cost of this change; shorten the cadence (not the grace,
+    # which exists to protect deliberate maintenance windows) if it ever bites.
+    schedule                      = "*/30 * * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 3
     concurrency_policy            = "Forbid"
@@ -623,6 +692,42 @@ resource "kubernetes_cron_job_v1" "nextcloud_watchdog" {
                   echo "$(date): self-heal occ upgrade complete"
                 else
                   echo "$(date): occ status healthy (no DB upgrade pending)"
+                fi
+
+                # F3 self-heal: maintenance mode stuck ON while the DB upgrade
+                # is already COMPLETE (maintenance=true + needsDbUpgrade=false).
+                # F1 above gates on needsDbUpgrade, so this quadrant had no
+                # cover: on 2026-08-15 a Keel bump finished its occ upgrade but
+                # never cleared maintenance mode, and every client 503'd for
+                # ~20.5h while this watchdog logged "healthy" every 5 min. The
+                # probes did not catch it either — all three hit /status.php,
+                # which answers 200 in maintenance mode, so the pod stayed
+                # Ready. Same class as the ~22h 2026-05-26 incident noted at the
+                # top of this file. (Do NOT "fix" this by pointing the probes at
+                # an endpoint that fails in maintenance mode: the liveness probe
+                # would then restart the pod mid-upgrade, which is exactly how
+                # F1 gets created.)
+                #
+                # A DELIBERATE maintenance window is protected by a grace
+                # period rather than a flag: `occ maintenance:mode --on`
+                # rewrites config.php, so its mtime is how long the mode has
+                # been on. For a planned window longer than the grace, suspend
+                # this CronJob:
+                #   kubectl -n nextcloud patch cronjob nextcloud-watchdog \
+                #     -p '{"spec":{"suspend":true}}'
+                MAINT_GRACE_MIN=30
+                if echo "$ST" | grep -q '"maintenance":true' && echo "$ST" | grep -q '"needsDbUpgrade":false'; then
+                  CFG_MTIME=$(kubectl exec -n nextcloud "$POD" -c nextcloud -- stat -c %Y /var/www/html/config/config.php 2>/dev/null || echo 0)
+                  MAINT_MIN=0
+                  if [ "$CFG_MTIME" -gt 0 ]; then
+                    MAINT_MIN=$(( ($(date +%s) - CFG_MTIME) / 60 ))
+                  fi
+                  if [ "$MAINT_MIN" -ge "$MAINT_GRACE_MIN" ]; then
+                    echo "$(date): maintenance mode ON ~$MAINT_MIN min with no pending DB upgrade -> clearing stuck flag"
+                    kubectl exec -n nextcloud "$POD" -c nextcloud -- php occ maintenance:mode --off || true
+                  else
+                    echo "$(date): maintenance mode ON ~$MAINT_MIN min (grace $MAINT_GRACE_MIN min) -> leaving alone"
+                  fi
                 fi
               EOF
               ]

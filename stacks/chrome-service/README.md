@@ -18,7 +18,7 @@ CDP_URL = "http://chrome-service.chrome-service.svc.cluster.local:9222"
 async with async_playwright() as p:
     browser = await p.chromium.connect_over_cdp(CDP_URL, timeout=15_000)
     # browser.contexts[0] is the persistent default context (the one
-    # the user logs into via noVNC). For bot work that should NOT share
+    # the user logs into via the neko view). For bot work that should NOT share
     # cookies, create a fresh incognito context:
     context = await browser.new_context()
     await context.add_init_script(STEALTH_JS)

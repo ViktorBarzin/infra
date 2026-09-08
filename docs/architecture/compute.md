@@ -23,7 +23,6 @@ graph TB
         NODE3["VM 203: k8s-node3<br/>8c / 32GB"]
         NODE4["VM 204: k8s-node4<br/>8c / 32GB"]
         NODE5["VM 205: k8s-node5<br/>8c / 32GB"]
-        NODE6["VM 206: k8s-node6<br/>8c / 32GB"]
     end
 
     subgraph K8s["Kubernetes Cluster v1.34.8"]
@@ -79,9 +78,10 @@ graph TB
 | k8s-node3 | 203 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node4 | 204 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node5 | 205 | 8 | 32GB | vmbr1:vlan20 (10.0.20.105) | Worker (joined 2026-05-26) | None |
-| k8s-node6 | 206 | 8 | 32GB | vmbr1:vlan20 (10.0.20.106) | Worker (joined 2026-05-26) | None |
 
-**Total Cluster Resources**: 64 vCPUs, ~240GB RAM (k8s-node1 16c/48GB + master and 5 workers at 8c/32GB each)
+<!-- k8s-node6 (VMID 206) removed 2026-07-18: decommissioned 2026-07-01 but zombie-rejoined on the power-outage reboot (onboot=1); drained + Node deleted + VM destroyed. See docs/post-mortems/2026-07-18-sofia-power-outage-unclean-shutdown.md -->
+
+**Total Cluster Resources**: 56 vCPUs, ~208GB RAM (k8s-node1 16c/48GB + master and 4 workers at 8c/32GB each)
 
 > **All Linux VMs are hand-managed in Proxmox, NOT in Terraform**
 > (decided 2026-05-26, commit 44c3770a). The telmate/proxmox v3.0.2
@@ -109,7 +109,37 @@ graph TB
 > I/O stall; see `post-mortems/2026-06-11-devvm-qemu-io-stall.md`). Current caps:
 > 102 devvm 60/60, 103 home-assistant 40/40, 200 k8s-master 100/60,
 > 201 k8s-node1 150/120, 202 k8s-node2 150/120, 203 k8s-node3 150/120,
-> 204 k8s-node4 150/120, 220 docker-registry 40/40.
+> 204 k8s-node4 150/120, 205 k8s-node5 150/120, 220 docker-registry 40/40.
+>
+> **k8s-node5 (205) was added to `TARGETS` on 2026-08-16.** The array
+> predates the node (joined 2026-05-26), so node5 was the one k8s
+> worker running uncapped, and the hourly timer had no way to notice —
+> it reconciles the list, not the VM inventory. Adding a VM to the host
+> means adding it here too. The caps are burst insurance rather than a
+> throughput reducer: node5's 30d write peak is 38.0 MB/s against the
+> 120 MB/s cap and its 30d average is 755 KB/s, so on the observed
+> record the cap would not have bound. Figures are 5-minute-averaged
+> (Prometheus scrape resolution), so sub-minute bursts are not visible
+> in them.
+>
+> **`discard=on` (guest TRIM passthrough)** is a separate, per-VM boot-disk
+> option that this script does not manage — it strips and rewrites only the
+> `mbps_*` keys, leaving `discard` untouched. VM204 and VM205 were the two
+> boot disks still running `discard=ignore` in QEMU; both were set to
+> `discard=on` on 2026-08-16 so the thin pool can reclaim freed guest
+> blocks (their thin LVs sat at 99.5% allocated against 138 GiB / 194 GiB
+> actually used). Both guests were already TRIM-ready (`fstrim.timer`
+> enabled, `/` mounted with `discard`) — QEMU was dropping the discards.
+> **`discard` is not hot-pluggable**: `qm set` records it in the config's
+> pending section and it takes effect on the next full QEMU stop/start; a
+> guest-level (kured) reboot does not apply it. A non-empty `qm pending
+> 204`/`205` showing a `discard` row is therefore the expected state until
+> those nodes are next cold-cycled, not a failed apply. Note also that
+> changing `discard` and `mbps_*` in a single `qm set` on a running VM
+> sends **both** to pending — `vmconfig_update_disk` hits the
+> non-hotpluggable check before it reaches the throttle-apply block — so
+> apply the throttle first and `discard` second if you want the caps live
+> immediately.
 >
 > Re-adoption into TF (via the `bpg/proxmox` provider, which models
 > dynamic disks correctly) is possible but not scheduled — the
@@ -343,7 +373,7 @@ next apply (discovery keyed on
 `sharing-strategy=time-slicing`, `nvidia.com/gpu.replicas=100`, so many pods
 share the single T4; request `nvidia.com/gpu: 1` for a slice, not the whole card):
 - immich-machine-learning (CLIP smart-search + facial recognition, CUDA)
-- immich-server (NVENC/NVDEC video transcoding — `ffmpeg.accel=nvenc` + `accelDecode=true`)
+- immich-worker (NVENC/NVDEC video transcoding — `ffmpeg.accel=nvenc` + `accelDecode=true`; ex immich-server — since the 2026-07-12 worker split the GPU-free `immich-api` replicas serve clients, only this job tier holds a GPU slice)
 - Frigate (object-detection inference)
 - llama-cpp / llama-swap (LLM inference)
 - nvidia-exporter + gpu-pod-exporter (DCGM metrics)
