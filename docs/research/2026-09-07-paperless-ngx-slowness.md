@@ -338,9 +338,10 @@ query, not by running whatever 3.1.3 emits.
 unambiguous date in their filename and were set to it (for example
 `Тест ЗБУТ Емил Барзин 28.10.2024.pdf`, which had OCR'd as 2524-10-28). The
 other 16 had no date in the filename and were set to their import date, which is
-truthful rather than accurate. The full before/after map is in the session
-scratchpad as `date-rollback.json`; the documents are emo's, so a better date is
-his to supply.
+truthful rather than accurate. The full before/after map, all 22 rows with the
+method used for each, is committed alongside this file as
+`2026-09-07-paperless-date-repair-rollback.json`; the documents are emo's, so a
+better date is his to supply.
 
 **The upgrade needed care in two places.** The Keel policy annotation had to come
 out of `ignore_changes` for Terraform to own it, because Kyverno's
