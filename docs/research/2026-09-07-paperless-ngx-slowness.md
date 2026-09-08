@@ -1,12 +1,20 @@
 # Why Paperless-ngx feels slow, and why tag search is hard to find
 
-Date: 2026-09-07
-Scope: `pdf.viktorbarzin.me`, paperless-ngx 2.20.15, ns `paperless-ngx`
-Status: research complete; five of the six recommendations were carried out the
-same day. See "What was done" at the end. The Postgres migration was the one
-item deliberately left out.
+Date: 2026-09-07, with the tags root cause added 2026-09-08
+Scope: `pdf.viktorbarzin.me`, ns `paperless-ngx`. Investigated on 2.20.15; the
+installation now runs 3.1.3 on the shared CNPG Postgres.
+Status: done. All six recommendations were carried out, including the Postgres
+migration. One cause is upstream and its report is pending. See "What was
+done" at the end.
 
 ## Summary
+
+```stats
+11.5 s | cold load, before
+330 ms | documents list, after
+21x | faster
+1 of 3 | causes left, and it is upstream
+```
 
 A cold load of the documents list settles after **11.5 s**. Three separate causes
 stack up, and all three scale with corpus size, so Viktor's hunch that emo's
@@ -29,6 +37,25 @@ upgrades.
 
 One web worker (`GRANIAN_WORKERS=1`) means cause 1 also blocks causes 2 and 3
 rather than overlapping with them.
+
+Each cause was independent of the others. Reading down the diagram is reading
+down the ranked list above, not a chain of causation.
+
+```mermaid
+flowchart TD
+    L["<b>Cold page load — 11.5 s</b>"]
+    L --> C1["<b>Cause 1</b> · 25,726 stale task rows · 10.7 s<br/>fixed — backlog acknowledged"]
+    C1 --> C2["<b>Cause 2</b> · content in the DISTINCT · 1.41 s x2<br/>fixed — moved to Postgres"]
+    C2 --> C3["<b>Cause 3</b> · whole vocabulary each load · 2.6 s<br/>open — upstream, report pending"]
+    C3 --> D["<b>Documents list — 330 ms</b><br/>tags call still 4.4 s"]
+
+    classDef fixed fill:#1a4d2e,stroke:#2d7a4a,color:#e8f5e9
+    classDef open fill:#5c3a1a,stroke:#8a5a2b,color:#fff3e0
+    classDef head fill:#1e3a5f,stroke:#2d5a8f,color:#e3f2fd
+    class C1,C2,D fixed
+    class C3 open
+    class L head
+```
 
 ## Cause 1 — the task backlog (the big one)
 
@@ -93,7 +120,8 @@ corpus. Measured against our data, it makes no difference:
 
 The `GROUP BY` from `annotate(Count("notes"))` materialises `content` whether or
 not `DISTINCT` is present. The column is the cost, not the deduplication. An
-upgrade is still worth doing for other reasons; it is not the cure for this.
+upgrade is still worth doing for other reasons; it does not address this
+particular cost.
 
 ### Postgres does avoid the cliff
 
@@ -127,8 +155,8 @@ The tags call alone takes 3.9 s cold. There is no pagination or lazy-load option
 for these in 2.20.
 
 Two things worth noting about the ownership column. All 1,448 tags are
-ownerless, so every user sees the whole vocabulary — that is what makes the tag
-dropdown a haystack rather than emo's tags being private. And the enrichment
+ownerless, so every user sees the whole vocabulary — the dropdown lists every
+tag in the system rather than emo's tags being private. And the enrichment
 service, not emo, ended up owning the correspondents and types it created during
 the import.
 
@@ -171,10 +199,21 @@ the tree.
 | 1448 (all) | 4.78 s |
 
 An early return when a tag has no children takes the serialization step from
-**3.23 s to 0.09 s**, measured in isolation against the same 1,448 tags. Filed
-upstream as [paperless-ngx#14034](https://github.com/paperless-ngx/paperless-ngx/issues/14034)
-with the profile and the proposed patch. We are not carrying a local patch for
-it — the image stays stock, which is what makes Keel `major` safe.
+**3.23 s to 0.09 s**, measured in isolation against the same 1,448 tags. We are
+not carrying a local patch for it — the image stays stock, which is what keeps
+Keel `major` safe.
+
+**Reporting this upstream has a constraint worth knowing before you try.** A
+first attempt ([#14034](https://github.com/paperless-ngx/paperless-ngx/issues/14034))
+was created through the REST API and closed within minutes by their issue bot,
+which requires the `bug`/`unconfirmed` labels that only GitHub's own form
+applies. An outside contributor cannot set those labels through the API, so the
+form has to be submitted in a browser. Two rules in their `CONTRIBUTING.md` also
+shape what such a report may contain: anything written in whole or part by an AI
+tool must say so, and a report generated that way must describe observed
+behaviour only, without code analysis, root-cause reasoning or a suggested fix.
+The analysis above therefore stays in this document; the upstream report carries
+the timings and the reproduction.
 
 ## Why tag search is hard to find
 
@@ -182,7 +221,9 @@ The filter exists and works. The **Tags** dropdown sits in the second filter row
 on `/documents`, it has All/Any toggles and a "Filter tags" text box, and it
 renders all 1,452 options in 835 ms. Full-text syntax works too:
 `tag:invoice` in the search box returns 1,002 documents, and `type:` and
-`correspondent:` behave the same way.
+`correspondent:` behave the same way. (That count reads 1,313 later in this
+document; the two were measured a day apart, either side of the search-index
+rebuild the upgrade triggered.)
 
 What makes it feel absent is the content of the list. It opens alphanumerically
 on `2P+E Socket`, `4-spenlow-apartments`, `6-orchard`, `26.05.2025`,
@@ -205,7 +246,7 @@ Some tag names also show mojibake — `A1 Áúëãàðèÿ` is Bulgarian read as
 instead of UTF-8 — which makes them hard to find by typing. Not measured further
 here.
 
-## A fourth thing, unasked for
+## A fourth thing, found along the way
 
 22 of emo's documents carry OCR-misread creation dates in the future, up to the
 year **2524**. The default documents view sorts by created descending, so those
@@ -263,7 +304,6 @@ next.
 | 4 | Saved view "My documents", owner-scoped | `/api/saved_views/`, id 1 | 381 documents, in the sidebar and on the dashboard. 0.376 s against 2.825 s for the unscoped list. |
 | 5 | Keel policy `patch` → `major` | `stacks/paperless-ngx/main.tf`, commit `6214cc01`, CI #1599 | Keel log: `resource updated … previous=2.20.15 new=3.1.3`. |
 | 6 | `PAPERLESS_SECRET_KEY` + startup/readiness probes | Vault `secret/paperless-ngx`, commit `454a2383` | 3.1.3 could not start without the key; see below. |
-
 | 7 | Migrated MySQL → shared CNPG Postgres | `document_exporter`/`document_importer --data-only`, driven by a workflow; declared in commit `b04fdda9` | 11,334 documents, all 22 must-match tables exactly equal, `tag:invoice` returns 1313 on both sides. |
 
 **The 3.1.3 rollout failed on the first attempt.** Detail below. It went forward
@@ -288,19 +328,30 @@ place for a week as a rollback path; bead `code-lile` drops it on 2026-09-15.
 
 ### What the failed upgrade taught us
 
+> [!WARNING]
+> **3.x will not start without `PAPERLESS_SECRET_KEY`, and the breaking-change
+> list does not mention it.** Anyone upgrading a 2.x install that never set one
+> hits this, and the symptom is a total outage rather than a warning.
+
 **3.x requires `PAPERLESS_SECRET_KEY`, and that is not in the release notes.**
 2.20 accepted the literal `change-me` with a warning; 3.x raises
 `ImproperlyConfigured` at settings import. The container died during
 `init-migrations`, never started a web server, and every request returned 502.
 The checks run beforehand covered the documented breaking changes (`mariadb` is
 still a valid backend, we use no document encryption, no consume scripts, no
-pybzar) and none of them named this. A newly-REQUIRED setting is a different
-category from a REMOVED one, and only the second kind was on the list.
+pybzar) and none of them named this. A newly-required setting and a removed one
+are different categories, and the list covered the second.
 
 **The database was never modified.** The failure is upstream of migrations, which
 the rollback confirmed by reporting `No migrations to apply`. A full `mysqldump`
 was taken first regardless: 142 MB gzipped from the 968 MB database, via a
 one-off run of the existing `mysql-backup-per-db` CronJob.
+
+> [!IMPORTANT]
+> **A deployment with no probes cannot report a failed upgrade.** Keel recorded
+> this rollout as a success while every request returned 502, because the only
+> health signal was the s6 supervisor, which keeps running when everything under
+> it has died.
 
 **A dead container reported `Ready=true` for several minutes.** The deployment
 carried no liveness, readiness or startup probe, so the only health signal was
@@ -321,10 +372,13 @@ index rebuild follow it, and several of the earlier ones (`version_index`,
 `checksum`, `archive_checksum`) are full table copies of `documents_document`,
 which carries the 319 MB of OCR text.
 
-Budget the startup probe for that. A 10-minute budget killed the first attempt
-at 8%, and **a probe cannot be changed on a running pod**, so noticing mid-way
-costs the whole migration and it restarts from zero. The value is now 240 x 10s,
-40 minutes.
+> [!CAUTION]
+> **Set the startup probe budget before you start, not during.** A probe cannot
+> be edited on a running pod, so a budget you discover is too short costs the
+> whole migration and it restarts from zero. A 10-minute budget killed the first
+> attempt at 8%. The value is now 240 x 10s, 40 minutes.
+
+Budget the startup probe for that.
 
 Two of those migrations bear on the findings above and are worth re-measuring
 rather than assuming: `0022_add_perf_indexes` adds indexes, and
