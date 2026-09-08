@@ -467,6 +467,114 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
                 DUP_OK=0
               fi
 
+              # GoCardless consent expiry. A PSD2 end-user agreement lasts 90 days
+              # and renewing one needs the account holder's own bank MFA, so the
+              # useful signal is DAYS OF NOTICE, not a post-mortem. Nothing here
+              # warned before: on 2026-07-18..07-24 anca's previous consents expired
+              # and this job wrote nothing for seven consecutive nights, which
+              # BankSyncStale only reported 48h in. Her current set was re-authorised
+              # 2026-07-25 and every one of them expires 2026-10-23.
+              #
+              # Only requisitions that are BOTH status LN and holding an account this
+              # budget actually syncs are considered. Dropping the second condition
+              # makes viktor alert forever on a BARCLAYS_BUSINESS requisition that has
+              # sat at LN since 2023-06-24 with an agreement that expired long before.
+              # Per institution the NEWEST match wins, because re-authorising mints a
+              # fresh requisition and the superseded one can stay LN indefinitely
+              # (anca has two LN MONZO requisitions, 2025-05-14 and 2026-07-25).
+              #
+              # Management endpoints only. This never calls the per-account
+              # transactions endpoint, which GoCardless rate-limits to 4 calls/day
+              # and which the import above already spends.
+              CONSENT_OK=0
+              : > /tmp/consent
+              PRIOR_CONSENT=$(curl -fsS --max-time 15 "$PGROOT/metrics" 2>/dev/null \
+                | grep "^bank_sync_consent_expiry_timestamp{" \
+                | grep "job=\"bank-sync-$USER_NAME\"" || true)
+
+              # Credentials come from the ESO-managed Secret at RUNTIME rather than
+              # being interpolated into this spec, so the GoCardless API key is not
+              # readable via `kubectl get cronjob -o yaml`. Source of truth is still
+              # each Actual server's own account.sqlite `secrets` table, set through
+              # the web UI; Vault carries a copy for this check. Rotating in the UI
+              # means updating secret/actualbudget too, which is why the check fails
+              # loudly (consent_check_success=0) instead of silently.
+              GC_ID=$(echo "$CREDENTIALS" | jq -r ".\"$USER_NAME\".gocardless_secret_id // empty" 2>/dev/null || echo "")
+              GC_KEY=$(echo "$CREDENTIALS" | jq -r ".\"$USER_NAME\".gocardless_secret_key // empty" 2>/dev/null || echo "")
+
+              if [ -n "$GC_ID" ] && [ -n "$GC_KEY" ]; then
+                GC="https://bankaccountdata.gocardless.com/api/v2"
+                GC_TOKEN=$(curl -fsS --max-time 30 -X POST "$GC/token/new/" \
+                  -H 'content-type: application/json' -H 'accept: application/json' \
+                  -d "{\"secret_id\":\"$GC_ID\",\"secret_key\":\"$GC_KEY\"}" 2>/dev/null \
+                  | jq -r '.access // empty' 2>/dev/null || echo "")
+
+                # The GoCardless account ids this budget syncs. official_name carries
+                # the institution as `integration-<INSTITUTION_ID>`; account_id is the
+                # GoCardless side. The /accounts REST route returns neither, so this
+                # goes through run-query like the duplicate check above.
+                INUSEQ='{"ActualQLquery":{"table":"accounts","filter":{"closed":false,"offbudget":false,"account_sync_source":"goCardless"},"select":["account_id"]}}'
+                INUSEJSON=$(curl -fsS --max-time 60 -X POST "$API/v1/budgets/$SYNC_ID/run-query" \
+                  -H 'content-type: application/json' -H "x-api-key: $API_KEY" \
+                  -d "$INUSEQ" 2>/dev/null || true)
+                INUSE=$(echo "$INUSEJSON" | jq -c "$DUPFILTER | [.[].account_id] | map(select(. != null))" 2>/dev/null || echo "")
+
+                if [ -n "$GC_TOKEN" ] && [ -n "$INUSE" ] && [ "$INUSE" != "[]" ]; then
+                  REQS=$(curl -fsS --max-time 30 "$GC/requisitions/?limit=100" \
+                    -H 'accept: application/json' -H "Authorization: Bearer $GC_TOKEN" 2>/dev/null || true)
+                  PICKED=$(echo "$REQS" | jq -c --argjson inuse "$INUSE" '
+                      [ .results[]
+                        | select(.status == "LN")
+                        | select((.accounts // []) | any(. as $a | $inuse | index($a)))
+                      ]
+                      | group_by(.institution_id)
+                      | map(sort_by(.created) | last | {inst: .institution_id, ag: .agreement})
+                      | .[]' 2>/dev/null || true)
+
+                  if [ -n "$PICKED" ]; then
+                    CONSENT_OK=1
+                    echo "$PICKED" | while IFS= read -r ROW; do
+                      [ -n "$ROW" ] || continue
+                      INST=$(echo "$ROW" | jq -r '.inst // empty')
+                      AGID=$(echo "$ROW" | jq -r '.ag // empty')
+                      [ -n "$INST" ] && [ -n "$AGID" ] || continue
+                      AGJSON=$(curl -fsS --max-time 30 "$GC/agreements/enduser/$AGID/" \
+                        -H 'accept: application/json' -H "Authorization: Bearer $GC_TOKEN" 2>/dev/null || true)
+                      ACCEPTED=$(echo "$AGJSON" | jq -r '.accepted // empty' 2>/dev/null || echo "")
+                      VALIDD=$(echo "$AGJSON" | jq -r '.access_valid_for_days // empty' 2>/dev/null || echo "")
+                      if [ -n "$ACCEPTED" ] && [ -n "$VALIDD" ]; then
+                        # accepted is RFC3339 with fractional seconds, which busybox
+                        # date cannot parse; -D needs the format spelled out and the
+                        # fraction stripped.
+                        CLEAN=$(echo "$ACCEPTED" | sed 's/T/ /; s/\..*$//; s/Z$//')
+                        AEPOCH=$(date -u -D '%Y-%m-%d %H:%M:%S' -d "$CLEAN" +%s 2>/dev/null || echo "")
+                        if [ -n "$AEPOCH" ]; then
+                          printf 'bank_sync_consent_expiry_timestamp{institution="%s"} %s\n' \
+                            "$INST" "$((AEPOCH + VALIDD * 86400))" >> /tmp/consent
+                        else
+                          echo "CONSENT parse-failed institution=$INST accepted=$ACCEPTED"
+                          echo "parse-failed" >> /tmp/consent_error
+                        fi
+                      else
+                        echo "CONSENT agreement-unreadable institution=$INST agreement=$AGID"
+                        echo "unreadable" >> /tmp/consent_error
+                      fi
+                    done
+                  else
+                    echo "CONSENT no LN requisition matched an in-use account"
+                  fi
+                else
+                  echo "CONSENT skipped: token or in-use account list unavailable"
+                fi
+              else
+                echo "CONSENT skipped: no GoCardless credentials in secret/actualbudget for $USER_NAME"
+              fi
+              # The `while` above runs in a pipeline subshell, so a per-institution
+              # failure cannot clear CONSENT_OK by assignment. It leaves a file.
+              if [ -f /tmp/consent_error ]; then
+                CONSENT_OK=0
+              fi
+
               # A Pushgateway POST REPLACES every metric family in this job's group —
               # it does NOT preserve label sets absent from the payload. That is why
               # the failure branch above re-emits the prior timestamp explicitly.
@@ -497,6 +605,29 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
                 printf '# HELP bank_sync_dupcheck_success 1 if the duplicate-import check ran and parsed\n'
                 printf '# TYPE bank_sync_dupcheck_success gauge\n'
                 printf 'bank_sync_dupcheck_success %s\n' "$DUP_OK"
+                # Carry the previous expiry values forward when the check could not
+                # run. A Pushgateway POST replaces the whole family, so an omitted
+                # series does not go stale, it VANISHES — and a vanished series can
+                # never satisfy BankSyncConsentExpiring. Same reasoning as the
+                # per-account timestamps above.
+                if [ -s /tmp/consent ]; then
+                  printf '# HELP bank_sync_consent_expiry_timestamp Unix timestamp when this institution GoCardless consent stops working\n'
+                  printf '# TYPE bank_sync_consent_expiry_timestamp gauge\n'
+                  cat /tmp/consent
+                elif [ -n "$PRIOR_CONSENT" ]; then
+                  printf '# HELP bank_sync_consent_expiry_timestamp Unix timestamp when this institution GoCardless consent stops working\n'
+                  printf '# TYPE bank_sync_consent_expiry_timestamp gauge\n'
+                  echo "$PRIOR_CONSENT" | while IFS= read -r L; do
+                    [ -n "$L" ] || continue
+                    INST_L=$(echo "$L" | sed -n 's/.*institution="\([^"]*\)".*/\1/p')
+                    VAL_L=$(echo "$L" | awk '{print $NF}')
+                    [ -n "$INST_L" ] && [ -n "$VAL_L" ] || continue
+                    printf 'bank_sync_consent_expiry_timestamp{institution="%s"} %s\n' "$INST_L" "$VAL_L"
+                  done
+                fi
+                printf '# HELP bank_sync_consent_check_success 1 if the GoCardless consent-expiry check ran and parsed\n'
+                printf '# TYPE bank_sync_consent_check_success gauge\n'
+                printf 'bank_sync_consent_check_success %s\n' "$CONSENT_OK"
                 if [ "$ANY" = "1" ]; then
                   printf '# HELP bank_sync_last_success_timestamp Unix timestamp of the most recent successful sync of any account\n'
                   printf '# TYPE bank_sync_last_success_timestamp gauge\n'
@@ -505,6 +636,20 @@ resource "kubernetes_cron_job_v1" "bank-sync" {
               } | curl -fsS --max-time 30 --data-binary @- "$PG"
               EOT
               ]
+
+              # The whole credentials blob, straight from the ESO-managed Secret.
+              # Interpolating the GoCardless key into the script the way SYNC_ID and
+              # API_KEY are done would publish it in `kubectl get cronjob -o yaml`;
+              # this keeps it out. The script picks its own user's entry with jq.
+              env {
+                name = "CREDENTIALS"
+                value_from {
+                  secret_key_ref {
+                    name = "actualbudget-secrets"
+                    key  = "credentials"
+                  }
+                }
+              }
             }
           }
         }
