@@ -33,7 +33,18 @@
 #
 # Like etcd-tuning.tf, this patches kubeadm-managed manifests, so a kubeadm
 # upgrade resets it and it must be re-applied afterwards. The pre-change manifest
-# of each is kept next to it as a .bak.
+# of each is kept in /root/manifest-backups/.
+#
+# The backup directory sits OUTSIDE staticPodPath on purpose. The kubelet parses
+# every file in /etc/kubernetes/manifests as a pod manifest whatever its
+# extension, so a .bak written next to the original becomes a second definition
+# of the same static pod. The first version of this file did that, and on
+# 2026-09-08 the kubelet spent several minutes flipping kube-scheduler and
+# kube-controller-manager between the tuned and untuned specs, restarting both
+# each time, until the backups were moved to /root/manifest-backups. The flags
+# were present in the manifest throughout, which is what made it confusing:
+# the file was right and the running process was wrong. etcd-tuning.tf already
+# keeps its backup under /root for the same reason.
 #
 # Applying this restarts each static pod, roughly 5 to 15 seconds apiece. The
 # apiserver and etcd are untouched, so the datastore stays up throughout.
@@ -58,7 +69,10 @@ resource "null_resource" "leader_election_tuning" {
     inline = [
       <<-SCRIPT
       sudo python3 -c "
+import os
 import yaml
+
+BACKUP_DIR = '/root/manifest-backups'
 
 FLAGS = {
     '--leader-elect-lease-duration': '60s',
@@ -93,10 +107,19 @@ for name in ('kube-controller-manager', 'kube-scheduler'):
         print('%s: already tuned, not rewriting' % name)
         continue
 
-    with open(path + '.bak-leader-election', 'w') as f:
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    with open(os.path.join(BACKUP_DIR, '%s.yaml.bak-leader-election' % name), 'w') as f:
         f.write(before)
-    with open(path, 'w') as f:
+
+    # Write to a temp file in the same directory and rename, so the kubelet
+    # cannot observe a half-written manifest. Its file source polls every 20s
+    # and will read a partial YAML document if it catches one.
+    tmp = path + '.tmp-leader-election'
+    with open(tmp, 'w') as f:
         f.write(after)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
     print('%s: updated %s' % (name, ' '.join(sorted(FLAGS))))
 "
       SCRIPT
