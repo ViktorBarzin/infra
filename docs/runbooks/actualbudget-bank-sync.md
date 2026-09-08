@@ -28,7 +28,7 @@ Actual Budget has two independent syncs. Conflating them costs a lot of time.
 | Servers | `actualbudget-{viktor,anca}` — `actualbudget/actual-server` |
 | API | `actualbudget-http-api-{viktor,anca}` — `jhonderson/actual-http-api`, svc `budget-http-api-<user>:80` → port 5007 |
 | Metrics | Pushgateway job `bank-sync-<user>` |
-| Credentials | literals in the CronJob spec (`SYNC_ID`, `API_KEY`) |
+| Credentials | `SYNC_ID` and `API_KEY` are literals in the CronJob spec; the GoCardless API credential arrives at runtime as the `CREDENTIALS` env var from the ESO-managed `actualbudget-secrets`, so it is not readable from the spec |
 
 Both images are Keel-managed (`keel.sh/policy=minor`); the Terraform `tag` /
 `http_api_tag` values are create-time seeds only. Keep the seeds level with live
