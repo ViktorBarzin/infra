@@ -665,3 +665,138 @@ resource "kubernetes_cron_job_v1" "ig_refresh_token" {
   }
   depends_on = [kubernetes_deployment.instagram_poster]
 }
+
+# ---------------------------------------------------------------------------
+# Portrait-album sync
+#
+# Immich (v3.1.0) cannot filter by aspect ratio. Its search API exposes camera,
+# date, location, people, tag, rating and filename, and nothing about
+# dimensions; its Workflows can add to an album, but the EXIF filter matches
+# one property at a time as a string, so it cannot divide width by height, and
+# its only triggers (AssetCreate / AssetMetadataExtraction) never revisit
+# photos already in the library.
+#
+# So the ratio is computed in SQL against Immich's Postgres and pushed back
+# through the REST API. One rule covers the 32k-photo backfill, new uploads,
+# and whatever sensor size the next phone has.
+#
+# This runs the instagram-poster IMAGE directly rather than curling the
+# Service: the Deployment is at replicas = 0 (Instagram Graph integration
+# parked 2026-06-24), and this job has no reason to wait for that to come back.
+# ---------------------------------------------------------------------------
+
+# Deliberately NOT reusing instagram-poster-secrets: that ExternalSecret is
+# parked at count = 0 because it asks for four ig_graph_* keys that are not in
+# Vault, so the Secret it targets has never existed. This one asks only for
+# keys that are present in secret/instagram-poster today, so it syncs.
+resource "kubernetes_manifest" "portrait_sync_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "instagram-poster-portrait-sync"
+      namespace = local.namespace
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "instagram-poster-portrait-sync"
+      }
+      data = [
+        {
+          secretKey = "IMMICH_API_KEY"
+          remoteRef = { key = "instagram-poster", property = "immich_api_key" }
+        },
+        {
+          secretKey = "IMMICH_PG_HOST"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_host" }
+        },
+        {
+          secretKey = "IMMICH_PG_PORT"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_port" }
+        },
+        {
+          secretKey = "IMMICH_PG_DATABASE"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_database" }
+        },
+        {
+          secretKey = "IMMICH_PG_USER"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_user" }
+        },
+        {
+          secretKey = "IMMICH_PG_PASSWORD"
+          remoteRef = { key = "instagram-poster", property = "immich_pg_password" }
+        },
+      ]
+    }
+  }
+}
+
+resource "kubernetes_cron_job_v1" "portrait_album_sync" {
+  metadata {
+    name      = "portrait-album-sync"
+    namespace = kubernetes_namespace.instagram_poster.metadata[0].name
+    labels    = local.labels
+  }
+  spec {
+    # Daily at 04:20. The work is proportional to what is NEW (Immich answers
+    # `duplicate` for everything already in the album), so a daily run is a few
+    # seconds after the first one. Off-peak so the 65 batched PUTs don't land
+    # while someone is browsing.
+    schedule                      = "20 4 * * *"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 2
+        template {
+          metadata {}
+          spec {
+            restart_policy = "OnFailure"
+            image_pull_secrets {
+              name = "ghcr-credentials"
+            }
+            security_context {
+              run_as_user     = 10001
+              run_as_group    = 10001
+              run_as_non_root = true
+            }
+            container {
+              name    = "sync"
+              image   = local.image
+              command = ["python", "-m", "instagram_poster.portrait_album", "sync"]
+              env_from {
+                secret_ref {
+                  name = "instagram-poster-portrait-sync"
+                }
+              }
+              env {
+                name  = "IMMICH_BASE_URL"
+                value = "https://immich.viktorbarzin.me"
+              }
+              resources {
+                requests = { cpu = "50m", memory = "128Mi" }
+                # Holds ~32k UUID strings plus the psycopg result; no image
+                # decoding happens here, so this stays far below the app's 1500Mi.
+                limits = { memory = "512Mi" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+  }
+  depends_on = [kubernetes_manifest.portrait_sync_external_secret]
+}
