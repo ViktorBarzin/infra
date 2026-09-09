@@ -867,9 +867,13 @@ resource "kubernetes_manifest" "middleware_android_emulator_rate_limit" {
 #    oxy header extractor returns "" for every request and they all share one
 #    bucket again — no error, just silent collapse (oxy utils/source.go
 #    makeHeaderExtractor returns req.Header.Get() with no missing-header check).
-#    NOTE the collapse this fixes is pre-existing for the five other proxied
-#    Anubis hosts (blog, jsoncrack, cyberchef, homepage, real-estate-crawler);
-#    fixing it here does not fix it for them.
+#    FIXED FLEET-WIDE 2026-09-09. The shared `rate-limit` became a chain
+#    (real-ip, then rate-limit-per-client with the same X-Real-Ip source key),
+#    so blog, jsoncrack, cyberchef, homepage and real-estate-crawler get
+#    per-client buckets too. Verified live against forgejo: 600 concurrent
+#    requests from one client returned 82 × 200 and 518 × 429, while a second
+#    client with a different X-Real-Ip got 10 × 200 and zero 429s during the
+#    same burst.
 #
 # 2. THE CEILING. Measured against the app's own constants rather than guessed:
 #      - live ladder: SEGMENT_SECONDS = 4, PLAYLIST_LENGTH = 6
