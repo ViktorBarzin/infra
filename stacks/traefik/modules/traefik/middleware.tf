@@ -2,7 +2,62 @@
 # These are referenced by ingress resources via annotations like:
 #   "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd"
 
-# Rate limiting middleware
+# Rate limiting middleware.
+#
+# THIS IS A CHAIN, NOT THE LIMITER. `rate-limit` is the name ~115 ingresses
+# reference (ingress_factory auto-attaches it, plus two hand-rolled ingresses in
+# stacks/owntracks and stacks/freedify and the reverse_proxy factory), so the
+# name stays and the chain expands in place: real-ip first, then the limiter.
+#
+# WHY A CHAIN. Until 2026-09-09 this was a bare rateLimit with no
+# `sourceCriterion`, which Traefik turns into an IPStrategy over "the request's
+# remote address field" (rate_limiter.go New(): a nil SourceCriterion becomes
+# &dynamic.IPStrategy{}). Behind the cloudflared tunnel that remote address is
+# the cloudflared pod, so every external viewer of every PROXIED host shared ONE
+# bucket of 10 req/s. The fix is to key on X-Real-Ip, which the vendored real-ip
+# plugin overwrites from the unspoofable TCP peer.
+#
+# But real-ip was only attached to anubis-* backends (ingress_factory:408).
+# Verified on the live forgejo Ingress the same day: its chain was
+# retry, error-pages, rate-limit, csp-headers, ai-bot-block, anti-ai-headers,
+# buffering — no real-ip anywhere. Adding `requestHeaderName` alone would
+# therefore have made things WORSE, not better, for the ~110 non-Anubis
+# ingresses:
+#
+#   - Missing header means an empty key, not a fallback. oxy's
+#     makeHeaderExtractor returns req.Header.Get() with no missing-header check,
+#     so every request without the header shares a single bucket keyed "". For
+#     the NON-PROXIED hosts (forgejo, kms, mail) that is a straight regression:
+#     pfSense PROXY-protocol already put the real client in the remote address,
+#     so they had working per-client buckets and would have lost them.
+#   - Without real-ip the header is client-supplied, so a crawler sending a
+#     random X-Real-Ip per request would mint itself an unlimited number of
+#     buckets.
+#
+# Putting real-ip inside the chain fixes both in ONE apply of this stack. The
+# alternative — attaching real-ip per-ingress in ingress_factory — fans a
+# modules/ change out over ~95 app stacks applied serially, and until each one
+# re-applied its ingress would carry the new source key with no header to read.
+# The other alternative, adding real-ip to the websecure ENTRYPOINT chain, is a
+# static-config change (helm upgrade plus a 3-replica roll) and that block is
+# deliberately left alone.
+#
+# ORDER IS LOAD-BEARING and this is the whole reason for the chain: reached
+# before real-ip, the header extractor returns "" for every request and they all
+# share one bucket again — no error, just silent collapse.
+#
+# Running real-ip twice on an Anubis-fronted ingress is harmless: it recomputes
+# from the TCP peer, which no middleware changes, so the second pass writes the
+# same value.
+#
+# WHAT THIS DOES NOT DO. Per-client buckets still cannot catch a crawl that
+# sends one request per address — 1,993 distinct addresses each making a single
+# request never fill any per-client bucket. That is what
+# viktor/distributed-crawl-range in stacks/crowdsec is for. And the limits stay
+# PER-POD across the 3 Traefik replicas, so the real ceiling is ~3x nominal
+# (~30 req/s average, ~150 burst). Traefik 3.7 can share buckets through Redis
+# (`rateLimit.redis`), which would make the numbers mean what they say; not done
+# here because it puts Redis on the hot path of every request.
 resource "kubernetes_manifest" "middleware_rate_limit" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -12,9 +67,45 @@ resource "kubernetes_manifest" "middleware_rate_limit" {
       namespace = kubernetes_namespace.traefik.metadata[0].name
     }
     spec = {
+      chain = {
+        middlewares = [
+          { name = kubectl_manifest.middleware_real_ip.name },
+          { name = kubernetes_manifest.middleware_rate_limit_per_client.manifest.metadata.name },
+        ]
+      }
+    }
+  }
+
+  field_manager {
+    force_conflicts = true
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# The actual limiter. Same 10/50 as before — no new ceiling here, deliberately:
+# the 2026-09-09 crawl came through with zero 5xx and zero 504s, so the numbers
+# are not what failed, and eight prior per-app carve-outs
+# (actualbudget, tripit, health, authentik, dawarich, immich, f1, android-emulator)
+# say a tighter global ceiling is the change most likely to break real traffic.
+#
+# What changed is the bucket KEY. Reference it through `rate-limit` above, never
+# directly, or real-ip will not have run and the key will be empty.
+resource "kubernetes_manifest" "middleware_rate_limit_per_client" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "rate-limit-per-client"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
       rateLimit = {
         average = 10
         burst   = 50
+        sourceCriterion = {
+          requestHeaderName = "X-Real-Ip"
+        }
       }
     }
   }
