@@ -22,7 +22,31 @@ agent:
       cpu: 25m
       memory: 128Mi
     limits:
-      memory: 512Mi
+      # Raised 512Mi -> 1Gi on 2026-09-09. ONE agent needs this, not all five:
+      # whichever node runs the traefik pod whose access log carries the crawl
+      # parses every http_* event for the whole cluster. Measured that day,
+      # 20 OOM restarts in 40h on node3 while the other four sat at 0, and
+      # `max_over_time(container_memory_working_set_bytes[40h])` peaked at
+      # 509.5Mi against the 512Mi ceiling.
+      #
+      # The driver is LIVE LEAKY-BUCKET COUNT, not a global undersize.
+      # `cscli metrics show scenarios` on node3 at the time:
+      #   viktor/forgejo-crawl-slow        5.29k live buckets,   0 overflows
+      #   crowdsecurity/http-crawl-non_statics 229 live buckets, 0 overflows
+      #   viktor/distributed-crawl-range     546 live buckets, 191 overflows
+      # Each bucket holds a queue of parsed events, so thousands of them is
+      # hundreds of MB. forgejo-crawl-slow groups per IPv6 /64 and this crawler
+      # rotates across /64s, which is what mints them.
+      #
+      # Worth knowing before raising this again: the range-grouped scenario
+      # does the same job for ~10x fewer buckets and is the one actually firing.
+      # Retiring forgejo-crawl-slow would cut the memory rather than accommodate
+      # it, but that removes a detection layer, so it is a deliberate decision
+      # rather than a side effect of this raise.
+      #
+      # Request deliberately left at 128Mi per the convention here, so node
+      # scheduling headroom is unaffected by a ceiling only one pod uses.
+      memory: 1Gi
   priorityClassName: "tier-1-cluster"
   # To specify each pod you want to process it logs (pods present in the node)
   acquisition:
