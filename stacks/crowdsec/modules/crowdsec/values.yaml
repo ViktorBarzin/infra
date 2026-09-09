@@ -50,6 +50,15 @@ agent:
     - name: SCENARIOS
       value: ""
       # value: "crowdsecurity/http-crawl-aggressive"
+    # geoip-enrich was already running before this line existed: it arrives as a
+    # hub DEPENDENCY of crowdsecurity/traefik, so the agent had it enabled and
+    # GeoLite2-ASN.mmdb on disk while no file in this repo mentioned either.
+    # Declared explicitly since 2026-09-09 because viktor/distributed-crawl-range
+    # keys its buckets on evt.Meta.SourceRange, which ONLY this parser creates —
+    # an upstream collection reshuffle that dropped the dependency would silently
+    # turn that scenario into a no-op with no error anywhere.
+    - name: PARSERS
+      value: "crowdsecurity/geoip-enrich"
   # Mount custom scenarios into /etc/crowdsec/scenarios
   extraVolumeMounts:
     - name: custom-scenarios
@@ -81,6 +90,13 @@ agent:
     - name: custom-scenarios
       mountPath: /etc/crowdsec/scenarios/forgejo-crawl-slow.yaml
       subPath: "forgejo-crawl-slow.yaml"
+      readonly: true
+    # Groups by the source's REGISTERED PREFIX rather than its address, which is
+    # the only axis on which a crawl that sends one request per address is
+    # visible at all. Fleet-wide, unlike forgejo-crawl-slow above.
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/distributed-crawl-range.yaml
+      subPath: "distributed-crawl-range.yaml"
       readonly: true
     - name: whitelist
       mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml
