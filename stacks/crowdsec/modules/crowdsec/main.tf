@@ -227,6 +227,99 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
         label: "Slow distributed crawl of git history"
         remediation: true
     YAML
+    # A crawl that sends ONE request per source address, from hundreds of
+    # addresses at once. Groups by the source's registered prefix
+    # (evt.Meta.SourceRange, from crowdsecurity/geoip-enrich) and counts DISTINCT
+    # ADDRESSES rather than requests, because the number of addresses is the only
+    # part of the signature that separates this from ordinary traffic.
+    #
+    # WHY NEITHER EXISTING SCENARIO SEES IT. Measured on the live agent
+    # 2026-09-09: crowdsecurity/http-crawl-non_statics instantiated 10,510
+    # buckets, poured 1.3 events into each, and overflowed 0 times.
+    # viktor/forgejo-crawl-slow groups by IPv6 /64 and fails the same way,
+    # because this crawler rotates ACROSS /64s. Per-source bucketing cannot
+    # work on one request per address, whatever the threshold.
+    #
+    # WHY DISTINCT ADDRESSES AND NOT REQUEST RATE. A per-range request-rate
+    # bucket cannot separate the two populations: the crawl ran at ~150-210
+    # req/min per range, while the largest confirmed legitimate single client
+    # here bursts to 587 req/min (Viktor's phone syncing to immich). Distinct
+    # addresses per range separates them by two orders of magnitude, and 587
+    # requests from one phone pour exactly ONE token.
+    #
+    # MEASURED, three windows of traefik access logs (distinct source addresses
+    # per netblock, private + CGNAT excluded):
+    #
+    #   window                          legitimate max   crawler /29s
+    #   2026-09-08 12:00-12:05Z         2                27, 36, 50, 56, 58
+    #   2026-09-08 19:00-19:05Z         3                42, 52, 55, 61, 61
+    #   2026-09-09 08:05-08:06Z (1min)  3                328, 328, 338, 338
+    #
+    # Legitimate p99 is 2-3 addresses per netblock in every window, and the
+    # median is 1. capacity 30 sits 10x above the measured legitimate ceiling
+    # and fills in ~5s at the crawl's peak rate.
+    #
+    # leakspeed 30s drains 2 addresses/minute, so a range that presents a new
+    # client every half minute forever never overflows; only a burst of 30
+    # net-new addresses does.
+    #
+    # SIX rotating-proxy ranges were active in those windows
+    # (2a10:4a00::/29, 2a10:7b00::/29, 2a12:da80::/29, 2a12:f540::/29,
+    # 2a13:dcc0::/29, 2a13:f40::/29) while the static blocklist added the same
+    # day covers two ASNs. That gap is what this scenario is for: it needs no
+    # list, no ASN lookup and no advance knowledge of the operator.
+    #
+    # GROUPED BY SourceRange, NOT BY ASN, for three reasons:
+    #   - The two databases disagree. MaxMind resolves the crawler's addresses
+    #     to AS54852 / F4-NETWORKS where RIPE's route object says AS214483, so
+    #     an AS-keyed rule's behaviour depends on which one you ask.
+    #   - scope: AS is SILENTLY DISCARDED by our Traefik bouncer plugin, which
+    #     handles only `ip` and `range` (crowdsec-bouncer-plugin/main.go:193-197).
+    #     An AS-scoped decision would detect and then enforce nothing — the same
+    #     shape as the captcha_remediation trap removed on 2026-09-02.
+    #   - Detection and enforcement stay the same prefix, so the ban covers
+    #     exactly what tripped it.
+    #
+    # EMPTY-SourceRange FALLBACK. GeoLite2-ASN.mmdb is baked into the image and
+    # dated 11 May, so a prefix allocated since then resolves to nothing. Without
+    # the fallback every unknown source would share one bucket keyed "" and emit
+    # a decision with an empty scope; with it they fall back to /64 (IPv6) or /24
+    # (IPv4). A crawler inside an unknown prefix then gets one bucket per /64
+    # again, which is the pre-existing blind spot rather than a new one — the
+    # durable fix is refreshing the mmdb.
+    #
+    # A false positive bans one registered prefix for 4h via
+    # default_range_remediation, announces it in Slack, and lifts with
+    # `homelab crowdsec unban <cidr>` — NOT `cscli decisions delete --ip`, which
+    # does not match a range-scoped decision (docs/runbooks/crowdsec-manual-bans.md).
+    "distributed-crawl-range.yaml" : <<-YAML
+      type: leaky
+      name: viktor/distributed-crawl-range
+      description: "Detect a crawl spread across many addresses in one registered prefix"
+      filter: "evt.Meta.log_type in ['http_access-log', 'http_error-log']"
+      # Distinct ADDRESSES, not distinct pages: one request per address is the
+      # whole signature, so counting requests would see nothing.
+      distinct: "evt.Meta.source_ip"
+      capacity: 30
+      leakspeed: 30s
+      # cache_size >= capacity, so an evicted address cannot pour a second time
+      # and inflate the count (same reasoning as forgejo-crawl-slow above).
+      cache_size: 60
+      groupby: 'evt.Meta.SourceRange != "" ? evt.Meta.SourceRange : (IsIPV6(evt.Meta.source_ip) ? IpToRange(evt.Meta.source_ip, "/64") : IpToRange(evt.Meta.source_ip, "/24"))'
+      scope:
+        type: Range
+        expression: 'evt.Meta.SourceRange != "" ? evt.Meta.SourceRange : (IsIPV6(evt.Meta.source_ip) ? IpToRange(evt.Meta.source_ip, "/64") : IpToRange(evt.Meta.source_ip, "/24"))'
+      blackhole: 5m
+      labels:
+        confidence: 3
+        spoofable: 0
+        classification:
+          - attack.T1595
+        behavior: "http:crawl"
+        service: http
+        label: "Distributed crawl from one registered prefix"
+        remediation: true
+    YAML
     "http-429-abuse.yaml" : <<-YAML
       type: leaky
       name: crowdsecurity/http-429-abuse
@@ -298,21 +391,31 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
       ---
       name: viktor/immich-asset-paths-whitelist
       description: "Don't penalise legit Immich timeline bursts (mobile scrub, web grid)"
-      # KNOWN INERT, pre-dates the 2026-09-01 JSON switch and unaffected by it:
-      # this expression reads evt.Parsed.target_fqdn, which no traefik parser
-      # path creates — the JSON node writes evt.Meta.target_fqdn, a different
-      # map, and CLF writes neither. Verified with `cscli explain` on an Immich
-      # 404 in both formats on 2026-09-01: this whitelist reported "unchanged"
-      # both times, so it has never suppressed anything. Fixing it means
-      # evt.Meta.target_fqdn (or evt.Parsed.traefik_router_name, as the
-      # nextcloud whitelist below does), which would START suppressing
-      # detections — a security-posture change, deliberately not bundled with a
-      # log-format change.
+      # WAS INERT FROM THE DAY IT WAS WRITTEN UNTIL 2026-09-09. It read
+      # evt.Parsed.target_fqdn, which no traefik parser path creates — the JSON
+      # node writes evt.Meta.target_fqdn, a different map, and CLF writes
+      # neither. `cscli explain` on an Immich 404 reported "unchanged" in both
+      # log formats, so it never suppressed anything and Immich has had no
+      # false-positive protection at all.
+      #
+      # Fixed here to evt.Parsed.traefik_router_name, the field
+      # viktor/nextcloud-webdav-whitelist below already uses and which is
+      # verified working at 4,397 suppressions. The router name is the FULL one
+      # (immich-immich-immich-viktorbarzin-me@kubernetes, confirmed in the live
+      # access log 2026-09-09) rather than a shorter substring, because
+      # "immich-viktorbarzin-me" alone would also match the three
+      # highlights-immich* routers, which are public share pages and are NOT
+      # what this exemption is for.
+      #
+      # This does START suppressing detections, which is why it lands BEFORE the
+      # new range-grouped scenario rather than after: tightening detection while
+      # Immich's own exemption is dead is how the earlier self-blocking
+      # happened.
       whitelist:
         reason: "Immich asset endpoints are auth-gated; mobile scrub legitimately bursts"
         expression:
           - >
-            evt.Parsed.target_fqdn == "immich.viktorbarzin.me" &&
+            evt.Parsed.traefik_router_name contains "immich-immich-immich-viktorbarzin-me" &&
             (evt.Parsed.request startsWith "/api/assets/" ||
              evt.Parsed.request startsWith "/api/timeline/" ||
              evt.Parsed.request startsWith "/api/asset/" ||
