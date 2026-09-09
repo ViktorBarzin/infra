@@ -540,6 +540,90 @@ resource "cloudflare_record" "git" {
   allow_overwrite = true
 }
 
+# Proof-of-work wall on forgejo's HTML routes, added 2026-09-09.
+#
+# WHY HERE AND WHY NOW. Forgejo is the one exposed high-volume host without it —
+# the other seven Anubis instances have run 122 days, and the 2026-09-06 audit
+# found that "f1 and kms, the two highest-volume ones, sit behind Anubis; the
+# rest return a login wall, an empty body or a 404". Meanwhile forgejo took
+# 1,531,741 requests in 7 days, 411,496 of them 499s (the client gave up
+# waiting), peaking at 16,623 req/min, and the crawl waves of 2026-09-03,
+# 09-05 and 09-09 all landed on it.
+#
+# THIS IS THE ONLY LAYER THAT ADDRESSES THE CLASS RATHER THAN THE OPERATOR. The
+# two static ASN blocklists and the range-grouped CrowdSec scenario all need to
+# recognise the source. A client that does not run JavaScript cannot solve a
+# proof-of-work challenge however many addresses it rotates through, whichever
+# user-agent it claims, and whether or not GeoLite2 has heard of its prefix.
+#
+# NOT A REPEAT OF infra#91. That revert was Cloudflare Bot Fight Mode 403ing
+# terminal-lobby's `PUT /api/packages/viktor/debian/...` from a GitHub Actions
+# runner, with no way to except it on the free plan. Here the exception is ours
+# to write: allow-machine-paths below covers /api/, /v2/ and git-over-HTTPS, and
+# the module's own allow-non-get-methods covers every write method. Nothing that
+# CI does reaches the challenge.
+module "anubis" {
+  source     = "../../modules/kubernetes/anubis_instance"
+  name       = "forgejo"
+  namespace  = kubernetes_namespace.forgejo.metadata[0].name
+  target_url = "http://${kubernetes_service.forgejo.metadata[0].name}.${kubernetes_namespace.forgejo.metadata[0].name}.svc.cluster.local"
+  # DB index 11 — 5,6,7,8,9,10,12 are taken by the other instances and the index
+  # MUST be unique per instance (in-flight PoW state would collide otherwise).
+  shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/11"
+
+  # The machine paths are ALLOWed FIRST, ahead of the deny imports, and that
+  # order is deliberate. The imports deny by user-agent, so a future upstream
+  # addition that happened to match a CI or git client's UA would break the
+  # release pipeline exactly the way infra#91 did. Putting the allows first
+  # makes that structurally impossible.
+  #
+  # The cost is that a declared AI crawler hitting /api/v1/repos/... is allowed
+  # through rather than denied. Accepted: the measured crawls all walked HTML
+  # (/commits, /pulls, /issues, /blame), the API is where our own automation
+  # lives, and CrowdSec still covers the API surface. Revisit if a crawl ever
+  # shows up on /api/.
+  #
+  # Every import below is copied from the module's own default rules, which
+  # seven instances have run for 122 days — no new import paths are introduced
+  # here, so this cannot fail on a path the binary does not embed.
+  policy_rules_yaml = <<-EOT
+    # --- Machine paths: no browser, no JS, no challenge possible. ---
+    # Forgejo's REST API and the OCI registry. /api/ also carries
+    # /api/healthz, which the external uptime monitor polls, and
+    # /api/packages/..., which terminal-lobby's GitHub Actions release PUTs to.
+    - name: allow-api-and-registry
+      action: ALLOW
+      path_regex: ^/(api|v2)/
+    # git over HTTPS. The clone handshake is a GET
+    # (/<owner>/<repo>/info/refs?service=git-upload-pack) so allow-non-get-methods
+    # does not cover it; the pack transfer and LFS are POSTs but are listed here
+    # too so the whole protocol is visible in one rule rather than split across
+    # two. Anchored at the end, or a repo literally named "git-upload-pack"
+    # would open a hole.
+    - name: allow-git-http
+      action: ALLOW
+      path_regex: (/info/refs$|/git-upload-pack$|/git-receive-pack$|/info/lfs/|/objects/[0-9a-f]{2}/)
+    # --- Then the module defaults, verbatim. ---
+    - import: (data)/bots/_deny-pathological.yaml
+    - import: (data)/bots/aggressive-brazilian-scrapers.yaml
+    - import: (data)/meta/ai-block-aggressive.yaml
+    - import: (data)/crawlers/_allow-good.yaml
+    - import: (data)/clients/x-firefox-ai.yaml
+    # Serves /robots.txt, /.well-known, /favicon.*, /sitemap.xml. Forgejo has
+    # returned 404 on /robots.txt since the infra#91 un-proxying gave back
+    # Cloudflare's managed one; this import should restore a 200.
+    - import: (data)/common/keep-internet-working.yaml
+    - name: allow-non-get-methods
+      action: ALLOW
+      expression: method != "GET"
+    # Everything left is a browser GET of an HTML page, which is the entire
+    # crawl surface.
+    - name: catchall-challenge
+      path_regex: .*
+      action: CHALLENGE
+  EOT
+}
+
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # Git + OCI registry (/v2/) — native clients (git, docker/podman) use HTTP
@@ -619,9 +703,16 @@ module "ingress" {
   # new-push before the forgejo stack applied, and the follow-up docs commit
   # touched no stack — so the forge stayed proxied and external CI kept 403ing.
   # This re-touches the stack so CI re-applies the non-proxied record.
-  dns_type        = "non-proxied"
+  dns_type = "non-proxied"
+  # Routed through Anubis since 2026-09-09 (module "anubis" above). Setting
+  # service_name to anubis-* also makes ingress_factory auto-attach the shared
+  # real-ip middleware first, which Anubis needs for its cookie and its
+  # trusted-local-networks bypass, and which the shared rate-limit chain now
+  # needs for its bucket key.
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
+  service_name    = module.anubis.service_name
+  port            = module.anubis.service_port
   tls_secret_name = var.tls_secret_name
   # OCI registry pushes ship full image layer blobs in one request; default
   # Traefik buffering chokes on anything past a few hundred MB.
