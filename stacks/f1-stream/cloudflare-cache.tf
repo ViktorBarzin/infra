@@ -12,11 +12,22 @@
 # ---------------------------------------------------------------------------
 # WHAT THIS BUYS, AND WHAT IT RISKS
 # ---------------------------------------------------------------------------
-# Measured 2026-09-10: the house has 15.06 Mbit/s of upload, and one live
-# viewer costs 4.55 Mbit/s (2.05 GB per viewer-hour). That is three concurrent
-# live viewers before the line is full, and the fourth breaks it. A replay on
-# the source rung is 7.9 Mbit/s, so that is ONE viewer. Traefik served 90.3 GB
-# for f1 over the preceding 30 days.
+# Measured 2026-09-10: one live viewer costs 4.55 Mbit/s (2.05 GB per
+# viewer-hour), and Traefik served 90.3 GB for f1 over the preceding 30 days.
+# Against a measured 32.0 Mbit/s of origin egress that is about seven
+# concurrent live viewers before the line is full. A replay on the source rung
+# is 7.9 Mbit/s, so about four of those.
+#
+# WHERE 32.0 COMES FROM, because an earlier figure in this file said 15.06 and
+# was wrong by half. 15.06 Mbit/s came from a single client pulling one object
+# at a time, which measures one TCP stream and not the line. Re-measured the
+# same day by purging five segments and fetching them CONCURRENTLY from outside
+# (five cold origin pulls through the tunnel, each confirmed against the Traefik
+# access log as a real origin fetch): 16,462,784 bytes in 4.116 s wall, so 32.0
+# Mbit/s sustained. Treat 32 as a FLOOR rather than a ceiling — nothing in that
+# run proves the line was saturated, only that it carries at least this much.
+# Re-measure the same way (concurrent, not serial) before trusting any number
+# here as a limit.
 #
 # The risk, in Cloudflare's own words (service-specific terms, CDN on Free, Pro
 # and Business): they reserve the right to "disable or limit your access to or
@@ -189,9 +200,9 @@ resource "cloudflare_ruleset" "f1_cache" {
 #   landed in colo LHR and took 5 MISS out of 5, pulling the full 16,742,528
 #   bytes from our origin, even though SOF was already warm.
 # Cloudflare's cache is per colo, so an audience spread across countries pays
-# for one copy per colo. At 4.55 Mbit/s per live viewer against 15.06 Mbit/s of
-# upload, that turns a viewer count into a COLO count: three colos fills the
-# line however few people are watching.
+# for one copy per colo. At 4.55 Mbit/s per live viewer against the measured
+# 32.0 Mbit/s of origin egress, that turns a viewer count into a COLO count:
+# roughly seven colos fills the line however few people are watching.
 #
 # Tiered Cache puts an upper tier between the edge and us. Cloudflare's docs:
 # "only the upper-tier can ask the origin for content", which "concentrates
@@ -214,6 +225,37 @@ resource "cloudflare_ruleset" "f1_cache" {
 # The trade: a distant viewer's FIRST request can be slightly slower, because a
 # cold upper tier is an extra hop. That buys a large amount of upload back, and
 # upload is the scarce resource here.
+#
+# VERIFIED AFTER APPLY, 2026-09-10, by re-running the London leg that had
+# failed before it. Both zone settings read on afterwards
+# (`argo/tiered_caching`, `cache/tiered_cache_smart_topology_enable`), and
+# `argo/smart_routing` still answers "not authorized", so no spend was enabled.
+#
+# The run: purge five live segments, warm colo SOF from home, then fetch the
+# same five through the UK VPN egress (194.35.235.160, colo LHR).
+#
+#   before  LHR 5 MISS / 5, and 16,742,528 bytes pulled from our origin
+#   after   LHR 5 HIT  / 5, and ZERO bytes pulled from our origin
+#
+# Origin pulls were counted in the Traefik access log, keyed on a per-segment
+# base64 slice AND on `ClientHost`, which carries `Cf-Connecting-Ip` and so
+# attributes each pull to the viewer that caused it. Exactly 5 pulls, all
+# 176.12.22.76 (the SOF warm), none from the UK address.
+#
+# TWO NEGATIVE CONTROLS, because "zero" is also what a broken query returns.
+# Purge one segment and fetch it from LHR alone -> 1 pull, attributed to
+# 194.35.235.160. Purge all five and fetch them concurrently from LHR -> 5
+# pulls, all 194.35.235.160. So the counter does see UK-attributed pulls when
+# they exist, and the zero above is real.
+#
+# Note for whoever re-runs this: `cf-cache-status` is reported by the LOWER
+# tier, so a tiered-cache hit can legitimately read either HIT or MISS. The
+# header is not the measurement. The origin pull count is.
+#
+# Note also that `homelab logs query` reaches Loki through the .lan ingress,
+# which puts your own search string into the traefik stream you are searching.
+# Port-forward Loki (`kubectl -n monitoring port-forward svc/loki 3100`) and
+# query it directly, or you will count your own queries as origin pulls.
 #
 # PROVIDER NOTE: the attribute is `cache_type` on provider v4, which this repo
 # pins (`~> 4`). It was renamed to `value` in v5, so a provider bump needs this
