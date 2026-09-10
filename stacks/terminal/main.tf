@@ -229,11 +229,57 @@ module "ingress_assets" {
     "/fonts/JetBrainsMono-Italic.woff2",
     "/fonts/JetBrainsMono-BoldItalic.woff2",
     "/fonts/dm-sans-latin-wght-normal.woff2",
+    # The symbol fallback face, added 2026-09-04. JetBrains Mono ships no
+    # braille and none of Claude Code's spinner glyphs, so both terminals carry
+    # an Iosevka subset for them. term.html embeds it as a data: URI and needed
+    # no route; the app-rendered terminal declares it in CSS and asks for it by
+    # URL, and while this path was missing here it fell through to the main
+    # ingress, reached ttyd, and 404ed, leaving the face at status "error" and
+    # the glyphs on whatever font the client happened to have.
+    "/fonts/tl-symbols.woff2",
   ]
   full_host        = "terminal.viktorbarzin.me" # MUST match the main ingress host; otherwise the factory derives terminal-assets.viktorbarzin.me and the carve-out never matches.
   dns_type         = "none"                     # host record already owned by the main terminal ingress
   tls_secret_name  = var.tls_secret_name
-  anti_ai_scraping = false # a manifest, three icons and five OFL font files; nothing for scrapers to mine
+  anti_ai_scraping = false # a manifest, three icons and six OFL font files; nothing for scrapers to mine
+  homepage_enabled = false # path carve-out, not its own dashboard tile
+}
+
+# The two build stamps, which are NOT public assets and so are not in the
+# carve-out above.
+#
+# tl-stamp writes share/build-id and share/term-build-id at package time
+# (release/manifest.go installs them into /usr/local/share/ttyd), and
+# clipboard-upload serves both. Neither path was routed anywhere, so both fell
+# through to the main ingress, reached ttyd and 404ed — the same shape as the
+# tl-symbols font above, and the same fix.
+#
+# What it cost while it was missing: ADR-0007 has the lobby update itself by
+# comparing the build it is running against the build being served, and
+# /build-id is where it reads the second one. A 404 there leaves the Build row
+# of the connection panel reading "not checked yet" forever, and the self-update
+# path falls back to refetching the whole document. Measured 2026-09-04:
+# clipboard-upload answers 200 for both on :7683, ttyd answers 404.
+#
+# auth = "required", not "none" like the assets beside it: only the PAGE fetches
+# these (frontend-v2/src/deploy/healer.ts), and the page already holds a
+# session. The service worker never does — which is worth stating because sw.js
+# IS in the public list, and had it been the fetcher these would have to be too.
+module "ingress_build_stamps" {
+  source       = "../../modules/kubernetes/ingress_factory"
+  auth         = "required"
+  namespace    = kubernetes_namespace.terminal.metadata[0].name
+  name         = "terminal-build-stamps"
+  service_name = kubernetes_service.clipboard_upload.metadata[0].name
+  port         = 80
+  ingress_path = [
+    "/build-id",
+    "/term-build-id",
+  ]
+  full_host        = "terminal.viktorbarzin.me" # as above: must match, or the factory derives its own host and the carve-out never matches
+  dns_type         = "none"                     # host record already owned by the main terminal ingress
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false # two short strings behind auth
   homepage_enabled = false # path carve-out, not its own dashboard tile
 }
 
@@ -407,6 +453,13 @@ resource "kubernetes_endpoints" "session_events" {
 # /hooks/* is deliberately absent: it is loopback-only and must stay off the
 # public ingress.
 #
+# /model was added on 2026-09-05: which model a session answers on, and how hard
+# it thinks. Neither is a launch flag — the terminal attach carries a command
+# KEY rather than a command line, and the pre-warm pool warms the bare `claude`
+# key — so the service applies a choice to a session that is already running by
+# driving the CLI's own picker. The lobby's model chip and its new-session row
+# both POST here; without the route both controls 404.
+#
 # /search and /answer-text were added on 2026-08-18. /search finds text
 # anywhere in a session's transcript — the browser holds only the last 20 turns,
 # so the search has to run where the whole file is. /answer-text types the free
@@ -424,6 +477,15 @@ resource "kubernetes_endpoints" "session_events" {
 # session's OWN skills and custom commands, which the service reads off the
 # user's disk. The page ships the CLI's built-ins, so a missing route costs the
 # per-user half of the menu rather than the menu.
+#
+# /answer was added on 2026-09-10, when answering a multi-question dialog moved
+# out of the browser and into session-events. The text view now sends one choice
+# per request and the service drives the dialog, so without this route the whole
+# feature 404s. It needs its own prefix: `/answer-text/` does not match
+# `/answer/`, and a rule that dropped the trailing slash would swallow both.
+# Field telemetry over the ten days before the change recorded four-question
+# answers failing 4 times in 5, which is what prompted it (terminal-lobby
+# ADR-0010, amended).
 resource "kubernetes_manifest" "session_events_ingressroute" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -435,7 +497,7 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`))"
+        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`) || PathPrefix(`/answer/`) || PathPrefix(`/model/`))"
         kind  = "Rule"
         middlewares = [
           {

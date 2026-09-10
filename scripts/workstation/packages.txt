@@ -67,9 +67,26 @@ prometheus-node-exporter
 # Chromium. The 2026-08-31 session study found iOS/Safari/PWA is where most
 # client-side defects in the corpus live and had NO instrument at all.
 #
-# WebKit on Linux is NOT Safari on iOS: no iOS UA, no iOS viewport quirks, a
-# different media stack. It narrows the gap; it does not close it. Treat a
-# WebKit repro as evidence and a WebKit pass as inconclusive for iOS.
+# MEASURED VERDICT (2026-09-01): this does NOT help with the iOS gap. Of the 15
+# iOS/Safari/PWA defects in the session corpus, WebKit-on-Linux would reproduce
+# 2 — and both already reproduce in the headless Chromium we had, so the
+# marginal yield is ZERO defects. Every corpus defect was caused by
+# iOS-the-PLATFORM (soft keyboard, safe-area insets, standalone containers,
+# push, share) or by Safari-the-OLD-VERSION, and none by WebKit-the-engine.
+# WebKit on Linux is the wrong axis: it supplies the engine family we did not
+# need and withholds the platform behaviour we did. Measured on this box:
+# safe-area insets read 0px even with viewport-fit=cover, maxTouchPoints is 0
+# under the iPhone descriptor, navigator.standalone and display-mode:standalone
+# cannot be faked at all, navigator.share and PushManager are undefined, and an
+# offline reload with a correct precaching service worker dies with "WebKit
+# encountered an internal error" where Chromium boots.
+#
+# Kept anyway: the deps are small, WebKit is a useful third engine for ordinary
+# cross-browser layout work, and removing them would only re-break a launch that
+# now works. But do NOT count a WebKit pass as iOS evidence, and do not treat
+# this install as progress on the iOS gap — closing that needs real Apple
+# hardware, and the old-iPad cluster in the corpus needs an iPadOS 15-era engine
+# specifically, which current hardware would also miss.
 #
 # List taken from `playwright install-deps --dry-run webkit`, not hand-guessed.
 # Re-derive it after a playwright major bump rather than trusting this copy.

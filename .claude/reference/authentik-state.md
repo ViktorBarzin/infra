@@ -12,6 +12,7 @@
 | Headscale | OAuth2/OIDC | implicit consent |
 | Immich | OAuth2/OIDC | implicit consent |
 | Kubernetes | OAuth2/OIDC (public) | implicit consent |
+| Kubernetes (agent sessions) | OAuth2/OIDC (public) | implicit consent |
 | Kubernetes Dashboard | OAuth2/OIDC (confidential) | implicit consent |
 | linkwarden | OAuth2/OIDC | implicit consent |
 | Vault | OAuth2/OIDC | implicit consent |
@@ -25,12 +26,32 @@
 > expiring consent screen (re-shown every 4 weeks per app) only slowed
 > first-time signin.
 
+> **Kubernetes** (public client `kubernetes`, UI-created Feb 2026): what every
+> user's kubelogin kubeconfig authenticates with
+> (`scripts/t3-provision-users.sh`). **Described in Terraform since 2026-09-01**
+> (`stacks/rbac/authentik-kubernetes.tf`) with `import` blocks gated off by
+> `manage_kubernetes_oidc_app`; adoption plans `2 to import, 0 to change`, so it
+> is a deliberate human step rather than something a CI apply performs.
+>
+> **Kubernetes (agent sessions)** (public client `kubernetes-agent`, TF-managed in
+> the same file, 2026-09-01): the separate identity for agent contexts, design
+> step 4. The apiserver maps its claims under the `agent:` prefix, so an agent
+> reaches the API as `agent:<email>` in `agent:kubernetes-*` groups and matches
+> only the `agent:*` RBAC bindings. **The apiserver does not trust this issuer
+> yet** — that is `agent_oidc_enabled` in `stacks/rbac/modules/rbac/apiserver-oidc.tf`,
+> default false, performed per `docs/runbooks/apiserver-oidc-agent-identity.md`.
+>
 > **Kubernetes Dashboard** (TF-managed in `stacks/k8s-dashboard/authentik.tf`):
 > confidential client `k8s-dashboard`, built for seamless dashboard SSO via
-> oauth2-proxy. **Currently IDLE** — the apiserver rejects all OIDC tokens (see
-> `docs/plans/2026-06-04-k8s-dashboard-sso-design.md` §12), so the dashboard runs
-> on forward-auth + token-paste instead and oauth2-proxy is unwired. Kept for a
-> future SSO retry once apiserver OIDC is fixed.
+> oauth2-proxy. The **"apiserver rejects all OIDC tokens"** note here was true when
+> written and is no longer: verified 2026-09-01, the apiserver carries
+> `--authentication-config` with BOTH the `kubernetes` and `k8s-dashboard`
+> issuers, rendered by Terraform and byte-identical to the node (sha256
+> `bdefc260…97e16`, cross-checked against the apiserver's own
+> `apiserver_authentication_config_controller_last_config_info` metric). Whether
+> oauth2-proxy itself is wired up was not re-checked. Separately, there were zero
+> OIDC-authenticated audit events in the 24 h to 2026-09-01, so the path is
+> configured and unused.
 >
 > **admin-services-restriction** policy (TF-managed in
 > `stacks/authentik/admin-services-restriction.tf`): since infra#84 / ADR-0023
@@ -53,8 +74,8 @@
 | Headscale Users | Allow Login Users | No | VPN access |
 | Home Server Admins | Allow Login Users | No | Server admin access |
 | Wrongmove Users | Allow Login Users | No | Real-estate app access |
-| kubernetes-admins | -- | No | K8s cluster-admin RBAC |
-| kubernetes-power-users | -- | No | K8s power-user RBAC |
+| kubernetes-admins | -- | No | K8s cluster-admin RBAC (group-keyed binding `oidc-group-kubernetes-admins` since 2026-09-01) |
+| kubernetes-power-users | -- | No | K8s power-user RBAC (read-only per ADR-0005) |
 | kubernetes-namespace-owners | -- | No | K8s namespace-owner RBAC |
 | Task Submitters | -- | No | Task submission access |
 | Proxy Users | -- | No | `proxy.viktorbarzin.me` remote browser ONLY (parentless — confined; ADR-0023) |

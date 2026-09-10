@@ -59,6 +59,47 @@
     devvm_user_memory_max: "{{ [24, (ansible_memtotal_mb / 1024 * 0.9) | round | int] | min }}G"
     devvm_pane_memory_max: "{{ [6, (ansible_memtotal_mb / 1024 * 0.2) | round | int] | min }}G"
     devvm_docker_memory_max: "{{ [8, (ansible_memtotal_mb / 1024 * 0.3) | round | int] | min }}G"
+    # Per-user swap, BOUNDED rather than off (2026-09-02). It was 0 from
+    # 2026-06-22, when a user runaway swap-thrashed the throttled virtual disk
+    # into an I/O storm and the box had to be hard-killed. Unlimited is what did
+    # that: the storm ran swap to 15 GB. A ceiling of 4G per user lets a session
+    # page out instead of being killed — which is the point, since tmpfs pages
+    # from /tmp are charged to a pane and are otherwise unswappable — while
+    # capping what one user can push at a disk that is seek-bound and shared
+    # (bead code-oflt is still open). The 6G pane cap remains the containment.
+    devvm_user_swap_max: "{{ [4, (ansible_memtotal_mb / 1024 * 0.13) | round | int] | min }}G"
+    # When the playwright browser reaper decides a gpu-process has wedged.
+    # 2 cores is roughly the working peak of a headless page render, and the
+    # 2026-06-12 leak sat at 10.5; 10 samples is 10 minutes, against 6.5 hours
+    # of it actually running. Both are deliberately far from the observed
+    # numbers on either side, so a busy page is never mistaken for a leak.
+    devvm_playwright_reaper_threshold_cores: 2
+    devvm_playwright_reaper_window_minutes: 10
+    # Swap sized from measurement, not from a RAM ratio: system.slice peaked at
+    # 8.4 GiB over the 30 days to 2026-09-02 (p50 2.7, p99 7.0) and two users at
+    # 4G each add 8, so 24 GiB total leaves ~7.6 GiB spare. The old 14 GiB never
+    # went past 60% because the user slices could not reach it at all.
+    #
+    # TWO FILES, ADDITIVE, rather than one grown in place. A swapfile cannot be
+    # extended — the header records its size and the kernel holds the extent map
+    # — so growing means a new file, and retiring the old one means swapoff.
+    # swapoff does NOT hand pages to another device: try_to_unuse() reads every
+    # page back into RAM. Measured 2026-09-02 that would be 5.2 GiB arriving into
+    # 7.4 GiB of available RAM beside 30 live Claude sessions, for a cosmetic
+    # gain. Same call, same reason, as the 2026-06-10 growth.
+    # ONE file is the target. It is two right now because growing swap on a live
+    # box has to be additive (see the swap tasks), and converging to one needs a
+    # swapoff, which reads every page in that file back into RAM. Measured
+    # 2026-09-02: /swapfile held 9 GiB against 8.2 GiB of MemAvailable, so the
+    # merge cannot be done while the box is carrying pages.
+    #
+    # So it converges instead of being done: the tasks below act on a swap area
+    # only when that area holds ZERO pages, which is true right after a boot and
+    # false the rest of the time. The first apply after any reboot resizes
+    # /swapfile to the target and retires /swapfile2, and every apply before that
+    # is a no-op. Same approach, same reason, as the 2026-06-12 merge, which was
+    # also done post-boot at 0B used.
+    devvm_swap_target: { path: /swapfile, size_gb: 24 }
     # The one account this playbook owns. Everyone else comes from the roster.
     devvm_admin_user: wizard
     devvm_admin_ssh_key: ""
@@ -71,6 +112,15 @@
     # Pinned on purpose: this npm package runs unattended as each user, so the
     # version is a reviewed choice. Bump it when you mean to.
     devvm_skills_cli: skills@1.5.23
+    # Users whose Claude Code the nightly timer keeps current. Claude Code
+    # installs PER USER (~/.local/share/claude/versions), so unlike codex there
+    # is no single binary to swap and every account needs its own update run.
+    # A user with no native install is skipped by the script, so listing one
+    # who does not use Claude Code is harmless rather than an error.
+    devvm_claude_users:
+      - wizard
+      - emo
+      - ancamilea
 
   tasks:
     # ---- 1) the apt toolset -------------------------------------------------
@@ -85,6 +135,42 @@
              | reject('match', '^#')
              | reject('equalto', '')
              | list }}
+
+    # Caddy was installed by hand at some point and left running: the stock
+    # welcome page on :80, zero handled requests in 30 days, nothing depending
+    # on it (apt-cache rdepends is empty). Its apt repo was undeclared machine
+    # state, and its Cloudsmith signing key EXPIRED — which failed
+    # `apt-get update` and therefore ABORTED the task below, so nothing on this
+    # box could be apt-installed at all (found 2026-09-01 while installing the
+    # Playwright WebKit dependencies). An unused web server with no update path
+    # is worse than either fixing or removing it, so it goes.
+    #
+    # Runs BEFORE the install task on purpose: while the repo is present with an
+    # expired key, `update_cache: true` fails and the install never happens.
+    - name: Remove the hand-installed caddy and its apt repo
+      block:
+        - name: Stop and disable caddy
+          ansible.builtin.systemd_service:
+            name: caddy
+            state: stopped
+            enabled: false
+          failed_when: false
+
+        - name: Remove the caddy package
+          ansible.builtin.apt:
+            name: caddy
+            state: absent
+            purge: true
+            update_cache: false
+
+        - name: Remove the caddy apt source and its expired keyring
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/apt/sources.list.d/caddy-stable.list
+            - /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+          register: caddy_repo_removed
 
     - name: Install the declared apt packages
       ansible.builtin.apt:
@@ -216,8 +302,14 @@
         - /etc/apt/sources.list.d
         - /etc/systemd/system/user-.slice.d
         - /etc/systemd/system/system.slice.d
+        - /etc/systemd/system/systemd-tmpfiles-clean.timer.d
         - /etc/systemd/user/scope.d
         - /usr/local/sbin
+        # The playwright-mcp slice has no unit file of its own -- it exists
+        # only because playwright-mcp@.service names it with Slice=. systemd
+        # still reads drop-ins for an implicit slice, which is how the CPU
+        # cap below reaches it without this repo owning the slice itself.
+        - '/etc/systemd/system/system-playwright\x2dmcp.slice.d'
 
     # ---- 4) the enforced machine-wide Claude config -------------------------
     # Top of the settings precedence chain, and carries no secrets.
@@ -332,6 +424,164 @@
         - docker-disk-gc.timer
         - networkd-dhcp-watchdog.timer
 
+    # Claude Code leaves one scratch directory per session under /tmp and never
+    # reaps them. /tmp is a RAM-backed tmpfs here, so that is a slow memory leak:
+    # it reached 8.0G of 8.0G on 2026-09-06 and background commands began failing
+    # with ENOSPC. The reasoning, the measurements and why the age check is
+    # pinned to mtime are in the file itself.
+    - name: Bound the Claude Code scratch retention under /tmp
+      ansible.builtin.copy:
+        src: files/devvm/claude-scratch.conf
+        dest: /etc/tmpfiles.d/claude-scratch.conf
+        mode: "0644"
+        owner: root
+        group: root
+
+    - name: Sweep tmpfiles hourly rather than daily
+      ansible.builtin.copy:
+        src: files/devvm/tmpfiles-clean-hourly.conf
+        dest: /etc/systemd/system/systemd-tmpfiles-clean.timer.d/override.conf
+        mode: "0644"
+        owner: root
+        group: root
+      notify: reload systemd
+
+    # ---- 7a2) the codex CLI, and keeping it current -------------------------
+    # Added 2026-09-06. Nothing in this repo installed codex: setup-devvm.sh and
+    # the section above cover only the shared auth at /opt/codex-shared and the
+    # auth-backup units, so the package itself was a hand install that a rebuilt
+    # box would not have had. It was found at 0.144.3 from 2026-07-13 while npm
+    # latest was 0.153.4 from 2026-09-04.
+    #
+    # `state: latest`, not a version, because Viktor wants these agent binaries
+    # always at latest (2026-09-06). Codex fetches its model list from the
+    # server, so an old CLI shows an old list even for an account entitled to
+    # more, which is how a newly released model went missing. The one pinned
+    # tool in this fleet is t3, held at v0.0.24 for a real regression; that is
+    # the bar for a pin.
+    #
+    # A playbook run alone would leave the box current only as often as someone
+    # runs it, so the timer below carries it the rest of the time.
+    - name: Install the codex CLI at the latest published version
+      community.general.npm:
+        name: "@openai/codex"
+        global: true
+        state: latest
+
+    - name: Install the codex updater
+      ansible.builtin.copy:
+        src: files/devvm/codex-update
+        dest: /usr/local/bin/codex-update
+        mode: "0755"
+        owner: root
+        group: root
+
+    # ---- 7a3) keeping Claude Code current, for everyone ---------------------
+    # Added 2026-09-06, same reason as the codex block above: Viktor wants these
+    # agent binaries always at latest.
+    #
+    # It was true for one account. `claude update` ran from wizard's PERSONAL
+    # crontab at 03:30 — a hand-installed line in no repository, covering no one
+    # else — and the installs had drifted apart behind it:
+    #
+    #   wizard     2.1.263   (the cron)
+    #   emo        2.1.259
+    #   ancamilea  2.1.183
+    #
+    # Claude Code installs per user, so this cannot be one `npm install -g` the
+    # way codex is; the script runs the update as each account in turn.
+    - name: Install the Claude Code updater
+      ansible.builtin.copy:
+        src: files/devvm/claude-update
+        dest: /usr/local/bin/claude-update
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Configure the Claude Code updater
+      ansible.builtin.copy:
+        dest: /etc/default/claude-update
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by playbooks/devvm.yml — edit there, not here.
+          CLAUDE_UPDATE_USERS="{{ devvm_claude_users | join(' ') }}"
+
+    # The personal crontab line this replaces. Left in place it would run the
+    # same update an unknown number of minutes from the timer, against the same
+    # per-user install, and keep appending to a log on the tmpfs.
+    - name: Drop the hand-installed claude update cron line
+      ansible.builtin.lineinfile:
+        path: "/var/spool/cron/crontabs/{{ item }}"
+        regexp: 'claude(-code)?.*\bupdate\b'
+        state: absent
+      loop: "{{ devvm_claude_users }}"
+      failed_when: false
+
+    # ---- 7a4) one job for every agent CLI -----------------------------------
+    # Added 2026-09-06. Viktor: "we don't need separate jobs for updates".
+    #
+    # The three updaters landed as three timers over the course of one
+    # afternoon, at 03:39, 04:59 and 05:58, staggered so they would not share a
+    # network window. One sequential job removes the need for that arrangement
+    # and leaves a single unit to look at when a morning's update did something
+    # unexpected.
+    #
+    # He also asked whether apt's unattended-upgrades could own this. It cannot
+    # reach any of the three: codex and t3 are global npm packages and Claude
+    # Code is a per-user native install under ~/.local/share, so none is a deb
+    # and apt has no handle on them. The two things on this box that ARE debs,
+    # terminal-lobby and ttyd-devvm, are already covered by apt and by the
+    # release deploy.
+    #
+    # The scripts stay separate. Each is individually runnable by hand, which is
+    # what the t3 runbook instructs, and t3-autoupdate.service is kept for the
+    # same reason. What goes away is the three schedules.
+    - name: Install the agent updater units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - agent-update.service
+        - agent-update.timer
+        - claude-update.service
+        - codex-update.service
+      notify: reload systemd
+
+    - name: Enable the agent updater timer
+      ansible.builtin.systemd_service:
+        name: agent-update.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # The per-tool schedules this replaces. Stopped and disabled before their
+    # unit files go, or systemd keeps an enabled symlink pointing at nothing.
+    - name: Stop the per-tool update timers
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop:
+        - claude-update.timer
+        - codex-update.timer
+        - t3-autoupdate.timer
+      failed_when: false
+
+    - name: Remove the per-tool update timer units
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - claude-update.timer
+        - codex-update.timer
+        - t3-autoupdate.timer
+      notify: reload systemd
+
     # ---- 7b) nightly refresh of the mattpocock skill set --------------------
     # Added 2026-08-30. The skills are a working dependency of how sessions run
     # here, and upstream ships behaviour changes most weeks, so they drifted two
@@ -371,6 +621,40 @@
         owner: root
         group: root
 
+    # copy never deletes, so retiring a patch or an exclude in the repo would
+    # otherwise leave it applying on the box forever. This directory is entirely
+    # repo-owned, so anything on disk the repo does not carry is stale. Both
+    # sides are enumerated with find and compared on the path relative to their
+    # own root; a fileglob lookup silently returns nothing here, which makes the
+    # difference "delete everything".
+    - name: List the skill-policy files the repo carries
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/files/devvm/claude-skills"
+        recurse: true
+        file_type: file
+      register: devvm_skill_policy_repo
+      delegate_to: localhost
+      become: false
+      check_mode: false
+
+    - name: List the skill-policy files on the box
+      ansible.builtin.find:
+        paths: /usr/local/share/claude-skills
+        recurse: true
+        file_type: file
+      register: devvm_skill_policy_live
+      check_mode: false
+
+    - name: Remove skill-policy files the repo no longer carries
+      ansible.builtin.file:
+        path: "/usr/local/share/claude-skills/{{ item }}"
+        state: absent
+      loop: >-
+        {{ (devvm_skill_policy_live.files | map(attribute='path')
+            | map('relpath', '/usr/local/share/claude-skills') | list)
+           | difference(devvm_skill_policy_repo.files | map(attribute='path')
+             | map('relpath', playbook_dir + '/files/devvm/claude-skills') | list) }}
+
     - name: Install the skills updater units
       ansible.builtin.copy:
         src: "files/devvm/{{ item }}"
@@ -389,6 +673,126 @@
         enabled: true
         state: started
         daemon_reload: true
+
+    # ---- 7b) swap ------------------------------------------------------------
+    # Swap was hand-managed until 2026-09-02: nothing in this repo declared the
+    # file or the fstab line, so a rebuilt box came up swapless and the size
+    # lived only in one machine and one person's notes.
+    #
+    # Every task here is guarded on a swap area holding NOTHING, because the one
+    # operation this needs — swapoff — does not hand pages to another device.
+    # try_to_unuse() reads every page back into RAM, so acting on a carrying file
+    # risks the OOM this whole thread is about.
+    - name: List swap areas that hold no pages
+      ansible.builtin.shell:
+        cmd: "swapon --show=NAME,USED --bytes --noheadings | awk '$2 == 0 {print $1}'"
+      register: devvm_swap_empty
+      changed_when: false
+      check_mode: false
+
+    - name: List every active swap area
+      ansible.builtin.command:
+        cmd: swapon --noheadings --show=NAME
+      register: devvm_swap_active
+      changed_when: false
+      check_mode: false
+
+    - name: Check the target swap file
+      ansible.builtin.stat:
+        path: "{{ devvm_swap_target.path }}"
+      register: devvm_swap_target_stat
+
+    # One task, not four: a swap file is usable only once allocated AND
+    # permissioned AND formatted, and a half-made one that survived a failure
+    # between steps would be picked up by fstab at the next boot. `creates` makes
+    # it idempotent and lets --check skip cleanly.
+    #
+    # fallocate, never dd: instant on ext4 and writes no data, so it costs
+    # nothing on a spindle that is already this box's bottleneck.
+    #
+    # set -eu, not -euo pipefail: ansible.builtin.shell runs /bin/sh, which is
+    # dash on Ubuntu and has no pipefail — dash exits 2 on the `set` line before
+    # reaching fallocate. No changed_when override either: an unconditional one
+    # reports a change even when `creates` skipped the task, which in --check made
+    # this look as though it would re-run mkswap over the LIVE swapfile.
+    - name: Create the target swap file if it is missing
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          fallocate -l {{ devvm_swap_target.size_gb }}G {{ devvm_swap_target.path }}
+          chown root:root {{ devvm_swap_target.path }}
+          chmod 0600 {{ devvm_swap_target.path }}
+          mkswap {{ devvm_swap_target.path }}
+        creates: "{{ devvm_swap_target.path }}"
+
+    # Resize to the target, but only while it is carrying nothing. Ordered BEFORE
+    # the retire below so the other area is still providing cover during the
+    # swapoff, which means there is never a swapless moment.
+    - name: Resize the target swap file to the declared size
+      when:
+        - devvm_swap_target_stat.stat.exists
+        - (devvm_swap_target_stat.stat.size | int) != (devvm_swap_target.size_gb | int * 1024 * 1024 * 1024)
+        - devvm_swap_target.path in devvm_swap_empty.stdout_lines
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          swapoff {{ devvm_swap_target.path }}
+          fallocate -l {{ devvm_swap_target.size_gb }}G {{ devvm_swap_target.path }}
+          chmod 0600 {{ devvm_swap_target.path }}
+          mkswap {{ devvm_swap_target.path }}
+          swapon {{ devvm_swap_target.path }}
+      changed_when: true
+
+    - name: Declare the target in fstab
+      ansible.posix.mount:
+        src: "{{ devvm_swap_target.path }}"
+        path: none
+        fstype: swap
+        opts: sw
+        state: present
+
+    - name: Activate the target if it is not carrying yet
+      when: devvm_swap_target.path not in devvm_swap_active.stdout
+      ansible.builtin.command:
+        cmd: "swapon {{ devvm_swap_target.path }}"
+      changed_when: true
+
+    # Re-read the target's size: the resize above may have just changed it.
+    - name: Re-check the target swap file
+      ansible.builtin.stat:
+        path: "{{ devvm_swap_target.path }}"
+      register: devvm_swap_target_now
+
+    # Retire superseded areas, only when they hold nothing AND the target has
+    # already reached its declared size. That second guard is load-bearing: with
+    # /swapfile still 14G and /swapfile2 empty, retiring on emptiness alone would
+    # drop total swap from 24G to 14G while the user slices hold 8G of ceiling
+    # between them — shrinking capacity in the name of tidiness. The path guard
+    # keeps this from ever acting on a device rather than a file we made.
+    - name: Retire superseded swap areas
+      when:
+        - item != devvm_swap_target.path
+        - item is match('^/[^/]')
+        - (devvm_swap_target_now.stat.size | int) == (devvm_swap_target.size_gb | int * 1024 * 1024 * 1024)
+      loop: "{{ devvm_swap_empty.stdout_lines }}"
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          swapoff {{ item }}
+          rm -f {{ item }}
+      changed_when: true
+
+    - name: Drop superseded areas from fstab
+      when:
+        - item != devvm_swap_target.path
+        - item is match('^/[^/]')
+        - (devvm_swap_target_now.stat.size | int) == (devvm_swap_target.size_gb | int * 1024 * 1024 * 1024)
+      loop: "{{ devvm_swap_empty.stdout_lines }}"
+      ansible.posix.mount:
+        src: "{{ item }}"
+        path: none
+        fstype: swap
+        state: absent_from_fstab
 
     # ---- 8) resource containment (setup-devvm.sh section 10) ---------------
     # Added after 2026-06-22, when one user's runaway swap-thrashed the throttled
@@ -440,6 +844,191 @@
         enabled: true
         state: started
 
+    # ---- 8a) the shared playwright-mcp browsers ------------------------------
+    # Adopted 2026-09-03 for bead code-r725. On 2026-06-12 a headless Chrome
+    # from the playwright-shared MCP wedged its swiftshader-webgl gpu-process
+    # at about 10.5 cores for 6.5 hours on a blank page, dominating this box
+    # and the Proxmox host and starving etcd. The MCP's own browser_close did
+    # not clear it, because page.close never reaches a spinning GPU process.
+    #
+    # Two halves. The quota bounds the damage the moment it starts; the reaper
+    # clears it a few minutes later so nobody has to notice. Each file carries
+    # its own reasoning, including how the reaper is kept away from a browser
+    # a person started themselves.
+    #
+    # Note for a rebuild: playwright-mcp@.service and its snapshot-refresh
+    # timer are NOT declared by this playbook. They were hand-installed in
+    # /etc/systemd/system on 2026-06-20 and no repository holds them, so a
+    # fresh machine gets this cap and this reaper with nothing to act on.
+    - name: Cap the playwright-mcp browser slice
+      ansible.builtin.copy:
+        src: files/devvm/50-devvm-playwright-cpu.conf
+        dest: '/etc/systemd/system/system-playwright\x2dmcp.slice.d/50-devvm-playwright-cpu.conf'
+        mode: "0644"
+        owner: root
+        group: root
+      notify: reload systemd
+
+    - name: Install the playwright browser reaper
+      ansible.builtin.copy:
+        src: files/devvm/playwright-reaper
+        dest: /usr/local/bin/playwright-reaper
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Configure the playwright browser reaper
+      ansible.builtin.copy:
+        dest: /etc/default/playwright-reaper
+        mode: "0644"
+        owner: root
+        group: root
+        content: |
+          # Managed by playbooks/devvm.yml -- edit there, not here.
+          # Cores a gpu-process has to hold before a sample counts against it,
+          # and how many consecutive one-minute samples it takes to be killed.
+          PLAYWRIGHT_REAPER_THRESHOLD_CORES={{ devvm_playwright_reaper_threshold_cores }}
+          PLAYWRIGHT_REAPER_WINDOW_MINUTES={{ devvm_playwright_reaper_window_minutes }}
+          PLAYWRIGHT_REAPER_DRY_RUN=0
+      notify: reload systemd
+
+    - name: Install the playwright reaper units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - playwright-reaper.service
+        - playwright-reaper.timer
+      notify: reload systemd
+
+    # Skipped under --check: the unit file has not been written yet on a box
+    # that has never had this applied, and systemd cannot be asked about a
+    # unit that does not exist. Without the guard the documented check-first
+    # workflow fails on a fresh machine rather than reporting the change.
+    - name: Enable the playwright reaper timer
+      ansible.builtin.systemd_service:
+        name: playwright-reaper.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    # ---- 8a-bis) the log shipper ---------------------------------------------
+    # scripts/devvm-promtail.yaml has described itself as the source of truth
+    # since it was written, but nothing applied it: /etc/promtail/config.yml was
+    # hand-deployed and dated 2026-07-09. The two were byte-identical when checked
+    # on 2026-09-01, so this task takes ownership without changing behaviour --
+    # and a committed change to the shipper now reaches the box instead of waiting
+    # for someone to remember.
+    #
+    # The identifier allowlist in that file is what gives Loki rules a label to
+    # select on. A rule keyed to an identifier missing from the allowlist matches
+    # nothing and reports no error, so the two files have to move together.
+    - name: Deploy the promtail config
+      ansible.builtin.copy:
+        src: ../scripts/devvm-promtail.yaml
+        dest: /etc/promtail/config.yml
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart promtail
+
+    - name: Enable promtail
+      ansible.builtin.systemd_service:
+        name: promtail
+        enabled: true
+        state: started
+
+    # ---- 8b) node_exporter textfile collector -------------------------------
+    # tl-session-watch (terminal-lobby package) writes per-session pane memory
+    # here every 30s, which is what gives us a history to move the 3G pane
+    # threshold on evidence rather than a guess. The collector is off by default
+    # (ARGS=""), and turning it on needs no new scrape target: the `devvm`
+    # Prometheus job already scrapes 10.0.10.10:9100 and applies no metric
+    # keep-list, so tl_pane_* is ingested as soon as it appears.
+    #
+    # Design: docs/plans/2026-09-01-devvm-session-loss-alerting.md
+    - name: Create the node_exporter textfile directory
+      ansible.builtin.file:
+        path: /var/lib/node_exporter/textfile
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Point node_exporter at the textfile directory
+      ansible.builtin.copy:
+        dest: /etc/default/prometheus-node-exporter
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml -- edit there, not here.
+          #
+          # The textfile collector is what carries tl_pane_memory_bytes,
+          # tl_pane_memory_max_bytes and tl_pane_top_is_claude from
+          # tl-session-watch into Prometheus. Those are history for tuning the
+          # pane threshold; the alerts themselves come from the journal, because
+          # a 2-minute scrape cannot see a pane cross its cap and die inside one
+          # interval.
+          ARGS="--collector.textfile.directory=/var/lib/node_exporter/textfile"
+      notify: restart node-exporter
+
+    - name: Enable node_exporter
+      ansible.builtin.systemd_service:
+        name: prometheus-node-exporter
+        enabled: true
+        state: started
+
+    # ---- 8c) the k8s node drift check ---------------------------------------
+    # The devvm is where ansible, the node SSH keys and a kubeconfig already
+    # live, so it is where the check that compares the six k8s nodes against
+    # playbooks/k8s-node-tuning.yml runs. Added 2026-09-05 for bead code-yypr.
+    #
+    # It REPORTS, it does not repair. Several docs claimed for two days that the
+    # node tuning was "reconciled hourly"; nothing scheduled it, on this box or
+    # anywhere else, and the claim outlived every grep for it. This is the
+    # schedule those docs were describing, with one deliberate difference: an
+    # unattended run that WROTE kubelet config to six nodes could brick a node at
+    # its next boot with console-only recovery, so a person reads the alert and
+    # runs the playbook. What changes is that the person finds out.
+    #
+    # Reaches Slack through Prometheus: the script pushes gauges to the
+    # pushgateway, five rules in stacks/monitoring read them, and Alertmanager
+    # routes warning to #alerts. The freshness of the metric is alerted on too,
+    # so a checker that quietly stops running is itself the signal.
+    - name: Install the k8s node drift check
+      ansible.builtin.copy:
+        src: ../scripts/k8s-node-drift-check
+        dest: /usr/local/bin/k8s-node-drift-check
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Install the k8s node drift check units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - k8s-node-drift-check.service
+        - k8s-node-drift-check.timer
+      notify: reload systemd
+
+    # Same --check guard as the playwright reaper above: on a box that has never
+    # had this applied the unit file does not exist yet, and systemd cannot be
+    # asked about a unit that is not there.
+    - name: Enable the k8s node drift check timer
+      ansible.builtin.systemd_service:
+        name: k8s-node-drift-check.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
     # ---- 9) docker containment ----------------------------------------------
     - name: Create the capped docker slice
       ansible.builtin.template:
@@ -483,6 +1072,16 @@
     - name: restart earlyoom
       ansible.builtin.systemd_service:
         name: earlyoom
+        state: restarted
+
+    - name: restart node-exporter
+      ansible.builtin.systemd_service:
+        name: prometheus-node-exporter
+        state: restarted
+
+    - name: restart promtail
+      ansible.builtin.systemd_service:
+        name: promtail
         state: restarted
 
     # Restarting dockerd interrupts running containers, so it is a handler that

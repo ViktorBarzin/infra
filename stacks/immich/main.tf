@@ -41,51 +41,57 @@ module "tls_secret" {
 # NFS volumes on Proxmox host (migrated from TrueNAS 2026-04-13)
 
 module "nfs_backups_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-backups-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs/immich/backups"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-backups-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs/immich/backups"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_encoded_video_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-encoded-video-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs/immich/encoded-video"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-encoded-video-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs/immich/encoded-video"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_library_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-library-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs/immich/library"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-library-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs/immich/library"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_profile_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-profile-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs/immich/profile"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-profile-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs/immich/profile"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_thumbs_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-thumbs-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs-ssd/immich/thumbs"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-thumbs-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs-ssd/immich/thumbs"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_upload_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-upload-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs/immich/upload"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-upload-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs/immich/upload"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_postgresql_host" {
@@ -128,11 +134,12 @@ resource "kubernetes_persistent_volume_claim" "immich_postgresql_encrypted" {
 }
 
 module "nfs_ml_cache_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "immich-ml-cache-host"
-  namespace  = kubernetes_namespace.immich.metadata[0].name
-  nfs_server = var.proxmox_host
-  nfs_path   = "/srv/nfs-ssd/immich/machine-learning"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "immich-ml-cache-host"
+  namespace          = kubernetes_namespace.immich.metadata[0].name
+  nfs_server         = var.proxmox_host
+  nfs_path           = "/srv/nfs-ssd/immich/machine-learning"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_namespace" "immich" {
@@ -633,7 +640,35 @@ resource "kubernetes_deployment" "immich_api" {
           }
           resources {
             requests = {
-              cpu = "100m"
+              # 100m -> 500m (2026-09-06). Serving 40 concurrent thumbnails
+              # measured 1.58 cores on one pod, so the old request was 16x under
+              # what a routine grid scroll asks for. CPU requests set the CFS
+              # share a cgroup gets when a node is contended, so a 100m request
+              # meant this pod was entitled to a tenth of a core at exactly the
+              # moment a user was waiting on a burst of images. The 30d
+              # Prometheus peak reads only 0.58 cores, but that is
+              # rate(...[5m]) and cannot see a 565ms burst; do not size this
+              # from that series. No CPU limit on purpose, so bursts stay free
+              # on an idle node. 3 replicas x 500m = 1.5 cores of new requests,
+              # and the busiest node was at 60%.
+              #
+              # This is right-sizing, NOT a fix for slow thumbnails. That
+              # symptom is still open: production thumbnail latency is p50 107ms
+              # and p90 823ms, and it is backend time (Traefik OriginDuration
+              # equals Duration to within 2ms, so it is not the client link).
+              # What has been RULED OUT by measurement, so nobody re-tests it:
+              # storage is fine (32 concurrent raw reads off the NFS mount in
+              # 18ms); the pod is not CPU-capped (1.58 of 8 visible cores, no
+              # limit); and libuv's threadpool is not the ceiling - setting
+              # UV_THREADPOOL_SIZE=16 was tried here and reverted because the
+              # concurrency curve was unchanged (4/8/16/32 concurrent ran
+              # 34/49/88/181 ms before and 30-37/48-55/80-117/189-245 ms after).
+              # A clean single-process harness also shows no collapse at all:
+              # one pod serves 242-460 thumbnails/s locally against a measured
+              # production peak of 64/s across three pods. The unexplained gap
+              # is between in-pod localhost (~4ms/req) and the same request
+              # through Traefik (70ms single, up to 590ms under parallelism).
+              cpu = "500m"
               # API-only profile — the old 6.9Gi peaks belong to jobs (now in
               # immich-worker). Lean so 3 replicas + cronjobs fit the 24Gi ns
               # quota; re-measure after a week (plan §7).
@@ -801,7 +836,12 @@ resource "kubernetes_deployment" "immich-postgres" {
                   # Wait for PG to accept connections, then prewarm vector search tables
                   for i in $(seq 1 60); do
                     if pg_isready -U postgres > /dev/null 2>&1; then
-                      psql -U postgres -d immich -c "CREATE EXTENSION IF NOT EXISTS pg_prewarm; SELECT pg_prewarm('smart_search'); SELECT pg_prewarm('clip_index');" > /dev/null 2>&1
+                      # pg_prewarm does NOT follow a table into its TOAST. The
+                      # vectors vchordrq re-ranks on live in smart_search's TOAST
+                      # (~706MB); the smart_search main fork is a ~13MB stub. Warming
+                      # the stub alone leaves the re-rank cold. reltoastrelid keeps
+                      # this OID-stable — the pg_toast_NNNNN name changes on restore.
+                      psql -U postgres -d immich -c "CREATE EXTENSION IF NOT EXISTS pg_prewarm; SELECT pg_prewarm('clip_index'); SELECT pg_prewarm(reltoastrelid) FROM pg_class WHERE relname='smart_search' AND relnamespace='public'::regnamespace; SELECT pg_prewarm('smart_search'); SELECT pg_prewarm(reltoastrelid) FROM pg_class WHERE relname='face_search' AND relnamespace='public'::regnamespace;" > /dev/null 2>&1
                       break
                     fi
                     sleep 1
@@ -817,10 +857,17 @@ resource "kubernetes_deployment" "immich-postgres" {
               # 14d median ~2.3Gi / peak ~3.6Gi. Request lowered 4Gi->3Gi 2026-07-26
               # (reverses the 2026-07-06 reserve-peak call) to free N-1 scheduler headroom;
               # 3Gi req stays above observed peak, spikes ride the 4Gi limit (Burstable).
+              # Request stays 3Gi: node3 memory REQUESTS are already at 97% of
+              # allocatable, so raising it makes the pod unschedulable. Actual node
+              # memory is far less committed (13Gi free), so the 5Gi limit is real
+              # headroom, but this pod now sits above its request and is therefore
+              # an eviction candidate if node3 ever comes under genuine pressure.
               memory = "3Gi"
             }
             limits = {
-              memory = "4Gi"
+              # 4Gi -> 5Gi to cover shared_buffers 2048MB -> 3072MB. Measured RSS
+              # was 2255Mi at 2048MB shared_buffers, so expect ~3.3Gi steady.
+              memory = "5Gi"
             }
           }
         }
@@ -837,8 +884,13 @@ resource "kubernetes_deployment" "immich-postgres" {
             fi
             cat > /data/postgresql.override.conf <<'PGCONF'
             # Immich vector search performance tuning
-            shared_buffers = 2048MB
-            effective_cache_size = 2560MB
+            # 2048MB could not hold the hot set: clip_index 743MB +
+            # smart_search TOAST 706MB + face_search TOAST 630MB = 2079MB, so they
+            # evicted each other and the nightly postgresql-backup seq-scan tipped
+            # it over every night (measured 2026-09-06). 3072MB fits all three with
+            # room for the asset tables.
+            shared_buffers = 3072MB
+            effective_cache_size = 3584MB
             work_mem = 64MB
             shared_preload_libraries = 'vchord.so, vectors.so, pg_prewarm'
             pg_prewarm.autoprewarm = on
@@ -1105,9 +1157,14 @@ resource "kubernetes_service" "immich-machine-learning" {
 #
 # Per tick:
 #   init  measure  (postgres image — has psql)
-#         · re-prewarms clip_index + smart_search, but only on :00/:30 ticks
-#         · times a representative random-vector ANN query
-#         · reads clip_index residency from pg_buffercache
+#         · re-prewarms clip_index, the smart_search TOAST, smart_search and
+#           the face_search TOAST, but only on :00/:30 ticks
+#         · times a representative random-vector ANN query two ways: what
+#           Postgres says the query took (the alerting series) and how long
+#           the psql process took end to end (context only)
+#         · reads clip_index AND smart_search-TOAST residency from pg_buffercache.
+#           Both matter: clip_index holds the quantized codes vchordrq scans,
+#           the TOAST holds the full-precision vectors it re-ranks with.
 #         · writes Prometheus exposition text to a shared emptyDir
 #   then, in parallel:
 #     push    (curl image) — POSTs those metrics to the Pushgateway
@@ -1170,31 +1227,125 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                 #
                 # 10# forces base 10 — bash reads a bare "05" as octal and errors.
                 if [ $(( 10#$(date +%M) % 30 )) -eq 0 ]; then
-                  if psql -v ON_ERROR_STOP=1 -c "SELECT pg_prewarm('clip_index'); SELECT pg_prewarm('smart_search');" >/dev/null 2>&1; then
+                  # Ordered deliberately: clip_index and the smart_search TOAST
+                  # are the smart-search read path and go in first, so that under
+                  # buffer pressure face_search's TOAST is the one that loses.
+                  # pg_prewarm does NOT descend into TOAST (proven 2026-09-06:
+                  # pg_prewarm('smart_search') warms 1,632 blocks of a 13MB stub and
+                  # 0 of the 88,320 TOAST blocks holding the vectors), which is why
+                  # a 100% clip_index residency reading could sit next to a 19.3s
+                  # query. reltoastrelid, not the pg_toast_NNNNN name, which is
+                  # OID-derived and changes across a dump/restore.
+                  if psql -v ON_ERROR_STOP=1 \
+                      -c "SELECT pg_prewarm('clip_index');" \
+                      -c "SELECT pg_prewarm(reltoastrelid) FROM pg_class WHERE relname='smart_search' AND relnamespace='public'::regnamespace;" \
+                      -c "SELECT pg_prewarm('smart_search');" \
+                      -c "SELECT pg_prewarm(reltoastrelid) FROM pg_class WHERE relname='face_search' AND relnamespace='public'::regnamespace;" \
+                      >/dev/null 2>&1; then
                     echo "prewarm ok"
                   else
                     echo "prewarm FAILED" >&2
                   fi
                 fi
 
+                # Two numbers, deliberately separate (2026-09-04, bead code-9hb8):
+                #
+                #   db_seconds   what POSTGRES says the query took. The outer
+                #                projection runs once the sub-select below it has
+                #                produced its row, so clock_timestamp() there minus
+                #                statement_timestamp() (fixed when the backend
+                #                received the statement) is the server-side elapsed
+                #                time, parse and plan included. This is the series
+                #                ImmichSmartSearchSlow and cluster-health check #46
+                #                read, and it is what their thresholds were always
+                #                meant to judge.
+                #
+                #   wall_seconds the old number: how long the psql PROCESS took,
+                #                start to exit. Kept because it is the only evidence
+                #                that the probe pod itself burns seconds, which is
+                #                still unexplained. No alert reads it.
+                #
+                # Until now db_seconds carried the wall-clock value, so the alert
+                # judged psql startup, DNS, TCP connect and pod scheduling against a
+                # threshold named after query time. Measured over 8 days: the query
+                # ran 0.085-0.600 s server-side while the probe reported up to
+                # 19.52 s on days nothing was wrong. Post-mortem:
+                # docs/post-mortems/2026-09-03-immich-smart-search-probe-measures-wall-clock.md
                 success=1
                 start=$(date +%s%3N)
-                if ! psql -v ON_ERROR_STOP=1 -tA -c "SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) s" >/dev/null 2>/tmp/err; then
+                # THE QUERY SHAPE MATTERS MORE THAN THE TIMING METHOD (2026-09-06).
+                # Until now this timed a bare ANN scan: no owner filter, no join,
+                # no tiebreaker. That shape uses the vchordrq index and returns in
+                # 70-94 ms. Immich never runs it. The real searchSmart query joins
+                # asset, filters ownerId/visibility/deletedAt, and ends
+                #   ORDER BY smart_search.embedding <=> $1, asset.id ASC
+                # (server/src/repositories/search.repository.ts, still on upstream
+                # main). That SECOND sort key means the index cannot satisfy the
+                # ordering, so Postgres computes the distance for EVERY asset the
+                # owner has and top-N sorts. Measured on a 59k-asset account, same
+                # data, three query vectors: 1279/1321/1090 ms with the tiebreaker
+                # against 10/15/20 ms without it. So the old gauge under-reported
+                # what a user actually waits for by roughly 15x, and the 1 s alert
+                # threshold was calibrated against a query nobody issues.
+                #
+                # Now timed against the LARGEST library on the instance, because
+                # cost scales with the owner's asset count and the worst account is
+                # the one worth alerting on. Picking it by count rather than by
+                # name keeps this correct as libraries grow.
+                q_ms=$(psql -v ON_ERROR_STOP=1 -tA -c "SELECT round(extract(epoch from clock_timestamp() - statement_timestamp()) * 1000) FROM (SELECT count(*) FROM (SELECT a.id FROM asset a INNER JOIN smart_search s ON a.id = s.\"assetId\" WHERE a.visibility != 'hidden' AND a.\"ownerId\" = (SELECT u.id FROM \"user\" u JOIN asset a2 ON a2.\"ownerId\" = u.id AND a2.\"deletedAt\" IS NULL GROUP BY u.id ORDER BY count(a2.id) DESC LIMIT 1) AND a.\"deletedAt\" IS NULL ORDER BY s.embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1), a.id ASC LIMIT 21) t) q" 2>/tmp/err)
+                rc=$?
+                end=$(date +%s%3N)
+                wall_ms=$((end - start))
+                # Anything but a clean integer means the query did not finish. Fall
+                # back to the wall clock so the series never goes missing (the
+                # Pushgateway would otherwise keep serving the last good value and
+                # hide the failure), and let probe_success carry the truth.
+                if [ $rc -ne 0 ] || ! [[ $q_ms =~ ^[0-9]+$ ]]; then
                   success=0
                   cat /tmp/err >&2
+                  q_ms=$wall_ms
                 fi
-                end=$(date +%s%3N)
-                dur_ms=$((end - start))
-                dur=$(printf '%d.%03d' $((dur_ms/1000)) $((dur_ms%1000)))
+                # The OLD shape, kept as a separate signal. It is the one query
+                # that does use the vchordrq index, so it isolates index and cache
+                # health from the plan problem above. Both slow means the index or
+                # the buffer cache; only db_seconds slow means the plan.
+                idx_ms=$(psql -tA -c "SELECT round(extract(epoch from clock_timestamp() - statement_timestamp()) * 1000) FROM (SELECT count(*) FROM (SELECT \"assetId\" FROM smart_search ORDER BY embedding <=> (SELECT embedding FROM smart_search ORDER BY random() LIMIT 1) LIMIT 100) s) q" 2>/dev/null)
+                if [[ $idx_ms =~ ^[0-9]+$ ]]; then
+                  idx=$(printf '%d.%03d' $((idx_ms/1000)) $((idx_ms%1000)))
+                else
+                  idx=-1
+                fi
+                dur=$(printf '%d.%03d' $((q_ms/1000)) $((q_ms%1000)))
+                wall=$(printf '%d.%03d' $((wall_ms/1000)) $((wall_ms%1000)))
                 pct=$(psql -tA -c "SELECT COALESCE(round(100.0*count(*)*8192/greatest(pg_relation_size('clip_index'::regclass),1),1),0) FROM pg_buffercache b JOIN pg_class c ON b.relfilenode=pg_relation_filenode(c.oid) WHERE c.relname='clip_index'" 2>/dev/null)
                 if [ -z "$pct" ]; then pct=-1; fi
+                # The other half of the smart-search read path. vchordrq scans the
+                # quantized codes in clip_index, then RE-RANKS by reading the
+                # full-precision vectors, which live in smart_search's TOAST. Until
+                # 2026-09-06 nothing measured that relation, so clip_index at 100%
+                # was read as "the cache is fine" while the re-rank ran cold.
+                toast_pct=$(psql -tA -c "SELECT COALESCE(round(100.0*count(b.bufferid)*8192/greatest(pg_relation_size(t.oid),1),1),0) FROM pg_class c JOIN pg_class t ON t.oid=c.reltoastrelid LEFT JOIN pg_buffercache b ON b.relfilenode=pg_relation_filenode(t.oid) WHERE c.relname='smart_search' AND c.relnamespace='public'::regnamespace GROUP BY t.oid" 2>/dev/null)
+                if [ -z "$toast_pct" ]; then toast_pct=-1; fi
                 {
-                  echo "# HELP immich_smart_search_db_seconds Wall-clock latency of a representative smart-search ANN query."
+                  echo "# HELP immich_smart_search_db_seconds Postgres-reported elapsed time of Immich's ACTUAL searchSmart query (asset join, owner/visibility/deletedAt filters, and the asset.id tiebreaker) against the largest library on the instance."
                   echo "# TYPE immich_smart_search_db_seconds gauge"
                   echo "immich_smart_search_db_seconds $dur"
+                  echo "# HELP immich_smart_search_probe_wall_seconds End-to-end wall clock of the probe psql process, including startup, DNS and connect. Context only, no alert reads it."
+                  echo "# TYPE immich_smart_search_probe_wall_seconds gauge"
+                  echo "immich_smart_search_probe_wall_seconds $wall"
                   echo "# HELP immich_clip_index_cached_pct Percent of clip_index vchord index resident in PG shared_buffers."
                   echo "# TYPE immich_clip_index_cached_pct gauge"
                   echo "immich_clip_index_cached_pct $pct"
+                  # Consumed by ImmichSmartSearchToastColdCache in
+                  # stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl.
+                  # Renaming this gauge without changing that alert leaves the
+                  # alert silently never firing, so the two move together.
+                  echo "# HELP immich_smart_search_index_seconds Postgres-reported time of a bare ANN scan that DOES use the vchordrq index (no owner filter, no tiebreaker). Index and cache health only; not what a user waits for. -1 means the query failed."
+                  echo "# TYPE immich_smart_search_index_seconds gauge"
+                  echo "immich_smart_search_index_seconds $idx"
+                  echo "# HELP immich_smart_search_toast_cached_pct Percent of the smart_search TOAST relation (the full-precision vectors the vchordrq re-rank reads) resident in PG shared_buffers."
+                  echo "# TYPE immich_smart_search_toast_cached_pct gauge"
+                  echo "immich_smart_search_toast_cached_pct $toast_pct"
                   echo "# HELP immich_smart_search_probe_success 1 if the probe ANN query succeeded."
                   echo "# TYPE immich_smart_search_probe_success gauge"
                   echo "immich_smart_search_probe_success $success"
@@ -1202,7 +1353,7 @@ resource "kubernetes_cron_job_v1" "immich-search-probe" {
                   echo "# TYPE immich_smart_search_probe_last_run_timestamp gauge"
                   echo "immich_smart_search_probe_last_run_timestamp $(date +%s)"
                 } > "$OUT"
-                echo "probe dur=$dur pct=$pct success=$success"
+                echo "probe dur=$dur wall=$wall idx=$idx pct=$pct toast_pct=$toast_pct success=$success"
                 exit 0
               EOT
               ]

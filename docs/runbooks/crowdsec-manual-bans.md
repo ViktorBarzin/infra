@@ -14,6 +14,19 @@ A reason is required, and hostnames are refused — only literal IPs and CIDRs
 are accepted, so an address has to be resolved (and recognised) before it can
 be banned.
 
+All four address shapes work: an IPv4 or IPv6 address, and an IPv4 or IPv6
+CIDR. `cscli` keeps those on two different flags (`--ip` for a single address,
+`--range` for a CIDR) and refuses a CIDR handed to `--ip`; the CLI picks the
+right one from the target, so a range reads the same as an address:
+
+```bash
+homelab crowdsec ban 2a03:2880::/32 --reason "Meta crawler swarm" --duration 168h
+homelab crowdsec ban 192.0.2.1 --reason "credential stuffing"
+```
+
+Before 2026-09-02 the wrapper always passed `--ip`, so any CIDR failed with
+`… is not a valid ip`.
+
 ## Where a ban is enforced
 
 A LAPI decision reaches traffic by two independent paths, split by what can
@@ -68,7 +81,8 @@ little when the ban is correct and clears itself when it is not.
 
 1. Confirm LAPI no longer holds the decision:
    `kubectl -n crowdsec exec deploy/crowdsec-lapi -- cscli decisions list --ip <addr>`
-   should print `No active decisions`.
+   should print `No active decisions`. For a range, the flag is `--range <cidr>`
+   — `--ip` does not match a range-scoped decision.
 2. Wait one poll. The Traefik bouncer refreshes every 30s; anything under ~35s is
    simply not yet picked up.
 3. Check what the bouncer decided, which is logged per blocked request:

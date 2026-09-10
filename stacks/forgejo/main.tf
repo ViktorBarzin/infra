@@ -150,6 +150,52 @@ resource "kubernetes_deployment" "forgejo" {
             name  = "FORGEJO__server__ROOT_URL"
             value = "https://forgejo.viktorbarzin.me"
           }
+          # Built-in SSH server, added 2026-09-06 so git stops travelling over
+          # HTTPS. That matters because forgejo.viktorbarzin.me is moving behind
+          # Cloudflare for crawler protection, and Cloudflare caps request
+          # bodies at 100 MB on our plan while a full push of infra.git is
+          # 183 MB. SSH does not pass through Cloudflare at all, so neither the
+          # body cap nor the 100 s first-byte timeout applies to git.
+          #
+          # The container runs as uid 1000 and cannot bind a privileged port, so
+          # it listens on 2222 and the LoadBalancer Service maps 22 onto it.
+          # SSH_PORT is what Forgejo prints in clone URLs, hence 22.
+          #
+          # SSH_DOMAIN is deliberately NOT forgejo.viktorbarzin.me: once that
+          # name is proxied it resolves to Cloudflare addresses, which carry no
+          # SSH. git.viktorbarzin.me is an A record straight to the WAN IP.
+          #
+          # Authentication is public-key only. Forgejo's built-in server
+          # registers a PublicKeyHandler and no password or
+          # keyboard-interactive handler (modules/ssh/ssh.go), so there is no
+          # credential to brute force. CrowdSec's nftables bouncer covers the
+          # address reputation side on non-HTTP traffic.
+          # DISABLE_SSH was baked into app.ini on the PVC at install time and
+          # silently overrides START_SSH_SERVER, so the built-in server stayed
+          # down and nothing listened on 2222. It appears in no Terraform file;
+          # the only way to find it was reading /data/gitea/conf/app.ini inside
+          # the running pod (2026-09-06). Declared here so it is never a
+          # surprise again.
+          env {
+            name  = "FORGEJO__server__DISABLE_SSH"
+            value = "false"
+          }
+          env {
+            name  = "FORGEJO__server__START_SSH_SERVER"
+            value = "true"
+          }
+          env {
+            name  = "FORGEJO__server__SSH_DOMAIN"
+            value = "git.viktorbarzin.me"
+          }
+          env {
+            name  = "FORGEJO__server__SSH_PORT"
+            value = "22"
+          }
+          env {
+            name  = "FORGEJO__server__SSH_LISTEN_PORT"
+            value = "2222"
+          }
           # Open self-service registration. Native local sign-up is allowed
           # (ALLOW_ONLY_EXTERNAL_REGISTRATION=false) alongside the existing
           # Authentik OAuth2 login. Bot abuse is gated by Cloudflare Turnstile
@@ -234,6 +280,37 @@ resource "kubernetes_deployment" "forgejo" {
           env {
             name  = "FORGEJO__git_0X2E_config__gc_0X2E_auto"
             value = "1000"
+          }
+          # --- MySQL connection-pool cap (2026-09-01 incident, infra#83).
+          # Forgejo shares `mysql.dbaas` (max_connections=80) with 7 other apps
+          # (nextcloud, grafana, phpipam, shlink, codimd, speedtest, wrongmove).
+          # Forgejo's app.ini set NO MAX_OPEN_CONNS, and forgejo's default is 0
+          # (unlimited). A distributed AI-crawler storm on /commit/<sha> +
+          # /src/commit/<sha> links opened enough connections to exhaust all 80,
+          # so EVERY DB-touching route 500'd cluster-wide with
+          # `Error 1040 (08004): Too many connections` at context.RepoAssignment
+          # (repo.go:487) — not a commit-render bug, a shared-pool exhaustion
+          # that also broke the other seven apps. The same storm OOMKilled the
+          # pod at 07:02Z, and while it was down Woodpecker lost a real
+          # terraform apply (could not read the pipeline definition).
+          # Capping forgejo at 25 open / 10 idle means forgejo can never
+          # monopolise the pool: under a future storm its requests QUEUE for a
+          # free connection (Go database/sql blocks up to the request context
+          # deadline) instead of erroring 1040, and >=55 connections stay
+          # reserved for the other apps. Raise together if forgejo's steady-state
+          # concurrency grows, but keep the sum of all mysql.dbaas apps' caps
+          # comfortably under 80.
+          env {
+            name  = "FORGEJO__database__MAX_OPEN_CONNS"
+            value = "25"
+          }
+          env {
+            name  = "FORGEJO__database__MAX_IDLE_CONNS"
+            value = "10"
+          }
+          env {
+            name  = "FORGEJO__database__CONN_MAX_LIFETIME"
+            value = "3600s"
           }
           # --- Open-signup bot prevention + mailer (appended so the diff vs the
           # pre-signup deployment stays purely additive). ---
@@ -357,6 +434,11 @@ resource "kubernetes_deployment" "forgejo" {
             container_port = 3000
             protocol       = "TCP"
           }
+          port {
+            name           = "ssh"
+            container_port = 2222
+            protocol       = "TCP"
+          }
         }
         volume {
           name = "data"
@@ -404,16 +486,233 @@ resource "kubernetes_service" "forgejo" {
     }
   }
 }
+# SSH endpoint for git, added 2026-09-06. Shares the 10.0.20.200 MetalLB
+# address with the other non-HTTP services (xray-reality, dolt, postgresql-lb,
+# shadowsocks and friends) via the allow-shared-ip annotation.
+#
+# Reachability mirrors the vlmcs pattern in stacks/kms:
+#   external: git.viktorbarzin.me -> 176.12.22.76 -> pfSense WAN NAT :22 -> 10.0.20.200:22
+#   internal: git.viktorbarzin.me -> 10.0.20.200 direct (Technitium split-horizon)
+# The pfSense forward is a manual out-of-band step; it is not managed here.
+resource "kubernetes_service" "forgejo_ssh" {
+  metadata {
+    name      = "forgejo-ssh"
+    namespace = kubernetes_namespace.forgejo.metadata[0].name
+    labels = {
+      "app" = "forgejo"
+    }
+    annotations = {
+      "metallb.universe.tf/loadBalancerIPs" = "10.0.20.200"
+      "metallb.io/allow-shared-ip"          = "shared"
+    }
+  }
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
+  spec {
+    type = "LoadBalancer"
+    selector = {
+      app = "forgejo"
+    }
+    port {
+      name        = "ssh"
+      port        = 22
+      target_port = 2222
+      protocol    = "TCP"
+    }
+  }
+}
+
+# A-only, non-proxied. Cloudflare's proxy carries HTTP(S) only, and this name
+# exists precisely so git bypasses it. No AAAA: the IPv6 tunnel does not
+# forward 22, and an AAAA would send v6-preferring clients somewhere that
+# cannot answer. Same shape as cloudflare_record.vlmcs in stacks/kms.
+resource "cloudflare_record" "git" {
+  name            = "git"
+  content         = "176.12.22.76" # public_ip (mirrors config.tfvars / ingress_factory default)
+  proxied         = false
+  ttl             = 1
+  type            = "A"
+  zone_id         = "fd2c5dd4efe8fe38958944e74d0ced6d" # cloudflare_zone_id
+  allow_overwrite = true
+}
+
+# Proof-of-work wall on forgejo's HTML routes, added 2026-09-09.
+#
+# WHY HERE AND WHY NOW. Forgejo is the one exposed high-volume host without it —
+# the other seven Anubis instances have run 122 days, and the 2026-09-06 audit
+# found that "f1 and kms, the two highest-volume ones, sit behind Anubis; the
+# rest return a login wall, an empty body or a 404". Meanwhile forgejo took
+# 1,531,741 requests in 7 days, 411,496 of them 499s (the client gave up
+# waiting), peaking at 16,623 req/min, and the crawl waves of 2026-09-03,
+# 09-05 and 09-09 all landed on it.
+#
+# THIS IS THE ONLY LAYER THAT ADDRESSES THE CLASS RATHER THAN THE OPERATOR. The
+# two static ASN blocklists and the range-grouped CrowdSec scenario all need to
+# recognise the source. A client that does not run JavaScript cannot solve a
+# proof-of-work challenge however many addresses it rotates through, whichever
+# user-agent it claims, and whether or not GeoLite2 has heard of its prefix.
+#
+# NOT A REPEAT OF infra#91. That revert was Cloudflare Bot Fight Mode 403ing
+# terminal-lobby's `PUT /api/packages/viktor/debian/...` from a GitHub Actions
+# runner, with no way to except it on the free plan. Here the exception is ours
+# to write: allow-machine-paths below covers /api/, /v2/ and git-over-HTTPS, and
+# the module's own allow-non-get-methods covers every write method. Nothing that
+# CI does reaches the challenge.
+module "anubis" {
+  source     = "../../modules/kubernetes/anubis_instance"
+  name       = "forgejo"
+  namespace  = kubernetes_namespace.forgejo.metadata[0].name
+  target_url = "http://${kubernetes_service.forgejo.metadata[0].name}.${kubernetes_namespace.forgejo.metadata[0].name}.svc.cluster.local"
+  # DB index 11 — 5,6,7,8,9,10,12 are taken by the other instances and the index
+  # MUST be unique per instance (in-flight PoW state would collide otherwise).
+  shared_store_url = "redis://redis-master.redis.svc.cluster.local:6379/11"
+
+  # The machine paths are ALLOWed FIRST, ahead of the deny imports, and that
+  # order is deliberate. The imports deny by user-agent, so a future upstream
+  # addition that happened to match a CI or git client's UA would break the
+  # release pipeline exactly the way infra#91 did. Putting the allows first
+  # makes that structurally impossible.
+  #
+  # The cost is that a declared AI crawler hitting /api/v1/repos/... is allowed
+  # through rather than denied. Accepted: the measured crawls all walked HTML
+  # (/commits, /pulls, /issues, /blame), the API is where our own automation
+  # lives, and CrowdSec still covers the API surface. Revisit if a crawl ever
+  # shows up on /api/.
+  #
+  # Every import below is copied from the module's own default rules, which
+  # seven instances have run for 122 days — no new import paths are introduced
+  # here, so this cannot fail on a path the binary does not embed.
+  policy_rules_yaml = <<-EOT
+    # --- Machine paths: no browser, no JS, no challenge possible. ---
+    # Forgejo's REST API and the OCI registry. /api/ also carries
+    # /api/healthz, which the external uptime monitor polls, and
+    # /api/packages/..., which terminal-lobby's GitHub Actions release PUTs to.
+    - name: allow-api-and-registry
+      action: ALLOW
+      path_regex: ^/(api|v2)/
+    # git over HTTPS. The clone handshake is a GET
+    # (/<owner>/<repo>/info/refs?service=git-upload-pack) so allow-non-get-methods
+    # does not cover it; the pack transfer and LFS are POSTs but are listed here
+    # too so the whole protocol is visible in one rule rather than split across
+    # two. Anchored at the end, or a repo literally named "git-upload-pack"
+    # would open a hole.
+    - name: allow-git-http
+      action: ALLOW
+      path_regex: (/info/refs$|/git-upload-pack$|/git-receive-pack$|/info/lfs/|/objects/[0-9a-f]{2}/)
+    # --- Then the module defaults, verbatim. ---
+    - import: (data)/bots/_deny-pathological.yaml
+    - import: (data)/bots/aggressive-brazilian-scrapers.yaml
+    - import: (data)/meta/ai-block-aggressive.yaml
+    - import: (data)/crawlers/_allow-good.yaml
+    - import: (data)/clients/x-firefox-ai.yaml
+    # Serves /robots.txt, /.well-known, /favicon.*, /sitemap.xml. Forgejo has
+    # returned 404 on /robots.txt since the infra#91 un-proxying gave back
+    # Cloudflare's managed one; this import should restore a 200.
+    - import: (data)/common/keep-internet-working.yaml
+    - name: allow-non-get-methods
+      action: ALLOW
+      expression: method != "GET"
+    # Everything left is a browser GET of an HTML page, which is the entire
+    # crawl surface.
+    - name: catchall-challenge
+      path_regex: .*
+      action: CHALLENGE
+  EOT
+}
+
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # Git + OCI registry (/v2/) — native clients (git, docker/podman) use HTTP
   # basic-auth / bearer tokens, NOT browser sessions. Forward-auth would 302
   # them into a redirect they can't follow.
   # auth = "none": Git + OCI registry clients use HTTP Basic auth / bearer tokens; native CLI tools cannot follow forward-auth redirects.
-  auth            = "none"
-  dns_type        = "non-proxied"
+  auth = "none"
+  # NON-PROXIED, and the experiment that confirmed it is recorded here so nobody
+  # re-runs it: forgejo was proxied on 2026-09-03 to test whether Cloudflare's
+  # ai_bots_protection would stop Meta's crawler. IT DOES NOT.
+  #
+  # Measured: of 73 residual Meta requests in 20 minutes, 66 arrived THROUGH the
+  # cloudflare tunnel (peers 10.10.107.222 / .195.220 / .169.165 are cloudflared
+  # pods) and only 5 still came direct from expiring DNS. So the requests reach
+  # Cloudflare's edge, pass straight through the AI-bot block, and are stopped by
+  # our own CrowdSec bouncer behind it. The reason is that Cloudflare identifies
+  # bots by verified identity (ASN + reverse DNS), and Meta was not claiming to
+  # be a bot at all — it sent spoofed desktop Chrome user-agents.
+  #
+  # The 95% traffic drop during the test was NOT caused by proxying: the decline
+  # began at 04:57 and the change landed at 05:34, ~40 minutes later. That was
+  # Meta's own wind-down.
+  #
+  # Reverted because with no bot-blocking benefit, only the costs remain — chiefly
+  # Cloudflare's 100MB request-body cap, which would reject a fresh full push of
+  # infra.git (183 MB on disk; terminal-lobby 81, website 74) from outside the
+  # house. Not worth an accidental breakage for nothing.
+  #
+  # RE-PROXIED 2026-09-06. The cap objection is gone: git now runs over SSH on
+  # git.viktorbarzin.me (see cloudflare_record.git and kubernetes_service
+  # .forgejo_ssh above), and SSH does not pass through Cloudflare at all, so
+  # neither the 100MB body cap nor the 100s first-byte timeout touches git. All
+  # 40 forgejo remotes on the devvm were moved to SSH and verified before this
+  # flip. Two further facts settled it:
+  #
+  #   - This is where the crawlers are. 22,115 of 22,189 Meta requests and 460
+  #     of 464 OpenAI requests in one 24h window landed on this host, and it was
+  #     the only public HTTP host not behind the edge.
+  #   - Woodpecker is unaffected. It reaches https://forgejo.viktorbarzin.me,
+  #     which resolves to the in-cluster service address 10.111.111.95 from
+  #     every pod, so its API calls and clones never leave for Cloudflare.
+  #     Verified from the woodpecker namespace before flipping.
+  #
+  # Known cost, accepted: Bot Fight Mode is on zone-wide and CANNOT be excepted
+  # on the free plan (Cloudflare documents that no WAF or Page Rule can skip
+  # it). Any EXTERNAL non-browser client still using forgejo.viktorbarzin.me
+  # over HTTPS may be challenged with no way to exempt it. Internal clients are
+  # insulated by split-horizon DNS. If an external integration breaks after
+  # this, that is the first thing to suspect, and the revert is this one word.
+  #
+  # Regained by proxying: Cloudflare's managed robots.txt, which makes
+  # /robots.txt serve 200 instead of 404.
+  #
+  # REVERTED 2026-09-06 (infra#91). The re-proxy did break an external
+  # integration exactly as the note above warned: terminal-lobby's release
+  # runs on GitHub Actions (off-infra per ADR-0002) and its final step PUTs the
+  # built .deb to https://forgejo.viktorbarzin.me/api/packages/viktor/debian/...
+  # from a runner IP. Once forgejo went behind the edge, Cloudflare Bot Fight
+  # Mode 403'd that PUT (56 ms, edge, never reached Forgejo) and nothing
+  # deployed to the devvm. Bot Fight Mode cannot be excepted on the free plan,
+  # so there is no proxied-and-working middle ground for this hostname.
+  #
+  # The crawler argument for proxying does not actually hold: the 2026-09-03
+  # measurement recorded above found Cloudflare passes the Meta crawlers
+  # straight through (they spoof Chrome UAs; CF gates on ASN/rDNS), and the real
+  # block is our CrowdSec static Meta blocklist, which is unaffected by this
+  # flag. So non-proxied keeps the crawler defence and un-breaks external CI;
+  # the only thing given up is Cloudflare's managed /robots.txt.
+  #
+  # To re-proxy later WITHOUT breaking CI, give the off-infra publish step an
+  # origin-direct path (curl --resolve forgejo.viktorbarzin.me:443:176.12.22.76,
+  # or a dedicated non-proxied packages hostname) so it skips the edge. That is
+  # a terminal-lobby-repo change; do it there first, then flip this back.
+  #
+  # 2026-09-06 (ref #91, fix-forward): the revert above was committed in
+  # 02b97919 but its CI apply (pipeline #1589) was SIGKILLed by a cancel-on-
+  # new-push before the forgejo stack applied, and the follow-up docs commit
+  # touched no stack — so the forge stayed proxied and external CI kept 403ing.
+  # This re-touches the stack so CI re-applies the non-proxied record.
+  dns_type = "non-proxied"
+  # Routed through Anubis since 2026-09-09 (module "anubis" above). Setting
+  # service_name to anubis-* also makes ingress_factory auto-attach the shared
+  # real-ip middleware first, which Anubis needs for its cookie and its
+  # trusted-local-networks bypass, and which the shared rate-limit chain now
+  # needs for its bucket key.
   namespace       = kubernetes_namespace.forgejo.metadata[0].name
   name            = "forgejo"
+  service_name    = module.anubis.service_name
+  port            = module.anubis.service_port
   tls_secret_name = var.tls_secret_name
   # OCI registry pushes ship full image layer blobs in one request; default
   # Traefik buffering chokes on anything past a few hundred MB.

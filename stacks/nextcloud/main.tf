@@ -142,7 +142,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "nextcloud"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -316,29 +316,32 @@ resource "kubernetes_persistent_volume_claim" "nextcloud_data_encrypted" {
 }
 
 module "nfs_nextcloud_backup_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "nextcloud-backup-host"
-  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/nextcloud-backup"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "nextcloud-backup-host"
+  namespace          = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/nextcloud-backup"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_pve_root_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "nextcloud-pve-nfs-root"
-  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs"
-  storage    = "3000Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "nextcloud-pve-nfs-root"
+  namespace          = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs"
+  storage            = "3000Gi"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_pve_ssd_root_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "nextcloud-pve-nfs-ssd-root"
-  namespace  = kubernetes_namespace.nextcloud.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs-ssd"
-  storage    = "100Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "nextcloud-pve-nfs-ssd-root"
+  namespace          = kubernetes_namespace.nextcloud.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs-ssd"
+  storage            = "100Gi"
+  storage_class_name = "nfs-pve"
 }
 
 module "ingress" {

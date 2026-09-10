@@ -59,20 +59,46 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+# Both volumes below moved nfs-truenas -> nfs-pve as part of the class rename
+# (bead code-yizt, Class A). Worth knowing before touching them again:
+#
+# The two storage classes are BYTE-IDENTICAL. Both nfs-truenas and nfs-pve are
+# nfs.csi.k8s.io with server 192.168.1.127 and share /srv/nfs, so this rename
+# moves no data whatsoever. What makes it a "Class A" change is only that
+# storageClassName is immutable on a PVC, so Terraform must destroy and
+# recreate the claim, and the pvc-protection finalizer holds that while a pod
+# mounts it.
+#
+# That is exactly how this stack got stuck: an apply on 2026-09-04 at 05:13 UTC
+# deleted the ytdlp-data-host PVC while the pod was still running, so it sat
+# Terminating for nine hours. The service kept working, because a mounted PVC
+# still serves, but it was one restart away from failing to mount. Cleared on
+# 2026-09-04 by scaling the deployment to 0, letting the PVC finish deleting,
+# deleting the two Released PVs, and re-applying.
+#
+# Deleting those PVs is safe and does not touch the files: both carry
+# reclaimPolicy Retain, and the module hardcodes nfs_path, so the recreated PV
+# points back at the same directory. Verified across the operation:
+# /srv/nfs/ytdlp 121M / 25 files and /srv/nfs/ytdlp-highlights 3.2G / 21 files,
+# identical before and after.
+#
+# If you change storage_class_name here again, scale the deployment to 0 FIRST.
 module "nfs_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ytdlp-data-host"
-  namespace  = kubernetes_namespace.ytdlp.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/ytdlp"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ytdlp-data-host"
+  namespace          = kubernetes_namespace.ytdlp.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/ytdlp"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_highlights_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ytdlp-highlights-data-host"
-  namespace  = kubernetes_namespace.ytdlp.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/ytdlp-highlights"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ytdlp-highlights-data-host"
+  namespace          = kubernetes_namespace.ytdlp.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/ytdlp-highlights"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "ytdlp" {
@@ -108,10 +134,21 @@ resource "kubernetes_deployment" "ytdlp" {
         container {
           image = "tzahi12345/youtubedl-material:nightly"
           name  = "ytdlp"
+          # requests 512Mi -> 256Mi on 2026-09-04 (bead code-hn6k). Measured
+          # peak working set over 30 days is 165Mi, a third of the old request.
+          # 256Mi is 1.5x that peak.
+          #
+          # An earlier version of this comment said the deployment is
+          # Sablier-parked at 0 replicas most of the time. It is not: it runs
+          # 1/1 and has for 248 days, so the reservation is real and worth
+          # taking back.
+          #
+          # The LIMIT stays at 512Mi. Request and limit were equal before, so a
+          # download that needs more headroom has exactly as much as it did.
           resources {
             requests = {
               cpu    = "25m"
-              memory = "512Mi"
+              memory = "256Mi"
             }
             limits = {
               memory = "512Mi"

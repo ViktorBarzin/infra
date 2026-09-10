@@ -133,7 +133,15 @@ singleBinary:
       # back over 80% as the cluster expands — bump the quota then.
       memory: 1Gi
     limits:
-      memory: 4Gi
+      # 4Gi -> 6Gi, 2026-09-06. loki was OOM-killed 3 times, most recently
+      # 12:13Z that day, and its cgroup high-water mark reads exactly 4096 MiB
+      # since the last restart, i.e. it is hitting the cap rather than
+      # approaching it. Sampled working set says 3,347 MiB at [30d:1h], which
+      # understates it; the high-water mark is the number that matters here.
+      # 6Gi is 1.5x the failing cap and sits under the monitoring namespace's
+      # 8Gi LimitRange ceiling. The REQUEST stays 1Gi deliberately: limits do
+      # not reserve, and node2 is at 89.6% of memory requests.
+      memory: 6Gi
 
 # Zero out replica counts of other deployment modes
 backend:

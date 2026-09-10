@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -166,5 +167,81 @@ func TestServicesArgsParsing(t *testing.T) {
 		if got := parseServicesQuery(tc.args); got != tc.want {
 			t.Errorf("parseServicesQuery(%v) = %q, want %q", tc.args, got, tc.want)
 		}
+	}
+}
+
+// --json exists so a script can consume the inventory. It emits ONLY the
+// inventory: the routing table above it is prose for a human and would have to
+// be stripped back out by every consumer.
+
+func TestCatalogJSONEmitsOneRowPerService(t *testing.T) {
+	svcs := []service{
+		{Name: "PrivateBin", Host: "pb.viktorbarzin.me", Description: "Encrypted pastebin", Group: "Productivity"},
+		{Name: "VPN egress (UK)", Host: "proxy-egress-uk.proxy.svc.cluster.local:8888", Internal: true},
+	}
+	out, err := catalogJSON(svcs)
+	if err != nil {
+		t.Fatalf("catalogJSON: %v", err)
+	}
+	var got []map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not a JSON array: %v\n%s", err, out)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 rows, got %d: %s", len(got), out)
+	}
+	if got[0]["name"] != "PrivateBin" || got[0]["host"] != "pb.viktorbarzin.me" ||
+		got[0]["description"] != "Encrypted pastebin" || got[0]["group"] != "Productivity" {
+		t.Errorf("first row = %+v", got[0])
+	}
+	// The in-cluster marker must survive into JSON. Without it a consumer
+	// treats an in-cluster address as a URL and reports the service down.
+	if got[0]["in_cluster"] != false {
+		t.Errorf("ingress-backed row should not be in_cluster: %+v", got[0])
+	}
+	if got[1]["in_cluster"] != true {
+		t.Errorf("ClusterIP-backed row should be in_cluster: %+v", got[1])
+	}
+}
+
+func TestCatalogJSONKeepsKeysWhenValuesAreEmpty(t *testing.T) {
+	// A script indexes by key. Dropping absent descriptions would make every
+	// consumer handle a missing key instead of an empty string.
+	out, err := catalogJSON([]service{{Name: "bare", Host: "bare.viktorbarzin.me"}})
+	if err != nil {
+		t.Fatalf("catalogJSON: %v", err)
+	}
+	var got []map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, k := range []string{"name", "host", "description", "group", "in_cluster"} {
+		if _, ok := got[0][k]; !ok {
+			t.Errorf("key %q missing: %s", k, out)
+		}
+	}
+}
+
+func TestCatalogJSONEmptyResultIsAnEmptyArray(t *testing.T) {
+	// `--search nope --json | jq length` must yield 0, not choke on `null`.
+	out, err := catalogJSON(nil)
+	if err != nil {
+		t.Fatalf("catalogJSON: %v", err)
+	}
+	if strings.TrimSpace(out) != "[]" {
+		t.Errorf("want [], got %q", out)
+	}
+}
+
+func TestParseServicesQueryIgnoresTheJSONFlag(t *testing.T) {
+	// --json must not be mistaken for a search term, in either position.
+	if q := parseServicesQuery([]string{"--json"}); q != "" {
+		t.Errorf("query = %q, want empty", q)
+	}
+	if q := parseServicesQuery([]string{"--json", "paste"}); q != "paste" {
+		t.Errorf("query = %q, want \"paste\"", q)
+	}
+	if q := parseServicesQuery([]string{"--search", "paste", "--json"}); q != "paste" {
+		t.Errorf("query = %q, want \"paste\"", q)
 	}
 }

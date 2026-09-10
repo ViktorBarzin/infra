@@ -49,7 +49,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -357,12 +357,13 @@ resource "kubernetes_cluster_role_binding" "claude_agent_exec" {
 # per-job *workspaces* are isolated (own clone under /workspace/jobs/<id>),
 # but /persistent is shared.
 module "persistent" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "claude-agent-persistent"
-  namespace  = kubernetes_namespace.claude_agent.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/claude-agent-persistent"
-  storage    = "5Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "claude-agent-persistent"
+  namespace          = kubernetes_namespace.claude_agent.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/claude-agent-persistent"
+  storage            = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # --- Deployment ---
@@ -938,6 +939,17 @@ resource "kubernetes_service" "claude_agent" {
     name      = "claude-agent-service"
     namespace = kubernetes_namespace.claude_agent.metadata[0].name
     labels    = local.labels
+    annotations = {
+      # This service has no ingress, so external-monitor-sync never sees it and
+      # nothing in Uptime Kuma watched it. These annotations make
+      # internal-monitor-sync create `[Internal] claude-agent-service`, probing
+      # http://claude-agent-service.claude-agent.svc.cluster.local:8080/health
+      # every 5 minutes. Same endpoint the kubelet probes, so a monitor going
+      # red means the pod is failing its own readiness check.
+      "uptime.viktorbarzin.me/internal-monitor"      = "true"
+      "uptime.viktorbarzin.me/internal-monitor-name" = "claude-agent-service"
+      "uptime.viktorbarzin.me/internal-monitor-path" = "/health"
+    }
   }
 
   spec {

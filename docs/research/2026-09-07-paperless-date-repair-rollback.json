@@ -1,0 +1,134 @@
+[
+ {
+  "id": 14027,
+  "old_created": "2524-10-28",
+  "new_created": "2024-10-28",
+  "how": "filename d.m.y"
+ },
+ {
+  "id": 548,
+  "old_created": "2414-04-21",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 3172,
+  "old_created": "2226-01-24",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 1707,
+  "old_created": "2077-12-15",
+  "new_created": "2017-01-01",
+  "how": "filename year only"
+ },
+ {
+  "id": 2027,
+  "old_created": "2076-04-01",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 1625,
+  "old_created": "2074-08-25",
+  "new_created": "2014-01-01",
+  "how": "filename year only"
+ },
+ {
+  "id": 1017,
+  "old_created": "2072-05-24",
+  "new_created": "2012-01-02",
+  "how": "filename d.m.y"
+ },
+ {
+  "id": 3148,
+  "old_created": "2072-03-26",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 2308,
+  "old_created": "2067-01-01",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 1809,
+  "old_created": "2049-11-08",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 12122,
+  "old_created": "2045-09-29",
+  "new_created": "2015-10-22",
+  "how": "filename ddmmyyyy"
+ },
+ {
+  "id": 12669,
+  "old_created": "2044-12-20",
+  "new_created": "2026-06-28",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 1988,
+  "old_created": "2043-04-16",
+  "new_created": "2013-12-27",
+  "how": "filename d.m.y"
+ },
+ {
+  "id": 11217,
+  "old_created": "2041-04-10",
+  "new_created": "2025-03-17",
+  "how": "filename d.m.y"
+ },
+ {
+  "id": 2969,
+  "old_created": "2028-03-02",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 3135,
+  "old_created": "2027-10-14",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 2922,
+  "old_created": "2027-08-25",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 2942,
+  "old_created": "2027-06-01",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 2916,
+  "old_created": "2027-04-27",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 3140,
+  "old_created": "2027-03-12",
+  "new_created": "2026-06-27",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 9612,
+  "old_created": "2027-01-01",
+  "new_created": "2026-06-28",
+  "how": "fallback: import date"
+ },
+ {
+  "id": 3195,
+  "old_created": "2026-12-09",
+  "new_created": "2026-06-28",
+  "how": "fallback: import date"
+ }
+]

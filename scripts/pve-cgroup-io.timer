@@ -1,0 +1,18 @@
+[Unit]
+Description=Re-delegate the cgroup io controller after PVE boot
+
+[Timer]
+# subtree_control is kernel state, so it resets on every reboot and the
+# delegation has to be re-applied. qemu.slice only exists once the first VM
+# starts, hence the delay rather than a plain After= on boot.
+OnBootSec=5min
+
+# Hourly as a safety net. A slice recreated after every VM on the host stopped
+# comes back with no delegation, and the script is a no-op when it is already set.
+OnCalendar=hourly
+
+Persistent=true
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

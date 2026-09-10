@@ -1,0 +1,10 @@
+[Unit]
+Description=LVM thin snapshot of Proxmox CSI PVCs
+After=lvm2-lvmetad.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/lvm-pvc-snapshot snapshot
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lvm-pvc-snapshot

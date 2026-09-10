@@ -915,7 +915,7 @@ resource "kubernetes_manifest" "email_roundtrip_monitor_secrets" {
       namespace = kubernetes_namespace.mailserver.metadata[0].name
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -1179,11 +1179,12 @@ sys.exit(0 if (success and not both_pushes_failed) else 1)
 # requires DNS changes, hence backup is critical.
 # =============================================================================
 module "nfs_mailserver_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "mailserver-backup-host"
-  namespace  = kubernetes_namespace.mailserver.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/mailserver-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "mailserver-backup-host"
+  namespace          = kubernetes_namespace.mailserver.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/mailserver-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_cron_job_v1" "mailserver-backup" {
@@ -1230,7 +1231,7 @@ resource "kubernetes_cron_job_v1" "mailserver-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 week=$(date +"%Y-%W")
-                prev_week=$(date -d "-7 days" +"%Y-%W" 2>/dev/null || echo "")
+                prev_week=$(date -d @$(( $(date +%s) - 604800 )) +"%Y-%W")
                 dst=/backup/$week
                 mkdir -p "$dst"
 
@@ -1252,7 +1253,7 @@ resource "kubernetes_cron_job_v1" "mailserver-backup" {
                 done
 
                 # Rotate — keep 8 weekly snapshots (~2 months)
-                find /backup -maxdepth 1 -mindepth 1 -type d -regex '.*/[0-9]+-[0-9]+$' | sort | head -n -8 | xargs -r rm -rf
+                find /backup -maxdepth 1 -mindepth 1 -type d -regex '.*/[0-9][0-9]*-[0-9][0-9]*$' | sort | head -n -8 | xargs -r rm -rf
 
                 _dur=$(($(date +%s) - _t0))
                 _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
@@ -1338,11 +1339,12 @@ resource "kubernetes_cron_job_v1" "mailserver-backup" {
 #   - writes to /srv/nfs/roundcube-backup/<YYYY-WW>/{html,enigma}/
 # =============================================================================
 module "nfs_roundcube_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "roundcube-backup-host"
-  namespace  = kubernetes_namespace.mailserver.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/roundcube-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "roundcube-backup-host"
+  namespace          = kubernetes_namespace.mailserver.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/roundcube-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_cron_job_v1" "roundcube-backup" {
@@ -1391,7 +1393,7 @@ resource "kubernetes_cron_job_v1" "roundcube-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 week=$(date +"%Y-%W")
-                prev_week=$(date -d "-7 days" +"%Y-%W" 2>/dev/null || echo "")
+                prev_week=$(date -d @$(( $(date +%s) - 604800 )) +"%Y-%W")
                 dst=/backup/$week
                 mkdir -p "$dst"
 
@@ -1412,7 +1414,7 @@ resource "kubernetes_cron_job_v1" "roundcube-backup" {
                 done
 
                 # Rotate — keep 8 weekly snapshots (~2 months)
-                find /backup -maxdepth 1 -mindepth 1 -type d -regex '.*/[0-9]+-[0-9]+$' | sort | head -n -8 | xargs -r rm -rf
+                find /backup -maxdepth 1 -mindepth 1 -type d -regex '.*/[0-9][0-9]*-[0-9][0-9]*$' | sort | head -n -8 | xargs -r rm -rf
 
                 _dur=$(($(date +%s) - _t0))
                 _rb1=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)

@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily refresh of Claude Code for every devvm user
+
+[Timer]
+# 03:30, the hour wizard's personal crontab used, so the version that lands
+# each morning arrives when it always has. Ahead of t3 at ~04:57, the skill
+# refresh at 05:30 and codex at 05:45.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=20min
+
+[Install]
+WantedBy=timers.target

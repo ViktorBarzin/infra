@@ -264,12 +264,13 @@ resource "kubernetes_namespace" "tts" {
 # llama-cpp's nfs_models. First start downloads the model into /data/hf_cache
 # (HF_HOME below), so weights persist across pod restarts.
 module "nfs_models" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "chatterbox-models"
-  namespace  = kubernetes_namespace.tts.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs-ssd/chatterbox"
-  storage    = "20Gi" # multilingual weights + HF cache + voices headroom
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "chatterbox-models"
+  namespace          = kubernetes_namespace.tts.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs-ssd/chatterbox"
+  storage            = "20Gi" # multilingual weights + HF cache + voices headroom
+  storage_class_name = "nfs-pve"
 }
 
 # One-shot bootstrap: /srv/nfs-ssd is exported whole-tree, but the chatterbox
@@ -285,8 +286,20 @@ resource "kubernetes_job" "models_dir_init" {
     labels    = local.labels
   }
   spec {
-    backoff_limit              = 3
-    ttl_seconds_after_finished = 86400
+    backoff_limit = 3
+    # Deliberately NO ttl_seconds_after_finished. It was 86400, which had
+    # Kubernetes delete the completed Job a day after it ran, so Terraform saw
+    # the resource missing and planned to create it again on every run. That
+    # made this stack drift forever and gave the cluster-wide drift count a
+    # floor it could never reach below (bead code-yizt, 2026-09-03).
+    #
+    # A completed Job object left in the namespace costs a few hundred bytes and
+    # is the record that the bootstrap ran. It cannot be replaced by an
+    # initContainer on the deployment: this creates /srv/nfs-ssd/chatterbox
+    # itself, which is the directory the chatterbox PVC mounts, and a pod cannot
+    # mkdir the path it is mounting. That is why the Job mounts the parent
+    # export whole-tree instead. The inner directories DO have an initContainer
+    # (see the reference_audio seeding on the deployment below).
     template {
       metadata { labels = local.labels }
       spec {
@@ -513,6 +526,25 @@ resource "kubernetes_deployment" "chatterbox" {
             limits = {
               memory           = "8Gi"
               "nvidia.com/gpu" = "1" # ONE time-slice (operator advertises 100), NOT the whole card
+              # VRAM seat (ADR-0016). Measured 2026-09-04 from the exporter's own
+              # gauge over its full 26-week record:
+              #   max by(namespace,container)(max_over_time(
+              #     sum by(namespace,container,pod)(gpu_pod_memory_used_bytes)[26w:10m]))
+              # -> 5,274,337,280 B = 5030 MiB for container=chatterbox-tts. Individual
+              # pod samples ran 3,214-4,529 MiB, so 5030 is the true ceiling, not a
+              # typical load. Seat = 5200 MiB, ~3% over the measured peak.
+              #
+              # Adding the seat is free today: chatterbox_scheduling_enabled has been
+              # false since 2026-08-16, all four CronJobs are Suspend=true and the
+              # Deployment is pinned at replicas=0, so no pod can be created and none
+              # can go Pending. Read this before flipping that switch back on: the
+              # node advertises 14000 MiB and the running tenants hold 12600, so only
+              # 1400 MiB is unallocated. A 5200 MiB seat does not fit against that,
+              # and Chatterbox would sit Pending rather than run. Re-enabling the
+              # schedule means re-budgeting the card first — claude-memory's 5000 seat
+              # is the obvious candidate, it has been using ~2600 MiB since the
+              # arena fix on 2026-09-02.
+              "viktorbarzin.me/gpumem" = "5200"
             }
           }
         }
