@@ -285,7 +285,24 @@ steps:
             2)
               # First-seen is preserved across runs so DriftUnaddressed can
               # age a stack that keeps drifting.
-              FIRST_SEEN=$(awk -v s="$stack" '$1 == "drift_stack_first_seen{stack=\""s"\"}" {print $2; exit}' "$PREV_METRICS")
+              #
+              # Read it back the way the Pushgateway actually serves it, which
+              # is NOT the way we pushed it. The gateway adds its own grouping
+              # labels and sorts the set, so our
+              #   drift_stack_first_seen{stack="monitoring"}
+              # comes back as
+              #   drift_stack_first_seen{instance="",job="drift-detection",stack="monitoring"}
+              # and it renders the value as a Go float, 1.788494507e+09. The
+              # old exact-string compare on $1 therefore never matched a single
+              # stack: FIRST_SEEN came back empty every time, every drifted
+              # stack was re-stamped as first seen NOW, and drift_stack_age_hours
+              # has read 0 for every stack for as long as the metric has
+              # existed. Matching on the metric name plus the stack label
+              # wherever it sits fixes that, and awk's printf %.0f turns the
+              # float into something the shell arithmetic below can subtract —
+              # feeding it 1.788494507e+09 raw aborts the step with
+              # "Illegal number", so the failed match was hiding a second fault.
+              FIRST_SEEN=$(awk -v s="$stack" '$1 ~ /^drift_stack_first_seen\{/ && index($1, "stack=\"" s "\"") { printf "%.0f\n", $2; exit }' "$PREV_METRICS")
               if [ -z "$FIRST_SEEN" ] || [ "$FIRST_SEEN" = "0" ]; then
                 FIRST_SEEN=$NOW
               fi

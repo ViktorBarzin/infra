@@ -50,6 +50,20 @@ resource "helm_release" "reloader" {
   values = [yamlencode({
     reloader = {
       reloadStrategy = "annotations"
+      # Declared 2026-09-06 after an OOM kill at 16:49Z. Before this the chart
+      # set no resources at all, so the pod inherited the tier-defaults
+      # LimitRange default of 256Mi — and reached 253 MiB against it, measured
+      # at 5-minute resolution over 7 days. An inherited default is not a
+      # sizing decision, it is the absence of one, which is why this is now
+      # explicit. 512Mi is under the namespace ceiling of 4Gi. Request stays at
+      # the LimitRange default of 64Mi: limits do not reserve, and the cluster
+      # is short of schedulable requests, not of memory.
+      deployment = {
+        resources = {
+          limits   = { memory = "512Mi" }
+          requests = { memory = "64Mi" }
+        }
+      }
     }
   })]
 }

@@ -179,3 +179,70 @@ def test_other_alertnames_are_ignored():
 def test_alert_without_namespace_label_is_ignored():
     payload = [{"labels": {"alertname": "GpuCudaOom"}, "status": {"state": "active"}}]
     assert w.parse_cuda_oom_alerts(payload, "GpuCudaOom") == set()
+
+
+# --- tick(): the floor has to be REACHABLE, not just correct (infra#79) -------
+# contention_reason() has always returned a floor reason. tick() never asked it
+# when no SEATED tenant was over budget, so a seatless tenant could fill the
+# card and the floor was unreachable code. Measured live 2026-09-01: free VRAM
+# sat at 547-569MiB against a 1536MiB floor for ten consecutive minutes while
+# llama-swap held ~7GiB seatless, and nothing was recycled.
+def _tick_harness(monkeypatch, used, budgets, free_total):
+    """Drive tick() with the cluster calls stubbed out. Returns deleted pods."""
+    deleted = []
+    monkeypatch.setattr(w, "scrape_used_mib", lambda _e: used)
+    monkeypatch.setattr(w, "gpu_node", lambda _k, _l: "k8s-node1")
+    monkeypatch.setattr(w, "declared_budgets", lambda _k, _r, _n: budgets)
+    monkeypatch.setattr(w, "fetch_active_alerts", lambda _a: [])
+    monkeypatch.setattr(w, "parse_pending_gpumem", lambda _p, _r: set())
+
+    def fake_api(_k, method, path, **_kw):
+        if method == "DELETE":
+            deleted.append(path)
+            return {}
+        return {"items": []}
+
+    monkeypatch.setattr(w, "api", fake_api)
+    cfg = {
+        "exporter": "x", "node_label": "l", "resource": "viktorbarzin.me/gpumem",
+        "alertmanager": "am", "cuda_oom_alertname": "GpuCudaOom",
+        "total": free_total + sum(used.values()), "floor": 1536, "dry_run": False,
+    }
+    w.tick(cfg, {})
+    return deleted
+
+
+def test_floor_is_reached_when_a_seatless_tenant_fills_the_card(monkeypatch):
+    # llama-swap holds the card with no seat; immich is seated and WITHIN budget,
+    # so select_offender() finds nobody. The floor must still fire.
+    deleted = _tick_harness(
+        monkeypatch,
+        used={("llama-cpp", "llama-swap-0"): 6994.0, ("immich", "immich-ml-0"): 1900.0},
+        budgets={("immich", "immich-ml-0"): 2500},
+        free_total=560,  # a third of the 1536 floor, as measured live
+    )
+    assert deleted, "below the emergency floor the watchdog must act"
+    assert "llama-swap-0" in deleted[0], "it should reclaim the largest holder"
+
+
+def test_a_healthy_card_with_no_offender_still_costs_nothing(monkeypatch):
+    # The cheap exit must survive: slack on the card and nobody over budget.
+    deleted = _tick_harness(
+        monkeypatch,
+        used={("llama-cpp", "llama-swap-0"): 2000.0},
+        budgets={("immich", "immich-ml-0"): 2500},
+        free_total=8000,
+    )
+    assert deleted == []
+
+
+def test_the_victim_of_a_cuda_oom_is_not_itself_recycled(monkeypatch):
+    # frigate reporting cuda-oom must not be the pod we kill to make room.
+    monkeypatch.setattr(w, "parse_cuda_oom_alerts", lambda _a, _n: {"frigate"})
+    deleted = _tick_harness(
+        monkeypatch,
+        used={("frigate", "frigate-0"): 2600.0, ("llama-cpp", "llama-swap-0"): 6994.0},
+        budgets={},
+        free_total=560,
+    )
+    assert deleted and "frigate" not in deleted[0]

@@ -1,8 +1,13 @@
 # devvm aggregate OOM backstop (setup-devvm.sh §10, 2026-06-22). Watches FREE RAM
 # (MemAvailable%) and kills the biggest task before the box exhausts. Unlike
-# systemd-oomd it needs NO swap/reclaim, so it works with our swap=0 work cgroups.
+# systemd-oomd it needs NO swap/reclaim, so it works whether or not the work
+# cgroups can swap (they were swap=0 until 2026-09-02, bounded 4G since).
 #   -m 5,3     SIGTERM the victim at MemAvailable<5%, SIGKILL at <3%
-#   -s 100,100 ignore swap in the decision (RAM-only; work cgroups are swap=0)
+#   -s 100,100 ignore swap in the decision (RAM-only). Kept after the user
+#              slices gained a bounded 4G of swap on 2026-09-02: requiring BOTH
+#              RAM and swap to be low would make earlyoom fire LESS, and the
+#              thrash shape it cannot see is covered by the DevvmSwapThrashing
+#              Prometheus alert instead.
 #   --avoid    never the box's nervous system / your way back in
 #   --prefer   target the agent/browser/build hogs that actually exhaust RAM
 #   -r 3600    hourly memory report (the 60s default is log spam)

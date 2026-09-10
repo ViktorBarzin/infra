@@ -1,6 +1,6 @@
 # Runbook: Registry VM (docker-registry, 10.0.20.10)
 
-Last updated: 2026-05-07
+Last updated: 2026-09-03
 
 The registry VM is an Ubuntu 24.04 VM on the cluster LAN subnet
 `10.0.20.0/24`, with a static netplan config (no DHCP). Because it
@@ -18,6 +18,70 @@ caches only:
 | 5020 | quay.io |
 | 5030 | registry.k8s.io |
 | 5040 | reg.kyverno.io |
+
+All five are wired on all six k8s nodes and serving, verified 2026-09-03.
+
+## The node side is declared, and used to be the weak half
+
+`/etc/containerd/certs.d/<registry>/hosts.toml` is what makes a node use
+these caches, and until 2026-09-03 nothing reconciled it. Two one-shot
+scripts wrote it at different times, so the six nodes held three different
+configurations:
+
+| nodes | mirrored |
+|---|---|
+| master | docker.io, forgejo, ghcr.io |
+| node1, node2, node3 | the above, plus two dead entries for the port-5050 registry decommissioned 2026-05-07 |
+| node4, node5 | the above, plus quay.io and registry.k8s.io |
+
+Four of six therefore pulled quay.io and registry.k8s.io straight from the
+internet while these caches sat unused, and three carried mirrors resolving
+to a listener gone since May.
+
+It is now declared in `playbooks/k8s-node-tuning.yml` as a
+`registry_mirrors` list of registry, upstream and port, and reconciled
+hourly. **Adding a registry to that list is the whole change needed to put
+every node behind a new cache.** All six trees are byte-identical; the
+check is one line:
+
+```bash
+for n in k8s-master k8s-node1 k8s-node2 k8s-node3 k8s-node4 k8s-node5; do
+  printf '%-12s ' "$n"
+  ssh "$n" 'sudo find /etc/containerd/certs.d -name hosts.toml -not -path "*retired-*" \
+    | sort | xargs sudo cat | md5sum | cut -d" " -f1'
+done
+```
+
+Two properties of those files worth knowing before editing one:
+
+- **certs.d is read per pull, not at containerd startup.** A mirror change
+  takes effect on the next pull with no restart, which is what makes hourly
+  reconciliation safe.
+- **Every entry lists the real registry second, as a fallback.** node5's
+  ghcr.io entry once had the cache as its only host, which fails ghcr pulls
+  closed whenever this VM is down, and this VM ran out of disk for 45 days
+  unnoticed. The fallback costs nothing on a hit and degrades to a direct
+  pull instead of an outage.
+
+## Port 5040 was pointed at the wrong registry for an unknown period
+
+The table above has always said `reg.kyverno.io`, and it was right.
+`config-kyverno.yml` carried `remoteurl: https://ghcr.io`, which made the
+cache look like a duplicate of 5010 and made it useless: this cluster runs
+`reg.kyverno.io/kyverno/{kyverno,background-controller,cleanup-controller}`
+at v1.18.2, so nothing it could serve was ever asked for. The evidence was
+its size, 4.0K, and that no node mirrored `reg.kyverno.io` at all, so every
+kyverno pull went to the internet.
+
+Corrected 2026-09-03: `remoteurl` names `reg.kyverno.io`, `ttl` goes 0 to
+168h matching the other four, and the registry joins `registry_mirrors`.
+Verified with a real pull on node2, 44.4 MB in 2.1 s, with the request
+visible in nginx's log and the cache growing 4.0K to 276K.
+
+**The lesson is the reusable part:** a pull-through cache that serves
+nothing looks identical to one nothing needs. Size plus a `remoteurl` that
+matches an image the cluster actually runs is the check.
+
 
 The decommissioned private registry (port 5050) is now hosted on
 Forgejo at `forgejo.viktorbarzin.me/viktor/<image>`. See
@@ -139,6 +203,45 @@ Internal lookups do fail during the blackhole (the fallback is a
 public resolver and does not know about the internal zone), which is
 expected — the fallback buys availability for external pulls, not
 internal hostnames.
+
+### Is the cache actually serving? Do not trust /v2/
+
+`/v2/` and a bare `/healthz` are storage-free: they answer 200 while
+content requests 500 under ENOSPC. That is the larger half of why this VM
+sat 100% full for 45 days with nobody noticing. Each port's `/healthz` is
+therefore a **real manifest fetch** of a pinned tag on a repo the cluster
+actually pulls, so it fails when storage does:
+
+```sh
+for p in 5000 5010 5020 5030 5040; do
+  printf ':%s ' "$p"
+  curl -s -o /dev/null -w '%{http_code}\n' --max-time 15 "http://10.0.20.10:$p/healthz"
+done
+```
+
+A content request through a node's own mirror is the end-to-end check, and
+it also proves the node-side wiring:
+
+```sh
+ssh k8s-node2 'sudo ctr -n cachetest images pull --hosts-dir /etc/containerd/certs.d \
+  reg.kyverno.io/kyverno/kyverno:v1.18.2'
+ssh 10.0.20.10 'sudo docker logs registry-nginx --since 2m | grep kyverno'   # should show the node's IP
+ssh k8s-node2 'sudo ctr -n cachetest images rm reg.kyverno.io/kyverno/kyverno:v1.18.2'
+```
+
+### Disk is now watched, which it was not
+
+The VM's node_exporter answers on `:9100` and was scraped by nothing until
+2026-09-03. It is now the `registry-cache-host` Prometheus job, so the
+existing `LowDiskSpace` rule covers it with no new alert needed: that rule
+is `node_filesystem_avail_bytes / node_filesystem_size_bytes * 100 < 5`
+with no job selector, so it started covering this host the moment the
+series existed. The gap was a missing target, not a missing rule.
+
+```sh
+homelab metrics query 'up{job="registry-cache-host"}'
+homelab metrics query 'node_filesystem_avail_bytes{job="registry-cache-host",mountpoint="/"}'
+```
 
 ## Rollback
 

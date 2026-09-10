@@ -114,10 +114,40 @@ func workLand(args []string) error {
 	}
 	landed, _ := gitOutput(repoRoot, "rev-parse", "HEAD")
 	fmt.Fprintln(os.Stderr, "homelab: watching CI for the landed commit...")
-	if err := ciWatch([]string{landed}); err != nil {
-		return fmt.Errorf("landed, but CI did not go green: %w", err)
+	note, fatal := landCIOutcome(ciWatch(append([]string{landed}, ciWaitArgs(args)...)))
+	if note != "" {
+		fmt.Fprintln(os.Stderr, note)
 	}
-	return nil
+	return fatal
+}
+
+// ciWaitArgs forwards the wait-tuning flags from `work land` through to the
+// watch, so `work land --timeout 45m` bounds the wait the same way `ci watch`
+// does. Everything else in land's args (--verify-cmd and friends) would only
+// confuse the parser.
+func ciWaitArgs(args []string) []string {
+	// land's own value-taking flags, whose VALUE must not be scanned: a
+	// `--verify-cmd --timeout 45m` would otherwise forward a wait flag that was
+	// really part of the verify command (mirrors ciPositionalCommit).
+	valueFlags := map[string]bool{"--verify-cmd": true}
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if valueFlags[a] {
+			i++ // skip its value
+			continue
+		}
+		switch {
+		case a == "--timeout" || a == "--appear-grace":
+			if i+1 < len(args) {
+				out = append(out, a, args[i+1])
+				i++
+			}
+		case strings.HasPrefix(a, "--timeout=") || strings.HasPrefix(a, "--appear-grace="):
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // runVerify runs the explicit --verify-cmd, else auto-detects (go test). If

@@ -19,6 +19,15 @@ variable "haos_api_token" {
   type      = string
   sensitive = true
 }
+variable "dawarich_metrics_username" {
+  type        = string
+  sensitive   = true
+  description = "Basic-auth user for Dawarich's Sidekiq /metrics exporter (Vault secret/dawarich)."
+}
+variable "dawarich_metrics_password" {
+  type      = string
+  sensitive = true
+}
 variable "pve_password" {
   type      = string
   sensitive = true
@@ -40,7 +49,7 @@ variable "postgresql_host" {
   type        = string
   description = "CNPG primary. The stray-workload reconciler (stray_workload.tf) reads Tier-1 Terraform state from the terraform_state database here; the Goldmane edge-trail Grafana datasource (goldmane_edges_datasource.tf) reads the goldmane_edges database."
 }
-variable "dbaas_root_password" {
+variable "dbaas_postgresql_root_password" {
   type        = string
   sensitive   = true
   description = "CNPG superuser, used only by the stray-workload-detect-db-init Job to create its read-only reader role."

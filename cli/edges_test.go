@@ -59,6 +59,34 @@ func TestBuildEdgesQueryDefaults(t *testing.T) {
 	}
 }
 
+// TestBuildEdgesQueryCollapsesWidenedRows pins the output shape against the
+// widened `edge` table (2026-09-01): the table now holds one row per source
+// workload, destination workload, service and port, so an ungrouped select would
+// print the same namespace pair many times over. The CLI answers the
+// namespace-level question, so it aggregates; per-workload and per-port detail is
+// a SQL query or the Grafana dashboard.
+func TestBuildEdgesQueryCollapsesWidenedRows(t *testing.T) {
+	q, err := buildEdgesQuery(edgesOpts{ns: "immich", limit: 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"sum(flow_count) AS flow_count",
+		"min(first_seen) AS first_seen",
+		"max(last_seen) AS last_seen",
+		"GROUP BY src_ns, dst_ns, action",
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("query %q missing %q — widened rows would print as duplicates", q, want)
+		}
+	}
+	// The WHERE filter has to stay ahead of the grouping, or it filters groups.
+	iWhere, iGroup := strings.Index(q, "WHERE"), strings.Index(q, "GROUP BY")
+	if iWhere < 0 || iGroup < 0 || iWhere > iGroup {
+		t.Errorf("WHERE must precede GROUP BY: %q", q)
+	}
+}
+
 func TestBuildEdgesQueryFilters(t *testing.T) {
 	cases := []struct {
 		name string

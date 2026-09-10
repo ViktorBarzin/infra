@@ -135,7 +135,7 @@ resource "kubernetes_secret" "stray_workload_db" {
     # Consumed as PGPASSWORD by the extractor's psql.
     READER_PASSWORD = random_password.stray_workload_db.result
     # CNPG superuser, used only by the bootstrap Job below.
-    ROOT_PASSWORD = var.dbaas_root_password
+    ROOT_PASSWORD = var.dbaas_postgresql_root_password
   }
 }
 

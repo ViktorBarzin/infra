@@ -33,6 +33,7 @@ module "nfs_data_host" {
   nfs_path     = "/srv/nfs/whisper"
   storage      = "1Gi"
   access_modes = ["ReadWriteMany"]
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "whisper" {

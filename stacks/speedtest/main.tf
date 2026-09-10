@@ -65,12 +65,13 @@ resource "random_id" "secret_key" {
 # speedtest-tracker is MySQL-backed (config dir = logs + Laravel config, no
 # embedded DB), NFS-safe. See docs/plans/2026-06-05-block-storage-harden-nfs-design.md
 module "nfs_speedtest" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "speedtest-config-nfs"
-  namespace  = kubernetes_namespace.speedtest.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/speedtest"
-  storage    = "5Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "speedtest-config-nfs"
+  namespace          = kubernetes_namespace.speedtest.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/speedtest"
+  storage            = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "speedtest" {

@@ -58,15 +58,14 @@ import sys
 import urllib.parse
 import urllib.request
 
-# One Traefik CLF access-log line for a GET of an original asset. The asset id
-# is taken from a FIXED position in the request line rather than by searching
-# the whole line, because User-Agent and Referer are attacker-controlled and a
-# loose pattern would let a visitor choose which asset a metric is filed under.
-LINE = re.compile(
-    r'^(?P<ip>\S+) \S+ \S+ \[(?P<ts>[^\]]+)\] '
-    r'"GET /api/assets/(?P<aid>[0-9a-f-]{36})/original\S* HTTP/[\d.]+" '
-    r'(?P<status>\d{3}) (?P<bytes>\d+) "[^"]*" "(?P<ua>[^"]*)"'
-)
+# The asset id is read from the RequestPath FIELD of a parsed JSON object, and
+# anchored to the start of that path, rather than searched for anywhere in the
+# line. User-Agent and Referer are attacker-controlled, and a loose pattern
+# would let a visitor choose which asset a metric is filed under. Reading a
+# named field off a parsed object cannot be reached from a header value at all,
+# which is stronger than the CLF byte position this replaced when the access
+# log became JSON on 2026-09-01.
+ASSET_PATH = re.compile(r'^/api/assets/(?P<aid>[0-9a-f-]{36})/original(?:[?/]|$)')
 
 # Traffic from inside the cluster/LAN is diagnostics, probes and this repo's own
 # tooling, never a person whose download we care about. It must be excluded, not
@@ -77,20 +76,40 @@ INTERNAL = re.compile(r'^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)')
 
 
 def parse_lines(lines):
-    """Traefik access-log lines -> [(ip, asset_id, status, bytes)]."""
+    """Traefik JSON access-log lines -> [(ip, asset_id, status, bytes, ua)].
+
+    Anything that is not a GET of an original asset is dropped, including lines
+    that are not JSON at all: the nginx auth-proxy and bot-block-proxy live in
+    the same namespace and still log CLF, and a Loki query that reaches them
+    must skip their lines rather than half-read them.
+    """
     out = []
     for line in lines:
-        m = LINE.match(line)
-        if m:
-            if INTERNAL.match(m.group("ip")):
-                continue
-            out.append((
-                m.group("ip"),
-                m.group("aid"),
-                int(m.group("status")),
-                int(m.group("bytes")),
-                m.group("ua"),
-            ))
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            rec = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(rec, dict) or rec.get("RequestMethod") != "GET":
+            continue
+        path = rec.get("RequestPath")
+        if not isinstance(path, str):
+            continue
+        m = ASSET_PATH.match(path)
+        if not m:
+            continue
+        ip = rec.get("ClientHost")
+        if not isinstance(ip, str) or INTERNAL.match(ip):
+            continue
+        try:
+            status = int(rec["DownstreamStatus"])
+            nbytes = int(rec["DownstreamContentSize"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.append((ip, m.group("aid"), status, nbytes,
+                    rec.get("request_User-Agent") or "-"))
     return out
 
 
@@ -220,8 +239,12 @@ def main():
     since = os.environ.get("WINDOW", "1h")
     sizes_path = os.environ.get("SIZES_FILE", "/work/sizes.csv")
     out_path = os.environ.get("OUT_FILE", "/work/metrics.prom")
+    # container="traefik" keeps the nginx auth-proxy and bot-block-proxy streams
+    # out of the scan: same namespace, and they still log CLF, so their lines
+    # would be fetched only to be discarded by parse_lines.
     query = os.environ.get(
-        "LOKI_QUERY", '{namespace="traefik"} |= "/api/assets" |= "/original"'
+        "LOKI_QUERY",
+        '{namespace="traefik", container="traefik"} |= "/api/assets" |= "/original"',
     )
 
     try:

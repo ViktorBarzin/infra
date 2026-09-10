@@ -44,7 +44,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "f1-stream"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -76,7 +76,7 @@ resource "kubernetes_manifest" "chrome_service_client_secret" {
       namespace = "f1-stream"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -95,13 +95,14 @@ resource "kubernetes_manifest" "chrome_service_client_secret" {
 }
 
 module "nfs_data_host" {
-  source       = "../../modules/kubernetes/nfs_volume"
-  name         = "f1-stream-data-host"
-  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
-  nfs_server   = var.nfs_server
-  nfs_path     = "/srv/nfs/f1-stream"
-  storage      = "1Gi"
-  access_modes = ["ReadWriteOnce"]
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "f1-stream-data-host"
+  namespace          = kubernetes_namespace.f1-stream.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/f1-stream"
+  storage            = "1Gi"
+  access_modes       = ["ReadWriteOnce"]
+  storage_class_name = "nfs-pve"
 }
 
 # Replay torrent cache. Shares the servarr qBittorrent downloads export so the
@@ -110,13 +111,14 @@ module "nfs_data_host" {
 # a second copy of the data. Subdirectory of the export, so F1 replays stay
 # separate from everything else servarr downloads.
 module "nfs_replay_cache" {
-  source       = "../../modules/kubernetes/nfs_volume"
-  name         = "f1-stream-replay-cache"
-  namespace    = kubernetes_namespace.f1-stream.metadata[0].name
-  nfs_server   = var.nfs_server
-  nfs_path     = "/srv/nfs/servarr/downloads/f1-replays"
-  storage      = "200Gi"
-  access_modes = ["ReadWriteMany"]
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "f1-stream-replay-cache"
+  namespace          = kubernetes_namespace.f1-stream.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/servarr/downloads/f1-replays"
+  storage            = "200Gi"
+  access_modes       = ["ReadWriteMany"]
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "f1-stream" {
@@ -277,9 +279,37 @@ resource "kubernetes_deployment" "f1-stream" {
           # connection itself; the chrome-service-client-secrets ExternalSecret
           # below stays in place because the snapshot endpoint (dev-box only,
           # not used by f1-stream) reuses the same Vault key.
+          #
+          # Deliberately NOT repointed at chrome-fleet, which docs/playback-guard.md
+          # proposes as build step 2. Two things measured 2026-09-05 say that swap
+          # would be a regression rather than a fix:
+          #   - chrome-fleet:8080 is the lease broker, not a CDP endpoint. Its
+          #     /json/version returns the FleetView HTML page, so
+          #     connect_over_cdp() against it fails. Leasing is a code change
+          #     (backend/chrome_fleet.py), not an env value.
+          #   - the address below now answers. From this pod,
+          #     chrome-service:9222/json/version returned 200 Chrome/147.0.7727.55.
+          #     The connection-refused the design recorded was the neko container
+          #     in that pod being taskless after a restart; the pod has since
+          #     restarted again and reads 3/3 Running.
+          # The guard CronJob does not set this var at all — it leases a worker
+          # per run and injects that worker's URL directly. See f1-source-guard.tf.
           env {
             name  = "CHROME_CDP_URL"
             value = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+          }
+          # The streamed extractor resolves embed pages by loading them in a
+          # browser, and leases a worker from the fleet broker to do it rather
+          # than holding the single chrome-service instance above for a whole
+          # extraction run. Without this the extractor logs that the var is
+          # unset and returns no streams, which is how it shipped on
+          # 2026-09-06: registered, deployed, and quietly yielding nothing.
+          # Note this is the BROKER, not a CDP endpoint — :8080 serves
+          # /acquire and /release, and the worker's own podIP:9222 is what
+          # gets dialled. See backend/chrome_fleet.py.
+          env {
+            name  = "CHROME_FLEET_URL"
+            value = "http://chrome-fleet.chrome-service.svc.cluster.local:8080"
           }
           # The embed proxy (this pod's /embed?url=…) must be reachable from
           # the remote chrome-service pod. Default 127.0.0.1 only works for
@@ -308,6 +338,33 @@ resource "kubernetes_deployment" "f1-stream" {
           env {
             name  = "REPLAY_CACHE_CAP_GB"
             value = "150"
+          }
+          # Peer-assisted delivery. The backend injects these into the served
+          # HTML shell as `window.__F1_CONFIG__` (backend/runtime_config.py),
+          # rather than the frontend baking them at build time, because the
+          # frontend is built once into the image while the tracker URL is
+          # deployment config that follows the ingress.
+          #
+          # UNSET MEANS OFF, deliberately: p2pSettings treats a missing tracker
+          # list as "peer-assist disabled", so a viewer then pulls every segment
+          # over HTTP exactly as before. That keeps a feature which opens WebRTC
+          # connections between viewers' browsers behind a single env var.
+          #
+          # The tracker is the in-cluster wt-tracker (see wt-tracker.tf), served
+          # on this same host under /tracker, so it follows f1 through the
+          # Cloudflare cutover with no second decision.
+          env {
+            name  = "P2P_TRACKERS"
+            value = "wss://f1.viktorbarzin.me/tracker"
+          }
+          # STUN only, no TURN. A STUN server learns a candidate address and
+          # carries no media, so this leaks less than the segment request that
+          # follows it; TURN would relay the video itself and defeat the point.
+          # Google's public STUN is used because it costs nothing and we do not
+          # run one — if that ever matters, coturn in-cluster is the swap.
+          env {
+            name  = "P2P_STUN"
+            value = "stun:stun.l.google.com:19302"
           }
           volume_mount {
             name       = "data"
@@ -460,6 +517,12 @@ module "anubis" {
       # is on disk, since the original release is released once its copy is
       # verified. Missing from this list, a cookie flap makes it answer with the
       # PoW page and every converted session looks absent.
+      # `replays/refresh` joined them on 2026-09-06, when the Replays page's
+      # Refresh button stopped merely re-reading the cache and started asking the
+      # server to go and look. It is a POST rather than a GET, which changes
+      # nothing here: Anubis matches on path, so without the entry the SPA's
+      # fetch gets the challenge page back as 200 text/html and .json() throws
+      # the same 'Unexpected token <' it throws for a missing GET route.
       # It was added after this rule; while missing, any request whose Anubis
       # cookie didn't validate (the IP-sensitive cookie flap) fell through to
       # catchall-challenge and got the PoW HTML back — so the SPA's res.json()
@@ -472,8 +535,93 @@ module "anubis" {
       # `admin/login` is deliberately NOT here -- it is a top-level navigation
       # gated by Authentik on its own Ingress, and never reaches Anubis.
       - name: f1-data-routes
-        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|schedule|streams)(/|\?|$)
+        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|replays/refresh|schedule|streams)(/|\?|$)
         action: ALLOW
+      # NOTE: /metrics is deliberately NOT allow-listed here. The Prometheus
+      # scrape reaches the app Service directly at
+      # f1.f1-stream.svc.cluster.local:80 and never passes through Anubis,
+      # which fronts only the Ingress. An ALLOW rule would therefore buy the
+      # scrape nothing and would publish per-source stream counts and
+      # timestamps on the public hostname for no reason. If the exposition ever
+      # needs to be reachable from outside the cluster, that is a deliberate
+      # decision to take on its own rather than a side effect of adding a
+      # scrape target.
+      # Link previews for shared moments and party invites (design doc
+      # 2026-09-08, "Crawler access"). Scoped to the three share shapes and
+      # nothing else, so a spoofed preview user-agent earns one Open Graph page
+      # and no more of the site:
+      #   /s/<id>            share page — OG tags plus a visible fallback link
+      #   /s/<id>/thumb.jpg  the ffmpeg frame grab at T (replays only)
+      #   /p/<id>            party join page, same shape so a pasted party link
+      #                      also previews
+      # These are backend routes on purpose: `ssr = false` in
+      # frontend/src/routes/+layout.js means the SvelteKit app cannot emit
+      # og:title or og:image at all, so without an ALLOW here a preview bot
+      # reaches the PoW interstitial and the paste renders as nothing.
+      #
+      # ONE `expression` RATHER THAN path_regex + user_agent_regex. That pairing
+      # is the obvious shape and Anubis rejects it: v1.25.0 (the tag running
+      # here) returns ErrBotMustHaveUserAgentOrPathNotBoth from
+      # lib/config/config.go when a rule sets both, and one invalid rule fails
+      # the WHOLE policy document — that takes f1 down rather than just losing
+      # previews. A CEL `all:` block ANDs the same two conditions and validates.
+      #
+      # The CEL matcher is also the narrower one. Anubis's PathChecker tests the
+      # client-supplied X-Original-URI header BEFORE r.URL.Path
+      # (lib/policy/checker.go), so any `path_regex` ALLOW can be widened by a
+      # client that sends `X-Original-URI: /s/aaaaaa` while requesting something
+      # else entirely. The CEL `path` variable is r.URL.Path only
+      # (lib/policy/celchecker.go, ResolveName), so this rule can only match the
+      # path actually being served.
+      #
+      # `[.]` and not `\.` for the literal dot. The regex travels through a
+      # Terraform heredoc, then YAML, then a CEL string literal, and `\.` is not
+      # a valid CEL escape sequence. A character class means the pattern carries
+      # zero backslashes and there is no escaping left to get wrong — please
+      # leave it as a class.
+      #
+      # The anchors, the {6,64} bound and the charset are what keep this from
+      # widening: without them the rule would ALLOW any two-segment path. Ids
+      # are opaque base64url minted with `secrets`, which is the charset here.
+      # Both trailing-slash forms match because the frontend sets
+      # trailingSlash = 'always'.
+      #
+      # POSITION MATTERS — do not move this above the imports. Anubis takes the
+      # first matching rule (lib/policy/policy.go), so with this rule here
+      # `_deny-pathological` and `ai-block-aggressive` still DENY ClaudeBot,
+      # GPTBot, Bytespider, PerplexityBot, meta-externalagent and the rest on
+      # the share path as well. That ordering is the only reason the generic
+      # `bot` substring is safe. What it does still admit is an undeclared SEO
+      # crawler that already holds the link; it cannot find one by guessing, and
+      # one OG page is all it gets.
+      #
+      # On the named agents: `whatsapp` covers Signal too, because Signal
+      # fetches previews with `User-Agent: WhatsApp/2` (signalapp/Signal-Android
+      # issue 13522 — deliberate, long-standing), so there is no separate Signal
+      # token to match. `facebookexternalhit` is the Messenger / WhatsApp
+      # desktop / Instagram preview fetcher and is listed; `meta-externalagent`
+      # is Meta's AI crawler and is deliberately NOT, since ai-catchall above
+      # denies it and should keep doing so. iMessage has no entry at all: its
+      # fetcher sends a plain Safari user-agent and cannot be distinguished from
+      # a person, so an iMessage paste falls through to the challenge. Nothing
+      # here can fix that.
+      - name: f1-share-link-previews
+        action: ALLOW
+        expression:
+          all:
+            # The charset includes ':' because a REPLAY share id is not an
+            # opaque minted token: it is `<reddit_post_id>:<session_type>`
+            # (e.g. `1abc2de:sprint_quali`), which is already durable, so those
+            # links need no registry round trip. The frontend deliberately
+            # decodes the colon back into the path (`shareLink.js` does
+            # `encodeURIComponent(id).replace(/%3A/g, ':')`), so a charset
+            # without ':' would miss EVERY replay preview while still matching
+            # live ones — a silent half-failure. ':' is legal in a path segment
+            # (RFC 3986 pchar). Kept minimal on purpose: no '.', which would
+            # widen this toward dot-segments for no gain, and '-' stays last in
+            # the class so it is a literal rather than a range.
+            - 'path.matches("^/(s|p)/[A-Za-z0-9_:-]{6,64}(/thumb[.]jpg)?/?$")'
+            - 'userAgent.matches("(?i)(bot|crawler|spider|preview|whatsapp|facebookexternalhit|facebookcatalog|telegram|discord|slack|twitter|skypeuripreview|linkedin|embedly|iframely|mastodon|vkshare)")'
       # Allow non-GET methods unconditionally — AI scrapers GET the body,
       # they don't POST. Mutating XHRs and CORS preflight need to bypass.
       - name: allow-non-get-methods
@@ -517,9 +665,21 @@ module "ingress_admin_login" {
 }
 
 module "ingress" {
-  source       = "../../modules/kubernetes/ingress_factory"
-  auth         = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type     = "non-proxied"
+  source = "../../modules/kubernetes/ingress_factory"
+  auth   = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  # CUT OVER 2026-09-10. "proxied" removes the explicit A and AAAA records, so
+  # the host falls through to the zone-wide `*` CNAME into the cloudflared
+  # tunnel (ADR-0021) and no per-name record is created. Reverting is the same
+  # one line back to "non-proxied".
+  #
+  # Done for EDGE CACHING, not only to hide the origin: the house has 15.06
+  # Mbit/s of upload and one live viewer costs 4.55, so three concurrent
+  # viewers fill the line. Cache Rules and the accepted terms risk are in
+  # cloudflare-cache.tf. Rate limiting was already made tunnel-safe when the
+  # share-link work landed: the shared `rate-limit` middleware has no
+  # sourceCriterion and would key every viewer on the cloudflared pod, so f1
+  # carries its own limiter keyed on X-Real-Ip (see below).
+  dns_type     = "proxied"
   namespace    = kubernetes_namespace.f1-stream.metadata[0].name
   name         = "f1"
   service_name = module.anubis.service_name
@@ -527,9 +687,23 @@ module "ingress" {
   # real-ip (sets X-Real-Ip for Anubis's cookie) is auto-attached by
   # ingress_factory for anubis-* backends. f1 is non-proxied (pfSense
   # PROXY-protocol) so the peer is already the real client.
-  tls_secret_name   = var.tls_secret_name
-  anti_ai_scraping  = false
-  extra_middlewares = ["traefik-x402@kubernetescrd"]
+  tls_secret_name  = var.tls_secret_name
+  anti_ai_scraping = false
+  # Video rate limiting, not page-load rate limiting. The shared `rate-limit`
+  # (10/s, burst 50) is detached and `traefik-f1-rate-limit` (200/s, burst
+  # 2000, keyed on X-Real-Ip) attached in its place — the shared one has no
+  # sourceCriterion, so behind the cloudflared tunnel every viewer on the site
+  # shares ONE 10 req/s bucket keyed on the cloudflared pod, and HLS asks for a
+  # segment every 4-6s per viewer. Full arithmetic and the ordering constraint
+  # are in stacks/traefik/modules/traefik/middleware.tf next to the resource.
+  # extra_middlewares are appended LAST by the factory, which is what puts this
+  # after the auto-attached real-ip and guarantees X-Real-Ip is already
+  # stamped when the limiter reads it.
+  skip_default_rate_limit = true
+  extra_middlewares = [
+    "traefik-x402@kubernetescrd",
+    "traefik-f1-rate-limit@kubernetescrd",
+  ]
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "F1 Stream"

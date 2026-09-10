@@ -31,12 +31,13 @@ module "tls_secret" {
 # Send stores encrypted file blobs on disk (metadata in Redis), no embedded DB,
 # NFS-safe. See docs/plans/2026-06-05-block-storage-harden-nfs-design.md
 module "nfs_send" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "send-data-nfs"
-  namespace  = kubernetes_namespace.send.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/send"
-  storage    = "5Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "send-data-nfs"
+  namespace          = kubernetes_namespace.send.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/send"
+  storage            = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "send" {
@@ -46,16 +47,37 @@ resource "kubernetes_deployment" "send" {
     labels = {
       app  = "send"
       tier = local.tiers.aux
+      # Scale-to-zero enrollment (ADR-0022), un-parked 2026-09-06 at Viktor's
+      # request. This is an exception to the ADR's "WebSocket-dependent apps
+      # cannot enroll" line, taken deliberately and with a sharper caveat than
+      # affine's.
+      #
+      # WS CAVEAT, worse here than elsewhere: the file payload streams over a
+      # WebSocket to /api/ws in 64 KiB ECE frames, and downloads are a single
+      # long HTTP GET. Neither refreshes a sablier session, so a transfer still
+      # running when the session expires is reaped mid-flight. affine survives
+      # the same reaping because it is local-first and re-syncs on reconnect;
+      # a cut Send transfer is simply lost. Hence session_duration 12h below
+      # rather than the 3h default: large files are the entire point of this
+      # service, so the window has to outlast a realistic transfer.
+      "sablier.enable"      = "true"
+      "sablier.group"       = "send"
+      "sablier.ready-after" = "5s"
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
     }
   }
   spec {
-    # PARKED (2026-07-12, Viktor) — unused; WS-upload protocol so it can't
-    # wake-on-request (ADR-0022 ineligible). Share links are DEAD while
-    # parked. Revive: set to 1 and drop external_monitor = false below.
-    replicas = 0
+    # UN-PARKED 2026-09-06 (Viktor) and enrolled in scale-to-zero instead of
+    # running 24/7. Parked 2026-07-12 as unused; the "can't wake-on-request"
+    # reason turned out to be half right. Waking is fine: a recipient opens a
+    # share link over plain HTTP, which is what sablier intercepts. Staying
+    # awake is the real constraint, covered in the labels above.
+    #
+    # sablier owns this number at runtime (see the ignore_changes below), so it
+    # is the starting value only.
+    replicas = 1
     strategy {
       type = "Recreate"
     }
@@ -145,6 +167,7 @@ resource "kubernetes_deployment" "send" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales replicas (ADR-0022)
     ]
   }
 }
@@ -176,11 +199,22 @@ module "ingress" {
   dns_type = "non-proxied"
   # Parked service: keep the external-monitor-sync from holding a permanently
   # red [External] monitor against a 0-replica backend.
-  external_monitor = false
-  namespace        = kubernetes_namespace.send.metadata[0].name
-  name             = "send"
-  tls_secret_name  = var.tls_secret_name
-  port             = 1443
+  # Scale-to-zero (ADR-0022). BLOCKING rather than the dynamic loading page:
+  # a share-link recipient may be a script or a native client, and a 200 HTML
+  # loading page would be handed to them as if it were the file. A held request
+  # just looks like a slow start. session_duration is 12h, not the 3h default,
+  # because neither the WebSocket upload nor the long GET download refreshes
+  # the session and a reaped transfer is unrecoverable here.
+  sablier = {
+    group            = "send"
+    strategy         = "blocking"
+    session_duration = "12h"
+    blocking_timeout = "5m"
+  }
+  namespace       = kubernetes_namespace.send.metadata[0].name
+  name            = "send"
+  tls_secret_name = var.tls_secret_name
+  port            = 1443
   extra_annotations = {
     "gethomepage.dev/enabled"      = "true"
     "gethomepage.dev/name"         = "Send"

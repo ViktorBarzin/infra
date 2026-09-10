@@ -200,3 +200,69 @@ func TestParsePasteArgs(t *testing.T) {
 		t.Error("an unsupported expiry must be rejected up front, not by the server")
 	}
 }
+
+// A paste is an internet-reachable URL, so a dropped flag is not cosmetic: a
+// mistyped --burn produces a paste that does NOT self-destruct, and a dropped
+// --expire quietly takes the 1week default. This parser already validated the
+// VALUE of --expire "so a typo fails immediately instead of silently becoming
+// the server default" — it just never applied that to the flag NAME.
+func TestParsePasteArgsRejectsUnknownFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"a.log", "--burn-after-read"},
+		{"a.log", "--brun"},
+		{"a.log", "--expiry", "1day"},
+		{"a.log", "-x"},
+	} {
+		got, err := parsePasteArgs(args)
+		if err == nil {
+			t.Fatalf("parsePasteArgs(%v) accepted an unknown flag (%+v)", args, got)
+		}
+	}
+	// A valueless value-flag used to fall through to the default too.
+	for _, args := range [][]string{{"a.log", "--expire"}, {"a.log", "--format"}, {"a.log", "--expire="}} {
+		if _, err := parsePasteArgs(args); err == nil {
+			t.Errorf("parsePasteArgs(%v) must error rather than take the default", args)
+		}
+	}
+	// A second positional is an error, not a silently ignored word.
+	if _, err := parsePasteArgs([]string{"a.log", "b.log"}); err == nil {
+		t.Error("a second positional must error")
+	}
+}
+
+func TestParsePasteArgsAcceptsBothDashAndEqualsForms(t *testing.T) {
+	for _, tc := range []struct {
+		args   []string
+		expire string
+		format string
+		burn   bool
+		force  bool
+	}{
+		{[]string{"a.log", "-burn"}, "1week", "plaintext", true, false},
+		{[]string{"a.log", "-force"}, "1week", "plaintext", false, true},
+		{[]string{"a.log", "-expire", "1day"}, "1day", "plaintext", false, false},
+		{[]string{"a.log", "--expire=1day"}, "1day", "plaintext", false, false},
+		{[]string{"a.log", "-expire=1day"}, "1day", "plaintext", false, false},
+		{[]string{"a.md", "--format=markdown"}, "1week", "markdown", false, false},
+		{[]string{"a.md", "-format", "markdown"}, "1week", "markdown", false, false},
+	} {
+		got, err := parsePasteArgs(tc.args)
+		if err != nil {
+			t.Fatalf("parsePasteArgs(%v): %v", tc.args, err)
+		}
+		if got.path != "a.log" && got.path != "a.md" {
+			t.Errorf("parsePasteArgs(%v) path = %q", tc.args, got.path)
+		}
+		if got.expire != tc.expire || got.format != tc.format || got.burn != tc.burn || got.force != tc.force {
+			t.Errorf("parsePasteArgs(%v) = %+v, want expire=%s format=%s burn=%v force=%v",
+				tc.args, got, tc.expire, tc.format, tc.burn, tc.force)
+		}
+	}
+	// `-` still means stdin, and is not read as a flag.
+	if got, err := parsePasteArgs([]string{"-"}); err != nil || got.path != "-" {
+		t.Fatalf(`parsePasteArgs(["-"]) = %+v, %v; want path="-"`, got, err)
+	}
+	if got, err := parsePasteArgs([]string{"-", "--burn"}); err != nil || got.path != "-" || !got.burn {
+		t.Fatalf(`parsePasteArgs(["-","--burn"]) = %+v, %v`, got, err)
+	}
+}

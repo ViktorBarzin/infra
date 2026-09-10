@@ -144,10 +144,22 @@ visible in `messages_crdt` — would have ruled that out immediately.
 - Why Anca's "Ignore" account was deleted on 2026-06-14 while ten live rules
   still pointed at it. It was one tombstone write alongside 30,289 others that
   day.
-- The cause of the 2026-07-05→07-24 degradation is inferred from browser
+- ~~The cause of the 2026-07-05→07-24 degradation is inferred from browser
   re-link writes to the accounts CRDT, not confirmed. Both users dropped out
   simultaneously right after the 07-04 run, which does not fit independent
-  per-user 90-day consent clocks. Confirming would need a GoCardless API call.
+  per-user 90-day consent clocks. Confirming would need a GoCardless API call.~~
+  **Answered 2026-09-08** by that GoCardless call. The clocks were not
+  independent: both users were re-linked on the SAME day, 2026-04-05, so their
+  90-day windows ran out together. Viktor's `MONZO_MONZGB2L` and Anca's
+  `MONZO_MONZGB2L` plus `AMERICAN_EXPRESS_AESUGB21` requisitions all carry
+  `created = 2026-04-05`, which is `2026-07-04` plus 90 days, and all now read
+  status `EX`. Anca's `REVOLUT_REVOGB21` was created 2026-04-18 and so expired
+  2026-07-17, which is why her job degraded in two stages and then wrote nothing
+  at all from 07-18 to 07-24 (verified by counting `transactions.financial_id`
+  writes per night in the server's CRDT log). She re-authorised all four banks on
+  2026-07-25 at 11:43 and the 07-26 run backfilled the gap from GoCardless's
+  90-day window, leaving no hole in the transaction dates. This is the failure
+  mode `BankSyncConsentExpiring` now warns about 14 days ahead.
 - A nightly flip-flop on `imported_description` for existing on-budget rows
   (Anca 794 changes across 53 rows, mostly Revolut GBP; Viktor 61 across 5) —
   e.g. `Anca Elena Milea` ↔ `Anca Elena Milea (GB16 XXX 6108)` alternating.

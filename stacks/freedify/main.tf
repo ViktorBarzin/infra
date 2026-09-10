@@ -14,7 +14,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "freedify"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -78,6 +78,7 @@ module "viktor" {
   source             = "./factory"
   name               = "viktor"
   tag                = "latest"
+  replicas           = 0 # idle, see factory/main.tf
   tls_secret_name    = var.tls_secret_name
   depends_on         = [kubernetes_namespace.freedify]
   tier               = local.tiers.aux
@@ -105,6 +106,7 @@ module "emo" {
   source             = "./factory"
   name               = "emo"
   tag                = "latest"
+  replicas           = 0 # idle, see factory/main.tf
   tls_secret_name    = var.tls_secret_name
   depends_on         = [kubernetes_namespace.freedify]
   tier               = local.tiers.aux
