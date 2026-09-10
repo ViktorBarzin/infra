@@ -191,6 +191,30 @@ home_of() {
 LOBBY_NAME_RE='^[a-zA-Z0-9_-]{1,32}$'
 addressable() { [[ "$1" =~ $LOBBY_NAME_RE ]]; }
 
+# A SYSTEM session is one the lobby did not make: a QA or e2e harness session, or
+# one nobody stamped at all. terminal-lobby records this in the @tl_origin tmux
+# option — "user" when its own create path made the session, "test" when a
+# harness did, absent when nothing said — and groups anything that is not "user"
+# into a collapsed System group instead of the sidebar proper.
+#
+# Snapshotting one puts a row in the restore picker for work nobody owns, and
+# restoring one resumes a conversation a harness abandoned. Same reasoning as
+# addressable() above, one step further out: that rule drops what the lobby
+# CANNOT address, this one drops what it did not create.
+#
+# The name half is a backstop for a session created before the stamper existed,
+# or by something that forgets to stamp. It mirrors reservedNamePrefixes in
+# terminal-lobby's tmux-api/migrate_ids.go; the pool prefix is already covered by
+# addressable(), which is why it is not repeated here.
+# Two halves, deliberately separate, because only one of them needs the box to be
+# stamping before it can be trusted. A reserved NAME means the same thing on every
+# box and in every version, so it is always safe to act on; an ABSENT origin means
+# "system" only once something is known to be writing origins at all.
+ORIGIN_USER='user'
+RESERVED_NAME_RE='^(qa-|t3e2e-|tlp-t)'
+reserved_name()  { [[ "$1" =~ $RESERVED_NAME_RE ]]; }
+foreign_origin() { [[ "$1" != "$ORIGIN_USER" ]]; }
+
 # First descendant of $1 whose comm is `claude` (BFS, bounded by process tree).
 #
 # Touches ONLY the pane's own subtree, with no subprocesses at all.
@@ -345,15 +369,57 @@ uuid_only() { uuid_of_claude "$@"; UUID_VALUE="${UUID_ANSWER#*$'\t'}"; }
 # only written when it DIFFERS from the newest one, so a reordering would read as
 # a change on every tick.
 capture_live() {   # $1 user -> TSV rows on stdout
-  local u="$1" sess pane_pid pane_cwd stamp answer uuid
-  local -a rows=() order=()
+  local u="$1" sess pane_pid pane_cwd stamp origin answer uuid line
+  local -a rows=() order=() panes=()
   local -A cwd_of=() owner=() saved=()
+
+  # The origin column sits THIRD, not last, and carries a `-` when the option is
+  # unset. Both details are load-bearing.
+  #
+  # `read` assigns everything left over to its LAST variable, separators
+  # included, so whichever column goes last absorbs any stray tab in the ones
+  # before it. @claude_transcript keeps that job: it is written by Claude Code's
+  # own hook and path-validated before it is stamped. Origin must NOT have it —
+  # a tab in a pane's cwd would hand `origin` the string "<transcript>\tuser",
+  # which reads as a foreign origin and would silently drop a real session out of
+  # every future snapshot.
+  #
+  # The placeholder is what keeps the column from being empty, because TAB is IFS
+  # whitespace: two adjacent empty fields collapse into one and shift every
+  # column after them.
+  #
+  # terminal-lobby's tmux-api reaches the same conclusion from the other end and
+  # for a sharper reason: its list format ends in #{pane_title}, which is
+  # whatever the application inside the pane last wrote over OSC 2, so an origin
+  # placed after it could be forged by anything running in a session.
+  mapfile -t panes < <(tmux_as "$u" list-panes -a \
+             -F $'#{session_name}\t#{pane_pid}\t#{?@tl_origin,#{@tl_origin},-}\t#{pane_current_path}\t#{@claude_transcript}' 2>/dev/null \
+           | sort -u -t$'\t' -k1,1)
+
+  # Does this box stamp origins at all yet? Every session alive before
+  # terminal-lobby's grandfather pass runs is unstamped, and an unstamped session
+  # reads as a system session — so on a box where the stamper has not arrived,
+  # the origin rule below would skip EVERY session and quietly stop persisting
+  # anybody's work. Seeing one stamped session is what proves the stamper is
+  # live; until then that rule does nothing, and it retires itself the moment the
+  # lobby half deploys. Deliberately per-capture, so no state has to be kept.
+  local stamping=0
+  for line in "${panes[@]:-}"; do
+    [[ -n "$line" ]] || continue
+    IFS=$'\t' read -r _ _ origin _ <<<"$line"
+    [[ "$origin" == "$ORIGIN_USER" ]] && { stamping=1; break; }
+  done
+
   # Pass 1: ask every pane which conversation it is running, and how sure it is.
-  while IFS=$'\t' read -r sess pane_pid pane_cwd stamp; do
+  for line in "${panes[@]:-}"; do
+    IFS=$'\t' read -r sess pane_pid origin pane_cwd stamp <<<"$line"
     [[ -n "$sess" ]] || continue
     # Skipped here rather than at restore, so an unaddressable session never
-    # enters a snapshot in the first place and no later reader has to know.
+    # enters a snapshot in the first place and no later reader has to know. A
+    # system session is dropped in the same place and for the same reason.
     addressable "$sess" || continue
+    reserved_name "$sess" && continue
+    ((stamping)) && foreign_origin "$origin" && continue
     answer=""
     if claude_pid_under "$pane_pid"; then
       uuid_of_claude "$CLAUDE_PID" "$u" "$pane_cwd" "$sess" "$stamp"
@@ -365,9 +431,7 @@ capture_live() {   # $1 user -> TSV rows on stdout
     # WHITESPACE, so `read` collapses a run of them and an empty middle field
     # would shift every column after it (the same trap the history rows hit).
     rows+=("${answer:-9$'\t'-}"$'\t'"$sess")
-  done < <(tmux_as "$u" list-panes -a \
-             -F $'#{session_name}\t#{pane_pid}\t#{pane_current_path}\t#{@claude_transcript}' 2>/dev/null \
-           | sort -u -t$'\t' -k1,1)
+  done
 
   # Pass 2: most-certain rows choose first, so a session that KNOWS its
   # conversation keeps it and a session that merely guessed the same one is saved
