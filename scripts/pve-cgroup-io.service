@@ -1,0 +1,12 @@
+[Unit]
+Description=Delegate the cgroup v2 io controller into qemu.slice (accounting only)
+Documentation=https://github.com/ViktorBarzin/infra/blob/master/scripts/pve-cgroup-io.sh
+After=pve-cluster.service
+Wants=pve-cluster.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pve-cgroup-io.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pve-cgroup-io

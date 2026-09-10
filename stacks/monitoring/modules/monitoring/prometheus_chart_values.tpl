@@ -1312,6 +1312,112 @@ serverFiles:
               severity: warning
             annotations:
               summary: "chrome-service pod quota >90% used for 10m — the pool may be unable to burst new workers. Raise the chrome-pool ResourceQuota or investigate leaked sessions."
+      # Added 2026-09-06 alongside retiring the 117-range Meta blocklist. That
+      # removed a control that was demonstrably working (it was stopping ~99
+      # requests/hour at the moment of removal) before its Cloudflare
+      # replacement had been proven, so these exist to make the crawl visible
+      # if it returns rather than discovering it from an outage.
+      #
+      # Thresholds are ratios against each series' own recent baseline, not
+      # absolute numbers, because normal volume here varies by two orders of
+      # magnitude between hosts.
+      - name: Scrape and traffic anomalies
+        rules:
+          - alert: ScrapeVolumeAnomaly
+            # Whole-edge request rate against its own 6h average. The 2026-09-02
+            # Meta crawl ran 9,300-11,000 req/hour on top of a ~10 req/s
+            # baseline, so a sustained 3x is comfortably above noise while still
+            # catching a crawl of that size. The >2 req/s floor stops a quiet
+            # night (where 3x of almost nothing is still almost nothing) from
+            # paging.
+            expr: |
+              sum(rate(traefik_service_requests_total[5m]))
+                > 3 * avg_over_time(sum(rate(traefik_service_requests_total[5m]))[6h:5m])
+              and sum(rate(traefik_service_requests_total[5m])) > 2
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Edge request rate {{ $value | printf \"%.1f\" }}/s is over 3x its 6h average for 15m — possible scrape or crawl. Check `homelab logs query` for a single host or user-agent dominating."
+          - alert: ForgejoCrawlSurge
+            # Forgejo specifically, because it is where every crawl has landed:
+            # 22,115 of 22,189 Meta requests in a 24h window, and 137,760
+            # direct-to-origin requests in 12h before it went behind Cloudflare.
+            # Baseline is ~0.4 req/s, so 5x is a real change and not jitter.
+            expr: |
+              sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m]))
+                > 5 * avg_over_time(sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m]))[6h:5m])
+              and sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m])) > 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "forgejo request rate {{ $value | printf \"%.1f\" }}/s is over 5x its 6h average — the crawl target. If the Meta blocklist retirement was premature, this is how we find out."
+          - alert: EdgeBlockSurge
+            # A sustained 403 rate means something is being refused in volume,
+            # which is the signature of a crawl meeting CrowdSec or the edge.
+            # Useful even when total volume looks normal, because blocked
+            # requests are cheap and may not move the aggregate.
+            #
+            # READS THE ENTRYPOINT COUNTER, NOT THE SERVICE ONE, and that is the
+            # whole alert. Until 2026-09-10 this was
+            # sum(rate(traefik_service_requests_total{code="403"}[5m])) > 1 and
+            # it could never fire: a CrowdSec 403 is issued by the `crowdsec`
+            # middleware on the websecure ENTRYPOINT, so the request is refused
+            # before any service is selected and the per-service counter never
+            # increments. Measured over the 24h that contained the 2026-09-09
+            # crawl:
+            #   traefik_service_requests_total{code="403"}      max 0.008 req/s
+            #   traefik_entrypoint_requests_total{code="403"}   max 147 req/s
+            # The old threshold of 1 sat 120x above the service counter's
+            # 24-hour maximum, so an alert written to catch bulk blocking read
+            # as coverage in the alert list while being structurally incapable
+            # of firing.
+            #
+            # THRESHOLD from the entrypoint counter's own distribution over that
+            # same 24h: p50 2.5, p90 10.4, p99 79.1, max 147 req/s. 30 sits
+            # about 3x above p90 and well under the crawl, and `for: 10m` keeps
+            # a brief burst of auth 403s from paging. Note the entrypoint
+            # counter includes ordinary application 403s, which is why the floor
+            # is 30 rather than the 1 that suited a counter reading near zero.
+            expr: sum(rate(traefik_entrypoint_requests_total{code="403"}[5m])) > 30
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.1f\" }} req/s being refused with 403 for 10m — something is being blocked in bulk. Identify it before deciding whether the block is right."
+
+          - alert: DistributedCrawlDetected
+            # The direct signal, added 2026-09-10. Every other crawl alert here
+            # infers a crawl from a traffic SHAPE (a rate over its own average,
+            # a 403 volume) and therefore needs a threshold that trades misses
+            # against false alarms. This one reports that the detector itself
+            # fired, so it needs no tuning and does not move when traffic does.
+            #
+            # cs_alerts is a LAPI counter labelled by scenario. All three LAPI
+            # replicas carry the same value, so this is max() rather than sum():
+            # summing would treble the rate, and a replica restart resets one
+            # series to zero while the others keep climbing, which max() rides
+            # out.
+            #
+            # `> 0` is deliberate and is not a placeholder. An overflow of
+            # viktor/distributed-crawl-range means 30 distinct addresses inside
+            # one registered prefix hit us inside the leak window, which does
+            # not happen to legitimate traffic: measured over three windows of
+            # real traffic on 2026-09-09, legitimate netblocks showed 2-3
+            # distinct addresses and crawler ranges 27-338. `for: 10m` requires
+            # the crawl to be sustained rather than a single burst.
+            #
+            # It stays firing for as long as the crawl runs, which is intended.
+            # A crawl in its fourth hour is still a crawl, and the resolve is
+            # the useful part: it says the thing stopped.
+            expr: max by (reason) (rate(cs_alerts{reason=~"viktor/.*crawl.*"}[10m])) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CrowdSec {{ $labels.reason }} is firing at {{ $value | printf \"%.2f\" }} alerts/s — a distributed crawl is in progress and being banned. `cscli decisions list --scope Range` shows which prefixes."
+
       - name: R730 Host
         rules:
           - alert: HighCPUTemperature
@@ -4678,6 +4784,43 @@ serverFiles:
           # curl had a timeout and a wedged run sat Running until the next day's
           # schedule replaced it, silently losing a day's sync while the
           # pushgateway still showed the previous run's success.
+          # A PSD2 consent lasts 90 days and renewing one needs the account
+          # holder's own bank MFA, so this is the one bank-sync alert that has to
+          # arrive BEFORE the failure. On 2026-07-18..07-24 anca's consents expired
+          # and the nightly job wrote nothing for seven nights; BankSyncStale
+          # reported it 48h in and nothing had warned. 14 days covers two weekends,
+          # which is what re-authorising three banks by phone realistically needs.
+          - alert: BankSyncConsentExpiring
+            expr: |
+              (bank_sync_consent_expiry_timestamp - time()) < 1209600
+              and
+              (bank_sync_consent_expiry_timestamp - time()) > 0
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Bank sync ({{ $labels.instance }}): {{ $labels.institution }} consent expires in {{ $value | humanizeDuration }}. Re-authorise in Actual: Settings -> Bank Sync -> the account -> re-link, which needs the account holder's bank login and MFA."
+          # Separate from the warning because the remedy is the same but the state is
+          # not: past expiry the nightly import returns ITEM_ERROR and no transaction
+          # arrives at all, so this is the one that should wake somebody.
+          - alert: BankSyncConsentExpired
+            expr: (bank_sync_consent_expiry_timestamp - time()) <= 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Bank sync ({{ $labels.instance }}): {{ $labels.institution }} consent HAS EXPIRED. Imports for its accounts are dead until it is re-authorised by hand in Actual."
+          # The check needs a GoCardless API credential that lives in each Actual
+          # server's own account.sqlite and is copied into secret/actualbudget.
+          # Rotating it in the web UI without updating Vault lands here rather than
+          # silently leaving the two alerts above with no series to evaluate.
+          - alert: BankSyncConsentCheckFailing
+            expr: bank_sync_consent_check_success == 0
+            for: 26h
+            labels:
+              severity: info
+            annotations:
+              summary: "Bank sync ({{ $labels.instance }}): the GoCardless consent-expiry check did not complete, so consent expiry is currently unmonitored for this instance. Usually a stale gocardless_secret_id/_key in secret/actualbudget."
           - alert: BankSyncSlow
             expr: bank_sync_duration_seconds > 300
             for: 5m
@@ -6554,6 +6697,53 @@ extraScrapeConfigs: |
     - source_labels: [__meta_kubernetes_pod_name]
       target_label: pod
     metrics_path: '/metrics'
+
+  - job_name: 'crowdsec-agent'
+    # The AGENTS, added 2026-09-10. The `crowdsec` job above keeps only
+    # type=lapi pods, so until now nothing scraped the five DaemonSet agents
+    # and `up{namespace="crowdsec"}` returned no series at all. Everything the
+    # LAPI exposes is about decisions AFTER the fact; the agent is where
+    # detection actually happens, and all 319 of its cs_* series were invisible.
+    #
+    # What this makes visible, and why it is worth a job:
+    #   cs_buckets                      live leaky buckets, per scenario
+    #   cs_bucket_overflowed_total      detections, per scenario
+    #   cs_bucket_instantiation_total   bucket churn
+    #   cs_parser_hits_total            whether a parser or whitelist runs
+    #   cs_node_hits_ok_total / _ko_    per-node parse success
+    #
+    # Concretely: the 2026-09-09 node3 OOM was caused by 5.29k live
+    # forgejo-crawl-slow buckets on one agent, and diagnosing it meant running
+    # `cscli metrics show scenarios` inside each of five pods by hand, because
+    # cs_buckets was not in Prometheus. It is a graph now.
+    #
+    # SEPARATE JOB NAME on purpose. Three existing alerts key on
+    # `up{job="crowdsec"}` (CrowdSecDown uses max(up{job="crowdsec"}) == 0,
+    # CrowdSecL7BouncerNotPolling uses == 1), and folding five more targets into
+    # that job would quietly change what those expressions mean. The metric
+    # names do not collide either way: cs_lapi_* and cs_alerts are LAPI-only,
+    # cs_bucket_* and cs_parser_* are agent-only.
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - crowdsec
+    relabel_configs:
+    - action: keep
+      regex: crowdsec;agent
+      source_labels: [__meta_kubernetes_pod_label_k8s_app, __meta_kubernetes_pod_label_type]
+    - source_labels: [__meta_kubernetes_pod_ip]
+      target_label: __address__
+      replacement: '$1:6060'
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+    # The node label is the point for the agent: bucket count and memory are a
+    # per-node property, since whichever node runs the Traefik pod carrying the
+    # crawl parses every http_* event for the whole cluster.
+    - source_labels: [__meta_kubernetes_pod_node_name]
+      target_label: node
+    metrics_path: '/metrics'
+
   - job_name: 'snmp-idrac'
     # 30s (was 1m) so the HA dashboard iDRAC metrics (temps / fan RPM / power /
     # voltage, read by ha-sofia's prometheus-query.lan REST sensors) refresh

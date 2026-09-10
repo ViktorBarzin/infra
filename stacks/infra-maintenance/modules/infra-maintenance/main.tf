@@ -76,13 +76,28 @@ module "nfs_etcd_backup_host" {
 }
 
 # # backup etcd
+#
+# Daily since 2026-09-08 (was "0 1 * * 0", weekly on Sunday). etcd runs as a
+# single member, so a lost disk loses the cluster state, and a weekly snapshot
+# put the recovery point up to 7 days back. Measured before the change: five
+# snapshots on /srv/nfs/etcd-backup dated 2026-08-09 through 2026-09-06, one
+# per week.
+#
+# docs/runbooks/restore-etcd.md already describes this job as daily, so the
+# schedule now matches the runbook. Retention was and stays 30 days, set by the
+# find -mtime +30 in the backup-manage container below.
+#
+# Cost of the change: ~30 snapshots retained instead of ~5, at 540-580 MB each,
+# so /srv/nfs/etcd-backup grows from ~2.8 GB to ~17 GB. It had 861 GB free when
+# this was measured. The extra write is ~570 MB/day against the ~24 GB/day that
+# VM 200's disk already writes, so it does not move the IOPS picture.
 resource "kubernetes_cron_job_v1" "backup-etcd" {
   metadata {
     name      = "backup-etcd"
     namespace = "default"
   }
   spec {
-    schedule                      = "0 1 * * 0"
+    schedule                      = "0 1 * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 1
     concurrency_policy            = "Forbid"

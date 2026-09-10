@@ -2,7 +2,62 @@
 # These are referenced by ingress resources via annotations like:
 #   "traefik.ingress.kubernetes.io/router.middlewares" = "traefik-rate-limit@kubernetescrd"
 
-# Rate limiting middleware
+# Rate limiting middleware.
+#
+# THIS IS A CHAIN, NOT THE LIMITER. `rate-limit` is the name ~115 ingresses
+# reference (ingress_factory auto-attaches it, plus two hand-rolled ingresses in
+# stacks/owntracks and stacks/freedify and the reverse_proxy factory), so the
+# name stays and the chain expands in place: real-ip first, then the limiter.
+#
+# WHY A CHAIN. Until 2026-09-09 this was a bare rateLimit with no
+# `sourceCriterion`, which Traefik turns into an IPStrategy over "the request's
+# remote address field" (rate_limiter.go New(): a nil SourceCriterion becomes
+# &dynamic.IPStrategy{}). Behind the cloudflared tunnel that remote address is
+# the cloudflared pod, so every external viewer of every PROXIED host shared ONE
+# bucket of 10 req/s. The fix is to key on X-Real-Ip, which the vendored real-ip
+# plugin overwrites from the unspoofable TCP peer.
+#
+# But real-ip was only attached to anubis-* backends (ingress_factory:408).
+# Verified on the live forgejo Ingress the same day: its chain was
+# retry, error-pages, rate-limit, csp-headers, ai-bot-block, anti-ai-headers,
+# buffering — no real-ip anywhere. Adding `requestHeaderName` alone would
+# therefore have made things WORSE, not better, for the ~110 non-Anubis
+# ingresses:
+#
+#   - Missing header means an empty key, not a fallback. oxy's
+#     makeHeaderExtractor returns req.Header.Get() with no missing-header check,
+#     so every request without the header shares a single bucket keyed "". For
+#     the NON-PROXIED hosts (forgejo, kms, mail) that is a straight regression:
+#     pfSense PROXY-protocol already put the real client in the remote address,
+#     so they had working per-client buckets and would have lost them.
+#   - Without real-ip the header is client-supplied, so a crawler sending a
+#     random X-Real-Ip per request would mint itself an unlimited number of
+#     buckets.
+#
+# Putting real-ip inside the chain fixes both in ONE apply of this stack. The
+# alternative — attaching real-ip per-ingress in ingress_factory — fans a
+# modules/ change out over ~95 app stacks applied serially, and until each one
+# re-applied its ingress would carry the new source key with no header to read.
+# The other alternative, adding real-ip to the websecure ENTRYPOINT chain, is a
+# static-config change (helm upgrade plus a 3-replica roll) and that block is
+# deliberately left alone.
+#
+# ORDER IS LOAD-BEARING and this is the whole reason for the chain: reached
+# before real-ip, the header extractor returns "" for every request and they all
+# share one bucket again — no error, just silent collapse.
+#
+# Running real-ip twice on an Anubis-fronted ingress is harmless: it recomputes
+# from the TCP peer, which no middleware changes, so the second pass writes the
+# same value.
+#
+# WHAT THIS DOES NOT DO. Per-client buckets still cannot catch a crawl that
+# sends one request per address — 1,993 distinct addresses each making a single
+# request never fill any per-client bucket. That is what
+# viktor/distributed-crawl-range in stacks/crowdsec is for. And the limits stay
+# PER-POD across the 3 Traefik replicas, so the real ceiling is ~3x nominal
+# (~30 req/s average, ~150 burst). Traefik 3.7 can share buckets through Redis
+# (`rateLimit.redis`), which would make the numbers mean what they say; not done
+# here because it puts Redis on the hot path of every request.
 resource "kubernetes_manifest" "middleware_rate_limit" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -12,9 +67,45 @@ resource "kubernetes_manifest" "middleware_rate_limit" {
       namespace = kubernetes_namespace.traefik.metadata[0].name
     }
     spec = {
+      chain = {
+        middlewares = [
+          { name = kubectl_manifest.middleware_real_ip.name },
+          { name = kubernetes_manifest.middleware_rate_limit_per_client.manifest.metadata.name },
+        ]
+      }
+    }
+  }
+
+  field_manager {
+    force_conflicts = true
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# The actual limiter. Same 10/50 as before — no new ceiling here, deliberately:
+# the 2026-09-09 crawl came through with zero 5xx and zero 504s, so the numbers
+# are not what failed, and eight prior per-app carve-outs
+# (actualbudget, tripit, health, authentik, dawarich, immich, f1, android-emulator)
+# say a tighter global ceiling is the change most likely to break real traffic.
+#
+# What changed is the bucket KEY. Reference it through `rate-limit` above, never
+# directly, or real-ip will not have run and the key will be empty.
+resource "kubernetes_manifest" "middleware_rate_limit_per_client" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "rate-limit-per-client"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
       rateLimit = {
         average = 10
         burst   = 50
+        sourceCriterion = {
+          requestHeaderName = "X-Real-Ip"
+        }
       }
     }
   }
@@ -744,6 +835,85 @@ resource "kubernetes_manifest" "middleware_android_emulator_rate_limit" {
       rateLimit = {
         average = 50
         burst   = 300
+      }
+    }
+  }
+
+  depends_on = [helm_release.traefik]
+}
+
+# f1-stream video rate limit. Separate from the shared `rate-limit` above
+# because f1 serves HLS, and HLS is a request-per-segment protocol rather than
+# a page load.
+#
+# Why a separate middleware and not a bump to the shared one: 115 ingresses
+# reference `rate-limit`, and raising it for all of them to suit one video host
+# would remove a limit those hosts still want.
+#
+# Two problems it fixes, in order of severity.
+#
+# 1. THE BUCKET KEY. The shared `rate-limit` sets no `sourceCriterion`, so
+#    Traefik falls back to an IPStrategy over "the request's remote address
+#    field" (rate_limiter.go New(): a nil SourceCriterion becomes
+#    &dynamic.IPStrategy{}). Behind the cloudflared tunnel that remote address
+#    is the cloudflared pod, so every viewer on the planet shares ONE bucket of
+#    10 req/s. `requestHeaderName = "X-Real-Ip"` moves the key to the real
+#    client. This works because ingress_factory auto-attaches the `real-ip`
+#    plugin FIRST for every anubis-* backend and extra_middlewares are appended
+#    LAST, so real-ip has already stamped X-Real-Ip by the time this runs —
+#    on the tunnel path from Cf-Connecting-Ip, on the grey-cloud path from the
+#    unspoofable TCP peer (real-ip-plugin/main.go:125 sets it unconditionally
+#    once the peer parses). Order is load-bearing: reached before real-ip, the
+#    oxy header extractor returns "" for every request and they all share one
+#    bucket again — no error, just silent collapse (oxy utils/source.go
+#    makeHeaderExtractor returns req.Header.Get() with no missing-header check).
+#    FIXED FLEET-WIDE 2026-09-09. The shared `rate-limit` became a chain
+#    (real-ip, then rate-limit-per-client with the same X-Real-Ip source key),
+#    so blog, jsoncrack, cyberchef, homepage and real-estate-crawler get
+#    per-client buckets too. Verified live against forgejo: 600 concurrent
+#    requests from one client returned 82 × 200 and 518 × 429, while a second
+#    client with a different X-Real-Ip got 10 × 200 and zero 429s during the
+#    same burst.
+#
+# 2. THE CEILING. Measured against the app's own constants rather than guessed:
+#      - live ladder: SEGMENT_SECONDS = 4, PLAYLIST_LENGTH = 6
+#        (f1-stream backend/transcode.py:75, :91)
+#      - replay ladder: SEGMENT_SECONDS = 6, three rungs
+#        (backend/replays/library.py:51, :87), and the upstream feeds run 6s too
+#        (backend/pdt.py:75-77)
+#    So one viewer costs ~0.5 req/s live (a segment plus a media-playlist
+#    refresh every 4s) and ~0.33 req/s on a replay. The bursts are what bite:
+#    a cold start with p2p-media-loader prefetching a 20-30s buffer pulls ~8
+#    segments plus two playlists at once, a replay seek fires a Range storm,
+#    and the SvelteKit SPA shell has the same parallel-asset shape that already
+#    pushed actualbudget, tripit, health, authentik, dawarich and noVNC off the
+#    default 10/50.
+#    average 200 / burst 2000 (per second — Traefik's default period) is ~80x
+#    the worst realistic steady state (a five-person watch party sharing one
+#    CGNAT egress, ~2.5 req/s) and ~25x its worst burst. Deliberately loose:
+#    a 429 on a segment is a stall mid-race, the request itself is a static
+#    file read or a proxy pass, and abuse is already covered by CrowdSec at the
+#    entrypoint, the Anubis PoW on the HTML and the x402 gateway. Sits between
+#    the 100/1000 SPA family and immich's 1000/20000.
+#
+# RIGHTSIZING NOTE: do not fold this back into the shared 10/50. The numbers
+# above are the reason it exists, and the sourceCriterion is not optional on a
+# tunnelled host.
+resource "kubernetes_manifest" "middleware_f1_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "f1-rate-limit"
+      namespace = kubernetes_namespace.traefik.metadata[0].name
+    }
+    spec = {
+      rateLimit = {
+        average = 200
+        burst   = 2000
+        sourceCriterion = {
+          requestHeaderName = "X-Real-Ip"
+        }
       }
     }
   }

@@ -22,7 +22,31 @@ agent:
       cpu: 25m
       memory: 128Mi
     limits:
-      memory: 512Mi
+      # Raised 512Mi -> 1Gi on 2026-09-09. ONE agent needs this, not all five:
+      # whichever node runs the traefik pod whose access log carries the crawl
+      # parses every http_* event for the whole cluster. Measured that day,
+      # 20 OOM restarts in 40h on node3 while the other four sat at 0, and
+      # `max_over_time(container_memory_working_set_bytes[40h])` peaked at
+      # 509.5Mi against the 512Mi ceiling.
+      #
+      # The driver is LIVE LEAKY-BUCKET COUNT, not a global undersize.
+      # `cscli metrics show scenarios` on node3 at the time:
+      #   viktor/forgejo-crawl-slow        5.29k live buckets,   0 overflows
+      #   crowdsecurity/http-crawl-non_statics 229 live buckets, 0 overflows
+      #   viktor/distributed-crawl-range     546 live buckets, 191 overflows
+      # Each bucket holds a queue of parsed events, so thousands of them is
+      # hundreds of MB. forgejo-crawl-slow groups per IPv6 /64 and this crawler
+      # rotates across /64s, which is what mints them.
+      #
+      # Worth knowing before raising this again: the range-grouped scenario
+      # does the same job for ~10x fewer buckets and is the one actually firing.
+      # Retiring forgejo-crawl-slow would cut the memory rather than accommodate
+      # it, but that removes a detection layer, so it is a deliberate decision
+      # rather than a side effect of this raise.
+      #
+      # Request deliberately left at 128Mi per the convention here, so node
+      # scheduling headroom is unaffected by a ceiling only one pod uses.
+      memory: 1Gi
   priorityClassName: "tier-1-cluster"
   # To specify each pod you want to process it logs (pods present in the node)
   acquisition:
@@ -50,6 +74,15 @@ agent:
     - name: SCENARIOS
       value: ""
       # value: "crowdsecurity/http-crawl-aggressive"
+    # geoip-enrich was already running before this line existed: it arrives as a
+    # hub DEPENDENCY of crowdsecurity/traefik, so the agent had it enabled and
+    # GeoLite2-ASN.mmdb on disk while no file in this repo mentioned either.
+    # Declared explicitly since 2026-09-09 because viktor/distributed-crawl-range
+    # keys its buckets on evt.Meta.SourceRange, which ONLY this parser creates —
+    # an upstream collection reshuffle that dropped the dependency would silently
+    # turn that scenario into a no-op with no error anywhere.
+    - name: PARSERS
+      value: "crowdsecurity/geoip-enrich"
   # Mount custom scenarios into /etc/crowdsec/scenarios
   extraVolumeMounts:
     - name: custom-scenarios
@@ -74,13 +107,31 @@ agent:
       mountPath: /etc/crowdsec/scenarios/http-crawl-non_statics.yaml
       subPath: "http-crawl-non_statics.yaml"
       readonly: true
-    # New scenario rather than an override, so it sits alongside the stock one:
-    # the stock rule keeps catching FAST crawlers everywhere, this one catches a
-    # SLOW crawler on forgejo only. Adding a mount restarts the agent pods,
-    # which is what loads it (subPath mounts do not refresh on their own).
+    # viktor/forgejo-crawl-slow WAS MOUNTED HERE and was retired 2026-09-10 on
+    # Viktor's call. Removing the mount is what unloads it; the ConfigMap key in
+    # main.tf went with it, and `git show` on this commit has the full scenario
+    # if it is ever wanted back.
+    #
+    # Measured on node3 during the live crawl, once the agents were finally
+    # scraped: it held 12,521 leaky buckets and had overflowed 0 times, while
+    # viktor/distributed-crawl-range held 1,373 and had overflowed 5,023. It
+    # grouped by IPv6 /64 and this crawler rotates ACROSS /64s, so every request
+    # minted a bucket that caught nobody. Each bucket carries a queue of parsed
+    # events, so the agent climbed 566 -> 788 MiB in two hours against its 1 GiB
+    # limit and was heading for the same OOM the limit raise had just deferred.
+    # An OOM restarts the pod and drops EVERY scenario's state, including the
+    # one doing the work, so the dead detector was endangering the live one.
+    #
+    # What is lost: it was written for a SLOW crawler patiently reading forgejo
+    # from one address. It never caught one, and Anubis has fronted forgejo
+    # since 2026-09-09, which challenges exactly that client.
+    #
+    # Groups by the source's REGISTERED PREFIX rather than its address, which is
+    # the only axis on which a crawl that sends one request per address is
+    # visible at all. Fleet-wide.
     - name: custom-scenarios
-      mountPath: /etc/crowdsec/scenarios/forgejo-crawl-slow.yaml
-      subPath: "forgejo-crawl-slow.yaml"
+      mountPath: /etc/crowdsec/scenarios/distributed-crawl-range.yaml
+      subPath: "distributed-crawl-range.yaml"
       readonly: true
     - name: whitelist
       mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml

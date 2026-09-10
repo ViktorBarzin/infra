@@ -1,7 +1,8 @@
 # Crawler defence at the Cloudflare edge
 
-Status: approved, not started
-Date: 2026-09-06 (revised the same day)
+Status: executing — steps 1 to 4 done, step 5 (retiring the static lists) held
+open pending false-positive observation on the new scenario
+Date: 2026-09-06 (revised the same day; step 4 closed out 2026-09-09)
 Author: Viktor Barzin (design worked through with Claude)
 
 ## Goal
@@ -20,7 +21,8 @@ at all and stay with CrowdSec and the firewall bouncer, as today.
 | surface | covered by |
 |---|---|
 | ~110 proxied HTTP hosts | Cloudflare edge, from step 1 |
-| forgejo | Cloudflare edge, from step 3 |
+| forgejo | Anubis proof-of-work from 2026-09-09, plus CrowdSec + firewall bouncer (step 3's edge proxying was reverted, infra#91) |
+| every HTTP host | `viktor/distributed-crawl-range` in CrowdSec from 2026-09-09 |
 | non-HTTP names, internal `.lan` | CrowdSec + firewall bouncer, unchanged |
 
 ## What changed, and why this document was rewritten
@@ -257,14 +259,196 @@ usable for CrowdSec decision volume is not yet measured.
 
 ## Sequence
 
-1. **Turn on the three edge controls.** Bot Fight Mode stays as it is. Applies
-   to all ~110 proxied hosts immediately, no code.
-2. **Enable SSH on Forgejo** and move remotes on this box, in CI and in
-   Woodpecker.
-3. **Proxy `forgejo.viktorbarzin.me`.**
-4. **Watch what the edge stops**, then decide whether the `/64` detector is
-   still worth building.
-5. **Retire the 117-range static blocklist.**
+1. **DONE** — Turned on the edge controls. `ai_search`, `ai_training` and
+   `ai_user` set to block (all three were disabled); `browser_check` on (was
+   off); the Cloudflare Managed Free Ruleset deployed as an entrypoint in the
+   `http_request_firewall_managed` phase, where it had been present but
+   attached to nothing. Bot Fight Mode left on. `cf_robots_variant` could not
+   be set: five candidate values were all rejected with 10400 on our plan.
+2. **DONE** — Forgejo SSH. Built-in server on 2222 in-pod behind a
+   `forgejo-ssh` LoadBalancer on 10.0.20.200:22, `git.viktorbarzin.me` A record
+   both publicly and in Technitium, pfSense NAT plus its linked pass rule, and
+   the pre-existing `ssh-pfense` forward on the ISP router enabled. All 40
+   Forgejo remotes across 39 repos moved to SSH and verified.
+3. **DONE, then REVERTED same day (infra#91).** `forgejo.viktorbarzin.me` was
+   proxied (verified: 200 with a `cf-ray`, `/robots.txt` 200 where it was 404,
+   git over SSH unaffected), but proxying 403'd terminal-lobby's release: its
+   GitHub-Actions job PUTs the built `.deb` to `/api/packages/...` from a runner
+   IP, and zone-wide Bot Fight Mode — which cannot be excepted on the free plan
+   — rejected it at the edge (56 ms, never reaching Forgejo), so nothing
+   deployed to the devvm. Reverted to `non-proxied` in `stacks/forgejo/main.tf`.
+   The crawler defence is unaffected: it was already CrowdSec, not Cloudflare
+   (see step 4's measurement — CF passes the spoofed-UA Meta crawlers through).
+   To re-proxy without breaking CI, give the off-infra publish step an
+   origin-direct upload path (`--resolve …:443:176.12.22.76`, or a dedicated
+   non-proxied packages hostname) in the terminal-lobby repo first.
+4. **DONE 2026-09-09 — watched, measured, decided.** Two measurements
+   answered it: the edge does not cover forgejo (step 3 was reverted), and the
+   `/64` detector overflowed 0 times from 10,510 buckets. The defence moved to
+   two layers that do not depend on recognising the operator. Details in
+   "Step 4 as measured" below.
+5. **Retire the 117-range static blocklist.** Not yet. Two static lists are now
+   live (the original Meta one, plus 556 prefixes from AS214483 and AS62610
+   added 2026-09-09), and `viktor/distributed-crawl-range` needs a period of
+   false-positive observation first. Retiring the lists is what the scenario is
+   for, and it is a separate step rather than part of this one.
+
+## Step 4 as measured (2026-09-09)
+
+Two crawl waves in one week gave the step-4 question a measurable answer.
+
+**The edge does not cover forgejo.** Step 3 proxied it and was reverted the same
+day (infra#91) because zone-wide Bot Fight Mode, which the free plan cannot
+except, 403'd terminal-lobby's CI package PUT. So the hostname taking the crawls
+is the one hostname behind no edge.
+
+**The `/64` detector ran, and the crawler's address rotation is wider than its
+bucket key.** Measured on the live agent:
+
+```
+Scenario                              Instantiated  Poured  Expired  Overflows
+crowdsecurity/http-crawl-non_statics  10.51k        13.65k  10.51k   0
+```
+
+10,510 buckets, 1.3 events each, zero overflows. `viktor/forgejo-crawl-slow`
+behaves the same way, because the crawler rotates *across* `/64`s rather than
+within one. Per-source bucketing cannot see one request per address at any
+threshold, so this is a limit of the axis rather than of the thresholds
+chosen.
+
+**The load problem was not separate from crawler blocking.** The risk section
+below recorded the 2026-09-05T17:35Z Traefik OOM as unrelated. It carries the
+same timestamp as one of three crawl waves that share a single fingerprint —
+around 2,000 distinct addresses in one minute, 85-96% IPv6, all on
+`/viktor/infra/commits` — on 2026-09-03 at 21:50Z, 2026-09-05 at 17:35Z and
+2026-09-09 at 07:58Z. Forgejo over the 7 days to 2026-09-09:
+
+| forgejo, 7 days | count |
+|---|---|
+| total requests | 1,531,741 |
+| status 499 (client gave up waiting) | 411,496 (27%) |
+| peak | 16,623 req/min |
+
+The 2026-09-09 wave came through with 203,788 × 200, 77 × 499 and zero 5xx,
+after `MAX_OPEN_CONNS=25` and the 1536Mi Traefik raise had landed. Those two
+changes held; the load itself is unchanged and recurring.
+
+**What was built instead.**
+
+```mermaid
+flowchart TD
+    R[external request] --> RL{shared rate-limit<br/>chain: real-ip then 10/50<br/>keyed on X-Real-Ip}
+    RL -->|over| E429[429]
+    RL -->|under| CS{CrowdSec plugin<br/>websecure entrypoint}
+    CS -->|banned ip or range| E403[403]
+    CS -->|clean| AN{forgejo only:<br/>Anubis}
+    AN -->|"/api/, /v2/, git,<br/>non-GET, local networks"| APP[Forgejo]
+    AN -->|browser GET| POW[proof-of-work]
+    POW -->|solved| APP
+    APP --> LOG[traefik JSON access log]
+    LOG --> AG[crowdsec agent]
+    AG --> SC[viktor/distributed-crawl-range<br/>groupby SourceRange<br/>distinct source_ip]
+    SC -->|30 addresses in one prefix| BAN[ban scope=Range, 4h]
+    BAN --> CS
+    E429 --> H429[http-429-abuse]
+    H429 --> BAN
+```
+
+```stats
+1,531,741 | forgejo requests, 7 days
+411,496 | of them status 499
+338 | crawler addresses per /29 per minute
+3 | legitimate addresses per netblock, max
+```
+
+1. `viktor/distributed-crawl-range` in CrowdSec, grouping by
+   `evt.Meta.SourceRange` and counting distinct source addresses. Thresholds
+   from three windows of real traffic: legitimate netblocks showed 2-3 distinct
+   addresses (median 1) against 27-338 for crawler ranges, so capacity 30 sits
+   10x above the measured legitimate ceiling.
+2. Anubis in front of forgejo's HTML routes, with `/api/`, `/v2/` and
+   git-over-HTTPS allowed ahead of the challenge so CI and git clients are
+   untouched. This is the only layer that does not need to recognise the
+   operator: a client that cannot run JavaScript cannot pass, whatever it
+   claims to be and whether or not GeoLite2 knows its prefix.
+3. The shared Traefik `rate-limit` given a source key. It had none, so behind
+   the tunnel every external viewer of every proxied host shared one bucket.
+
+**Grouped by prefix, not by ASN.** MaxMind resolves the crawler's addresses to
+AS54852 / F4-NETWORKS where RIPE's route object says AS214483, so an AS-keyed
+rule's behaviour depends on which database is asked. `scope: AS` is also
+silently discarded by our bouncer plugin, which handles only `ip` and `range`
+(`crowdsec-bouncer-plugin/main.go:193-197`), so an AS-scoped decision would
+detect and enforce nothing.
+
+**A third OOM appeared during the investigation and is not the crawler's.**
+`loki-0` was OOMKilled at 09:27:35Z, exit 137, restart 4, caused by 7-day
+per-IP `| json` aggregation queries run while measuring the above against its
+4Gi ceiling. It recovered on its own. Anyone re-running these measurements
+should keep Loki windows at or under an hour and pre-filter with plain `!=`
+string filters before `| json`; `max_query_series` is 500 applied to
+intermediate series, so a cluster-wide per-IP census cannot be done in one
+query and has to be sampled. Prometheus scrapes Traefik every 120s, so
+`rate[1m]` returns no series and per-minute bursts are only visible in Loki.
+
+**`crowdsec-agent` on node3 is a separate defect, now fixed.** 20 restarts in
+40h on node3 while the other four agents sat at 0, and 271Mi against a 512Mi
+limit where node1 used 42Mi. It is not the crawl: the kills cluster around
+00:00-02:00Z, hours before the waves.
+
+The bucket census identified the cause. Whichever node runs the Traefik pod whose
+access log carries the crawl parses every `http_*` event for the whole cluster,
+and on node3 that meant 5.29k live `viktor/forgejo-crawl-slow` buckets against
+546 for the new scenario, each bucket holding a queue of parsed events.
+`max_over_time(container_memory_working_set_bytes[40h])` peaked at 509.5Mi
+against the 512Mi ceiling.
+
+The hope that step 1 would fix this as a side effect did not hold: adding a
+scenario does not remove another one's buckets, and the numbers above are from
+after it landed. So the limit went 512Mi to 1Gi with the request left at 128Mi,
+which is the fallback this plan sanctioned.
+
+One cheaper option is recorded next to the value rather than taken.
+`forgejo-crawl-slow` costs roughly 10x the buckets of the scenario that is
+firing and has overflowed zero times, so retiring it would reduce the memory
+instead of accommodating it. That removes a detection layer, so it is a decision
+to take deliberately.
+
+## As built (2026-09-06)
+
+What the plan did not anticipate, recorded so the next reader is not surprised.
+
+**`DISABLE_SSH = true` was baked into `app.ini` on the PVC** at install time
+and silently overrode `START_SSH_SERVER`. It appears in no Terraform file; the
+only way to find it was reading the config inside the running pod. Now declared
+in `stacks/forgejo/main.tf`.
+
+**Split-horizon DNS is two independent records and only one is in code.**
+`git.viktorbarzin.me` resolved publicly from `cloudflare_record.git` and
+resolved to nothing internally until a Technitium A record was added by hand,
+the same way `vlmcs` was. Set only the public half and the name works from a
+cafe and fails from your desk.
+
+**The upstream ISP router already had the port 22 forward, disabled.** pfSense
+is not our edge: its WAN address is 192.168.1.2 and the public address belongs
+to a TP-Link Archer AX6000 at 192.168.1.1. A rule named `ssh-pfense` mapping
+22 to 192.168.1.2 existed and was switched off. Adding a second one is refused
+with "This item conflicts with existed ones".
+
+**`pfctl` prints port 22 as `ssh`**, so grepping its output for `port = 22`
+finds nothing and a working rule looks broken.
+
+**Almost nothing else was exposed.** Measured from outside on 2026-09-06, of
+every host still answering directly rather than through Cloudflare, none served
+bulk scrapeable content anonymously. `f1` and `kms`, the two highest-volume
+ones, sit behind Anubis; the rest return a login wall, an empty body or a 404.
+Forgejo really was the whole problem, which is consistent with 22,115 of 22,189
+Meta requests landing on it.
+
+**Untracked drift this created.** The Cloudflare zone settings in step 1 and
+the Technitium record in step 2 are both set outside Terraform.
+`cloudflare_zone_settings_override` appears nowhere in this repo, so nothing
+will revert them, and equally nothing records them. Worth codifying.
 
 ## Risks
 
@@ -279,6 +463,11 @@ crawlers are caught on this plan only by Bot Fight Mode's heuristics. Bot score
 and JA3/JA4 fingerprinting need Enterprise with Bot Management. If Meta returns
 in its 2026-09-02 form, declaring nothing, the edge may not stop it and the
 CrowdSec `/64` detector becomes the thing that matters.
+
+> Both halves of that came true on 2026-09-09. The `/64` detector overflowed 0
+> times from 10,510 buckets, because this crawler rotates across `/64`s rather
+> than within one. See "Step 4 as measured": `viktor/distributed-crawl-range`
+> and Anubis on forgejo cover the shape it cannot.
 
 **The API still goes over HTTPS.** Moving every git remote to SSH takes git
 entirely off the proxy, so neither the 100 MB cap nor the 100-second read
@@ -308,6 +497,11 @@ responsible for 100% of Meta blocking.
 2,948 in 504 over 24h. That load problem is separate from crawler blocking and
 is not addressed by anything in this document.
 
+> Corrected 2026-09-09: it was not separate. 17:35Z on 2026-09-05 is the
+> timestamp of one of three crawl waves sharing a single fingerprint, so the
+> OOM was that wave's load. The 499s are the same event seen from the client
+> side. Addressed by the three layers in "Step 4 as measured".
+
 ## Open questions
 
 - Our largest HTTPS request body to Forgejo. Needed to judge the 100 MB cap
@@ -317,3 +511,19 @@ is not addressed by anything in this document.
   question deserves its own measurement.
 - Whether Bot Fight Mode's false-positive rate is acceptable for a git host. No
   way to know before enabling it, which is why step 3 is separated from step 1.
+
+Added 2026-09-09:
+
+- **`GeoLite2-ASN.mmdb` is baked into the CrowdSec image, dated 11 May, and
+  never refreshed.** `viktor/distributed-crawl-range` falls back to `/64` or
+  `/24` for a prefix the database does not know, which is a per-address bucket
+  again for anything allocated since. A free MaxMind key already exists in this
+  repo for shlink (`stacks/url/main.tf:203-208`) and could feed a refresh.
+- **Whether `/viktor/infra` needs to be world-readable at all.** This would
+  remove the crawl surface rather than defend it, and it has not been asked
+  for yet.
+- **`crowdsec-agent` on node3.** See "Step 4 as measured" — 20 restarts in 40h
+  against 0 on the other four agents, driven by live bucket count rather than a
+  global undersize.
+- **The Cloudflare drift recorded under "As built" is still untracked.**
+  `cloudflare_zone_settings_override` appears nowhere in this repo.
