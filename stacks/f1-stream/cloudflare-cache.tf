@@ -170,3 +170,55 @@ resource "cloudflare_ruleset" "f1_cache" {
     }
   }
 }
+
+# ---------------------------------------------------------------------------
+# SMART TIERED CACHE. This setting is ZONE-WIDE, not f1-only.
+# ---------------------------------------------------------------------------
+# It lives in this file because the reasoning and the measurements that justify
+# it are here, and f1 is the only workload that needed it. But it changes cache
+# topology for every proxied hostname on viktorbarzin.me (115 of them as of
+# 2026-09-10), so treat it as a zone setting that happens to be filed under the
+# stack that asked for it. Grep `cloudflare_tiered_cache` before assuming a
+# cache question is f1-scoped.
+#
+# WHY, measured on 2026-09-10 with seven independent viewers:
+#   Six viewers pinned to Cloudflare anycast near home all landed in colo SOF
+#   and took 28 HIT / 2 MISS across 30 segment fetches — the edge served them
+#   and our origin was not touched.
+#   One viewer routed through the cluster's UK VPN egress (194.35.235.160)
+#   landed in colo LHR and took 5 MISS out of 5, pulling the full 16,742,528
+#   bytes from our origin, even though SOF was already warm.
+# Cloudflare's cache is per colo, so an audience spread across countries pays
+# for one copy per colo. At 4.55 Mbit/s per live viewer against 15.06 Mbit/s of
+# upload, that turns a viewer count into a COLO count: three colos fills the
+# line however few people are watching.
+#
+# Tiered Cache puts an upper tier between the edge and us. Cloudflare's docs:
+# "only the upper-tier can ask the origin for content", which "concentrates
+# connections to origin servers so they come from a small number of data
+# centers rather than the full set of network locations". So a cold LHR fetches
+# from the upper tier instead of from this house.
+#
+# FREE ON THIS PLAN. Cloudflare's availability table lists Tiered Cache and
+# Smart Topology as available on Free, Pro, Business and Enterprise; only the
+# Generic Global, Regional and Custom topologies are Enterprise-only. This is a
+# supported feature used as designed, unlike the caching question above it.
+#
+# WHAT THIS DELIBERATELY DOES NOT TOUCH: `cloudflare_argo`. That resource
+# bundles Argo Smart Routing, which is a PAID add-on, and declaring it risks
+# enabling spend as a side effect of a free change. Verified 2026-09-10 that
+# `GET /zones/<zone>/argo/smart_routing` answers "The request is not authorized
+# to access this setting", i.e. it is structurally unavailable on Free, so this
+# is belt-and-braces rather than the only guard.
+#
+# The trade: a distant viewer's FIRST request can be slightly slower, because a
+# cold upper tier is an extra hop. That buys a large amount of upload back, and
+# upload is the scarce resource here.
+#
+# PROVIDER NOTE: the attribute is `cache_type` on provider v4, which this repo
+# pins (`~> 4`). It was renamed to `value` in v5, so a provider bump needs this
+# line changed too.
+resource "cloudflare_tiered_cache" "zone_smart" {
+  zone_id    = "fd2c5dd4efe8fe38958944e74d0ced6d"
+  cache_type = "smart"
+}
