@@ -518,6 +518,13 @@ resource "helm_release" "traefik" {
         memory = "768Mi"
       }
       limits = {
+        # Raised 1536Mi -> 2560Mi on 2026-09-06: it was OOM-killed again on
+        # 2026-09-05 at the 1536Mi ceiling. The cgroup high-water mark reads
+        # exactly 1536 MiB, so it reached the cap; a [30d:1h] sample says only
+        # 433 MiB, which is why the sampled figure must not be used to size
+        # this. 5-minute resolution over 7d catches 1,389 MiB. The namespace
+        # LimitRange allows 8Gi. Request stays 768Mi (Burstable on purpose,
+        # see below).
         # Raised 768Mi -> 1536Mi during a live incident on 2026-09-02: all three
         # pods were OOMKilled repeatedly (exit 137) and ALL ingress flapped.
         # Trigger was a crawler swarm on forgejo's expensive commit/src/blame
@@ -532,7 +539,7 @@ resource "helm_release" "traefik" {
         # reservation and eat the N-1 headroom that ClusterCannotTolerateNonGpuNodeLoss
         # watches. Actual node usage is ~40%, so the headroom to absorb a spike
         # is real even though the reservation is not.
-        memory = "1536Mi"
+        memory = "2560Mi"
       }
     }
 
