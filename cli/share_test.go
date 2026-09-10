@@ -113,3 +113,51 @@ func TestParseShareArgs(t *testing.T) {
 		t.Error("want a usage error with no file argument")
 	}
 }
+
+// A share link is internet-reachable, so a dropped --expire silently gives the
+// link the 30-day default rather than the lifetime the caller asked for.
+func TestParseShareArgsRejectsUnknownFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"a.log", "--expiry", "7"},
+		{"a.log", "--days", "7"},
+		{"a.log", "-x"},
+	} {
+		got, err := parseShareArgs(args)
+		if err == nil {
+			t.Fatalf("parseShareArgs(%v) accepted an unknown flag (%+v)", args, got)
+		}
+	}
+	for _, args := range [][]string{{"a.log", "--expire"}, {"a.log", "--expire="}} {
+		if _, err := parseShareArgs(args); err == nil {
+			t.Errorf("parseShareArgs(%v) must error rather than take the default", args)
+		}
+	}
+	if _, err := parseShareArgs([]string{"a.log", "b.log"}); err == nil {
+		t.Error("a second positional must error")
+	}
+}
+
+func TestParseShareArgsAcceptsBothDashAndEqualsForms(t *testing.T) {
+	for _, tc := range []struct {
+		args  []string
+		days  int
+		force bool
+	}{
+		{[]string{"a.log", "-expire", "7"}, 7, false},
+		{[]string{"a.log", "--expire=7"}, 7, false},
+		{[]string{"a.log", "-expire=7"}, 7, false},
+		{[]string{"a.log", "-force"}, 30, true},
+	} {
+		got, err := parseShareArgs(tc.args)
+		if err != nil {
+			t.Fatalf("parseShareArgs(%v): %v", tc.args, err)
+		}
+		if got.path != "a.log" || got.expireDays != tc.days || got.force != tc.force {
+			t.Errorf("parseShareArgs(%v) = %+v, want days=%d force=%v", tc.args, got, tc.days, tc.force)
+		}
+	}
+	// A non-numeric --expire is still rejected on its value.
+	if _, err := parseShareArgs([]string{"a.log", "--expire=soon"}); err == nil {
+		t.Error("--expire must reject a non-numeric value")
+	}
+}

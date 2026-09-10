@@ -478,22 +478,57 @@ type getOpts struct {
 
 var validGetFields = map[string]bool{"password": true, "username": true, "uri": true, "notes": true, "totp": true}
 
+// parseGetArgs parses the argv strictly: an argument that looks like a flag and
+// is not one we know is an ERROR, never a silently-ignored token, and neither is
+// a second bare word or a valueless --field.
+//
+// The strictness is a security property here, not tidiness. `field` defaults to
+// "password", so every route that dropped an argument on the floor ended up
+// returning the PASSWORD for a caller who had asked for something else —
+// `-field=username` (the single-dash form the real bw/vault CLIs take) matched
+// no case, `--field` as the last argument failed the old i+1 bounds guard, and
+// `get item username` ignored the second word. All three looked like they
+// worked. That is worse than the field-less `vault kv get` dump fixed the same
+// day (see cmd_vault_kv.go): a dump is loud, whereas this handed over a
+// credential of the wrong kind quietly, and a caller who believes they hold a
+// username will write it where a username belongs. Failing closed on the VALUE
+// is not the same as failing closed on the CALLER'S INTENT.
+//
+// Both dash spellings of every flag are accepted for the same reason the kv side
+// accepts them: muscle memory from the upstream CLI should land on what the
+// caller meant. The "password" default is deliberately unchanged — the hazard
+// was the silent drop, not the default.
 func parseGetArgs(args []string) (getOpts, error) {
 	o := getOpts{field: "password"}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		switch {
-		case a == "--json":
+		if !strings.HasPrefix(a, "-") {
+			if o.name == "" {
+				o.name = a
+				continue
+			}
+			return o, fmt.Errorf("unexpected argument %q; to read one field write: homelab vault get %s --field %s", a, o.name, a)
+		}
+		name, value, hasValue := flagToken(a)
+		switch name {
+		case "json":
 			o.json = true
-		case a == "--all":
+		case "all":
 			o.all = true
-		case a == "--field" && i+1 < len(args):
-			o.field = args[i+1]
-			i++
-		case strings.HasPrefix(a, "--field="):
-			o.field = strings.TrimPrefix(a, "--field=")
-		case !strings.HasPrefix(a, "-") && o.name == "":
-			o.name = a
+		case "field":
+			if !hasValue {
+				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+					return o, fmt.Errorf("--field needs a field name (password|username|uri|notes|totp)")
+				}
+				i++
+				value = args[i]
+			}
+			if value == "" {
+				return o, fmt.Errorf("--field needs a field name (password|username|uri|notes|totp)")
+			}
+			o.field = value
+		default:
+			return o, fmt.Errorf("unknown flag %q; `vault get` takes --field <name>, --json or --all", a)
 		}
 	}
 	if o.name == "" {

@@ -259,7 +259,7 @@ func parseKVGetArgs(args []string) (kvGetOpts, error) {
 			}
 			return o, fmt.Errorf("unexpected argument %q; to read one key write: homelab vault kv get %s --field %s", a, o.Path, a)
 		}
-		name, value, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		name, value, hasValue := flagToken(a)
 		switch name {
 		case "field":
 			if !hasValue {
