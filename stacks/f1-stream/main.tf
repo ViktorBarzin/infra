@@ -665,10 +665,21 @@ module "ingress_admin_login" {
 }
 
 module "ingress" {
-  source   = "../../modules/kubernetes/ingress_factory"
-  auth     = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
-  dns_type = "non-proxied"
-  # ^^^ THE CLOUDFLARE CUTOVER IS THIS ONE LINE. See the block below.
+  source = "../../modules/kubernetes/ingress_factory"
+  auth   = "none" # Anubis-fronted; PoW challenge gates bots, no Authentik
+  # CUT OVER 2026-09-10. "proxied" removes the explicit A and AAAA records, so
+  # the host falls through to the zone-wide `*` CNAME into the cloudflared
+  # tunnel (ADR-0021) and no per-name record is created. Reverting is the same
+  # one line back to "non-proxied".
+  #
+  # Done for EDGE CACHING, not only to hide the origin: the house has 15.06
+  # Mbit/s of upload and one live viewer costs 4.55, so three concurrent
+  # viewers fill the line. Cache Rules and the accepted terms risk are in
+  # cloudflare-cache.tf. Rate limiting was already made tunnel-safe when the
+  # share-link work landed: the shared `rate-limit` middleware has no
+  # sourceCriterion and would key every viewer on the cloudflared pod, so f1
+  # carries its own limiter keyed on X-Real-Ip (see below).
+  dns_type     = "proxied"
   namespace    = kubernetes_namespace.f1-stream.metadata[0].name
   name         = "f1"
   service_name = module.anubis.service_name
