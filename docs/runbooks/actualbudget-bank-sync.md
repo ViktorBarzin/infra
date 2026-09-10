@@ -28,7 +28,7 @@ Actual Budget has two independent syncs. Conflating them costs a lot of time.
 | Servers | `actualbudget-{viktor,anca}` — `actualbudget/actual-server` |
 | API | `actualbudget-http-api-{viktor,anca}` — `jhonderson/actual-http-api`, svc `budget-http-api-<user>:80` → port 5007 |
 | Metrics | Pushgateway job `bank-sync-<user>` |
-| Credentials | literals in the CronJob spec (`SYNC_ID`, `API_KEY`) |
+| Credentials | `SYNC_ID` and `API_KEY` are literals in the CronJob spec; the GoCardless API credential arrives at runtime as the `CREDENTIALS` env var from the ESO-managed `actualbudget-secrets`, so it is not readable from the spec |
 
 Both images are Keel-managed (`keel.sh/policy=minor`); the Terraform `tag` /
 `http_api_tag` values are create-time seeds only. Keep the seeds level with live
@@ -163,6 +163,57 @@ skips it (`if (acct.bankId && acct.account_id)`), returns 200, and the CronJob
 records a success. Viktor has four such accounts (dormant manual ledgers), which
 is why `bank_sync_success{job="bank-sync-viktor"}` is pinned at 1. Check
 `account_sync_source` before concluding an account is syncing.
+
+## Consent expiry, and the alert that watches it
+
+A GoCardless end-user agreement lasts `access_valid_for_days`, 90 days for every
+institution here. Past that the nightly import keeps returning HTTP 200 at the
+`/banksync` layer while GoCardless returns nothing, so the job looks healthy and
+no transaction arrives. Renewing needs the account holder's own bank login and
+MFA, so it cannot be automated. What we can do is give notice.
+
+Anca's history is the worked example. Her consents expired around 2026-07-18 and
+the job wrote nothing for seven consecutive nights, 07-18 to 07-24. She
+re-authorised all four banks on 2026-07-25 at 11:43, and the 07-26 run backfilled
+the whole gap from GoCardless's 90-day window, which is why the transaction dates
+show no hole. `BankSyncStale` reported it 48h in; nothing had warned beforehand.
+
+`bank_sync_consent_expiry_timestamp{institution}` is pushed nightly by the same
+CronJob, and three alerts read it: `BankSyncConsentExpiring` at 14 days
+(warning), `BankSyncConsentExpired` past zero (critical), and
+`BankSyncConsentCheckFailing` when the check itself could not run (info).
+
+Two things about how the requisition is chosen, both of which cost a false alarm
+if you change them:
+
+- Only requisitions holding an account this budget actually syncs count. Viktor
+  has a `BARCLAYS_BUSINESS_BUKBGB22` requisition that has sat at status `LN`
+  since 2023-06-24 with an agreement that expired long ago, and no Barclays
+  account in the budget. Without the in-use filter it alerts forever.
+- Per institution the newest match wins. Re-authorising mints a new requisition
+  and the superseded one can stay `LN` indefinitely; anca has two `LN` MONZO
+  requisitions, from 2025-05-14 and 2026-07-25.
+
+The check uses only GoCardless management endpoints (`/token/new/`,
+`/requisitions/`, `/agreements/enduser/{id}/`). It never touches
+`/accounts/{id}/transactions/`, which is rate-limited to 4 calls per account per
+day and which the import itself already spends.
+
+Reading it by hand:
+
+```sh
+homelab metrics query 'bank_sync_consent_expiry_timestamp'
+homelab metrics query '(bank_sync_consent_expiry_timestamp - time()) / 86400'   # days left
+```
+
+The GoCardless API credential lives in each Actual server's own
+`account.sqlite` `secrets` table (`gocardless_secretId`, `gocardless_secretKey`),
+set through the web UI, and each instance has its OWN GoCardless account. Vault
+`secret/actualbudget` carries a copy per user as `gocardless_secret_id` /
+`gocardless_secret_key`, reaching the CronJob as the `CREDENTIALS` env var from
+the ESO-managed Secret rather than being interpolated into the spec. Rotating the
+credential in the UI means updating Vault too, and forgetting shows up as
+`BankSyncConsentCheckFailing` rather than as silence.
 
 ## Backups
 

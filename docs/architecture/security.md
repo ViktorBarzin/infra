@@ -83,8 +83,9 @@ Intelligence below):
 3. **CrowdSec** - in-kernel nftables drop on direct hosts, and the `crowdsec` entrypoint middleware for all HTTP (one map lookup; 403 on a hit)
 4. **Anti-AI Scraping** - 3-layer bot defense (optional per service, updated 2026-04-17)
 5. **Authentik ForwardAuth** - Authentication check (if `protected = true`)
-6. **Rate Limiting** - Per-source IP rate limits (returns 429 on breach)
+6. **Rate Limiting** - per-client limits keyed on `X-Real-Ip`, 10/s average and 50 burst per Traefik pod (returns 429 on breach). A chain: `real-ip` then the limiter
 7. **Retry Middleware** - Auto-retry on transient errors (2 attempts, 100ms delay)
+8. **Anubis proof-of-work** - on 8 hosts, including forgejo since 2026-09-09. The only layer that stops an undeclared crawler without recognising it first
 
 ### CrowdSec Threat Intelligence
 
@@ -215,6 +216,31 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   Terraform-managed static blocklist** of 117 collapsed ranges from AS32934,
   AS63293 and AS54115, re-imported daily at 04:00 so its 168h decisions never
   lapse.
+- **Range-grouped detection is the axis that does work (added 2026-09-09).**
+  `viktor/distributed-crawl-range` groups by `evt.Meta.SourceRange`, the
+  source's registered prefix from `crowdsecurity/geoip-enrich`, and counts
+  **distinct source addresses** rather than requests: capacity 30, leakspeed
+  30s, `scope: Range`, so the ban covers exactly the prefix that tripped it.
+  Counting addresses is what separates the two populations. A per-range
+  *request-rate* bucket cannot: the 2026-09-09 crawl ran at 150-210 req/min per
+  range while the largest confirmed legitimate single client here bursts to 587
+  req/min. Measured over three windows of real traffic, distinct addresses per
+  netblock were 2-3 for legitimate traffic (median 1) against 27-338 for
+  crawler ranges. Replaying two of those windows through the deployed scenario
+  overflowed 4 and 5 ranges respectively, every one of them a crawler, and
+  three of the four rotating-proxy ranges present were not covered by either
+  static blocklist. Grouped by prefix and not by ASN because MaxMind and RIPE
+  disagree on the AS for these addresses, and because `scope: AS` is silently
+  discarded by our bouncer plugin, which handles only `ip` and `range`.
+  `crowdsecurity/geoip-enrich` is declared in the agent's `PARSERS` for this
+  reason — it arrived as an undeclared hub dependency before, and losing it
+  would turn the scenario into a no-op with no error.
+- **`viktor/immich-asset-paths-whitelist` was inert until 2026-09-09.** It read
+  `evt.Parsed.target_fqdn`, which no traefik parser path creates, so Immich had
+  no false-positive exemption at all. Now scoped by
+  `evt.Parsed.traefik_router_name`, matching the nextcloud whitelist that is
+  verified working; `cscli explain` on an Immich asset 404 reports
+  `[whitelisted]` where it previously reported `unchanged`.
 - **Cloudflare's AI-bot block does NOT catch Meta (measured 2026-09-03).**
   `ai_bots_protection` was enabled on the zone, and forgejo was proxied as a
   test. Of 73 residual Meta requests in 20 minutes, **66 arrived through the
@@ -691,12 +717,42 @@ the **`AggregatorDown`** + **`DigestFailing`** alerts and cluster-health check #
 
 ### Rate Limiting
 
-**Per-source IP limits**:
-- Default: 100 requests/minute
-- Returns **429 Too Many Requests** (not 503)
-- Higher limits for upload-heavy services:
-  - Immich: 500 req/min (photo uploads)
-  - Nextcloud: 300 req/min (file sync)
+Read from `stacks/traefik/modules/traefik/middleware.tf` on 2026-09-09. The
+earlier text here described a `rate_limit` variable in requests per minute that
+`ingress_factory` has never had, and per-service overrides for Immich and
+Nextcloud that are not how either is configured.
+
+**The shared `rate-limit` middleware**, auto-attached by `ingress_factory` to
+about 115 ingresses:
+- 10 requests/second average, burst 50. Traefik's `period` defaults to one
+  second, so `average` is a per-second figure, not per-minute.
+- Returns **429 Too Many Requests**.
+- Keyed on `X-Real-Ip` since 2026-09-09, which makes it a genuine per-client
+  limit. Before that it set no `sourceCriterion`, so Traefik keyed on the
+  request's remote address; behind the cloudflared tunnel that is the
+  cloudflared pod, and every external viewer of every proxied host shared one
+  bucket.
+- `rate-limit` is now a **chain**: the `real-ip` plugin runs first, then the
+  limiter (`rate-limit-per-client`). The order matters. Reached before
+  `real-ip`, the header extractor reads an empty value for every request and
+  they all share one bucket again, with no error logged.
+- Limits are per Traefik **pod**, and there are 3 replicas, so the effective
+  ceiling is about 3x nominal. Traefik 3.7 can share buckets through Redis
+  (`rateLimit.redis`); not adopted, because it puts Redis on the request path.
+
+**Per-service limits** are separate Middleware resources or opt-outs, not a
+variable on the shared one:
+- `skip_default_rate_limit = true` detaches the shared limiter entirely.
+  Immich, Nextcloud's ingresses, Authentik, tripit, health, actualbudget,
+  dawarich, android-emulator, prometheus and f1-stream use it, mostly because
+  parallel asset loads or sync clients exceed 10/s legitimately.
+- `f1-rate-limit` (200/2000, also keyed on `X-Real-Ip`) fronts f1-stream, where
+  HLS makes one request per video segment.
+
+**What a per-client limit cannot do**: catch a crawl that sends one request
+from each of many addresses. 1,993 distinct addresses making a single request
+each never fill any per-client bucket. That shape is handled by
+`viktor/distributed-crawl-range` in CrowdSec (see below).
 
 **Retry Middleware**:
 - 2 attempts max
@@ -753,11 +809,15 @@ module "myapp_ingress" {
   host      = "myapp.viktorbarzin.me"
 
   # Security toggles
-  protected         = true   # Enable ForwardAuth
-  anti_ai_scraping  = false  # Disable anti-AI (e.g., for public API)
-  rate_limit        = 200    # Custom rate limit (req/min)
+  protected               = true   # Enable ForwardAuth
+  anti_ai_scraping        = false  # Disable anti-AI (e.g., for public API)
+  skip_default_rate_limit = true   # Detach the shared 10/s limiter
 }
 ```
+
+There is no `rate_limit` variable. The shared limiter is either attached (the
+default) or detached with `skip_default_rate_limit`; a service needing a
+different ceiling gets its own Middleware, as f1-stream does.
 
 ### Kyverno Policy Example
 
@@ -874,8 +934,16 @@ spec:
 
 **Fix**:
 1. Check Traefik logs for rate limit hits: `kubectl logs -n traefik -l app=traefik | grep 429`
-2. Increase limit in `ingress_factory`: `rate_limit = 300`
-3. Apply: `terraform apply`
+2. Confirm the router's chain includes `traefik-real-ip` ahead of
+   `traefik-rate-limit`: `kubectl get ingress <name> -n <ns> -o jsonpath='{.metadata.annotations.traefik\.ingress\.kubernetes\.io/router\.middlewares}'`.
+   `real-ip` is inside the `rate-limit` chain, so it is there by default; a
+   hand-rolled ingress referencing `rate-limit-per-client` directly would key
+   every request on an empty value and share one bucket.
+3. Detach the shared limiter for that service:
+   `skip_default_rate_limit = true` in `ingress_factory`, or give it its own
+   Middleware with a higher `average`/`burst` (the `f1-rate-limit` pattern).
+   There is no `rate_limit` variable to raise.
+4. Apply: `scripts/tg apply` from the stack directory, or push and let CI apply.
 
 ### HTTP/3 Not Working
 

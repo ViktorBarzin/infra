@@ -143,64 +143,114 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
         label: "Aggressive Crawl"
         remediation: true
       YAML
-    # A SLOW, DISTRIBUTED crawl of forgejo's git history — the shape that got
-    # through on 2026-09-02 and that no per-IP scenario could see.
+    # viktor/forgejo-crawl-slow LIVED HERE and was retired 2026-09-10 on
+    # Viktor's call. The scenario and the measurements behind its thresholds are
+    # in the history of this file, one commit back.
     #
-    # MEASURED from the real attack trace (1000 requests over 412s, replayed
-    # through a simulated leaky bucket per source address):
+    # Why it went: measured on node3 during a live crawl, once the agents were
+    # finally scraped, it held 12,521 leaky buckets and had overflowed 0 times,
+    # against viktor/distributed-crawl-range's 1,373 buckets and 5,023
+    # overflows. It grouped by IPv6 /64 and this crawler rotates ACROSS /64s, so
+    # nearly every request minted a bucket that caught nobody. Each bucket
+    # carries a queue of parsed events, so the agent climbed 566 -> 788 MiB in
+    # two hours against the 1 GiB limit raised the day before. An OOM restarts
+    # the pod and drops EVERY scenario's in-memory state, so a detector catching
+    # nothing was endangering the one doing the work.
     #
-    #   capacity 40  leakspeed 0.5s   <- the stock scenario    0 of 61 banned
-    #   capacity 15  leakspeed 30s                             2 of 61
-    #   capacity 12  leakspeed 60s                             6 of 61
-    #   capacity 10  leakspeed 90s                            30 of 61
-    #   capacity  8  leakspeed 120s                           49 of 61
-    #   capacity  6  leakspeed 180s                           58 of 61
+    # What is given up: it was written for a SLOW crawler reading forgejo
+    # patiently from a single address. It never caught one, and Anubis has
+    # fronted forgejo since 2026-09-09, which challenges exactly that client.
+    # A crawl that sends ONE request per source address, from hundreds of
+    # addresses at once. Groups by the source's registered prefix
+    # (evt.Meta.SourceRange, from crowdsecurity/geoip-enrich) and counts DISTINCT
+    # ADDRESSES rather than requests, because the number of addresses is the only
+    # part of the signature that separates this from ordinary traffic.
     #
-    # Meta spread the crawl across 61 addresses, each in its own /64, at
-    # 0.059-0.121 req/s. The stock scenario drains 2 tokens/sec, so every one of
-    # them ran 16-34x under the threshold and it caught NONE. The aggregate was
-    # 2.43 req/s, which is what OOMKilled forgejo and all three traefik pods.
+    # WHY NEITHER EXISTING SCENARIO SEES IT. Measured on the live agent
+    # 2026-09-09: crowdsecurity/http-crawl-non_statics instantiated 10,510
+    # buckets, poured 1.3 events into each, and overflowed 0 times.
+    # viktor/forgejo-crawl-slow groups by IPv6 /64 and fails the same way,
+    # because this crawler rotates ACROSS /64s. Per-source bucketing cannot
+    # work on one request per address, whatever the threshold.
     #
-    # The real ceiling is `distinct` pages per address: median 14, max 34 over
-    # that window. That is why the curve breaks at capacity 10 — above it, the
-    # median crawler simply never has enough distinct filenames to fill the
-    # bucket. Chose 10/120s: it caught 30 of 61 in a 412-second replay, and a
-    # real crawl runs for hours, so each address accumulates far more distinct
-    # pages than this short trace shows. The replay is a floor, not a forecast.
+    # WHY DISTINCT ADDRESSES AND NOT REQUEST RATE. A per-range request-rate
+    # bucket cannot separate the two populations: the crawl ran at ~150-210
+    # req/min per range, while the largest confirmed legitimate single client
+    # here bursts to 587 req/min (Viktor's phone syncing to immich). Distinct
+    # addresses per range separates them by two orders of magnitude, and 587
+    # requests from one phone pour exactly ONE token.
     #
-    # SCOPED TO THE FORGEJO ROUTER ON PURPOSE. At capacity 10 a human browsing
-    # normally would trip this, so it must not apply fleet-wide — the blog,
-    # immich shares and the rest keep the stock scenario. Forgejo is a personal
-    # forge whose legitimate human readers are Viktor and emo, whose egress
-    # addresses are in the whitelist. That makes it the one router where a tight
-    # threshold costs almost nothing.
+    # MEASURED, three windows of traefik access logs (distinct source addresses
+    # per netblock, private + CGNAT excluded):
     #
-    # Bans the INDIVIDUAL IP (default scope), Viktor's call — no range bans, so
-    # a false positive affects one address for 4h and `homelab crowdsec unban`
-    # lifts it in ~33s.
-    "forgejo-crawl-slow.yaml" : <<-YAML
+    #   window                          legitimate max   crawler /29s
+    #   2026-09-08 12:00-12:05Z         2                27, 36, 50, 56, 58
+    #   2026-09-08 19:00-19:05Z         3                42, 52, 55, 61, 61
+    #   2026-09-09 08:05-08:06Z (1min)  3                328, 328, 338, 338
+    #
+    # Legitimate p99 is 2-3 addresses per netblock in every window, and the
+    # median is 1. capacity 30 sits 10x above the measured legitimate ceiling
+    # and fills in ~5s at the crawl's peak rate.
+    #
+    # leakspeed 30s drains 2 addresses/minute, so a range that presents a new
+    # client every half minute forever never overflows; only a burst of 30
+    # net-new addresses does.
+    #
+    # SIX rotating-proxy ranges were active in those windows
+    # (2a10:4a00::/29, 2a10:7b00::/29, 2a12:da80::/29, 2a12:f540::/29,
+    # 2a13:dcc0::/29, 2a13:f40::/29) while the static blocklist added the same
+    # day covers two ASNs. That gap is what this scenario is for: it needs no
+    # list, no ASN lookup and no advance knowledge of the operator.
+    #
+    # GROUPED BY SourceRange, NOT BY ASN, for three reasons:
+    #   - The two databases disagree. MaxMind resolves the crawler's addresses
+    #     to AS54852 / F4-NETWORKS where RIPE's route object says AS214483, so
+    #     an AS-keyed rule's behaviour depends on which one you ask.
+    #   - scope: AS is SILENTLY DISCARDED by our Traefik bouncer plugin, which
+    #     handles only `ip` and `range` (crowdsec-bouncer-plugin/main.go:193-197).
+    #     An AS-scoped decision would detect and then enforce nothing — the same
+    #     shape as the captcha_remediation trap removed on 2026-09-02.
+    #   - Detection and enforcement stay the same prefix, so the ban covers
+    #     exactly what tripped it.
+    #
+    # EMPTY-SourceRange FALLBACK. GeoLite2-ASN.mmdb is baked into the image and
+    # dated 11 May, so a prefix allocated since then resolves to nothing. Without
+    # the fallback every unknown source would share one bucket keyed "" and emit
+    # a decision with an empty scope; with it they fall back to /64 (IPv6) or /24
+    # (IPv4). A crawler inside an unknown prefix then gets one bucket per /64
+    # again, which is the pre-existing blind spot rather than a new one — the
+    # durable fix is refreshing the mmdb.
+    #
+    # A false positive bans one registered prefix for 4h via
+    # default_range_remediation, announces it in Slack, and lifts with
+    # `homelab crowdsec unban <cidr>` — NOT `cscli decisions delete --ip`, which
+    # does not match a range-scoped decision (docs/runbooks/crowdsec-manual-bans.md).
+    "distributed-crawl-range.yaml" : <<-YAML
       type: leaky
-      name: viktor/forgejo-crawl-slow
-      description: "Detect a slow, distributed crawl of forgejo git history"
-      filter: "evt.Meta.log_type in ['http_access-log', 'http_error-log'] && evt.Parsed.static_ressource == 'false' && evt.Parsed.verb in ['GET', 'HEAD'] && evt.Parsed.traefik_router_name startsWith 'forgejo'"
-      distinct: "evt.Parsed.file_name"
-      capacity: 10
-      leakspeed: 120s
-      # cache_size must be >= capacity. The stock scenario ships cache_size 5
-      # against capacity 40, which lets an evicted filename pour a second time
-      # and inflate the count; sizing it above capacity keeps one page worth
-      # exactly one token.
-      cache_size: 50
-      groupby: "evt.Meta.source_ip"
+      name: viktor/distributed-crawl-range
+      description: "Detect a crawl spread across many addresses in one registered prefix"
+      filter: "evt.Meta.log_type in ['http_access-log', 'http_error-log']"
+      # Distinct ADDRESSES, not distinct pages: one request per address is the
+      # whole signature, so counting requests would see nothing.
+      distinct: "evt.Meta.source_ip"
+      capacity: 30
+      leakspeed: 30s
+      # cache_size >= capacity, so an evicted address cannot pour a second time
+      # and inflate the count (same reasoning as forgejo-crawl-slow above).
+      cache_size: 60
+      groupby: 'evt.Meta.SourceRange != "" ? evt.Meta.SourceRange : (IsIPV6(evt.Meta.source_ip) ? IpToRange(evt.Meta.source_ip, "/64") : IpToRange(evt.Meta.source_ip, "/24"))'
+      scope:
+        type: Range
+        expression: 'evt.Meta.SourceRange != "" ? evt.Meta.SourceRange : (IsIPV6(evt.Meta.source_ip) ? IpToRange(evt.Meta.source_ip, "/64") : IpToRange(evt.Meta.source_ip, "/24"))'
       blackhole: 5m
       labels:
-        confidence: 2
+        confidence: 3
         spoofable: 0
         classification:
           - attack.T1595
         behavior: "http:crawl"
         service: http
-        label: "Slow distributed crawl of git history"
+        label: "Distributed crawl from one registered prefix"
         remediation: true
     YAML
     "http-429-abuse.yaml" : <<-YAML
@@ -247,6 +297,22 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
           # in London reports being blocked.
           - "137.220.71.46"
         cidr:
+          # Meta CORPORATE egress, Viktor's work VPN. Added 2026-09-07 after
+          # finding he was blocked from his own sites twice over whenever it was
+          # on: this /44 was inside the static Meta-ASN blocklist (removed from
+          # it in the same commit), AND viktor/forgejo-crawl-slow had separately
+          # banned 2620:10d:c092:400::4:2f8a, a single address inside it, which
+          # was him browsing.
+          #
+          # This is NOT the crawler. The crawl runs from 2a03:2880::/32; corp
+          # egress is a different prefix, so exempting it costs nothing against
+          # the swarm. The occupants are employees on a managed network.
+          #
+          # NOTE the two halves are both needed and do different jobs: a
+          # whitelist is PARSER-STAGE, so it stops scenarios from CREATING
+          # decisions but does nothing about an already-imported one. Removing
+          # the range from the static list is what lifts the existing block.
+          - "2620:10d:c090::/44"
           # Never ban internal/cluster/LAN/tailnet sources. Enforcement (edge
           # Worker + firewall-bouncer) drops on real source IP, so an internal
           # range slipping into a decision could blackhole legit traffic — this
@@ -258,21 +324,31 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
       ---
       name: viktor/immich-asset-paths-whitelist
       description: "Don't penalise legit Immich timeline bursts (mobile scrub, web grid)"
-      # KNOWN INERT, pre-dates the 2026-09-01 JSON switch and unaffected by it:
-      # this expression reads evt.Parsed.target_fqdn, which no traefik parser
-      # path creates — the JSON node writes evt.Meta.target_fqdn, a different
-      # map, and CLF writes neither. Verified with `cscli explain` on an Immich
-      # 404 in both formats on 2026-09-01: this whitelist reported "unchanged"
-      # both times, so it has never suppressed anything. Fixing it means
-      # evt.Meta.target_fqdn (or evt.Parsed.traefik_router_name, as the
-      # nextcloud whitelist below does), which would START suppressing
-      # detections — a security-posture change, deliberately not bundled with a
-      # log-format change.
+      # WAS INERT FROM THE DAY IT WAS WRITTEN UNTIL 2026-09-09. It read
+      # evt.Parsed.target_fqdn, which no traefik parser path creates — the JSON
+      # node writes evt.Meta.target_fqdn, a different map, and CLF writes
+      # neither. `cscli explain` on an Immich 404 reported "unchanged" in both
+      # log formats, so it never suppressed anything and Immich has had no
+      # false-positive protection at all.
+      #
+      # Fixed here to evt.Parsed.traefik_router_name, the field
+      # viktor/nextcloud-webdav-whitelist below already uses and which is
+      # verified working at 4,397 suppressions. The router name is the FULL one
+      # (immich-immich-immich-viktorbarzin-me@kubernetes, confirmed in the live
+      # access log 2026-09-09) rather than a shorter substring, because
+      # "immich-viktorbarzin-me" alone would also match the three
+      # highlights-immich* routers, which are public share pages and are NOT
+      # what this exemption is for.
+      #
+      # This does START suppressing detections, which is why it lands BEFORE the
+      # new range-grouped scenario rather than after: tightening detection while
+      # Immich's own exemption is dead is how the earlier self-blocking
+      # happened.
       whitelist:
         reason: "Immich asset endpoints are auth-gated; mobile scrub legitimately bursts"
         expression:
           - >
-            evt.Parsed.target_fqdn == "immich.viktorbarzin.me" &&
+            evt.Parsed.traefik_router_name contains "immich-immich-immich-viktorbarzin-me" &&
             (evt.Parsed.request startsWith "/api/assets/" ||
              evt.Parsed.request startsWith "/api/timeline/" ||
              evt.Parsed.request startsWith "/api/asset/" ||
@@ -652,7 +728,6 @@ resource "kubernetes_config_map" "crowdsec_static_blocklist" {
       199.201.64.0/22
       204.15.20.0/22
       2620:0:1c00::/40
-      2620:10d:c090::/44
       2a03:2880::/32
       2a03:2887:ff00::/48
       2a03:2887:ff02::/47
@@ -691,6 +766,598 @@ resource "kubernetes_config_map" "crowdsec_static_blocklist" {
       2c0f:ef78:9::/48
       2c0f:ef78:c::/47
       2c0f:ef78:10::/47
+    LIST
+
+    # Static, reviewable blocklist: two IPv6 proxy-lease ASNs.
+    #
+    # On 2026-09-09 at 07:58Z a crawler walked forgejo's issue and pull-request
+    # filter space — /viktor/infra/issues? and /pulls? with every combination of
+    # labels, assignee, milestone, poster, project and state, which Forgejo
+    # renders as a fresh DB query each time. 19,450 requests in 16 minutes
+    # against a 48 req/min baseline.
+    #
+    # It was built to defeat per-IP detection: 1,993 distinct source addresses in
+    # 2,000 sampled requests (one request per address), and eight spoofed desktop
+    # Chrome/Edge user-agents rotated evenly. Every address traced to AS214483
+    # (Rapidseedbox) or AS62610, both of which lease IPv6 space to rotating-proxy
+    # operators. No rate-limit scenario can fire on a single request per address,
+    # which is the same conclusion the 2026-09-02 Meta swarm reached and the
+    # reason that block is also an ASN list rather than a scenario.
+    #
+    # Safe to block at ASN granularity: neither ASN served a single request to
+    # any viktorbarzin.me host in the 7 days before the crawl (checked in Loki
+    # across all eight /29s that appeared).
+    #
+    # ACCEPTED COST, Viktor's decision 2026-09-09: anyone reaching us from a
+    # Rapidseedbox VPS or an AS62610 lease is refused on every host, not just
+    # forgejo, because the firewall bouncer drops in-kernel. Outbound is
+    # unaffected.
+    #
+    # Regenerate (754 announced prefixes collapse to 556 aggregates):
+    #   for as in AS214483 AS62610; do
+    #     curl -s "https://stat.ripe.net/data/announced-prefixes/data.json?resource=$as" \
+    #       | jq -r '.data.prefixes[].prefix'
+    #   done | sort -u | python3 -c 'import sys,ipaddress as i; \
+    #       n=[i.ip_network(l.strip()) for l in sys.stdin if l.strip()]; \
+    #       print("\n".join(str(x) for x in list(i.collapse_addresses([a for a in n if a.version==4])) \
+    #                                      + list(i.collapse_addresses([a for a in n if a.version==6]))))'
+    "proxy-asn.txt" = <<-LIST
+      23.91.105.0/24
+      23.136.164.0/24
+      23.136.188.0/24
+      23.137.204.0/24
+      23.137.220.0/24
+      23.137.228.0/24
+      23.138.252.0/24
+      23.139.108.0/24
+      23.139.124.0/24
+      23.139.148.0/24
+      23.139.172.0/24
+      23.139.188.0/24
+      23.142.52.0/24
+      23.142.188.0/24
+      23.146.44.0/24
+      23.147.36.0/24
+      23.147.44.0/24
+      23.148.244.0/24
+      23.149.116.0/24
+      23.149.140.0/24
+      23.149.148.0/24
+      23.149.156.0/24
+      23.149.180.0/24
+      23.149.204.0/24
+      23.149.212.0/24
+      23.149.244.0/24
+      23.150.28.0/24
+      23.150.36.0/24
+      23.150.44.0/24
+      23.150.52.0/24
+      23.150.76.0/24
+      23.150.100.0/24
+      23.150.108.0/24
+      23.150.116.0/24
+      23.150.140.0/24
+      23.150.148.0/24
+      23.150.156.0/24
+      23.150.188.0/24
+      23.150.196.0/24
+      23.150.212.0/24
+      23.150.220.0/24
+      23.150.236.0/24
+      23.151.4.0/24
+      23.151.12.0/24
+      23.151.28.0/24
+      23.152.52.0/24
+      23.153.100.0/24
+      23.153.124.0/24
+      23.153.140.0/24
+      23.169.0.0/24
+      23.174.200.0/24
+      23.185.16.0/24
+      23.251.33.0/24
+      23.251.36.0/22
+      23.251.40.0/23
+      23.251.43.0/24
+      23.251.44.0/24
+      23.251.47.0/24
+      23.251.48.0/22
+      23.251.52.0/24
+      23.251.55.0/24
+      23.251.56.0/22
+      23.251.60.0/23
+      23.251.62.0/24
+      31.56.80.0/24
+      31.56.217.0/24
+      31.56.238.0/24
+      31.57.213.0/24
+      31.58.212.0/24
+      38.67.19.0/24
+      38.93.200.0/21
+      38.179.80.0/21
+      38.248.192.0/20
+      38.248.208.0/21
+      38.248.216.0/22
+      38.248.220.0/23
+      38.248.224.0/19
+      43.224.150.0/24
+      43.230.8.0/23
+      43.252.210.0/24
+      43.255.116.0/23
+      45.12.185.0/24
+      45.121.212.0/23
+      45.121.214.0/24
+      45.158.11.0/24
+      46.202.101.0/24
+      46.202.118.0/24
+      46.202.124.0/24
+      46.203.18.0/24
+      46.203.31.0/24
+      46.203.78.0/24
+      46.203.155.0/24
+      46.236.204.0/23
+      46.236.206.0/24
+      51.146.32.0/22
+      51.194.251.0/24
+      64.145.13.0/24
+      64.204.8.0/24
+      64.204.39.0/24
+      64.204.133.0/24
+      64.204.140.0/24
+      64.204.162.0/24
+      64.204.165.0/24
+      64.204.172.0/24
+      64.204.236.0/24
+      64.205.176.0/22
+      64.205.180.0/24
+      64.205.182.0/24
+      64.205.200.0/23
+      64.205.203.0/24
+      64.205.204.0/23
+      64.205.206.0/24
+      66.80.1.0/24
+      66.92.5.0/24
+      66.92.9.0/24
+      66.92.10.0/24
+      66.92.13.0/24
+      66.92.17.0/24
+      66.92.19.0/24
+      66.93.8.0/24
+      66.93.15.0/24
+      66.93.29.0/24
+      66.93.31.0/24
+      66.93.33.0/24
+      66.93.34.0/24
+      66.93.40.0/24
+      66.93.42.0/24
+      66.93.44.0/24
+      66.93.53.0/24
+      66.93.57.0/24
+      66.93.59.0/24
+      66.93.74.0/24
+      66.93.81.0/24
+      66.93.128.0/24
+      66.93.130.0/24
+      66.93.132.0/24
+      66.93.151.0/24
+      66.93.154.0/24
+      66.93.169.0/24
+      66.93.173.0/24
+      66.93.176.0/24
+      66.93.179.0/24
+      66.93.248.0/24
+      66.253.10.0/23
+      66.253.13.0/24
+      66.253.14.0/24
+      66.253.38.0/24
+      66.253.45.0/24
+      66.253.47.0/24
+      68.166.215.0/24
+      68.166.219.0/24
+      68.166.228.0/24
+      68.166.232.0/24
+      68.166.240.0/24
+      69.17.8.0/24
+      69.33.216.0/24
+      69.33.224.0/24
+      69.165.69.0/24
+      69.165.76.0/24
+      74.2.221.0/24
+      74.2.222.0/24
+      82.21.112.0/24
+      82.22.119.0/24
+      82.22.166.0/24
+      82.23.191.0/24
+      82.24.70.0/24
+      82.26.78.0/23
+      82.29.64.0/24
+      82.47.141.0/24
+      82.47.143.0/24
+      82.47.194.0/24
+      82.109.151.0/24
+      82.153.218.0/24
+      83.147.41.0/24
+      83.147.43.0/24
+      83.147.44.0/22
+      84.75.1.0/24
+      84.75.179.0/24
+      84.75.222.0/24
+      87.83.47.0/24
+      87.84.64.0/24
+      89.116.10.0/24
+      89.213.50.0/24
+      89.213.224.0/24
+      91.124.24.0/24
+      91.124.94.0/23
+      92.112.230.0/24
+      95.134.63.0/24
+      95.134.119.0/24
+      95.134.240.0/20
+      95.135.182.0/24
+      95.135.192.0/24
+      95.135.233.0/24
+      95.155.172.0/23
+      95.155.174.0/24
+      98.96.221.0/24
+      98.96.225.0/24
+      98.96.232.0/23
+      98.96.240.0/24
+      98.96.248.0/23
+      98.96.250.0/24
+      98.98.23.0/24
+      98.98.69.0/24
+      98.98.74.0/24
+      98.98.134.0/24
+      101.47.94.0/24
+      103.49.60.0/24
+      103.49.62.0/23
+      103.62.52.0/24
+      103.62.54.0/24
+      103.103.246.0/23
+      103.215.127.0/24
+      103.225.197.0/24
+      103.225.198.0/24
+      103.235.19.0/24
+      103.237.101.0/24
+      103.237.102.0/23
+      103.239.103.0/24
+      104.140.120.0/24
+      104.166.83.0/24
+      104.218.167.0/24
+      104.254.194.0/24
+      107.151.141.0/24
+      107.151.153.0/24
+      107.151.174.0/24
+      107.151.192.0/23
+      107.151.195.0/24
+      107.151.196.0/22
+      107.151.200.0/21
+      107.151.208.0/22
+      107.151.213.0/24
+      107.151.214.0/23
+      107.151.216.0/21
+      107.151.234.0/24
+      107.151.238.0/23
+      107.151.240.0/22
+      107.151.248.0/21
+      109.65.235.0/24
+      109.66.76.0/24
+      109.66.78.0/24
+      109.66.80.0/24
+      109.66.94.0/24
+      109.66.106.0/24
+      109.66.131.0/24
+      109.66.160.0/24
+      109.66.164.0/24
+      109.66.192.0/24
+      118.26.60.0/22
+      128.1.12.0/24
+      128.1.24.0/24
+      128.1.28.0/24
+      128.1.120.0/23
+      128.1.123.0/24
+      128.1.147.0/24
+      128.1.152.0/23
+      128.1.162.0/24
+      128.1.180.0/24
+      128.1.195.0/24
+      128.1.222.0/24
+      128.1.237.0/24
+      128.1.250.0/24
+      128.14.24.0/24
+      128.14.30.0/24
+      128.14.37.0/24
+      128.14.50.0/24
+      128.14.61.0/24
+      128.14.68.0/22
+      128.14.79.0/24
+      128.14.82.0/24
+      128.14.127.0/24
+      128.14.133.0/24
+      128.14.134.0/23
+      128.14.136.0/23
+      128.14.142.0/24
+      128.14.145.0/24
+      128.14.146.0/23
+      129.227.139.0/24
+      134.202.225.0/24
+      143.14.81.0/24
+      143.14.140.0/24
+      143.20.65.0/24
+      143.20.72.0/24
+      143.20.74.0/24
+      143.20.102.0/24
+      143.20.120.0/24
+      143.20.200.0/24
+      150.107.0.0/24
+      150.107.3.0/24
+      150.129.40.0/24
+      150.129.42.0/24
+      151.240.0.0/24
+      151.240.5.0/24
+      151.240.6.0/24
+      151.240.133.0/24
+      151.241.1.0/24
+      151.241.148.0/24
+      151.241.150.0/24
+      151.241.157.0/24
+      151.241.220.0/24
+      151.242.1.0/24
+      151.242.12.0/24
+      151.242.14.0/24
+      151.242.59.0/24
+      151.242.77.0/24
+      151.242.119.0/24
+      151.242.157.0/24
+      151.243.21.0/24
+      151.243.47.0/24
+      151.243.49.0/24
+      151.243.51.0/24
+      151.243.57.0/24
+      151.243.60.0/23
+      151.243.88.0/24
+      151.243.114.0/24
+      151.243.120.0/24
+      151.244.105.0/24
+      151.244.142.0/24
+      151.244.178.0/24
+      151.244.236.0/24
+      151.245.29.0/24
+      151.245.38.0/24
+      151.245.48.0/24
+      151.245.52.0/24
+      151.245.60.0/23
+      151.245.63.0/24
+      151.245.65.0/24
+      151.245.102.0/24
+      151.245.109.0/24
+      151.245.120.0/24
+      151.245.138.0/24
+      151.245.141.0/24
+      151.245.148.0/24
+      151.245.162.0/24
+      151.245.170.0/24
+      151.245.226.0/24
+      151.245.241.0/24
+      151.246.179.0/24
+      151.246.180.0/24
+      151.246.222.0/24
+      151.246.248.0/24
+      151.247.45.0/24
+      151.247.108.0/24
+      151.247.137.0/24
+      154.16.41.0/24
+      154.16.91.0/24
+      154.16.96.0/24
+      154.16.122.0/24
+      154.16.159.0/24
+      154.16.177.0/24
+      154.16.184.0/24
+      154.16.218.0/24
+      154.16.220.0/24
+      154.16.237.0/24
+      154.84.167.0/24
+      154.86.116.0/23
+      154.208.113.0/24
+      155.117.139.0/24
+      155.229.87.0/24
+      155.229.197.0/24
+      156.59.73.0/24
+      156.59.123.0/24
+      156.59.146.0/24
+      156.59.184.0/24
+      156.59.223.0/24
+      157.119.20.0/24
+      162.128.64.0/23
+      162.128.66.0/24
+      162.128.68.0/22
+      162.128.72.0/22
+      162.128.76.0/23
+      162.128.80.0/21
+      162.128.89.0/24
+      162.128.90.0/23
+      162.128.92.0/22
+      162.128.101.0/24
+      162.128.113.0/24
+      162.128.132.0/24
+      162.128.146.0/24
+      163.53.244.0/24
+      163.53.247.0/24
+      165.49.235.0/24
+      167.148.40.0/24
+      167.148.120.0/23
+      167.148.169.0/24
+      168.222.74.0/24
+      168.222.117.0/24
+      169.197.101.0/24
+      172.81.127.0/24
+      174.140.239.0/24
+      174.140.251.0/24
+      178.83.15.0/24
+      178.83.106.0/24
+      178.83.208.0/24
+      178.92.228.0/24
+      178.93.17.0/24
+      178.93.58.0/24
+      178.93.193.0/24
+      178.93.236.0/24
+      178.93.243.0/24
+      178.94.195.0/24
+      178.94.197.0/24
+      178.94.201.0/24
+      178.94.204.0/24
+      178.94.207.0/24
+      178.94.216.0/24
+      178.94.228.0/24
+      178.94.253.0/24
+      178.95.8.0/24
+      178.95.84.0/24
+      178.95.87.0/24
+      178.95.92.0/24
+      178.95.97.0/24
+      178.95.98.0/23
+      178.95.113.0/24
+      178.95.193.0/24
+      178.95.219.0/24
+      178.95.222.0/24
+      178.95.226.0/24
+      178.95.252.0/24
+      178.95.254.0/24
+      178.132.196.0/24
+      179.61.152.0/24
+      179.61.207.0/24
+      181.214.220.0/24
+      181.214.229.0/24
+      181.215.198.0/24
+      181.215.238.0/24
+      188.220.95.0/24
+      188.220.198.0/24
+      188.220.249.0/24
+      188.221.212.0/24
+      188.221.216.0/24
+      191.101.175.0/24
+      191.101.189.0/24
+      191.101.200.0/24
+      192.6.35.0/24
+      192.6.94.0/24
+      193.8.113.0/24
+      193.31.113.0/24
+      194.231.139.0/24
+      194.231.158.0/24
+      194.231.208.0/24
+      194.231.210.0/24
+      198.44.164.0/22
+      198.44.168.0/23
+      198.44.171.0/24
+      198.44.175.0/24
+      198.44.188.0/22
+      199.190.45.0/24
+      204.27.77.0/24
+      207.210.111.0/24
+      209.101.52.0/24
+      212.17.234.0/24
+      212.134.16.0/24
+      212.134.18.0/23
+      212.134.22.0/24
+      212.134.24.0/24
+      212.134.58.0/23
+      212.134.80.0/24
+      212.134.83.0/24
+      212.134.99.0/24
+      212.134.104.0/24
+      212.134.110.0/24
+      212.134.120.0/24
+      212.134.134.0/24
+      212.134.136.0/24
+      212.134.143.0/24
+      212.134.160.0/24
+      212.134.171.0/24
+      212.134.175.0/24
+      212.134.176.0/24
+      212.134.181.0/24
+      212.134.184.0/23
+      212.134.202.0/24
+      212.134.219.0/24
+      212.134.233.0/24
+      212.134.234.0/24
+      212.134.237.0/24
+      212.134.238.0/24
+      212.134.244.0/24
+      212.134.246.0/24
+      212.134.251.0/24
+      212.135.66.0/24
+      212.135.98.0/24
+      212.135.140.0/23
+      212.135.150.0/24
+      212.135.158.0/24
+      212.135.168.0/24
+      212.135.171.0/24
+      212.135.204.0/24
+      212.135.250.0/24
+      216.27.173.0/24
+      216.27.174.0/24
+      216.115.187.0/24
+      216.116.190.0/23
+      216.133.144.0/24
+      216.133.154.0/23
+      216.133.157.0/24
+      216.133.158.0/23
+      216.231.51.0/24
+      216.231.62.0/24
+      217.147.168.0/24
+      217.216.221.0/24
+      217.216.222.0/23
+      2400:3280::/32
+      2401:a180::/32
+      2401:bb80::/32
+      2403:58c0::/32
+      2602:f4e0::/40
+      2602:f524::/40
+      2602:f52b::/40
+      2602:f54a::/40
+      2602:ffe4:c68::/46
+      2602:ffe4:c74::/46
+      2602:ffe4:c80::/45
+      2602:ffe4:c88::/46
+      2602:ffe4:c90::/47
+      2602:ffe4:c93::/48
+      2602:ffe4:c94::/47
+      2602:ffe4:c96::/48
+      2602:ffe4:c98::/46
+      2604:980:e016::/47
+      2604:980:e01a::/47
+      2604:980:e01c::/46
+      2604:980:e020::/45
+      2604:980:e028::/47
+      2604:980:e02c::/46
+      2604:980:e030::/47
+      2604:980:e036::/47
+      2604:980:e038::/46
+      2604:980:e03c::/47
+      2604:980:e044::/46
+      2604:980:efc0::/42
+      2a01:f2c0::/29
+      2a09:3940::/29
+      2a0b:21c1:600c::/46
+      2a0b:21c1:6013::/48
+      2a0b:21c1:6014::/46
+      2a0b:21c1:6018::/47
+      2a0b:21c1:601a::/48
+      2a0b:21c1:601e::/47
+      2a0b:21c1:6020::/47
+      2a0b:21c1:6024::/46
+      2a0b:21c1:6032::/47
+      2a0c:a580::/29
+      2a0e:1c00::/29
+      2a10:4a00::/29
+      2a10:7b00::/29
+      2a11:c40::/29
+      2a11:4500::/29
+      2a11:7940::/29
+      2a12:6180::/29
+      2a12:da80::/29
+      2a12:f540::/29
+      2a13:f40::/29
+      2a13:dcc0::/29
     LIST
   }
 }
@@ -783,30 +1450,40 @@ resource "kubernetes_cron_job_v1" "crowdsec_blocklist_import" {
                 # died on `unable to open /tmp/meta-asn.txt: no such file or
                 # directory`. Shell redirection follows the symlink, so pipe the
                 # bytes through exec's stdin instead.
-                echo "Importing static blocklist (Meta ASN)..."
-                EXPECTED=$(grep -cvE '^[[:space:]]*(#|$)' /static/meta-asn.txt)
-                kubectl exec -i -n crowdsec "$AGENT_POD" -- \
-                  sh -c 'cat > /tmp/meta-asn.txt' < /static/meta-asn.txt
+                # Each entry is "<file>|<reason>". Both lists get the identical
+                # stage-verify-import treatment, so a second list can never be
+                # added with weaker guards than the first.
+                for ENTRY in \
+                  "meta-asn.txt|static-blocklist/meta-asn (git-history crawler swarm 2026-09-02)" \
+                  "proxy-asn.txt|static-blocklist/proxy-asn (rotating-proxy crawl 2026-09-09, AS214483+AS62610)"
+                do
+                  LIST_FILE="$${ENTRY%%|*}"
+                  LIST_REASON="$${ENTRY#*|}"
 
-                # Prove the file arrived before importing. The failure this
-                # guards against was silent for a day: the import errored, the
-                # job went red for what looked like the third-party feeds, and
-                # the 168h decisions quietly kept ticking down.
-                LANDED=$(kubectl exec -n crowdsec "$AGENT_POD" -- \
-                  sh -c 'grep -cvE "^[[:space:]]*(#|$)" /tmp/meta-asn.txt 2>/dev/null || echo 0')
-                if [ "$LANDED" != "$EXPECTED" ]; then
-                  echo "ERROR: static blocklist did not reach the agent:" \
-                       "expected $EXPECTED CIDRs, found $LANDED in /tmp/meta-asn.txt"
-                  kubectl exec -n crowdsec "$AGENT_POD" -- rm -f /tmp/meta-asn.txt || true
-                  exit 1
-                fi
-                echo "Staged $LANDED CIDRs on $AGENT_POD."
+                  echo "Importing static blocklist ($LIST_FILE)..."
+                  EXPECTED=$(grep -cvE '^[[:space:]]*(#|$)' "/static/$LIST_FILE")
+                  kubectl exec -i -n crowdsec "$AGENT_POD" -- \
+                    sh -c "cat > /tmp/$LIST_FILE" < "/static/$LIST_FILE"
 
-                kubectl exec -n crowdsec "$AGENT_POD" -- cscli decisions import \
-                  -i /tmp/meta-asn.txt --format values --scope range \
-                  --duration 168h \
-                  --reason "static-blocklist/meta-asn (git-history crawler swarm 2026-09-02)"
-                kubectl exec -n crowdsec "$AGENT_POD" -- rm -f /tmp/meta-asn.txt
+                  # Prove the file arrived before importing. The failure this
+                  # guards against was silent for a day: the import errored, the
+                  # job went red for what looked like the third-party feeds, and
+                  # the 168h decisions quietly kept ticking down.
+                  LANDED=$(kubectl exec -n crowdsec "$AGENT_POD" -- \
+                    sh -c "grep -cvE '^[[:space:]]*(#|\$)' /tmp/$LIST_FILE 2>/dev/null || echo 0")
+                  if [ "$LANDED" != "$EXPECTED" ]; then
+                    echo "ERROR: static blocklist did not reach the agent:" \
+                         "expected $EXPECTED CIDRs, found $LANDED in /tmp/$LIST_FILE"
+                    kubectl exec -n crowdsec "$AGENT_POD" -- rm -f "/tmp/$LIST_FILE" || true
+                    exit 1
+                  fi
+                  echo "Staged $LANDED CIDRs from $LIST_FILE on $AGENT_POD."
+
+                  kubectl exec -n crowdsec "$AGENT_POD" -- cscli decisions import \
+                    -i "/tmp/$LIST_FILE" --format values --scope range \
+                    --duration 168h --reason "$LIST_REASON"
+                  kubectl exec -n crowdsec "$AGENT_POD" -- rm -f "/tmp/$LIST_FILE"
+                done
 
                 # ---- third-party feeds, non-fatal -----------------------------
                 # A failure here still exits non-zero at the end so the job goes

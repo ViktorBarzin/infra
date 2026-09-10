@@ -509,6 +509,16 @@ locals {
     "cyberchef",
     "dawarich",
     "f1-stream",
+    # forgejo, added 2026-09-09. A NEW Anubis instance is the one thing that
+    # reaches redis from a namespace this snapshot could not have contained,
+    # and it fails hard rather than degrading: Anubis validates its valkey
+    # store while PARSING the policy file, so the pod crashloops with
+    # "can't parse policy file: valkey.Factory: ping failed" and every request
+    # to the site behind it gets a 503. Measured: 6 restarts in 10 minutes and
+    # forgejo.viktorbarzin.me down until this name was added. Adding an
+    # anubis_instance with shared_store_url set means adding its namespace
+    # here, in the same change.
+    "forgejo",
     "grampsweb",
     "homepage",
     "immich",

@@ -914,6 +914,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-goldmane-edges",
     "pg-tasks",
     "pg-goodreads-sync",
+    "pg-paperless-ngx",
   ]
 
   postgresql {
@@ -991,6 +992,14 @@ resource "vault_database_secret_backend_static_role" "mysql_phpipam" {
 }
 
 # --- PostgreSQL Static Roles ---
+
+resource "vault_database_secret_backend_static_role" "pg_paperless_ngx" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-paperless-ngx"
+  username        = "paperless_ngx"
+  rotation_period = 604800
+}
 
 resource "vault_database_secret_backend_static_role" "pg_trading" {
   backend         = vault_mount.database.path

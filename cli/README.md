@@ -259,7 +259,7 @@ failing the read.
 
 | Command | Tier | What it does |
 | --- | --- | --- |
-| `vault kv get <path> [--field K]` | read | read a secret: `--field K` → one value (TTY-aware clipboard/stdout); no field → all fields as JSON (refuses a bare TTY) |
+| `vault kv get <path> [--field K]` | read | no field → the secret's key NAMES + version, never values; `--field K` (or a `<path>/<key>` argument) → that one value (TTY-aware clipboard/stdout); `--reveal-all` → every value, with a warning on stderr |
 | `vault kv list <path>` | read | list sub-paths under `<path>` (no values) |
 | `vault kv put <path> <key>` | write | write one key; **value via stdin** (piped or no-echo prompt, never argv); creates the path or **merges** (never clobbers siblings) |
 
