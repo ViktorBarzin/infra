@@ -282,28 +282,28 @@ usable for CrowdSec decision volume is not yet measured.
    To re-proxy without breaking CI, give the off-infra publish step an
    origin-direct upload path (`--resolve …:443:176.12.22.76`, or a dedicated
    non-proxied packages hostname) in the terminal-lobby repo first.
-4. **DONE 2026-09-09 — watched, measured, decided.** The answer is that the
-   edge stops none of it and the `/64` detector does not work either, so the
-   defence moved to two layers that do not depend on recognising the operator.
-   Details in "Step 4 as measured" below.
+4. **DONE 2026-09-09 — watched, measured, decided.** Two measurements
+   answered it: the edge does not cover forgejo (step 3 was reverted), and the
+   `/64` detector overflowed 0 times from 10,510 buckets. The defence moved to
+   two layers that do not depend on recognising the operator. Details in
+   "Step 4 as measured" below.
 5. **Retire the 117-range static blocklist.** Not yet. Two static lists are now
    live (the original Meta one, plus 556 prefixes from AS214483 and AS62610
-   added 2026-09-09), and `viktor/distributed-crawl-range` has to be observed
-   for false positives before anything is removed. Retiring them is the point
-   of building the scenario, not a step to take alongside it.
+   added 2026-09-09), and `viktor/distributed-crawl-range` needs a period of
+   false-positive observation first. Retiring the lists is what the scenario is
+   for, and it is a separate step rather than part of this one.
 
 ## Step 4 as measured (2026-09-09)
 
-Two crawl waves in one week, and the step-4 question turned out to have a clear
-answer.
+Two crawl waves in one week gave the step-4 question a measurable answer.
 
-**The edge does not cover forgejo, and that is settled rather than open.**
-Step 3 proxied it and was reverted the same day (infra#91) because zone-wide Bot
-Fight Mode, which the free plan cannot except, 403'd terminal-lobby's CI package
-PUT. So the hostname taking the crawls is the one hostname behind no edge.
+**The edge does not cover forgejo.** Step 3 proxied it and was reverted the same
+day (infra#91) because zone-wide Bot Fight Mode, which the free plan cannot
+except, 403'd terminal-lobby's CI package PUT. So the hostname taking the crawls
+is the one hostname behind no edge.
 
-**The `/64` detector was built, ran, and caught the wrong thing.** Measured on
-the live agent:
+**The `/64` detector ran, and the crawler's address rotation is wider than its
+bucket key.** Measured on the live agent:
 
 ```
 Scenario                              Instantiated  Poured  Expired  Overflows
@@ -311,9 +311,10 @@ crowdsecurity/http-crawl-non_statics  10.51k        13.65k  10.51k   0
 ```
 
 10,510 buckets, 1.3 events each, zero overflows. `viktor/forgejo-crawl-slow`
-fails the same way, because the crawler rotates *across* `/64`s rather than
+behaves the same way, because the crawler rotates *across* `/64`s rather than
 within one. Per-source bucketing cannot see one request per address at any
-threshold.
+threshold, so this is a limit of the axis rather than of the thresholds
+chosen.
 
 **The load problem was not separate from crawler blocking.** The risk section
 below recorded the 2026-09-05T17:35Z Traefik OOM as unrelated. It carries the
@@ -328,11 +329,37 @@ around 2,000 distinct addresses in one minute, 85-96% IPv6, all on
 | status 499 (client gave up waiting) | 411,496 (27%) |
 | peak | 16,623 req/min |
 
-The 2026-09-09 wave came through clean (203,788 × 200, 77 × 499, zero 5xx)
-because `MAX_OPEN_CONNS=25` and the 1536Mi Traefik raise had landed by then. The
-mitigations work; the load is real and recurring.
+The 2026-09-09 wave came through with 203,788 × 200, 77 × 499 and zero 5xx,
+after `MAX_OPEN_CONNS=25` and the 1536Mi Traefik raise had landed. Those two
+changes held; the load itself is unchanged and recurring.
 
 **What was built instead.**
+
+```mermaid
+flowchart TD
+    R[external request] --> RL{shared rate-limit<br/>chain: real-ip then 10/50<br/>keyed on X-Real-Ip}
+    RL -->|over| E429[429]
+    RL -->|under| CS{CrowdSec plugin<br/>websecure entrypoint}
+    CS -->|banned ip or range| E403[403]
+    CS -->|clean| AN{forgejo only:<br/>Anubis}
+    AN -->|"/api/, /v2/, git,<br/>non-GET, local networks"| APP[Forgejo]
+    AN -->|browser GET| POW[proof-of-work]
+    POW -->|solved| APP
+    APP --> LOG[traefik JSON access log]
+    LOG --> AG[crowdsec agent]
+    AG --> SC[viktor/distributed-crawl-range<br/>groupby SourceRange<br/>distinct source_ip]
+    SC -->|30 addresses in one prefix| BAN[ban scope=Range, 4h]
+    BAN --> CS
+    E429 --> H429[http-429-abuse]
+    H429 --> BAN
+```
+
+```stats
+1,531,741 | forgejo requests, 7 days
+411,496 | of them status 499
+338 | crawler addresses per /29 per minute
+3 | legitimate addresses per netblock, max
+```
 
 1. `viktor/distributed-crawl-range` in CrowdSec, grouping by
    `evt.Meta.SourceRange` and counting distinct source addresses. Thresholds
@@ -364,16 +391,28 @@ intermediate series, so a cluster-wide per-IP census cannot be done in one
 query and has to be sampled. Prometheus scrapes Traefik every 120s, so
 `rate[1m]` returns no series and per-minute bursts are only visible in Loki.
 
-**`crowdsec-agent` on node3 restarts on its own schedule and is a separate
-defect.** 20 restarts in 40h on node3 while the other four agents sit at 0, and
-271Mi against a 512Mi limit where node1 uses 42Mi. It is not the crawl: the
-kills cluster around 00:00-02:00Z, hours before the waves. The bucket census
-points at the cause — node3's agent holds 3.46k live `viktor/forgejo-crawl-slow`
-buckets (22.50k instantiated) because that scenario groups per `/64`, and each
-bucket carries a queue of full events. Being measured after
-`viktor/distributed-crawl-range` lands; the new scenario adds few buckets but
-does not remove the old one's, so a limit raise remains the likely fix rather
-than a side effect.
+**`crowdsec-agent` on node3 is a separate defect, now fixed.** 20 restarts in
+40h on node3 while the other four agents sat at 0, and 271Mi against a 512Mi
+limit where node1 used 42Mi. It is not the crawl: the kills cluster around
+00:00-02:00Z, hours before the waves.
+
+The bucket census identified the cause. Whichever node runs the Traefik pod whose
+access log carries the crawl parses every `http_*` event for the whole cluster,
+and on node3 that meant 5.29k live `viktor/forgejo-crawl-slow` buckets against
+546 for the new scenario, each bucket holding a queue of parsed events.
+`max_over_time(container_memory_working_set_bytes[40h])` peaked at 509.5Mi
+against the 512Mi ceiling.
+
+The hope that step 1 would fix this as a side effect did not hold: adding a
+scenario does not remove another one's buckets, and the numbers above are from
+after it landed. So the limit went 512Mi to 1Gi with the request left at 128Mi,
+which is the fallback this plan sanctioned.
+
+One cheaper option is recorded next to the value rather than taken.
+`forgejo-crawl-slow` costs roughly 10x the buckets of the scenario that is
+firing and has overflowed zero times, so retiring it would reduce the memory
+instead of accommodating it. That removes a detection layer, so it is a decision
+to take deliberately.
 
 ## As built (2026-09-06)
 
@@ -425,9 +464,10 @@ and JA3/JA4 fingerprinting need Enterprise with Bot Management. If Meta returns
 in its 2026-09-02 form, declaring nothing, the edge may not stop it and the
 CrowdSec `/64` detector becomes the thing that matters.
 
-> Both halves of that came true on 2026-09-09, and the `/64` detector was not
-> the thing that mattered — it caught nothing. See "Step 4 as measured".
-> `viktor/distributed-crawl-range` and Anubis on forgejo replace it.
+> Both halves of that came true on 2026-09-09. The `/64` detector overflowed 0
+> times from 10,510 buckets, because this crawler rotates across `/64`s rather
+> than within one. See "Step 4 as measured": `viktor/distributed-crawl-range`
+> and Anubis on forgejo cover the shape it cannot.
 
 **The API still goes over HTTPS.** Moving every git remote to SSH takes git
 entirely off the proxy, so neither the 100 MB cap nor the 100-second read
@@ -479,8 +519,9 @@ Added 2026-09-09:
   `/24` for a prefix the database does not know, which is a per-address bucket
   again for anything allocated since. A free MaxMind key already exists in this
   repo for shlink (`stacks/url/main.tf:203-208`) and could feed a refresh.
-- **Whether `/viktor/infra` needs to be world-readable at all.** The cheapest
-  fix to every crawl in this document, and nobody has asked for it yet.
+- **Whether `/viktor/infra` needs to be world-readable at all.** This would
+  remove the crawl surface rather than defend it, and it has not been asked
+  for yet.
 - **`crowdsec-agent` on node3.** See "Step 4 as measured" — 20 restarts in 40h
   against 0 on the other four agents, driven by live bucket count rather than a
   global undersize.
