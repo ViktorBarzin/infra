@@ -31,6 +31,22 @@ shellcheck
 # MemAvailable% and is swap-independent.
 earlyoom
 
+# Python libraries the agents' throwaway analysis scripts reach for. Measured, not
+# guessed: over 30 days of emo's sessions these were the ModuleNotFoundError hits
+# (PIL 12x, aiohttp 4x, the rest 2x each) — each one costing a failed run plus a
+# retry. Preferred as apt packages over `pip --break-system-packages` so they are
+# distro-managed and survive a Python upgrade. python3-cryptography was already
+# present. tidalapi and playwright are deliberately NOT here: tidalapi is one
+# user's niche dependency, and browser automation goes through the Playwright MCP
+# or `homelab browser`, not a local pip install.
+python3-pil          # Pillow — image inspection/annotation of screenshots
+python3-aiohttp      # async HTTP against device and Home Assistant APIs
+python3-openpyxl     # .xlsx read/write
+python3-xlsxwriter   # .xlsx generation
+python3-reportlab    # PDF generation
+python3-paramiko     # SSH from Python to LAN devices
+python3-paho-mqtt    # MQTT — Home Assistant / ESPHome device traffic
+
 # --- installed by setup-devvm.sh via NON-apt paths (not apt-installable) ---
 # nodejs + npm                -> NodeSource repo (claude-code needs node >= 18; distro nodejs is too old)
 # gh (GitHub CLI)             -> GitHub's own apt repo (cli.github.com), NOT in the default Ubuntu repos
@@ -44,3 +60,49 @@ earlyoom
 # Scraped by Prometheus job `devvm` (stacks/monitoring) — pressure/swap/load
 # history for t3 drop attribution (docs/runbooks/t3-drop-attribution.md).
 prometheus-node-exporter
+
+# Playwright WebKit's system dependencies. WebKit was already downloaded
+# (~/.cache/ms-playwright/webkit-2248) and would not launch: 26 missing shared
+# libraries, so every attempt to reproduce a Safari-reported bug fell back to
+# Chromium. The 2026-08-31 session study found iOS/Safari/PWA is where most
+# client-side defects in the corpus live and had NO instrument at all.
+#
+# MEASURED VERDICT (2026-09-01): this does NOT help with the iOS gap. Of the 15
+# iOS/Safari/PWA defects in the session corpus, WebKit-on-Linux would reproduce
+# 2 — and both already reproduce in the headless Chromium we had, so the
+# marginal yield is ZERO defects. Every corpus defect was caused by
+# iOS-the-PLATFORM (soft keyboard, safe-area insets, standalone containers,
+# push, share) or by Safari-the-OLD-VERSION, and none by WebKit-the-engine.
+# WebKit on Linux is the wrong axis: it supplies the engine family we did not
+# need and withholds the platform behaviour we did. Measured on this box:
+# safe-area insets read 0px even with viewport-fit=cover, maxTouchPoints is 0
+# under the iPhone descriptor, navigator.standalone and display-mode:standalone
+# cannot be faked at all, navigator.share and PushManager are undefined, and an
+# offline reload with a correct precaching service worker dies with "WebKit
+# encountered an internal error" where Chromium boots.
+#
+# Kept anyway: the deps are small, WebKit is a useful third engine for ordinary
+# cross-browser layout work, and removing them would only re-break a launch that
+# now works. But do NOT count a WebKit pass as iOS evidence, and do not treat
+# this install as progress on the iOS gap — closing that needs real Apple
+# hardware, and the old-iPad cluster in the corpus needs an iPadOS 15-era engine
+# specifically, which current hardware would also miss.
+#
+# List taken from `playwright install-deps --dry-run webkit`, not hand-guessed.
+# Re-derive it after a playwright major bump rather than trusting this copy.
+gstreamer1.0-libav
+gstreamer1.0-plugins-bad
+gstreamer1.0-plugins-base
+gstreamer1.0-plugins-good
+libavif16
+libenchant-2-2
+libevent-2.1-7t64
+libgstreamer-gl1.0-0
+libgstreamer-plugins-bad1.0-0
+libgstreamer-plugins-base1.0-0
+libgtk-4-1
+libharfbuzz-icu0
+libhyphen0
+libmanette-0.2-0
+libsecret-1-0
+libwoff1

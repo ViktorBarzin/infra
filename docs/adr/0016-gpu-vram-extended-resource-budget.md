@@ -84,6 +84,22 @@ slow arena drift, not an instantaneous spike, and the alternative (HAMi) carries
 disproportionate risk for this hardware.
 
 ## Consequences
+- **A first-party service putting onnxruntime on CUDA must pass
+  `{"arena_extend_strategy": "kSameAsRequested"}` in the provider options**, not
+  the bare `providers=[provider]` string. The CUDA BFC arena defaults to
+  `kNextPowerOfTwo`, so it doubles whenever inference asks for more than it
+  holds and never returns the memory. On 2026-09-02 that put claude-memory at
+  7,314 MiB against a 5,000 MiB seat — a step of exactly +4,096 followed by a
+  flat line, which is the signature: a power-of-two step is the arena, and a
+  flat line is not a leak. Pinning `kSameAsRequested` took it to 2,466 MiB.
+  Both upstream ONNX tenants already do this — immich at
+  `/usr/src/immich_ml/sessions/ort.py:130`, frigate at
+  `/opt/frigate/frigate/util/model.py:310` — so the gap was only ever in our own
+  code. Deliberately no `gpu_mem_limit`: a hard cap turns an over-large batch
+  into an inference failure, which is worse than a large arena, and the seat
+  plus the watchdog are what bound a tenant. `GPUTenantOverSeatSustained`
+  (infra#85) is the guardrail that now catches the next one.
+
 
 - **The 2026-06-02 class is bounded** without touching the pinned driver, the GPU
   operator, or time-slicing. immich-ml can no longer silently grow into
@@ -92,12 +108,44 @@ disproportionate risk for this hardware.
 - **The card has a seating chart now.** Sum of declared budgets ≤ ~14 GB, so a new
   always-on GPU tenant requires re-budgeting; an over-budget on-demand tenant sits
   `Pending`. This is the intended, legible back-pressure.
-- **Small/on-demand tenants (android-emulator, ytdlp, tts, ebook2audiobook) are
-  NOT budgeted in v1** — they fill *actual* slack rather than holding a scheduler
-  seat (tts via its existing free-VRAM demand-gate), and are covered by the
-  ~1.4 GiB physical reserve plus budget headroom (the five residents' budgets sum
-  to 13300 ≤ 14000 advertised). Give them budgets later if they grow; until then
-  the watchdog protects the budgeted five and counts everyone's usage toward free.
+- **Small/on-demand tenants (android-emulator, ytdlp, tts, ebook2audiobook) were
+  NOT budgeted in v1** — they filled *actual* slack rather than holding a scheduler
+  seat (tts via its existing free-VRAM demand-gate), covered by the ~1.4 GiB
+  physical reserve plus budget headroom.
+- **Superseded 2026-09-04 (bead code-0twf): declaring a budget is now mandatory,
+  and the exemptions are explicit.** The Kyverno `require-gpumem-declaration`
+  policy moved from Audit to **Enforce**, so a pod requesting `nvidia.com/gpu` in
+  a non-excluded namespace and declaring no `gpumem` is rejected at admission.
+  android-emulator (300), f1-stream (500) and claude-memory (5000) had already
+  taken seats; tts/chatterbox-tts (5200) and the three ebook2audiobook
+  deployments (400 each) were seated in the same change. Four namespaces are
+  excluded rather than seated, each holding a deliberately seatless tenant:
+  `nvidia` (gpu-pod-exporter, a DaemonSet that reads NVML and holds no VRAM),
+  `llama-cpp` (llama-swap, the opportunistic tenant this ADR describes),
+  `stremio` and `ytdlp` (both measured at zero VRAM). The exclude list and its
+  reasons live in `local.gpumem_excluded_namespaces`,
+  `stacks/kyverno/modules/kyverno/resource-governance.tf`.
+- **The rule was inert from 2026-08-31 until 2026-09-04, and the flip to Enforce
+  is what exposed it.** Its `pattern` nested the requirement inside two
+  CONDITIONAL anchors, `(resources)` then `(limits)`. A conditional anchor treats
+  a sub-pattern that does not match as a SKIP, so a GPU container missing
+  `gpumem` made the inner map fail, `(limits)` call itself unmatched and skip,
+  and `(resources)` skip in turn: the rule passed everything, in Audit and in
+  Enforce alike. Verified live on the day of the flip, by server-dry-running the
+  real frigate pod with its `gpumem` stripped and watching it be admitted. Both
+  anchors are now EXISTENCE anchors, `=(resources)` and `=(limits)`, which mean
+  "if this key is present its value must match" and let the failure propagate.
+  Measured with kyverno-cli 1.18.2 over every live pod in the cluster: 6 pass
+  (the six seated tenants), 0 fail, 368 skip. **A validate `pattern` that reports
+  nothing is not evidence that nothing violates it** — check it against a
+  deliberately-violating resource before believing a clean result.
+- **The seating chart as of 2026-09-04** (running tenants, node advertises
+  14000 MiB): claude-memory 5000, frigate 2800, immich-ml 2500, immich-worker
+  1500, f1-stream 500, android-emulator 300 = **12600**, leaving 1400
+  unallocated. tts and ebook2audiobook hold seats but sit at `replicas=0`, so
+  they reserve nothing today. Chatterbox's 5200 does not fit against that 1400,
+  which is deliberate and recorded next to the seat: its scheduling has been off
+  since 2026-08-16, and turning it back on means re-budgeting the card first.
 - **New RBAC:** the reconcile SA patches `nodes/status`; the watchdog SA lists pods
   cluster-wide and deletes pods in GPU tenant namespaces. Far less privileged than
   existing cluster-admin tooling (woodpecker-agent).

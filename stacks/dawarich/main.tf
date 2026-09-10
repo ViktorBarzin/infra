@@ -34,7 +34,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "dawarich"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -101,10 +101,6 @@ resource "kubernetes_deployment" "dawarich" {
             name           = "http"
             container_port = 3000
           }
-          port {
-            name           = "prometheus"
-            container_port = 9394
-          }
           command = ["web-entrypoint.sh"]
           args    = ["bin/rails", "server", "-p", "3000", "-b", "::"]
           env {
@@ -152,21 +148,72 @@ resource "kubernetes_deployment" "dawarich" {
             name  = "APPLICATION_HOSTS"
             value = "dawarich.viktorbarzin.me"
           }
-          # env {
-          #   name  = "PROMETHEUS_EXPORTER_ENABLED"
-          #   value = "true"
-          # }
-          # env {
-          #   name  = "PROMETHEUS_EXPORTER_PORT"
-          #   value = "9394"
-          # }
-          # env {
-          #   name  = "PROMETHEUS_EXPORTER_HOST"
-          #   value = "0.0.0.0"
-          # }
+          # Metrics, re-enabled 2026-09-04. 1.7.11 dropped the prometheus_exporter
+          # gem for yabeda, so there is no client/server split and no sidecar to
+          # run: the Sidekiq container starts its own in-process WEBrick exporter
+          # on 9394 (see that container below), and this container mounts
+          # /metrics on the Rails router (port 3000). That route serves its own
+          # rails_/puma_/activerecord_ series merged with whatever it fetches
+          # from SIDEKIQ_METRICS_URL, so ONE scrape of :3000/metrics covers both
+          # processes. The flag gates both halves — config/routes.rb only mounts
+          # the route when it is "true", and config/initializers/sidekiq.rb only
+          # starts the exporter thread then. PROMETHEUS_EXPORTER_HOST is dead in
+          # this version (grepped the image, nothing reads it); the exporter
+          # always binds 0.0.0.0.
+          env {
+            name  = "PROMETHEUS_EXPORTER_ENABLED"
+            value = "true"
+          }
+          # Upstream's default is http://dawarich_sidekiq:9394/metrics, a
+          # docker-compose hostname that does not resolve here. Both containers
+          # share this pod's network namespace, so loopback is the address.
+          env {
+            name  = "SIDEKIQ_METRICS_URL"
+            value = "http://127.0.0.1:9394/metrics"
+          }
+          # Both /metrics endpoints sit behind Dawarich::MetricsBasicAuth, which
+          # secure_compares the request credentials against these two vars AFTER
+          # .to_s. Leaving them unset is therefore not "auth off", it is "the
+          # empty username and empty password are valid" — any client on the pod
+          # network could read the endpoint. Vault secret/dawarich, synced by the
+          # dawarich-secrets ExternalSecret above. The web container needs them
+          # twice over: to guard its own route, and to authenticate its fetch of
+          # the Sidekiq exporter.
+          env {
+            name = "METRICS_USERNAME"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-secrets"
+                key  = "metrics_username"
+              }
+            }
+          }
+          env {
+            name = "METRICS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-secrets"
+                key  = "metrics_password"
+              }
+            }
+          }
           env {
             name  = "RAILS_ENV"
             value = "production"
+          }
+          # Same glibc arena behaviour already diagnosed and fixed on
+          # dawarich-sidekiq (2026-08-29, see its resources block below): one
+          # malloc arena per thread, up to 8x ncores, and Ruby never returns the
+          # freed-but-fragmented pages. Measured on the WEB container
+          # 2026-08-31 — two Puma cluster workers at 557900 KB and 275480 KB
+          # plus a 208504 KB master against a 896Mi ceiling, 439 cgroup reclaim
+          # events since its last restart, and four OOMKills that day. Capping
+          # arenas trades a little allocator contention for a far flatter
+          # profile; it is the same trade sidekiq took, and its restarts went to
+          # zero the next day.
+          env {
+            name  = "MALLOC_ARENA_MAX"
+            value = "2"
           }
           env {
             name = "SECRET_KEY_BASE"
@@ -201,7 +248,14 @@ resource "kubernetes_deployment" "dawarich" {
               memory = "896Mi"
             }
             limits = {
-              memory = "896Mi"
+              # Limit decoupled from request 2026-08-31 (896Mi -> 2Gi). Puma
+              # runs two cluster workers plus a master; with MALLOC_ARENA_MAX=2
+              # the plateau should fall well under this, and the headroom means
+              # a transient spike no longer costs a restart. Request stays at
+              # 896Mi deliberately so the scheduler reservation on k8s-node5 is
+              # unchanged (see ClusterCannotTolerateNonGpuNodeLoss); only the
+              # ceiling moves. Re-measure the plateau before trimming it back.
+              memory = "2Gi"
             }
           }
         }
@@ -210,6 +264,14 @@ resource "kubernetes_deployment" "dawarich" {
           name    = "dawarich-sidekiq"
           command = ["sidekiq-entrypoint.sh"]
           args    = ["bundle exec sidekiq"]
+          # Moved here from the web container 2026-09-04. The listener is in
+          # this process, not that one. Informational either way, since a
+          # containerPort declaration does not open anything, but the manifest
+          # should say where the socket is.
+          port {
+            name           = "prometheus"
+            container_port = 9394
+          }
           env {
             name  = "REDIS_URL"
             value = "redis://${var.redis_host}:6379"
@@ -259,14 +321,40 @@ resource "kubernetes_deployment" "dawarich" {
             name  = "APPLICATION_HOSTS"
             value = "dawarich.viktorbarzin.me"
           }
-          # Prometheus exporter disabled until a standalone `prometheus_exporter`
-          # server sidecar is added — see follow-up bead. The client middleware
-          # pushes over TCP to PROMETHEUS_EXPORTER_HOST:PORT, it does not start
-          # a listener itself. Keeping ENABLED=false silences the reconnect
-          # log spam (~2/sec) from PrometheusExporter::Client.
+          # On :startup the Sidekiq server thread starts a WEBrick exporter on
+          # PROMETHEUS_EXPORTER_PORT bound 0.0.0.0, serving the yabeda-sidekiq
+          # series (queue latency, waiting/dead/retry counts, job outcomes). The
+          # 1.6.1 behaviour this replaces was the opposite shape — a push client
+          # with no listener, which is why the flag was false and why the old
+          # plan called for a sidecar. Nothing pushes any more, so there is no
+          # log spam and nothing to add.
           env {
             name  = "PROMETHEUS_EXPORTER_ENABLED"
-            value = "false"
+            value = "true"
+          }
+          env {
+            name  = "PROMETHEUS_EXPORTER_PORT"
+            value = "9394"
+          }
+          # Guards the 9394 endpoint. Same empty-string hazard as the web
+          # container: unset means empty credentials authenticate.
+          env {
+            name = "METRICS_USERNAME"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-secrets"
+                key  = "metrics_username"
+              }
+            }
+          }
+          env {
+            name = "METRICS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "dawarich-secrets"
+                key  = "metrics_password"
+              }
+            }
           }
           env {
             name  = "RAILS_ENV"
@@ -308,9 +396,17 @@ resource "kubernetes_deployment" "dawarich" {
             value = "2"
           }
           # The hourly `bulk_stats_calculating_job` (schedule.yml, "0 */1 * * *")
-          # spikes on top of that plateau and blew through the old 1Gi limit
-          # every hour — ~5 KernelOOMKiller CRITICAL pages a day. Request stays
-          # at 768Mi so this does not add scheduling pressure (see
+          # enqueues Stats::CalculatingJob(user, year, month), which holds the
+          # CURRENT month's points in memory. Its peak therefore scales with
+          # points-in-that-month (~5-6 KiB/point above a ~250 MiB baseline), so
+          # this ceiling is a moving target rather than a fixed requirement:
+          #   2026-08-08  ~125k points/month -> 978 MiB peak; limit 1Gi -> 2Gi
+          #   2026-08-29   340,903 points/month -> 2Gi outgrown in ~3 weeks,
+          #                one OOM kill per hour, August stats frozen at Aug 27
+          # 4Gi covers August's ~2.4 GiB projection plus a heavier September.
+          # Expect the pattern to go quiet on the 1st of a month and return
+          # mid-month; re-measure rather than assume when it does. Request
+          # stays at 768Mi so this does not add scheduling pressure (see
           # ClusterCannotTolerateNonGpuNodeLoss); only the ceiling moves.
           resources {
             requests = {
@@ -318,7 +414,7 @@ resource "kubernetes_deployment" "dawarich" {
               memory = "768Mi"
             }
             limits = {
-              memory = "2Gi"
+              memory = "4Gi"
             }
           }
           liveness_probe {

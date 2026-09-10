@@ -74,7 +74,10 @@ module "tls_secret" {
 #### MYSQL — Standalone (migration target)
 #
 # Standalone MySQL without Group Replication. Eliminates ~95 GB/day of GR
-# write overhead (binlog, relay log, XCom cache) for databases totaling ~35 MB.
+# write overhead (binlog, relay log, XCom cache). The 20 tenant databases held
+# ~35 MB when this was written; they hold 7,830 MB across 692 tables as of
+# 2026-09-04, which is worth knowing before quoting any dump-and-restore
+# window from the old number.
 # Binary logging disabled entirely (skip-log-bin) since no replication needed.
 # Uses official mysql:8.4 image (Bitnami images deprecated by Broadcom Aug 2025).
 
@@ -92,8 +95,24 @@ resource "kubernetes_config_map" "mysql_standalone_cnf" {
       max_connections=80
       innodb_log_buffer_size=16777216
       innodb_flush_log_at_trx_commit=2
-      innodb_io_capacity=100
-      innodb_io_capacity_max=200
+      # 2000/4000 (was 100/200) — code-963q 2026-09-04. The 8.4.9 DD-upgrade
+      # stall of 2026-05-18 was diagnosed as flush starvation, and the wipe +
+      # reinit plan was built to route around it rather than test it. These
+      # are the pre-flight values that plan names, and they are the right
+      # steady-state values regardless of whether the upgrade ever happens:
+      # 100 is half MySQL's own default of 200 and roughly 20x too low for
+      # storage that answers a write in 0.50 ms.
+      # Measured before the change, 26.6 days of uptime:
+      #   Innodb_buffer_pool_wait_free = 46,458 (1,746/day) — every one of
+      #   those is a query thread stalled waiting for the page cleaner to
+      #   produce a free page. On a cleaner that keeps up this counter is 0.
+      #   Steady-state flush rate 30.6 pages/s, but dirty-page bursts of
+      #   23,461 pages drained in under 20 s, i.e. ~1,173 pages/s — the server
+      #   already blows through io_capacity=100 whenever a checkpoint gets
+      #   urgent. The low ceiling does not reduce the work, it just defers it
+      #   into emergency flushing.
+      innodb_io_capacity=2000
+      innodb_io_capacity_max=4000
       innodb_redo_log_capacity=1073741824
       innodb_buffer_pool_size=2147483648
       # DETECT_ONLY: stop writing full page content to the doublewrite buffer
@@ -101,9 +120,37 @@ resource "kubernetes_config_map" "mysql_standalone_cnf" {
       # DETECTION; recovery is restore-from-backup. OK with BBU+UPS+daily
       # mysqldump. Dynamic (no restart). code-oflt 2026-06-30.
       innodb_doublewrite=DETECT_ONLY
-      innodb_flush_neighbors=1
+      # 0, not 1 (2026-08-16). Neighbour flushing drags every contiguous dirty
+      # page in the extent along with the one being flushed, betting that the
+      # resulting sequential write is cheaper than the extra pages. That bet
+      # does not pay here: writes to sdc land in the PERC H730's write-back
+      # cache (measured 0.50 ms/write, faster than a 7200 rpm spindle can
+      # physically do), which already coalesces and reorders, and sdc sits
+      # under an LVM thin pool, so "contiguous" at the filesystem layer is not
+      # contiguous on the platter anyway. Measured before the change: 3.88M
+      # page writes/day against only ~880k row writes — 4.4x amplification —
+      # for 64.9 GB/day, of which 62 GB was page flushing (Innodb_data_written
+      # over Uptime). Dynamic, no restart. Also note MySQL's own default is 0;
+      # the 1 here was a deliberate HDD-era choice, not an inherited default.
+      innodb_flush_neighbors=0
       innodb_lru_scan_depth=256
-      innodb_page_cleaners=1
+      # 4 (was 1) — code-963q 2026-09-04, same change as innodb_io_capacity
+      # above. One cleaner thread serialises every LRU and flush-list pass for
+      # the whole 2 GiB pool. NOT dynamic: this one needs a pod restart, which
+      # is why the two knobs landed together.
+      #
+      # THE SERVER RUNS 2, NOT 4, AND SAYS NOTHING ABOUT IT. MySQL clamps
+      # innodb_page_cleaners to innodb_buffer_pool_instances, which is 2 here
+      # because the pool is 2 GiB and instances are auto-sized at 1 GiB each.
+      # Verified on the live server after the 2026-09-04 restart:
+      #   @@innodb_page_cleaners = 2, @@innodb_buffer_pool_instances = 2
+      # and no warning in the error log. The 4 is left in place deliberately:
+      # it is the value we want, and it takes effect on its own if the pool
+      # ever grows. Getting 4 cleaners today would mean setting
+      # innodb_buffer_pool_instances=4 as well, which costs another restart of
+      # every MySQL tenant, so it waits for the next restart rather than
+      # earning one of its own.
+      innodb_page_cleaners=4
       innodb_adaptive_flushing_lwm=10
       innodb_max_dirty_pages_pct=90
       innodb_max_dirty_pages_pct_lwm=10
@@ -119,14 +166,24 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
       "app.kubernetes.io/name"      = "mysql"
       "app.kubernetes.io/instance"  = "mysql-standalone"
       "app.kubernetes.io/component" = "primary"
-      # 2026-05-26: defense-in-depth on top of the annotation below. The
-      # Kyverno `inject-keel-annotations` ClusterPolicy reads this LABEL
-      # via its `exclude.any[].resources.selector.matchLabels` rule, so
-      # even if the dbaas namespace exclude were lost the label still
-      # bypasses the mutation. Without the label, a Kyverno reconcile
-      # had silently overwritten our annotation=never → patch this turn
-      # and Keel patch-bumped mysql:8.4.8 → 8.4.9, stalling the DD upgrade.
-      "keel.sh/policy" = "never"
+      # There was a `keel.sh/policy = "never"` LABEL here from 2026-05-26 to
+      # 2026-08-17, as defense-in-depth on top of the annotation below: the
+      # Kyverno `inject-keel-annotations` exclude used to select on that label
+      # (`exclude.any[].resources.selector.matchLabels`), so it bypassed the
+      # mutation even if the dbaas namespace exclude were lost. It earned its
+      # place — without it a Kyverno reconcile had overwritten annotation=never
+      # → patch and Keel patch-bumped mysql:8.4.8 → 8.4.9, stalling the DD
+      # upgrade.
+      #
+      # Removed because that exclude now selects on the ANNOTATION, and because
+      # Kyverno stamping a keel.sh/* label is drift against every stack that
+      # declares a `labels` map (see stacks/kyverno/.../keel-annotations.tf).
+      # What protects this StatefulSet now: the `+(keel.sh/policy)` preserve
+      # anchor in that policy never overwrites an existing annotation value —
+      # the 2026-05-26 overwrite came from an earlier version that did — plus
+      # the dbaas namespace exclude, plus the annotation-based exclude. Lifting
+      # the opt-out still MUST go through the upgrade plan referenced below.
+      #
       # Declared because the sync-tier-label-from-namespace Kyverno policy
       # stamps it live; without it every apply strips the label and the
       # policy re-adds it (perma-drift that fed provider identity bugs).
@@ -316,6 +373,17 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Kyverno stamps these two onto every workload in a keel-enrolled
+      # namespace. They are NOT declared here, so without the ignore every
+      # apply plans to strip them and Kyverno immediately re-adds them —
+      # dbaas showed this same two-line diff on every nightly drift run.
+      # `keel.sh/policy` is deliberately absent from this list: it IS declared
+      # in TF as "never", which is what keeps mysql pinned at 8.4.8 after the
+      # 2026-05-18 Keel bump to 8.4.9 forced a PVC wipe + dump-restore. Leaving
+      # policy TF-owned means a future change to it still shows up as drift,
+      # which is what we want for this one.
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       # StatefulSet volumeClaimTemplates are immutable post-creation, and the
       # pvc-autoresizer rewrites their annotations on the live object
       # (storage_limit/threshold), so TF's desired VCT can never apply and a
@@ -882,8 +950,9 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   auth            = "required"
   extra_annotations = {
-    "gethomepage.dev/icon" = "phpmyadmin.png"
-    "gethomepage.dev/name" = "phpMyAdmin"
+    "gethomepage.dev/description" = "MySQL admin UI (phpMyAdmin)"
+    "gethomepage.dev/icon"        = "phpmyadmin.png"
+    "gethomepage.dev/name"        = "phpMyAdmin"
   }
 }
 
@@ -1154,9 +1223,9 @@ resource "null_resource" "pg_cluster" {
     image          = var.pg_cluster_image
     storage_size   = "20Gi"
     storage_class  = "proxmox-lvm-encrypted"
-    memory_limit   = "3Gi"
-    memory_request = "2560Mi" # req < limit (Burstable); bumping this trigger forces the null_resource re-apply, 2026-07-26
-    pg_params      = "v5-shared1024-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500"
+    memory_limit   = "4Gi"
+    memory_request = "2816Mi" # req < limit (Burstable); bumping this trigger forces the null_resource re-apply, 2026-07-26
+    pg_params      = "v7-shared2048-walcompZSTD-workmem16-max200-ckpt15m-wal4g-minwal1g-archoff-cdelay2500-prewarm"
     affinity       = "required-hostname-v1"
   }
 
@@ -1187,8 +1256,37 @@ resource "null_resource" "pg_cluster" {
           topologyKey: kubernetes.io/hostname
         imageName: ${var.pg_cluster_image}
         postgresql:
+          # pg_prewarm's autoprewarm worker dumps the shared_buffers page list
+          # every autoprewarm_interval seconds and reloads it at startup, so a
+          # hot index stays hot across a restart instead of being re-read from
+          # the HDD one novel query at a time.
+          #
+          # Added for claude-memory (infra#86): recall embeds each query, and a
+          # NOVEL query walks HNSW index pages nothing had cached yet. Measured
+          # 2026-09-02 — only 339 of idx_memories_embedding_hnsw's 4,456 pages
+          # were resident, and a novel query read 199-491 blocks off sdc at
+          # ~8.9 ms each (1.25-2.48 s). After pg_prewarm loaded all 4,456 pages
+          # (35 MB, plus 18 MB of table, into a 1 GB shared_buffers) the same
+          # queries read 0 blocks and returned in 0.27-0.49 s.
+          #
+          # Idle time is NOT the variable — a repeated query read 0 blocks at
+          # 0 s, 30 s, 60 s and 120 s idle. Nothing evicts these pages once
+          # loaded; only a restart loses them, which is exactly what
+          # autoprewarm covers. Same pattern immich's own Postgres has run
+          # since its clip_index work (stacks/immich/main.tf).
+          #
+          # shared_preload_libraries is postmaster-level, so this triggers ONE
+          # rolling restart (unsupervised/restart, replicas first). Removing an
+          # entry later needs a full restart of every instance.
+          shared_preload_libraries:
+            - pg_prewarm
           parameters:
             search_path: '"$user", public'
+            # Both default to these values once the library is loaded; set
+            # explicitly so a future default change cannot silently drop the
+            # behaviour we depend on.
+            pg_prewarm.autoprewarm: "on"
+            pg_prewarm.autoprewarm_interval: "300"
             # Cluster grew past the 100-conn default ceiling (~90/100 idle
             # steady-state in May 2026; authentik+matrix alone hold ~55).
             # Bumped to 200 with shared_buffers/effective_cache_size/memory
@@ -1196,8 +1294,25 @@ resource "null_resource" "pg_cluster" {
             # sort/hash op, not per connection, so 16MB * 200 isn't the
             # worst case.
             max_connections: "200"
-            shared_buffers: "1024MB"
-            effective_cache_size: "2560MB"
+            # 1024MB -> 2048MB, 2026-09-02 (infra#86). The pool was fully
+            # subscribed and one tenant owned nearly all of it: dawarich held
+            # 127,029 of 131,072 buffers (992 MB) with ZERO free, against
+            # claude_memory's 2,290. dawarich's `points` table is 3.5 GB with
+            # 4.7 billion buffer hits at a 96.6% hit rate, so that is a real
+            # working set, not a runaway query.
+            #
+            # The effect on a smaller tenant is total: prewarming
+            # claude-memory's 4,456-page HNSW index left only 1,095 pages (24%)
+            # resident by the time pg_prewarm returned, and 0 within 60 s.
+            # Every novel query then re-read its graph path off sdc.
+            #
+            # NOTE this raises the odds rather than guaranteeing anything —
+            # dawarich's working set exceeds 2 GB too, so it can take the extra
+            # gigabyte as well. Re-measure residency before assuming it helped.
+            shared_buffers: "2048MB"
+            # Planner hint for shared_buffers + OS page cache, sized to the new
+            # 4Gi container limit.
+            effective_cache_size: "3072MB"
             work_mem: "16MB"
             wal_compression: "zstd"
             random_page_cost: "4"
@@ -1239,11 +1354,19 @@ resource "null_resource" "pg_cluster" {
           requests:
             cpu: "50m"
             # Request lowered 3Gi->2560Mi 2026-07-26 (Burstable) to free N-1 scheduler
-            # headroom on node4 (ClusterCannotTolerateNonGpuNodeLoss). 2560Mi stays above
-            # every member's 14d peak (~2.4Gi); limit unchanged at 3Gi (node-OOM safe).
-            memory: "2560Mi"
+            # headroom on node4 (ClusterCannotTolerateNonGpuNodeLoss). 2560Mi stayed above
+            # every member's 14d peak (~2.4Gi).
+            #
+            # 2026-09-02: shared_buffers went 1->2 GB, which is shared memory and
+            # therefore resident, moving expected steady state to ~2.6 GB. The request
+            # rises only to 2816Mi rather than back to 3Gi+ — enough to cover the new
+            # floor while keeping most of the headroom that 2026-07-26 bought, because
+            # node2/node3 sit at 2.2-2.7 GiB of free REQUESTS while their actual usage
+            # is ~40%. Limit 3Gi->4Gi leaves room above shared_buffers for backends,
+            # sorts and autovacuum.
+            memory: "2816Mi"
           limits:
-            memory: "3Gi"
+            memory: "4Gi"
       EOF
     EOT
   }
@@ -1349,6 +1472,35 @@ resource "null_resource" "pg_payslip_ingest_db" {
   }
 }
 
+# Create paperless_ngx database. Paperless moved off the shared MySQL on
+# 2026-09-08: 3.x annotates every documents-list row with an effective_content
+# correlated subquery, which costs 6.2s on MySQL against 1.9ms here, because
+# Postgres TOASTs the 319MB content column out of line. Underscores, not the
+# hyphenated MySQL name, to match every other role on this cluster.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-paperless-ngx`, 7d rotation).
+resource "null_resource" "pg_paperless_ngx_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "paperless_ngx"
+    username = "paperless_ngx"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'paperless_ngx'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE paperless_ngx WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'paperless_ngx'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE paperless_ngx OWNER paperless_ngx"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE paperless_ngx TO paperless_ngx"
+        '
+    EOT
+  }
+}
+
 # Create job_hunter database for the job-hunter scraper service.
 # Role password is managed by Vault Database Secrets Engine (static role `pg-job-hunter`, 7d rotation).
 resource "null_resource" "pg_job_hunter_db" {
@@ -1369,6 +1521,33 @@ resource "null_resource" "pg_job_hunter_db" {
           psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'job_hunter'"'"'" | grep -q 1 || \
             psql -U postgres -c "CREATE DATABASE job_hunter OWNER job_hunter"
           psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE job_hunter TO job_hunter"
+        '
+    EOT
+  }
+}
+
+# Create goodreads_sync database for the Goodreads -> Calibre pipeline.
+# Holds one row per shelf item (outcome, reason, md5, calibre id) so each book is
+# attempted once and a miss can be explained later.
+# Role password is managed by Vault Database Secrets Engine (static role `pg-goodreads-sync`, 7d rotation).
+resource "null_resource" "pg_goodreads_sync_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "goodreads_sync"
+    username = "goodreads_sync"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'goodreads_sync'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE goodreads_sync WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'goodreads_sync'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE goodreads_sync OWNER goodreads_sync"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE goodreads_sync TO goodreads_sync"
         '
     EOT
   }
@@ -1454,35 +1633,6 @@ resource "null_resource" "pg_nextcloud_todos_db" {
           psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE nextcloud_todos TO nextcloud_todos"
           psql -U postgres -c "ALTER ROLE nextcloud_todos SET search_path TO nextcloud_todos"
           psql -U postgres -d nextcloud_todos -c "CREATE SCHEMA IF NOT EXISTS nextcloud_todos AUTHORIZATION nextcloud_todos"
-        '
-    EOT
-  }
-}
-
-# Postiz: 3 databases (postiz, temporal, temporal_visibility) all owned by the
-# `postiz` role. Bundled bitnami PostgreSQL was retired 2026-05-09 in favour of
-# this CNPG cluster — covered by postgresql-backup-per-db automatically.
-# Role password placeholder; Vault static role `pg-postiz` rotates 7d.
-resource "null_resource" "pg_postiz_dbs" {
-  depends_on = [null_resource.pg_cluster]
-
-  triggers = {
-    role = "postiz"
-    dbs  = "postiz,temporal,temporal_visibility"
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
-      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
-        bash -c '
-          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'postiz'"'"'" | grep -q 1 || \
-            psql -U postgres -c "CREATE ROLE postiz WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
-          for db in postiz temporal temporal_visibility; do
-            psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'$db'"'"'" | grep -q 1 || \
-              psql -U postgres -c "CREATE DATABASE $db OWNER postiz"
-            psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE $db TO postiz"
-          done
         '
     EOT
   }
@@ -1767,6 +1917,9 @@ module "ingress-pgadmin" {
   name            = "pgadmin"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  extra_annotations = {
+    "gethomepage.dev/description" = "PostgreSQL admin UI"
+  }
 }
 
 

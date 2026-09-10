@@ -176,6 +176,12 @@ resource "kubernetes_deployment" "dashboard_injector" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales replicas (ADR-0022)
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }

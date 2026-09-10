@@ -52,17 +52,27 @@ def client(cfg, monkeypatch):
         }
         return f"{abs_target}/2026-07-27-foo.html"
 
-    def fake_commit_and_push(_cfg, subdir, slug, user, status, **_kw):
+    def fake_sync_to_master(_cfg):
+        calls["sync"] = {}
+
+    def fake_stage_and_commit(_cfg, subdir, slug, user, status):
         calls["commit"] = {
             "subdir": subdir,
             "slug": slug,
             "user": user,
             "status": status,
         }
+        return True
+
+    def fake_push_to_master(_cfg, user):
+        calls["push"] = {"user": user}
+        return True, ""
 
     monkeypatch.setattr(publisher, "ensure_repo", fake_ensure_repo)
+    monkeypatch.setattr(publisher, "sync_to_master", fake_sync_to_master)
     monkeypatch.setattr(publisher, "render_page", fake_render_page)
-    monkeypatch.setattr(publisher, "commit_and_push", fake_commit_and_push)
+    monkeypatch.setattr(publisher, "stage_and_commit", fake_stage_and_commit)
+    monkeypatch.setattr(publisher, "push_to_master", fake_push_to_master)
 
     test_client = TestClient(main.create_app(cfg))
     test_client.calls = calls

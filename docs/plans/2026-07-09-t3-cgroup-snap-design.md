@@ -90,3 +90,25 @@ Same-commit docs (light — this is a diagnostic):
 - **bpftrace probe on `sched_process_exec` + RSS threshold**: cleanest identification, but `bpftrace` isn't installed on the devvm and requires a kernel with BTF the current 6.8.0-124-generic has, plus root — worth it only if the bash sampler proves insufficient.
 - **Correlate against `~/.claude/**/*.jsonl` transcripts alone**: I tried this already; it names the agent's Bash command (e.g. `poetry run pytest -q`) but not the specific ballooning subprocess (Poetry / pytest / mypy / …) — needed the process view too.
 - **Just raise the cap**: not a diagnostic; would silence the signal we're trying to read. Also unsafe: 3 users × new cap > devvm 23.5 GiB physical.
+
+## Outcome (2026-08-16): question answered
+
+The sampler did the job it was deployed for. The unattributed `Comm='2.1.20x'`
+balloon is a **claude-spawned search tool**: those processes carry
+`exe=/home/<user>/.local/share/claude/versions/<ver>` with an argv of `ugrep`,
+`bfs` or `rg`. Claude Code spawns its search tools through its own binary, so
+the child keeps claude's `exe` and the kernel records `comm` as the version
+string — which is why nothing on the box "reports version 2.1.205". Across all
+rotations: 114x ugrep, 25x bfs, 3x rg, and no sessions; one grew 10.1 -> 11.5 GiB
+in 33 s on 2026-08-14.
+
+Consequence: `ugrep` had been in earlyoom's `--prefer` since 2026-06-22 and had
+never matched. Mitigation landed the same day — per-pane `MemoryMax` plus a
+corrected earlyoom victim ranking, `../plans/2026-08-16-devvm-pane-memory-cap.md`
+and addendum 4 of `../post-mortems/2026-06-22-devvm-mem-io-overload-containment.md`.
+
+The sampler is **kept running for now** rather than retired with the mitigation
+as originally planned: it is the only view that resolves a version-comm process
+to its real argv, which is exactly what will be needed to confirm the new
+ranking is picking correctly. Retire checklist unchanged in
+`../runbooks/t3-cgroup-snap.md`.

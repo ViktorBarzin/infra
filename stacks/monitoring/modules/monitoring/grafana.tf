@@ -24,35 +24,16 @@
 #   }
 # }
 
-resource "kubernetes_persistent_volume" "alertmanager_pv" {
-  metadata {
-    name = "alertmanager-pv"
-  }
-  spec {
-    capacity = {
-      "storage" = "2Gi"
-    }
-    access_modes = ["ReadWriteOnce"]
-    persistent_volume_source {
-      csi {
-        driver        = "nfs.csi.k8s.io"
-        volume_handle = "alertmanager-pv"
-        volume_attributes = {
-          server = "192.168.1.127"
-          share  = "/srv/nfs/alertmanager"
-        }
-      }
-    }
-    mount_options = [
-      "soft",
-      "timeo=30",
-      "retrans=3",
-      "actimeo=5",
-    ]
-    storage_class_name               = "nfs-truenas"
-    persistent_volume_reclaim_policy = "Retain"
-  }
-}
+# alertmanager-pv (2Gi, nfs-truenas, 192.168.1.127:/srv/nfs/alertmanager) removed
+# 2026-09-04. Alertmanager moved to proxmox-lvm-encrypted on 2026-04-14
+# [PM-2026-04-14], but this declaration stayed behind, so Terraform recreated the PV
+# object on 2026-04-15 and it sat Available with no claimRef for 141 days.
+# The backing directory is left on the NFS server, which is what reclaimPolicy Retain
+# means here: 12K of pre-migration runtime state, last written 2026-04-14 05:30. It
+# holds an nflog notification-dedup record and one silence for QBittorrentMAMRatioLow,
+# an alert rule that no longer exists. Nothing reads it. It can go whenever
+# /srv/nfs is cleaned up.
+
 # resource "kubernetes_persistent_volume_claim" "grafana_pvc" {
 #   metadata {
 #     name      = "grafana-pvc"
@@ -126,6 +107,9 @@ locals {
     "technitium-dns.json"  = "Networking"
     "nginx_ingress.json"   = "Networking"
     "network_traffic.json" = "Networking"
+    # Goldmane east-west edge trail (ADR-0014). MUST be listed: the fallback
+    # folder is "General", which aborts the whole provisioning walk.
+    "east-west-traffic.json" = "Networking"
 
     # Hardware & Host
     "node_exporter_full.json"    = "Hardware"
@@ -148,6 +132,14 @@ locals {
     "qbittorrent.json"        = "Applications"
     "realestate-crawler.json" = "Applications"
     "openclaw.json"           = "Applications"
+    # Developer tooling. These MUST be listed: the fallback below is "General",
+    # which is Grafana's reserved built-in folder — the sidecar cannot create
+    # it, so provisioning fails with "A folder with that name already exists"
+    # and ABORTS THE WHOLE WALK. A dashboard left on the fallback is therefore
+    # not merely misfiled, it is never imported at all. terminal-lobby-usage
+    # sat there unseen from 2026-08-03 until 2026-08-15.
+    "terminal-lobby-usage.json" = "Applications"
+    "claude-usage.json"         = "Applications"
     "uk-payslip.json"         = "Finance (Personal)"
     "wealth.json"             = "Finance (Personal)"
     "job-hunter.json"         = "Finance"

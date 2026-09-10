@@ -1,0 +1,7 @@
+[Unit]
+Description=networkd DHCP state-machine watchdog (kicks stuck interfaces)
+After=systemd-networkd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/networkd-dhcp-watchdog.sh ens18

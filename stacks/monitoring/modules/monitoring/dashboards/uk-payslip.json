@@ -1086,7 +1086,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 62
+        "y": 71
       },
       "fieldConfig": {
         "defaults": {
@@ -1260,7 +1260,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 68
+        "y": 77
       },
       "fieldConfig": {
         "defaults": {
@@ -1436,7 +1436,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 82
+        "y": 91
       },
       "fieldConfig": {
         "defaults": {
@@ -1734,6 +1734,131 @@
       ]
     },
     {
+      "id": 14,
+      "title": "Meta payroll: bank deposit vs payslip net pay",
+      "description": "Bank deposits from Meta versus net pay on the payslip, by month. Sourced from payslip_ingest.external_meta_deposits (populated by the actualbudget-payroll-sync CronJob) joined against payslip_ingest.payslip. Removed 2026-04-25 in 53f555dc because migration 0007 had not been deployed and the table did not exist; restored 2026-09-03 (code-lxhf) now that the schema is at 0008 and the table holds rows. A non-zero delta on a vest month is expected: the deposit includes the RSU proceeds and the payslip net pay does not.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "payslips-pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "currencyGBP",
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deposit_sum"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Bank deposit (ActualBudget)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "payslip_net_pay"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Payslip net pay"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "delta"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Delta (deposit \u2212 payslip)"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawSql": "WITH deposits AS (SELECT DATE_TRUNC('month', deposit_date)::date AS month_start, SUM(amount) AS deposit_sum FROM payslip_ingest.external_meta_deposits GROUP BY 1), payslip_net AS (SELECT DATE_TRUNC('month', pay_date)::date AS month_start, SUM(net_pay) AS payslip_net_pay FROM payslip_ingest.payslip GROUP BY 1) SELECT COALESCE(p.month_start, d.month_start) AS \"time\", d.deposit_sum, p.payslip_net_pay, COALESCE(d.deposit_sum, 0) - COALESCE(p.payslip_net_pay, 0) AS delta FROM deposits d FULL OUTER JOIN payslip_net p ON p.month_start = d.month_start WHERE $__timeFilter(COALESCE(p.month_start, d.month_start)) ORDER BY \"time\"",
+          "format": "time_series",
+          "refId": "A",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ]
+    },
+    {
       "id": 8,
       "title": "Sankey \u2014 where the money went",
       "description": "Income sources flow into gross, then out to deductions and take-home. Aggregated over the selected time range (use the time picker to scope to a single tax year).",
@@ -1746,7 +1871,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 57
       },
       "options": {
         "monochrome": false,
@@ -1784,7 +1909,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 103
       },
       "fieldConfig": {
         "defaults": {
@@ -2146,6 +2271,347 @@
           "editorMode": "code",
           "format": "time_series",
           "rawSql": "WITH projected AS (SELECT ((CURRENT_DATE - INTERVAL '12 months')::date + (pay_date - MAKE_DATE(SUBSTRING(tax_year, 1, 4)::int, 4, 6)))::timestamp AS t, tax_year, SUM(COALESCE(taxable_pay, gross_pay) + COALESCE(pension_sacrifice, 0)) OVER (PARTITION BY tax_year ORDER BY pay_date) AS ytd FROM payslip_ingest.payslip) SELECT t AS \"time\", tax_year AS metric, ytd AS ytd_gross FROM projected ORDER BY t, tax_year"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "RSU vest reconciliation \u2014 payslip vs Schwab",
+      "description": "Per-vest-month reconciliation of the Meta RSU vest across three figures: what the broker recorded, what the payslip's rsu_vest column says, and what the payslip implies the gross vest actually was.\n\nSources. The broker side is wealthfolio_sync, not payslip_ingest.rsu_vest_events. That table is empty and has no writer, because Schwab Stock Plan Services does not email release confirmations (188 emails surveyed, broker-sync abf9fa7), so the IMAP path this panel was originally built on cannot fill it. wealthfolio_sync records each vest as a BUY on the Schwab (US workplace) account.\n\nRead shares_sold and broker_sold_gbp as the sold-to-cover half of the vest, not the whole vest. broker-sync infers the BUY from the same-day SELL at identical quantity, so the recorded share count is what was sold, not what vested. Measured across all 23 months with both sides present, broker_sold_gbp is 44.2% to 55.3% of payslip_gross_gbp, mean 50.4%, with no trend, which is what a roughly half sell-to-cover withholding looks like.\n\npayslip_gross_gbp is taxable_pay minus salary minus bonus plus pension_sacrifice, which is the gross RSU figure the payslip supports. It is shown because the rsu_vest column alone does not carry it: for 2023-05 onward rsu_vest is 47.5% to 48.6% of that derived gross.\n\nFX basis: fx_usd_gbp is wealthfolio's own daily USD to GBP rate for this account (daily_account_valuation.fx_rate_to_base), read on the vest date itself. A market spot rate, not a month average and not an HMRC published rate, so it will not reproduce whatever rate Meta payroll applied.\n\nHow to read the two ratios. broker_pct_of_gross is the stable one and sits near 50% throughout. payslip_vs_broker compares two figures that are each about half the gross, so from 2023-05 it lands near 95%; the residual few percent is the difference between two different half measures and is not yet attributed. Before 2023-05 payslip_vs_broker jumps to roughly 400%, and that break is on the payslip side, not the broker side: rsu_vest runs 167.6% to 200.9% of the derived gross in those months while broker_pct_of_gross stays near 50%. Treat the early rsu_vest values as a parser artifact rather than evidence about the broker record.",
+      "type": "table",
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 113
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "right",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "unit": "currencyGBP",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vest_month"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 95
+              },
+              {
+                "id": "custom.align",
+                "value": "left"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "vest_date"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 95
+              },
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "shares_sold"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 95
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "broker_sold_usd"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fx_usd_gbp"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 90
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 5
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "payslip_vs_broker"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 112
+              },
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "no payslip",
+                        "color": "text",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.9
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.97
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1.03
+                    },
+                    {
+                      "color": "red",
+                      "value": 1.1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "broker_pct_of_gross"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 145
+              },
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "no payslip",
+                        "color": "text",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.44
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.47
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.56
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.6
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "vest_month"
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "vest_month",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "binary",
+            "alias": "payslip_vs_broker",
+            "replaceFields": false,
+            "binary": {
+              "left": "payslip_rsu_gbp",
+              "operator": "/",
+              "right": "broker_sold_gbp"
+            }
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "binary",
+            "alias": "broker_pct_of_gross",
+            "replaceFields": false,
+            "binary": {
+              "left": "broker_sold_gbp",
+              "operator": "/",
+              "right": "payslip_gross_gbp"
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "wealth-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH schwab AS (SELECT id FROM accounts WHERE name = 'Schwab (US workplace)'), vest AS (SELECT date_trunc('month', a.activity_date)::date AS vm, MIN(a.activity_date)::date AS vest_date, SUM(a.quantity) AS shares_sold, SUM(a.quantity * a.unit_price) AS sold_usd FROM activities a WHERE a.account_id = (SELECT id FROM schwab) AND a.activity_type = 'BUY' GROUP BY 1) SELECT to_char(v.vm, 'YYYY-MM') AS vest_month, v.vest_date, v.shares_sold, round(v.sold_usd, 2) AS broker_sold_usd, round(f.fx_rate_to_base, 5) AS fx_usd_gbp, round(v.sold_usd * f.fx_rate_to_base, 2) AS broker_sold_gbp FROM vest v LEFT JOIN daily_account_valuation f ON f.account_id = (SELECT id FROM schwab) AND f.valuation_date = v.vest_date ORDER BY 1 DESC"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "payslips-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT to_char(date_trunc('month', pay_date), 'YYYY-MM') AS vest_month, SUM(rsu_vest) AS payslip_rsu_gbp, SUM(taxable_pay - salary - bonus + pension_sacrifice) AS payslip_gross_gbp FROM payslip_ingest.payslip WHERE rsu_vest > 0 GROUP BY 1 ORDER BY 1 DESC"
         }
       ]
     }

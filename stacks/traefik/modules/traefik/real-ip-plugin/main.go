@@ -82,34 +82,47 @@ func (r *RealIP) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
+	clientIP := ""
 	if trusted {
 		// Genuine in-cluster proxy (cloudflared): the real client is in the
 		// CF / XFF headers it set.
 		if cf := strings.TrimSpace(req.Header.Get("Cf-Connecting-Ip")); isPublic(cf) {
-			req.Header.Set("X-Real-Ip", cf)
-			r.next.ServeHTTP(rw, req)
-			return
-		}
-		// No usable CF header: first public X-Forwarded-For entry.
-		for _, part := range strings.Split(strings.Join(req.Header.Values("X-Forwarded-For"), ","), ",") {
-			if isPublic(part) {
-				req.Header.Set("X-Real-Ip", strings.TrimSpace(part))
-				r.next.ServeHTTP(rw, req)
-				return
+			clientIP = cf
+		} else {
+			// No usable CF header: first public X-Forwarded-For entry.
+			for _, part := range strings.Split(strings.Join(req.Header.Values("X-Forwarded-For"), ","), ",") {
+				if isPublic(part) {
+					clientIP = strings.TrimSpace(part)
+					break
+				}
 			}
 		}
-		// Trusted peer but no usable header: fall back to the peer itself.
-		if peerIP != nil {
-			req.Header.Set("X-Real-Ip", host)
-		}
-	} else {
-		// Untrusted peer = the real client itself (pfSense PROXY-protocol
-		// rewrote RemoteAddr, or direct/internal). Ignore ALL client-supplied
-		// headers to prevent spoofing.
-		if peerIP != nil {
-			req.Header.Set("X-Real-Ip", host)
-		}
-		// peerIP == nil (shouldn't happen): leave X-Real-Ip untouched.
 	}
+	// Untrusted peer = the real client itself (pfSense PROXY-protocol rewrote
+	// RemoteAddr, or direct/internal): ignore ALL client-supplied headers to
+	// prevent spoofing. Also the trusted-peer fallback when it sent no usable
+	// header.
+	if clientIP == "" && peerIP != nil {
+		clientIP = host
+	}
+
+	if clientIP == "" {
+		// Peer unparseable (shouldn't happen): leave X-Real-Ip as it was, but
+		// don't let a client-supplied Cf-Connecting-Ip stand — a backend
+		// keyed on it must never read an unverified value.
+		req.Header.Del("Cf-Connecting-Ip")
+		r.next.ServeHTTP(rw, req)
+		return
+	}
+
+	// Stamp BOTH headers. Cf-Connecting-Ip is normalised as well as X-Real-Ip
+	// because backends may key on it directly — tuwunel (matrix) runs with
+	// ip_source=cf_connecting_ip, and the origin is reachable without passing
+	// through Cloudflare (WAN :443 NATs straight to Traefik), so an untouched
+	// header let a client pick the IP the backend rate-limits and logs. Setting
+	// it also means requests that never transit Cloudflare still carry one,
+	// instead of the backend erroring on a header that isn't there.
+	req.Header.Set("X-Real-Ip", clientIP)
+	req.Header.Set("Cf-Connecting-Ip", clientIP)
 	r.next.ServeHTTP(rw, req)
 }

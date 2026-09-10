@@ -1,0 +1,14 @@
+[Unit]
+Description=Hourly drift check of the Kubernetes node configuration
+
+[Timer]
+OnCalendar=hourly
+# The run SSHes to six nodes and takes 3-4 minutes. Spread it off the top of the
+# hour, which is already busy with t3-provision-users and wizard's repo pull.
+RandomizedDelaySec=15min
+# Catch up after the box has been off, so a reboot does not silently skip the
+# window in which a kubeadm upgrade erased the tune.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

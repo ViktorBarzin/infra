@@ -37,27 +37,30 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
 }
 
 module "nfs_downloads_host" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-qbittorrent-downloads-host"
-  namespace  = "servarr"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/servarr/downloads"
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "servarr-qbittorrent-downloads-host"
+  namespace          = "servarr"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/servarr/downloads"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_audiobooks_host" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-qbittorrent-audiobooks-host"
-  namespace  = "servarr"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/audiobooks"
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "servarr-qbittorrent-audiobooks-host"
+  namespace          = "servarr"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/audiobooks"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_calibre_ingest_host" {
-  source     = "../../../modules/kubernetes/nfs_volume"
-  name       = "servarr-qbittorrent-calibre-ingest-host"
-  namespace  = "servarr"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+  source             = "../../../modules/kubernetes/nfs_volume"
+  name               = "servarr-qbittorrent-calibre-ingest-host"
+  namespace          = "servarr"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "qbittorrent" {
@@ -220,6 +223,12 @@ resource "kubernetes_service" "qbittorrent-torrenting" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type                    = "LoadBalancer"
     external_traffic_policy = "Cluster"
@@ -250,7 +259,19 @@ resource "kubernetes_cron_job_v1" "qbittorrent_ratio_monitor" {
     concurrency_policy            = "Replace"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3
-    schedule                      = "*/5 * * * *"
+    # */30 since 2026-08-16 (was */5). This is not a probe — it exports per-tracker
+    # ratio metrics, reconciles the queue preferences (incl. the load-bearing
+    # dont_count_slow_torrents) and reaps dead torrents, so it is kept. But at
+    # */5 it was 288 pod creations a day AND a `pip install requests` on every
+    # one (14 MB to the node container layer per run, ~3.9 GB/day) — the
+    # status-page-pusher anti-pattern.
+    #
+    # Nothing here needs 5-minute resolution: ratios move over hours, and the
+    # reaper only acts on torrents with zero progress, no seeders AND older than
+    # STALLED_MAX_AGE (3 days). The one real cost is that a preference changed
+    # in the qBittorrent UI now sticks for up to 30 minutes before being
+    # reverted, instead of 5.
+    schedule = "*/30 * * * *"
     job_template {
       metadata {}
       spec {
@@ -536,3 +557,163 @@ module "ingress" {
     "gethomepage.dev/widget.password" = var.homepage_credentials["qbittorrent"]["password"]
   }
 }
+
+# qBittorrent Prometheus exporter.
+#
+# Declared 2026-09-02, applied on the fourth pipeline. Landing it took that
+# many because infra CI applies only the stacks a push changed and Woodpecker
+# cancels a running pipeline when the next push lands, so #1386, #1388 and
+# #1390 were all killed by unrelated work while CI still reported green. The
+# check that matters here is whether a pipeline which DIFFED THIS STACK passed.
+#
+# #1395 then failed for a reason that had nothing to do with the exporter: this
+# stack carried f28e026b's pending nfs-truenas -> nfs-pve move, storageClassName
+# is immutable, so the plan wanted to destroy and recreate five in-use -host
+# PVCs and the pvc-protection finalizer refused. Resolved by scaling the three
+# consumers to zero, letting the PVCs clear, and re-applying.
+#
+# The re-apply (#1397) recreated the five claims but still failed: Terraform had
+# already flipped the retained PVs to nfs-pve, and a Retain PV keeps the
+# claimRef of the claim it was bound to, so each new PVC was refused with
+# "volume already bound to a different claim" against a stale UID. Reusing a
+# retained PV needs spec.claimRef cleared so it returns to Available; after
+# that the five bound in 21 seconds and the three deployments came back with
+# their data intact (/downloads 349M, /audiobooks 10G). Worth knowing before
+# the other 27 mounted nfs-truenas claims are migrated — see bead code-yizt.
+#
+# Sequencing that actually lands it, after four cancelled pipelines: scale the
+# consumers to 0 and clear every PV's claimRef BEFORE pushing. The claims then
+# bind the moment Terraform creates them instead of the apply sitting on
+# pvc-protection finalizers, which cuts the apply from minutes to about one and
+# stops it losing the race against the next unrelated push. Landing it took three pushes, which is worth recording
+# because the failure mode is invisible: infra CI applies only the stacks a
+# push changed, and Woodpecker cancels a running pipeline when the next push
+# arrives. Pipeline #1386 (the adoption) and #1388 (the first retry) were both
+# cancelled by traefik pushes, and the pipelines that did run diffed only
+# traefik, so servarr was skipped and the declaration sat in master unapplied
+# while CI looked green. Checking that a pipeline containing the commit passed
+# is not enough here; the check is whether a pipeline that DIFFED THIS STACK
+# passed.
+#
+# Adopted into Terraform on 2026-09-02. It was created by hand on 2026-03-25
+# and had been running ever since in no state file and no commit, which is what
+# StrayWorkloadDetected flagged; the stray-workload job names it as the case it
+# exists for. Nothing about the workload was wrong, it was simply never written
+# down, so this declares what is already live rather than changing it.
+#
+# The prometheus.io annotations on the Service are the one addition. Without
+# them the exporter was serving 179 metric lines that nothing collected: there
+# was no `up` series for it and no qbittorrent_* metric in Prometheus, because
+# the kubernetes-service-endpoints job selects on the SERVICE annotation and the
+# hand-made Service carried none. Adopting it as-is would have put a pod that
+# does nothing under management, so the scrape is wired up here.
+resource "kubernetes_deployment" "qbittorrent_exporter" {
+  metadata {
+    name      = "qbittorrent-exporter"
+    namespace = "servarr"
+    labels = {
+      app  = "qbittorrent-exporter"
+      tier = var.tier
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "qbittorrent-exporter"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "qbittorrent-exporter"
+        }
+      }
+      spec {
+        container {
+          image = "esanchezm/prometheus-qbittorrent-exporter:v1.7.0"
+          name  = "qbittorrent-exporter"
+
+          port {
+            container_port = 8000
+          }
+          env {
+            name  = "QBITTORRENT_HOST"
+            value = "qbittorrent.servarr.svc.cluster.local"
+          }
+          env {
+            name  = "QBITTORRENT_PORT"
+            value = "80"
+          }
+          env {
+            name  = "EXPORTER_LOG_LEVEL"
+            value = "INFO"
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "64Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # Same guard as kubernetes_deployment.qbittorrent above, and it is the
+    # reason this adoption does not start a fight. servarr carries
+    # keel.sh/enrolled=true, so Kyverno injects the keel.sh/* annotations and
+    # Keel stamps keel.sh/update-time on the pod template and bumps the image
+    # tag on its own schedule. Declaring the image in Terraform without
+    # ignoring it here would give the Keel-vs-Terraform flip-flop that churned
+    # prometheus-server: Keel bumps, the next apply reverts, repeat hourly. Keel
+    # owns the tag; the pinned value above is the adoption baseline only.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      metadata[0].annotations["kubernetes.io/change-cause"],
+      metadata[0].annotations["deployment.kubernetes.io/revision"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    ]
+  }
+}
+
+resource "kubernetes_service" "qbittorrent_exporter" {
+  metadata {
+    name      = "qbittorrent-exporter"
+    namespace = "servarr"
+    labels = {
+      app = "qbittorrent-exporter"
+    }
+    annotations = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/port"   = "8000"
+    }
+  }
+
+  spec {
+    selector = {
+      app = "qbittorrent-exporter"
+    }
+    port {
+      name        = "metrics"
+      port        = 8000
+      target_port = 8000
+    }
+  }
+}
+
+# Adopted by delete-and-recreate rather than an import block. import blocks are
+# only honoured in the ROOT module and these resources live in a child one, so
+# the pair declared here was silently ignored and apply #1400 fell through to
+# creating them: 'deployments.apps "qbittorrent-exporter" already exists'. The
+# exporter carries no volumes and nothing was scraping it, so removing the
+# hand-made objects and letting Terraform create them costs nothing and leaves
+# a cleaner result than a root-module import of a resource declared here.

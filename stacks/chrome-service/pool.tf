@@ -49,10 +49,9 @@ resource "kubernetes_deployment" "worker_warm" {
           seccomp_profile { type = "RuntimeDefault" }
         }
         container {
-          name              = "chrome"
-          image             = "ghcr.io/viktorbarzin/chrome-service-browser:latest"
-          image_pull_policy = "IfNotPresent"
-          command           = ["bash", "/scripts/worker_entrypoint.sh"]
+          name    = "chrome"
+          image   = "ghcr.io/viktorbarzin/chrome-service-browser:latest"
+          command = ["bash", "/scripts/worker_entrypoint.sh"]
           env {
             name  = "DISPLAY"
             value = ":99"
@@ -124,6 +123,10 @@ resource "kubernetes_deployment" "worker_warm" {
       # label, stamped by the separate resource-governance policy, needs the
       # ignore.
       metadata[0].labels["tier"],
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }

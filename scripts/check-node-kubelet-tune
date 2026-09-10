@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Check that each node's live kubelet config still carries the post-join tune.
+
+WHY THIS EXISTS
+---------------
+`playbooks/k8s-node-tuning.yml` declares the homelab's kubelet settings, and it
+is the only thing that does. `kubeadm upgrade node` rewrites
+`/var/lib/kubelet/config.yaml` from the cluster-wide `kube-system/kubelet-config`
+ConfigMap, which does not contain them, so an upgrade erases the tune and the
+playbook has to be re-run. Until 2026-09-02 the settings came from
+`modules/create-template-vm/k8s-node-post-join-tune.sh`, a one-shot cloud-init
+runcmd that nothing reconciled at all; the playbook supersedes it.
+
+On 2026-07-26/27 the v1.35.7 upgrade did exactly that on all five nodes and
+removed the whole tune. Nothing alerted. The first visible symptom arrived
+weeks later and looked unrelated: the proxy VPN gateway could not start,
+because `net.ipv4.ip_forward` was no longer in `allowedUnsafeSysctls`, and a
+remote browser spent four days reconnecting to a Service with no endpoints.
+
+This script turns that silent class of failure into a signal. It reads each
+node's LIVE kubelet configuration from the kubelet's own `/configz` endpoint —
+not the file on disk, so it reflects what the kubelet actually loaded.
+
+USAGE
+    scripts/check-node-kubelet-tune            # all nodes
+    scripts/check-node-kubelet-tune --json     # machine-readable
+
+Exit codes: 0 = every node fully tuned · 1 = drift found · 2 = could not check.
+
+The playbook writes the config and does NOT restart kubelet, so a node reads as
+DRIFTED here between the apply and the node's next reboot. That is expected, and
+it is exactly why this script reads `/configz` rather than the file.
+"""
+
+import json
+import subprocess
+import sys
+
+# Mirrors kubelet_declared in playbooks/k8s-node-tuning.yml. Kept as data rather
+# than inline in the lambdas so a mismatch is a one-line diff against the
+# playbook instead of a puzzle.
+SHUTDOWN_LADDER = [
+    (0, 10),
+    (200000, 10),
+    (400000, 15),
+    (600000, 15),
+    (800000, 90),
+    (1000000, 30),
+    (1200000, 15),
+    (2000000000, 15),
+    (2000001000, 15),
+]
+
+EVICTION_HARD = {
+    "memory.available": "100Mi",
+    "nodefs.available": "10%",
+    "nodefs.inodesFree": "5%",
+    "imagefs.available": "15%",
+    "imagefs.inodesFree": "5%",
+}
+
+# Each entry: key -> a predicate over the loaded KubeletConfiguration.
+# Mirrors what playbooks/k8s-node-tuning.yml declares. Keep the two in step —
+# checking for a key the playbook does not declare produces a permanent DRIFTED,
+# and dropping one it does declare hides a real regression.
+EXPECTED = {
+    "allowedUnsafeSysctls": lambda c: "net.ipv4.ip_forward" in (c.get("allowedUnsafeSysctls") or []),
+    "memorySwap": lambda c: (c.get("memorySwap") or {}).get("swapBehavior") == "LimitedSwap",
+    # true on every node today; asserted so a future change away from it is visible.
+    "serializeImagePulls": lambda c: c.get("serializeImagePulls") is True,
+    # "0s" disables age-based image collection, which is the state that let 130
+    # images / 56.8567 GiB go in one threshold-triggered pass on k8s-node1.
+    "imageMaximumGCAge": lambda c: c.get("imageMaximumGCAge") not in (None, "", "0s"),
+    # The shutdown ladder, checked rung by rung rather than for mere presence. A
+    # truthy test would pass on a one-rung ladder, and the tier ordering IS the
+    # setting: it is what gets the databases 90 seconds inside the host's 180s
+    # `down=` ceiling (bead code-xgcg).
+    "shutdownGracePeriodByPodPriority": lambda c: [
+        (r.get("priority"), r.get("shutdownGracePeriodSeconds"))
+        for r in (c.get("shutdownGracePeriodByPodPriority") or [])
+    ] == SHUTDOWN_LADDER,
+    # Declared 2026-09-05 (code-yypr) at the kubelet's own defaults, so that a
+    # change to them is a diff someone approved rather than a silent drift. These
+    # rows are exact-value, not truthy: the old evictionHard row tested only for a
+    # truthy memory.available, which the 100Mi default satisfies, so it reported
+    # PASS on all six nodes while the values it claimed to check were absent.
+    "imageGCHighThresholdPercent": lambda c: c.get("imageGCHighThresholdPercent") == 85,
+    "imageGCLowThresholdPercent": lambda c: c.get("imageGCLowThresholdPercent") == 80,
+    "evictionHard": lambda c: (c.get("evictionHard") or {}) == EVICTION_HARD,
+}
+
+
+# NOT checked, deliberately, because the playbook does not declare them:
+#   systemReserved / kubeReserved / evictionSoft  -> bead code-eu6l. Together they
+#     carve 1,024 MiB (512 + 512; a SOFT threshold costs no allocatable at all)
+#     out of every node, and that call is code-eu6l's to make. Re-add these three
+#     rows when it lands. The 1,424 MiB figure this line used to carry also
+#     counted moving evictionHard.memory.available to 500Mi, which the playbook
+#     explicitly declines to do.
+#   maxParallelImagePulls -> retired. 28-29 MB/s is an aggregate ceiling that
+#     containerd's own 5 concurrent streams already reach, so parallel pulls buy
+#     under 1.5x; the playbook pins serializeImagePulls: true instead.
+#   containerLogMaxSize / containerLogMaxFiles -> live 10Mi and 5 are the kubelet
+#     defaults; the playbook does not declare either.
+
+
+def run(args):
+    return subprocess.run(args, capture_output=True, text=True, timeout=60)
+
+
+def node_names():
+    p = run(["kubectl", "get", "nodes", "-o", "jsonpath={range .items[*]}{.metadata.name}{'\\n'}{end}"])
+    if p.returncode != 0:
+        print("cannot list nodes: %s" % p.stderr.strip(), file=sys.stderr)
+        sys.exit(2)
+    return [n for n in p.stdout.split() if n]
+
+
+def kubelet_config(node):
+    """Live config from the kubelet's /configz. Returns None if unreachable."""
+    p = run(["kubectl", "get", "--raw", "/api/v1/nodes/%s/proxy/configz" % node])
+    if p.returncode != 0 or not p.stdout.strip():
+        return None
+    try:
+        return json.loads(p.stdout)["kubeletconfig"]
+    except (ValueError, KeyError):
+        return None
+
+
+def main():
+    as_json = "--json" in sys.argv
+    report, drifted, unreachable = {}, [], []
+
+    for node in node_names():
+        cfg = kubelet_config(node)
+        if cfg is None:
+            unreachable.append(node)
+            report[node] = {"reachable": False, "missing": []}
+            continue
+        missing = sorted(k for k, ok in EXPECTED.items() if not ok(cfg))
+        report[node] = {"reachable": True, "missing": missing}
+        if missing:
+            drifted.append(node)
+
+    if as_json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for node in sorted(report):
+            r = report[node]
+            if not r["reachable"]:
+                print("%-12s UNREACHABLE (kubelet /configz did not answer)" % node)
+            elif r["missing"]:
+                print("%-12s DRIFTED  missing: %s" % (node, ", ".join(r["missing"])))
+            else:
+                print("%-12s ok" % node)
+        print()
+        if unreachable:
+            print("%d node(s) could not be checked: %s" % (len(unreachable), ", ".join(unreachable)))
+        if drifted:
+            print("%d node(s) are missing part of the declared kubelet tune." % len(drifted))
+            print("Source of truth: playbooks/k8s-node-tuning.yml")
+            print("Re-apply with:  ansible-playbook -i playbooks/inventory.ini \\")
+            print("                  playbooks/k8s-node-tuning.yml --tags kubelet --limit <node-ip>")
+            print("A node reads DRIFTED between that apply and its next reboot; the playbook")
+            print("writes the file and does not restart kubelet.")
+        elif not unreachable:
+            print("All nodes carry the full declared kubelet tune.")
+
+    if unreachable:
+        return 2
+    return 1 if drifted else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

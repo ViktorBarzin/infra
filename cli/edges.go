@@ -120,6 +120,7 @@ func buildEdgesQuery(o edgesOpts) (string, error) {
 			return "", err
 		}
 		p := sqlStr(o.peersOf)
+		// UNION already de-duplicates, so the widened rows collapse here for free.
 		return fmt.Sprintf("SELECT DISTINCT peer, action FROM ("+
 			"SELECT dst_ns AS peer, action FROM edge WHERE src_ns = %s "+
 			"UNION SELECT src_ns AS peer, action FROM edge WHERE dst_ns = %s"+
@@ -151,10 +152,22 @@ func buildEdgesQuery(o edgesOpts) (string, error) {
 		conds = append(conds, c)
 	}
 
-	q := "SELECT src_ns, dst_ns, action, flow_count, first_seen, last_seen FROM edge"
+	// The `edge` table holds one row per source workload, destination workload,
+	// destination service and port since 2026-09-01, so a plain select prints the
+	// same namespace pair many times. This CLI answers the namespace-level
+	// question, so it rolls the rows back up; per-workload and per-port detail is
+	// a direct SQL query or the Grafana dashboard.
+	//
+	// Filters stay in WHERE (per row, before grouping), which is what makes
+	// --new-since mean "a workload or port pairing first seen in the window" — a
+	// namespace pair can now surface as new because a workload of it started using
+	// a port it never used.
+	q := "SELECT src_ns, dst_ns, action, sum(flow_count) AS flow_count, " +
+		"min(first_seen) AS first_seen, max(last_seen) AS last_seen FROM edge"
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
+	q += " GROUP BY src_ns, dst_ns, action"
 	q += fmt.Sprintf(" ORDER BY first_seen DESC LIMIT %d", limit)
 
 	if o.asJSON {

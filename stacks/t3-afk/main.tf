@@ -69,7 +69,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -128,6 +128,7 @@ module "data" {
   nfs_server = "192.168.1.127"
   nfs_path   = "/srv/nfs-ssd/t3-afk-data"
   storage    = "30Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # --- Deployment ---
@@ -377,6 +378,8 @@ resource "kubernetes_deployment" "t3_afk" {
       # they don't perpetually drift the plan.
       metadata[0].annotations["keel.sh/pollSchedule"],
       metadata[0].annotations["keel.sh/trigger"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
 }
@@ -413,6 +416,7 @@ module "ingress" {
   port            = 3773
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
+    "gethomepage.dev/description" = "In-cluster T3 Code instance for the AFK pipeline"
     "gethomepage.dev/icon" = "mdi-sleep"
   }
 }

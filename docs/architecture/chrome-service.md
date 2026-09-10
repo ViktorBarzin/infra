@@ -232,12 +232,32 @@ run as uid 1000, and the PVC is owned `1000:1000`).
 python3, so `cdp_bridge.py` moved from inside the browser container to its own
 `cdp-bridge` sidecar in the same netns. Callers keep hitting `:9222` unchanged.
 
-**Media path.** WebRTC relays through coturn. A `turn-cred` initContainer mints
-an ephemeral coturn TURN-REST credential at every pod start (`files/turn_cred.py`,
+**Media path — DIRECT on a dedicated LB IP.** The UI and signaling ride the
+Traefik ingress, but WebRTC media is UDP and cannot. The `chrome-media` Service
+publishes the mux port on **10.0.20.206** (`ETP=Local`, so the viewer's real
+address survives; a dedicated IP because `ETP=Local` can't share the
+`ETP=Cluster` .200), and `NEKO_WEBRTC_NAT1TO1` advertises that address as neko's
+ICE host candidate. Anything routing `10.0.0.0/8` reaches it: the LANs, the London
+WireGuard tunnel (clients arrive as `192.168.8.x`), Headscale. The NetworkPolicy
+admits UDP/59000 from exactly those ranges.
+
+coturn remains configured as a **fallback** — a `turn-cred` initContainer mints an
+ephemeral TURN-REST credential at every pod start (`files/turn_cred.py`,
 unit-tested in `files/turn_cred_test.py`) and writes the ICE-server JSON to a
-shared `emptyDir`; the neko container exports those files before exec'ing
-supervisord, because neko reads ICE servers from env and env can't be computed at
-pod start. Nothing long-lived needs rotating by hand.
+shared `emptyDir`, which the neko container exports before exec'ing supervisord,
+because neko reads ICE servers from env and env can't be computed at pod start.
+Nothing long-lived needs rotating by hand.
+
+> [!IMPORTANT]
+> The relay cannot currently reach an **off-LAN** viewer. pfSense's WAN is the
+> private `192.168.1.2` behind an ISP router, and that router forwards UDP 3478
+> but not coturn's `49152-49252` relay range — measured 2026-08-11, pfSense's rdr
+> counter for the range does not move when an external host sends to a relayed
+> address, while the identical probe from the LAN completes the full
+> allocate/permit/data path. Adding that forward on the ISP device is what makes
+> off-LAN media work; the direct path above needs none of it. Related: coturn
+> moved to its own `10.0.20.205` with `ETP=Local` the same day, because on the
+> shared IP kube-proxy's SNAT hid every client from it.
 
 **Two gates.** Authentik forward-auth on the ingress (`Chrome Users`, ADR-0023)
 plus neko's own admin password from Vault
@@ -405,9 +425,12 @@ stdlib-Python service on the stock `playwright/python` image (broker.py +
 via ConfigMap; pip-installs playwright at startup for the seed/screenshot
 **subprocesses** — no custom image, the `gate.py` pattern). Stateless: session
 state is reconstructed from pod labels each request (no Redis). k8s via the in-pod
-SA token/CA. API: `POST /acquire` {owner,purpose} → {pod,cdpPort,session};
+SA token/CA. API: `POST /acquire` {owner,purpose} → {pod,cdpPort,podIP,session};
 `POST /release` {session}; `GET /sessions`; `GET /seed` (fresh cached
-storage_state); `GET /metrics`; `GET /healthz`. SA `chrome-broker` = pods
+storage_state); `GET /metrics`; `GET /healthz`. `podIP` is for **in-cluster**
+callers, which dial the worker's CDP directly because no Service selects
+`app=chrome-worker` (the devvm CLI keeps port-forwarding to `pod/<name>`);
+`/sessions` still redacts the IP, since FleetView is browser-facing. SA `chrome-broker` = pods
 create/delete/get/list/patch (namespace-scoped; `rbac.tf`).
 
 **Workers.** One session per pod. **Bare burst pods** (broker-created from

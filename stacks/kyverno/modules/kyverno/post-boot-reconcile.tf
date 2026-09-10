@@ -29,12 +29,20 @@
 #   5. CAP    — delete at most MAX_RESTARTS_PER_RUN per run; log + leave the rest.
 #   6. DRY_RUN — log the delete it WOULD do without deleting.
 #
-# ROLLOUT: reconcile_dry_run defaults to TRUE — the job observes and logs
-# "WOULD delete ..." without deleting. Watch a few runs + the pushed metrics,
-# then flip reconcile_dry_run=false to arm. BEFORE arming, add
-# `system:serviceaccount:kyverno:post-boot-reconcile` to the K8sMassDelete
-# exclusion regex (stacks/monitoring/.../loki.tf) — done in the same change —
-# else a >5-delete cold-boot recovery run trips that critical alert.
+# ROLLOUT: reconcile_dry_run defaulted to TRUE while the job was observed, and
+# is now FALSE — armed, 2026-09-03, bead code-avx0. Both preconditions were met
+# before arming:
+#   * `system:serviceaccount:kyverno:post-boot-reconcile` is in the K8sMassDelete
+#     exclusion regex (stacks/monitoring/modules/monitoring/loki.tf), so a
+#     >5-delete cold-boot recovery run does not trip that critical alert.
+#   * arming is a no-op in steady state. Over 30 days the pushed metrics report
+#     max(post_boot_reconcile_missed_found) = 0 and
+#     max(post_boot_reconcile_restarted) = 0, so the job has never found a
+#     candidate to delete. min(post_boot_reconcile_kyverno_ready) = 0 over the
+#     same window, meaning the readiness gate DID see Kyverno down and skipped
+#     rather than acting, and min(post_boot_reconcile_success) = 1, so every run
+#     completed. The metrics are the check to repeat here: `homelab logs query`
+#     truncates at --limit long before it covers 30 days.
 #
 # Structure mirrors stacks/nvidia/modules/nvidia/gpu_memory_budget.tf. Pure-stdlib
 # Python on stock python:3.12-alpine (no pip/apk at runtime). The in-cluster
@@ -61,8 +69,8 @@ variable "reconcile_max_restarts_per_run" {
 
 variable "reconcile_dry_run" {
   type        = bool
-  default     = true
-  description = "Default TRUE: the job logs the delete it WOULD do but does not delete. Observe a few runs, then set false to arm."
+  default     = false
+  description = "Armed 2026-09-03 (bead code-avx0): the job deletes wedged missed-injection pods so their controller recreates them with the initContainer injected. Set true to return it to observe-only, where it logs the delete it WOULD do and deletes nothing."
 }
 
 variable "reconcile_skip_namespaces" {

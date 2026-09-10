@@ -32,7 +32,13 @@ when:
         - 'modules/docker-registry/cleanup-tags.sh'
         - 'modules/docker-registry/nginx_registry.conf'
         - 'modules/docker-registry/config-private.yml'
+    # A bare `event: manual` matches EVERY manual pipeline, so a trigger meant
+    # for another workflow ran this one too — terminal-lobby fires one per
+    # release, which turned an occasional manual sync into a per-release one.
+    # Same fix provision-user.yml already carries. An undefined variable
+    # compares as empty, so a bare manual run (no variables) still enters here.
   - event: manual
+    evaluate: 'PIPELINE == "" || PIPELINE == "registry-config-sync"'
 
 clone:
   git:

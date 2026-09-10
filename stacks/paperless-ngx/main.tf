@@ -5,6 +5,7 @@ variable "tls_secret_name" {
 variable "nfs_server" { type = string }
 variable "redis_host" { type = string }
 variable "mysql_host" { type = string }
+variable "postgresql_host" { type = string }
 
 data "vault_kv_secret_v2" "secrets" {
   mount = "secret"
@@ -45,7 +46,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "paperless-ngx"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -62,6 +63,46 @@ resource "kubernetes_manifest" "external_secret" {
   }
   depends_on = [kubernetes_namespace.paperless-ngx]
 }
+# Postgres credential, rotated weekly by the Vault database engine (static role
+# `pg-paperless-ngx`). Separate from the ExternalSecret above because that one
+# reads the KV path with dataFrom; this reads the database engine, which is a
+# different ClusterSecretStore and a different refresh interval.
+#
+# The deployment carries a Reloader annotation for this secret. Without it the
+# app keeps the old password after every rotation and fails auth, because
+# PAPERLESS_DBPASS is read once at startup and never re-read.
+resource "kubernetes_manifest" "db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "paperless-ngx-db-creds"
+      namespace = "paperless-ngx"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "paperless-ngx-db-creds"
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-paperless-ngx"
+          property = "password"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.paperless-ngx]
+}
+
 module "tls_secret" {
   source          = "../../modules/kubernetes/setup_tls_secret"
   namespace       = kubernetes_namespace.paperless-ngx.metadata[0].name
@@ -109,6 +150,17 @@ resource "kubernetes_deployment" "paperless-ngx" {
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
+      # The Postgres password rotates weekly and PAPERLESS_DBPASS is read once
+      # at startup, so without this the app fails auth every seventh day.
+      "secret.reloader.stakater.com/reload" = "paperless-ngx-db-creds"
+      # Semver-ORDERED major tracking, so Keel performs the 2.20.15 -> 3.x jump
+      # and can only ever move upward. Kyverno's inject-keel-annotations adds
+      # "patch" with +() (only-if-absent), so this explicit value wins, and it
+      # is deliberately absent from ignore_changes below so Terraform owns it.
+      #
+      # NEVER "force" here: force ignores semver ordering and rolled this exact
+      # deployment 2.20.15 -> 1.5.0 within minutes on 2026-07-14.
+      "keel.sh/policy" = "major"
     }
   }
   spec {
@@ -127,14 +179,19 @@ resource "kubernetes_deployment" "paperless-ngx" {
           app = "paperless-ngx"
         }
         annotations = {
-          "diun.enable"                    = "true"
-          "diun.include_tags"              = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
-          "dependency.kyverno.io/wait-for" = "mysql.dbaas:3306,redis-master.redis:6379"
+          "diun.enable"       = "true"
+          "diun.include_tags" = "^\\d+(?:\\.\\d+)?(?:\\.\\d+)?$"
+          # Waits on Postgres now, not MySQL. Left pointing at MySQL the pod
+          # would block on a database it no longer uses, and would start
+          # happily while the one it does use was down.
+          "dependency.kyverno.io/wait-for" = "pg-cluster-rw.dbaas:5432,redis-master.redis:6379"
         }
       }
       spec {
         container {
-          image = "ghcr.io/paperless-ngx/paperless-ngx:2.20.14"
+          # Seed only. The live tag is Keel's (image is in ignore_changes
+          # below); this records the intended floor for a fresh apply.
+          image = "ghcr.io/paperless-ngx/paperless-ngx:3.1.3"
           name  = "paperless-ngx"
           env {
             name = "PAPERLESS_REDIS"
@@ -145,28 +202,68 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_REDIS_PREFIX"
             value = "paperless-ngx"
           }
+          # Moved off the shared MySQL onto pg-cluster on 2026-09-08.
+          #
+          # WHY, and do not undo this casually: paperless 3.x annotates every
+          # row of the documents list with a correlated subquery resolving
+          # effective_content, for a document-versions feature nothing here
+          # uses (all 11,334 rows have root_document_id NULL). On MySQL that
+          # query took 6,971 ms warm; on Postgres, same rows, same 319 MB of
+          # text, it is 396 ms. Measured, not estimated, and upstream's own
+          # numbers agree. Postgres TOASTs the content column out of line so a
+          # subquery matching zero rows costs nothing; MySQL materialises it.
+          #
+          # Neither an index nor prefer_ordering_index=off fixes it, both were
+          # tried and measured. The two upstream PRs that would have are one
+          # closed unmerged (#13875) and one open draft (#13789).
+          #
+          # Database name uses underscores, unlike the hyphenated MySQL one,
+          # to match every other role on this cluster.
           env {
             name  = "PAPERLESS_DBENGINE"
-            value = "mariadb"
+            value = "postgresql"
           }
           env {
             name  = "PAPERLESS_DBHOST"
-            value = var.mysql_host
+            value = var.postgresql_host
           }
           env {
             name  = "PAPERLESS_DBNAME"
-            value = "paperless-ngx"
+            value = "paperless_ngx"
           }
           env {
             name  = "PAPERLESS_DBUSER"
-            value = "paperless-ngx"
+            value = "paperless_ngx"
           }
+          # From the ExternalSecret, NOT a literal. The Vault static role
+          # rotates this weekly and the Reloader annotation on this deployment
+          # restarts the pod when it changes; a literal would work until the
+          # first rotation and then fail auth.
           env {
             name = "PAPERLESS_DBPASS"
             value_from {
               secret_key_ref {
+                name = "paperless-ngx-db-creds"
+                key  = "password"
+              }
+            }
+          }
+          # REQUIRED from 3.0 onward. 2.20 fell back to the literal
+          # "change-me" with a warning; 3.x raises ImproperlyConfigured at
+          # settings import, so the container dies during init-migrations and
+          # never starts a webserver. Generated 2026-09-07 and stored at Vault
+          # secret/paperless-ngx -> secret_key, which the ExternalSecret pulls
+          # in wholesale with dataFrom.
+          #
+          # Rotating it invalidates every existing session cookie and every
+          # signed URL, so users get logged out. API tokens are unaffected
+          # (they are DRF rows, not signed values).
+          env {
+            name = "PAPERLESS_SECRET_KEY"
+            value_from {
+              secret_key_ref {
                 name = "paperless-ngx-secrets"
-                key  = "db_password"
+                key  = "secret_key"
               }
             }
           }
@@ -221,9 +318,25 @@ resource "kubernetes_deployment" "paperless-ngx" {
           # text layer (born-digital PDFs + office->PDF via Gotenberg). Kept as
           # standing config after the 2026-06/07 Emo bulk import: big speed/IO
           # saver, harmless for scanned docs (they still OCR+archive).
+          #
+          # Renamed in 3.0, which decoupled OCR control from archive control.
+          # PAPERLESS_OCR_SKIP_ARCHIVE_FILE still parsed but did nothing, and
+          # 3.1.3 says so at startup: "is set but has no effect". "auto" is the
+          # 3.x spelling of the old "with_text" and is also the default; it is
+          # written out so the intent survives a future default change.
           env {
-            name  = "PAPERLESS_OCR_SKIP_ARCHIVE_FILE"
-            value = "with_text"
+            name  = "PAPERLESS_ARCHIVE_FILE_GENERATION"
+            value = "auto"
+          }
+          # Granian web workers. The image defaults this to 1
+          # (/etc/s6-overlay/s6-rc.d/svc-webserver/run), so a single slow
+          # request blocks the whole page load: measured 2026-09-07, the
+          # documents list fired 13 API calls that queued behind one 10.7s
+          # /api/tasks/ response instead of overlapping. 3 keeps headroom under
+          # the 8Gi ceiling (1 worker sat at ~2.1Gi with celery alongside).
+          env {
+            name  = "PAPERLESS_WEBSERVER_WORKERS"
+            value = "3"
           }
           volume_mount {
             name       = "data"
@@ -246,6 +359,44 @@ resource "kubernetes_deployment" "paperless-ngx" {
           port {
             container_port = 8000
           }
+
+          # This Deployment had no probes at all until 2026-09-07, so the only
+          # health signal was "the s6 supervisor is still running" — which it
+          # is even when every service under it failed. A 3.1.3 rollout whose
+          # container died at init-migrations reported Ready=true for minutes
+          # while every request 502'd, and the rollout was recorded a success.
+          #
+          # The startup probe carries the long budget: this container installs
+          # tesseract language packs, runs Django migrations, and rebuilds the
+          # search index when the schema changes.
+          #
+          # 40 minutes, and that is measured rather than padded. The 2.20 -> 3.x
+          # upgrade runs migration 0016_sha256_checksums, which re-reads every
+          # document off the encrypted volume to rehash it: 11,334 files at
+          # about 10 per second is 19 minutes on its own, before the remaining
+          # nine migrations and the search index rebuild. A 10-minute budget
+          # killed it at 8% on the first attempt.
+          #
+          # A probe cannot be changed on a running pod, so raising this mid-way
+          # costs the whole migration and starts it again. Size it for the
+          # slowest thing this container ever does at boot, not the usual case.
+          startup_probe {
+            http_get {
+              path = "/accounts/login/"
+              port = 8000
+            }
+            period_seconds    = 10
+            failure_threshold = 240
+          }
+          readiness_probe {
+            http_get {
+              path = "/accounts/login/"
+              port = 8000
+            }
+            period_seconds    = 10
+            timeout_seconds   = 5
+            failure_threshold = 3
+          }
         }
         volume {
           name = "data"
@@ -259,7 +410,8 @@ resource "kubernetes_deployment" "paperless-ngx" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
+      # keel.sh/policy is NOT ignored: it is set to "major" above and Terraform
+      # owns it, so the patch->major flip actually reconciles.
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
@@ -358,6 +510,11 @@ resource "kubernetes_deployment" "gotenberg" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 }
@@ -436,6 +593,11 @@ resource "kubernetes_deployment" "tika" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 }

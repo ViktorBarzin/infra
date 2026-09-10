@@ -93,7 +93,7 @@ graph TB
 | CoreDNS | K8s `kube-system` | Cluster default | K8s service discovery + forwarding to Technitium |
 | NodeLocal DNSCache | K8s `kube-system` (DaemonSet) | `k8s-dns-node-cache:1.23.1` | Per-node DNS cache, transparent interception on 10.96.0.10 + 169.254.20.10. Insulates pods from CoreDNS/Technitium/pfSense disruption. |
 | Cloudflare DNS | SaaS | N/A | Public zone management — 185/200 records (free-plan hard cap; see "Zone record budget") |
-| pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium; DoT upstream to Cloudflare |
+| pfSense Unbound | 10.0.20.1 | pfSense 2.7.2 (Unbound 1.19) | DNS resolver on LAN/OPT1/WAN; AXFR-slaves `viktorbarzin.lan` from Technitium and serves it `for-downstream` (see "Zone serial" below); DoT upstream to Cloudflare |
 | Kea DHCP-DDNS | 10.0.20.1 | pfSense 2.7.x | Automatic DNS registration on DHCP lease |
 | phpIPAM | K8s namespace `phpipam` | v1.7.0 | IPAM ↔ DNS bidirectional sync |
 
@@ -108,6 +108,31 @@ graph TB
 | pfSense | `stacks/pfsense/` | VM config only (Unbound config is managed out-of-band via pfSense web UI / direct config.xml edits; see `docs/runbooks/pfsense-unbound.md`) |
 
 ## DNS Resolution Paths
+
+### Zone serial — `viktorbarzin.lan` uses the date scheme, and must keep doing so
+
+pfSense does **not** forward `.lan` to Technitium. Unbound holds its own AXFR
+copy (`auth-zone`, master `10.0.20.201`, `for-downstream: yes`) and answers LAN
+clients from it, refreshing on the zone's SOA refresh (900s). It receives no
+NOTIFY: the zone's NS record is the Technitium **pod name**, so nothing points at
+pfSense.
+
+That makes the serial load-bearing. A refresh only transfers when the master's
+serial is **higher** than the cached one — a lower serial reads as "nothing new".
+On 2026-08-15 the primary's plain counter had regressed below the copy pfSense
+held (`64125` vs `684609`), so Unbound had not re-transferred since 2026-08-04
+and **every `.lan` record created after that date was invisible to every LAN
+client**, while queries straight to `10.0.20.201` were correct.
+
+Fixed by switching the zone to Technitium's **date-based serial scheme**
+(`useSerialDateScheme`), taking the serial to `2026081500`. Keep it there: a plain
+counter can regress if the zone is ever recreated, and the failure is silent.
+
+**Symptom to recognise:** an old `.lan` name resolves everywhere, a newly added
+one resolves only at `10.0.20.201` and NXDOMAINs elsewhere with a fresh negative
+TTL each time — which looks like negative caching and is not. Compare
+`dig +short @10.0.20.201 viktorbarzin.lan SOA` with the serial pfSense returns;
+a lower number upstream is the signature.
 
 ### K8s Pod → Internal Domain (.viktorbarzin.lan)
 
@@ -278,7 +303,7 @@ Technitium's **Split Horizon AddressTranslation** app post-processes DNS respons
 
 - **Affected**: Non-proxied domains (ha-sofia, immich, headscale, calibre, vaultwarden, etc.) for 192.168.1.x clients
 - **Not affected**: Cloudflare-proxied domains (resolve to Cloudflare edge IPs, no translation needed)
-- **10.0.x.x clients (k8s nodes, devvm, other VMs)** — handled at the resolver since 2026-06-10: **pfSense Unbound carries a domain override forwarding the whole `viktorbarzin.me` zone to Technitium** (`10.0.20.201`). Technitium's split-horizon zone answers with the zone apex A record, which auto-tracks the live Traefik LB IP (`technitium-ingress-dns-sync` CNAMEs every ingress host hourly; `viktorbarzin-apex-probe` is the drift canary). Every client of pfSense Unbound — all VLANs, k8s nodes included — therefore gets internal answers with **zero per-host configuration** (no `/etc/hosts` pins, no resolved drop-ins; both earlier same-day approaches were removed, nodes are stock). Names not behind Traefik keep distinct records in the zone (e.g. `mail.viktorbarzin.me → 10.0.20.1`, verified working on :993/:25; since 2026-06-10 its :443 also works internally — pfSense carries an SNI-routed HAProxy frontend on 443 that sends hostname traffic to Traefik and bare-IP/no-SNI traffic to the webGUI, which moved to :8443; see `docs/runbooks/mailserver-pfsense-haproxy.md`). See `docs/runbooks/pfsense-unbound.md` for the override config + rollback, and `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md` for the incident that motivated this (kubelet forgejo pulls riding the broken hairpin; the containerd hosts.toml mirror cannot fix it — Traefik 404s bare-IP requests and the registry auth realm is an absolute public URL).
+- **10.0.x.x clients (k8s nodes, devvm, other VMs)** — handled at the resolver since 2026-06-10: **pfSense Unbound carries a domain override forwarding the whole `viktorbarzin.me` zone to Technitium** (`10.0.20.201`). Technitium's split-horizon zone answers with the zone apex A record, which auto-tracks the live Traefik LB IP (`technitium-ingress-dns-sync` CNAMEs every ingress host hourly; the `apex-dns` blackbox scrape is the drift canary — a `dns_apex` module asking Technitium for the apex A record every 60s and failing unless the answer is the live LB IP, replacing the `viktorbarzin-apex-probe` CronJob on 2026-08-16). Every client of pfSense Unbound — all VLANs, k8s nodes included — therefore gets internal answers with **zero per-host configuration** (no `/etc/hosts` pins, no resolved drop-ins; both earlier same-day approaches were removed, nodes are stock). Names not behind Traefik keep distinct records in the zone (e.g. `mail.viktorbarzin.me → 10.0.20.1`, verified working on :993/:25; since 2026-06-10 its :443 also works internally — pfSense carries an SNI-routed HAProxy frontend on 443 that sends hostname traffic to Traefik and bare-IP/no-SNI traffic to the webGUI, which moved to :8443; see `docs/runbooks/mailserver-pfsense-haproxy.md`). See `docs/runbooks/pfsense-unbound.md` for the override config + rollback, and `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md` for the incident that motivated this (kubelet forgejo pulls riding the broken hairpin; the containerd hosts.toml mirror cannot fix it — Traefik 404s bare-IP requests and the registry auth realm is an absolute public URL).
   - **devvm**: also covered by a `~viktorbarzin.me → 10.0.20.201` resolved routing domain (predates the pfSense override, provisioned by `setup-devvm.sh`) — redundant-but-harmless belt-and-suspenders.
   - **in-cluster PODS are ordinary internal clients too** (since 2026-06-10 evening): CoreDNS's dedicated `viktorbarzin.me:53` block (in `stacks/technitium`, TF-managed) forwards to the Technitium ClusterIP (`10.96.0.53`, same as the `.lan` block), so pods get the same split-horizon answers as everyone else. This works because on k8s 1.34 **pods CAN reach the ETP=Local Traefik LB IP** — kube-proxy short-circuits in-cluster traffic to LB IPs via the cluster path (verified from pods on three non-Traefik nodes; re-verify after major k8s upgrades — the canary is the uptime-kuma `[External]` fleet going red). forgejo stays pinned to Traefik's **ClusterIP** in the same block so CI pushes survive a Technitium outage. History: the block briefly forwarded to `8.8.8.8/1.1.1.1` (morning of 2026-06-10), which kept pods on public IPs and the broken TP-Link NAT loopback — 27 non-proxied `[External]` uptime-kuma monitors dark (beads code-yh33). Note: in-cluster `[External]` monitors now test DNS+Traefik+service via the internal path for ALL names, including Cloudflare-proxied ones — genuine edge-path fidelity is the job of a true external vantage, not in-cluster probes. **Since 2026-07-08 that vantage is deployed: gatus on mx2** (Oracle Frankfurt, [ADR-0020](../adr/0020-mx2-outage-failover-and-external-vantage.md)) probes the public hostnames from outside, serves `status.viktorbarzin.me`, and fires edge-unreachable Slack alerts — superseding the earlier ha-london aspiration.
   - **Trade-off**: `viktorbarzin.me` resolution via pfSense now depends on in-cluster Technitium (3 replicas). During a full cluster outage the zone SERVFAILs LAN-wide — acceptable, the services behind it are down anyway; node bootstrap images pull via the IP-addressed `10.0.20.10` mirrors, so cold-start self-unwinds.
@@ -370,8 +395,8 @@ Counts are exact as of the 2026-07-08 record cleanup (zone total **185**):
 | Type | Records | Target | Example |
 |------|---------|--------|---------|
 | Proxied CNAME (tunnel) | 99 | `{tunnel_id}.cfargotunnel.com` | blog (apex), hackmd, homepage, ntfy |
-| Non-proxied A | 34 | `176.12.22.76` (public IP) | mail, headscale, immich |
-| Non-proxied AAAA | 33 | IPv6 (HE tunnel) | Same set as non-proxied A (minus the IPv4-only names) |
+| Non-proxied A | 30 (live, 2026-09-04) | `176.12.22.76` (public IP) | mail, headscale, immich |
+| Non-proxied AAAA | 26 (live, 2026-09-04) | IPv6 (HE tunnel) | Same set as non-proxied A (minus the IPv4-only names: turn, vpn, xray-reality, vlmcs) |
 | Internal-IP A (`dns_type = "internal"`) | 2 | `10.0.20.203` (internal Traefik LB) | highlights-immich kiosks — publicly resolvable, routable only from home/WG/VPN |
 | MX | 2 | `mail.viktorbarzin.me` (pri 1), `mx2.viktorbarzin.me` (pri 20, ADR-0019) | Inbound email + offsite store-and-forward backup |
 | TXT (SPF) | 1 | `v=spf1 include:spf.brevo.com ~all` | Email authentication (Brevo relay) |
@@ -396,6 +421,50 @@ The free plan hard-caps the zone at **200 records** (error 81045 on overflow —
 - **Proxied (orange cloud)**: Traffic routes through Cloudflare CDN → Cloudflared tunnel → Traefik. Benefits: DDoS protection, caching, no public IP exposure.
 - **Non-proxied (grey cloud)**: DNS resolves directly to public IP. Required for services needing direct connections (mail, VPN, WebSocket-heavy apps).
 - **Outage behaviour (ADR-0020, since 2026-07-08)**: during a homelab outage, proxied hosts no longer show Cloudflare's raw 530/1033 — a free-plan Worker on `*.viktorbarzin.me/*` + apex intercepts origin-down errors (fetch-error/530/521–523, browser GET/HEAD HTML only) and serves a branded **503 + Retry-After** from mx2's self-contained `/error.html`. It deliberately does NOT touch 502/504 (in-cluster error-pages owns app errors). Grey-cloud hosts still time out — automatic DNS flip to mx2 was rejected (see the ADR); their story is MX pri 20 for mail + status-page visibility.
+
+### Which names stay grey, and why (2026-09-04, code-6m20)
+
+ADR-0026 observed that most direct A/AAAA names were direct for reasons about
+authentication rather than about Cloudflare, and left the follow-up untracked.
+This is that pass. Every name whose A record pointed at the WAN IP on
+2026-09-04 was classified against one question: does Cloudflare's proxy break
+this specific service? Forward-auth breaking a native client is a Traefik
+concern and does not answer it, because a proxied name gains no auth.
+
+Measured on the live zone that day: 35 names carried an A record to
+`176.12.22.76`, 31 of them with a matching AAAA, for 66 of the zone's 95
+records. Five names moved to `dns_type = "proxied"` and gave up their explicit
+records, leaving **30 names / 56 records**. That remaining set is the scope of
+the DDNS updater tracked as `code-dvla`, since a proxied name creates no record
+and needs no update when the WAN IP moves (ADR-0021).
+
+Moved to proxied: `health`, `health-api`, `k8s-portal`, `novelapp`,
+`plotting-book`. Each is a small text or JSON web app with no large bodies, no
+long-held requests and no non-browser client that Cloudflare's bot management
+would challenge.
+
+| name | why it stays direct | basis |
+|---|---|---|
+| `turn` | STUN/TURN on UDP 3478. The proxy carries HTTP(S) on its published port list only. | protocol |
+| `vpn` | WireGuard on UDP 51820/51821. | protocol |
+| `xray-reality` | REALITY on TCP 7443; the transport depends on the client completing TLS against the origin. | protocol |
+| `vlmcs` | KMS activation on TCP 1688, NAT'd to the vlmcsd MetalLB IP (`stacks/kms`). | protocol |
+| `mail` | MX target for the zone at priority 1, plus SMTP, IMAP and submission. Proxying would point inbound mail at Cloudflare addresses. | protocol |
+| `immich` | 413 at 104,857,600 bytes, measured in ADR-0026. Also the CDN large-file terms (memory #8163). | measured |
+| `forgejo` | A fresh full push of `infra.git` is 183 MB (ADR-0026). | measured |
+| `files` | Synology NAS transfers routinely exceed the edge body cap. | body size |
+| `send` | End-to-end encrypted file drop; large files are the feature. | body size |
+| `stremio` | infra#80 chose the direct path to stay outside the CDN video terms; CrowdSec nftables covers the origin. | recorded decision |
+| `poison` | The trap exists to be scraped. Cloudflare bot management in front would defeat it. | recorded decision |
+| `traefik` | The dashboard is wanted most when the tunnel is the thing that broke. Same reasoning as `status` in ADR-0020. | recovery path |
+| `ci` | Woodpecker is how a fix gets deployed, including a fix to the tunnel. | recovery path |
+| `audiobookshelf`, `audiblez`, `ebook2audiobook`, `f1`, `music-assistant`, `music-emo`, `music-viktor`, `yt`, `yt-highlights` | Audio and video delivery. The same CDN terms question already answered for `immich` and `stremio` applies, and the conversion jobs behind `audiblez` and `ebook2audiobook` also hold a request open for minutes. | CDN terms |
+| `ha-london`, `ha-sofia`, `headscale`, `openclaw`, `qbittorrent`, `soulseek` | Long-held or streaming HTTP: Home Assistant websockets, the Tailscale map long-poll, LLM streaming, torrent and P2P transfers. Cloudflare's 100 s first-byte timeout has not been measured against any of them. | open question |
+| `kms`, `webhook` | The clients are not browsers: PowerShell `iwr \| iex` for the activator scripts, third-party webhook POSTs for the handler. Cloudflare bot management could challenge either. | open question |
+
+The last two groups are open questions rather than settled constraints. Each
+can be answered by measuring one host, and any that clears moves out of the
+DDNS scope.
 
 ### Zone Settings
 
@@ -580,3 +649,32 @@ For external `.viktorbarzin.me` records:
 - [Security Architecture](security.md) — Kyverno ndots policy
 - [Monitoring Architecture](monitoring.md) — CoreDNS metrics, Uptime Kuma external monitors
 - Runbook: `docs/runbooks/add-dns-record.md` (referenced but not yet created)
+
+### git over SSH (2026-09-06)
+
+`git.viktorbarzin.me` is an A-only, non-proxied record for git traffic, added so
+`forgejo.viktorbarzin.me` can move behind Cloudflare without breaking git.
+Cloudflare caps request bodies at 100 MB on our plan and a full push of
+`infra.git` is 183 MB; SSH does not pass through Cloudflare, so neither that cap
+nor the 100 s first-byte timeout applies to git.
+
+Both halves are needed, and the internal one is easy to miss:
+
+| view | answer | set where |
+|---|---|---|
+| public | 176.12.22.76 | `cloudflare_record.git`, `stacks/forgejo/main.tf` |
+| internal | 10.0.20.200 | Technitium, by hand via the API (same as `vlmcs`) |
+
+Without the Technitium record the name resolves publicly and **not at all** on
+the LAN or in the cluster, so every internal client fails to resolve it. Path
+from outside: `git.viktorbarzin.me` -> 176.12.22.76 -> ISP router forward
+`ssh-pfense` (22 -> 192.168.1.2:22) -> pfSense rdr -> `k8s_shared_lb`
+(10.0.20.200:22) -> `forgejo-ssh` Service -> forgejo pod :2222.
+
+Forgejo's built-in SSH server is public-key only, so there is no password to
+brute force.
+
+**Woodpecker is unaffected by the Cloudflare move.** It talks to
+`https://forgejo.viktorbarzin.me`, which resolves to the in-cluster service
+address 10.111.111.95 from every pod, so its API calls and clones never reach
+Cloudflare. Verified from the `woodpecker` namespace on 2026-09-06.

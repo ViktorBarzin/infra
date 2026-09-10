@@ -66,7 +66,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -165,8 +165,24 @@ resource "kubernetes_deployment" "recruiter_responder" {
   }
 
   spec {
+    # OFF as of 2026-08-21, by Viktor's decision — deliberately 0, not a
+    # temporary scale-down, so it survives applies, reboots and Keel rollouts.
+    #
+    # Everything else is intentionally left standing so this is a one-line
+    # revert: the pg-recruiter-responder database and its Vault static role,
+    # the ingress and hostname, the ExternalSecrets, and openclaw's
+    # recruiter-api plugin (openclaw installs that from the
+    # ghcr.io/viktorbarzin/recruiter-responder image in an init container, so
+    # it keeps working; anything in that plugin which calls THIS Service will
+    # now get a Service with no endpoints).
+    #
+    # Consequences while it is 0: no IMAP IDLE watcher, so recruiter mail is
+    # simply left unread in the mailbox rather than triaged, and the
+    # APScheduler jobs do not run. Nothing queues up inside the app.
+    #
+    # Original note, still true if it is ever turned back on:
     # IMAP IDLE + APScheduler want a single leader; concurrency hurts both.
-    replicas = 1
+    replicas = 0
     strategy {
       type = "Recreate"
     }
@@ -308,7 +324,13 @@ resource "kubernetes_deployment" "recruiter_responder" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # Stakater Reloader stamps this on every secret-triggered restart. The
+      # 2026-08-14 switch to reloadStrategy = annotations (stacks/reloader) moved
+      # the marker onto this pod-template annotation on the expectation that
+      # Terraform does not manage it, but it does wherever the pod template
+      # declares annotations, so it planned as a removal on every run.
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
@@ -369,6 +391,7 @@ module "ingress" {
   ingress_path     = ["/cb"]
   tls_secret_name  = var.tls_secret_name
   extra_annotations = {
-    "gethomepage.dev/icon" = "mdi-email-fast"
+    "gethomepage.dev/description" = "Automated recruiter email triage"
+    "gethomepage.dev/icon"        = "mdi-email-fast"
   }
 }

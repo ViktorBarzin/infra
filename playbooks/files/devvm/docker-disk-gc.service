@@ -1,0 +1,13 @@
+[Unit]
+Description=Docker disk garbage collection
+Documentation=man:docker-system-prune(1)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/docker-disk-gc
+StandardOutput=journal
+StandardError=journal
+Nice=10
+IOSchedulingClass=idle

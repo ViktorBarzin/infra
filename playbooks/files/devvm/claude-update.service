@@ -1,0 +1,14 @@
+[Unit]
+Description=Keep every devvm user's Claude Code at the latest version
+Documentation=https://code.claude.com/docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/claude-update
+StandardOutput=journal
+StandardError=journal
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min

@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily file-level incremental backup of devvm /home to sda
+
+[Timer]
+# 03:30 — after nfs-mirror (02:00) and lvm-pvc-snapshot (03:00), before
+# daily-backup (05:00) and offsite-sync (06:00), so a fresh generation is on
+# sda before the monthly full offsite pass mirrors /mnt/backup to Synology.
+# Deliberately NOT adjacent to vzdump-vms (01:00 Sundays) — the two should never
+# read devvm's disk at the same time.
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

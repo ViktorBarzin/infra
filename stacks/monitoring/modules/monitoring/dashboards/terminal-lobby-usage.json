@@ -1,14 +1,21 @@
 {
   "uid": "terminal-lobby-usage",
   "title": "Terminal Lobby Usage",
-  "description": "How terminal-lobby is actually used, per OS user. Fed by TLEVENT usage events in the devvm journal (terminal-lobby docs/adr/0006-usage-telemetry.md). Loki retention is 30 days, so ranges beyond that are empty by design.",
-  "tags": ["terminal-lobby", "usage", "logs"],
+  "description": "Feature usage (ADR-0006) and client health (ADR-0008) for the terminal lobby. The health rows are collapsed by default: open one when something felt wrong. Every query strips the journal's log prefix before parsing and addresses the dotted keys with bracket notation \u2014 the record's field names contain literal dots, so a dotted path would walk objects that do not exist.",
+  "tags": [
+    "terminal-lobby",
+    "usage",
+    "logs"
+  ],
   "timezone": "browser",
   "editable": true,
   "schemaVersion": 39,
   "version": 1,
   "refresh": "5m",
-  "time": { "from": "now-7d", "to": "now" },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
@@ -19,7 +26,15 @@
         "multi": true,
         "includeAll": true,
         "allValue": ".+",
-        "current": { "selected": true, "text": ["All"], "value": ["$__all"] }
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
       }
     ]
   },
@@ -27,7 +42,12 @@
     {
       "type": "row",
       "title": "Overview",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "collapsed": false,
       "panels": []
     },
@@ -35,68 +55,141 @@
       "type": "stat",
       "title": "Events",
       "description": "Total usage events in the selected range.",
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
           "queryType": "instant",
-          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json user=\"user.id\" | user =~ \"$user\" [$__range]))"
+          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json user=\"[\\\"user.id\\\"]\" | user =~ \"$user\" [$__range]))"
         }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
     },
     {
       "type": "stat",
       "title": "Sessions started",
-      "description": "session.attached — every session start, including plain ttyd URLs that never touch the lobby.",
-      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 1 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "description": "session.attached \u2014 every session start, including plain ttyd URLs that never touch the lobby.",
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 4,
+        "y": 1
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
           "queryType": "instant",
-          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", user=\"user.id\" | name = \"session.attached\" | user =~ \"$user\" [$__range]))"
+          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\" | name = \"session.attached\" | user =~ \"$user\" [$__range]))"
         }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
     },
     {
       "type": "stat",
       "title": "Lobby tabs opened",
-      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 1 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 9,
+        "y": 1
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
           "queryType": "instant",
-          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", user=\"user.id\" | name = \"app.loaded\" | user =~ \"$user\" [$__range]))"
+          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\" | name = \"app.loaded\" | user =~ \"$user\" [$__range]))"
         }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
     },
     {
       "type": "stat",
       "title": "Errors seen",
-      "description": "app.error — a toast the user actually saw. The strongest \"this needs work\" signal here.",
-      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 1 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "description": "app.error \u2014 a toast the user actually saw. The strongest \"this needs work\" signal here.",
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 14,
+        "y": 1
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
           "queryType": "instant",
-          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", user=\"user.id\" | name = \"app.error\" | user =~ \"$user\" [$__range]))"
+          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\" | name = \"app.error\" | user =~ \"$user\" [$__range]))"
         }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
       "fieldConfig": {
         "defaults": {
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 20 },
-              { "color": "red", "value": 100 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
             ]
           }
         },
@@ -106,21 +199,42 @@
     {
       "type": "stat",
       "title": "Prompts sent from the web",
-      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 1 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 19,
+        "y": 1
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
           "queryType": "instant",
-          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", user=\"user.id\" | name = \"claude.prompt_sent\" | user =~ \"$user\" [$__range]))"
+          "expr": "sum(count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\" | name = \"claude.prompt_sent\" | user =~ \"$user\" [$__range]))"
         }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
     },
     {
       "type": "row",
       "title": "What gets used",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
       "collapsed": false,
       "panels": []
     },
@@ -128,106 +242,797 @@
       "type": "barchart",
       "title": "Features by use, per user",
       "description": "The core question: which parts of the lobby earn their keep, and whether wizard and emo use it differently.",
-      "gridPos": { "h": 11, "w": 14, "x": 0, "y": 6 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": {
+        "h": 11,
+        "w": 14,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
           "queryType": "instant",
-          "expr": "sum by (name, user) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", user=\"user.id\" | user =~ \"$user\" [$__range]))"
+          "expr": "sum by (name, user) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\" | user =~ \"$user\" [$__range]))"
         }
       ],
-      "options": { "orientation": "horizontal", "stacking": "normal", "legend": { "showLegend": true, "placement": "bottom" } }
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "legend": {
+          "showLegend": true,
+          "placement": "bottom"
+        }
+      }
     },
     {
       "type": "piechart",
       "title": "Which tool sessions run",
-      "description": "session.attached by command key — claude / codex / shell / none (tmux default-command).",
-      "gridPos": { "h": 11, "w": 10, "x": 14, "y": 6 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "description": "session.attached by command key \u2014 claude / codex / shell / none (tmux default-command).",
+      "gridPos": {
+        "h": 11,
+        "w": 10,
+        "x": 14,
+        "y": 6
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
           "queryType": "instant",
-          "expr": "sum by (kind) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", kind=\"attrs.tl.kind\", user=\"user.id\" | name = \"session.attached\" | user =~ \"$user\" [$__range]))"
+          "expr": "sum by (kind) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", kind=\"attrs[\\\"tl.kind\\\"]\", user=\"[\\\"user.id\\\"]\" | name = \"session.attached\" | user =~ \"$user\" [$__range]))"
         }
       ],
-      "options": { "legend": { "showLegend": true, "placement": "right" }, "reduceOptions": { "calcs": ["lastNotNull"] } }
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "placement": "right"
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
       "type": "row",
       "title": "Over time",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
       "collapsed": false,
       "panels": []
     },
     {
       "type": "timeseries",
       "title": "Activity per user",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (user) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json user=\"user.id\" | user =~ \"$user\" [$__interval]))"
+          "expr": "sum by (user) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json user=\"[\\\"user.id\\\"]\" | user =~ \"$user\" [$__interval]))"
         }
       ],
       "fieldConfig": {
-        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } },
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
         "overrides": []
       }
     },
     {
       "type": "timeseries",
       "title": "Keyboard vs pointer (command dispatch)",
-      "description": "palette.action counts every command dispatch — palette pick, chord, or forwarded shortcut.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "description": "palette.action counts every command dispatch \u2014 palette pick, chord, or forwarded shortcut.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (key) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", key=\"attrs.tl.key\", user=\"user.id\" | name = \"palette.action\" | user =~ \"$user\" [$__interval]))"
+          "expr": "sum by (key) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", key=\"attrs[\\\"tl.key\\\"]\", user=\"[\\\"user.id\\\"]\" | name = \"palette.action\" | user =~ \"$user\" [$__interval]))"
         }
       ],
       "fieldConfig": {
-        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } },
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
         "overrides": []
       }
     },
     {
       "type": "row",
       "title": "Detail",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
       "collapsed": false,
       "panels": []
     },
     {
       "type": "table",
       "title": "Prefs and themes people change",
-      "description": "Which knobs actually get turned — a default worth revisiting is one that keeps getting changed.",
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 27 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "description": "Which knobs actually get turned \u2014 a default worth revisiting is one that keeps getting changed.",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
           "queryType": "instant",
-          "expr": "sum by (key, to) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | json name=\"event.name\", key=\"attrs.tl.key\", to=\"attrs.tl.to\", user=\"user.id\" | name =~ \"prefs.changed|theme.changed\" | user =~ \"$user\" [$__range]))"
+          "expr": "sum by (key, to) (count_over_time({job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", key=\"attrs[\\\"tl.key\\\"]\", to=\"attrs[\\\"tl.to\\\"]\", user=\"[\\\"user.id\\\"]\" | name =~ \"prefs.changed|theme.changed\" | user =~ \"$user\" [$__range]))"
         }
       ],
-      "options": { "showHeader": true }
+      "options": {
+        "showHeader": true
+      }
     },
     {
       "type": "logs",
       "title": "Raw event stream",
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 27 },
-      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
       "targets": [
         {
           "refId": "A",
-          "expr": "{job=\"devvm-journal\"} |= \"TLEVENT\" | json user=\"user.id\" | user =~ \"$user\""
+          "expr": "{job=\"devvm-journal\"} |= \"TLEVENT\" | line_format `{{ regexReplaceAll \"^.*?TLEVENT \" __line__ \"\" }}` | json user=\"[\\\"user.id\\\"]\" | user =~ \"$user\""
         }
       ],
-      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "type": "row",
+      "title": "Latency \u2014 how it felt",
+      "description": "Client-measured timings. Absent series mean nobody was typing, not that latency was zero.",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Echo round-trip, p95 by device",
+          "description": "Keystroke to the first byte back, sampled only when the terminal was output-idle beforehand. Read it next to 'usable echo samples' below: a p95 drawn from a handful of samples is a different claim from one drawn from hundreds.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 37
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (device) (max_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", device=\"attrs[\\\"tl.device\\\"]\", v=\"attrs[\\\"tl.echo.p95\\\"]\" | name = \"perf.rollup\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__interval]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "{{device}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Client-side cost: input path and render",
+          "description": "Neither leg leaves the device, so these are unconfounded by the network: keydown to ws.send, and xterm write to its render callback.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 37
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (device) (max_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", device=\"attrs[\\\"tl.device\\\"]\", v=\"attrs[\\\"tl.input.p95\\\"]\" | name = \"perf.rollup\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__interval]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "input p95 \u00b7 {{device}}"
+            },
+            {
+              "refId": "B",
+              "expr": "max by (device) (max_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", device=\"attrs[\\\"tl.device\\\"]\", v=\"attrs[\\\"tl.render.p95\\\"]\" | name = \"perf.rollup\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__interval]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "render p95 \u00b7 {{device}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Usable echo samples",
+          "description": "How many echo measurements passed the quiet gate.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 45
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum (sum_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", v=\"attrs[\\\"tl.echo.n\\\"]\" | name = \"perf.rollup\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__range]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "queryType": "instant"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Discarded as unpairable",
+          "description": "Keystrokes whose echo never arrived within the deadline, or that could not be paired unambiguously. A high share next to a low usable count means the gate is too strict for how this terminal is actually used.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 45
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum (sum_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", v=\"attrs[\\\"tl.echo.unmatched\\\"]\" | name = \"perf.rollup\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__range]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "queryType": "instant"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Stalls",
+          "description": "Input went out and nothing came back for longer than the threshold.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 45
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum (count_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\" | name = \"term.stall\" | user =~ \"$user\" [$__range]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "queryType": "instant"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Frames dropped",
+          "description": "Animation frames that arrived more than 100 ms after the previous one, while the tab was visible.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 45
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum (sum_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", v=\"attrs[\\\"tl.jank.n\\\"]\" | name = \"perf.rollup\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__range]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "queryType": "instant"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Connections \u2014 did it stay up",
+      "description": "",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "WebSocket drops",
+          "description": "Every deploy restarts ttyd and drops every open socket, which is why a drop carries a reason \u2014 deploy churn is separable from real instability.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 38
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (reason) (count_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", reason=\"attrs[\\\"tl.reason\\\"]\" | name = \"conn.dropped\" | user =~ \"$user\" [$__interval]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "{{reason}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 60,
+                "stacking": {
+                  "mode": "normal"
+                }
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "table",
+          "title": "Close codes",
+          "description": "1006 is an abnormal closure with no close frame \u2014 the shape a network drop takes, as opposed to a clean server-side close.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 38
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (code) (count_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", code=\"attrs[\\\"tl.code\\\"]\" | name = \"conn.dropped\" | user =~ \"$user\" [$__range]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "queryType": "instant"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Tabs that died without closing",
+          "description": "A page life that ended with no pagehide: killed by the OS, a browser crash, or a device that never woke up. Counted at the NEXT boot.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 0,
+            "y": 46
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum (count_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\" | name = \"app.died\" | user =~ \"$user\" [$__range]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "queryType": "instant"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Connection setup time",
+          "description": "",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 16,
+            "x": 8,
+            "y": 46
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (device) (max_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", device=\"attrs[\\\"tl.device\\\"]\", v=\"attrs[\\\"tl.handshake_ms\\\"]\" | name = \"conn.opened\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__interval]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "handshake \u00b7 {{device}}"
+            },
+            {
+              "refId": "B",
+              "expr": "max by (device) (max_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", device=\"attrs[\\\"tl.device\\\"]\", v=\"attrs[\\\"tl.token_ms\\\"]\" | name = \"conn.opened\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__interval]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "token fetch \u00b7 {{device}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Failures \u2014 what broke",
+      "description": "",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "panels": [
+        {
+          "type": "table",
+          "title": "Exceptions, most frequent first",
+          "description": "Deduped in the browser by message and top frame, so a looping error is one record carrying its own count rather than hundreds of lines.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 39
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (msg, src) (count_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", msg=\"attrs[\\\"tl.msg\\\"]\", src=\"attrs[\\\"tl.src\\\"]\" | name = \"app.exception\" | user =~ \"$user\" [$__range]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "queryType": "instant"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Slow calls: what the client saw vs what the server took",
+          "description": "The gap between the two lines is network and device time. Join an individual pair on tl.req to attribute one specific slow call.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 48
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (ep) (max_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", ep=\"attrs[\\\"tl.ep\\\"]\", v=\"attrs[\\\"tl.ms\\\"]\" | name = \"api.slow\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__interval]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "client \u00b7 {{ep}}"
+            },
+            {
+              "refId": "B",
+              "expr": "max by (ep) (max_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", ep=\"attrs[\\\"tl.ep\\\"]\", v=\"attrs[\\\"tl.ms\\\"]\" | name = \"api.served\" | unwrap v | __error__ = \"\" [$__interval]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "server \u00b7 {{ep}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "logs",
+          "title": "Incidents, with the events that led to them",
+          "description": "tl.trace on each of these is the flight recorder: the raw input events immediately before the failure.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 48
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "{job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\" | name =~ \"diag.incident|term.stall|conn.dropped|app.exception\" | user =~ \"$user\"",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              }
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Server-side endpoint latency",
+          "description": "What the handlers themselves cost, per service and endpoint group. This is the baseline the client-side numbers are read against: a client p95 far above the matching line here is network or device time, not the devvm. Carries no user \u2014 it is a per-service distribution rather than one person's activity.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 56
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "{{svc}} {{ep}}",
+              "expr": "max by (svc, ep) (max_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", svc=\"[\\\"service.name\\\"]\", ep=\"attrs[\\\"tl.ep\\\"]\", v=\"attrs[\\\"tl.p95\\\"]\" | name = \"api.rollup\" | unwrap v | __error__ = \"\" [$__interval]))"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Load \u2014 how it started",
+      "description": "",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "panels": [
+        {
+          "type": "table",
+          "title": "Boot timing and device context",
+          "description": "One row per tab boot: how long the page took to load and what it was loaded on. This is where 'it is slow on my phone' becomes a number. The eng column lists what that engine is MISSING out of the short list the lobby depends on, measured on the device rather than read off the user agent \u2014 every browser on iPadOS runs the system WebKit, so the version string there describes nothing. Empty is a current browser.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 40
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "{job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", ttfb=\"attrs[\\\"tl.nav.ttfb\\\"]\", load=\"attrs[\\\"tl.nav.load\\\"]\", bytes=\"attrs[\\\"tl.nav.bytes\\\"]\", net=\"attrs[\\\"tl.net.type\\\"]\", rtt=\"attrs[\\\"tl.net.rtt\\\"]\", cpu=\"attrs[\\\"tl.dev.cpu\\\"]\", mem=\"attrs[\\\"tl.dev.mem\\\"]\", plat=\"attrs[\\\"tl.dev.plat\\\"]\", eng=\"attrs[\\\"tl.eng.missing\\\"]\" | name = \"app.context\" | user =~ \"$user\"",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              }
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Lobby API calls per device",
+          "description": "How many API calls each device actually made, counted from its own rollups. A device that keeps loading the page while its line sits flat is reaching the lobby and failing before the request leaves the browser \u2014 which is what an old engine did on 2026-08-19, when AbortSignal.timeout (Safari 16) threw ahead of every fetch and the sidebar read 'Failed to load' over an empty session list. Nothing reached the ingress, so no server-side panel could have shown it. Read beside the engine table: gaps there plus a flat line here is a browser that cannot talk to us.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 49
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (device) (sum_over_time({job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", device=\"attrs[\\\"tl.device\\\"]\", v=\"attrs[\\\"tl.api.n\\\"]\" | name = \"perf.rollup\" | user =~ \"$user\" | unwrap v | __error__ = \"\" [$__interval]))",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              },
+              "legendFormat": "{{device}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "table",
+          "title": "Engines missing an API we polyfill",
+          "description": "Every boot from a browser lacking something the lobby depends on. Empty is the healthy state. A row is not by itself a fault: baseline-polyfills.ts fills in AbortSignal.timeout and URL.canParse, so those devices run on the polyfill. RegExp lookbehind is NOT filled in \u2014 a device listing it loses the GFM markdown extensions (tables, task lists, strikethrough). Keep the probe list in step with frontend-v2/src/lib/baseline-polyfills.ts.",
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 49
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "{job=\"devvm-journal\"} |= \"TLDIAG\" | line_format `{{ regexReplaceAll \"^.*?TLDIAG \" __line__ \"\" }}` | json name=\"[\\\"event.name\\\"]\", user=\"[\\\"user.id\\\"]\", device=\"attrs[\\\"tl.device\\\"]\", plat=\"attrs[\\\"tl.dev.plat\\\"]\", w=\"attrs[\\\"tl.dev.w\\\"]\", h=\"attrs[\\\"tl.dev.h\\\"]\", eng=\"attrs[\\\"tl.eng.missing\\\"]\" | name = \"app.context\" | user =~ \"$user\" | eng != \"\"",
+              "datasource": {
+                "type": "loki",
+                "uid": "P8E80F9AEF21F6940"
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }

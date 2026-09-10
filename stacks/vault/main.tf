@@ -79,6 +79,14 @@ resource "helm_release" "vault" {
         enabled  = true
         replicas = 3
 
+        # Editing `config` below does NOT restart anything. The chart renders
+        # it into the vault-config ConfigMap, the pod template carries no
+        # checksum annotation, and the StatefulSet is updateStrategy: OnDelete
+        # (deliberate for HA Vault — the operator, not the controller, decides
+        # when a leader election happens). So an apply is non-disruptive and the
+        # running pods keep the old config until deleted one at a time,
+        # standbys first and the leader last, verifying unseal and raft health
+        # between each. See docs/runbooks/vault-raft-leader-deadlock.md.
         raft = {
           enabled   = true
           setNodeId = true
@@ -111,6 +119,50 @@ resource "helm_release" "vault" {
               retry_join {
                 leader_api_addr = "http://vault-2.vault-internal:8200"
               }
+            }
+
+            # Metrics-only listener, separate from the public one on 8200.
+            #
+            # `unauthenticated_metrics_access` cannot go on the 8200 listener:
+            # that one is what https://vault.viktorbarzin.me serves (ingress ->
+            # vault-active:8200, auth = "none" because Vault does its own auth),
+            # so enabling it there would publish /v1/sys/metrics to the internet.
+            # Vault telemetry carries every mount path and policy name as label
+            # values (vault_route_*{mount_point}, vault_token_count_by_policy),
+            # which is a map of the secret store for anyone who asks.
+            # Verified 2026-09-03: vault.viktorbarzin.me resolves to Cloudflare
+            # (104.21.3.16) publicly and /v1/sys/health already answers 200
+            # through the edge, so the path is genuinely reachable.
+            #
+            # Port 8202 is already declared as a containerPort on the
+            # StatefulSet (name http-rep, the Enterprise replication port).
+            # This is OSS Vault with no Enterprise license, so nothing binds it
+            # and nothing will; reusing it keeps the port visible in the pod
+            # spec instead of listening on an undeclared one. No Service maps
+            # 8202, and the vault namespace has no NetworkPolicy, so Prometheus
+            # reaches it directly on the pod IP and nothing else can.
+            #
+            # A second listener also opens a cluster port at address+1, so the
+            # pods now listen on 8203 as well. It is inert: VAULT_CLUSTER_ADDR
+            # still advertises 8201, nothing dials 8203, and no Service maps it
+            # either. Noted because it is visible in netstat and otherwise
+            # looks unexplained.
+            listener "tcp" {
+              tls_disable = 1
+              address     = "[::]:8202"
+
+              telemetry {
+                unauthenticated_metrics_access = true
+              }
+            }
+
+            # Without this stanza the metrics endpoint answers but holds almost
+            # nothing. disable_hostname strips the pod hostname from every
+            # metric NAME (Vault prepends it otherwise), which would make
+            # vault_core_active unqueryable as a single series.
+            telemetry {
+              prometheus_retention_time = "24h"
+              disable_hostname          = true
             }
 
             service_registration "kubernetes" {}
@@ -419,6 +471,163 @@ resource "kubernetes_cron_job_v1" "vault_backup" {
   }
 }
 
+
+# --- Audit Log Rotation ---
+#
+# The file audit device appends to /vault/audit/vault-audit.log forever; Vault
+# never rotates it. When the volume fills, Vault FAILS CLOSED — every audited
+# request returns HTTP 500 while sys/health keeps answering 200, so the cluster
+# looks healthy while nothing works. That is the 2026-08-23 outage: the audit
+# volume on the active leader hit its pvc-autoresizer storage_limit of 10Gi and
+# all 132 ExternalSecrets stopped syncing for ~28h.
+# Runbook: docs/runbooks/vault-audit-device-full.md
+#
+# pvc-autoresizer is not the fix here — it grew audit-vault-1 4Gi -> 8Gi -> 10Gi
+# and then correctly stopped at its configured ceiling. Growing a volume only
+# chooses when unbounded growth hits the wall; rotation is what bounds it.
+#
+# audit-vault-N is RWO and already mounted by vault-N, so a job pod cannot mount
+# it. Rotation therefore goes through `kubectl exec`, which is why this needs a
+# ServiceAccount with pods/exec rather than a volume mount.
+#
+# The archive is verified with `gzip -t` BEFORE the live log is truncated. If the
+# stream is short (the exec is killed, the NFS write fails), the partial archive
+# is deleted and the log is left untouched — the job retries tomorrow rather than
+# destroying audit history it failed to copy.
+
+resource "kubernetes_service_account" "audit_rotate" {
+  metadata {
+    name      = "vault-audit-rotate"
+    namespace = kubernetes_namespace.vault.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "audit_rotate" {
+  metadata {
+    name      = "vault-audit-rotate"
+    namespace = kubernetes_namespace.vault.metadata[0].name
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["get", "list"]
+  }
+  # Scoped to the three Vault pods by name. RBAC resourceNames matches on a
+  # subresource create because the pod name is in the request path, so this SA
+  # cannot exec into anything else in the namespace even if its token leaks.
+  # `list` above stays unscoped: resourceNames does not apply to list.
+  rule {
+    api_groups     = [""]
+    resources      = ["pods/exec"]
+    verbs          = ["create"]
+    resource_names = ["vault-0", "vault-1", "vault-2"]
+  }
+}
+
+resource "kubernetes_role_binding" "audit_rotate" {
+  metadata {
+    name      = "vault-audit-rotate"
+    namespace = kubernetes_namespace.vault.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.audit_rotate.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.audit_rotate.metadata[0].name
+    namespace = kubernetes_namespace.vault.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "vault_audit_rotate" {
+  metadata {
+    name      = "vault-audit-rotate"
+    namespace = kubernetes_namespace.vault.metadata[0].name
+  }
+  spec {
+    # Daily, offset from the Sunday 02:00 raft snapshot so the two never share
+    # the same NFS target at the same moment.
+    schedule                      = "30 3 * * *"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 2
+        template {
+          metadata {}
+          spec {
+            service_account_name = kubernetes_service_account.audit_rotate.metadata[0].name
+            container {
+              name    = "rotate"
+              image   = "bitnami/kubectl:latest"
+              command = ["/bin/sh", "-c"]
+              args = [join("", [
+                "set -eu; ",
+                # 500 MiB. At the observed ~150 MiB/day on the active leader the
+                # live log stays well under 1 GiB between runs, and the 10Gi
+                # volume keeps ~15x headroom as a backstop.
+                "THRESHOLD=524288000; ",
+                "ARCHIVE=/backup/audit; ",
+                "mkdir -p \"$ARCHIVE\"; ",
+                "ROTATED=0; FAILED=0; SKIPPED=0; BYTES=0; ",
+                "for POD in vault-0 vault-1 vault-2; do ",
+                "  SIZE=$(kubectl exec -n vault \"$POD\" -c vault -- stat -c%s /vault/audit/vault-audit.log 2>/dev/null || echo 0); ",
+                "  if [ \"$SIZE\" -le \"$THRESHOLD\" ]; then ",
+                "    echo \"$POD: $SIZE bytes, under threshold, skipping\"; SKIPPED=$((SKIPPED+1)); continue; ",
+                "  fi; ",
+                "  TS=$(date +%Y%m%d-%H%M%S); ",
+                "  OUT=\"$ARCHIVE/vault-audit-$POD-$TS.log.gz\"; ",
+                "  echo \"$POD: $SIZE bytes, rotating -> $OUT\"; ",
+                # Verify the archive is complete and readable BEFORE truncating.
+                # A killed exec or a short NFS write leaves a truncated .gz that
+                # gzip -t rejects, and the live log is then left alone.
+                "  if kubectl exec -n vault \"$POD\" -c vault -- gzip -c /vault/audit/vault-audit.log > \"$OUT\" && gzip -t \"$OUT\"; then ",
+                "    kubectl exec -n vault \"$POD\" -c vault -- truncate -s 0 /vault/audit/vault-audit.log; ",
+                "    GZSIZE=$(stat -c%s \"$OUT\"); BYTES=$((BYTES+GZSIZE)); ROTATED=$((ROTATED+1)); ",
+                "    echo \"$POD: rotated ok, archive $GZSIZE bytes\"; ",
+                "  else ",
+                "    echo \"$POD: ARCHIVE FAILED verification, leaving log intact\"; rm -f \"$OUT\"; FAILED=$((FAILED+1)); ",
+                "  fi; ",
+                "done; ",
+                "find \"$ARCHIVE\" -name '*.log.gz' -mtime +30 -delete || true; ",
+                "KEPT=$(find \"$ARCHIVE\" -name '*.log.gz' | wc -l); ",
+                "echo \"=== rotated=$ROTATED failed=$FAILED skipped=$SKIPPED archives_kept=$KEPT ===\"; ",
+                # curl, not wget: bitnami/kubectl ships curl and has NO wget, so a
+                # wget push would silently no-op and the staleness alert below
+                # would never see a heartbeat. Verified against the live image.
+                "curl -sf --max-time 15 --data-binary \"audit_rotate_rotated $${ROTATED}\naudit_rotate_failed $${FAILED}\naudit_rotate_skipped $${SKIPPED}\naudit_rotate_archive_bytes $${BYTES}\naudit_rotate_archives_kept $${KEPT}\naudit_rotate_last_success_timestamp $(date +%s)\n\" ",
+                "\"http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/vault-audit-rotate\" || true; ",
+                # Surface a verification failure as a job failure so the CronJob
+                # shows up as failed rather than quietly succeeding.
+                "[ \"$FAILED\" -eq 0 ]"
+              ])]
+              volume_mount {
+                mount_path = "/backup"
+                name       = "backup-storage"
+              }
+            }
+            restart_policy = "OnFailure"
+            volume {
+              name = "backup-storage"
+              persistent_volume_claim {
+                claim_name = module.vault_backup_nfs_host.claim_name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 # =============================================================================
 # Kubernetes Auth Method
 # =============================================================================
@@ -631,52 +840,6 @@ resource "vault_kubernetes_auth_backend_role" "terraform_state" {
   token_period                     = 518400 # periodic: auto-renews indefinitely
 }
 
-# --- Hermes Agent Policy & Role (Discord personal assistant) ---
-
-resource "vault_policy" "hermes_agent" {
-  name = "hermes-agent"
-  # Hermes v2 (stacks/hermes-agent; design docs/plans/2026-07-12-hermes-agent-
-  # v2-discord-claude-design.md). Viktor chose broad KV READ for his Discord
-  # assistant, delivered as a DEDICATED policy+role: independently revocable
-  # and no widening of the shared terraform-state role's SA×namespace product.
-  # DELIBERATE differences from terraform-state (adversarial-review findings):
-  #   - NO database/* grants — database/static-creds/pg-terraform-state would
-  #     let a steered agent mutate Terraform state directly, and Hermes never
-  #     runs terragrunt itself (its infra changes go commit → CI).
-  #   - Same denies: Vault's own admin secrets and the breakglass SSH key
-  #     must stay out of reach of an internet-facing (Discord) agent.
-  policy = <<-EOT
-    path "secret/data/*" {
-      capabilities = ["read"]
-    }
-    path "secret/metadata/*" {
-      capabilities = ["read", "list"]
-    }
-    path "secret/data/vault" {
-      capabilities = ["deny"]
-    }
-    path "secret/metadata/vault" {
-      capabilities = ["deny"]
-    }
-    path "secret/data/claude-breakglass/*" {
-      capabilities = ["deny"]
-    }
-    path "secret/metadata/claude-breakglass/*" {
-      capabilities = ["deny"]
-    }
-  EOT
-}
-
-resource "vault_kubernetes_auth_backend_role" "hermes_agent" {
-  backend                          = vault_auth_backend.kubernetes.path
-  role_name                        = "hermes-agent"
-  bound_service_account_names      = ["hermes-agent"]
-  bound_service_account_namespaces = ["hermes-agent"]
-  token_policies                   = [vault_policy.hermes_agent.name]
-  token_ttl                        = 432000 # 5d (staggered: ci=7d, eso=10d, woodpecker=8d, openclaw=9d, terraform-state=6d)
-  token_period                     = 432000 # periodic: auto-renews indefinitely
-}
-
 resource "vault_policy" "vpn_portal" {
   name = "vpn-portal"
   # stacks/vpn-portal — the VPN config portal at vpn.viktorbarzin.me reads its
@@ -744,12 +907,14 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-terraform-state", "pg-payslip-ingest", "pg-job-hunter",
     "pg-lesson-harvester",
     "pg-wealthfolio-sync", "pg-fire-planner",
-    "pg-postiz", "pg-instagram-poster",
+    "pg-instagram-poster",
     "pg-recruiter-responder", "pg-tripit",
     "pg-nextcloud-todos",
     "pg-technitium",
     "pg-goldmane-edges",
     "pg-tasks",
+    "pg-goodreads-sync",
+    "pg-paperless-ngx",
   ]
 
   postgresql {
@@ -828,6 +993,14 @@ resource "vault_database_secret_backend_static_role" "mysql_phpipam" {
 
 # --- PostgreSQL Static Roles ---
 
+resource "vault_database_secret_backend_static_role" "pg_paperless_ngx" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-paperless-ngx"
+  username        = "paperless_ngx"
+  rotation_period = 604800
+}
+
 resource "vault_database_secret_backend_static_role" "pg_trading" {
   backend         = vault_mount.database.path
   db_name         = vault_database_secret_backend_connection.postgresql.name
@@ -860,12 +1033,25 @@ resource "vault_database_secret_backend_static_role" "pg_affine" {
   rotation_period = 604800
 }
 
+# Pinned to a SCHEDULE rather than a period, so the moment of rotation is known
+# (infra#45). woodpecker-server reads its datasource once at boot and exits on a
+# store-setup failure, so every rotation costs an outage bounded by how long the
+# pod holds the dead password. With rotation_period the tick drifted, and the
+# only way to shorten the outage was to poll Vault harder all week. With a
+# schedule, stacks/woodpecker's force-sync CronJob can concentrate that polling
+# into the one hour it matters.
+#
+# Measured before the change, four consecutive ticks in Loki: Fri 09:17:07 (4m41s),
+# 09:16:00 (7m12s), 09:15:57 (7m12s), 09:15:57 (4m0s) — all inside the 09:00 hour,
+# which is what the cron below encodes. rotation_window bounds how long Vault will
+# keep trying if the scheduled attempt fails.
 resource "vault_database_secret_backend_static_role" "pg_woodpecker" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-woodpecker"
-  username        = "woodpecker"
-  rotation_period = 604800
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-woodpecker"
+  username          = "woodpecker"
+  rotation_schedule = "0 9 * * FRI"
+  rotation_window   = 3600
 }
 
 resource "vault_database_secret_backend_static_role" "pg_claude_memory" {
@@ -881,17 +1067,6 @@ resource "vault_database_secret_backend_static_role" "pg_terraform_state" {
   db_name         = vault_database_secret_backend_connection.postgresql.name
   name            = "pg-terraform-state"
   username        = "terraform_state"
-  rotation_period = 604800
-}
-
-# Postiz uses three databases (postiz, temporal, temporal_visibility) all owned
-# by the `postiz` PG role. One static role covers all three. Migrated from the
-# bundled bitnami PG StatefulSet to CNPG on 2026-05-09.
-resource "vault_database_secret_backend_static_role" "pg_postiz" {
-  backend         = vault_mount.database.path
-  db_name         = vault_database_secret_backend_connection.postgresql.name
-  name            = "pg-postiz"
-  username        = "postiz"
   rotation_period = 604800
 }
 
@@ -989,6 +1164,16 @@ resource "vault_database_secret_backend_static_role" "pg_goldmane_edges" {
 # tasks PWA (Reminders-style front-end over Nextcloud CalDAV) — 7-day rotation
 # for the `tasks` CNPG role. Consumed by stacks/tasks via a vault-database
 # ExternalSecret -> TASKS_DB_DSN (remoteRef static-creds/pg-tasks).
+# State for the Goodreads -> Calibre pipeline: one row per shelf item recording
+# what happened to it, so a book is attempted once and misses stay explainable.
+resource "vault_database_secret_backend_static_role" "pg_goodreads_sync" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-goodreads-sync"
+  username        = "goodreads_sync"
+  rotation_period = 604800
+}
+
 resource "vault_database_secret_backend_static_role" "pg_tasks" {
   backend         = vault_mount.database.path
   db_name         = vault_database_secret_backend_connection.postgresql.name
