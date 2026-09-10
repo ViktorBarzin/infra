@@ -116,6 +116,8 @@ func capabilities() []capability {
 				"Two stores: Vaultwarden for logins, HashiCorp Vault/OpenBao kv for infra.",
 				"homelab vault search <vendor>   find it by name first",
 				"homelab vault kv list secret    what infra paths exist",
+				"homelab vault kv get <path>     that secret's key NAMES, no values",
+				"homelab vault kv get <path> --field <key>   one value (or <path>/<key>)",
 				"Before saying \"I have no X access here\", check here and say what you found.",
 				"`which <binary>` returning nothing is not evidence about credentials.",
 			},
