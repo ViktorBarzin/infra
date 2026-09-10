@@ -64,7 +64,8 @@ func vaultHelp() string {
   homelab vault lock              lock / log out the local bw session
 
 ── HashiCorp Vault / OpenBao  (infra secrets; uses your own OIDC vault token) ──
-  homelab vault kv get <path> [--field K]   read an infra KV secret
+  homelab vault kv get <path>               the secret's key names (NO values)
+  homelab vault kv get <path> --field K     one value ('<path>/<key>' works too)
   homelab vault kv list <path>              list sub-paths
   homelab vault kv put <path> <key>         write one key (value via stdin)
 
