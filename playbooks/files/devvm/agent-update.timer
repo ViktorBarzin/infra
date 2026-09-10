@@ -1,0 +1,17 @@
+[Unit]
+Description=Daily refresh of every agent CLI on this box
+
+[Timer]
+# 03:30, where the Claude Code update has always run. It is early enough that
+# the whole sequence, t3's canary rollout included, is done well before anyone
+# is working.
+#
+# The three timers this replaces were staggered (03:39 / 04:59 / 05:58) to keep
+# them off each other's network window. Running in one sequence makes that
+# arrangement unnecessary.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=20min
+
+[Install]
+WantedBy=timers.target

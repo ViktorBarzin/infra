@@ -33,7 +33,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "tandoor"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -72,6 +72,7 @@ module "nfs_tandoor" {
   nfs_server = var.nfs_server
   nfs_path   = "/srv/nfs/tandoor"
   storage    = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "tandoor" {

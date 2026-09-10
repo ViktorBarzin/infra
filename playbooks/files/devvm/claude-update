@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Keep every devvm user's Claude Code at the latest version.
+#
+# Viktor, 2026-09-06: he wants these agent binaries always at latest. Until now
+# that was true for exactly one account. `claude update` ran from wizard's
+# PERSONAL crontab at 03:30 — a hand-installed line in no repository, covering
+# no one else — and the three installs had drifted apart accordingly:
+#
+#   wizard     2.1.263   (the cron)
+#   emo        2.1.259
+#   ancamilea  2.1.183
+#
+# Claude Code's native installer keeps versions per user under
+# ~/.local/share/claude/versions and points ~/.local/bin/claude at one of them,
+# so there is no shared binary to swap and the update has to run AS each user.
+# That is also why this cannot be one `npm install -g` the way codex-update is.
+#
+# The users come from /etc/default/claude-update, written by playbooks/devvm.yml.
+# A user with no native install is skipped rather than treated as an error: not
+# every account on this box runs Claude Code, and breakglass does not.
+#
+# Output goes to the journal. The crontab line this replaces appended to
+# /tmp/claude-update.log, which is a tmpfs here — a log that competes for RAM
+# with the sessions it is logging about, and that vanishes on reboot.
+set -uo pipefail
+export PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+CONF=/etc/default/claude-update
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+CLAUDE_UPDATE_USERS="${CLAUDE_UPDATE_USERS:-}"
+
+log() { printf '%s claude-update: %s\n' "$(date -Is)" "$*"; }
+
+if [ -z "$CLAUDE_UPDATE_USERS" ]; then
+    log "no users configured in $CONF; nothing to do"
+    exit 0
+fi
+
+problems=0
+
+for user in $CLAUDE_UPDATE_USERS; do
+    home="$(getent passwd "$user" | cut -d: -f6)"
+    if [ -z "$home" ] || [ ! -d "$home" ]; then
+        log "$user: no home directory; skipped"
+        continue
+    fi
+
+    bin="$home/.local/bin/claude"
+    if [ ! -x "$bin" ]; then
+        log "$user: no native Claude Code install; skipped"
+        continue
+    fi
+
+    # `claude --version` prints "<version> (Claude Code)"; the first field is
+    # the part worth comparing.
+    before="$(runuser -l "$user" -c "$bin --version" 2>/dev/null | awk '{print $1}')"
+
+    # -l so the update runs under the user's own profile and PATH, which is what
+    # the native installer expects when it rewrites ~/.local/bin/claude.
+    if ! runuser -l "$user" -c "$bin update" >/dev/null 2>&1; then
+        log "$user: update failed, still on ${before:-unknown}"
+        problems=$((problems + 1))
+        continue
+    fi
+
+    after="$(runuser -l "$user" -c "$bin --version" 2>/dev/null | awk '{print $1}')"
+
+    if [ "$before" = "$after" ]; then
+        log "$user: already at ${after:-unknown}"
+    else
+        log "$user: updated ${before:-unknown} -> ${after:-unknown}"
+    fi
+done
+
+if [ "$problems" -gt 0 ]; then
+    log "$problems user(s) failed to update"
+    exit 1
+fi

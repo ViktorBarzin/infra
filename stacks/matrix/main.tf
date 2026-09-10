@@ -36,7 +36,7 @@ resource "kubernetes_manifest" "secrets_external_secret" {
       namespace = "matrix"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

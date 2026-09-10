@@ -13,8 +13,8 @@ dependency "vault" {
 }
 
 # llama-cpp: in-cluster vision-LLM server. One Deployment of
-# `mostlygeek/llama-swap:cuda` fronts three models (qwen3vl-8b,
-# minicpm-v-4-5, qwen3vl-4b) at a single OpenAI-compat /v1 endpoint
+# `mostlygeek/llama-swap:cuda` fronts two models (qwen3vl-8b for
+# vision, qwen3-8b for text) at a single OpenAI-compat /v1 endpoint
 # on Service `llama-swap`. llama-swap loads/unloads per-model
 # llama-server subprocesses on demand (idle TTL 10 min). The T4 is
 # allocated wholly to this pod; immich-ml must be scaled to 0 during

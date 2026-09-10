@@ -17,7 +17,29 @@ All services storing sensitive data were migrated to `proxmox-lvm-encrypted` on 
 - **HDD NFS**: `/srv/nfs` on ext4 LV `pve/nfs-data` (4TB) — bulk media and backup targets
 - **SSD NFS**: `/srv/nfs-ssd` on ext4 LV `ssd/nfs-ssd-data` (100GB) — high-performance data (Immich ML)
 
-`StorageClass: nfs-truenas` is the **only** NFS StorageClass and points to the Proxmox host. The name is historical — it was retained because StorageClass names are immutable on bound PVs (48 PVs reference it) and renaming would force mass PV churn across the cluster. (A short-lived parallel `nfs-proxmox` StorageClass was removed on 2026-04-25, commit 484b4c71, during the vault NFS-hostile migration.)
+Three NFS StorageClasses exist, all served by the nfs-csi driver and all `reclaimPolicy: Retain`:
+
+- **`nfs-pve`** — the Proxmox host at `192.168.1.127`. Use this for new volumes.
+- **`nfs-synology`** — the Synology NAS at `192.168.1.13`.
+- **`nfs-truenas`** — the historical name, also pointing at the Proxmox host. TrueNAS was decommissioned on 2026-04-13, so this name no longer describes where the data is.
+
+`nfs-pve` and `nfs-synology` were added on 2026-08-31 so a volume's class says which server holds it. Both names work, and volumes move across one stack at a time rather than in a single pass: a PVC's `storageClassName` is immutable, so terraform destroys and recreates the PVC to change it.
+
+Counts on 2026-09-03: **67** on `nfs-pve`, **8** on `nfs-truenas`, 1 on `nfs-synology`. They were 15 / 59 / 1 two days earlier, so the bulk moved on 2026-09-02 and 09-03. Any number written here goes stale while the migration runs, so read it live rather than trusting the line:
+
+```bash
+kubectl get pv -o jsonpath='{range .items[*]}{.spec.storageClassName}{"\n"}{end}' | sort | uniq -c
+```
+
+The eight still on `nfs-truenas` are `dbaas/dbaas-mysql-backup-host`, `dbaas/dbaas-postgresql-backup-host`, `headscale/headscale-data-host`, `immich/immich-postgresql-data-host`, `vault/vault-backup-host`, `ytdlp/ytdlp-data-host`, `ytdlp/ytdlp-highlights-data-host`, and one unbound 2Gi PV with no `claimRef`. Two of those stacks are Tier 0 (`dbaas`, `vault`), where the destroy-recreate costs a database or Vault restart, so they are worth scheduling rather than sweeping up with the rest. Tracked as `code-yizt`.
+
+Moving a volume copies no data — the PV keeps its `volumeHandle`, server and share. Two things stall the apply if unhandled, both documented in `modules/kubernetes/nfs_volume/main.tf`: the Retain PV keeps the deleted claim's `claimRef` so the new PVC cannot bind until it is cleared, and a Succeeded CronJob pod still holds `kubernetes.io/pvc-protection` so the old PVC stays in `Terminating`.
+
+A third one is quieter and was found on openclaw on 2026-09-03. When the `claimRef` is not cleared, the apply does not fail fast: it sits for about five minutes waiting for the PVC to bind and then errors with `client rate limiter Wait returned an error: context deadline exceeded`. That timed-out create leaves the PVC **tainted** in Terraform state, so the next plan reads `2 to add, 0 to change, 2 to destroy` and the next CI apply of that stack would repeat the whole outage unattended. After clearing the `claimRef` by hand, run `scripts/tg untaint <module>.kubernetes_persistent_volume_claim.this` for each and confirm the plan reports `No changes`.
+
+The workload has to be scaled to 0 for any of this: `pvc-protection` holds the delete open while a pod mounts the volume, and a PVC with a `deletionTimestamp` cannot be un-deleted, so a stack left half-migrated fails at whatever moment its pod next restarts. Fingerprint the data first (`find <mount> -type f | wc -l` and `du -sb <mount>`) and compare after — openclaw came back byte-identical on `/tools` and 7078 files on both sides of `/workspace`.
+
+(A short-lived parallel `nfs-proxmox` StorageClass was removed on 2026-04-25, commit 484b4c71, during the vault NFS-hostile migration.)
 
 **Backup storage (sda)**: 1.1TB RAID1 SAS disk, VG `backup`, LV `data` (ext4), mounted at `/mnt/backup` on PVE host. Dedicated backup disk for weekly PVC file backups, auto SQLite backups, pfSense backups, and PVE config. NFS data syncs directly to Synology via inotify change tracking (not stored on sda). Independent of live storage (sdc).
 
@@ -74,7 +96,7 @@ graph TB
     end
 
     subgraph K8s["Kubernetes Cluster"]
-        CSI_NFS["nfs-csi driver<br/>StorageClass: nfs-truenas (historical name)<br/>soft,timeo=30,retrans=3"]
+        CSI_NFS["nfs-csi driver<br/>StorageClasses: nfs-pve, nfs-synology,<br/>nfs-truenas (historical)<br/>soft,timeo=30,retrans=3"]
         CSI_PVE["Proxmox CSI plugin<br/>StorageClass: proxmox-lvm<br/>StorageClass: proxmox-lvm-encrypted"]
 
         NFS_PV["NFS PersistentVolumes<br/>RWX, ~100 volumes"]
@@ -112,7 +134,9 @@ graph TB
 | Proxmox NFS (HDD) | LV `pve/nfs-data`, 4TB ext4 | 192.168.1.127:/srv/nfs | Bulk NFS data for all services |
 | Proxmox NFS (SSD) | LV `ssd/nfs-ssd-data`, 100GB ext4 | 192.168.1.127:/srv/nfs-ssd | High-performance data (Immich ML) |
 | nfs-csi | Helm chart | Namespace: nfs-csi | NFS CSI driver |
-| StorageClass `nfs-truenas` | RWX, soft mount | Cluster-wide | The only NFS StorageClass — **historical name**, points to the Proxmox host. Kept because SC names are immutable on 48 bound PVs. (Sibling `nfs-proxmox` SC removed 2026-04-25, commit 484b4c71.) |
+| StorageClass `nfs-pve` | RWX, soft mount | Cluster-wide | Proxmox host at 192.168.1.127. **Use this for new volumes.** Added 2026-08-31; 67 PVs on 2026-09-03. |
+| StorageClass `nfs-synology` | RWX, soft mount | Cluster-wide | Synology NAS at 192.168.1.13. Added 2026-08-31; 1 PV on 2026-09-03. |
+| StorageClass `nfs-truenas` | RWX, soft mount | Cluster-wide | **Historical name**, points to the Proxmox host. 8 PVs on 2026-09-03, down from 59 on 09-01, migrating to `nfs-pve` per stack. (Sibling `nfs-proxmox` SC removed 2026-04-25, commit 484b4c71.) |
 | TF module `nfs_volume` | `modules/kubernetes/nfs_volume/` | Infra repo | Static NFS PV/PVC factory |
 | ~~TrueNAS VM~~ | **DECOMMISSIONED 2026-04-13** | Was VM 9000 at 10.0.10.15 | Replaced by Proxmox NFS. VM still in stopped state pending deletion. |
 | ~~democratic-csi-iscsi~~ | **REMOVED** | Was namespace: iscsi-csi | Replaced by Proxmox CSI (2026-04-02) |
@@ -139,7 +163,7 @@ graph TB
 
 **Note**: Some legacy PVs still reference `/mnt/main/<service>` paths. These work via compatibility symlinks/bind-mounts on the Proxmox host. New PVs should use `/srv/nfs/<service>` or `/srv/nfs-ssd/<service>`.
 
-**CRITICAL**: Never use inline `nfs {}` blocks in pod specs — they default to `hard,timeo=600` which causes 10-minute hangs on network issues. Always use the `nfs-truenas` StorageClass (historical name; it points at the Proxmox host) via PVCs.
+**CRITICAL**: Never use inline `nfs {}` blocks in pod specs — they default to `hard,timeo=600` which causes 10-minute hangs on network issues. Always go through a PVC on one of the NFS StorageClasses — `nfs-pve` for the Proxmox host, `nfs-synology` for the NAS.
 
 ### Block Storage Flow (Proxmox CSI) — NEW
 
@@ -242,7 +266,7 @@ Levers (in order of leverage-per-effort):
 |------|---------|
 | `/etc/exports` (on Proxmox host) | NFS export configuration for all service shares |
 | `stacks/proxmox-csi/` | Terraform stack for Proxmox CSI plugin + StorageClass |
-| `stacks/nfs-csi/` | NFS CSI driver + StorageClasses (`nfs-proxmox` + legacy `nfs-truenas`) |
+| `stacks/nfs-csi/` | NFS CSI driver + StorageClasses (`nfs-pve`, `nfs-synology`, legacy `nfs-truenas`) |
 | `modules/kubernetes/nfs_volume/` | Reusable module for static NFS PV/PVC creation |
 | `config.tfvars` | Variable `nfs_server = "192.168.1.127"` shared by all stacks |
 
@@ -259,7 +283,7 @@ Levers (in order of leverage-per-effort):
 ### Terraform Stacks
 
 - **`stacks/proxmox-csi/`**: Deploys Proxmox CSI plugin + `proxmox-lvm` and `proxmox-lvm-encrypted` StorageClasses + ExternalSecret for encryption passphrase + node topology labels
-- **`stacks/nfs-csi/`**: Deploys NFS CSI driver + StorageClasses for Proxmox NFS
+- **`stacks/nfs-csi/`**: Deploys NFS CSI driver + the `nfs-pve`, `nfs-synology` and legacy `nfs-truenas` StorageClasses
 - All application stacks reference NFS volumes via `module "nfs_<name>"` calls
 - Database PVCs use `storageClass: proxmox-lvm` (CNPG, MySQL Helm VCT, Redis Helm, standalone PVCs)
 

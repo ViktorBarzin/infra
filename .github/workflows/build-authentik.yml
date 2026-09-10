@@ -1,16 +1,20 @@
 name: Build Custom Authentik Image
 
 # ADR-0002: infra-owned image built off-infra on GHA → ghcr.
-# Thin SLOW-1a overlay over the official authentik server (narrows the login
-# identification stage's select_subclasses() to the login-capable source subtypes;
-# see stacks/authentik/Dockerfile). Rebuild only when the Dockerfile changes — on
-# every authentik bump, edit the FROM tag + the patchN suffix here + the image tag
-# in modules/authentik/values.yaml together.
+# Thin old-browser overlay over the official authentik server: serves authentik's
+# no-JS Simplified Flow Executor to old WebKit / iOS<=16.3 instead of a blank
+# login (see stacks/authentik/Dockerfile). The overlay's other patch, SLOW-1a,
+# went upstream and shipped in 2026.8.1, so the whole overlay is now
+# patch-compat-sfe.py. On every authentik bump, edit the FROM tag + the patchN
+# suffix here + the image tag in modules/authentik/values.yaml together.
 on:
   push:
     branches: [master]
     paths:
+      # BOTH files: the overlay is now the patch script, so a script-only edit
+      # must rebuild too (it previously did not, and needed a workflow_dispatch).
       - 'stacks/authentik/Dockerfile'
+      - 'stacks/authentik/patch-compat-sfe.py'
   workflow_dispatch: {}
 
 permissions:
@@ -35,5 +39,5 @@ jobs:
           provenance: false
           push: true
           tags: |
-            ghcr.io/viktorbarzin/authentik-server:2026.8.0-patch3
+            ghcr.io/viktorbarzin/authentik-server:2026.8.1-patch4
             ghcr.io/viktorbarzin/authentik-server:latest

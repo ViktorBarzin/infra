@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily refresh of the codex CLI
+
+[Timer]
+# 05:45, after t3 at 05:00 and the skill refresh at 05:30, so the three
+# unattended updaters on this box do not contend for the same network window.
+OnCalendar=*-*-* 05:45:00
+Persistent=true
+RandomizedDelaySec=20min
+
+[Install]
+WantedBy=timers.target

@@ -17,7 +17,7 @@
 # This script covers the same data the cheap way. rsync only reads what changed,
 # and `--link-dest` makes each generation a hardlink farm against the previous
 # one, so N retained days cost ~1x plus the deltas. With the exclusions below the
-# tracked set is ~33 GB (vs ~116 GiB raw) — smaller than ONE vzdump archive, so
+# tracked set is ~29 GB (vs ~116 GiB raw) — smaller than ONE vzdump archive, so
 # this both frees space on sda and gives per-file restore granularity, which is
 # far more useful for a dev box than a whole-disk image.
 #
@@ -69,11 +69,32 @@ REMOTE_PATH="/"
 # real work costs work. Notably NOT excluded: ~/.ssh, ~/.config, ~/.claude
 # (agent session history), ~/.gnupg, and ~/code (git repos whose worktrees carry
 # uncommitted work and whose monorepo root has no remote at all).
+#
+# The rule needs the patterns to actually match, and until 2026-09-03 several
+# did not, so ~8 GB of regenerable content was being copied every night.
+# `**/.venv/` and `**/venv/` were meant to catch virtualenvs but missed
+# ~/.virtualenvs and ~/bg-bakeoff-venv, and four SDK or plugin caches had no
+# pattern at all: ~/.terraform.d (provider plugin cache), ~/android-sdk,
+# ~/.dotnet and ~/google-cloud-sdk. `/*/go/pkg/mod/` also only caught part of
+# ~/go, so the whole tree goes. Each of them is rebuilt by re-running an
+# installer or `terraform init`.
+#
+# Measured with `rsync -an --stats` over the live /home on 2026-09-03:
+#   before  607,968 files  37.81 GB
+#   after   446,398 files  29.72 GB
+#
+# What stays, and why: ~/code holds the only copy of two repos with no remote
+# (agent-conductor, cloud) plus unpushed commits and uncommitted work in others.
+# The 39 repos that DO live on self-hosted Forgejo are covered a second way, by
+# the Forgejo PVC backup in /mnt/backup/pvc-data — if that ever stops, this
+# home mirror becomes their only second copy and the trade-off changes.
 EXCLUDES=(
     --exclude='/*/.cache/'
     --exclude='**/node_modules/'
     --exclude='**/.venv/'
     --exclude='**/venv/'
+    --exclude='/*/.virtualenvs/'
+    --exclude='**/*-venv/'
     --exclude='**/__pycache__/'
     --exclude='**/.mypy_cache/'
     --exclude='**/.pytest_cache/'
@@ -86,7 +107,7 @@ EXCLUDES=(
     --exclude='/*/.yarn/cache/'
     --exclude='/*/.pnpm-store/'
     --exclude='/*/.bun/install/cache/'
-    --exclude='/*/go/pkg/mod/'
+    --exclude='/*/go/'
     --exclude='/*/.local/share/Trash/'
     --exclude='/*/.local/share/containers/'
     --exclude='/*/.vscode-server/'
@@ -94,7 +115,11 @@ EXCLUDES=(
     --exclude='/*/.ollama/'
     --exclude='/*/snap/'
     --exclude='**/.terraform/'
+    --exclude='/*/.terraform.d/'
     --exclude='/*/.gradle/'
+    --exclude='/*/android-sdk/'
+    --exclude='/*/.dotnet/'
+    --exclude='/*/google-cloud-sdk/'
     --exclude='/*/.m2/repository/'
     --exclude='**/.next/'
     --exclude='**/.nuxt/'

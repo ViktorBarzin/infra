@@ -161,8 +161,11 @@ resource "kubernetes_service" "k8s_portal" {
 }
 
 module "ingress" {
-  source          = "../../../../modules/kubernetes/ingress_factory"
-  dns_type        = "non-proxied"
+  source = "../../../../modules/kubernetes/ingress_factory"
+  # ADR-0026 / code-6m20: auth-grey host, no recorded reason for the direct
+  # path. Small admin UI behind Authentik forward-auth. Proxied rides the
+  # zone-wide wildcard CNAME (ADR-0021) and creates no A/AAAA record.
+  dns_type        = "proxied"
   namespace       = kubernetes_namespace.k8s_portal.metadata[0].name
   name            = "k8s-portal"
   tls_secret_name = var.tls_secret_name

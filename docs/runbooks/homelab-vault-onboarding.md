@@ -28,9 +28,12 @@ homelab vault code <name>       current TOTP code
 homelab vault lock              lock / log out the local bw session
 
 # HashiCorp Vault / OpenBao (infra secrets; uses your own OIDC token)
-homelab vault kv get <path> [--field K]   read an infra KV secret
-homelab vault kv list <path>              list sub-paths
-homelab vault kv put <path> <key>         write one key (value via stdin; merges)
+homelab vault kv get <path>                the secret's key names (NO values)
+homelab vault kv get <path> --field K      one value
+homelab vault kv get <path>/<key>          one value, addressed as a path
+homelab vault kv get <path> --reveal-all   every value (deliberate, warns on stderr)
+homelab vault kv list <path>               list sub-paths
+homelab vault kv put <path> <key>          write one key (value via stdin; merges)
 ```
 
 ## How auth works (why a non-admin can use it)

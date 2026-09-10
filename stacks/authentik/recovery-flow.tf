@@ -1,0 +1,212 @@
+# Self-service account recovery (infra#87, decided 2026-09-02).
+#
+# Until now there was NO recovery flow at all — `recovery_flow` on
+# default-authentication-identification was null, so the login page carried no
+# way back and every lost credential was a manual fix. That is fine for the six
+# Google-backed accounts, which recover through Google, and not fine for the
+# three local ones: anca.r.cristian10 holds a single iCloud Keychain passkey and
+# nothing else.
+#
+# The chain ends in a NEW PASSKEY, not a password. Nothing here signs in with a
+# password by choice (6 Google accounts, 4 registered passkeys), and a recovery
+# path that mints a password would quietly add a second, permanent way in.
+# Someone recovering is on a new device anyway, so enrolling a fresh
+# authenticator is the natural act rather than an extra step.
+#
+#   recovery-identification
+#     -> [deny stage, included only for superusers]
+#     -> recovery-email -> passkey setup -> login
+#
+# SUPERUSERS ARE DENIED, and that is load-bearing rather than tidiness. akadmin
+# is a superuser in kubernetes-admins + Home Server Admins whose address
+# akadmin@viktorbarzin.me has no alias, so it falls to the @viktorbarzin.me
+# catch-all and lands in spam@viktorbarzin.me — a mailbox whose credential is
+# referenced by four stacks. Without this policy, publishing a recovery flow
+# would CREATE a path from that shared mailbox to cluster admin. Viktor's own
+# account is also a superuser, but its address is his Google address, so email
+# access there is already equivalent to Google login and adds nothing new.
+# Recovering an admin account stays a manual act, deliberately.
+
+# Its own identification stage. default-authentication-identification cannot be
+# reused: it carries the three social sources and a password stage, which in a
+# recovery context would offer routes that defeat the point.
+resource "authentik_stage_identification" "recovery_identification" {
+  name        = "recovery-identification"
+  user_fields = ["email", "username"]
+  # No password_stage, no sources — identify, then prove it by email.
+  # pretend_user_exists matches the two existing identification stages, so the
+  # form cannot be used to discover which addresses have accounts.
+  pretend_user_exists = true
+}
+
+# token_expiry is now SET, closing the gap noted when this shipped. It was left
+# unmanaged because the provider was pinned ~> 2024.10 (resolving 2024.12.1),
+# which types the attribute as a NUMBER and always sends one, and the server
+# rejects that outright:
+#   POST /stages/email/ -> 400
+#   {"token_expiry":["30 is not in the correct format of 'hours=3;minutes=1'."]}
+# The floor moved to ~> 2025.8 the same day for an unrelated reason, and that
+# resolves 2025.12.1 where it is a string — so authentik's minutes=30 default no
+# longer has to stand in for the hour we actually wanted.
+resource "authentik_stage_email" "recovery_email" {
+  name                     = "recovery-email"
+  use_global_settings      = true
+  activate_user_on_success = false
+  token_expiry             = "hours=1"
+  subject                  = "Recover your access"
+  # KNOWN COSMETIC GAP: neither stock template fits a passkey recovery.
+  # password_reset.html says "requested to change your password ... set a new
+  # password" with a "Reset Password" button, and account_confirmation.html
+  # greets the person with "Welcome!" as though the account were new. This one
+  # is the better of the two: right intent (you asked to regain access, link
+  # valid for N minutes), and it carries the "if you did not request this,
+  # ignore this email" line that a recovery mail needs. The wrong noun is the
+  # cost. Fixing it properly means baking a custom template into the existing
+  # overlay image (stacks/authentik/Dockerfile already exists for the two
+  # runtime patches) and bumping the pinned tag — an auth-image rollout for an
+  # email's wording, deliberately not bundled here.
+  template = "email/password_reset.html"
+}
+
+# A dedicated stage rather than reusing signup-passkey-setup. The two flows can
+# legitimately want different settings later — recovery may want a laxer
+# user_verification if people struggle on a new device — and sharing one object
+# would make that change silently affect signup too.
+resource "authentik_stage_authenticator_webauthn" "recovery_passkey" {
+  name                     = "recovery-passkey-setup"
+  user_verification        = "required"
+  resident_key_requirement = "required"
+  # configure_flow unset: the stage runs INLINE in this flow rather than
+  # sending the user off to a separate configuration flow.
+}
+
+resource "authentik_flow" "recovery" {
+  # depends_on is the structural fix for what went wrong on 2026-09-02. The
+  # first apply failed while creating the email stage, but terraform had already
+  # created the flow and three of its four bindings — leaving a LIVE recovery
+  # flow that ran identification -> register a passkey -> log in, with no email
+  # proof at all. Anyone who knew a non-superuser's address could have taken
+  # over that account. It existed for 3m41s; nobody reached it (one request to
+  # the URL, from our own devvm) and no WebAuthn credential was created.
+  #
+  # Terraform cannot apply this atomically, so the flow must be the LAST thing
+  # created. With every stage listed here, a stage failure means the flow is
+  # never created either, and the bindings depend on the flow — so a partial
+  # apply leaves unreferenced stage objects, which grant nothing, instead of a
+  # reachable half-built flow. A flow is reachable at its slug URL whether or
+  # not anything links to it, so "not wired up yet" is NOT a safety property.
+  depends_on = [
+    authentik_stage_identification.recovery_identification,
+    authentik_stage_email.recovery_email,
+    authentik_stage_authenticator_webauthn.recovery_passkey,
+    authentik_stage_deny.recovery_deny_superuser,
+    data.authentik_stage.default_authentication_login,
+  ]
+
+  name           = "recovery"
+  slug           = "recovery"
+  title          = "Recover your access"
+  designation    = "recovery"
+  authentication = "require_unauthenticated"
+}
+
+resource "authentik_flow_stage_binding" "recovery_identification" {
+  target = authentik_flow.recovery.uuid
+  stage  = authentik_stage_identification.recovery_identification.id
+  order  = 10
+  # re_evaluate_policies keeps the superuser deny below effective on the
+  # execution pass, once the identification stage has resolved a pending user —
+  # on the plan pass there is no user to judge yet.
+  evaluate_on_plan     = true
+  re_evaluate_policies = true
+}
+
+resource "authentik_flow_stage_binding" "recovery_email" {
+  target               = authentik_flow.recovery.uuid
+  stage                = authentik_stage_email.recovery_email.id
+  order                = 20
+  evaluate_on_plan     = true
+  re_evaluate_policies = true
+}
+
+# After the email token, before login: the credential row is a foreign key to a
+# user, and the pending user is resolved by then.
+resource "authentik_flow_stage_binding" "recovery_passkey" {
+  target               = authentik_flow.recovery.uuid
+  stage                = authentik_stage_authenticator_webauthn.recovery_passkey.id
+  order                = 30
+  evaluate_on_plan     = true
+  re_evaluate_policies = false
+}
+
+resource "authentik_flow_stage_binding" "recovery_login" {
+  target               = authentik_flow.recovery.uuid
+  stage                = data.authentik_stage.default_authentication_login.id
+  order                = 40
+  evaluate_on_plan     = false
+  re_evaluate_policies = true
+}
+
+data "authentik_stage" "default_authentication_login" {
+  name = "default-authentication-login"
+}
+
+# Refuse recovery for a superuser. See the header for why this is the control
+# that makes the flow safe to publish at all.
+#
+# THE LOGIC IS INVERTED ON PURPOSE, and getting that wrong is what made the
+# first attempt useless. Two facts force the shape:
+#
+#   1. A policy bound to the FLOW is evaluated when the flow is ENTERED, before
+#      any stage runs — so `pending_user` is not set yet and the policy cannot
+#      see who is recovering. Measured 2026-09-02: bound to the flow, this
+#      policy returned passing=true for akadmin, i.e. it never fired.
+#   2. A policy bound to a STAGE decides whether that stage is INCLUDED, not
+#      whether the flow is denied. So attaching a "deny superusers" policy to
+#      the email stage would SKIP email verification for them — turning the
+#      control into the very bypass it exists to prevent.
+#
+# Hence a Deny stage that is included only WHEN the user is a superuser. The
+# policy returns True for exactly the people who must be stopped.
+resource "authentik_stage_deny" "recovery_deny_superuser" {
+  name         = "recovery-deny-superuser"
+  deny_message = "Account recovery is not available for administrator accounts. Please ask the administrator directly."
+}
+
+resource "authentik_policy_expression" "target_is_superuser" {
+  name = "recovery-target-is-superuser"
+  # pending_user is the account the identification stage resolved. Absent means
+  # nobody has been identified yet, so there is nobody to stop — the email stage
+  # cannot do anything without a user either way.
+  expression = <<-EOT
+    user = request.context.get("pending_user")
+    if user is None:
+      return False
+    if not getattr(user, "is_authenticated", False):
+      return False
+    return bool(getattr(user, "is_superuser", False))
+  EOT
+}
+
+resource "authentik_flow_stage_binding" "recovery_deny_superuser" {
+  target = authentik_flow.recovery.uuid
+  stage  = authentik_stage_deny.recovery_deny_superuser.id
+  order  = 15
+  # evaluate_on_plan MUST be false. At plan time pending_user does not exist, so
+  # the policy would return False and the stage would be dropped from the plan
+  # entirely — and re-evaluation cannot add back a stage that was never planned.
+  # False keeps it in the plan unconditionally; re_evaluate_policies then judges
+  # it at execution, once identification has resolved the user.
+  evaluate_on_plan     = false
+  re_evaluate_policies = true
+}
+
+resource "authentik_policy_binding" "superuser_on_deny_stage" {
+  target = authentik_flow_stage_binding.recovery_deny_superuser.id
+  policy = authentik_policy_expression.target_is_superuser.id
+  order  = 0
+  # An erroring policy must not silently let a superuser through, so a failure
+  # counts as "include the deny stage".
+  failure_result = true
+  enabled        = true
+}
