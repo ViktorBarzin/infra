@@ -48,9 +48,24 @@ If (2) hangs and (4) shows repeated msgpack errors → stuck leader.
 
 ## 1. Identify the stuck pod precisely
 
+Ask Prometheus first. Since 2026-09-03 each pod exposes telemetry on its
+own metrics-only listener (port 8202, `stacks/vault/main.tf`) and the
+`vault` scrape job collects all three separately, so the leader and its
+commit index are one query away:
+
 ```sh
-# Find the pod whose vault_core_active would be 1 if it were scraping
-# (currently no telemetry — use logs as proxy until telemetry is enabled).
+# Which pod thinks it is the leader, and is its commit index moving?
+homelab metrics query 'vault_core_active'
+homelab metrics query 'rate(vault_raft_storage_stats_applied_index[5m])'
+```
+
+A pod with `vault_core_active=1` and a flat `vault_raft_last_index_gauge`
+is the stuck leader — that pairing is what `VaultRaftLeaderStuck` alerts on.
+(`vault_raft_last_index_gauge` does not exist in Vault 1.18.5; the applied
+index is the one that moves on every committed entry.)
+If Prometheus itself is unreachable, fall back to reading the logs:
+
+```sh
 for p in vault-0 vault-1 vault-2; do
   echo "=== $p ==="
   kubectl logs -n vault $p -c vault --tail=5 2>&1 | head -5

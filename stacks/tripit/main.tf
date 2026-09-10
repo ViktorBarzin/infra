@@ -147,6 +147,14 @@ locals {
     # that rollout — same image-first hold-order as FARE/CALENDAR/RESEARCH above.
     LODGING_PROVIDER = "playwright"
     LODGING_CDP_URL  = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+    # Anonymous Booking.com property SEARCH (GET /api/lodging/search, `tripit
+    # lodging search`) — distinct from LODGING_PROVIDER above, which prices ONE
+    # representative area rate. Calls Booking.com's own FullSearch GraphQL over
+    # plain HTTP: no browser, no cookies, no credentials, so there is nothing to
+    # configure but the switch. Defaults OFF in the app so tests and local dev
+    # never call out; prod opts in here. Stays SIGNED OUT deliberately — prices
+    # are public (geniusLevel 0) and no account is ever attached.
+    LODGING_SEARCH_ENABLED = "1"
     # Calendar-conflict column (tripit issue #19): read the owner's Nextcloud
     # calendar over CalDAV to flag date clashes on a planning Option. Base +
     # user are non-secret; the app-password arrives via tripit-secrets. Same
@@ -364,13 +372,14 @@ resource "kubernetes_manifest" "db_external_secret" {
 # same document store, hence RWX). Lives under /srv/nfs on the Proxmox host,
 # so the daily-backup pipeline auto-discovers and versions it.
 module "documents_nfs" {
-  source       = "../../modules/kubernetes/nfs_volume"
-  name         = "tripit-documents-host"
-  namespace    = kubernetes_namespace.tripit.metadata[0].name
-  nfs_server   = var.nfs_server
-  nfs_path     = "/srv/nfs/tripit-documents"
-  storage      = "5Gi"
-  access_modes = ["ReadWriteMany"]
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "tripit-documents-host"
+  namespace          = kubernetes_namespace.tripit.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/tripit-documents"
+  storage            = "5Gi"
+  access_modes       = ["ReadWriteMany"]
+  storage_class_name = "nfs-pve"
 }
 
 # RWO encrypted PVC for the PERSONAL document vault (passports, IDs). Separate
@@ -416,10 +425,12 @@ locals {
     LLM_MODE     = "llamacpp"
     LLM_ENDPOINT = "http://llama-swap.llama-cpp.svc.cluster.local:8080"
     # Text extraction needs the 8B model to retain flight numbers. qwen3-8b
-    # crashes on the current CUDA image, while qwen3vl-8b is proven live;
-    # attachments stay on the smaller vision model (ADR-0033 fallback remains).
+    # crashes on the current CUDA image, while qwen3vl-8b is proven live.
+    # Attachments share it: qwen3vl-4b is retired, and both VLMs were served
+    # with the same 3072-token context, so this is token-neutral and stops
+    # mail ingest swapping models within one email (ADR-0033 fallback remains).
     LLM_MODEL           = "qwen3vl-8b"
-    LLM_VISION_MODEL    = "qwen3vl-4b"
+    LLM_VISION_MODEL    = "qwen3vl-8b"
     MAIL_INGEST_ENABLED = "true"
     # Forwarded Reels require POI-level Nominatim, isolated from the global
     # city-level OpenMeteo geocoder used by weather/tours (ADR-0031).
@@ -733,10 +744,21 @@ resource "kubernetes_deployment" "mail_listener" {
 # the jobs stay identical except for schedule, subcommand, and the suspend flag.
 locals {
   cronjobs = {
-    # Hourly (not */30) to stay within AeroDataBox's free 600-unit/month quota:
-    # the sweep spends 1 unit per soon-departing flight per run. On-demand reads
-    # (the segment status endpoint) still refresh on a 30-min staleness window
-    # when the user opens the app, so this only paces background change-detection.
+    # Hourly, which is the fastest tier flight_poller.py will actually spend a
+    # call on. The sweep decides per flight: hourly inside 24h of departure,
+    # two-hourly out to the 48h POLL_HORIZON, nothing beyond it. So the schedule
+    # is the carrier and the pacing in the code is the bill.
+    #
+    # An AeroDataBox call costs 2 units, not 1 — the adapter asks for
+    # withLocation and the position data is billed on top. Measured on the live
+    # plan counter 2026-09-04: 300 requests had spent all 600 units. A flight
+    # therefore costs 36 calls = 72 units end to end, so Viktor's measured rate
+    # (26 flights over the 12 months to 2026-09, peak 5 in a month) spends 360
+    # units in a peak month, 60% of the 600-unit BASIC plan, and only breaks past
+    # ~8 flights in one month. Sweeps with nothing due make no call at all, so
+    # idle weeks cost nothing. Polling every in-window flight on every run, which
+    # is what ran before, cost ~720 units for a single flight and hit 100% of the
+    # quota on 2026-09-04.
     poll-flights = {
       schedule  = "0 * * * *"
       command   = ["python", "-m", "tripit_api", "poll-flights"]
@@ -996,6 +1018,7 @@ module "ingress" {
     "traefik-tripit-rate-limit@kubernetescrd",
   ]
   extra_annotations = {
+    "gethomepage.dev/description" = "Self-hosted travel itinerary planner"
     "gethomepage.dev/icon" = "mdi-airplane-takeoff"
     "gethomepage.dev/name" = "TripIt"
   }

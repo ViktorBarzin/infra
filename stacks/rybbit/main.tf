@@ -36,7 +36,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "rybbit"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

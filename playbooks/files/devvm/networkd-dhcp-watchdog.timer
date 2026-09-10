@@ -1,0 +1,11 @@
+[Unit]
+Description=Run networkd DHCP watchdog every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=networkd-dhcp-watchdog.service
+
+[Install]
+WantedBy=timers.target

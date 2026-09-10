@@ -194,3 +194,88 @@ be resolved to its real tool. Diagnostic-only; the mitigation lands in the
 PR that removes the snapshotter.
 Runbook: `../runbooks/t3-cgroup-snap.md`; design:
 `../plans/2026-07-09-t3-cgroup-snap-design.md`.
+
+## Addendum 4 (2026-08-16): the balloon identified, and the backstop was picking the wrong victim
+
+Two findings, one root and one consequence. Design + full evidence:
+`../plans/2026-08-16-devvm-pane-memory-cap.md`.
+
+**The `Comm='2.1.20x'` balloon of addendum 3 is a claude-spawned search tool.**
+`t3-cgroup-snap` — deployed for exactly this question — resolved it: those
+processes have `exe=/home/<user>/.local/share/claude/versions/<ver>` with an argv
+of `ugrep`, `bfs` or `rg`. Claude Code spawns its search tools through its own
+binary, so the child keeps claude's `exe` and the kernel records `comm` as the
+VERSION STRING. Across all rotations every version-comm sample is a search tool
+(114x ugrep, 25x bfs, 3x rg) and none is a session; one grew 10.1 -> 11.5 GiB in
+33 s on 2026-08-14. This is the same runaway class as the 10G `ugrep` that
+motivated this post-mortem — it never stopped, it was just unattributable.
+
+**`ugrep` has been in earlyoom's `--prefer` since this document was written and
+has never once matched**, because the process the kernel sees is called
+`2.1.232`. Meanwhile `claude` WAS in that list, and `--prefer` adds 300 to
+oom_score. Every tmux-hosted process also inherits `oom_score_adj=200`
+(systemd's `DefaultOOMScoreAdjust` on the user manager, via wizard's
+`tmux.service`), which puts the baseline near 800 and leaves RSS worth only
+~0.014 points/MB: measured live, a 320 MB claude scored 804 and a 605 MB one
+808. So a small conversation outranked a very large process. On 2026-08-16 six
+conversations were killed in 50 s at badness 1104-1168 while an 18,685 MiB
+process sat at 1068 and survived the round. Over the 30 days to 2026-08-16:
+100 kills, **89 of them `claude`**, mean 600 MiB reclaimed per kill.
+
+**The layering did not work as this document describes it.** "Per-cgroup
+MemoryMax is the PRIMARY guard; earlyoom is the aggregate net" was the intent,
+but per-pane scopes were uncapped and the per-user cap is 24G *each* on a
+31.3 GiB box — two users is 48G of budget over 31 GiB of RAM, so the box-wide
+threshold is always reached first. earlyoom was doing all the work.
+
+Fixed in `setup-devvm.sh` §10: a per-pane `MemoryMax=6G` via a top-level
+`/etc/systemd/user/scope.d/` drop-in (tmux 3.4 gives every pane its own
+transient scope; the kernel then picks the highest-RSS task inside the pane,
+`memory.oom.group=0`, so the spawned tool dies and the ~0.5 GiB claude above it
+does not — and RSS ranking cannot be fooled by a comm string). `claude` dropped
+from `--prefer` and `[0-9]+\.[0-9]+\.[0-9]+` added, so the backstop finally
+targets the balloon. `claude` deliberately NOT added to `--avoid` — a leaked
+session must stay killable.
+
+Also fixed alongside: `tmux-persist.sh` `resume_in_place()` used
+`send-keys -t "=<name>"`, and tmux rejects the `=` exact-match prefix on a PANE
+target, so the "claude died, shell survived" recovery had never worked — it
+logged a WARN and left a bare shell. `=<name>:` is accepted and stays exact.
+Regression test added (`tests/tmux-persist/test_resume_in_place.sh`).
+
+Left open: wizard's tmux runs as a systemd user service and so inherits
+`adj=200`, while emo's does not and sits at `adj=0`. In the 450-750 MB band over
+those 30 days that is 32 kills at mean badness 1107 for uid 1000 vs 9 at 974 for
+uid 1002 — a 133-point handicap at identical footprint. One line in
+`~wizard/.config/systemd/user/tmux.service` whenever we want it.
+
+## Addendum 5 (2026-08-16): the pane cap needed `OOMPolicy=continue` — found by testing it
+
+The per-pane `MemoryMax` from addendum 4 was verified end-to-end the same day by
+running a real Claude session in a capped pane and asking it to grow a
+200 MB-at-a-time allocator. The kernel half worked perfectly on the first try:
+pane peak 6144 MB (exactly the cap), `CONSTRAINT_MEMCG` scoped to that pane's own
+scope, `oom_kill 1` / `oom_group_kill 0`, victim `python3` at 5.44 GiB anon-rss
+chosen over `claude` at 457 MB in the same cgroup, and earlyoom did not fire at
+all. The kernel task table makes the ranking explicit: claude 116,910 pages,
+python3 1,429,056 pages, tail 448 pages — python3 killed.
+
+**Then systemd stopped the whole scope anyway** and the conversation died with
+it: `tmux-spawn-<uuid>.scope: Failed with result 'oom-kill'`. A scope defaults to
+`OOMPolicy=stop`, which stops the entire unit as soon as ANY member is
+OOM-killed. `memory.oom.group=0` only governs whether the KERNEL group-kills; it
+says nothing about systemd's reaction, and the two are easy to conflate. This is
+the same failure `t3-serve@.service` hit on 2026-06-10 and fixed with
+`OOMPolicy=continue`; the pane drop-in shipped without it.
+
+Fixed by adding `OOMPolicy=continue` to
+`/etc/systemd/user/scope.d/50-devvm-pane-cap.conf`. Re-running the identical test
+gives the intended result: the 5.63 GiB hog is killed, claude (443 MB) keeps
+running in the same pane, the session survives, all eight other conversations are
+untouched, and earlyoom stays at zero kills. The pane now logs only "A process of
+this unit has been killed by the OOM killer" with no unit failure.
+
+Worth recording as a general point: a containment mechanism is not verified by
+reading the config or the kernel log alone. The kernel log for run 1 looked like
+a complete success — right constraint, right victim, one kill — and the outcome
+was still a lost conversation.

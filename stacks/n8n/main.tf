@@ -37,7 +37,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "n8n"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -67,7 +67,7 @@ resource "kubernetes_manifest" "external_secret_claude_agent" {
       namespace = "n8n"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -101,7 +101,7 @@ resource "kubernetes_manifest" "external_secret_instagram_pipeline" {
       namespace = "n8n"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -280,10 +280,17 @@ resource "kubernetes_deployment" "n8n" {
             value = "Europe/Sofia"
           }
           env {
-            name  = "DOMAIN_NAME"
-            value = "viktorbarzin.me"
-          }
-          env {
+            # DOMAIN_NAME was declared twice in a row, "viktorbarzin.me" then
+            # "n8n". Kubernetes keeps the last, so only "n8n" was ever live —
+            # the first was dead config, but it made Terraform count 21 env vars
+            # against 20 live, which shifted every later entry by one position
+            # and showed up as a permanent rename cascade no apply could settle.
+            #
+            # Kept the value that is actually running. Worth a look separately:
+            # upstream's compose pattern is DOMAIN_NAME=<domain> plus
+            # SUBDOMAIN=<host>, so the second line may have been meant as
+            # SUBDOMAIN = "n8n" — changing that would alter behaviour, so it is
+            # deliberately not done here.
             name  = "DOMAIN_NAME"
             value = "n8n"
           }

@@ -1,8 +1,11 @@
 name: Build pages-publish
 
 # ADR-0002: infra-owned image built off-infra on GHA → ghcr, deployed by Keel
-# (the deployment is keel.sh/policy=force + poll @every 5m, so a fresh :latest
-# digest rolls automatically — no Woodpecker deploy step needed). Source lives
+# (the deployment is keel.sh/policy=force + match-tag=true + poll @every 5m, so a
+# fresh :latest digest rolls automatically — no Woodpecker deploy step needed.
+# match-tag is load-bearing: without it Keel watches for new TAGS, which this
+# repo never grows, and nothing deploys — see the annotation comment in
+# stacks/pages-publish/main.tf). Source lives
 # in-repo at stacks/pages-publish/ (app + Dockerfile), identical on both git
 # remotes, so the github checkout builds the current image.
 on:

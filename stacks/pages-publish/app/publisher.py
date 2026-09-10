@@ -10,6 +10,7 @@ or ``<repo>/pages/shared/``.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import subprocess
@@ -17,8 +18,14 @@ import tempfile
 
 from .config import Config
 
+log = logging.getLogger(__name__)
+
 STATUSES = ("draft", "approved", "executing", "done")
 PAGES_PREFIX = "pages"
+
+# How many times publish() will re-sync + re-render + re-push when another
+# publish lands on master first.
+DEFAULT_ATTEMPTS = 5
 
 # Slug charset. NOTE: '.' is allowed, so '..' matches this class — the explicit
 # '..' check in sanitize_slug is what blocks parent traversal, not the regex.
@@ -141,44 +148,100 @@ def render_page(cfg: Config, md_path: str, abs_target_dir: str, status: str) -> 
     return lines[-1]
 
 
-def commit_and_push(
-    cfg: Config, subdir: str, slug: str, user: str, status: str, *, retries: int = 5
-) -> None:
-    """Stage the target dir, commit as <user>, push to master with rebase-retry.
+def sync_to_master(cfg: Config) -> None:
+    """Put the clone on current ``origin/master``, discarding local state.
+
+    Called before every render attempt, which is what makes a lost push race
+    recoverable without merging anything: a page is a pure function of its
+    markdown, so re-rendering on top of fresh master reproduces the same bytes.
+
+    **This deliberately never rebases.** The previous implementation answered a
+    non-fast-forward push with ``git pull --rebase``; when that rebase hit a
+    conflict — and it reliably did, because every publish regenerates
+    ``pages/<user>/index.html`` — it stopped mid-rebase, leaving
+    ``.git/rebase-merge`` behind and HEAD detached. Every later publish then
+    failed on "there is already a rebase-merge directory", so ONE conflicting
+    race returned HTTP 500 for **every** user until the pod was replaced
+    (2026-08-17: 10 unpushed commits stranded in a pod's emptyDir). Any stale
+    rebase/merge found here is abandoned rather than inherited, so a pod that
+    somehow reaches that state heals itself on the next request.
+    """
+    env = _git_env(cfg)
+    git_dir = os.path.join(cfg.repo_dir, ".git")
+    for state in ("rebase-merge", "rebase-apply"):
+        if os.path.isdir(os.path.join(git_dir, state)):
+            log.warning("abandoning interrupted rebase in %s", cfg.repo_dir)
+            _run(["git", "-C", cfg.repo_dir, "rebase", "--abort"], env=env)
+    if os.path.exists(os.path.join(git_dir, "MERGE_HEAD")):
+        log.warning("abandoning interrupted merge in %s", cfg.repo_dir)
+        _run(["git", "-C", cfg.repo_dir, "merge", "--abort"], env=env)
+
+    fetch = _run(["git", "-C", cfg.repo_dir, "fetch", "origin", "master"], env=env)
+    if fetch.returncode != 0:
+        log.error("git fetch failed: %s", fetch.stderr.strip())
+        raise RenderError(f"git fetch failed: {fetch.stderr.strip()}")
+
+    # FETCH_HEAD rather than origin/master: a plain `git fetch origin master`
+    # always writes FETCH_HEAD, whatever the remote-tracking refspec does.
+    reset = _run(
+        ["git", "-C", cfg.repo_dir, "reset", "--hard", "FETCH_HEAD"], env=env
+    )
+    if reset.returncode != 0:
+        log.error("git reset failed: %s", reset.stderr.strip())
+        raise RenderError(f"git reset failed: {reset.stderr.strip()}")
+
+    # Land on a real branch. Nothing here needs one (`push HEAD:master` works
+    # detached), but a detached HEAD is exactly what made the wedged clone hard
+    # to read, so keep the checkout self-describing.
+    checkout = _run(
+        ["git", "-C", cfg.repo_dir, "checkout", "-B", "master", "FETCH_HEAD"], env=env
+    )
+    if checkout.returncode != 0:
+        log.error("git checkout failed: %s", checkout.stderr.strip())
+        raise RenderError(f"git checkout failed: {checkout.stderr.strip()}")
+
+
+def stage_and_commit(
+    cfg: Config, subdir: str, slug: str, user: str, status: str
+) -> bool:
+    """Stage the target dir and commit as ``user``. False = nothing to commit.
 
     Staging is scoped to the target dir (new page + regenerated index) — never
-    ``git add -A``. A clean tree after staging is treated as an idempotent
-    no-op. On a non-fast-forward push we ``pull --rebase`` and retry.
+    ``git add -A`` — and so is the emptiness check, so an unrelated change
+    elsewhere in the clone can never read as "this page changed".
     """
     env = _git_env(cfg, author=user)
     add = _run(["git", "-C", cfg.repo_dir, "add", "--", f"{subdir}/"], env=env)
     if add.returncode != 0:
+        log.error("git add failed: %s", add.stderr.strip())
         raise RenderError(f"git add failed: {add.stderr.strip()}")
 
-    st = _run(["git", "-C", cfg.repo_dir, "status", "--porcelain"], env=env)
+    st = _run(
+        ["git", "-C", cfg.repo_dir, "status", "--porcelain", "--", f"{subdir}/"],
+        env=env,
+    )
     if not st.stdout.strip():
-        return  # identical content already committed — nothing to publish
+        return False  # identical content already on master — nothing to publish
 
     msg = f"pages: publish {slug} for {user} ({status})"
     commit = _run(["git", "-C", cfg.repo_dir, "commit", "-m", msg], env=env)
     if commit.returncode != 0:
+        log.error("git commit failed: %s", commit.stderr.strip())
         raise RenderError(f"git commit failed: {commit.stderr.strip()}")
+    return True
 
-    last_err = ""
-    for _ in range(retries):
-        push = _run(
-            ["git", "-C", cfg.repo_dir, "push", "origin", "HEAD:master"], env=env
-        )
-        if push.returncode == 0:
-            return
-        last_err = push.stderr.strip()
-        pull = _run(
-            ["git", "-C", cfg.repo_dir, "pull", "--rebase", "origin", "master"],
-            env=env,
-        )
-        if pull.returncode != 0:
-            raise RenderError(f"git pull --rebase failed: {pull.stderr.strip()}")
-    raise RenderError(f"git push failed after {retries} attempts: {last_err}")
+
+def push_to_master(cfg: Config, user: str) -> tuple[bool, str]:
+    """One push attempt. ``(False, stderr)`` on rejection — never raises.
+
+    A rejection is an ordinary lost race, not an error: the caller re-syncs and
+    re-renders. Only genuinely broken git state raises, from the other seams.
+    """
+    env = _git_env(cfg, author=user)
+    push = _run(["git", "-C", cfg.repo_dir, "push", "origin", "HEAD:master"], env=env)
+    if push.returncode == 0:
+        return True, ""
+    return False, push.stderr.strip()
 
 
 def derive_url(cfg: Config, out_path: str, shared: bool) -> str:
@@ -199,11 +262,20 @@ def publish(
     filename: str,
     status: str = "draft",
     shared: bool = False,
+    attempts: int = DEFAULT_ATTEMPTS,
 ) -> dict[str, str]:
-    """Full pipeline: validate -> render -> commit + push. Returns url + path.
+    """Full pipeline: validate -> (sync -> render -> commit -> push). url + path.
 
     ``user`` is the token-resolved identity; callers must never pass a
     request-body value here.
+
+    Each attempt starts by landing on current master (``sync_to_master``) and
+    then renders, so a push that loses a race is retried by regenerating the
+    page against the master that won — no merge, no rebase, nothing to
+    conflict. Rendering has to come *after* the sync in every attempt: the
+    renderer rebuilds ``index.html`` from the files it finds on disk, so
+    rendering against a stale checkout would publish an index missing whatever
+    landed meanwhile.
     """
     slug = sanitize_slug(filename)
     status = validate_status(status)
@@ -217,16 +289,39 @@ def publish(
         raise PublishError("computed target escapes the pages/ root")
 
     ensure_repo(cfg)
-    os.makedirs(abs_target, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as td:
         md_path = os.path.join(td, f"{slug}.md")
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(content)
-        out_path = render_page(cfg, md_path, abs_target, status)
 
-    commit_and_push(cfg, subdir, slug, user, status)
-    return {
-        "url": derive_url(cfg, out_path, shared),
-        "path": os.path.relpath(out_path, cfg.repo_dir),
-    }
+        last_err = ""
+        for attempt in range(1, attempts + 1):
+            sync_to_master(cfg)
+            os.makedirs(abs_target, exist_ok=True)
+            out_path = render_page(cfg, md_path, abs_target, status)
+            result = {
+                "url": derive_url(cfg, out_path, shared),
+                "path": os.path.relpath(out_path, cfg.repo_dir),
+            }
+
+            if not stage_and_commit(cfg, subdir, slug, user, status):
+                log.info("publish %s for %s: already current, nothing to push", slug, user)
+                return result
+
+            pushed, err = push_to_master(cfg, user)
+            if pushed:
+                log.info("published %s for %s (%s) -> %s", slug, user, status, result["url"])
+                return result
+
+            last_err = err
+            log.warning(
+                "push rejected for %s (attempt %d/%d), re-rendering onto master: %s",
+                slug,
+                attempt,
+                attempts,
+                err,
+            )
+
+    log.error("publish %s for %s failed after %d attempts: %s", slug, user, attempts, last_err)
+    raise RenderError(f"git push failed after {attempts} attempts: {last_err}")

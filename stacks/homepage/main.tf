@@ -83,6 +83,14 @@ resource "kubernetes_deployment" "cache_proxy" {
   metadata {
     name      = "homepage-cache"
     namespace = kubernetes_namespace.homepage.metadata[0].name
+    labels = {
+      # Declared because the sync-tier-label-from-namespace Kyverno policy
+      # stamps `tier` live. With no labels block at all, Terraform managed the
+      # map as empty and planned to strip it on every run while the policy
+      # re-added it — perma-drift, and this Deployment was one of the stacks in
+      # the 2026-08-17 drift report for exactly that reason.
+      tier = local.tiers.aux
+    }
   }
   spec {
     replicas = 1

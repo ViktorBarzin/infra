@@ -8,7 +8,12 @@ variable "technitium_password" {
   type      = string
   sensitive = true
 }
-variable "dbaas_root_password" {
+# CNPG root credential. NOTE the key name: in `secret/platform`,
+# `dbaas_root_password` is the MySQL root password and only
+# `dbaas_postgresql_root_password` authenticates to Postgres (as user `root`,
+# not `postgres`). Other stacks read a `dbaas_root_password` that IS the PG one
+# because they read their own Vault path — don't copy the name across paths.
+variable "dbaas_postgresql_root_password" {
   type      = string
   sensitive = true
 }
@@ -56,6 +61,27 @@ data "kubernetes_service" "traefik" {
 # redis.redis.svc.cluster.local.viktorbarzin.lan) by returning NXDOMAIN for any
 # query with 2+ labels before .viktorbarzin.lan. Legitimate single-label queries
 # (e.g. idrac.viktorbarzin.lan) fall through to Technitium.
+#
+# The 1.168.192.in-addr.arpa block gives pods reverse DNS for the physical LAN.
+# Technitium is authoritative for that zone, but nothing was asking it: the .:53
+# block sends in-addr.arpa to 10.0.20.1 first, pfSense answers an authoritative
+# NXDOMAIN, and that ends the lookup — the later upstreams never get a turn. So
+# every in-cluster reverse lookup of a LAN host failed while the forward lookup
+# worked fine.
+#
+# What that broke: postfix's reject_unknown_client_hostname needs
+# forward-confirmed reverse DNS for the connecting client, so the Proxmox host at
+# 192.168.1.127 was refused with "450 4.7.25 cannot find your hostname" 100-217
+# times a day and its daily reports never arrived. Found 2026-08-21 while tracing
+# a different mail fault; measured over the full 30d of Loki retention.
+#
+# Scoped to 192.168.1.0/24 deliberately. The cluster/VM range
+# (20.0.10.in-addr.arpa) has to keep being answered by the kubernetes plugin in
+# the .:53 block, which synthesises names like
+# 10-0-20-105.node-local-dns.kube-system.svc.cluster.local that do
+# forward-confirm — that is how mail from pods passes the same postfix check.
+# Technitium holds no PTR for those node IPs, so pointing that zone here would
+# refuse mail from every pod in the cluster.
 resource "kubernetes_config_map" "coredns" {
   metadata {
     name      = "coredns"
@@ -143,6 +169,18 @@ resource "kubernetes_config_map" "coredns" {
           serve_stale 86400s
         }
       }
+      1.168.192.in-addr.arpa:53 {
+        errors
+        forward . 10.96.0.53 {
+          health_check 5s
+          max_fails 2
+        }
+        cache {
+          success 10000 300 6
+          denial 10000 300 60
+          serve_stale 86400s
+        }
+      }
     EOF
   }
 }
@@ -181,6 +219,24 @@ resource "kubernetes_persistent_volume_claim" "primary_config_encrypted" {
   }
 }
 
+# NO node pin here, deliberately. The primary was hand-pinned to k8s-node1 with
+# spec.template.spec.nodeName for a long time to preserve the original client IP
+# for query analysis. That pin was never in Terraform — it was live drift, and
+# it was not what preserved the client IP.
+#
+# What preserves it is externalTrafficPolicy: Local on the technitium-dns
+# LoadBalancer (below): kube-proxy does not SNAT on that path, so the DNS server
+# sees the real source address. That holds on whichever node the pod runs, which
+# is why the secondary and tertiary see real client IPs too. Verified 2026-08-16
+# with the primary moved to k8s-node3: the query log still records 192.168.1.x
+# LAN clients and 10.0.10.10, not node addresses.
+#
+# The pin also had a cost worth remembering: setting nodeName BYPASSES THE
+# SCHEDULER ENTIRELY, so the pod ignored the nvidia.com/gpu=true:NoSchedule taint
+# that reserves k8s-node1 for GPU work — a NoSchedule taint is a scheduler
+# predicate, and the kubelet does not enforce it. The primary therefore sat on
+# the GPU node holding ~1 GiB, preemptable by any gpu-workload pod (1.2M priority
+# vs this pod's tier-0-core 1.0M). Re-adding a pin here would reintroduce both.
 resource "kubernetes_deployment" "technitium" {
   # resource "kubernetes_daemonset" "technitium" {
   metadata {
@@ -295,7 +351,13 @@ resource "kubernetes_deployment" "technitium" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE
+    ]
   }
 }
 
@@ -342,6 +404,12 @@ resource "kubernetes_service" "technitium-dns" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     type = "LoadBalancer"
     port {
@@ -462,7 +530,7 @@ resource "kubernetes_job" "pg_db_init" {
               set -e
               # -d postgres: psql defaults the database name to the username, and
               # the root user has no root-named database, so be explicit.
-              export PGPASSWORD='${var.dbaas_root_password}'
+              export PGPASSWORD='${var.dbaas_postgresql_root_password}'
               psql -h ${var.postgresql_host} -U root -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='technitium'" | grep -q 1 || \
                 psql -h ${var.postgresql_host} -U root -d postgres -c "CREATE DATABASE technitium OWNER technitium"
               psql -h ${var.postgresql_host} -U root -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE technitium TO technitium"
@@ -476,6 +544,14 @@ resource "kubernetes_job" "pg_db_init" {
   }
   wait_for_completion = false
   depends_on          = [kubernetes_namespace.technitium]
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno mutates the pod dns_config (ndots) on
+    # admission. A Job's pod template is immutable, so Terraform can't update
+    # that in place — it would REPLACE the Job and re-run it on every apply.
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config,
+    ]
+  }
 }
 
 # ExternalSecret for the Technitium PostgreSQL query-log password (Vault
@@ -657,21 +733,27 @@ resource "kubernetes_cron_job_v1" "technitium_password_sync" {
                 curl -sf -X POST "http://technitium-web:5380/api/apps/config/set?token=$$TOKEN" --data-urlencode "name=Query Logs (Postgres)" --data-urlencode "config=$$PG_CONFIG"
                 echo "PG logging configured on primary"
 
-                # Cap on-disk server-log retention. Technitium's LogManager opens
-                # the day's log file BEFORE it binds :53, so a full config PVC is a
-                # hard startup failure that no restart can clear. The default 365
-                # days let ~6 weeks of Npgsql exception traces accumulate into 5Gi
-                # and take DNS primary down for 27.6h on 2026-08-04. 7 days is
-                # ample for debugging; Loki holds the rest.
+                # Bound the on-disk log. Technitium's LogManager opens the day's
+                # log file BEFORE it binds :53, so a full config PVC is a hard
+                # startup failure that no restart can clear — that is how the DNS
+                # primary stayed down for 27.6h on 2026-08-04. Two knobs:
+                #   maxLogFileDays=7 — was the 365-day default, so NOTHING was ever
+                #     pruned: 112 daily files / 4.3 GB had accumulated.
+                #   logQueries=false — the primary was writing EVERY query to the
+                #     daily file (~223 MB/day) on top of the PG query log. That
+                #     duplication was the actual volume driver; PG (dns_logs, 90-day
+                #     retention) is the query-log system of record. Secondary and
+                #     tertiary already had it off. Server events (startup, zone
+                #     loads, errors) are governed by enableLogging and are retained.
                 for INST in http://technitium-web:5380 http://technitium-secondary-web:5380 http://technitium-tertiary-web:5380; do
                   L_TOKEN=$$TOKEN
                   if [ "$$INST" != "http://technitium-web:5380" ]; then
                     L_TOKEN=$$(curl -sf "$$INST/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
                   fi
                   if [ -z "$$L_TOKEN" ]; then echo "Login failed for $$INST, skipping log retention"; continue; fi
-                  curl -sf -X POST "$$INST/api/settings/set?token=$$L_TOKEN&maxLogFileDays=7" >/dev/null \
-                    && echo "maxLogFileDays=7 set on $$INST" \
-                    || echo "WARNING: could not set maxLogFileDays on $$INST"
+                  curl -sf -X POST "$$INST/api/settings/set?token=$$L_TOKEN&maxLogFileDays=7&logQueries=false" >/dev/null \
+                    && echo "maxLogFileDays=7 logQueries=false set on $$INST" \
+                    || echo "WARNING: could not set log retention on $$INST"
                 done
 
                 # Uninstall MySQL/SQLite on secondary and tertiary instances too
@@ -830,109 +912,6 @@ resource "kubernetes_cron_job_v1" "technitium_dns_optimization" {
         }
       }
     }
-  }
-}
-
-# viktorbarzin.me apex DNS drift probe
-# Resolves `viktorbarzin.me A` against the Technitium LoadBalancer IP every
-# 5 min and pushes a Pushgateway gauge. Backstop for the entire
-# split-horizon zone: every internal `*.viktorbarzin.me` CNAME chains through
-# this apex, so if it drifts (ISP rollover, accidental edit), this is the
-# canary. Alerts: ViktorBarzinApexDrift, ApexProbeStale, ApexProbeNeverRun
-# in stacks/monitoring/.
-resource "kubernetes_cron_job_v1" "viktorbarzin_apex_probe" {
-  metadata {
-    name      = "viktorbarzin-apex-probe"
-    namespace = kubernetes_namespace.technitium.metadata[0].name
-  }
-  spec {
-    concurrency_policy            = "Replace"
-    schedule                      = "*/5 * * * *"
-    successful_jobs_history_limit = 1
-    failed_jobs_history_limit     = 3
-    job_template {
-      metadata {}
-      spec {
-        backoff_limit              = 1
-        ttl_seconds_after_finished = 300
-        template {
-          metadata {}
-          spec {
-            container {
-              name  = "probe"
-              image = "docker.io/library/python:3.12-alpine"
-              resources {
-                requests = {
-                  cpu    = "10m"
-                  memory = "48Mi"
-                }
-                limits = {
-                  memory = "96Mi"
-                }
-              }
-              command = ["/bin/sh", "-c", <<-EOT
-                pip install --quiet --disable-pip-version-check dnspython requests && python3 -c '
-import dns.resolver, requests, time, sys
-
-EXPECTED = {"10.0.20.203"}
-NAMESERVER = "10.0.20.201"  # Technitium LB IP
-NAME = "viktorbarzin.me"
-PUSHGATEWAY = "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/viktorbarzin-apex-probe"
-
-resolver = dns.resolver.Resolver(configure=False)
-resolver.nameservers = [NAMESERVER]
-resolver.timeout = 5
-resolver.lifetime = 8
-
-correct = 0
-observed = "unknown"
-try:
-    answer = resolver.resolve(NAME, "A")
-    ips = sorted(str(r) for r in answer)
-    observed = ",".join(ips)
-    correct = 1 if set(ips) <= EXPECTED and ips else 0
-    print(f"apex {NAME} -> {observed} (expected one of {EXPECTED}); correct={correct}")
-except Exception as e:
-    observed = f"error:{type(e).__name__}"
-    print(f"resolve error: {e}", file=sys.stderr)
-
-metric_lines = [
-    "# HELP viktorbarzin_apex_correct 1 if viktorbarzin.me apex resolves to expected IP, 0 otherwise",
-    "# TYPE viktorbarzin_apex_correct gauge",
-    f"viktorbarzin_apex_correct {correct}",
-]
-if correct:
-    metric_lines += [
-        "# HELP viktorbarzin_apex_last_correct_timestamp Unix time of last correct resolution",
-        "# TYPE viktorbarzin_apex_last_correct_timestamp gauge",
-        f"viktorbarzin_apex_last_correct_timestamp {int(time.time())}",
-    ]
-metrics = "\n".join(metric_lines) + "\n"
-try:
-    r = requests.post(PUSHGATEWAY, data=metrics, timeout=10)
-    print(f"pushgateway: {r.status_code}")
-except Exception as e:
-    print(f"pushgateway error: {e}", file=sys.stderr)
-sys.exit(0 if correct else 1)
-'
-              EOT
-              ]
-            }
-            dns_config {
-              option {
-                name  = "ndots"
-                value = "2"
-              }
-            }
-            restart_policy = "OnFailure"
-          }
-        }
-      }
-    }
-  }
-  lifecycle {
-    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
   }
 }
 

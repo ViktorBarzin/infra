@@ -58,11 +58,12 @@ resource "kubernetes_persistent_volume_claim" "config_encrypted" {
 }
 
 module "nfs_media_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "frigate-media-host"
-  namespace  = kubernetes_namespace.frigate.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/frigate/media"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "frigate-media-host"
+  namespace          = kubernetes_namespace.frigate.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/frigate/media"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "frigate" {
@@ -106,7 +107,7 @@ resource "kubernetes_deployment" "frigate" {
         container {
           # image = "ghcr.io/blakeblackshear/frigate:stable"
           # image = "ghcr.io/blakeblackshear/frigate:stable-tensorrt"
-          image = "ghcr.io/blakeblackshear/frigate:0.17.0-beta1-tensorrt"
+          image = "ghcr.io/blakeblackshear/frigate:0.17.2-tensorrt"
           name  = "frigate"
 
           resources {
@@ -117,9 +118,13 @@ resource "kubernetes_deployment" "frigate" {
             limits = {
               memory           = "10Gi"
               "nvidia.com/gpu" = "1"
-              # GPU VRAM budget (ADR-0016): detector + ffmpeg decode (~1.9 GiB),
-              # +~250 MiB NVDEC headroom for the vermont-garage camera (ADR-0017).
-              "viktorbarzin.me/gpumem" = "2300"
+              # GPU VRAM budget (ADR-0016): detector + ffmpeg decode across 12
+              # processes, +NVDEC headroom for the vermont-garage camera
+              # (ADR-0017). Raised 2300 -> 2800 on 2026-08-31: measured
+              # steady 2611 MiB / 7-day peak 2689, so the old figure put
+              # frigate permanently over contract and made it a legitimate
+              # recycle target once enforcement went live.
+              "viktorbarzin.me/gpumem" = "2800"
             }
           }
           env {
@@ -290,6 +295,12 @@ resource "kubernetes_service" "frigate-rtsp" {
     }
   }
 
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
   spec {
     # Was NodePort. ETP=Local: the Frigate pod is pinned to the GPU node, so
     # MetalLB advertises .204 only from that node -> no SNAT, real client IP

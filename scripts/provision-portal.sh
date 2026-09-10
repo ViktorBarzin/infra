@@ -23,7 +23,11 @@
 set -euo pipefail
 
 # ---- config (all overridable via env) --------------------------------------
-MAC="${MAC:-viktorbarzin@192.168.8.168}"                                    # USB host on the Portal's LAN
+# USB host on the Portal's LAN. By NAME: the Mac's macOS private Wi-Fi address
+# rotates, which is what left its previous DHCP reservation stale. It is pinned to
+# 192.168.8.168 by a Flint reservation covering both that address and the hardware
+# MAC, and mbp-london.viktorbarzin.lan resolves to it.
+MAC="${MAC:-viktorbarzin@mbp-london.viktorbarzin.lan}"
 RADB="${RADB:-/Users/viktorbarzin/Library/Android/sdk/platform-tools/adb}"  # adb path ON the Mac
 FRAME_REPO="${FRAME_REPO:-$HOME/code/portal-immich-frame}"
 FRAME_URL="${FRAME_URL:-}"              # empty => build-apk.sh default (London)
@@ -141,6 +145,27 @@ case ":$E:" in
 esac
 "$ADB" shell settings put secure accessibility_enabled 1
 "$ADB" shell appops set "$VSKPKG" SYSTEM_ALERT_WINDOW allow
+# Let the frame offer its own updates (portal-immich-frame ADR-0006). Without
+# this the startup check still runs and downloads, but the install prompt never
+# appears — so a device provisioned without it silently stops taking updates.
+# It does NOT permit silent installs; Android still asks whoever is at the device.
+"$ADB" shell appops set "$FPKG" REQUEST_INSTALL_PACKAGES allow
+# ...and let the install actually complete. The Portal ships NO Play/GMS, so
+# nothing on the device can answer a package-verification request: the check
+# times out and the installer aborts with INSTALL_FAILED_VERIFICATION_FAILURE,
+# AFTER the download, the checksum and the user tapping Install (observed on the
+# London Portal+ 2026-08-15). Sideloads were unaffected and hid this, because
+# verifier_verify_adb_installs is already 0 — only app-initiated session installs
+# go through the verifier.
+"$ADB" shell settings put global package_verifier_enable 0
+# ...and let the frame bring ITSELF back after an update. Android stops the app to
+# replace it and never restarts it, so without this the update turns the display
+# off until someone walks up to the Portal. The frame relaunches from a
+# MY_PACKAGE_REPLACED receiver, which is a background activity start and needs
+# this app-op on Android 10 (portal-immich-frame v0.1.10+). REQUIRED on the Sofia
+# Portal Mini (Android 10); belt-and-braces on the London Portal Plus, which is
+# Android 9 and predates the background-activity-start restriction.
+"$ADB" shell appops set "$FPKG" SYSTEM_ALERT_WINDOW allow
 "$ADB" shell settings put system screen_off_timeout 2147483647   # never sleep (LCD, always mains)
 "$ADB" shell settings put secure screensaver_enabled 0           # no dream/screensaver
 "$ADB" shell am start -n "$FPKG/$FACT"
@@ -153,8 +178,8 @@ REMOTE
 cat <<'DONE'
 
 >> DONE (device side). Now, physically at the Portal:
-   * Confirm the Immich slideshow is showing — adb screencap is BLACK for the
-     WebView surface, so you must look at the screen, not a screenshot.
+   * Confirm the Immich slideshow is showing. adb screencap DOES capture it now
+     (verified 2026-08-15); a black image is the older WebView-surface behaviour.
    * Confirm the VirtualSoftKeys Back/Home pills appear (your exit button).
    * Open Spotify and Home Assistant and log in (personal accounts).
 DONE

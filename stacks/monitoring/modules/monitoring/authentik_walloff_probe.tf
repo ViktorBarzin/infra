@@ -65,6 +65,13 @@ locals {
     # t3 dispatch probe surface (auth="none" path carve-out on /probe): WS echo
     # + healthz for the t3-probe drop-attribution client (stacks/t3code).
     "t3-probe-ws" = "https://t3.viktorbarzin.me/probe/healthz"
+    # t3 native-client descriptor (Authentik-less IngressRoute carve-out,
+    # stacks/t3code kubernetes_manifest.t3_native_ingressroute): the T3 mobile
+    # app fetches this BEFORE it has any credential, so an Authentik 302 here
+    # is exactly the failure that made the app unpairable — it parses the login
+    # HTML as the JSON descriptor and reports an invalid response. The probe
+    # sends no cookie, which is what the carve-out rule keys on.
+    "t3-native-descriptor" = "https://t3.viktorbarzin.me/.well-known/t3/environment"
     # tasks PWA icons + manifest (auth="none" path carve-out, stacks/tasks
     # module.ingress_icons): macOS/iOS/Android icon fetchers carry no session
     # cookies, so an Authentik 302 here breaks Add-to-Dock icons.
@@ -158,6 +165,37 @@ resource "kubernetes_config_map" "blackbox_exporter_config" {
             query_name            = "cloudflare.com"
             query_type            = "A"
             valid_rcodes          = ["NOERROR"]
+          }
+        }
+        # Split-horizon apex canary (added 2026-08-16, replaced the
+        # viktorbarzin-apex-probe CronJob). Technitium serves the apex A record
+        # that ~80 *.viktorbarzin.me CNAMEs resolve through, and it must track
+        # the LIVE Traefik LB IP. When Traefik moved from .200 to .203 on
+        # 2026-05-30 and the record went stale, every fresh image pull silently
+        # degraded to public DNS -> hairpin -> ImagePullBackOff.
+        #
+        # This replaces a CronJob that ran every 5 minutes and `pip install`ed
+        # dnspython + requests on each run — 288 pods and ~4.8 GB of writes a
+        # day to answer one DNS question. As a scrape target it costs neither.
+        #
+        # validate_answer_rrs is what makes it a canary rather than a liveness
+        # check: NOERROR alone would pass on a WRONG address, so the answer must
+        # actually contain the expected LB IP. Update the regexp if Traefik's LB
+        # IP ever moves — and note that moving it without updating here is
+        # exactly the failure this is watching for.
+        dns_apex = {
+          prober  = "dns"
+          timeout = "5s"
+          dns = {
+            transport_protocol    = "udp"
+            preferred_ip_protocol = "ip4"
+            ip_protocol_fallback  = false
+            query_name            = "viktorbarzin.me"
+            query_type            = "A"
+            valid_rcodes          = ["NOERROR"]
+            validate_answer_rrs = {
+              fail_if_not_matches_regexp = [".*\\s+A\\s+10\\.0\\.20\\.203$"]
+            }
           }
         }
         # TCP connect (added 2026-07-08, ADR-0019): drives the backup-mx-smtp

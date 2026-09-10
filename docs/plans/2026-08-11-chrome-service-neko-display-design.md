@@ -1,6 +1,6 @@
 # chrome-service — neko WebRTC display for the master browser
 
-**Status:** approved (design), not yet implemented
+**Status:** done — implemented and verified 2026-08-11
 **Date:** 2026-08-11
 **Owner:** Viktor
 **Stack:** `infra/stacks/chrome-service` (+ a one-record addition to `infra/stacks/technitium`)
@@ -324,17 +324,93 @@ Terraform revert.
 **Revert:** Terraform revert of the stack change. The profile is untouched by
 design (same path, same UID), and the tar from step 1 is the backstop.
 
+## As-built — four things the stock image did that the design didn't predict
+
+The shape above survived; these are the deltas found while rolling it out, each
+fixed in place. All four came from the same root: the stock neko image is built
+for a public kiosk browser, and this stack wants a scriptable one.
+
+1. **Upstream's managed Chrome policy disables DevTools.** The image ships
+   `/etc/opt/chrome/policies/managed/policies.json` with
+   `DeveloperToolsAvailability: 2`, and Chrome then answers browser-level CDP
+   (`/json/version`, `Browser.getVersion`) while refusing every per-page session
+   with `-32001 Session with given id not found` — so `connect_over_cdp` hangs and
+   times out, breaking all five callers. Isolated with a dependency-free raw CDP
+   client (reproduced outside Playwright) plus the pool worker's Chrome as a
+   control, where the identical probe returns `{"result":{}}`. Fixed by mounting
+   our own copy of the policy with `DeveloperToolsAvailability: 0` (Chrome's
+   default, and what this browser effectively had before),
+   `IncognitoModeAvailability: 0` (`new_context()` is `Target.createBrowserContext`
+   — the incognito mechanism) and `DownloadRestrictions: 0`. Diff + evidence:
+   `stacks/chrome-service/files/neko/README.md`.
+2. **The supervisord file holds two programs, and there is no entrypoint
+   wrapper.** Upstream's `google-chrome.conf` defines `[program:openbox]`
+   alongside the browser, and a subPath mount replaces the whole file — so the
+   first version of our override silently removed the window manager. It also
+   copied `/bin/entrypoint.sh` from the proxy's *chromium* variant, which does
+   not exist in the google-chrome image, so Chrome never launched. Both fixed by
+   reading the file out of the actual pinned image rather than from upstream's
+   default branch.
+3. **`NEKO_CAPTURE_VIDEO_CODEC=h264` alone does not change the encoder.** With no
+   pipeline set, neko logs "no video pipelines specified, using default" and
+   builds a `vp8enc` pipeline at ~2 Mbps regardless of the codec. The stream is
+   H.264 only with an explicit `NEKO_CAPTURE_VIDEO_PIPELINE`; ours is the proxy's
+   shape with `x264enc` (4 Mbps, `tune=zerolatency speed-preset=veryfast`) in
+   place of its GPU `nvh264enc`.
+4. **Chrome's profile singleton lock blocks startup across pod renames.** The
+   lock is a symlink named `<hostname>-<pid>`; a rollout changes the pod name, so
+   the previous pod's lock names a host Chrome cannot verify and it refuses to
+   start. The `fix-perms` initContainer now clears the three `Singleton*` files.
+
+Two operational notes worth keeping:
+
+- **A subPath ConfigMap mount does not hot-update, and a liveness-driven
+  container restart does not remount it** — only a pod recreation picks up a new
+  ConfigMap. Expect a rollout, not a restart, when changing either file.
+- **A push that lands while CI is mid-apply cancels it** (Woodpecker
+  cancel-on-new-push). Here that left `neko-conf` and the turn ExternalSecret
+  created in the cluster but absent from Terraform state, and the next apply
+  failed with "already exists"; recovery was deleting the two orphaned objects so
+  the following apply could own them. Avoid pushing again while an apply is
+  running.
+
+## Verified live (2026-08-11)
+
+| Check | Result |
+|---|---|
+| Chrome + openbox + Xorg running under neko | yes, `Chrome/147.0.7727.55` |
+| Encoder | `x264enc` H.264, 4 Mbps, 1920x1080@30 |
+| CDP session (flattened auto-attach) | `Page.enable` → `{"result":{}}` |
+| Persistent profile (`contexts[0]`) | 133 cookies / 33 domains, chess.com session present (23 cookies) |
+| Fresh `new_context()` | isolated, 0 cookies |
+| snapshot-harvester CronJob | wrote a 38,147-byte snapshot |
+| `homelab browser --shared-context` | connected to the master, 133 cookies |
+| chrome-broker `/seed` | 133 cookies |
+| `chrome.viktorbarzin.me/api/snapshot` | HTTP 200, parses (Traefik priority holds) |
+| `chrome.viktorbarzin.me/` unauthenticated | 302 → Authentik authorize |
+| neko screencast fallback | endpoint live (401 = auth-gated) |
+| `turn.viktorbarzin.me` on internal DNS | `10.0.20.200` (was NXDOMAIN) |
+
+## Still to confirm in a browser
+
+Not verifiable from a shell; these need the view opened once:
+
+- neko's UI loading through Authentik forward-auth and its `/ws` upgrade
+  surviving it (D3's assumption; the ttyd stack is the precedent, and the
+  token-in-URL fallback is the remedy if it fails).
+- WebRTC actually connecting through the coturn relay, audio, and a live
+  resolution change — plus whether 1080p software x264 feels as smooth as the
+  proxy's 1440p NVENC (D2 records the GPU path if not).
+- The same from a LAN client, now that `turn.viktorbarzin.me` resolves.
+
 ## What we don't know yet
 
-These are verification steps in the rollout above, not blockers on the design:
+These were verification steps in the rollout above, and the ones now settled are
+recorded in the table above:
 
-- Whether Authentik forward-auth passes neko's `/ws` upgrade. Precedent (ttyd)
-  says yes; the fallback is the proxy's token-in-URL model.
-- Whether mounting a ConfigMap over
-  `/etc/neko/supervisord/google-chrome.conf` behaves as expected in the stock
-  image — the file's shape is confirmed upstream, the mount is not yet tested.
-- Whether software x264 at 1080p feels as smooth as the proxy's 1440p NVENC in
-  day-to-day use. The measured numbers are close (~25 vs ~29 fps delivered); the
-  subjective comparison is Viktor's call after rollout, and D2 records the GPU
-  path if the answer is no.
-- Whether Chrome's persisted fullscreen state reproduces under openbox.
+- The ConfigMap-over-supervisord mount works (settled — see As-built 2 for what
+  the file actually contained).
+- Chrome's persisted fullscreen state did not reproduce under openbox during the
+  rollout; the proxy's F11 guard was not needed and was not ported.
+- The `/ws`-behind-Authentik question and the subjective smoothness comparison
+  remain open — see "Still to confirm in a browser".

@@ -17,20 +17,33 @@
 locals {
   # name (relative to the zone) => IPv4 address.
   #
-  # turn: coturn's MetalLB address. Public DNS resolves turn.viktorbarzin.me to
-  # the WAN IP, but Technitium had no record at all, so a LAN client received
-  # NXDOMAIN for the STUN/TURN hostname and a WebRTC display (the neko views in
-  # stacks/chrome-service and stacks/proxy) got ZERO ICE candidates — neko's only
-  # other candidate is a pod IP that is not routable off-cluster, so the stream
-  # never established. Verified 2026-08-11:
+  # turn: coturn's DEDICATED MetalLB address (stacks/coturn local.lb_ip — keep in
+  # step with it and with the pfSense `coturn_lb` alias). Public DNS resolves
+  # turn.viktorbarzin.me to the WAN IP, but Technitium had no record at all, so a
+  # client on LAN DNS received NXDOMAIN for the STUN/TURN hostname and a WebRTC
+  # display (the neko views in stacks/chrome-service and stacks/proxy) got no
+  # usable ICE candidates. Verified 2026-08-11:
   #   dig @10.0.20.201 turn.viktorbarzin.me  ->  NXDOMAIN (flags: qr aa)
   #   dig @1.1.1.1     turn.viktorbarzin.me  ->  176.12.22.76
-  # This fixes NAME RESOLUTION only. coturn runs listening-ip=0.0.0.0 with
-  # external-ip=<WAN> and no private mapping, so it still advertises relay
-  # candidates on the WAN address and LAN media hairpins through it. A LAN-local
-  # relay candidate would need a dual external-ip mapping or a second listener.
+  # Note this record only helps clients that USE Technitium; London resolves via
+  # its own dnsmasq and gets the public answer, reaching coturn over the WAN.
   static_a_records = {
-    turn = "10.0.20.200"
+    turn = "10.0.20.205"
+  }
+
+  # Same, for the internal-only viktorbarzin.lan zone — the household devices
+  # that live behind a remote site's own DHCP rather than Kea, so neither the
+  # ingress sync nor the phpIPAM/Technitium sync ever creates them. The London
+  # names that predate this (ha-london, rpi-london, openwrt-london) were added
+  # by hand in Technitium; declare new ones here so they survive a rebuild.
+  #
+  # mbp-london: Viktor's MacBook, which is the USB adb host for the London
+  # Portal (infra/scripts/provision-portal.sh, docs/runbooks/provision-portal.md).
+  # Pinned to .168 by a static lease on the London Flint covering BOTH its
+  # hardware MAC and its current macOS private Wi-Fi address — the previous
+  # reservation had gone stale because that private address rotated.
+  static_lan_a_records = {
+    "mbp-london" = "192.168.8.168"
   }
 }
 
@@ -69,14 +82,16 @@ resource "kubernetes_cron_job_v1" "technitium_static_records" {
                 name  = "TECH_PASS"
                 value = var.technitium_password
               }
-              # "<name> <ip>" per line — the shell reads it without needing jq.
+              # "<zone> <name> <ip>" per line — the shell reads it without needing jq.
               env {
-                name  = "RECORDS"
-                value = join("\n", [for name, ip in local.static_a_records : "${name} ${ip}"])
+                name = "RECORDS"
+                value = join("\n", concat(
+                  [for name, ip in local.static_a_records : "viktorbarzin.me ${name} ${ip}"],
+                  [for name, ip in local.static_lan_a_records : "viktorbarzin.lan ${name} ${ip}"],
+                ))
               }
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
-                ZONE="viktorbarzin.me"
                 TECH_API="http://technitium-web:5380"
 
                 TOKEN=$$(curl -sf "$$TECH_API/api/user/login?user=$$TECH_USER&pass=$$TECH_PASS" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
@@ -87,7 +102,7 @@ resource "kubernetes_cron_job_v1" "technitium_static_records" {
                 # would report success while failing to write a record.
                 printf '%s\n' "$$RECORDS" > /tmp/records
                 RC=0
-                while read -r NAME IP; do
+                while read -r ZONE NAME IP; do
                   [ -z "$$NAME" ] && continue
                   FQDN="$$NAME.$$ZONE"
                   REC=$$(curl -sf "$$TECH_API/api/zones/records/get?token=$$TOKEN&zone=$$ZONE&domain=$$FQDN" || true)

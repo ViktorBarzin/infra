@@ -4,6 +4,82 @@ variable "tls_secret_name" {
 }
 variable "nfs_server" { type = string }
 
+# Cluster VPN egress pilot — docs/plans/2026-08-16-cluster-vpn-egress-service-design.md
+#
+# Book-search is the first consumer of the shared VPN egress service: its
+# outbound HTTP is re-originated from inside the UK NordVPN tunnel by gluetun's
+# built-in HTTP proxy listener. In-cluster calls and myanonamouse.net stay
+# direct (see the NO_PROXY env on the Deployment).
+#
+# This is a MEASURED pilot, ON by default so we get data. What motivated it is
+# the Anna's Archive 403, and that 403 is a DDoS-Guard JS challenge keyed on
+# ASN reputation rather than a geo-block (reproduced from the pod, 2026-08-16:
+# 902-byte body, <title>DDoS-Guard</title>). A datacenter/VPN exit may well be
+# challenged at least as often as the current residential IP, so compare
+# download success before and after rather than assuming the route fixes it.
+# The FlareSolverr fallback leg does not move either — FlareSolverr makes its
+# own outbound request from its own pod in servarr.
+#
+# TO REVERT: set this to "" and apply. An empty value produces no proxy mount
+# at all (urllib's getproxies_environment drops empty *_proxy vars, so httpx
+# sees none), which keeps the off position a value edit — the env blocks stay
+# in place and NO_PROXY goes inert alongside them. Verified live in the running
+# pod on 2026-08-16, both positions.
+# Calibre-web shelf that Goodreads-sourced books land on. Public, owned by
+# Anca's calibre-web user, so the admin session book-search already holds can
+# write to it. "0" disables shelving (the book still imports into the library).
+variable "goodreads_shelf_id" {
+  type = string
+  # Shelf 6: "Goodreads wishlist", public, owned by calibre-web user `anca`.
+  default     = "6"
+  description = "calibre-web shelf id for books sourced from Anca's Goodreads to-read shelf."
+}
+
+# Downloads stay OFF until the matcher has been checked by hand against her real
+# shelf (backend/goodreads/replay.py). With this false the poller still reads the
+# feed and reports what it would fetch, but never fetches.
+# Kindle address that Goodreads-sourced books are forwarded to once they are in
+# Calibre. Only books the pipeline actually FETCHES are sent: a book the library
+# already held may already be on the device, and clearing a duplicate off a
+# Kindle is fiddly. Empty disables forwarding, and the poller reports books as
+# shelved-only exactly as it did before. Reflowable formats only (epub/azw3/mobi)
+# — see backend/kindle.py for why a pdf is shelved instead of sent.
+variable "goodreads_kindle_email" {
+  type = string
+  # Anca's Send-to-Kindle address. calibre-web@viktorbarzin.me has to stay on her
+  # Amazon approved-sender list for Amazon to accept these; a rejection comes back
+  # as a bounce, which the OutboundMailBounced alert now catches.
+  default     = "ancaelena98_4RMJsy@kindle.com"
+  description = "Kindle address for books sourced from Anca's Goodreads to-read shelf. Empty = shelve only."
+}
+
+variable "goodreads_downloads_enabled" {
+  type = string
+  # ON since 2026-08-16. The gate is passed: the matcher was replayed over 50 of
+  # her real shelf items and every pick checked by hand, and the whole path was
+  # run end to end (Strange Houses -> libgen -> Calibre 497 -> her shelf).
+  default     = "true"
+  description = "Whether the Goodreads poller may actually download books."
+}
+
+variable "book_search_proxy_url" {
+  type = string
+  # REVERTED 2026-08-16 after measuring. The pilot answered its question and the
+  # answer was no: routing book-search through the UK exit changed nothing on any
+  # of its blocked endpoints. Measured from the pod, direct vs proxied:
+  #   annas-archive.gl/search  403 -> 403
+  #   googleapis.com/books     429 -> 429   (a quota limit, not an IP block)
+  #   libgen                   error -> error
+  # This matches the design's stated expectation: NordVPN exits sit in hosting
+  # ASNs that anti-bot vendors score more harshly than a residential address, so
+  # a datacenter exit does not beat a challenge the home IP already fails. The
+  # egress service itself is verified working (UK exit, fail-closed, no leak) —
+  # this consumer just gains nothing from it.
+  # Set back to "http://proxy-egress-uk.proxy.svc.cluster.local:8888" to re-run.
+  default     = ""
+  description = "Outbound HTTP proxy for book-search (cluster VPN egress, UK exit). Empty string = no proxy, traffic egresses from the home IP as before."
+}
+
 resource "kubernetes_namespace" "ebooks" {
   metadata {
     name = "ebooks"
@@ -31,7 +107,7 @@ resource "kubernetes_manifest" "calibre_external_secret" {
       namespace = "ebooks"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -61,7 +137,7 @@ resource "kubernetes_manifest" "audiobookshelf_external_secret" {
       namespace = "ebooks"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -91,7 +167,7 @@ resource "kubernetes_manifest" "servarr_external_secret" {
       namespace = "ebooks"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -147,11 +223,12 @@ module "tls_secret" {
 
 # NFS Volumes - Calibre (prefixed with ebooks- to avoid PV name clash with old stacks)
 module "nfs_calibre_library_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-library-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/calibre-library"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-calibre-library-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/calibre-library"
+  storage_class_name = "nfs-pve"
 }
 
 # iSCSI volume for config (SQLite DBs) - enables WAL mode for concurrent reads/writes
@@ -184,44 +261,49 @@ resource "kubernetes_persistent_volume_claim" "calibre_config_iscsi" {
 }
 
 module "nfs_calibre_ingest_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-ingest-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-calibre-ingest-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_mam_farming_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-mam-farming-host"
-  namespace  = "ebooks"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/servarr/mam-farming"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-mam-farming-host"
+  namespace          = "ebooks"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/servarr/mam-farming"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_calibre_stacks_config_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-stacks-config-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/stacks"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-calibre-stacks-config-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/stacks"
+  storage_class_name = "nfs-pve"
 }
 
 # NFS Volumes - Audiobookshelf (prefixed with ebooks- to avoid PV name clash)
 module "nfs_audiobookshelf_audiobooks_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-audiobooks-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/audiobooks"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-abs-audiobooks-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/audiobooks"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_audiobookshelf_podcasts_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-podcasts-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/podcasts"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-abs-podcasts-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/podcasts"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_persistent_volume_claim" "abs_config_proxmox" {
@@ -254,11 +336,12 @@ resource "kubernetes_persistent_volume_claim" "abs_config_proxmox" {
 }
 
 module "nfs_audiobookshelf_metadata_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-metadata-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/metadata"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-abs-metadata-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/metadata"
+  storage_class_name = "nfs-pve"
 }
 
 # Calibre-Web-Automated Deployment
@@ -296,6 +379,56 @@ resource "kubernetes_deployment" "calibre-web-automated" {
         }
       }
       spec {
+        # Calibre-Web keeps its SMTP password Fernet-encrypted in
+        # /config/app.db, decryptable only with /config/.key. When the two
+        # disagree it does not surface an error: config_sql.py catches
+        # InvalidToken and blanks the field, and tasks/mail.py then skips SMTP
+        # AUTH altogether, so the mailserver refuses every send. The 2025-11-30
+        # migration to calibre-web-automated hit that — app.db was carried over
+        # from /mnt/main/calibre, the hidden .key was not — and "Send to Kindle"
+        # failed silently until 2026-08-21. Re-seeding from the Vault-backed
+        # secret on every start makes the secret the single source of truth, so
+        # a lost key is repaired on the next restart instead of becoming another
+        # silent outage. Idempotent: no write when the stored value already
+        # matches. Alerts on the resulting refusals: ClusterServiceCannotRelayMail
+        # (stacks/monitoring/modules/monitoring/loki.tf).
+        init_container {
+          # The CWA image already ships python3 + cryptography + sqlite3, and
+          # the seeding logic does not depend on the Calibre-Web version, so
+          # reusing it avoids a second image to keep current.
+          name    = "seed-smtp-password"
+          image   = "viktorbarzin/calibre-web-automated:latest"
+          command = ["python3", "-c", file("${path.module}/files/seed-smtp-password.py")]
+          env {
+            name = "SMTP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "calibre-secrets"
+                key  = "smtp_password"
+              }
+            }
+          }
+          # Match the main container's PUID/PGID (abc = 1000:1000) so anything
+          # this creates — a regenerated .key, SQLite's -wal/-shm — stays
+          # writable by Calibre-Web.
+          security_context {
+            run_as_user  = 1000
+            run_as_group = 1000
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
+          volume_mount {
+            name       = "config"
+            mount_path = "/config"
+          }
+        }
         container {
           image = "viktorbarzin/calibre-web-automated:latest"
           name  = "calibre-web-automated"
@@ -776,9 +909,8 @@ resource "kubernetes_deployment" "book_search" {
       }
       spec {
         container {
-          image             = "viktorbarzin/book-search:latest"
-          image_pull_policy = "Always"
-          name              = "book-search"
+          image = "viktorbarzin/book-search:latest"
+          name  = "book-search"
 
           port {
             container_port = 8000
@@ -786,6 +918,29 @@ resource "kubernetes_deployment" "book_search" {
           env {
             name  = "QBITTORRENT_URL"
             value = "http://qbittorrent.servarr.svc.cluster.local"
+          }
+          # Calibre-web shelf that Goodreads-sourced books are added to. The
+          # shelf is public and owned by Anca's calibre-web user, which is what
+          # lets the admin session book-search already holds write to it.
+          env {
+            name  = "GOODREADS_SHELF_ID"
+            value = var.goodreads_shelf_id
+          }
+          # Forwarding happens here rather than in the poller because this is
+          # where the SMTP credentials and the Calibre library both already are.
+          env {
+            name  = "GOODREADS_KINDLE_EMAIL"
+            value = var.goodreads_kindle_email
+          }
+          # The iOS Shortcut sends a recipient NAME, not an address. Only the
+          # first attachment in a shortcut's HTTP header dictionary resolves,
+          # so the api key is the one variable it can carry and everything else
+          # it sends is a literal string. Holding the addresses here also keeps
+          # them out of the shortcut file, which /shortcut serves without
+          # authentication, and lets one change without a reinstall.
+          env {
+            name  = "KINDLE_RECIPIENTS"
+            value = "anca:${var.goodreads_kindle_email}"
           }
           env {
             name = "QBITTORRENT_PASS"
@@ -918,6 +1073,41 @@ resource "kubernetes_deployment" "book_search" {
                 key  = "slack_webhook_url"
               }
             }
+          }
+          # VPN egress pilot — see var.book_search_proxy_url above for what this
+          # is, why it is a measurement rather than a fix, and how to turn it
+          # off. ALL_PROXY is the one that does the work: httpx runs with
+          # trust_env=True and no client in the app passes proxies=/mounts=/
+          # transport=, so ALL_PROXY becomes a single `all://` mount covering
+          # http and https alike. HTTP_PROXY/HTTPS_PROXY carry the same value so
+          # anything outside httpx (a library or subprocess added later) takes
+          # the same route instead of quietly egressing from the home IP.
+          env {
+            name  = "ALL_PROXY"
+            value = var.book_search_proxy_url
+          }
+          env {
+            name  = "HTTP_PROXY"
+            value = var.book_search_proxy_url
+          }
+          env {
+            name  = "HTTPS_PROXY"
+            value = var.book_search_proxy_url
+          }
+          # Bypass list. Inert while the proxy URL is "", so it stays put across
+          # flips. myanonamouse.net is load-bearing: mam.py documents the MAM
+          # session as ASN/IP-locked, and a UK exit changes both — worse, if
+          # dynamicSeedbox.php then re-locks the session to the VPN address,
+          # flipping the proxy back off breaks MAM a second time.
+          # FQDN suffixes only: the match is against the full hostname, so a
+          # bare short name (`calibre.ebooks`) would still take the tunnel — use
+          # FQDNs in service URLs. No CIDRs either — httpx splits a NO_PROXY
+          # entry on "/" and builds a malformed pattern, and the app makes no
+          # raw-IP HTTP calls. Routing verified live in the pod, 2026-08-16:
+          # in-cluster + MAM + localhost direct, libgen/annas/openlibrary via UK.
+          env {
+            name  = "NO_PROXY"
+            value = ".svc.cluster.local,.cluster.local,localhost,127.0.0.1,myanonamouse.net,.viktorbarzin.me"
           }
           resources {
             requests = {
@@ -1057,4 +1247,192 @@ module "book_search_api_ingress" {
   # auth = "none": Book Search API endpoints — API key auth handled by backend; forward-auth would block downloads.
   auth         = "none"
   ingress_path = ["/api/download-url", "/api/download-status", "/api/send-to-kindle", "/shortcut"]
+}
+
+# ---------------------------------------------------------------------------- #
+# Goodreads -> Calibre auto-ingest                                              #
+#                                                                               #
+# Design: pages.viktorbarzin.me/2026-08-16-goodreads-auto-ingest.html            #
+#                                                                               #
+# When Anca adds a book to her Goodreads to-read shelf it is matched, downloaded #
+# and put on her calibre-web shelf, with nobody in the loop. Runs as its own     #
+# small Deployment rather than inside the book-search pod so a slow feed or a    #
+# stuck download cannot affect the interactive search UI.                        #
+#                                                                               #
+# Goodreads publishes no WebSub hub, so this polls — but the feed honours        #
+# If-None-Match, so a check costs a few hundred bytes when nothing has changed   #
+# and she gets her books within ~2 minutes of shelving them.                     #
+# ---------------------------------------------------------------------------- #
+
+# DB credentials from the Vault database engine (7-day rotation).
+# Pre-req in dbaas: role + database `goodreads_sync`, Vault role
+# `static-creds/pg-goodreads-sync`.
+resource "kubernetes_manifest" "goodreads_db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "goodreads-sync-db-creds"
+      namespace = kubernetes_namespace.ebooks.metadata[0].name
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "goodreads-sync-db-creds"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/match" = "true"
+            }
+          }
+          data = {
+            GOODREADS_DATABASE_URL = "postgresql://goodreads_sync:{{ .password }}@postgresql.dbaas.svc.cluster.local:5432/goodreads_sync"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "database/static-creds/pg-goodreads-sync"
+          property = "password"
+        }
+      }]
+    }
+  }
+}
+
+resource "kubernetes_deployment" "goodreads_sync" {
+  metadata {
+    name      = "goodreads-sync"
+    namespace = kubernetes_namespace.ebooks.metadata[0].name
+    labels = {
+      app  = "goodreads-sync"
+      tier = local.tiers.edge
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "goodreads-sync"
+      }
+    }
+    # One writer only: the poller records one row per shelf item, and two
+    # replicas would race to claim the same new book.
+    strategy {
+      type = "Recreate"
+    }
+    template {
+      metadata {
+        labels = {
+          app = "goodreads-sync"
+        }
+      }
+      spec {
+        container {
+          image   = "viktorbarzin/book-search:latest"
+          name    = "goodreads-sync"
+          command = ["python3", "-m", "backend.goodreads.runner"]
+
+          env {
+            name  = "GOODREADS_USER_ID"
+            value = "33074940"
+          }
+          env {
+            name  = "GOODREADS_SHELF"
+            value = "to-read"
+          }
+          env {
+            name  = "GOODREADS_POLL_SECONDS"
+            value = "120"
+          }
+          env {
+            name  = "GOODREADS_DOWNLOADS_ENABLED"
+            value = var.goodreads_downloads_enabled
+          }
+          env {
+            name  = "GOODREADS_SHELF_ID"
+            value = var.goodreads_shelf_id
+          }
+          env {
+            name  = "BOOK_SEARCH_URL"
+            value = "http://book-search.ebooks.svc.cluster.local"
+          }
+          env {
+            name = "API_KEY"
+            value_from {
+              secret_key_ref {
+                name = "calibre-secrets"
+                key  = "book_search_api_key"
+              }
+            }
+          }
+          env {
+            name = "SLACK_WEBHOOK_URL"
+            value_from {
+              secret_key_ref {
+                name = "calibre-secrets"
+                key  = "slack_webhook_url"
+              }
+            }
+          }
+          env_from {
+            secret_ref {
+              name = "goodreads-sync-db-creds"
+            }
+          }
+          # Follows book-search's egress pilot switch so both move together; the
+          # measured result was that the UK exit changes nothing for these hosts,
+          # so this is empty today.
+          dynamic "env" {
+            for_each = var.book_search_proxy_url == "" ? [] : [var.book_search_proxy_url]
+            content {
+              name  = "HTTPS_PROXY"
+              value = env.value
+            }
+          }
+          dynamic "env" {
+            for_each = var.book_search_proxy_url == "" ? [] : [var.book_search_proxy_url]
+            content {
+              name  = "NO_PROXY"
+              value = ".svc.cluster.local,.cluster.local,localhost,127.0.0.1,.viktorbarzin.me"
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "256Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+
+  # Kyverno stamps keel.sh/policy, keel.sh/trigger and keel.sh/pollSchedule onto
+  # every workload in this keel-enrolled namespace, and the kubernetes provider
+  # manages metadata.annotations as a whole map even where none is declared, so
+  # all three planned as removals on every apply. That is the same two-owners,
+  # one-field fight the siblings in this file already settle; this deployment
+  # was simply missing the block. dns_config comes from inject-ndots and is the
+  # repo-wide requirement for any kubernetes_deployment.
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
+  }
 }

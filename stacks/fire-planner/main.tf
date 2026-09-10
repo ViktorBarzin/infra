@@ -64,7 +64,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -272,10 +272,9 @@ resource "kubernetes_deployment" "fire_planner" {
         }
 
         init_container {
-          name              = "alembic-migrate"
-          image             = local.image
-          image_pull_policy = "Always"
-          command           = ["python", "-m", "fire_planner", "migrate"]
+          name    = "alembic-migrate"
+          image   = local.image
+          command = ["python", "-m", "fire_planner", "migrate"]
 
           env_from {
             secret_ref {
@@ -507,7 +506,21 @@ resource "kubernetes_cron_job_v1" "fire_planner_fire_targets" {
         ttl_seconds_after_finished = 86400
         # The full country sweep is CPU-bound (binary search × ~22 cities ×
         # 3 cases). Give it room rather than letting it run forever.
-        active_deadline_seconds = 3600
+        #
+        # 3600 -> 10800 on 2026-09-02. The work has not grown; the disk under it
+        # has. The 2026-08-02 run wrote all 88 rows inside the hour with sdc at
+        # 3.8% utilisation. The 2026-09-02 run hit the deadline, retried once and
+        # failed again with sdc at 70% — the shared-spindle contention tracked in
+        # bead code-oflt. The wealth dashboard reads fire_target directly over
+        # Postgres, so a failed run leaves it showing month-old FIRE numbers.
+        #
+        # If it fails again at 10800, do NOT just raise this further. The loop
+        # already logs one line per solved target and the failed run emitted
+        # none, so it completed zero of 88 in a full hour rather than nearly
+        # finishing. That would mean the per-solve DB round-trips are the wall
+        # and the fix belongs in the storage or the solver, not in this number.
+        # Applied 2026-09-02 (pipeline #1406 was cancelled first).
+        active_deadline_seconds = 10800
         template {
           metadata {
             labels = local.labels
@@ -807,8 +820,8 @@ variable "claude_agent_service_url" {
 
 variable "examples_llm_model" {
   type        = string
-  description = "llama-swap model id for the examples LLM primary extractor. Use qwen3-8b when GPU has ≥5GB free; qwen3vl-4b when immich-ml is using ~10GB."
-  default     = "qwen3vl-4b"
+  description = "llama-swap model id for the examples LLM primary extractor. The extractor is text-only, so this is the text model; the app default in fire_planner/examples/llm_extract.py matches."
+  default     = "qwen3-8b"
 }
 
 variable "run_examples_bulk_ingest" {
@@ -1044,9 +1057,8 @@ resource "kubernetes_cron_job_v1" "examples_weekly_delta" {
               name = "ghcr-credentials"
             }
             container {
-              name              = "ingest"
-              image             = local.image
-              image_pull_policy = "IfNotPresent"
+              name  = "ingest"
+              image = local.image
               command = ["python", "-m", "fire_planner", "examples", "ingest",
               "--top=week", "--limit=200"]
 

@@ -39,12 +39,13 @@ module "tls_secret" {
 # boarding-pass images, no embedded DB; drops LUKS-at-rest (low-sensitivity, accepted).
 # See docs/plans/2026-06-05-block-storage-harden-nfs-design.md
 module "nfs_priority_pass" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "priority-pass-uploads-nfs"
-  namespace  = kubernetes_namespace.priority-pass.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/priority-pass"
-  storage    = "10Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "priority-pass-uploads-nfs"
+  namespace          = kubernetes_namespace.priority-pass.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/priority-pass"
+  storage            = "10Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "priority-pass" {
@@ -120,13 +121,19 @@ resource "kubernetes_deployment" "priority-pass" {
             name       = "uploads"
             mount_path = "/data/uploads"
           }
+          # requests 512Mi -> 384Mi on 2026-09-04 (bead code-hn6k). Measured
+          # peak working set over 30 days is 240Mi, under half the old request,
+          # while the cluster could not drain a node because requests were
+          # oversubscribed against 41-54% real use. 384Mi is 1.5x that peak.
+          #
+          # The LIMIT stays at 512Mi, so burst headroom is unchanged.
           resources {
             limits = {
               memory = "512Mi"
             }
             requests = {
               cpu    = "10m"
-              memory = "512Mi"
+              memory = "384Mi"
             }
           }
         }
@@ -178,7 +185,8 @@ module "ingress" {
   auth            = "required"
   max_body_size   = "10m"
   extra_annotations = {
-    "gethomepage.dev/icon" = "mdi-airplane"
+    "gethomepage.dev/description" = "Boarding pass and lounge tracker"
+    "gethomepage.dev/icon"        = "mdi-airplane"
   }
 }
 

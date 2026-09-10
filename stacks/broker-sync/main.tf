@@ -39,7 +39,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = kubernetes_namespace.broker_sync.metadata[0].name
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

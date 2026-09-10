@@ -100,7 +100,8 @@ whole `viktorbarzin.me` zone to Technitium `10.0.20.201` (forward-zone, not
 AXFR). Every Unbound client — all VLANs + 192.168.1.x via the WAN listener —
 gets Technitium's internal split-horizon answers: ingress hosts CNAME to the
 zone apex whose A record auto-tracks the live Traefik LB IP
-(`technitium-ingress-dns-sync` + `viktorbarzin-apex-probe` canary). This is
+(`technitium-ingress-dns-sync` + the `apex-dns` blackbox scrape as drift
+canary — it replaced the `viktorbarzin-apex-probe` CronJob on 2026-08-16). This is
 what keeps kubelet forgejo image pulls (and everything else on 10.0.x) off
 the broken public NAT-hairpin with zero per-host DNS config — see
 `docs/post-mortems/2026-06-10-tuya-bridge-forgejo-pull-hairpin.md`.

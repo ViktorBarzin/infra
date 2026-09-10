@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Docker disk garbage collection
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

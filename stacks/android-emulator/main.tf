@@ -147,7 +147,17 @@ resource "kubernetes_deployment" "android-emulator" {
             }
             limits = {
               memory           = "8Gi"
-              "nvidia.com/gpu" = "1" # T4 time-slice; ~0.5-1GiB VRAM while awake
+              "nvidia.com/gpu" = "1" # T4 time-slice
+              # GPU VRAM budget (ADR-0016), declared 2026-08-31. This pod ran
+              # with NO gpumem declaration, which made it invisible to the
+              # gpu-vram-watchdog: it could never be recycled no matter what it
+              # used, and its usage did not count against the seating chart.
+              # Measured 214 MiB peak / 180 MiB mean, active 12 of the 169 hours
+              # to 2026-08-31, so 300 covers it with margin. (The older
+              # "~0.5-1GiB while awake" note here was an estimate; this is the
+              # measurement.) It keeps its own android-emulator-gate rather than
+              # Sablier, which already works.
+              "viktorbarzin.me/gpumem" = "300"
             }
           }
 
@@ -198,6 +208,11 @@ resource "kubernetes_deployment" "android-emulator" {
       # the wake gate + idle sleeper own replicas (scale-to-zero on demand);
       # an apply must not resurrect or kill the emulator.
       spec[0].replicas,
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].labels["tier"],                      # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE
     ]
   }
 }
@@ -212,6 +227,12 @@ resource "kubernetes_service" "adb" {
       "metallb.universe.tf/loadBalancerIPs" = "10.0.20.200"
       "metallb.io/allow-shared-ip"          = "shared"
     }
+  }
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
   }
   spec {
     type = "LoadBalancer"
@@ -310,8 +331,9 @@ module "ingress-public-gate" {
   service_name    = kubernetes_service.gate.metadata[0].name
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
-    "gethomepage.dev/icon" = "android.png"
-    "gethomepage.dev/name" = "Android Emulator"
+    "gethomepage.dev/description" = "Shared Android testing instance (adb + noVNC)"
+    "gethomepage.dev/icon"        = "android.png"
+    "gethomepage.dev/name"        = "Android Emulator"
   }
 }
 

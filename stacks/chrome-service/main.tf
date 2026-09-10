@@ -36,10 +36,18 @@ locals {
   # Software x264 at this size costs ~1.2 cores while a viewer is attached, ~0
   # idle; no GPU slice, so the pod keeps floating across node2-5.
   neko_screen = "1920x1080@30"
-  # Fixed WebRTC media mux port. Media reaches viewers through the coturn relay
-  # (the pod-IP host candidate isn't routable off-cluster), so this port needs no
-  # ingress rule — relay traffic rides the allocation neko itself opens.
+  # Fixed WebRTC media mux port, published DIRECTLY on its own MetalLB address
+  # (see kubernetes_service.chrome_media). Viewers send media straight here, which
+  # is what actually carries the stream — the coturn relay stays configured as a
+  # fallback but cannot reach an external client today, because the ISP router in
+  # front of pfSense forwards only UDP 3478 and not coturn's 49152-49252 relay
+  # range (measured 2026-08-11).
   neko_udpmux = 59000
+  # Dedicated MetalLB address for the media port. Must NOT be the shared .200:
+  # ETP=Local (needed so the real client address survives) cannot coexist with the
+  # shared IP's ETP=Cluster. Reachable from the LAN, the London WireGuard tunnel
+  # and Headscale, all of which route 10.0.0.0/8.
+  media_lb_ip = "10.0.20.206"
 }
 
 # --- Namespace ---
@@ -79,7 +87,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = local.namespace
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -168,11 +176,12 @@ resource "kubernetes_persistent_volume_claim" "profile_encrypted" {
 
 # --- NFS backup target ---
 module "nfs_chrome_service_backup_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "chrome-service-backup-host"
-  namespace  = kubernetes_namespace.chrome_service.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/chrome-service-backup"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "chrome-service-backup-host"
+  namespace          = kubernetes_namespace.chrome_service.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/chrome-service-backup"
+  storage_class_name = "nfs-pve"
 }
 
 # --- Deployment ---
@@ -186,13 +195,21 @@ resource "kubernetes_deployment" "chrome_service" {
       # Deliberate pin: the neko image is digest-pinned (local.neko_image) and
       # the sidecars track local.python_image, so a neko upgrade is a reviewed
       # bump rather than an automatic roll — a display regression here takes the
-      # hand-login surface with it. Opt out of Keel via this label; the
-      # inject-keel-annotations ClusterPolicy excludes workloads
-      # selector-matching keel.sh/policy=never.
-      "keel.sh/policy" = "never"
+      # hand-login surface with it. The Keel opt-out is the annotation below.
     })
     annotations = {
       "reloader.stakater.com/auto" = "true"
+      # Opt out of Keel. This was a LABEL in the merge above until 2026-08-17,
+      # when the inject-keel-annotations exclude moved off labels onto this
+      # annotation (a keel.sh/* label is drift — see
+      # stacks/kyverno/modules/kyverno/keel-annotations.tf).
+      #
+      # `ignore_changes` below covers this key, so declaring it here does not
+      # fight Kyverno on updates — but ignore_changes does not apply on CREATE,
+      # so a recreated Deployment still comes up opted out. That matters: the
+      # neko image is digest-pinned deliberately and an automatic roll would
+      # take the hand-login surface with it.
+      "keel.sh/policy" = "never"
     }
   }
   spec {
@@ -280,7 +297,7 @@ resource "kubernetes_deployment" "chrome_service" {
           # either way, so LAN viewers hairpin — see the design doc's D7.
           env {
             name  = "COTURN_BACKEND_URL"
-            value = "turn:10.0.20.200:3478"
+            value = "turn:10.0.20.205:3478"
           }
           env {
             name  = "COTURN_FRONTEND_URL"
@@ -400,6 +417,30 @@ resource "kubernetes_deployment" "chrome_service" {
           env {
             name  = "NEKO_WEBRTC_UDPMUX"
             value = tostring(local.neko_udpmux)
+          }
+          # Advertise the media LoadBalancer address as the ICE host candidate, so
+          # viewers connect to the media port DIRECTLY and carry no dependency on
+          # a relay. Anything that routes 10.0.0.0/8 — the LAN, the London
+          # WireGuard tunnel, Headscale — reaches it.
+          #
+          # Why not the relay: coturn's relayed addresses are advertised on the WAN
+          # address, and the ISP router in front of pfSense forwards only UDP 3478,
+          # not the 49152-49252 relay range. Measured 2026-08-11 — pfSense's rdr
+          # counter for that range does not move when an external host sends to a
+          # relayed address, so the packet is dropped upstream of the firewall. No
+          # relay-based candidate pair can complete from outside in either
+          # direction until that forward exists, which is a change on the ISP
+          # device rather than anything in this repo. Direct media needs none of
+          # it. coturn stays in the ICE list as a fallback for the day it is fixed.
+          #
+          # Left UNSET this variable is actively harmful: neko then HTTP-GETs
+          # checkip.amazonaws.com and advertises our WAN address as the host
+          # candidate (nothing forwards 59000 either), and pion suppresses srflx
+          # gathering once a 1:1 mapping exists — so the client is offered nothing
+          # reachable and ICE sits at `checking` with the UI logged in and no video.
+          env {
+            name  = "NEKO_WEBRTC_NAT1TO1"
+            value = local.media_lb_ip
           }
           # H.264, explicitly, with an explicit pipeline.
           #
@@ -810,6 +851,46 @@ moved {
   to   = kubernetes_service.chrome_view
 }
 
+# WebRTC media, published directly on its own MetalLB address.
+#
+# This is what carries the stream. The UI and signaling ride the Traefik ingress
+# (TCP), but WebRTC media is UDP and cannot: neko advertises this address as its
+# ICE host candidate (NEKO_WEBRTC_NAT1TO1), and any viewer that routes
+# 10.0.0.0/8 — LAN, the London tunnel, Headscale — sends media straight here.
+#
+# ETP=Local so the viewer's real address survives; that also means only the node
+# running this pod answers for the IP, which MetalLB handles by announcing from
+# wherever the endpoint is. A dedicated IP is required either way, since ETP=Local
+# cannot share an IP with the ETP=Cluster services on .200.
+resource "kubernetes_service" "chrome_media" {
+  metadata {
+    name      = "chrome-media"
+    namespace = kubernetes_namespace.chrome_service.metadata[0].name
+    labels    = local.labels
+    annotations = {
+      "metallb.io/loadBalancerIPs" = local.media_lb_ip
+    }
+  }
+
+  lifecycle {
+    # METALLB_LIFECYCLE_V1: MetalLB's controller writes this annotation on the
+    # live object after it allocates an IP. Without the ignore, every apply
+    # plans to strip it and MetalLB re-adds it — permanent drift.
+    ignore_changes = [metadata[0].annotations["metallb.io/ip-allocated-from-pool"]]
+  }
+  spec {
+    type                    = "LoadBalancer"
+    external_traffic_policy = "Local"
+    selector                = local.labels
+    port {
+      name        = "media"
+      port        = local.neko_udpmux
+      target_port = local.neko_udpmux
+      protocol    = "UDP"
+    }
+  }
+}
+
 # Snapshot-server endpoint (bearer-gated, exposed via ingress sub-path
 # chrome.viktorbarzin.me/api/snapshot — auth=none at the ingress layer
 # because the bearer check happens inside snapshot_server.py).
@@ -880,8 +961,9 @@ module "ingress_snapshot" {
 # - TCP/8080 (neko UI + WS signaling): only from the traefik namespace (public
 #   path is chrome.viktorbarzin.me → Traefik → neko; Authentik forward-auth
 #   gates external access at the Traefik layer, and neko's own admin password
-#   is the inner gate). WebRTC media needs no rule — it relays through coturn
-#   over the allocation neko opens outbound, which is stateful return traffic.
+#   is the inner gate).
+# - UDP/59000 (WebRTC media): from the LANs, remote-site tunnels and the tailnet
+#   — the networks that can route to the media LoadBalancer IP.
 # - TCP/8088 (snapshot-server): only from the traefik namespace
 #   (chrome.viktorbarzin.me/api/snapshot → Traefik → sidecar; bearer token
 #   is the gate inside snapshot-server.py).
@@ -945,6 +1027,26 @@ resource "kubernetes_network_policy_v1" "ws_ingress" {
         protocol = "TCP"
       }
     }
+    # WebRTC media, straight from the viewer to the media LoadBalancer address.
+    # ETP=Local preserves the real source, so this admits the networks that can
+    # actually route to that IP: the homelab LANs, the remote-site tunnels
+    # (London arrives as 192.168.8.x) and the Headscale tailnet. Deliberately not
+    # 0.0.0.0/0 — an off-LAN viewer cannot reach this IP anyway.
+    ingress {
+      from {
+        ip_block { cidr = "10.0.0.0/8" }
+      }
+      from {
+        ip_block { cidr = "192.168.0.0/16" }
+      }
+      from {
+        ip_block { cidr = "100.64.0.0/10" }
+      }
+      ports {
+        port     = tostring(local.neko_udpmux)
+        protocol = "UDP"
+      }
+    }
   }
 }
 
@@ -985,10 +1087,67 @@ resource "kubernetes_cron_job_v1" "chrome_service_backup" {
               image = "docker.io/library/alpine:3.20"
               command = ["/bin/sh", "-c", <<-EOT
                 set -euxo pipefail
+                apk add --no-cache rsync
                 ts=$(date +"%Y_%m_%d_%H")
-                tar -czf /backup/$${ts}.tar.gz -C /profile .
+
+                # Generations are plain directories, not tarballs, so rsync
+                # --link-dest can hardlink the unchanged majority against the
+                # previous run. A gzip blob cannot dedupe at all: every tarball
+                # is fresh bytes even when the profile has barely moved, which
+                # is how 4 runs a day for 30 days reached 51G.
+                #
+                # Names sort lexically, so the newest generation is the tail.
+                # [0-9][0-9]* not [0-9]+ — BusyBox find uses POSIX BRE, where +
+                # is a literal (the same trap fixed in mailserver on 2026-09-01).
+                gens='.*/[0-9][0-9]*_[0-9][0-9]*_[0-9][0-9]*_[0-9][0-9]*$'
+                prev=$(find /backup -maxdepth 1 -mindepth 1 -type d -regex "$gens" | sort | tail -1)
+                link_dest_arg=""
+                [ -n "$prev" ] && link_dest_arg="--link-dest=$prev"
+
+                # Excluded paths are regenerable: browser and build caches, and
+                # component/model stores Chrome re-downloads on demand. Measured
+                # 2026-09-01, they were 82.8% of every tarball (655.5 MiB of
+                # 792). What stays is the state that cannot be recreated —
+                # Cookies, Login Data, Web Data, Preferences, Local State,
+                # History, Local Storage, IndexedDB and Extensions.
+                rsync -aH --delete $link_dest_arg \
+                  --exclude='/.npm/' \
+                  --exclude='/.cache/' \
+                  --exclude='/lost+found/' \
+                  --exclude='/chromium-data/Default/Cache/' \
+                  --exclude='/chromium-data/Default/Code Cache/' \
+                  --exclude='/chromium-data/Default/Service Worker/' \
+                  --exclude='/chromium-data/Default/GPUCache/' \
+                  --exclude='/chromium-data/Default/DawnCache/' \
+                  --exclude='/chromium-data/Default/DawnGraphiteCache/' \
+                  --exclude='/chromium-data/Default/GrShaderCache/' \
+                  --exclude='/chromium-data/Default/ShaderCache/' \
+                  --exclude='/chromium-data/GrShaderCache/' \
+                  --exclude='/chromium-data/ShaderCache/' \
+                  --exclude='/chromium-data/GraphiteDawnCache/' \
+                  --exclude='/chromium-data/optimization_guide_model_store/' \
+                  --exclude='/chromium-data/component_crx_cache/' \
+                  --exclude='/chromium-data/extensions_crx_cache/' \
+                  --exclude='/chromium-data/WidevineCdm/' \
+                  --exclude='/chromium-data/WasmTtsEngine/' \
+                  --exclude='/chromium-data/OnDeviceHeadSuggestModel/' \
+                  --exclude='/chromium-data/SafeBrowsing/' \
+                  --exclude='/chromium-data/Safe Browsing*' \
+                  --exclude='BrowserMetrics*' \
+                  /profile/ "/backup/$${ts}/"
+
+                # Keep 120 generations = 30 days at 4 runs a day, matching the
+                # window the old -mtime +30 tarball rule kept. Count-based
+                # rather than -mtime because rsync -a stamps a generation
+                # directory with the SOURCE mtime, so -mtime would not measure
+                # when the backup was taken.
+                find /backup -maxdepth 1 -mindepth 1 -type d -regex "$gens" | sort | head -n -120 | xargs -r rm -rf
+
+                # Legacy tarballs from before 2026-09-01 age out on their
+                # original 30-day rule; nothing is deleted early.
                 find /backup -maxdepth 1 -type f -name '*.tar.gz' -mtime +30 -delete
-                echo "Backup complete: $${ts}.tar.gz"
+
+                echo "Backup complete: $${ts} ($(du -sh /backup | cut -f1) total across $(find /backup -maxdepth 1 -mindepth 1 -type d -regex "$gens" | wc -l) generations)"
               EOT
               ]
               volume_mount {

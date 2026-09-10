@@ -1,0 +1,27 @@
+--- a/SKILL.md	2026-08-30 17:30:00.533909629 +0000
++++ b/SKILL.md	2026-08-30 17:30:00.536909656 +0000
+@@ -52,7 +52,23 @@
+ 
+ The lesson should be short, and completable very quickly. Learners' working memory is very small, and we need to stay within it. But each lesson should give the user a single tangible win that they can build on. It should be directly tied to the mission, and should be in the user's zone of proximal development.
+ 
+-If possible, open the lesson file for the user by running a CLI command.
++When the lesson is saved, **commit and push it, then give the user its
++Viewer link**. The Viewer (`learn.viktorbarzin.me`, Authentik-gated,
++owner-only) serves the monorepo's `learn/` at git HEAD, so a lesson becomes
++viewable ~30-60s after it is PUSHED - pushing is part of delivering the
++lesson, not optional cleanup:
++
++1. `git -C ~/code add <the files you wrote>` (never `add -A`), commit with a
++   normal audit-trail message, `git -C ~/code push origin master`.
++2. Print the link: `https://learn.viktorbarzin.me/<path relative to learn/>`
++   - e.g. `learn/chess/lessons/0001-the-blunder-check.html` ->
++   `https://learn.viktorbarzin.me/chess/lessons/0001-the-blunder-check.html`.
++   Mention it may take up to a minute to appear.
++
++Do the same when you create or update a reference document. Never try to
++open a local browser (this box is headless) and never rasterize a lesson to
++an image - quizzes need a real browser. (Domain language: `learn/CONTEXT.md`;
++the serving decision is `learn/docs/adr/0002`.)
+ 
+ Each lesson should link via HTML anchors to other lessons and reference documents.
+ 

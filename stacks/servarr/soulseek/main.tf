@@ -124,4 +124,7 @@ module "ingress" {
   name            = "soulseek"
   tls_secret_name = var.tls_secret_name
   auth            = "required"
+  extra_annotations = {
+    "gethomepage.dev/description" = "Soulseek peer-to-peer client"
+  }
 }

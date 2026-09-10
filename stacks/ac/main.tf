@@ -73,6 +73,13 @@ resource "kubernetes_secret" "tls" {
     "tls.crt" = data.kubernetes_secret.wildcard.data["tls.crt"]
     "tls.key" = data.kubernetes_secret.wildcard.data["tls.key"]
   }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: the sync-tls-secret policy stamps generate.kyverno.io/*
+    # + app.kubernetes.io/managed-by labels on this Secret. Same line the shared
+    # modules/kubernetes/setup_tls_secret module already carries — this stack
+    # hand-rolls its own tls Secret instead of using that module, so it needs it too.
+    ignore_changes = [metadata[0].labels]
+  }
 }
 
 # --- acd-demux (browser WS → per-user relay → acd) : DevVM 10.0.10.10:7690 ---

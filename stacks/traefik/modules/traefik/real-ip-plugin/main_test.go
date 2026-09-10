@@ -219,3 +219,87 @@ func TestTrustedPeerMalformedCFFallsThrough(t *testing.T) {
 		t.Fatalf("malformed CF must fall through to XFF; want 203.0.113.9, got %q", got)
 	}
 }
+
+// --- Cf-Connecting-Ip is normalised too, not just X-Real-Ip.
+//
+// Backends may read Cf-Connecting-Ip directly instead of X-Real-Ip — tuwunel
+// (matrix) is configured with ip_source=cf_connecting_ip. Leaving that header
+// as the client sent it let anyone reaching the origin directly (WAN :443 NATs
+// to Traefik without a Cloudflare-source restriction) choose the IP the backend
+// rate-limits and logs. So the resolved address is stamped onto BOTH headers,
+// which also means a request arriving without any CF header still gets a usable
+// one instead of the backend erroring on its absence. ---
+
+// serveCF is serve but returns the Cf-Connecting-Ip the next handler observes.
+func serveCF(t *testing.T, remoteAddr string, h http.Header) string {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = remoteAddr
+	if h != nil {
+		req.Header = h
+	}
+	var got string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Cf-Connecting-Ip")
+	})
+	rp, err := New(context.Background(), next, CreateConfig(), "test")
+	if err != nil {
+		t.Fatalf("New returned an unexpected error: %v", err)
+	}
+	rp.ServeHTTP(httptest.NewRecorder(), req)
+	return got
+}
+
+// 13. Untrusted peer + forged Cf-Connecting-Ip → overwritten with the real peer.
+// This is the spoofing hole: without it the backend believes 6.6.6.6.
+func TestUntrustedPeerForgedCFIsOverwritten(t *testing.T) {
+	got := serveCF(t, "176.12.22.76:5000", http.Header{
+		"Cf-Connecting-Ip": {"6.6.6.6"},
+	})
+	if got != "176.12.22.76" {
+		t.Fatalf("forged Cf-Connecting-Ip must be overwritten with the peer; want 176.12.22.76, got %q", got)
+	}
+}
+
+// 14. Untrusted peer + NO CF header → one is stamped from the peer, so a
+// backend that requires the header does not fail on requests that bypass
+// Cloudflare (LAN, WireGuard, IPv6-direct via pfSense).
+func TestUntrustedPeerNoCFGetsStamped(t *testing.T) {
+	got := serveCF(t, "10.0.10.10:5000", nil)
+	if got != "10.0.10.10" {
+		t.Fatalf("a header-less request must get Cf-Connecting-Ip from the peer; want 10.0.10.10, got %q", got)
+	}
+}
+
+// 15. Trusted peer (cloudflared) + genuine public CF → preserved untouched.
+func TestTrustedPeerGenuineCFPreserved(t *testing.T) {
+	got := serveCF(t, "10.10.195.236:5000", http.Header{
+		"Cf-Connecting-Ip": {"203.0.113.5"},
+	})
+	if got != "203.0.113.5" {
+		t.Fatalf("a genuine CF value from cloudflared must survive; want 203.0.113.5, got %q", got)
+	}
+}
+
+// 16. Trusted peer + no CF but a public XFF → CF is filled in from XFF, so both
+// headers agree on one address.
+func TestTrustedPeerCFFilledFromXFF(t *testing.T) {
+	got := serveCF(t, "10.10.195.236:5000", http.Header{
+		"X-Forwarded-For": {"198.51.100.9"},
+	})
+	if got != "198.51.100.9" {
+		t.Fatalf("CF must be filled from the public XFF entry; want 198.51.100.9, got %q", got)
+	}
+}
+
+// 17. Both headers always carry the same resolved address.
+func TestBothHeadersAgree(t *testing.T) {
+	h := func() http.Header {
+		return http.Header{"Cf-Connecting-Ip": {"6.6.6.6"}, "X-Forwarded-For": {"7.7.7.7"}}
+	}
+	realIP := serve(t, "176.12.22.76:5000", h())
+	cf := serveCF(t, "176.12.22.76:5000", h())
+	if realIP != cf {
+		t.Fatalf("X-Real-Ip (%q) and Cf-Connecting-Ip (%q) must agree", realIP, cf)
+	}
+}

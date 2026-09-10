@@ -1,0 +1,23 @@
+[Unit]
+Description=Kill a wedged playwright-mcp Chrome GPU process
+Documentation=file:/usr/local/bin/playwright-reaper
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/playwright-reaper
+ExecStart=/usr/local/bin/playwright-reaper
+
+# The reaper reads /proc and sends SIGKILL to processes owned by other users,
+# so it runs as root. Everything it does not need is taken away: no new
+# privileges, a private /tmp, and the whole filesystem read-only apart from
+# /run, where its per-process CPU samples live.
+User=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RuntimeDirectory=playwright-reaper
+RuntimeDirectoryPreserve=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes

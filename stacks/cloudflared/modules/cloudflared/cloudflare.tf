@@ -255,7 +255,7 @@ resource "cloudflare_record" "mail_spf" {
 }
 
 resource "cloudflare_record" "mail_domainkey_rspamd" {
-  content = "\"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs9XHeFBKhUAEJSikXx+P49Q3nEBbnaSpn6h/9TqIhKaZWSVa2uGUGYQieNdon7DEJZ0VFo0Tvm3/UFsy2qF7ZmF+E/+N8EmkcPrMlxgJT281dpk5DxrZ+kbzw/DosfHH71K6vCLB4rSexzxJHaAx0AUddI3bFUJGjMgCXXCMZF+p8YCx+DDGPIXz2FOTtlJlR7aeZ2xXavwE/lBfI3MLnsq7X+GhPjQEax070nndOdZI0S8HpZkVxdGWl1N2Ec6LukYm2RiUkEMMQHSYX7WF3JBc+CGqUyd706Iy/5oeC3UGwZSM2uLkrp8YBjmw/h1rAeyv/ITt6ZXraP/cIMRiVQIDAQAB\""
+  content = "\"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs9XHeFBKhUAEJSikXx+P49Q3nEBbnaSpn6h/9TqIhKaZWSVa2uGUGYQieNdon7DEJZ0VFo0Tvm3/UFsy2qF7ZmF+E/+N8EmkcPrMlxgJT281dpk5DxrZ+kbzw/DosfHH71K6vCLB4rSexzxJHaAx0AUddI3bFUJGjMgCXXCMZF+p8YCx+DDGPIX\" \"z2FOTtlJlR7aeZ2xXavwE/lBfI3MLnsq7X+GhPjQEax070nndOdZI0S8HpZkVxdGWl1N2Ec6LukYm2RiUkEMMQHSYX7WF3JBc+CGqUyd706Iy/5oeC3UGwZSM2uLkrp8YBjmw/h1rAeyv/ITt6ZXraP/cIMRiVQIDAQAB\""
   name    = "mail._domainkey.viktorbarzin.me"
   proxied = false
   ttl     = 1
@@ -334,7 +334,12 @@ resource "cloudflare_record" "keyserver" {
 # (<1.7) rejects removed{} blocks even at the stack root, so declarative
 # forget wasn't available. valia-sites imported the live record by id.
 
-# Enable HTTP/3 (QUIC) for Cloudflare-proxied domains
+# Enable HTTP/3 (QUIC) for Cloudflare-proxied domains.
+#
+# Briefly switched off on 2026-08-31 while we chased truncated Immich
+# downloads. QUIC was not the cause: an 11-agent investigation excluded every
+# server-side candidate by measurement, and the truncation is terminated at the
+# client end. Turned back on the same day.
 resource "cloudflare_zone_settings_override" "http3" {
   zone_id = var.cloudflare_zone_id
 

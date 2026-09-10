@@ -1,0 +1,7 @@
+[Unit]
+Description=Daily fallback backup of shared codex auth to Vault
+[Timer]
+OnCalendar=daily
+Persistent=true
+[Install]
+WantedBy=timers.target
