@@ -143,90 +143,23 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
         label: "Aggressive Crawl"
         remediation: true
       YAML
-    # A SLOW, DISTRIBUTED crawl of forgejo's git history — the shape that got
-    # through on 2026-09-02 and that no per-IP scenario could see.
+    # viktor/forgejo-crawl-slow LIVED HERE and was retired 2026-09-10 on
+    # Viktor's call. The scenario and the measurements behind its thresholds are
+    # in the history of this file, one commit back.
     #
-    # MEASURED from the real attack trace (1000 requests over 412s, replayed
-    # through a simulated leaky bucket per source address):
+    # Why it went: measured on node3 during a live crawl, once the agents were
+    # finally scraped, it held 12,521 leaky buckets and had overflowed 0 times,
+    # against viktor/distributed-crawl-range's 1,373 buckets and 5,023
+    # overflows. It grouped by IPv6 /64 and this crawler rotates ACROSS /64s, so
+    # nearly every request minted a bucket that caught nobody. Each bucket
+    # carries a queue of parsed events, so the agent climbed 566 -> 788 MiB in
+    # two hours against the 1 GiB limit raised the day before. An OOM restarts
+    # the pod and drops EVERY scenario's in-memory state, so a detector catching
+    # nothing was endangering the one doing the work.
     #
-    #   capacity 40  leakspeed 0.5s   <- the stock scenario    0 of 61 banned
-    #   capacity 15  leakspeed 30s                             2 of 61
-    #   capacity 12  leakspeed 60s                             6 of 61
-    #   capacity 10  leakspeed 90s                            30 of 61
-    #   capacity  8  leakspeed 120s                           49 of 61
-    #   capacity  6  leakspeed 180s                           58 of 61
-    #
-    # Meta spread the crawl across 61 addresses, each in its own /64, at
-    # 0.059-0.121 req/s. The stock scenario drains 2 tokens/sec, so every one of
-    # them ran 16-34x under the threshold and it caught NONE. The aggregate was
-    # 2.43 req/s, which is what OOMKilled forgejo and all three traefik pods.
-    #
-    # The real ceiling is `distinct` pages per address: median 14, max 34 over
-    # that window. That is why the curve breaks at capacity 10 — above it, the
-    # median crawler simply never has enough distinct filenames to fill the
-    # bucket. Chose 10/120s: it caught 30 of 61 in a 412-second replay, and a
-    # real crawl runs for hours, so each address accumulates far more distinct
-    # pages than this short trace shows. The replay is a floor, not a forecast.
-    #
-    # SCOPED TO THE FORGEJO ROUTER ON PURPOSE. At capacity 10 a human browsing
-    # normally would trip this, so it must not apply fleet-wide — the blog,
-    # immich shares and the rest keep the stock scenario. Forgejo is a personal
-    # forge whose legitimate human readers are Viktor and emo, whose egress
-    # addresses are in the whitelist. That makes it the one router where a tight
-    # threshold costs almost nothing.
-    #
-    # GROUPS AND BANS BY IPv6 /64 since 2026-09-07, so the scenario can carry
-    # the load on its own and the static Meta blocklist can retire.
-    #
-    # Why: Meta gives every crawler address its own /64, so grouping by the full
-    # address handed each one its own bucket and ~10 free pages before it
-    # filled. With 393 distinct addresses observed in 24h that is ~3,900 pages
-    # per pass. Measured live on 2026-09-06: with the static list removed and
-    # this scenario grouping per-address, Meta was served 84 requests with 200
-    # in 15 minutes (~336/hr). Down 30x from the 9,300-11,000/hr of the
-    # original incident, but not zero.
-    #
-    # A single IPv6 /64 is one customer allocation, the IPv4-address equivalent,
-    # so this is not the range-banning Viktor ruled out: IPv4 sources still get
-    # per-address treatment via the conditional below. IpToRange truncates in
-    # Go's net stack (netip.Addr.Prefix), so compressed forms like 2a03:2880::1
-    # normalise correctly — string splitting on colons does not, because
-    # Traefik logs RFC 5952 compressed addresses.
-    #
-    # The Range-scoped decision is routed by the existing
-    # default_range_remediation profile, and the Traefik plugin already enforces
-    # scope Range. Nothing else had to change.
-    #
-    # A false positive now affects one /64 for 4h; `homelab crowdsec unban
-    # <cidr>` lifts it in ~33s (CIDR support landed in homelab CLI v0.21.2).
-    "forgejo-crawl-slow.yaml" : <<-YAML
-      type: leaky
-      name: viktor/forgejo-crawl-slow
-      description: "Detect a slow, distributed crawl of forgejo git history"
-      filter: "evt.Meta.log_type in ['http_access-log', 'http_error-log'] && evt.Parsed.static_ressource == 'false' && evt.Parsed.verb in ['GET', 'HEAD'] && evt.Parsed.traefik_router_name startsWith 'forgejo'"
-      distinct: "evt.Parsed.file_name"
-      capacity: 10
-      leakspeed: 120s
-      # cache_size must be >= capacity. The stock scenario ships cache_size 5
-      # against capacity 40, which lets an evicted filename pour a second time
-      # and inflate the count; sizing it above capacity keeps one page worth
-      # exactly one token.
-      cache_size: 50
-      groupby: 'IsIPV6(evt.Meta.source_ip) ? IpToRange(evt.Meta.source_ip, "/64") : evt.Meta.source_ip'
-      scope:
-        type: Range
-        expression: 'IsIPV6(evt.Meta.source_ip) ? IpToRange(evt.Meta.source_ip, "/64") : evt.Meta.source_ip + "/32"'
-      blackhole: 5m
-      labels:
-        confidence: 2
-        spoofable: 0
-        classification:
-          - attack.T1595
-        behavior: "http:crawl"
-        service: http
-        label: "Slow distributed crawl of git history"
-        remediation: true
-    YAML
+    # What is given up: it was written for a SLOW crawler reading forgejo
+    # patiently from a single address. It never caught one, and Anubis has
+    # fronted forgejo since 2026-09-09, which challenges exactly that client.
     # A crawl that sends ONE request per source address, from hundreds of
     # addresses at once. Groups by the source's registered prefix
     # (evt.Meta.SourceRange, from crowdsecurity/geoip-enrich) and counts DISTINCT
