@@ -196,12 +196,38 @@ resource "kubernetes_deployment" "f1-stream" {
               # f1-stream now shares node1's fate. Accepted: every video path
               # on the hardware is worth more here than spreading the risk.
               "nvidia.com/gpu" = "1"
-              # GPU VRAM budget (ADR-0016), declared 2026-08-31. This pod ran
-              # with NO gpumem declaration, so the gpu-vram-watchdog could never
-              # see or recycle it and its usage did not count against the
-              # seating chart. Measured 418 MiB while encoding, active 1 of the
-              # 169 hours to 2026-08-31 (race sessions), so 500 covers a live
-              # ladder with margin.
+              # GPU VRAM budget (ADR-0016), declared 2026-08-31 at 500 and
+              # RAISED to 1200 on 2026-09-10. This pod ran with NO gpumem
+              # declaration until 2026-08-31, so the gpu-vram-watchdog could
+              # never see or recycle it and its usage did not count against the
+              # seating chart.
+              #
+              # WHY 500 WAS UNDER, measured rather than estimated. 500 was sized
+              # from a replay ladder ALONE, at 418 MiB. It missed that this pod
+              # runs live transcode sessions from the same container, and
+              # TRANSCODE_MAX_SESSIONS is 2, each its own ffmpeg process at a
+              # measured 291 MiB. The worst legitimate total is therefore
+              # 2 x 291 + 418 = 1000 MiB, twice the declaration, and it needs no
+              # unusual event to be reached: someone watching live while a
+              # ladder builds does it.
+              #
+              # Under-declaring is NOT the safe direction. The watchdog acts on
+              # a tenant that is over its CONTRACT, so a pod that quietly
+              # exceeds a too-small number becomes the recycle target during a
+              # contention event it did not cause. The floor is crossed often
+              # today: 84 contention events in the six hours to 2026-09-10, free
+              # VRAM measured at 487-1067 MiB at trigger time. Every one of the
+              # 84 recycled llama-swap, which is seatless and holds 6.6 GB; an
+              # over-contract f1-stream would have been chosen ahead of it,
+              # killing the live stream.
+              #
+              # 1200 leaves margin over the 1000 worst case. Declared total
+              # across the card goes 12,300 -> 13,000 MiB against the node's
+              # advertised 14k, so roughly 1,000 MiB stays unallocated.
+              #
+              # Sizing rule this cost us: size a VRAM declaration from every
+              # process the container can run AT ONCE under its own configured
+              # limits, not from the one workload you were thinking about.
               #
               # Sablier scale-to-zero was considered and NOT applied: this
               # ingress has traffic in 162 of the last 168 hours — a ~12/h floor
@@ -210,7 +236,7 @@ resource "kubernetes_deployment" "f1-stream" {
               # sit in FRONT of Anubis, so that floor alone would hold the group
               # awake permanently. Parking it needs the bot floor addressed
               # first.
-              "viktorbarzin.me/gpumem" = "500"
+              "viktorbarzin.me/gpumem" = "1200"
               memory                   = "2Gi"
             }
             requests = {
