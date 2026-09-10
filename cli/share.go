@@ -103,22 +103,41 @@ type shareArgs struct {
 	force      bool
 }
 
+// parseShareArgs parses the argv strictly: an unrecognised flag, a second
+// positional, or a valueless --expire is an ERROR. A share link is
+// internet-reachable, so a dropped --expire silently giving the link the
+// 30-day default instead of the requested lifetime is a real consequence, not
+// a cosmetic one.
 func parseShareArgs(args []string) (shareArgs, error) {
 	out := shareArgs{expireDays: defaultShareExpireDays}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		switch {
-		case a == "--force":
+		if !strings.HasPrefix(a, "-") {
+			if out.path == "" {
+				out.path = a
+				continue
+			}
+			return out, fmt.Errorf("unexpected argument %q; homelab share takes ONE file", a)
+		}
+		name, value, hasValue := flagToken(a)
+		switch name {
+		case "force":
 			out.force = true
-		case a == "--expire" && i+1 < len(args):
-			d, err := strconv.Atoi(args[i+1])
+		case "expire":
+			if !hasValue {
+				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+					return out, fmt.Errorf("--expire needs a number of days")
+				}
+				i++
+				value = args[i]
+			}
+			d, err := strconv.Atoi(value)
 			if err != nil {
-				return out, fmt.Errorf("--expire wants a number of days, got %q", args[i+1])
+				return out, fmt.Errorf("--expire wants a number of days, got %q", value)
 			}
 			out.expireDays = d
-			i++
-		case !strings.HasPrefix(a, "-") && out.path == "":
-			out.path = a
+		default:
+			return out, fmt.Errorf("unknown flag %q; homelab share takes --expire or --force", a)
 		}
 	}
 	if out.path == "" {

@@ -308,25 +308,55 @@ type pasteArgs struct {
 	force  bool
 }
 
+// parsePasteArgs parses the argv strictly: an unrecognised flag, a second
+// positional, or a value-flag with no value is an ERROR.
+//
+// The strictness matters because a paste is an internet-reachable URL. The old
+// loop ignored anything it did not match, so `--burn-after-read` produced a
+// paste that does NOT self-destruct, and `--expire=1day` quietly took the
+// 1week default — both looking like they worked. The --expire VALUE was
+// already validated here for exactly that reason ("so a typo fails immediately
+// instead of silently becoming the server default"); this extends the same rule
+// to the flag NAME.
 func parsePasteArgs(args []string) (pasteArgs, error) {
 	out := pasteArgs{expire: "1week", format: "plaintext"}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		switch {
-		case a == "--burn":
+		// A bare "-" is the stdin path, not a flag.
+		if a == "-" || !strings.HasPrefix(a, "-") {
+			if out.path == "" {
+				out.path = a
+				continue
+			}
+			return out, fmt.Errorf("unexpected argument %q; homelab paste takes ONE file (or - for stdin)", a)
+		}
+		name, value, hasValue := flagToken(a)
+		// --expire and --format carry a value; resolve it (inline "=v" form, or
+		// the next token) before the switch, so a missing one errors once here
+		// rather than per-flag.
+		if name == "expire" || name == "format" {
+			if !hasValue {
+				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+					return out, fmt.Errorf("--%s needs a value", name)
+				}
+				i++
+				value = args[i]
+			}
+			if value == "" {
+				return out, fmt.Errorf("--%s needs a value", name)
+			}
+		}
+		switch name {
+		case "burn":
 			out.burn = true
-		case a == "--force":
+		case "force":
 			out.force = true
-		case a == "--expire" && i+1 < len(args):
-			out.expire = args[i+1]
-			i++
-		case a == "--format" && i+1 < len(args):
-			out.format = args[i+1]
-			i++
-		case a == "-" && out.path == "":
-			out.path = "-"
-		case !strings.HasPrefix(a, "-") && out.path == "":
-			out.path = a
+		case "expire":
+			out.expire = value
+		case "format":
+			out.format = value
+		default:
+			return out, fmt.Errorf("unknown flag %q; homelab paste takes --expire, --burn, --format or --force", a)
 		}
 	}
 	if out.path == "" {

@@ -79,14 +79,6 @@ locals {
       gpu_layers     = 99
       text_only      = false
     }
-    qwen3vl-4b = {
-      hf_repo        = "Qwen/Qwen3-VL-4B-Instruct-GGUF"
-      gguf_pattern   = "*Q4_K_M*.gguf"
-      mmproj_pattern = "*mmproj*.gguf"
-      ctx_size       = 3072
-      gpu_layers     = 99
-      text_only      = false
-    }
     # Text-only triage / drafting model for recruiter-responder.
     # Q4_K_M, ~4.7GB, 32k native context (capped at 16k here — plenty
     # for recruiter emails + extraction prompt + JSON output).
@@ -175,12 +167,13 @@ resource "kubernetes_namespace" "llama_cpp" {
 # ~2s vs ~10s on HDD NFS). Page-cache is warmed by the download Job so
 # first inference reads from warm cache.
 module "nfs_models" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "llama-cpp-models"
-  namespace  = kubernetes_namespace.llama_cpp.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs-ssd/llamacpp"
-  storage    = "30Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "llama-cpp-models"
+  namespace          = kubernetes_namespace.llama_cpp.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs-ssd/llamacpp"
+  storage            = "30Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # Download Job. Pulls Q4_K_M GGUF + mmproj for every model in locals.models

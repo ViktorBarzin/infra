@@ -27,12 +27,13 @@ labels + allow-deny + policy-trace) streamed from Felix (the existing
 drove the whole design). **Whisker** is its live web UI. Because the ring
 buffer is *not* a trail (a Goldmane restart loses the window), the
 `goldmane-edge-aggregator` consumes Goldmane's gRPC `Flows.Stream` API over
-mTLS and upserts the unique **namespace-pair edge set** into Postgres; a daily
-CronJob posts first-seen edges to Slack.
+mTLS and upserts the unique **edge set** into Postgres; a daily CronJob posts
+first-seen edges to Slack.
 
-The edge set is deliberately **low-cardinality** — one row per
-`(src_ns, dst_ns, action)`, *not* per-pod or per-port — so the table stays
-small no matter how much traffic flows.
+The edge set aggregates per **workload**, not per pod: a pod name churns on every
+restart, and Whisker already serves live per-pod drill-down, so a per-pod trail
+would grow without bound while answering nothing extra a day later. One row per
+source workload, destination workload, destination service, port and action.
 
 ## Where the data lives
 
@@ -54,21 +55,121 @@ small no matter how much traffic flows.
   (`pg-cluster-rw.dbaas.svc.cluster.local:5432`). One table:
 
   ```
-  edge(src_ns text, dst_ns text, action text,
+  edge(src_ns text, src_workload text, src_type text,
+       dst_ns text, dst_workload text, dst_type text,
+       dst_service_ns text, dst_service text, dst_port bigint,
+       action text,
        first_seen timestamptz, last_seen timestamptz, flow_count bigint,
-       PRIMARY KEY (src_ns, dst_ns, action))
+       PRIMARY KEY (src_ns, src_workload, src_type,
+                    dst_ns, dst_workload, dst_type,
+                    dst_service_ns, dst_service, dst_port, action))
   ```
+
+  **Widened 2026-09-01** (design
+  `docs/plans/2026-09-01-service-identity-and-request-attribution-design.md`,
+  step 2). Before that the table was `(src_ns, dst_ns, action)` alone, so it could
+  answer "did these two namespaces talk" and nothing more. Every field added was
+  already on Goldmane's wire and was being dropped at the adapter boundary.
 
   - `action` ∈ `allow` / `deny` / `pass` / `unspecified` (normalised Goldmane
     action).
-  - **Self-edges (`src_ns == dst_ns`) and empty-namespace flows** (host-endpoint
-    / public-internet) are **dropped** — the trail is about in-cluster service
-    relationships only. (Egress to the public internet is therefore NOT in this
-    table; it lives in the Wave-1 Calico flow-log path — see security.md.)
+  - `src_type` / `dst_type` ∈ `workload` (a pod) / `host` (a node) / `networkset`
+    / `network` (an address Calico does not know: `pub` or `pvt`) / `unknown`.
+    This is what makes a node-to-internet flow distinguishable rather than merely
+    unlabelled.
+  - `src_workload` / `dst_workload` are Goldmane's endpoint name with the
+    generated part removed, so one workload stays one row across redeploys:
+    `traefik-7cbc567497-*` → `traefik`, `fixer-tick-29804008-*` → `fixer-tick`.
+    StatefulSet ordinals (`pg-cluster-1`) and node names (`k8s-node1`) are kept
+    as-is. Exact rules: `edge.NormalizeWorkload` in the service repo.
+  - `dst_service_ns` / `dst_service` name the Kubernetes Service the flow was
+    addressed to, when it used one.
+  - A field that does not apply to an endpoint is stored as `-` — Goldmane's own
+    sentinel, which it also puts on the wire. An unknown port is `0`.
+  - **Dropped, and counted by reason** (the aggregate log line carries both):
+    flows where **both ends are workloads in the same namespace**
+    (`intra-namespace`), and flows where an end carries no type, no name and no
+    namespace (`non-workload`). **Node, network-set and internet flows are kept.**
+    The test is on endpoint type, not on string equality of the two namespaces:
+    a non-workload end arrives with `-` as its namespace, so equality also matched
+    (and deleted) any flow carrying one at **both** ends.
+
+    **Measured 2026-09-01, that deleted class is currently empty.** Across 2,168
+    flows in Goldmane's live buffer, none had `-` at both ends: no Calico
+    HostEndpoint resources are defined (`kubectl get hostendpoints` → none), so
+    Goldmane never types an end as `host` and every non-workload end is a
+    `network` (`pub` / `pvt`). The endpoint-type test is therefore a correctness
+    fix guarding a class that appears the moment HostEndpoints are defined, rather
+    than a recovery of traffic missing today.
+
+    What the widening does recover immediately is the other half of the same
+    problem: **1,116 of those 2,168 flows (51%) touch an external address**, and
+    were recorded as a bare namespace pair (`keel → -`) with no port, no workload
+    and no endpoint type. Those three now land on every one of them.
   - A **"new edge"** = a row whose `first_seen` falls inside the digest window.
-  - Role `goldmane_edges` (Vault-rotated, 7-day) owns the DB. The `edge` table
-    is created idempotently by the aggregator at startup (canonical DDL also in
-    the repo at `migrations/0001_edge.sql`).
+  - Role `goldmane_edges` (Vault-rotated, 7-day) owns the DB. The `edge` table is
+    created — and a pre-widening one upgraded in place — idempotently by the
+    aggregator at startup (canonical DDL also in the repo at
+    `migrations/0001_edge.sql` + `migrations/0002_widen_edge.sql`).
+  - **Expect one unusually large digest the day the widening deploys.** The
+    identity tuple is wider, so the first observation of a namespace pair after
+    the upgrade inserts a new row; a "new edge" is one whose `first_seen` is in
+    the window, so the whole re-observed graph reports once. The 710 pre-widening
+    rows are kept and read NULL in the added columns, which is what the generated
+    `pre_widening` flag reports (verified against a copy of the live table: 710
+    rows and 388,404,965 flows intact).
+
+### Grafana — the *East-West Traffic* dashboard
+
+- `https://grafana.viktorbarzin.me/d/east-west-traffic`, folder **Networking**.
+  Source: `dashboards/east-west-traffic.json` in
+  `stacks/monitoring/modules/monitoring/`.
+- Datasource **Goldmane Edges** (uid `goldmane-edges-pg`), provisioned by
+  `stacks/monitoring/modules/monitoring/goldmane_edges_datasource.tf`. It reads
+  the `goldmane_edges` DB as the `goldmane_edges` role, using the same
+  Vault-rotated static credential the aggregator uses
+  (`static-creds/pg-goldmane-edges`), mirrored into `monitoring` by an
+  ExternalSecret and injected via Grafana's `envFromSecrets` +
+  `$__env{GOLDMANE_EDGES_PG_PASSWORD}`. Reloader restarts Grafana on each
+  7-day rotation.
+- **The dashboard needs the widened `edge` schema; its panels error until that
+  migration runs.** They read `src_workload`, `src_type`, `dst_workload`,
+  `dst_type`, `dst_service`, `dst_port` and the generated `pre_widening` flag,
+  all added by `migrations/0002_widen_edge.sql`. The datasource works either way.
+  The full column contract is the header comment of
+  `goldmane_edges_datasource.tf`.
+- **Endpoint types are stored lowercase** — `workload`, `host`, `networkset`,
+  `network`, `unknown` — because the aggregator normalises Goldmane's
+  `EndpointType` enum onto its own constants (`internal/edge/edge.go`). A query
+  comparing against the enum spelling (`WorkloadEndpoint`, `Network`) matches
+  nothing and fails silently: a `dst_type = 'Network'` filter reads 0, and a
+  `src_type <> 'WorkloadEndpoint'` filter matches every row. Likewise the unset
+  sentinel is `-`, never the empty string, so blank a service with
+  `NULLIF(dst_service, '-')`.
+- **Rows written before the widening are excluded, not deleted.** They are NULL
+  in all seven added columns, so every panel filters on `NOT pre_widening` (the
+  contract `0002_widen_edge.sql` states). Read off the live table on 2026-09-01,
+  that is all 710 rows in it, carrying 389,663,018 accumulated flows back to
+  2026-06-24 — so the panels start empty on the day the migration lands and fill
+  as each edge is re-observed under the wider identity. Leaving the rows in would
+  dominate every total indefinitely, because a wider identity means they are
+  never updated again. `homelab edges` neither filters nor aggregates them (its
+  query is a bare `SELECT` of the namespace-pair columns), so after the migration
+  it lists a legacy row beside each widened row for the same pair; reading
+  pre-widening history means asking for it, with `WHERE src_type IS NULL`.
+- Panels: all traffic as a filterable table (namespace / workload / destination
+  port / action template variables, matching either end of the edge), a
+  namespace-to-namespace sankey, busiest ports and workloads, denied edges, the
+  host-and-internet class, and **Unusual connections** — a first-seen edge, a
+  workload using a destination port it has never used, or a namespace reaching
+  the internet for the first time, over its own window variable rather than the
+  time picker.
+- Honest limits, stated on the dashboard itself: the table keeps first/last-seen
+  plus a cumulative `flow_count`, so **there is no time series and no rate**;
+  the time picker filters on `last_seen`. No protocol is stored, so a port
+  cannot separate TCP from UDP. And immediately after the widening migration
+  every row looks new for one window, because the rows are re-keyed — the
+  unusual panel needs a burn-in period before its findings are meaningful.
 
 ### Slack `#alerts` — daily digest
 
@@ -166,44 +267,87 @@ homelab edges --json [...]      # machine-readable, for agents/pipelines
 homelab edges --help            # full flag list
 ```
 
+The CLI answers the **namespace-level** question, so it rolls the widened rows
+back up (`GROUP BY src_ns, dst_ns, action`, summing `flow_count` and taking
+`min(first_seen)`). Its output shape is therefore unchanged by the widening, and
+`min(first_seen)` still reports when the namespace pair itself was first seen,
+because the pre-widening row carries that history. One semantic shift worth
+knowing: `--new-since` filters rows before grouping, so a namespace pair can
+surface as new because one of its workloads started using a port it never used —
+which is usually what you want to hear about.
+
 For ad-hoc SQL, `psql` into the DB (creds: Vault static role
 `static-creds/pg-goldmane-edges`, or exec a CNPG pod). All queries are against
 the single `edge` table.
 
 ```sql
 -- Everything talking to a namespace (inbound), most-active first
-SELECT src_ns, action, flow_count, first_seen, last_seen
-FROM edge WHERE dst_ns = '<ns>' ORDER BY flow_count DESC;
+SELECT src_ns, action, sum(flow_count) AS flows, min(first_seen), max(last_seen)
+FROM edge WHERE dst_ns = '<ns>' GROUP BY src_ns, action ORDER BY flows DESC;
 
--- Everything a namespace talks TO (outbound)
-SELECT dst_ns, action, flow_count, first_seen, last_seen
+-- Everything a namespace talks TO (outbound), per workload and port
+SELECT src_workload, dst_ns, dst_workload, dst_service, dst_port, action,
+       flow_count, last_seen
 FROM edge WHERE src_ns = '<ns>' ORDER BY last_seen DESC;
 
 -- New edges in the last 24h (what the digest reports)
-SELECT src_ns, dst_ns, action, flow_count, first_seen
+SELECT src_ns, src_workload, dst_ns, dst_workload, dst_port, action, flow_count, first_seen
 FROM edge WHERE first_seen > now() - interval '24 hours'
 ORDER BY first_seen DESC;
 
 -- Any DENIED edges (policy is dropping this pair)
-SELECT src_ns, dst_ns, flow_count, last_seen
+SELECT src_ns, src_workload, dst_ns, dst_workload, dst_port, flow_count, last_seen
 FROM edge WHERE action = 'deny' ORDER BY last_seen DESC;
 
--- Full edge set as a graph adjacency list
-SELECT src_ns, dst_ns, action, flow_count FROM edge ORDER BY src_ns, dst_ns;
+-- Full edge set as a graph adjacency list, namespace level
+SELECT src_ns, dst_ns, action, sum(flow_count) AS flows
+FROM edge GROUP BY src_ns, dst_ns, action ORDER BY src_ns, dst_ns;
+
+-- Which ports a workload uses (the "unusual connection" axis)
+SELECT src_ns, src_workload, dst_port, count(*) AS peers, sum(flow_count) AS flows
+FROM edge GROUP BY src_ns, src_workload, dst_port ORDER BY flows DESC;
+
+-- Egress to the internet. Recorded before 2026-09-01 too, but only as a bare
+-- namespace pair: the port, workload and endpoint type are what the widening added.
+SELECT src_ns, src_workload, src_type, dst_workload, dst_port, flow_count, last_seen
+FROM edge WHERE dst_type = 'network' AND NOT pre_widening ORDER BY flow_count DESC;
+
+-- Node-level traffic (host endpoints). This is the class the old same-namespace
+-- test did delete, and it is empty until Calico HostEndpoints are defined.
+SELECT src_workload, dst_workload, dst_type, dst_port, flow_count
+FROM edge WHERE src_type = 'host' OR dst_type = 'host' ORDER BY flow_count DESC;
 ```
 
-For the **live** (sub-hour) view including pod/port detail, use the Whisker UI —
-the `edge` table intentionally aggregates that away.
+Rows written before 2026-09-01 read **NULL** in all seven added columns, not a
+sentinel. `0002_widen_edge.sql` made them nullable with no default on purpose:
+every sentinel available is also a legitimate live value (`-` is a real unset
+service, `unknown` a real endpoint type, `0` a real unrecorded port), so a
+sentinel would make a legacy row indistinguishable from an observation. Filter
+them with the generated flag, `WHERE NOT pre_widening` — that is the contract
+the migration states and the one every East-West Traffic panel uses.
+
+`src_type <> 'unknown'` is not a substitute. It excludes legacy rows only as a
+side effect of NULL comparison, and it also drops real observations whose source
+type Goldmane never sent, which the aggregator keeps whenever the end carries a
+namespace or a name (`edge.identifiable`). Measured on a scratch Postgres 16.15
+seeded to the live shape: `NOT pre_widening` keeps 28 rows, `src_type <>
+'unknown'` keeps 27, silently losing one.
+
+For the **live** (sub-hour) view with **per-pod** detail, use the Whisker UI. The
+`edge` table aggregates pods up to their workload on purpose, so a pod name is
+the one thing it cannot answer.
 
 ## Deriving the Wave-1 egress allowlist from the edge table (infra #62)
 
 The durable edge set is a faster, identity-stamped data source for the existing
 **observe-then-enforce** egress effort (beads `code-8ywc`; snapshot
-`docs/architecture/wave1-egress-observation-2026-05-22.md`) than the original
+`docs/architecture/wave1-egress-observation-2026-09-04.md`) than the original
 iptables-`LOG` → journald → Loki path (ADR-0014 consequence: "Enforcement gains
 a better data source"). It replaces the *internal* (namespace-to-namespace) leg
-of the allowlist; **external/public-internet egress is NOT in this table** (empty
-dst namespace, dropped) — for those destinations keep using the Calico flow-log
+of the allowlist; **external/public-internet egress is NOT in this table**
+(a destination with no namespace is normalised to the sentinel `dst_ns = '-'`,
+which records that a namespace egressed off-cluster but never to where — 141
+such rows across 139 source namespaces as of 2026-09-04) — for those destinations keep using the Calico flow-log
 path described in security.md.
 
 **Per-namespace internal egress allowlist** — the set of in-cluster namespaces a
@@ -241,7 +385,7 @@ the external destinations still come from the Wave-1 observation snapshot.
 the phased per-namespace default-deny rollout (starting `recruiter-responder`)
 is tracked under `code-8ywc`. Cross-links:
 [security.md → NetworkPolicy Default-Deny Egress](../architecture/security.md#networkpolicy-default-deny-egress-wave-1--observe-then-enforce-tier-34),
-[wave1-egress-observation-2026-05-22.md](../architecture/wave1-egress-observation-2026-05-22.md),
+[wave1-egress-observation-2026-09-04.md](../architecture/wave1-egress-observation-2026-09-04.md),
 [ADR-0014](../adr/0014-service-identity-and-east-west-observability.md).
 
 > **Caveat (same as the Wave-1 snapshot):** an edge only exists if it was
@@ -340,7 +484,7 @@ completed; confirm the aggregator pod is `Running` and not `ImagePullBackOff`
 - [ADR-0014 — Service identity & east-west observability](../adr/0014-service-identity-and-east-west-observability.md)
 - [security.md — NetworkPolicy Default-Deny Egress + east-west flow observability](../architecture/security.md)
 - [monitoring.md — east-west flow observability + alerts](../architecture/monitoring.md)
-- [wave1-egress-observation-2026-05-22.md](../architecture/wave1-egress-observation-2026-05-22.md)
+- [wave1-egress-observation-2026-09-04.md](../architecture/wave1-egress-observation-2026-09-04.md)
 - `CONTEXT.md` glossary — **Service identity**, **Goldmane / Whisker**
 - Code: `~/code/goldmane-edge-aggregator` (`README.md`, `DEPLOY.md`); stacks
   `stacks/goldmane-edge-aggregator`, `stacks/calico`

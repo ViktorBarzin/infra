@@ -64,6 +64,14 @@ EXCLUDES=(
     --exclude='/pfsense/'
     --exclude='/pve-config/'
     --exclude='/vzdump/'       # VM images from vzdump-vms — NOT a /srv/nfs svc (else --delete reaps them nightly)
+    # devvm-home-backup's hardlink generations, added 2026-08-16 with no
+    # matching exclude here. Measured 2026-09-04: every generation older than
+    # the current night was empty of user data — 0 entries under wizard/ in
+    # 2026-08-31 through 2026-09-03 against 87 in 2026-09-04, and their mtimes
+    # (02:05-02:11) sat right after this job's 02:00 slot. Retention was
+    # effectively 1 day, not 14. Same failure that reaped the first two vzdump
+    # images on 2026-06-10, on a directory added after that exclude was written.
+    --exclude='/devvm-home/'
     --exclude='/lost+found/'
 
     # ---- state files used by other backup jobs ----

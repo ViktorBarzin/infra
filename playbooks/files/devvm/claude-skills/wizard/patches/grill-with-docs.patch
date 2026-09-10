@@ -1,14 +1,20 @@
---- a/SKILL.md	2026-08-30 17:30:00.552909804 +0000
-+++ b/SKILL.md	2026-08-30 17:30:00.555909831 +0000
-@@ -5,3 +5,11 @@
+--- a/SKILL.md	2026-09-04 13:14:18.403543882 +0000
++++ b/SKILL.md	2026-09-04 13:14:18.447544283 +0000
+@@ -5,3 +5,17 @@
  ---
  
  Call the Skill tool twice, for "grilling" and "domain-modeling".
 +
-+When the plan/design reaches shared understanding, write it to its canonical
-+markdown home (the owning repo's docs tree). Sketching the design as a
-+```` ```mermaid ```` diagram (architecture / flow / sequence) is part of the
-+synthesis, not decoration. If the design has a shape, the document shows it.
-+Then finish with the `publish-page` skill: render + push it and hand the user
-+the `pages.viktorbarzin.me` URL. The published page is the session's
-+deliverable.
++Put each round's questions through the `AskUserQuestion` tool rather than
++writing them as prose. The round structure is unchanged: still the whole
++frontier at once, still a recommendation per question.
++
++- The tool takes at most 4 questions per call, so a wider round goes out as
++  consecutive calls in the same turn. Do not drop questions to fit.
++- The `➡️` recommendation becomes the first option, labelled `(Recommended)`.
++- Each question takes 2 to 4 options. Where the answer is open rather than a
++  choice, offer the plausible answers anyway; the tool always adds a free-text
++  option, so nothing is lost by asking this way.
++- Set `multiSelect: true` when the choices are not exclusive.
++- Use `preview` when the options are things to look at rather than read, such
++  as competing layouts, schemas, or code shapes.

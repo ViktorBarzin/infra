@@ -47,19 +47,21 @@ resource "kubernetes_resource_quota_v1" "osm_routing" {
 }
 
 module "nfs_osrm_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "osm-routing-osrm-data-host"
-  namespace  = kubernetes_namespace.osm-routing.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/osm-routing/osrm"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "osm-routing-osrm-data-host"
+  namespace          = kubernetes_namespace.osm-routing.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/osm-routing/osrm"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_otp_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "osm-routing-otp-data-host"
-  namespace  = kubernetes_namespace.osm-routing.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/osm-routing/otp"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "osm-routing-otp-data-host"
+  namespace          = kubernetes_namespace.osm-routing.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/osm-routing/otp"
+  storage_class_name = "nfs-pve"
 }
 
 # --- OSRM Foot ---
@@ -115,10 +117,20 @@ resource "kubernetes_deployment" "osrm-foot" {
             name       = "osrm-data"
             mount_path = "/data"
           }
+          # requests 1Gi -> 640Mi on 2026-09-04 (bead code-hn6k). Measured
+          # peak working set over 30 days is 391Mi, so the old request reserved
+          # ~2.6x what this engine has ever used while the cluster could not
+          # drain a node. 640Mi is 1.5x that peak.
+          #
+          # The LIMIT stays at 1Gi, which is a RAISE in effective burst room:
+          # request and limit were equal before, so the process could never go
+          # above 1Gi and now still cannot, but it is no longer reserving the
+          # whole ceiling. Stateless routing server, holds no state, not on a
+          # login path.
           resources {
             requests = {
               cpu    = "50m"
-              memory = "1Gi"
+              memory = "640Mi"
             }
             limits = {
               memory = "1Gi"
@@ -224,10 +236,20 @@ resource "kubernetes_deployment" "osrm-bicycle" {
             name       = "osrm-data"
             mount_path = "/data"
           }
+          # requests 1Gi -> 640Mi on 2026-09-04 (bead code-hn6k). Measured
+          # peak working set over 30 days is 401Mi, so the old request reserved
+          # ~2.6x what this engine has ever used while the cluster could not
+          # drain a node. 640Mi is 1.5x that peak.
+          #
+          # The LIMIT stays at 1Gi, which is a RAISE in effective burst room:
+          # request and limit were equal before, so the process could never go
+          # above 1Gi and now still cannot, but it is no longer reserving the
+          # whole ceiling. Stateless routing server, holds no state, not on a
+          # login path.
           resources {
             requests = {
               cpu    = "50m"
-              memory = "1Gi"
+              memory = "640Mi"
             }
             limits = {
               memory = "1Gi"

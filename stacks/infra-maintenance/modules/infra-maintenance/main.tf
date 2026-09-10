@@ -67,21 +67,37 @@ variable "nfs_server" { type = string }
 # }
 
 module "nfs_etcd_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "infra-etcd-backup-host"
-  namespace  = "default"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/etcd-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "infra-etcd-backup-host"
+  namespace          = "default"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/etcd-backup"
+  storage_class_name = "nfs-pve"
 }
 
 # # backup etcd
+#
+# Daily since 2026-09-08 (was "0 1 * * 0", weekly on Sunday). etcd runs as a
+# single member, so a lost disk loses the cluster state, and a weekly snapshot
+# put the recovery point up to 7 days back. Measured before the change: five
+# snapshots on /srv/nfs/etcd-backup dated 2026-08-09 through 2026-09-06, one
+# per week.
+#
+# docs/runbooks/restore-etcd.md already describes this job as daily, so the
+# schedule now matches the runbook. Retention was and stays 30 days, set by the
+# find -mtime +30 in the backup-manage container below.
+#
+# Cost of the change: ~30 snapshots retained instead of ~5, at 540-580 MB each,
+# so /srv/nfs/etcd-backup grows from ~2.8 GB to ~17 GB. It had 861 GB free when
+# this was measured. The extra write is ~570 MB/day against the ~24 GB/day that
+# VM 200's disk already writes, so it does not move the IOPS picture.
 resource "kubernetes_cron_job_v1" "backup-etcd" {
   metadata {
     name      = "backup-etcd"
     namespace = "default"
   }
   spec {
-    schedule                      = "0 1 * * 0"
+    schedule                      = "0 1 * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 1
     concurrency_policy            = "Forbid"
@@ -252,14 +268,31 @@ resource "kubernetes_cron_job_v1" "defrag-etcd" {
   }
 }
 
-# Clean up evicted/failed pods cluster-wide daily
+# Clean up evicted/failed pods cluster-wide, and reap finished CronJob pods.
+#
+# The Succeeded half was added 2026-09-06. 31 CronJobs across ~20 stacks carry no
+# ttlSecondsAfterFinished, so their Completed pods sit at whatever
+# successfulJobsHistoryLimit allows: 106 cluster-wide when this was written, led
+# by descheduler (10), tripit (13) and monitoring (12).
+#
+# They hold no scheduler reservation. kube-state-metrics keeps publishing
+# kube_pod_container_resource_requests for them until the pod object is GC'd, so
+# the raw request sum read 151.6 GiB against the 134.4 GiB the scheduler actually
+# holds. That 17.2 GiB of phantom is how a 54 GiB "unused memory" gap was read off
+# a dashboard. ClusterCannotTolerateNonGpuNodeLoss already filters on pod phase
+# for the same reason (2026-08-08, when it flapped for days and drove a real
+# 4Gi->3Gi cut to prometheus chasing an unreal problem); this fixes the number at
+# the source instead, and covers any CronJob added later without a TTL.
+#
+# The 1-hour floor keeps a just-finished job inspectable with `kubectl get pods`.
+# Anything older is in Loki for 30 days regardless.
 resource "kubernetes_cron_job_v1" "cleanup-failed-pods" {
   metadata {
     name      = "cleanup-failed-pods"
     namespace = "default"
   }
   spec {
-    schedule                      = "0 2 * * *"
+    schedule                      = "17 * * * *"
     successful_jobs_history_limit = 1
     failed_jobs_history_limit     = 1
     concurrency_policy            = "Forbid"
@@ -268,6 +301,14 @@ resource "kubernetes_cron_job_v1" "cleanup-failed-pods" {
         name = "cleanup-failed-pods"
       }
       spec {
+        ttl_seconds_after_finished = 600
+        # The run is a serial kubectl delete per pod, so it takes minutes rather
+        # than seconds, and it talks to the apiserver throughout. On 2026-09-06 the
+        # apiserver restarted mid-run (its own liveness probe, unrelated to this
+        # job) and the pod sat in Error while the Job kept retrying. With
+        # concurrency_policy Forbid, a run that never finishes silently cancels
+        # every later schedule, so the deadline is what keeps the hourly cadence.
+        active_deadline_seconds = 600
         template {
           metadata {
             name = "cleanup-failed-pods"
@@ -275,9 +316,25 @@ resource "kubernetes_cron_job_v1" "cleanup-failed-pods" {
           spec {
             service_account_name = kubernetes_service_account.cleanup_sa.metadata[0].name
             container {
-              name    = "cleanup"
-              image   = "bitnami/kubectl:latest"
-              command = ["/bin/sh", "-c", "kubectl delete pods -A --field-selector=status.phase=Failed --ignore-not-found"]
+              name  = "cleanup"
+              image = "bitnami/kubectl:latest"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -u
+                kubectl delete pods -A --field-selector=status.phase=Failed --ignore-not-found
+
+                # Succeeded pods older than an hour. finishedAt comes from the first
+                # container status; a pod without one is skipped rather than guessed at.
+                now=$(date +%s)
+                kubectl get pods -A --field-selector=status.phase=Succeeded \
+                  -o go-template='{{range .items}}{{.metadata.namespace}} {{.metadata.name}} {{if .status.containerStatuses}}{{with (index .status.containerStatuses 0).state.terminated}}{{.finishedAt}}{{end}}{{end}}{{"\n"}}{{end}}' \
+                | while read -r ns name fin; do
+                    [ -n "$fin" ] || continue
+                    end=$(date -d "$fin" +%s 2>/dev/null) || continue
+                    [ $((now - end)) -gt 3600 ] || continue
+                    kubectl -n "$ns" delete pod "$name" --ignore-not-found
+                  done
+              EOT
+              ]
             }
             restart_policy = "Never"
           }

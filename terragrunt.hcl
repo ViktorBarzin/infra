@@ -78,8 +78,26 @@ terraform {
       version = "~> 4"
     }
     authentik = {
-      source  = "goauthentik/authentik"
-      version = "~> 2024.10"
+      source = "goauthentik/authentik"
+      # Floor raised from ~> 2024.10 (which resolved to 2024.12.1) on
+      # 2026-09-02. That version cannot create an email stage against authentik
+      # 2026.8.1 at all: it types token_expiry as a NUMBER and always sends one,
+      # even when the attribute is omitted, and the server rejects it —
+      #   POST /stages/email/ -> 400
+      #   {"token_expiry":["30 is not in the correct format of 'hours=3;minutes=1'."]}
+      # 2025.8 types it as a string.
+      #
+      # MEASURED before bumping, because this provider is used by four stacks
+      # and two of them gate cluster access (rbac, k8s-dashboard):
+      #   - authentik stack plan: 2 to add, 0 to change, 0 to destroy
+      #   - schema diff 2024.12.1 -> 2025.8.1 for every type the other three
+      #     stacks use (authentik_application, authentik_provider_oauth2, and
+      #     the three data sources): no newly-required attribute, no type
+      #     change, no removal.
+      # Note authentik_provider_oauth2 does drop `redirect_uris` in 2025.8, but
+      # nothing here uses it — all four stacks already use
+      # allowed_redirect_uris, which 2024.12.1 also has.
+      version = "~> 2025.8"
     }
     # kubectl (gavinbunney) — workaround for hashicorp/kubernetes
     # `kubernetes_manifest` panics on Kyverno CRDs. See beads code-e2dp.

@@ -95,7 +95,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeDown|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing"
+          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeDown|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing|F1MetricsMissing"
       # Planned node maintenance (kured drain-reboot or a manual cordon): the
       # window is announced by NodeMaintenanceInProgress (info — one Slack
       # line), and everything a 3-6 min drain+reboot predictably trips is
@@ -110,7 +110,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeMaintenanceInProgress
         target_matchers:
-          - alertname =~ "NodeDown|NodeNotReady|NodeConditionBad|CalicoNodeNotReady|RecentNodeReboot|TraefikDown|AuthentikDown|AuthentikRootRouter5xxHigh|ForwardAuthFallbackActive|MailServerDown|DaemonSetMissingPods|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|PodCrashLooping|ContainerOOMKilled|KernelOOMKiller|ScrapeTargetDown|HighMemoryUsage|HighSystemLoad|HighPowerUsage|ServerHighPowerUsage|KubeletRunningContainersDrop|GPUVRAMLow|MysqlStandaloneDown|PostgreSQLDown|RedisDown|CloudflaredDown|HeadscaleDown|HeadscaleReplicasMismatch|ClusterCannotTolerateNonGpuNodeLoss|PodStuckPending|PVCStuckPending|NodeExporterDown|NodeLowFreeMemory|KubeletImagePullErrors|PodsStuckContainerCreating|TechnitiumZoneCountMismatch|TechnitiumDNSDown|EmailRoundtripFailing|TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet"
+          - alertname =~ "NodeDown|NodeNotReady|NodeConditionBad|CalicoNodeNotReady|RecentNodeReboot|TraefikDown|AuthentikDown|AuthentikRootRouter5xxHigh|ForwardAuthFallbackActive|MailServerDown|DaemonSetMissingPods|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|PodCrashLooping|ContainerOOMKilled|KernelOOMKiller|ScrapeTargetDown|HighMemoryUsage|HighSystemLoad|HighPowerUsage|ServerHighPowerUsage|KubeletRunningContainersDrop|GPUVRAMLow|MysqlStandaloneDown|PostgreSQLDown|RedisDown|CloudflaredDown|HeadscaleDown|HeadscaleReplicasMismatch|ClusterCannotTolerateNonGpuNodeLoss|PodStuckPending|PVCStuckPending|NodeExporterDown|NodeLowFreeMemory|NodeMemoryRequestsHigh|KubeletImagePullErrors|PodsStuckContainerCreating|TechnitiumZoneCountMismatch|TechnitiumDNSDown|EmailRoundtripFailing|TailscaleSubnetRouterDown|TailscaleLanUnreachableViaTailnet"
       # NFS down causes mass pod failures and NFS-dependent service outages
       - source_matchers:
           - alertname = NFSServerUnresponsive
@@ -166,7 +166,7 @@ alertmanager:
       - source_matchers:
           - alertname = ImmichSearchProbeStale
         target_matchers:
-          - alertname =~ "ImmichSmartSearchSlow|ImmichClipIndexColdCache"
+          - alertname =~ "ImmichSmartSearchSlow|ImmichClipIndexColdCache|ImmichSmartSearchToastColdCache|ImmichSmartSearchIndexSlow"
       # Same shape for the thumbnail reconciler: its gauges live in the
       # Pushgateway, which keeps serving the last value forever. If the CronJob
       # stops running, "N photos still need repair" is frozen history rather than
@@ -175,6 +175,31 @@ alertmanager:
           - alertname = ImmichThumbnailReconcileStale
         target_matchers:
           - alertname =~ "ImmichThumbnailRepairNotTaking|ImmichThumbnailRepairUnowned"
+      # Third instance of the same Pushgateway shape, for the broker feeds.
+      # t212_/ibkr_position_drift_shares keep serving their last pushed value
+      # after the CronJob stops running, so a frozen drift reading is history,
+      # not a current fact. Let the staleness alert carry the message.
+      - source_matchers:
+          - alertname = T212SyncStale
+        target_matchers:
+          - alertname = T212PositionDrift
+      - source_matchers:
+          - alertname = IBKRSyncStale
+        target_matchers:
+          - alertname = IBKRPositionDrift
+      # The generic ratio alerts and the Immich-specific rate alerts describe the
+      # same errors two ways. If the ratio one has already escalated to critical,
+      # the warning that saw it first adds nothing — keep the louder one.
+      - source_matchers:
+          - alertname = IngressErrorRate5xxHigh
+        target_matchers:
+          - alertname = ImmichHTTP5xxElevated
+        equal: [service]
+      - source_matchers:
+          - alertname = HighService4xxRate
+        target_matchers:
+          - alertname = ImmichHTTP4xxElevated
+        equal: [service]
       # Power outage makes on-battery alert redundant
       - source_matchers:
           - alertname = PowerOutage
@@ -272,6 +297,22 @@ alertmanager:
           - alertname =~ "HDDSaturated|HDDReadLatencyHigh"
         target_matchers:
           - alertname =~ "HDDHighIOPS|HDDHighReadRate|HDDHighWriteRate|HDDDailyReadVolume|HDDDailyWriteVolume"
+      # devvm down: the generic scrape alert says the same thing 27 minutes
+      # later and more quietly. equal: [job] keeps this surgical — every OTHER
+      # target's ScrapeTargetDown still notifies while devvm is unreachable.
+      - source_matchers:
+          - alertname = DevvmDown
+        target_matchers:
+          - alertname = ScrapeTargetDown
+        equal: [job]
+      # The two devvm dead-man switches in the Loki ruler go off whenever the
+      # box stops shipping journal lines, which a down box does by definition.
+      # Both alertnames are devvm-specific, so no `equal` is needed to keep this
+      # from reaching anything else.
+      - source_matchers:
+          - alertname = DevvmDown
+        target_matchers:
+          - alertname =~ "DevvmJournalSilent|SessionWatchSilent"
     receivers:
       - name: slack-critical
         slack_configs:
@@ -455,11 +496,19 @@ server:
       - name: prometheus-backup
         persistentVolumeClaim:
           claimName: monitoring-prometheus-backup-host
+      # infra#80: the HA scrape credential, mounted rather than inlined into
+      # the rendered ConfigMap (which every power-user can read).
+      - name: haos-scrape-token
+        secret:
+          secretName: haos-scrape-token
   extraVolumeMounts:
     - name: prometheus-wal-tmpfs
       mountPath: /data/wal
     - name: prometheus-backup
       mountPath: /backup
+    - name: haos-scrape-token
+      mountPath: /etc/secrets/haos
+      readOnly: true
   sidecarContainers:
     prometheus-backup:
       image: docker.io/library/alpine:3.21
@@ -609,7 +658,7 @@ serverFiles:
           insecure_skip_verify: true
         metric_relabel_configs:
           - source_labels: [__name__]
-            regex: '(storage_operation_duration_seconds|csi_operations_seconds|volume_operation_total_seconds|kubelet_image_pull_duration_seconds|kubelet_http_requests_duration_seconds|rest_client_rate_limiter_duration_seconds|rest_client_request_duration_seconds|rest_client_request_size_bytes|rest_client_response_size_bytes|kubelet_pod_worker_duration_seconds|kubelet_volume_metric_collection_duration_seconds|kubelet_cgroup_manager_duration_seconds)_bucket'
+            regex: '(storage_operation_duration_seconds|csi_operations_seconds|volume_operation_total_seconds|kubelet_http_requests_duration_seconds|rest_client_rate_limiter_duration_seconds|rest_client_request_duration_seconds|rest_client_request_size_bytes|rest_client_response_size_bytes|kubelet_pod_worker_duration_seconds|kubelet_volume_metric_collection_duration_seconds|kubelet_cgroup_manager_duration_seconds)_bucket'
             action: drop
           - source_labels: [__name__]
             regex: 'kubernetes_feature_enabled|kubelet_container_log_filesystem_used_bytes'
@@ -620,8 +669,29 @@ serverFiles:
           # any PVC missing even one. Without inodes_free + inodes the
           # autoresizer's GetMetrics returns empty for every PVC and the
           # reconcile is a no-op cluster-wide.
+          #
+          # kubelet_image_pull_duration_seconds_(bucket|sum|count) added
+          # 2026-09-02 (Phase 0 of docs/plans/2026-09-02-node1-large-image-handling.md).
+          # It was excluded twice: named in the _bucket drop rule above AND
+          # absent from this list, so sum and count went too and no percentile
+          # or per-size-class breakdown of image pulls existed. The plan's own
+          # anchor number (node1 spending 2,898 s on 1-5 GB pulls over 36.9
+          # days) had to be read off the live kubelet by hand because
+          # Prometheus held none of it.
+          #
+          # Cardinality, measured 2026-09-02 rather than estimated: the metric
+          # exposes 21 series per image_size_in_bytes class (19 le buckets +
+          # sum + count). Live today that is 105 series on each of the five
+          # workers (5 classes) and 21 on k8s-master (1 class) = 546 series,
+          # against a 98,926-series head, so +0.55%. The label is
+          # image_size_in_bytes with bucketed STRING values ("1GB-5GB",
+          # "100MB-500MB"), not image_size_in_gb, and kubelet defines 7 classes
+          # in total, so the ceiling as nodes see bigger images is 7 x 21 x 6 =
+          # 882 series. Anchored, not open-ended — this stays a whitelist.
+          # Regex note: `keep` is fully anchored, so the bare metric name would
+          # NOT match the _bucket/_sum/_count children; the group is required.
           - source_labels: [__name__]
-            regex: 'kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_used_bytes|kubelet_volume_stats_available_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free|kubelet_running_containers|kubelet_runtime_operations_errors_total|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|go_memstats_alloc_bytes|up'
+            regex: 'kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_used_bytes|kubelet_volume_stats_available_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free|kubelet_running_containers|kubelet_runtime_operations_errors_total|kubelet_image_pull_duration_seconds_(bucket|sum|count)|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|go_memstats_alloc_bytes|up'
             action: keep
       - job_name: kubernetes-nodes-cadvisor
         scheme: https
@@ -646,11 +716,11 @@ serverFiles:
             regex: 'container_tasks_state|container_memory_failures_total'
             action: drop
           - source_labels: [__name__]
-            regex: 'container_fs_.*|container_blkio_.*|container_pressure_.*|container_spec_.*|container_ulimits_soft|container_file_descriptors|container_threads|container_threads_max|container_sockets|container_processes|container_last_seen|machine_nvm_.*|machine_swap_bytes|machine_cpu_physical_cores|machine_cpu_sockets|container_network_(receive|transmit)_(errors|packets_dropped)_total|container_cpu_(load_average_10s|load_d_average_10s|system_seconds_total|user_seconds_total)|container_memory_(cache|failcnt|kernel_usage|mapped_file|max_usage_bytes|rss|swap|total_active_file_bytes|total_inactive_file_bytes)'
+            regex: 'container_fs_.*|container_blkio_.*|container_pressure_.*|container_spec_.*|container_ulimits_soft|container_file_descriptors|container_threads|container_threads_max|container_sockets|container_processes|container_last_seen|machine_nvm_.*|machine_swap_bytes|machine_cpu_physical_cores|machine_cpu_sockets|container_network_(receive|transmit)_(errors|packets_dropped)_total|container_cpu_(load_average_10s|load_d_average_10s|system_seconds_total|user_seconds_total)|container_memory_(cache|failcnt|kernel_usage|mapped_file|rss|swap|total_active_file_bytes|total_inactive_file_bytes)'
             action: drop
           # Whitelist: only keep essential cAdvisor metrics
           - source_labels: [__name__]
-            regex: 'container_cpu_usage_seconds_total|container_cpu_cfs_throttled_seconds_total|container_memory_working_set_bytes|container_network_receive_bytes_total|container_network_transmit_bytes_total|container_oom_events_total|container_spec_memory_limit_bytes|container_start_time_seconds|machine_cpu_cores|machine_memory_bytes'
+            regex: 'container_cpu_usage_seconds_total|container_cpu_cfs_throttled_seconds_total|container_memory_working_set_bytes|container_memory_max_usage_bytes|container_network_receive_bytes_total|container_network_transmit_bytes_total|container_oom_events_total|container_spec_memory_limit_bytes|container_start_time_seconds|machine_cpu_cores|machine_memory_bytes'
             action: keep
       - job_name: kubernetes-service-endpoints
         honor_labels: true
@@ -724,7 +794,7 @@ serverFiles:
           # guard (stacks/k8s-version-upgrade) — removing it re-opens the sticky-latch
           # false-critical (the guard would evaluate against an empty series).
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|sablier_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
+            regex: 'memory_.+|tripit_.+|sablier_.+|qbittorrent_.+|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -877,6 +947,106 @@ serverFiles:
             source_labels:
               - __meta_kubernetes_pod_node_name
             target_label: node
+      # Vault. A dedicated job (not the annotation-driven kubernetes-pods one)
+      # because VaultRaftLeaderStuck and VaultHAStatusUnavailable both key off
+      # job="vault", and because the target is the metrics-only listener on
+      # 8202, not the pod's advertised 8200. role: pod so all three replicas are
+      # scraped individually — vault_core_active is per-pod and the leader
+      # alerts compare across instances, which a Service-level scrape (one
+      # random backend per interval) cannot express.
+      - job_name: vault
+        metrics_path: /v1/sys/metrics
+        params:
+          format:
+            - prometheus
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - vault
+        relabel_configs:
+          - action: keep
+            regex: vault
+            source_labels:
+              - __meta_kubernetes_pod_label_app_kubernetes_io_name
+          - action: drop
+            regex: Pending|Succeeded|Failed|Completed
+            source_labels:
+              - __meta_kubernetes_pod_phase
+          # 8202 is the metrics-only listener declared in stacks/vault/main.tf.
+          # The pod's own 8200 refuses unauthenticated /v1/sys/metrics by design.
+          - action: replace
+            regex: (.+)
+            replacement: $1:8202
+            source_labels:
+              - __meta_kubernetes_pod_ip
+            target_label: __address__
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_pod_name
+            target_label: pod
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_pod_name
+            target_label: instance
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_namespace
+            target_label: namespace
+          # Deliberately no `node` label. VaultRaftLeaderStuck joins its two
+          # halves with `and on(instance)`, and a vault pod that reschedules
+          # keeps its name while changing node — so for the few minutes both
+          # series sit inside the lookback window there would be two series
+          # sharing an instance, which makes the join fail as a duplicate match
+          # rather than fire. Seen live while rolling vault-2 from k8s-node2 to
+          # k8s-node5 on 2026-09-03. Which node a pod is on is already in
+          # kube_pod_info if anyone needs it.
+      # etcd's own disk metrics (code-at4f, 2026-09-03). Until today Prometheus
+      # had NONE of these: `count(etcd_disk_wal_fsync_duration_seconds_count)`
+      # returned no series, and the only etcd_* metrics present were
+      # etcd_request_duration_*, which the apiserver emits about its own calls
+      # rather than etcd about its disk. kubeadm binds --listen-metrics-urls to
+      # 127.0.0.1:2381, so nothing off the master could reach it;
+      # stacks/rbac/modules/rbac/etcd-tuning.tf now adds the node IP alongside
+      # loopback.
+      #
+      # Why it matters: keeping etcd on the shared 7200rpm HDD was explicitly
+      # risk-accepted on 2026-09-03 (bead code-oflt), and measurement is the
+      # compensating control. wal_fsync and backend_commit p99 are the two
+      # numbers that show the spindle hurting, and they are what would explain
+      # the ~4 kube-controller-manager restarts a day this cluster sees.
+      #
+      # role: node rather than a hardcoded address so a renumbered control
+      # plane does not silently stop being scraped. Plain HTTP is correct here:
+      # :2381 serves /metrics and /health only, never the client API, which
+      # stays on https://127.0.0.1:2379 behind mTLS.
+      - job_name: etcd
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          # `labelpresent`, not the label itself. node-role.kubernetes.io/
+          # control-plane carries an EMPTY value on the master, and a node
+          # without the label also reads as empty, so keeping on the label
+          # value would match every node in the cluster and scrape :2381 on
+          # five workers that are not running etcd.
+          - action: keep
+            regex: "true"
+            source_labels:
+              - __meta_kubernetes_node_labelpresent_node_role_kubernetes_io_control_plane
+          - action: replace
+            regex: (.+)
+            replacement: $1:2381
+            source_labels:
+              - __meta_kubernetes_node_address_InternalIP
+            target_label: __address__
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_node_name
+            target_label: node
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_node_name
+            target_label: instance
       - job_name: kubernetes-pods-slow
         honor_labels: true
         scrape_interval: 5m
@@ -1001,22 +1171,64 @@ serverFiles:
               severity: warning
             annotations:
               summary: "gpu-vram-watchdog has no available replica for 15m — runtime VRAM enforcement (over-budget recycle) is OFF. Budget still scheduler-enforced."
+          # A tenant sustained ABOVE its declared viktorbarzin.me/gpumem seat.
+          # The gpu-vram-watchdog already sees this and deliberately allows it
+          # while nothing is blocked (ADR-0016) — correct behaviour that
+          # produces log lines and no signal, which is how claude-memory sat
+          # 2,314 MiB over its seat for a day before anyone noticed (infra#85).
+          #
+          # min_over_time on the LHS means EVERY sample in the window must be
+          # over, so a single burst cannot fire it and the watchdog's deliberate
+          # burst tolerance is preserved. Summed per POD because
+          # gpu_pod_memory_used_bytes is PER-PROCESS and a pod can run several —
+          # reading one series is exactly the trap that hid the incident.
+          #
+          # 1536 MiB, no per-tenant exceptions (Viktor, 2026-09-02): it clears
+          # immich-ml's tolerated plateau by 488 MiB and would have caught the
+          # claude-memory incident by 778. A tighter threshold needs an
+          # exception list, and a stale exception list is how a real alert gets
+          # tuned out.
+          - alert: GPUTenantOverSeatSustained
+            expr: |
+              min_over_time(
+                (sum by (namespace, pod) (gpu_pod_memory_used_bytes) / 1024 / 1024)[45m:2m]
+              )
+              - on(namespace, pod) group_left()
+              sum by (namespace, pod) (kube_pod_container_resource_limits{resource="viktorbarzin_me_gpumem"})
+              > 1536
+            for: 5m
+            labels:
+              severity: warning
+              subsystem: gpu
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }} has been >1.5 GiB over its gpumem seat for 45m"
+              description: "Sustained overshoot of the declared viktorbarzin.me/gpumem budget, so the seating chart no longer describes the card. The watchdog only acts under contention, so this stays invisible until something is starved. Check whether the tenant genuinely needs a bigger seat or whether its allocator is at fault — an onnxruntime CUDA arena left on the default kNextPowerOfTwo strategy doubles on demand and never returns memory, which is what caused infra#85. See docs/adr/0016-gpu-vram-extended-resource-budget.md."
       # Memory recall. Nothing watched this path until 2026-09-01, which is how a
       # 6.5% silent-loss rate ran for seven weeks: the server never errored, the
       # per-turn hook gave up at 6s, and the only record was a log file on one
       # workstation. The histogram had existed since 2026-07-11 with no rule reading it.
+      # claude-memory recall. ALL memory alerts live in this one group on purpose:
+      # they were split across here and the catch-all group below until 2026-09-01,
+      # which is how a duplicate MemoryRecallErrors and MemoryEmbedWriteFailing got
+      # added without anyone noticing the originals.
+      #
+      # Traffic is ~4 recalls/hour, so every latency rule here needs a long window
+      # AND a volume guard. A 10m window contains 0-1 requests and its p95 is
+      # whatever that one request did.
       - name: Memory recall
         rules:
-          - alert: MemoryRecallSlow
-            # p90 target from the GPU-embedding plan. Generous against an expected
-            # ~20ms GPU embed and a ~350ms CPU fallback, so this fires on a real
-            # regression rather than on normal variation between the two.
-            expr: histogram_quantile(0.9, sum by (le) (rate(memory_recall_seconds_bucket[30m]))) > 0.5
+          - alert: MemoryRecallLatencyHigh
+            # The recall hook aborts at 6s; sustained slowness silently drops
+            # injected memories from prompts. p90 over 6h, guarded on >=20 samples
+            # so a quiet night cannot produce a quantile out of two data points.
+            # Measured 2026-09-01 after the GPU migration: p90/6h = 1.05s, of which
+            # ~30ms is the embed and ~210ms the lexical OR-broaden.
+            expr: histogram_quantile(0.9, sum by (le) (rate(memory_recall_seconds_bucket[6h]))) > 2.5 and on() sum(increase(memory_recall_seconds_count[6h])) >= 20
             for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "Memory recall p90 {{ $value | printf \"%.2f\" }}s (>0.5s) — the per-turn recall hook gives up at 6s, so sustained slowness costs sessions their memories silently."
+              summary: "claude-memory recall p90 {{ $value | printf \"%.2f\" }}s over 6h (>2.5s) — approaching the 6s hook timeout, past which sessions lose their memories silently."
           - alert: MemoryEmbedCpuFallback
             # A non-zero rate means the GPU path is degraded and the CPU provider is
             # carrying query embedding. Recall still works, which is the point of the
@@ -1028,12 +1240,36 @@ serverFiles:
             annotations:
               summary: "Memory query embedding is falling back to CPU — the CUDA provider is failing at inference. Recall is degraded, not down. Check the claude-memory pod and GPU VRAM."
           - alert: MemoryRecallErrors
-            expr: sum(rate(memory_recall_errors_total[15m])) > 0
-            for: 10m
+            # The audit's silent-failure class: recall handlers raising (was the
+            # tsquery-500 that cost ~11%% of prompts their memories, unnoticed).
+            expr: increase(memory_recall_errors_total[15m]) > 0
+            for: 5m
             labels:
               severity: warning
             annotations:
-              summary: "Memory recall is raising ({{ $value | printf \"%.2f\" }}/s). This counter had never incremented before, so any value is new."
+              summary: "claude-memory recall handlers are raising (see surface label) — sessions silently losing recall"
+          - alert: MemoryEmbedWriteFailing
+            expr: increase(memory_embed_write_total{status="failed"}[30m]) > 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "claude-memory embed-on-write failing repeatedly — new memories invisible to the dense leg"
+          - alert: MemoryEmbeddingsPending
+            # A memory stored without an embedding is invisible to dense recall FOREVER —
+            # nothing retries it, so the row silently stays lexical-only. That is why the
+            # threshold is >0 rather than the >100 this rule carried until 2026-09-01: a
+            # permanent hole of 20 memories is the same failure as one of 200, and the
+            # 6h/>100 form could not see it.
+            #
+            # embed-on-write is async, so a brief non-zero reading is normal; 2h is not.
+            # This gauge is what verified the 2026-09-01 backfill (10,892 of 10,892).
+            expr: memory_embeddings_pending > 0
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} memories have no embedding and are invisible to dense recall. Nothing retries them; re-embed with scripts/reembed.py (dense leg off for the duration) or find why embed-on-write is failing."
           - alert: MemoryRecallTelemetryDown
             # The failure this whole group exists to prevent: losing sight of recall.
             expr: absent(memory_recall_seconds_count)
@@ -1041,7 +1277,7 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "claude-memory recall telemetry absent 30m — the p90 and fallback alerts above are blind."
+              summary: "claude-memory recall telemetry absent 30m — the latency and fallback alerts above are blind."
       # chrome-service browser pool (broker + FleetView + worker pods). The
       # broker exposes browser_* gauges (job=kubernetes-pods). A CPU-wedged worker
       # is the 6.5h-swiftshader class — the CPU limit caps it at 4 cores and the
@@ -1076,6 +1312,112 @@ serverFiles:
               severity: warning
             annotations:
               summary: "chrome-service pod quota >90% used for 10m — the pool may be unable to burst new workers. Raise the chrome-pool ResourceQuota or investigate leaked sessions."
+      # Added 2026-09-06 alongside retiring the 117-range Meta blocklist. That
+      # removed a control that was demonstrably working (it was stopping ~99
+      # requests/hour at the moment of removal) before its Cloudflare
+      # replacement had been proven, so these exist to make the crawl visible
+      # if it returns rather than discovering it from an outage.
+      #
+      # Thresholds are ratios against each series' own recent baseline, not
+      # absolute numbers, because normal volume here varies by two orders of
+      # magnitude between hosts.
+      - name: Scrape and traffic anomalies
+        rules:
+          - alert: ScrapeVolumeAnomaly
+            # Whole-edge request rate against its own 6h average. The 2026-09-02
+            # Meta crawl ran 9,300-11,000 req/hour on top of a ~10 req/s
+            # baseline, so a sustained 3x is comfortably above noise while still
+            # catching a crawl of that size. The >2 req/s floor stops a quiet
+            # night (where 3x of almost nothing is still almost nothing) from
+            # paging.
+            expr: |
+              sum(rate(traefik_service_requests_total[5m]))
+                > 3 * avg_over_time(sum(rate(traefik_service_requests_total[5m]))[6h:5m])
+              and sum(rate(traefik_service_requests_total[5m])) > 2
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Edge request rate {{ $value | printf \"%.1f\" }}/s is over 3x its 6h average for 15m — possible scrape or crawl. Check `homelab logs query` for a single host or user-agent dominating."
+          - alert: ForgejoCrawlSurge
+            # Forgejo specifically, because it is where every crawl has landed:
+            # 22,115 of 22,189 Meta requests in a 24h window, and 137,760
+            # direct-to-origin requests in 12h before it went behind Cloudflare.
+            # Baseline is ~0.4 req/s, so 5x is a real change and not jitter.
+            expr: |
+              sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m]))
+                > 5 * avg_over_time(sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m]))[6h:5m])
+              and sum(rate(traefik_service_requests_total{service=~".*forgejo.*"}[5m])) > 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "forgejo request rate {{ $value | printf \"%.1f\" }}/s is over 5x its 6h average — the crawl target. If the Meta blocklist retirement was premature, this is how we find out."
+          - alert: EdgeBlockSurge
+            # A sustained 403 rate means something is being refused in volume,
+            # which is the signature of a crawl meeting CrowdSec or the edge.
+            # Useful even when total volume looks normal, because blocked
+            # requests are cheap and may not move the aggregate.
+            #
+            # READS THE ENTRYPOINT COUNTER, NOT THE SERVICE ONE, and that is the
+            # whole alert. Until 2026-09-10 this was
+            # sum(rate(traefik_service_requests_total{code="403"}[5m])) > 1 and
+            # it could never fire: a CrowdSec 403 is issued by the `crowdsec`
+            # middleware on the websecure ENTRYPOINT, so the request is refused
+            # before any service is selected and the per-service counter never
+            # increments. Measured over the 24h that contained the 2026-09-09
+            # crawl:
+            #   traefik_service_requests_total{code="403"}      max 0.008 req/s
+            #   traefik_entrypoint_requests_total{code="403"}   max 147 req/s
+            # The old threshold of 1 sat 120x above the service counter's
+            # 24-hour maximum, so an alert written to catch bulk blocking read
+            # as coverage in the alert list while being structurally incapable
+            # of firing.
+            #
+            # THRESHOLD from the entrypoint counter's own distribution over that
+            # same 24h: p50 2.5, p90 10.4, p99 79.1, max 147 req/s. 30 sits
+            # about 3x above p90 and well under the crawl, and `for: 10m` keeps
+            # a brief burst of auth 403s from paging. Note the entrypoint
+            # counter includes ordinary application 403s, which is why the floor
+            # is 30 rather than the 1 that suited a counter reading near zero.
+            expr: sum(rate(traefik_entrypoint_requests_total{code="403"}[5m])) > 30
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.1f\" }} req/s being refused with 403 for 10m — something is being blocked in bulk. Identify it before deciding whether the block is right."
+
+          - alert: DistributedCrawlDetected
+            # The direct signal, added 2026-09-10. Every other crawl alert here
+            # infers a crawl from a traffic SHAPE (a rate over its own average,
+            # a 403 volume) and therefore needs a threshold that trades misses
+            # against false alarms. This one reports that the detector itself
+            # fired, so it needs no tuning and does not move when traffic does.
+            #
+            # cs_alerts is a LAPI counter labelled by scenario. All three LAPI
+            # replicas carry the same value, so this is max() rather than sum():
+            # summing would treble the rate, and a replica restart resets one
+            # series to zero while the others keep climbing, which max() rides
+            # out.
+            #
+            # `> 0` is deliberate and is not a placeholder. An overflow of
+            # viktor/distributed-crawl-range means 30 distinct addresses inside
+            # one registered prefix hit us inside the leak window, which does
+            # not happen to legitimate traffic: measured over three windows of
+            # real traffic on 2026-09-09, legitimate netblocks showed 2-3
+            # distinct addresses and crawler ranges 27-338. `for: 10m` requires
+            # the crawl to be sustained rather than a single burst.
+            #
+            # It stays firing for as long as the crawl runs, which is intended.
+            # A crawl in its fourth hour is still a crawl, and the resolve is
+            # the useful part: it says the thing stopped.
+            expr: max by (reason) (rate(cs_alerts{reason=~"viktor/.*crawl.*"}[10m])) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CrowdSec {{ $labels.reason }} is firing at {{ $value | printf \"%.2f\" }} alerts/s — a distributed crawl is in progress and being banned. `cscli decisions list --scope Range` shows which prefixes."
+
       - name: R730 Host
         rules:
           - alert: HighCPUTemperature
@@ -1273,6 +1615,113 @@ serverFiles:
               severity: warning
             annotations:
               summary: "rpi-sofia SoC temp: {{ $value | printf \"%.0f\" }}°C (threshold: 75°C)"
+      # The shared workstation VM. Session-loss alerting otherwise lives in the
+      # Loki ruler ("Claude Session Loss (devvm)"), because a pane can hit its own
+      # 6G cap while the box has 20 GiB free and 30s detection is not reachable
+      # from a 2-minute scrape. This group carries the one condition that IS
+      # box-wide and IS worth predicting.
+      # Design: docs/plans/2026-09-01-devvm-session-loss-alerting.md
+      - name: DevVM
+        rules:
+          - alert: DevvmDown
+            # The box being GONE, as opposed to squeezed. Until this rule the
+            # only thing that noticed was ScrapeTargetDown at for: 30m/warning,
+            # and before that nothing did: the 2026-06-11 QEMU stall ran ~90
+            # minutes before a human looked at the sidebar and counted.
+            #
+            # for: 5m, and the two minutes above 3m are bought deliberately.
+            # Calibrated on the 30 days to 2026-09-03: up{job="devvm"} hit 0 in
+            # 13 samples, and the longest contiguous run in any 10m window was
+            # 2. At a 2m scrape a 2-sample run keeps the rule true across
+            # evaluations spanning 4 minutes, so for: 3m WOULD have fired once
+            # on a blip that was not an outage. Requiring 3 consecutive failed
+            # scrapes never happened in those 30 days. It still catches the real
+            # thing: over 180 days the worst run was 6 samples.
+            #
+            # Cost of the choice: the alert speaks at roughly 6-8 minutes of
+            # real downtime instead of 4-6. Against ScrapeTargetDown's 30
+            # minutes and the 90 minutes a human took on 2026-06-11, that is
+            # cheap, and this is a critical that re-pings every 6h.
+            #
+            # `or on() vector(0)` mirrors NodeDown: if the target is dropped
+            # from the scrape config entirely the series vanishes and a bare
+            # up==0 can never fire. In that case the alert carries no job label
+            # and the ScrapeTargetDown inhibition below does not apply, which is
+            # fine, because ScrapeTargetDown cannot fire on an absent series
+            # either.
+            expr: (up{job="devvm"} or on() vector(0)) == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "devvm is not being scraped — the shared workstation may be down"
+              description: "Every Claude session, t3-serve and agent on this box is gone or unreachable. Check the VM on Proxmox first (qm status on proxmox-1); a QEMU stall looks identical to a reboot from here and was the 2026-06-11 failure. Journal history survives in Loki even while the box is unreachable: homelab logs query '{job=\"devvm-journal\"}' --since 1h. When the box is back, ClaudeSessionDied reports what did not come back with it."
+          - alert: DevvmMemoryPressure
+            # earlyoom SIGTERMs at 5% available and SIGKILLs at 3% (-m 5,3), and
+            # when it fires on this box it takes claude processes: the 2026-08-16
+            # event killed 14 of wizard's and 7 of emo's in two minutes. 8% is the
+            # band between "unusual" and "earlyoom acts": measured over the 30 days
+            # to 2026-09-01, MemAvailable p1 was 11.8%, p10 15.9%, p50 27.0%, so
+            # this is below the 1st percentile and should be rare rather than
+            # standing.
+            #
+            # It does NOT predict a per-pane cap kill, which is the more common
+            # loss and is independent of box memory — PaneNearMemoryCap in the Loki
+            # ruler covers that one.
+            #
+            # for: 10m is 5 samples at the global 2m scrape interval.
+            expr: (node_memory_MemAvailable_bytes{instance="devvm"} / node_memory_MemTotal_bytes{instance="devvm"}) < 0.08
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "devvm has {{ $value | humanizePercentage }} memory available — earlyoom kills claude processes at 5%"
+              description: "Close a few sessions or stop a heavy build while there is still room. Each Claude session costs ~659 MB all-in (467 MB the process plus ~192 MB of per-session MCP servers), so three bought back ~2 GB when measured 2026-08-24. Largest panes right now: homelab metrics query 'topk(5, tl_pane_memory_bytes)'. If sessions have already been lost, ClaudeSessionDied and ClaudeOOMKilled will have fired alongside this."
+          - alert: DevvmSwapThrashing
+            # Added 2026-09-02 with the change that made this reachable: the user
+            # slices went from MemorySwapMax=0 to a bounded 4G, so a session can
+            # page out instead of being killed. The failure that setting guarded
+            # against is thrash — on 2026-06-22 a user runaway swap-thrashed the
+            # throttled virtual disk into an I/O storm and the box was hard-killed.
+            #
+            # Nothing else catches it. earlyoom watches global MemAvailable and
+            # ignores swap by design (-s 100,100); systemd-oomd is inert for
+            # cgroups holding anon memory. Per-cgroup thrash with healthy global
+            # RAM is invisible to both.
+            #
+            # BOTH directions, each above 500, sustained 15m — not their sum.
+            # This took three passes to get right and the first two are worth
+            # recording, because each was wrong in a different way.
+            #
+            # It began at "sum > 2000", reasoning above the 30-day peak of 1392.
+            # That is the right question for a noise floor and the wrong one for a
+            # trigger: this disk cannot reach 2000. Asking a user slice to reclaim
+            # 512 MB on 2026-09-02 took over 120 seconds, about 1100 pages/s. A
+            # sustained thrash plateaus at whatever the spindle can do, so the
+            # alert would have sat unfirable while the box wedged.
+            #
+            # Lowering it to "sum > 800" then fired on healthy behaviour. Right
+            # after the user slices gained swap, the kernel began parking cold
+            # session pages it had previously been forbidden to touch: measured
+            # page-out 1001/s against page-in 49/s, a ratio of 0.05, while
+            # MemAvailable ROSE from 7.0 to 7.6 GiB and io stall sat at 24%,
+            # below its 29% p95. That is a one-way migration and exactly what the
+            # change was for, and it would have paged someone for hours.
+            #
+            # So the signal is page-IN, gated on page-out. Eviction alone is
+            # progress; needing back what you just evicted is thrash. Requiring
+            # both above 500 for 15m clears a migration (out-only), clears a
+            # session waking up after being paged out (a brief in-spike), and
+            # still sits ~6x the 30-day page-out p99 of 85 on a box that is
+            # normally at zero. The disk is seek-bound and shared, measured 95%
+            # busy at 0.19 MB/s of writes (bead code-oflt, open).
+            expr: rate(node_vmstat_pswpin{instance="devvm"}[5m]) > 500 and rate(node_vmstat_pswpout{instance="devvm"}[5m]) > 500
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "devvm is swap-thrashing — paging {{ $value | printf \"%.0f\" }} pages/s back IN while still evicting, the 2026-06-22 hard-kill shape"
+              description: "Pages are coming back in as fast as they leave, which is churn rather than the one-way eviction that freeing RAM looks like. Normal on this box is 0. Find the source: for d in /sys/fs/cgroup/user.slice/user-*.slice; do echo $d $(cat $d/memory.swap.current); done. A user sitting at their 4G MemorySwapMax ceiling is the likely one. To stop it while investigating, systemctl set-property user-<uid>.slice MemorySwapMax=0 puts that user back to cap-and-kill. The reason paging hurts here at all is the shared seek-bound spindle; bead code-oflt moves devvm's disk to SSD and is still open."
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp
@@ -1348,13 +1797,53 @@ serverFiles:
           # clip_index is partially evicted — 6 fire/resolve pairs in 7 days for
           # one cache-cold episode (measured 2026-08-10).
           - alert: ImmichSmartSearchSlow
-            expr: immich_smart_search_db_seconds{job="immich-search-probe"} > 1
+            # Threshold moved 1s -> 3s on 2026-09-06, because the series changed
+            # meaning. db_seconds now times Immich's REAL searchSmart query
+            # (asset join, owner filter, and the asset.id tiebreaker that makes the
+            # vchordrq index unusable) instead of a bare indexed ANN scan nobody
+            # issues. Measured baseline on the largest library: 834-1088 ms over 10
+            # samples, median 971 ms. A 1s threshold against that would fire
+            # permanently. 3s leaves headroom over the normal range while still
+            # catching the cold-TOAST case, which reached 19s.
+            expr: immich_smart_search_db_seconds{job="immich-search-probe"} > 3
             for: 15m
-            keep_firing_for: 2h
+            # 2h -> 15m. keep_firing_for is RE-ARMED by every single sample over
+            # the threshold, so isolated spikes kept this alert lit for hours after
+            # the slowness ended: measured 2026-09-06, fired 00:26 and still firing
+            # at 09:06 while the real slowness stopped at 02:32, extended by three
+            # daytime samples of 1.05s, 1.17s and 2.91s. 15m bridges a gap between
+            # 5-minutely probe runs without turning one spike into a half-day alert.
+            keep_firing_for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "Immich context search slow: {{ $value | printf \"%.2f\" }}s (>1s) — clip_index likely evicted; check the immich-search-probe CronJob, which now also does the prewarm"
+              summary: "Immich context search slow: {{ $value | printf \"%.2f\" }}s (>3s). Check BOTH residency gauges, not just clip_index: immich_clip_index_cached_pct (quantized codes) and immich_smart_search_toast_cached_pct (the full-precision vectors the re-rank reads). A hot clip_index next to a cold TOAST is the known shape. Prewarm runs in the immich-search-probe CronJob."
+          - alert: ImmichSmartSearchIndexSlow
+            # The old ImmichSmartSearchSlow semantic, now pointed at the series it
+            # was always describing: a bare ANN scan that DOES use the vchordrq
+            # index. Normal is 70-95 ms. This firing means the index or the buffer
+            # cache is unhealthy. If this is quiet while ImmichSmartSearchSlow
+            # fires, the index is fine and the cost is the query plan.
+            expr: immich_smart_search_index_seconds{job="immich-search-probe"} >= 0 and immich_smart_search_index_seconds{job="immich-search-probe"} > 1
+            for: 15m
+            keep_firing_for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich indexed ANN scan slow: {{ $value | printf \"%.2f\" }}s (>1s, normal 0.07-0.095s) — the vchordrq index path itself is degraded, check clip_index and smart_search TOAST residency"
+          - alert: ImmichSmartSearchToastColdCache
+            # Gauge is emitted by the immich-search-probe CronJob defined in
+            # stacks/immich/main.tf — the two move together.
+            # Backstop for the half of the read path that went unmeasured until
+            # 2026-09-06. pg_prewarm does not descend into TOAST, so warming
+            # smart_search warmed a 13MB stub and left ~706MB of vectors cold
+            # while immich_clip_index_cached_pct still read 100%.
+            expr: immich_smart_search_toast_cached_pct{job="immich-search-probe"} >= 0 and immich_smart_search_toast_cached_pct{job="immich-search-probe"} < 50
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich smart_search TOAST only {{ $value | printf \"%.1f\" }}% resident (<50%) — the vchordrq re-rank vectors are cold, expect slow context search even if clip_index reads 100%"
           - alert: ImmichClipIndexColdCache
             expr: immich_clip_index_cached_pct{job="immich-search-probe"} >= 0 and immich_clip_index_cached_pct{job="immich-search-probe"} < 50
             for: 15m
@@ -1406,6 +1895,67 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Immich thumbnail reconciler has not reported in {{ $value | printf \"%.0f\" }}s (>48h) — the self-heal for dropped thumbnail jobs is not running"
+          # Immich HTTP error volume — ABSOLUTE RATES, not ratios (added 2026-09-01).
+          #
+          # Immich is already covered by HighService4xxRate (>30%),
+          # HighServiceErrorRate (>10%) and IngressErrorRate5xxHigh (>5%), and it
+          # is excluded from none of them. Over the 7 days around the 2026-08-31
+          # missing-thumbnail incident all three only ever reached `pending` and
+          # none fired, so the event that put 1,139 thumbnail 404s in the access
+          # log was invisible to alerting.
+          #
+          # A ratio does not work for this service. Immich's traffic is bursty and
+          # mostly idle (about 5 req/min overnight), so a handful of 404s from
+          # someone scrolling past the 110 known-dead photos takes the 4xx ratio to
+          # 93% on a 5m window and still 76% on 30m. Raising the traffic floor does
+          # not fix it: the ratio is meaningless whenever the denominator is small,
+          # which here is most of the day. Absolute rate asks the question actually
+          # worth asking — "are errors happening at a rate a person would notice?"
+          #
+          # 499 is EXCLUDED from the 4xx rule, and that exclusion is what makes the
+          # threshold usable. Traefik logs a browser cancelling an in-flight image
+          # as 499, which is ordinary behaviour when scrolling a photo grid (718 of
+          # them in one day here, and every routine "burst" over 7 days turned out
+          # to be scroll-cancels). Counting them made ordinary browsing look like
+          # an incident.
+          #
+          # Thresholds from 7 days of measurement (15m windows):
+          #   real 4xx  median 0/min, p95 0.08, p99 0.74, max 63.8
+          #             above 5/min in exactly 4 windows, all of them the incident
+          #   5xx       median 0/min, p95 0, max 1.17, only one window above 1/min
+          # So both fire on the incident and on nothing else in that week.
+          #
+          # Known permanent contributors, deliberately left inside the numbers
+          # because they are small and their absence would be its own signal: the
+          # 110 photos with destroyed originals (see the reconciler alerts above),
+          # the /share/<key>/photos/<id> deep-link 404 (upstream immich #27786),
+          # and about 900/day of `GET /api/map/markers?...&fileCreatedBefore=` 400s
+          # from the web UI sending an empty date. Together those are ~0.6/min,
+          # well under the 5/min floor.
+          - alert: ImmichHTTP4xxElevated
+            expr: |
+              sum by (service) (
+                rate(traefik_service_requests_total{service=~"immich-immich-server-.*",code=~"4..",code!="499"}[15m])
+              ) * 60 > 5
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich 4xx at {{ $value | printf \"%.1f\" }}/min (threshold 5/min, excludes 499 scroll-cancels) — baseline is 0"
+              description: "Sustained client errors on immich-server. Find the shape with: homelab logs query '{namespace=\"traefik\"} |= \"immich-immich-immich-viktorbarzin-me@kubernetes\" |~ \"HTTP/[0-9.]+\\\" 4[0-9][0-9] \"' --since 1h — then group by path. A wall of /api/assets/<id>/thumbnail 404s means the generation pipeline dropped work; check immich_thumbnail_stuck_assets and the immich-thumbnail-reconcile CronJob."
+          - alert: ImmichHTTP5xxElevated
+            expr: |
+              sum by (service) (
+                rate(traefik_service_requests_total{service=~"immich-immich-server-.*",code=~"5.."}[15m])
+              ) * 60 > 1
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Immich 5xx at {{ $value | printf \"%.1f\" }}/min (threshold 1/min) — baseline is zero"
+              description: "Server-side errors on immich-server, which normally emits none. Fires well below IngressErrorRate5xxHigh's 5% ratio, so treat it as the early warning. Check `kubectl -n immich get pods` and the immich-api logs; a Keel minor-version roll can produce a brief 502 burst, which should clear inside the 10m hold."
           # Downloads that were left partial. Traefik writes its 200 and
           # Content-Length before the body, so a transfer that dies part-way is
           # logged as an ordinary success and the recipient is left with a
@@ -2037,16 +2587,78 @@ serverFiles:
           # cron iterations of a typical 5-min/15-min/1h job before paging —
           # transient single-run failures (network blip, upstream timeout)
           # are recovered by the next iteration without alerting.
+          #
+          # The recency window was widened 3600 -> 21600 on 2026-09-01, because
+          # with a 1h window this rule could NEVER FIRE: it required the failure
+          # to persist for 2h while the recency clause went false at 1h and reset
+          # the `for` timer, so it sat permanently in "pending". That is why
+          # paperless-ai's daily rag-index-refresh failed every night for nine
+          # days with no notification — the job was failing and the metric was
+          # correct, but the rule could not reach firing. Widening the window
+          # rather than shortening `for` keeps the intent above intact: still two
+          # hours of persistence before anyone is told, now with six hours of
+          # room for that to elapse. Verified against live data at the time of
+          # the change: the expression matches paperless-ai/rag-index-refresh.
           - alert: JobFailed
             expr: |
               kube_job_status_failed > 0
               and on(namespace, job_name)
-              (time() - kube_job_status_start_time) < 3600
+              (time() - kube_job_status_start_time) < 21600
             for: 2h
             labels:
               severity: warning
             annotations:
               summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }}: {{ $value | printf \"%.0f\" }} failure(s)"
+          # JobFailed cannot fire for a FAST CronJob, and that is why
+          # phpipam-dns-sync failed every 15 minutes for 20 hours on
+          # 2026-08-04/05 with nothing alerting.
+          #
+          # `for: 2h` is evaluated per time SERIES, and every CronJob run is a new
+          # series because job_name carries the run's schedule index. A failed Job
+          # is retained only until failedJobsHistoryLimit newer failures replace
+          # it, so at */15 with limit 3 each series lives ~46 minutes. Measured by
+          # replaying the JobFailed expression over the outage window
+          # (`count_over_time((<expr>)[24h:2m] @ 1785909600)`): every
+          # phpipam-dns-sync series topped out at 23 two-minute steps = 46 min,
+          # against the 120 min the `for` needs. The rule sat in pending forever.
+          # This is a different defect from the recency-window one fixed above,
+          # and widening that window did not touch it.
+          #
+          # Summing over the CronJob instead of the Job gives a series with a
+          # stable identity that stays > 0 while ANY of that CronJob's failures is
+          # retained, so overlapping 46-minute Jobs add up to one continuous
+          # 20-hour signal. The same recency guard is applied per-Job BEFORE the
+          # aggregation, which matters because phpIPAM keeps Failed Jobs from
+          # weeks ago in history and without it this would fire on those forever.
+          # cronjob is derived by stripping the trailing -<index> from job_name;
+          # kube_job_owner is not in this cluster's kube-state-metrics allowlist.
+          #
+          # Replayed over 2026-08-04/05 this holds true for 1442 continuous
+          # minutes on phpipam/phpipam-dns-sync, and names the collateral damage
+          # too (technitium-ingress-dns-sync, -zone-sync, -password-sync,
+          # -dns-optimization all failed in the same window on the same broken
+          # auth path). Against live state today it returns zero series.
+          #
+          # It overlaps JobFailed for SLOW CronJobs, where a single Job's series
+          # does survive 2h and both rules fire. Same severity and channel, so the
+          # cost is a duplicate warning; JobFailed is left alone because it also
+          # covers Jobs that no CronJob owns.
+          - alert: CronJobFailingRepeatedly
+            expr: |
+              sum by (namespace, cronjob) (
+                label_replace(
+                  kube_job_status_failed{reason="BackoffLimitExceeded", job_name=~".+-[0-9]+"} > 0
+                  and on(namespace, job_name)
+                  (time() - kube_job_status_start_time) < 21600,
+                  "cronjob", "$1", "job_name", "(.+)-[0-9]+"
+                )
+              ) > 0
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "CronJob {{ $labels.namespace }}/{{ $labels.cronjob }} has been failing for over 2h ({{ $value | printf \"%.0f\" }} failed run(s) retained)"
+              description: "Every run of this CronJob has failed for at least two hours. `kubectl -n {{ $labels.namespace }} get jobs | grep {{ $labels.cronjob }}` lists the retained failures and `homelab logs query '{namespace=\"{{ $labels.namespace }}\"}' --since 3h` has their output; note that failedJobsHistoryLimit prunes older runs, so Prometheus holds more history than kubectl does."
           # JobFailed only sees a Job that FAILS. A Job that hangs forever never
           # fails, so it was invisible -- and with concurrency_policy Forbid a
           # hung Job blocks every later run of its CronJob indefinitely.
@@ -2094,9 +2706,19 @@ serverFiles:
               description: "Check the deployment's image reference — often a stale tag, a removed registry, or a credentials mismatch. `kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}` shows the pull error."
           # N-1 capacity check (topology-agnostic — auto-tracks node add/remove/drain).
           # If the most-loaded non-GPU worker died, would its memory REQUESTS
-          # reschedule onto the remaining Ready + schedulable workers (incl. the GPU
-          # node, whose taint is soft/PreferNoSchedule)? Fires when that worker holds
-          # more memory requests than the rest of the eligible pool has free.
+          # reschedule onto the remaining Ready + schedulable workers? Fires when that
+          # worker holds more memory requests than the rest of the eligible pool has
+          # free.
+          #
+          # The GPU node is excluded from BOTH halves. It was excluded from the
+          # numerator only until 2026-09-06, on the comment's belief that its taint
+          # was soft/PreferNoSchedule. It is not: `kubectl get node k8s-node1
+          # -o jsonpath='{.spec.taints}'` reads nvidia.com/gpu:NoSchedule, so a pod
+          # evicted from a dead worker cannot land there without a toleration.
+          # Counting its free space as absorbing capacity made the denominator read
+          # 22.911 GiB healthier than reality (37.02 GiB claimed vs 14.11 GiB real:
+          # node2 3.264 + node3 4.143 + node4 4.404 + node5 2.295, measured
+          # 2026-09-06), which is the direction that HIDES a genuine shortfall.
           # Node selection is dynamic via metrics: GPU node by nvidia_com_gpu capacity,
           # drained/cordoned by kube_node_spec_unschedulable, down by the Ready
           # condition. The control-plane is excluded by name (node!~"k8s-master.*")
@@ -2145,6 +2767,7 @@ serverFiles:
                   * on(node) (kube_node_status_condition{condition="Ready",status="true"} == 1)
                 )
                 unless on(node) (kube_node_spec_unschedulable == 1)
+                unless on(node) (kube_node_status_capacity{resource="nvidia_com_gpu"} > 0)
               )
             for: 15m
             # keep_firing_for: headroom sits close to the line, so ordinary pod
@@ -2167,6 +2790,159 @@ serverFiles:
                 Remediation: right-size the top memory reservers with `krr` (trim
                 over-provisioned requests — e.g. claude-agent, stirling-pdf, traefik,
                 authentik-worker), or add/return a worker node.
+          # NodeMemoryRequestsHigh — defined 2026-09-06.
+          #
+          # WHY IT DID NOT EXIST BEFORE. Nothing in this file watched per-node
+          # memory REQUESTS against allocatable, which is the number that decides
+          # whether a pod can be placed. The nearest neighbours answer different
+          # questions: ClusterCannotTolerateNonGpuNodeLoss is an N-1 question about
+          # the pool, NodeLowFreeMemory watches actual free bytes, and
+          # KubeQuotaAlmostFull is per-namespace. So the four untainted workers sat
+          # between 95% and 99% of requests for weeks with nothing saying so, and
+          # the condition surfaced only indirectly — a Recreate roll leaving a pod
+          # Pending for 10 minutes, and the repowise incident of 2026-09-03.
+          #
+          # THE PHASE FILTER IS LOAD-BEARING, not decoration. kube-state-metrics
+          # keeps publishing kube_pod_container_resource_requests for Succeeded and
+          # Failed pods until the pod object is GC'd. Counting those phantoms is
+          # what made the N-1 alert above flap for days in August, and measured
+          # 2026-09-06 `kubectl describe` overstates cluster-wide requests by
+          # 4.5 GiB for the same reason. Any future request-sum alert needs this.
+          #
+          # THRESHOLD, calibrated 2026-09-06 rather than guessed. Phase-filtered
+          # request utilisation, live and 7-day maximum:
+          #     node2  90.8% now / 95.8% 7d max
+          #     node3  87.3% now / 98.6% 7d max
+          #     node4  77.0% now / 95.4% 7d max
+          #     node5  92.6% now / 99.0% 7d max
+          #     node1  51.2% now / 59.4% 7d max   (GPU-tainted)
+          #     master  6.4% now /  6.4% 7d max   (control-plane tainted)
+          # 90% is where a 31.2 GiB node has under ~3 GiB of request headroom,
+          # which is smaller than several single pods here (repowise alone requests
+          # 4,672Mi), so past this line a routine roll can strand its own
+          # replacement. Note a 30-day subquery on this expression returns EMPTY
+          # rather than erroring — it is too expensive — so 7d is the longest
+          # window these figures can honestly claim.
+          #
+          # WHY WARNING AND NOT CRITICAL. Under the alert-on-change routing at the
+          # top of this file a warning notifies once and then stays quiet, which
+          # suits a standing capacity condition. A critical re-pings every 6h and
+          # would nag about a fact that does not change hour to hour.
+          #
+          # NO COMPANION LIMITS ALERT, deliberately. Node memory LIMITS run
+          # 133-206% of allocatable here and that is not what hurts: of 313 OOM
+          # kills in the 30 days to 2026-09-06, 313 were cgroup-level against a
+          # container's own limit and none were node-level. Alerting on limit
+          # overcommit would report a condition that has never caused an outage,
+          # while ContainerOOMKilled and ContainerNearOOM already cover the kills
+          # that do happen.
+          - alert: NodeMemoryRequestsHigh
+            expr: |
+              100 * (
+                sum by (node) (
+                  kube_pod_container_resource_requests{resource="memory",unit="byte"}
+                  * on(namespace,pod) group_left() max by (namespace,pod) (
+                      kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                    )
+                )
+                / on(node) group_left() kube_node_status_allocatable{resource="memory",unit="byte"}
+              ) > 90
+            for: 30m
+            # Same reasoning as the N-1 alert above: pod churn tips this back and
+            # forth across the line, so fold an episode into one alert rather than
+            # a fire/resolve pair per CronJob.
+            keep_firing_for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.node }} memory requests at {{ $value | printf \"%.1f\" }}% of allocatable"
+              description: |
+                Phase-filtered memory requests on {{ $labels.node }} are
+                {{ $value | printf "%.1f" }}% of allocatable. Past ~90% a 31.2 GiB
+                node has under 3 GiB of request headroom, which is less than a
+                single large pod, so a Deployment roll can leave its own
+                replacement Pending (maxSurge defaults to 1, so the new pod must
+                schedule alongside the old one).
+                This is about SCHEDULING, not memory exhaustion — actual usage on
+                these nodes runs near 47%, and MemoryPressure has never fired.
+                Remediation: trim over-provisioned requests with `krr`, park an
+                unused service, or add capacity. Do not read `kubectl describe`
+                percentages for this — they count finished CronJob pods and
+                overstate by ~4.5 GiB cluster-wide.
+          # NodeLowFreeMemory — defined 2026-09-06. The name was already in two
+          # inhibit_rules target lists (NodeDown and NodeMaintenanceInProgress,
+          # see alertmanager.config above) but no rule ever produced it, so both
+          # inhibitions suppressed an alert that could not fire.
+          #
+          # This watches FREE memory on the node, which is a different question
+          # from the request accounting ClusterCannotTolerateNonGpuNodeLoss asks.
+          # Requests can sit at 93% while the node is half idle, and the reverse
+          # is also possible: every container here is Burstable, so actual use can
+          # run past the sum of requests without the scheduler noticing.
+          #
+          # Threshold. 4 GiB is proposed, not settled. The 90-day floor of
+          # node_memory_MemAvailable_bytes across the six nodes is 8.93 GiB, so
+          # 4 GiB is a genuine excursion rather than a routine dip, and it sits far
+          # above kubelet's evictionHard of memory.available<100Mi — the point is
+          # to be told long before eviction, not as it starts. Revisit if it proves
+          # noisy.
+          #
+          # Scope. k8s nodes only. node-exporter also scrapes devvm, rpi-sofia,
+          # mx2, registry-cache and the Proxmox host, whose free-memory profiles
+          # are unrelated and would page for normal behaviour.
+          - alert: NodeLowFreeMemory
+            expr: node_memory_MemAvailable_bytes{node=~"k8s-.*"} < 4 * 1024 * 1024 * 1024
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.node }} has under 4 GiB of available memory"
+              description: |
+                node_memory_MemAvailable_bytes on {{ $labels.node }} has been below
+                4 GiB for 10 minutes (currently {{ $value | humanize1024 }}B). This is
+                real memory, not request accounting, so it can go low while
+                `kubectl describe node` still shows request headroom.
+                Check what grew: `homelab metrics query 'topk(10,
+                container_memory_working_set_bytes{node="{{ $labels.node }}"})'`.
+                Kubelet starts evicting at memory.available<100Mi.
+          # ContainerNearOOM — defined 2026-09-06. Several docs referred to this
+          # alert for months (docs/architecture/monitoring.md and .claude/CLAUDE.md
+          # both recorded that it did NOT exist), and the gap it leaves is that
+          # nothing warns before a container is killed: ContainerOOMKilled and
+          # KernelOOMKiller are both post-mortem signals.
+          #
+          # severity: info is deliberate. It routes to slack-info, whose
+          # repeat_interval is 8760h, so a container that lives permanently near
+          # its limit posts once rather than re-pinging. Several will fire on the
+          # first evaluation and that is correct rather than noise: measured
+          # 2026-09-06, loki sits at 100.0% of its 4Gi limit, prometheus-server at
+          # 94.7%, and traefik, crowdsec-agent and error-pages have all been
+          # OOMKilled recently. Promote to warning once that backlog is worked
+          # through and the alert is normally silent.
+          #
+          # working_set is the same signal kubelet's own OOM accounting uses, so
+          # this ratio is the one that predicts a kill. It cannot see a spike
+          # shorter than the 5-minute scrape; container_memory_max_usage_bytes,
+          # re-enabled in the same change as this rule, is the companion that can.
+          - alert: ContainerNearOOM
+            expr: |
+              container_memory_working_set_bytes{container!="",container!="POD"}
+              / on(namespace,pod,container) group_left()
+              kube_pod_container_resource_limits{resource="memory",unit="byte"}
+              > 0.85
+            for: 15m
+            labels:
+              severity: info
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) is at {{ $value | humanizePercentage }} of its memory limit"
+              description: |
+                The container has held above 85% of its memory limit for 15 minutes.
+                It has not been killed, which is why nothing else reports it.
+                Either the limit is too tight for what the workload legitimately
+                needs, or the workload is leaking. Check the high-water mark
+                (`container_memory_max_usage_bytes`) and the 30-day shape before
+                changing anything — a 7-day window has under-read a periodic job by
+                more than 70x here.
       # Goldmane edge-aggregator (ADR-0014 / infra #58, #61): the durable
       # who-talks-to-whom trail. The aggregator pod has NO /metrics endpoint,
       # so its health is inferred from kube-state-metrics signals — the trail
@@ -2397,17 +3173,23 @@ serverFiles:
             annotations:
               summary: "Vault audit-log rotation failed to archive {{ $value | printf \"%.0f\" }} pod(s) — logs left intact, volume still growing"
               description: "The rotation job verifies each gzip archive before truncating the live log, so a failure here means the archive could not be written or did not verify. No audit data was lost, but the volume is not being reclaimed."
+          # vault_raft_storage_stats_applied_index, NOT vault_raft_last_index_gauge.
+          # The latter is what this rule shipped with in April and it does not
+          # exist in Vault 1.18.5 — checked against a live /v1/sys/metrics dump
+          # on 2026-09-03, which is also why nobody noticed: a rule referencing
+          # a metric that was never emitted evaluates to nothing, and nothing is
+          # exactly what a healthy cluster looks like.
           - alert: VaultRaftLeaderStuck
             expr: |
               (vault_core_active == 1)
               and on(instance)
-              (rate(vault_raft_last_index_gauge[5m]) == 0)
+              (rate(vault_raft_storage_stats_applied_index[5m]) == 0)
             for: 2m
             labels:
               severity: critical
             annotations:
               summary: "Vault raft leader {{ $labels.instance }} is active but commit index has not advanced for >2m"
-              description: "The raft leader is reachable on TCP but its commit index has stalled — likely a stuck goroutine hang (see 2026-04-22 post-mortem). External /v1/sys/health will be 503. Recovery: graceful delete of the stuck pod (see docs/runbooks/vault-raft-leader-deadlock.md). NOTE: silent until vault telemetry + scrape job are enabled."
+              description: "The raft leader is reachable on TCP but its commit index has stalled — likely a stuck goroutine hang (see 2026-04-22 post-mortem). External /v1/sys/health will be 503. Recovery: graceful delete of the stuck pod (see docs/runbooks/vault-raft-leader-deadlock.md)."
           - alert: VaultHAStatusUnavailable
             expr: |
               (count(up{job="vault"} == 1) > 0)
@@ -2418,7 +3200,7 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Vault pods are Up but no pod reports HA active leader"
-              description: "At least one Vault pod is scraping healthy, but no pod has vault_core_active=1. HA layer is broken — external endpoint will be 503 even though the pods themselves are alive. See docs/runbooks/vault-raft-leader-deadlock.md. NOTE: silent until vault telemetry + scrape job are enabled."
+              description: "At least one Vault pod is scraping healthy, but no pod has vault_core_active=1. HA layer is broken — external endpoint will be 503 even though the pods themselves are alive. See docs/runbooks/vault-raft-leader-deadlock.md."
           - alert: VaultwardenBackupStale
             expr: (time() - kube_cronjob_status_last_successful_time{cronjob="vaultwarden-backup", namespace="vaultwarden"}) > 86400
             for: 30m
@@ -2590,11 +3372,16 @@ serverFiles:
           # match. /volume1 reached 99% (103 GiB free, ~1 day from stopping the
           # offsite leg) and only surfaced because an unrelated navidrome PVC shares
           # the volume. offsite-sync-backup now publishes the gauges directly.
-          # Warn early — a full destination silently breaks Copy 3 of 3-2-1.
+          # Warn threshold moved 10% -> 6% free on 2026-09-04, the revisit the
+          # runbook asked for. 10% was a placeholder picked on 2026-08-06 before
+          # any steady state existed. It sits inside this disk's normal
+          # operating band: 95% used is where /volume1 lives and needs no action
+          # (a7fd8211), so a 10% warning reports the baseline, not a problem.
+          # 6% is below the band and still a step ahead of the 4% critical.
           - alert: OffsiteDestinationFillingUp
             expr: |
               (offsite_dest_available_bytes{job="offsite-backup-sync"}
-               / offsite_dest_size_bytes{job="offsite-backup-sync"}) * 100 < 10
+               / offsite_dest_size_bytes{job="offsite-backup-sync"}) * 100 < 6
             for: 30m
             labels:
               severity: warning
@@ -2683,7 +3470,13 @@ serverFiles:
             annotations:
               summary: "New Tailscale client registered ({{ $value | printf \"%.2f\" }} reauth/s)"
           - alert: CrowdSecDown
-            expr: up{job="crowdsec"} == 0
+            # max(), not a bare up==0, since the crowdsec job went from one
+            # service target to per-pod targets on 2026-09-02 (see the job in
+            # extraScrapeConfigs). LAPI is only down when every replica is, and
+            # a single pod restart should not page — two of the three were 44
+            # minutes old when this changed. A partial outage still shows in
+            # the up series and on the dashboard.
+            expr: max(up{job="crowdsec"}) == 0
             for: 10m
             labels:
               severity: warning
@@ -3019,6 +3812,89 @@ serverFiles:
               severity: warning
             annotations:
               summary: "apiserver->etcd avg request latency {{ $value | printf \"%.2f\" }}s (>0.5s for 10m) — etcd likely slow on the shared HDD; control-plane recovery at risk on reboot"
+          # Static-pod restart rate, the second compensating control for keeping
+          # etcd on the shared HDD (code-oflt, risk-accepted 2026-09-03). The
+          # 2026-06-12 flap crashlooped the control plane for ~2h on etcd
+          # lease-renewal timeouts and nothing alerted; EtcdRequestLatencyHigh
+          # above watches the latency, these two watch the consequence.
+          #
+          # TWO rules, because the four containers have baselines two orders of
+          # magnitude apart. Measured over the 30 days to 2026-09-03:
+          #   etcd                     1 restart
+          #   kube-apiserver           5
+          #   kube-controller-manager  120
+          #   kube-scheduler          ~121
+          # A single ">= 1 restart" rule over all four would post roughly 8
+          # times a day about the chronic leader-election churn; a single
+          # ">= 3 in 15m" rule would leave etcd unwatched, since etcd restarting
+          # even once is the event worth hearing about.
+          #
+          # The open question these left ("~4 kube-controller-manager restarts
+          # a day is high, is it etcd fsync on the spindle?") is now measurable:
+          # the etcd scrape job above landed 2026-09-03 and the two rules below
+          # watch the disk directly.
+          - alert: ControlPlaneStaticPodRestarted
+            # etcd and the apiserver. Rare enough that one restart is news:
+            # over 30 days, 1 and 5 respectively, in 3 distinct episodes.
+            expr: increase(kube_pod_container_status_restarts_total{namespace="kube-system",pod=~"etcd.*|kube-apiserver.*"}[15m]) >= 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.container }} on {{ $labels.pod }} restarted {{ $value | printf \"%.0f\" }}x in 15m"
+              description: "A control-plane static pod restarted. On this cluster that is usually etcd being slow on the shared HDD and taking the lease with it. Check EtcdRequestLatencyHigh alongside this, then: homelab k8s status kube-system, and kubectl -n kube-system logs {{ $labels.pod }} --previous. If this is a burst rather than a single restart, ControlPlaneLeaderFlapping fires too."
+          - alert: ControlPlaneLeaderFlapping
+            # The scheduler and controller-manager restart on every lost leader
+            # lease, so they drip continuously: 21 and 20 separate hours in the
+            # 7 days to 2026-09-03 had at least one. The threshold is set above
+            # that drip and below a crashloop. Over 30 days the busiest 15m
+            # window held 5, and ">= 3 in 15m" was true in 26 five-minute
+            # samples, which is roughly 4 episodes — about one a week.
+            expr: increase(kube_pod_container_status_restarts_total{namespace="kube-system",pod=~"kube-scheduler.*|kube-controller-manager.*"}[15m]) >= 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.container }} restarted {{ $value | printf \"%.0f\" }}x in 15m — control plane is flapping, not drifting"
+              description: "Above the normal leader-election churn on this cluster (~4/day each, which is itself a known symptom of etcd on the shared spindle). A burst this size is the 2026-06-12 shape: etcd fsync stalls, the lease expires, the component restarts, repeat. Check the disk first: homelab metrics query 'rate(node_disk_io_time_seconds_total{device=\"sdc\"}[5m])'. Then kubectl -n kube-system logs {{ $labels.pod }} --previous."
+          # etcd's own disk latency, the third compensating control for
+          # code-oflt. These are the numbers the other two rules could only
+          # infer from consequences.
+          #
+          # THRESHOLDS ARE SET AGAINST THIS CLUSTER, NOT AGAINST HEALTHY
+          # HARDWARE. Read off the live endpoint on 2026-09-03, lifetime
+          # histograms (17.5M fsyncs, 7.7M commits):
+          #   wal_fsync       p99 between 64ms and 128ms, p99.9 512ms-1.02s
+          #   backend_commit  p99 between 128ms and 256ms, p99.9 1.02s-2.05s
+          # etcd's own guidance is p99 under 10ms for fsync and under 25ms for
+          # commit, so this cluster already sits an order of magnitude past it.
+          # That is the accepted cost of keeping etcd on the shared 7200rpm
+          # HDD, and alerting at the recommended figures would page constantly
+          # about a condition that was decided deliberately.
+          #
+          # So each threshold sits at roughly this cluster's normal p99.9: the
+          # alert means "the 99th percentile has reached what is usually the
+          # 99.9th", which is a stall episode rather than the chronic baseline.
+          #
+          # These are lifetime figures and therefore include past bad periods.
+          # Re-base both once a few weeks of scraped data exist and a recent
+          # windowed p99 can be computed properly.
+          - alert: EtcdWalFsyncSlow
+            expr: histogram_quantile(0.99, sum by (instance, le) (rate(etcd_disk_wal_fsync_duration_seconds_bucket[10m]))) > 0.5
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "etcd WAL fsync p99 {{ $value | printf \"%.2f\" }}s on {{ $labels.instance }} (baseline p99 ~0.1s)"
+              description: "etcd is waiting on the disk to durably write its log. At this level lease renewals start losing races and the control plane restarts, which is the ControlPlaneLeaderFlapping shape. Check what else is hitting the spindle: homelab metrics query 'rate(node_disk_io_time_seconds_total{device=\"sdc\"}[5m])'. The durable fix is moving etcd off the shared HDD, deliberately deferred in bead code-oflt."
+          - alert: EtcdBackendCommitSlow
+            expr: histogram_quantile(0.99, sum by (instance, le) (rate(etcd_disk_backend_commit_duration_seconds_bucket[10m]))) > 1.0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "etcd backend commit p99 {{ $value | printf \"%.2f\" }}s on {{ $labels.instance }} (baseline p99 ~0.2s)"
+              description: "etcd is slow committing its backend boltdb transaction, which stalls every write through the apiserver. Usually arrives alongside EtcdWalFsyncSlow and EtcdRequestLatencyHigh; if it arrives alone, suspect a large defrag or snapshot rather than general IO contention."
           - alert: KubeletRuntimeOperationsLatency
             expr: histogram_quantile(0.99, sum by (instance, operation_type, le) (rate(kubelet_runtime_operations_duration_seconds_bucket[10m]))) > 60
             for: 10m
@@ -3049,6 +3925,63 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Calico: only {{ $value | printf \"%.0f\" }} of desired calico-node pods ready — networking degraded"
+          # ---- node OS config drift (bead code-yypr) --------------------------
+          # playbooks/k8s-node-tuning.yml declares the kubelet, containerd and
+          # sysctl settings kubeadm does not carry. Until 2026-09-05 nothing ran
+          # it on a schedule and nothing reported when live had diverged, so a
+          # `kubeadm upgrade node` erased the whole kubelet tune from all six
+          # nodes on 2026-07-26/27 and the first symptom anyone noticed arrived
+          # three weeks later as a VPN gateway that would not start.
+          #
+          # scripts/k8s-node-drift-check now runs hourly on the devvm
+          # (k8s-node-drift-check.timer, installed by playbooks/devvm.yml) and
+          # pushes these gauges. It reports and does not repair: re-applying is a
+          # human running the playbook, because a bad kubelet config combination
+          # makes kubelet exit at boot with console-only recovery.
+          #
+          # These do NOT gate kured. Its alertFilterMatchOnly is true, so only the
+          # named alerts in stacks/kured/main.tf block a reboot — which matters
+          # here, since the playbook writes files and the node's next reboot is
+          # what activates them. A drift alert that stopped reboots would keep
+          # itself firing.
+          - alert: K8sNodeConfigDrift
+            expr: k8s_node_config_drift_nodes{job="k8s-node-drift-check"} > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} k8s node(s) no longer match playbooks/k8s-node-tuning.yml"
+              description: "An `ansible-playbook --check --diff` of playbooks/k8s-node-tuning.yml is no longer a no-op. Which tasks differ is in the journal: homelab logs query '{job=\"devvm-journal\", unit=\"k8s-node-drift-check.service\"}' --since 24h. Re-apply with --limit on the affected node."
+          - alert: K8sNodeKubeletTuneDrift
+            expr: k8s_node_kubelet_tune_drift_nodes{job="k8s-node-drift-check"} > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} k8s node(s) are running a kubelet whose live config is missing part of the declared tune"
+              description: "Read from each kubelet's own /configz, not the file on disk, so this is what the kubelet actually loaded. A node reads drifted between an apply and its next reboot, which is expected; a node that has rebooted since the last apply and still reads drifted has genuinely lost the tune. Check with scripts/check-node-kubelet-tune."
+          - alert: K8sNodeDriftCheckStale
+            expr: (time() - k8s_node_config_drift_last_run_timestamp{job="k8s-node-drift-check"}) > 21600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "k8s node drift check last ran {{ $value | humanizeDuration }} ago (timer is hourly, threshold 6h)"
+              description: "A drift check that stops running is the same silent failure it exists to catch. Check: systemctl status k8s-node-drift-check.timer on the devvm."
+          - alert: K8sNodeDriftCheckNeverRun
+            expr: absent(k8s_node_config_drift_last_run_timestamp{job="k8s-node-drift-check"})
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "k8s node drift check has never pushed metrics to Pushgateway"
+          - alert: K8sNodeDriftCheckFailing
+            expr: k8s_node_config_drift_status{job="k8s-node-drift-check"} == 2
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "k8s node drift check could not complete — a node was unreachable or a check task failed"
       # Upgrade Gates: any firing alert here halts kured rolling reboots via
       # --prometheus-url + alertFilterRegexp ignore-list (see stacks/kured/main.tf).
       # These are silent-failure detectors and cluster-health velocity signals
@@ -3331,6 +4264,93 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Traefik pod {{ $labels.instance }} is down"
+
+          # Traefik healthy, and nothing able to reach it. This is the hole
+          # TraefikDown above cannot see, and the comment on it is wrong about
+          # this case: a total-ingress outage does NOT always show as up == 0.
+          # In all three outages below every Traefik pod stayed Ready and
+          # scraped fine while the LoadBalancer path on 443 refused connections.
+          #
+          # THE FAILURE MODE. websecure/TCP:443 and websecure-http3/UDP:443
+          # share a port NUMBER, and Kubernetes uses `port` as the
+          # strategic-merge key for Service.spec.ports. A helm upgrade of the
+          # traefik release corrupts the TCP entry on that key: on 2026-08-31 it
+          # was deleted outright, and on 2026-09-03 it came back with
+          # targetPort=websecure-http3, a named port the pod does not have
+          # (its ports are web/8000 and websecure/8443). Either way kube-proxy
+          # has no backend for 443 and every ingress refuses. The long comment
+          # in stacks/traefik/modules/traefik/main.tf carries the detail and the
+          # `kubectl patch --type=json` recovery, which bypasses merge keys.
+          #
+          # BACKTESTED, because a rule that exists is not a rule that fires.
+          # `max(probe_success{job="blackbox-authentik-walloff"})` over 7 days at
+          # a 1m step gives exactly three all-targets-down episodes, and each one
+          # starts within ~2 min of a traefik helm revision:
+          #
+          #   revision 72  2026-08-31 11:17:22Z -> 11:19-11:22    3 min
+          #   revision 75  2026-09-01 07:46:19Z -> 07:47-10:36  169 min, unnoticed
+          #   revision 76  2026-09-03 04:54:29Z -> 04:56-04:57    1 min, hand-patched
+          #
+          # Three upgrades, three outages. The 1-minute one is short only because
+          # somebody was watching the apply; the 169-minute one is what this
+          # costs unattended, and nothing alerted for any of them.
+          #
+          # Zero isolated false-positive samples in those 7 days (9,929 samples,
+          # 3 episodes, no singletons outside them), so `for: 2m` is affordable.
+          # It catches the 3-minute and 169-minute episodes. A 1-minute episode
+          # is deliberately allowed to pass: at 1m scrape it cannot be
+          # distinguished from one bad probe round, and an outage nobody
+          # interrupts does not stay 1 minute long.
+          #
+          # WHY THIS JOB. Its name is about the Authentik walling-off guard, but
+          # its probes are ordinary HTTPS requests through the shared 443 path,
+          # which is what makes the AGGREGATE meaningful: one target at 0 is that
+          # app's problem, every target at 0 at once is the path they share.
+          # `max()` and not `min()` for the same reason — two of these targets
+          # (insta2spotify, instagram-poster) sit at probe_success 0 in steady
+          # state, so `min()` would fire forever.
+          #
+          # REJECTED, having measured it: traefik_entrypoint_requests_total on
+          # the websecure entrypoint. It does not drop during these outages. The
+          # entrypoint listens on 8443 inside the pod and in-cluster clients
+          # (cloudflared, probes, service-to-service) reach the ClusterIP
+          # directly, so request rate stayed above 0.05/s throughout 2026-09-03
+          # with zero samples below it. Only the LoadBalancer path was broken.
+          - alert: IngressAllTargetsUnreachable
+            expr: max(probe_success{job="blackbox-authentik-walloff"}) == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Every ingress probe target is unreachable — the shared 443 path is down"
+              description: >-
+                No blackbox target answers over HTTPS, so this is the path they
+                share rather than any one app. Traefik's pods are probably Ready
+                and TraefikDown silent. Check the Service first:
+                `kubectl get svc -n traefik traefik -o json | jq '.spec.ports'`
+                — websecure/TCP:443 must have targetPort `websecure`, and a
+                recent `helm history traefik -n traefik` revision is the usual
+                trigger. Recover with
+                `kubectl patch svc -n traefik traefik --type=json
+                -p '[{"op":"replace","path":"/spec/ports/2/targetPort","value":"websecure"}]'`
+                after confirming the index, then re-check the mapping.
+
+          # The detector going away must not read as healthy. max() over an empty
+          # selector returns NO series, so the rule above evaluates to nothing and
+          # goes silent — the same absence trap the Loki rules hit needing
+          # `or vector(0)`. If the probe job is renamed or its targets removed,
+          # this fires instead of leaving a comfortable silence.
+          - alert: IngressReachabilityProbesAbsent
+            expr: absent(up{job="blackbox-authentik-walloff"})
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Ingress reachability probes are gone — IngressAllTargetsUnreachable cannot fire"
+              description: >-
+                The blackbox-authentik-walloff scrape job has no series, so the
+                total-ingress-outage detector has nothing to evaluate. Restore
+                the job or repoint the alert at whatever replaced it.
           # Detects a Traefik replica whose K8s Ingress informer cache has gone
           # stale — pod reloads at a fraction of the rate of peers, returns 404
           # for ingresses it never re-listed. Pattern observed 2026-05-12 when
@@ -3495,11 +4515,33 @@ serverFiles:
             #
             # A p95 says "a real share of requests are slow", which is the thing
             # worth waking up for, and one outlier can no longer move it.
+            #
+            # ha-sofia joined the exclusion list on 2026-09-03, for the same
+            # reason nextcloud and immich are on it: p95 request duration
+            # measures payload transfer for a service that proxies large media,
+            # not ingress health. Home Assistant's camera cards fetch
+            # /api/camera_proxy/camera.ds_7632nxi_* from the Hikvision NVR, 16
+            # at a time, 200-300 KiB each. Measured while the alert was firing
+            # at 13:40: of 611 requests in the window, 235 sat in 0.2-0.5s, 205
+            # in 0.5-1.0s, 25 in 1-2s, 9 in 2-5s. Nothing was wrong; someone was
+            # looking at the cameras. Twelve concurrent fetches driven from
+            # inside the cluster peak at 1.20s on their own, so the dashboard
+            # clears the 1s threshold without any fault at all, and it did so 12
+            # times in the 7 days to 2026-09-03.
+            #
+            # The exclusion is the whole service because
+            # traefik_service_request_duration_seconds_bucket carries no path
+            # label (code, instance, job, method, protocol, service), so the
+            # camera route cannot be dropped on its own. What still covers
+            # ha-sofia: four active uptime-kuma monitors (ha-sofia-public,
+            # ha-sofia-internal and ha-sofia-direct on /manifest.json, and
+            # [External] ha-sofia) plus healthcheck checks 26-29 and 45. Those
+            # are availability, not latency, which is the signal given up here.
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service, le)
               ) > 1
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 10m
             # Was 1h, to damp the mean's fire/resolve churn. The p95 doesn't
@@ -3515,9 +4557,9 @@ serverFiles:
             # single 4.5s matrix request kept re-announcing itself all day.
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service, le)
               ) > 3
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 5m
             keep_firing_for: 15m
@@ -3742,6 +4784,43 @@ serverFiles:
           # curl had a timeout and a wedged run sat Running until the next day's
           # schedule replaced it, silently losing a day's sync while the
           # pushgateway still showed the previous run's success.
+          # A PSD2 consent lasts 90 days and renewing one needs the account
+          # holder's own bank MFA, so this is the one bank-sync alert that has to
+          # arrive BEFORE the failure. On 2026-07-18..07-24 anca's consents expired
+          # and the nightly job wrote nothing for seven nights; BankSyncStale
+          # reported it 48h in and nothing had warned. 14 days covers two weekends,
+          # which is what re-authorising three banks by phone realistically needs.
+          - alert: BankSyncConsentExpiring
+            expr: |
+              (bank_sync_consent_expiry_timestamp - time()) < 1209600
+              and
+              (bank_sync_consent_expiry_timestamp - time()) > 0
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Bank sync ({{ $labels.instance }}): {{ $labels.institution }} consent expires in {{ $value | humanizeDuration }}. Re-authorise in Actual: Settings -> Bank Sync -> the account -> re-link, which needs the account holder's bank login and MFA."
+          # Separate from the warning because the remedy is the same but the state is
+          # not: past expiry the nightly import returns ITEM_ERROR and no transaction
+          # arrives at all, so this is the one that should wake somebody.
+          - alert: BankSyncConsentExpired
+            expr: (bank_sync_consent_expiry_timestamp - time()) <= 0
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Bank sync ({{ $labels.instance }}): {{ $labels.institution }} consent HAS EXPIRED. Imports for its accounts are dead until it is re-authorised by hand in Actual."
+          # The check needs a GoCardless API credential that lives in each Actual
+          # server's own account.sqlite and is copied into secret/actualbudget.
+          # Rotating it in the web UI without updating Vault lands here rather than
+          # silently leaving the two alerts above with no series to evaluate.
+          - alert: BankSyncConsentCheckFailing
+            expr: bank_sync_consent_check_success == 0
+            for: 26h
+            labels:
+              severity: info
+            annotations:
+              summary: "Bank sync ({{ $labels.instance }}): the GoCardless consent-expiry check did not complete, so consent expiry is currently unmonitored for this instance. Usually a stale gocardless_secret_id/_key in secret/actualbudget."
           - alert: BankSyncSlow
             expr: bank_sync_duration_seconds > 300
             for: 5m
@@ -3780,40 +4859,6 @@ serverFiles:
               severity: warning
             annotations:
               summary: "share-link-geo CronJob (monitoring ns) hasn't succeeded in >49h — geo/unique-IP share-link gauges are stale"
-          - alert: MemoryRecallErrors
-            # The audit's silent-failure class: recall handlers raising (was the
-            # tsquery-500 that cost ~11%% of prompts their memories, unnoticed).
-            expr: increase(memory_recall_errors_total[15m]) > 0
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: "claude-memory recall handlers are raising (see surface label) — sessions silently losing recall"
-          - alert: MemoryEmbedWriteFailing
-            expr: increase(memory_embed_write_total{status="failed"}[30m]) > 3
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: "claude-memory embed-on-write failing repeatedly — new memories invisible to the dense leg"
-          - alert: MemoryEmbedBacklog
-            # Steady state is ~0 (embed-on-write keeps up). A growing backlog
-            # means the background embed task is stalled or the model broke.
-            expr: memory_embeddings_pending > 100
-            for: 6h
-            labels:
-              severity: warning
-            annotations:
-              summary: "claude-memory embeddings backlog >100 for 6h — dense recall coverage degrading"
-          - alert: MemoryRecallLatencyHigh
-            # The recall hook aborts at 6s; p95 near that silently drops
-            # injected memories from prompts.
-            expr: histogram_quantile(0.95, sum(rate(memory_recall_seconds_bucket[10m])) by (le)) > 2.5
-            for: 30m
-            labels:
-              severity: warning
-            annotations:
-              summary: "claude-memory recall p95 >2.5s for 30m — approaching the 6s hook timeout"
           - alert: T3ProbeLegDown
             expr: t3probe_connected{job="t3-probe"} == 0
             for: 5m
@@ -3933,6 +4978,66 @@ serverFiles:
             annotations:
               summary: "Dawarich ingestion freshness monitor has never pushed"
               description: "Expected `dawarich_ingestion_monitor_last_push_timestamp` to appear once the daily CronJob runs. Check the CronJob in dawarich namespace."
+          # Dawarich Sidekiq, from the yabeda exporter enabled 2026-09-04
+          # (code-1q5). Metric names below were read off the live endpoint, not
+          # the yabeda-sidekiq README — note `sidekiq_queue_latency` carries no
+          # _seconds suffix while `sidekiq_job_runtime_seconds` does.
+          # Sidekiq is what turns raw points into tracks, stats and digests, so
+          # when it stops the map keeps accepting writes and quietly stops
+          # updating. That is the failure code-459 hit.
+          - alert: DawarichSidekiqDown
+            # The exporter thread lives inside the Sidekiq server process, so a
+            # failed scrape means that process is not serving. `absent` covers
+            # the case where the target disappears from discovery entirely.
+            expr: |
+              up{job="dawarich-sidekiq-metrics"} == 0
+              or absent(up{job="dawarich-sidekiq-metrics"})
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich Sidekiq metrics endpoint unreachable for 15m"
+              description: "The exporter runs inside the Sidekiq server process, so this usually means Sidekiq is down or wedged, and imports, track building and stats have stopped. `kubectl -n dawarich get pods` then `kubectl -n dawarich logs deploy/dawarich -c dawarich-sidekiq`. Sidekiq is the container with the 4Gi limit that the hourly stats job has outgrown before."
+          - alert: DawarichSidekiqQueueLatencyHigh
+            # sidekiq_queue_latency is the age of the oldest job still queued.
+            # Every queue sat at 0 when this was written, with concurrency 2.
+            expr: max by (queue) (sidekiq_queue_latency) > 1800
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich Sidekiq queue {{ $labels.queue }} backed up {{ $value | printf \"%.0f\" }}s"
+              description: "The oldest job in {{ $labels.queue }} has been waiting over 30 minutes for 15 minutes running. A large import can do this legitimately. If nothing is importing, check whether Sidekiq is alive and whether reverse_geocoding is throttled to one worker (config/initializers/sidekiq.rb limits it when Photon points at komoot.io)."
+          - alert: DawarichSidekiqDeadGrowing
+            # The dead set already held 667 jobs when this alert was written, so
+            # an absolute threshold says nothing. Sidekiq keeps dead jobs for
+            # six months by default, which puts the accumulated background rate
+            # near four a day. Ten in an hour is a burst, not the background.
+            expr: delta(sidekiq_jobs_dead_count[1h]) > 10
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich Sidekiq dead set grew by {{ $value | printf \"%.0f\" }} in an hour"
+              description: "Jobs are exhausting their retries. Open the Sidekiq dead set and read the backtrace on the newest entries. A burst usually means one repeating input the worker cannot handle, not a general outage."
+          - alert: DawarichSidekiqFailureRateHigh
+            # Volume floor so a single failure in a quiet hour cannot page. Both
+            # counters are per-process and reset when the container restarts,
+            # which increase() already accounts for.
+            expr: |
+              (
+                sum(increase(sidekiq_jobs_failed_total[15m]))
+                /
+                sum(increase(sidekiq_jobs_executed_total[15m]))
+              ) > 0.2
+              and
+              sum(increase(sidekiq_jobs_executed_total[15m])) >= 5
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dawarich Sidekiq failing {{ $value | humanizePercentage }} of jobs"
+              description: "Over a fifth of executed jobs raised in the last 15 minutes, across at least five jobs. `kubectl -n dawarich logs deploy/dawarich -c dawarich-sidekiq` and look for a repeating exception class. Check the database and Redis are reachable before blaming the worker."
       - name: "Network Traffic (GoFlow2)"
         rules:
           - alert: GoFlow2Down
@@ -4293,6 +5398,68 @@ serverFiles:
               severity: warning
             annotations:
               summary: "image-flipflop-detect hasn't reported in {{ $value | humanizeDuration }} — the image-ownership signal is stale, check the CronJob in monitoring"
+      - name: Stray Workloads
+        # Metrics pushed by the stray-workload-detect CronJob (stray_workload.tf,
+        # daily 07:05). It subtracts what Terraform declares from what is
+        # actually running and reports the difference. Declarations come from the
+        # Tier-1 state database on CNPG plus the committed Tier-0 projection;
+        # accounted-for means matched by name, belonging to a declared
+        # helm_release, carrying an ownerReference, stamped by a known in-cluster
+        # reconciler, or written down in exempt.json with a reason.
+        rules:
+          - alert: StrayWorkloadDetected
+            # Kyverno admission cannot answer this: it decides whether a pod is
+            # ALLOWED (trusted registry, not privileged, no host namespaces) and
+            # says nothing about whether anything declares it. A workload that
+            # was admitted correctly and later dropped out of Terraform passes
+            # every admission rule forever, and if nothing talks to it the flow
+            # trail never sees it either — servarr/qbittorrent-exporter ran that
+            # way from 2026-03-25, keel-updated, in no state file and no commit.
+            #
+            # `for: 30m` only guards against reading a half-written push. The
+            # gauge is already a daily whole-cluster comparison, so this does not
+            # fire on transient state.
+            expr: stray_workload_count > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} running workload(s)/pod(s) that no Terraform declaration accounts for — check the `stray_workload` series for kind/namespace/name and the `reason` label. reason=undeclared usually means a resource was deleted from .tf without a destroy (adopt it with an `import {}` block, or delete the live object); reason=orphan-pod is a bare pod left behind by hand; reason=helm-release-undeclared is a hand-run `helm install`. If the name belongs to a Tier-0 stack (infra/platform/cnpg/vault/dbaas/external-secrets), regenerate the committed projection instead: `python3 scripts/gen-tier0-workload-inventory.py`"
+          - alert: StrayWorkloadInventoryBroken
+            # THE HELM-UNSTICK LESSON, made loud. The dangerous failure is not
+            # missing a stray workload, it is the declared inventory coming back
+            # short and every workload in the cluster reading as stray. The job
+            # refuses to report below MIN_DECLARED declarations or above
+            # MAX_FINDING_RATIO of the live set, pushes this gauge as 0 and exits
+            # non-zero. Without this alert that refusal would look like a quiet,
+            # healthy run with a stale count.
+            expr: stray_workload_inventory_ok == 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "stray-workload-detect refused to report: the declared inventory does not describe this cluster (see `stray_workload_declared_total` vs `stray_workload_live_total`, and the Job's logs for which guard tripped). Usually the Tier-1 state extraction failed part-way or the Tier-0 projection is stale — NOT that the cluster is full of stray workloads."
+          - alert: StrayWorkloadDetectorStale
+            # The job runs daily; 50h means at least two runs were missed. Without
+            # this the count above silently freezes at its last value and a NEW
+            # stray workload would never be reported — the same failure mode as a
+            # probe that stops running while its last result still reads healthy.
+            #
+            # The absent_over_time branch covers the case the timestamp
+            # comparison CANNOT see: a job that has never pushed at all, which is
+            # what a broken first apply or a wiped Pushgateway looks like. A `>`
+            # comparison against a series with no samples yields an empty result
+            # and never fires (see the `or vector(0)` note in .claude/CLAUDE.md
+            # for the same trap on the Loki side). 26h means at least one
+            # scheduled run has been missed, so it does not fire between deploying
+            # this and the first 07:05 run; the prometheus-uptime guard stops a
+            # freshly-restored Prometheus with an empty TSDB from false-firing.
+            expr: (time() - stray_workload_last_run_timestamp > 50 * 3600) or (absent_over_time(stray_workload_last_run_timestamp[26h]) and on() (time() - process_start_time_seconds{job="prometheus"}) > 26 * 3600)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "stray-workload-detect hasn't reported in {{ $value | humanizeDuration }} — the declared-versus-running signal is stale, check the CronJob in monitoring (a failed init container means the Tier-1 state extraction could not complete, which is deliberately fatal rather than a short inventory)"
       - name: Infrastructure Drift
         # Metrics pushed by .woodpecker/drift-detection.yml after each cron run.
         # See Wave 7 of the state-drift consolidation plan.
@@ -4363,6 +5530,21 @@ serverFiles:
       # terminal.viktorbarzin.me, so ~70% of /token preflight requests routed
       # to that replica returned 404 with router="-". The WS upgrade failed
       # intermittently. Fix: `kubectl delete pod -n traefik <replica>`.
+          # A stack CI deliberately SKIPS still needs a human to apply it, and
+          # the Slack post saying so can be missed. This is the durable
+          # backstop: the gauge is pushed on every apply run and set to 0 when
+          # nothing is pending, so a stuck non-zero means a real change has been
+          # sitting unapplied. 2h, because the remediation is a person running
+          # `cd stacks/vault && ../../scripts/tg apply` (infra#84).
+          - alert: CIStackPendingHumanApply
+            expr: ci_stack_pending_human_apply > 0
+            for: 2h
+            labels:
+              severity: warning
+              subsystem: ci
+            annotations:
+              summary: "A stack changed in CI and was NOT applied — it needs a human run"
+              description: "infra CI skipped a Tier-0 stack (today only stacks/vault, which CI cannot apply because the shared runner holds no Vault-admin permissions) and the change has been pending over 2h, so the repo and the live estate disagree until someone runs it. Apply: cd stacks/vault && ../../scripts/tg apply. See docs/architecture/ci-cd.md."
       - name: Webterminal
         rules:
       # Traefik router parity — detects the root cause of the webterminal
@@ -4430,6 +5612,17 @@ serverFiles:
       # queue is empty in normal operation. Runbook: docs/runbooks/backup-mx.md.
       - name: Backup MX
         rules:
+          - alert: VpnTransportDown
+            # Per-transport, so the alert names which one. 10m rides out an
+            # xray rollout; the probe interval is 2m so that is 5 samples.
+            expr: probe_success{job="vpn-transports"} == 0
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: vpn
+            annotations:
+              summary: "VPN transport {{ $labels.transport }} ({{ $labels.pop }}) not answering for >10m"
+              description: "blackbox tcp_connect to {{ $labels.instance }} has failed for >10m, so the {{ $labels.transport }} transport is listed on vpn.viktorbarzin.me and handed out by the subscription while not accepting connections. home/cloudflare targets are in-cluster origins — check `kubectl -n xray get pods` and the shadowsocks LB. oci targets are on mx2 (92.5.132.215) — check the VM and the OCI security list. Portal runbook: ~/code/vpn-portal/DEPLOY.md."
           - alert: BackupMxDown
             # In-cluster blackbox TCP-connect to the reserved public IP:25.
             expr: max(probe_success{job="backup-mx-smtp"}) == 0
@@ -4635,6 +5828,395 @@ serverFiles:
             annotations:
               summary: "MyProtein daily digest has never posted successfully"
               description: "The myprotein-watch-digest CronJob has no successful run on record, so the daily heartbeat has never arrived. Most likely a deploy-time problem — missing SLACK_WEBHOOK_URL from ESO, or the script ConfigMap not mounted — rather than anything about MyProtein's page."
+      # Broker feeds reconcile what a broker says it holds against what
+      # Wealthfolio derives from its own activity ledger. broker-sync pushes
+      # the comparison to Pushgateway at the end of each daily run
+      # (broker_sync/cli.py, _push_position_drift / _push_run_freshness).
+      #
+      # Why this group exists: on 2026-05-27, 78 InvestEngine BUY rows were
+      # re-inserted into the Wealthfolio ledger and inflated it by GBP 252k.
+      # Nothing noticed for days. The drift number that would have shown it
+      # was being computed for IBKR alone, and no alert rule read it.
+      #
+      # There is deliberately NO IEPositionDrift here. InvestEngine has no
+      # holdings endpoint wired, the Bearer token in Vault expired 2026-08-24,
+      # and there is no broker-sync-invest-engine CronJob. IE reaches
+      # Wealthfolio only through the IMAP confirmation path, which has skipped
+      # InvestEngine by default since broker-sync 0d23487 — so an "IE drift"
+      # series would be an invented number rather than a measurement. Whether
+      # their private API exposes holdings at all is tracked as its own bead.
+      - name: Broker Sync
+        rules:
+          # A TOLERANCE, not zero. Fractional-share brokers round their own
+          # position differently from a sum over the activity ledger: measured
+          # live 2026-09-03, Trading212 GIA VUAG was 4125.09499749 at the
+          # broker against 4125.09499836 in the ledger, a gap of -8.7e-07
+          # shares with nothing wrong. 0.01 sits four orders of magnitude
+          # above that floor and below any fill worth investigating.
+          #
+          # abs(), not a bare `> 0.01`: the 2026-05-27 incident was a DOUBLE
+          # IMPORT, so the ledger exceeded the broker and the drift was
+          # NEGATIVE. A one-sided comparison looks straight past that shape.
+          #
+          # for: 2h — the metric only changes once a day (02:00 UK), so this
+          # fires the same night rather than waiting out a second run. Both
+          # sides are read in the same request round at 02:00 with markets
+          # closed, so "fill visible in /portfolio but not yet in
+          # /history/orders" is not a realistic transient here.
+          - alert: T212PositionDrift
+            expr: abs(t212_position_drift_shares{job="broker-sync-trading212"}) > 0.01
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Trading212 {{ $labels.symbol }} is {{ $value | printf \"%.4f\" }} shares away from the Wealthfolio ledger (account {{ $labels.account }})"
+              description: "The broker's own position and the quantity Wealthfolio derives from its activity ledger disagree. NEGATIVE means the ledger holds MORE than the broker — a double import, the 2026-05-27 shape. POSITIVE means a fill never landed. Broker side is /api/v0/equity/portfolio, ledger side is Wealthfolio's activities/search; compare both before editing either."
+          - alert: IBKRPositionDrift
+            # Idle by design today: the IBKR account holds GBP 1.23 of cash
+            # and no positions, so provider.open_positions() returns [] and
+            # the metric loop emits nothing (verified against the live Flex
+            # query 2026-09-03). The rule evaluates fine with no series and
+            # starts covering the account the moment it holds something.
+            expr: abs(ibkr_position_drift_shares{job="broker-sync-ibkr"}) > 0.01
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "IBKR {{ $labels.symbol }} is {{ $value | printf \"%.4f\" }} shares away from the Wealthfolio ledger (account {{ $labels.account }})"
+              description: "Same check as T212PositionDrift, against the IBKR Flex query's OpenPositions rather than a REST holdings call. NEGATIVE means the ledger holds more than the broker (double import); positive means a fill never landed."
+          # Pushgateway serves the last pushed value forever, so a drift of 0
+          # from a cron that stopped running a fortnight ago reads exactly
+          # like a healthy feed. These three staleness rules are what stop the
+          # drift alerts above from going quietly blind, and they are the only
+          # cover the IMAP feed can have at all.
+          #
+          # 50h ~= two missed daily runs, the same threshold MyProteinWatch
+          # and the backup jobs use: one transient failure recovers on the
+          # next run without saying anything.
+          - alert: T212SyncStale
+            expr: (time() - t212_sync_last_success_timestamp_seconds{job="broker-sync-trading212"}) > 180000
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Trading212 sync has not completed successfully in {{ $value | humanizeDuration }} (>2 missed daily runs)"
+              description: "CronJob broker-sync-trading212 (daily 02:00 UK, ns broker-sync) has no recent successful run, so t212_position_drift_shares is frozen history rather than a current fact. Check `kubectl -n broker-sync get jobs` and the last pod's logs; a rejected API key surfaces as Trading212AuthError on HTTP 401."
+          - alert: IBKRSyncStale
+            expr: (time() - ibkr_sync_last_success_timestamp_seconds{job="broker-sync-ibkr"}) > 180000
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "IBKR sync has not completed successfully in {{ $value | humanizeDuration }} (>2 missed daily runs)"
+              description: "CronJob broker-sync-ibkr (daily 02:00 UK, ns broker-sync) has no recent successful run. The Flex query is generated server-side at IBKR and expires; a stale or revoked IBKR_FLEX_TOKEN is the usual cause. Check `kubectl -n broker-sync get jobs` and the last pod's logs."
+          - alert: IMAPIngestStale
+            # The mailbox feed gets no drift metric by design: it carries trade
+            # confirmations, and neither InvestEngine nor Schwab exposes
+            # holdings to reconcile against. What goes wrong silently is the
+            # mailbox going quiet, so freshness is the whole check here.
+            expr: (time() - imap_sync_last_success_timestamp_seconds{job="broker-sync-imap"}) > 180000
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "IMAP confirmation ingest has not completed successfully in {{ $value | humanizeDuration }} (>2 missed daily runs)"
+              description: "CronJob broker-sync-imap (daily 02:30 UK, ns broker-sync) has no recent successful run, so InvestEngine and Schwab trade confirmations are not reaching Wealthfolio and nothing else watches that path. Usual causes are IMAP credentials in Vault going stale or the mailbox moving. Check `kubectl -n broker-sync get jobs` and the last pod's logs."
+          - alert: IMAPIngestFailures
+            # `imported` deliberately has NO alert. A healthy run right now
+            # fetches mail and imports zero rows, because the ingest skips
+            # InvestEngine by default (broker-sync 0d23487) — measured
+            # 2026-09-04: fetched=18, imported=0, failed=0. Only `failed`
+            # moving off zero means a confirmation was seen and then dropped.
+            expr: imap_activities_failed{job="broker-sync-imap"} > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "IMAP ingest could not import {{ $value | printf \"%.0f\" }} confirmation email(s) on its last run"
+              description: "broker-sync-imap parsed confirmation emails it could not turn into Wealthfolio activities, so those trades are missing from the ledger and will not reappear on their own. The per-email parse errors are in the last broker-sync-imap pod's logs."
+          # A feed that has NEVER pushed leaves an absent series, not a stale
+          # one, so the staleness rules above have nothing to age and stay
+          # silent about a feed that was broken from its first run. `for: 48h`
+          # matches the LVM-snapshot and vzdump pairs above: long enough to
+          # ride out a Pushgateway restart reloading its persistence file.
+          - alert: T212SyncNeverReported
+            expr: absent(t212_sync_last_success_timestamp_seconds{job="broker-sync-trading212"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Trading212 sync has never reported to Pushgateway"
+              description: "No t212_sync_last_success_timestamp_seconds series exists at all, so T212SyncStale and T212PositionDrift are both evaluating nothing. Either the CronJob has never had a successful run, or PUSHGATEWAY_URL is unreachable from the job."
+          - alert: IBKRSyncNeverReported
+            expr: absent(ibkr_sync_last_success_timestamp_seconds{job="broker-sync-ibkr"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "IBKR sync has never reported to Pushgateway"
+              description: "No ibkr_sync_last_success_timestamp_seconds series exists at all, so IBKRSyncStale and IBKRPositionDrift are both evaluating nothing. Note this is distinct from IBKRPositionDrift having no series, which is normal while the account holds no positions."
+          - alert: IMAPIngestNeverReported
+            expr: absent(imap_sync_last_success_timestamp_seconds{job="broker-sync-imap"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "IMAP confirmation ingest has never reported to Pushgateway"
+              description: "No imap_sync_last_success_timestamp_seconds series exists at all, so IMAPIngestStale and IMAPIngestFailures are both evaluating nothing and the confirmation-email path is entirely unwatched."
+      - name: Payslip Freshness
+        rules:
+          # Payslips only reach Paperless because Viktor forwards or uploads the
+          # PDF himself. That manual step stopped after pay_date 2026-05-29 and
+          # nothing noticed for 98 days (code-oqyb): the payslip-ingest webhook
+          # and the actualbudget-payroll-sync CronJob both kept exiting 0 the
+          # whole time, because "no new payslip document" is a healthy run for
+          # both. So the check has to read the DATA, not a job result.
+          #
+          # 40 days, per Viktor's ruling. Meta pays monthly on the last working
+          # day, so the widest normal gap between two pay_dates is 31 days, and
+          # the document is filed on or after the pay date. 40 leaves ~9 days of
+          # slack for a late filing and still catches a missed cycle inside a
+          # fortnight rather than a quarter.
+          #
+          # `for: 6h` only debounces a Pushgateway restart reloading its
+          # persistence file; by the time this is true it has been true for
+          # weeks, so a longer hold would buy nothing.
+          - alert: PayslipStale
+            expr: (time() - payslip_latest_pay_date_timestamp_seconds{job="payslip-freshness"}) > 3456000
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Newest payslip in payslip_ingest is {{ $value | humanizeDuration }} old (>40d, so at least one pay cycle is missing)"
+              description: "max(pay_date) in payslip_ingest.payslip has not moved in over 40 days. Nothing in the pipeline is broken when this fires — payslip-ingest reads documents already tagged in Paperless, and no payslip PDF has been filed. Compare payslip_latest_deposit_date_timestamp_seconds: if deposits are still arriving, he was paid and only the document is missing. Fix is to forward or upload the payslip PDFs to Paperless; the parser picks them up on the next webhook with no further work. Runbook context is on bead code-oqyb."
+          # Pushgateway serves the last pushed value forever, so a frozen
+          # pay_date from an exporter that died still ages and still trips
+          # PayslipStale — safe, but for the wrong reason. This rule is what
+          # tells the two apart.
+          #
+          # 26h ~= four missed 6-hourly runs. Shorter than the 50h the daily
+          # broker-sync and backup jobs use, because this one runs 4x a day and
+          # a whole day of frozen data is already more blindness than it needs.
+          - alert: PayslipFreshnessExportStale
+            expr: (time() - payslip_freshness_last_success_timestamp_seconds{job="payslip-freshness"}) > 93600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "payslip-freshness-export has not completed successfully in {{ $value | humanizeDuration }}"
+              description: "CronJob payslip-freshness-export (every 6h, ns payslip-ingest) has no recent successful run, so payslip_latest_pay_date_timestamp_seconds is frozen history rather than a current fact and PayslipStale is reading a stale number. The job refuses to push when either query returns nothing, so an empty result looks like this rather than like a 1970 pay date. Check `kubectl -n payslip-ingest get jobs` and the last pod's logs; a rotated pg-payslip-ingest password surfaces here first."
+          # A feed that has never pushed leaves an ABSENT series, not a stale
+          # one, so neither rule above can age anything and both stay silent
+          # about an exporter that was broken from its first run. 48h matches
+          # the other NeverReported pairs — long enough to ride out a
+          # Pushgateway restart reloading persistence.
+          - alert: PayslipFreshnessNeverReported
+            expr: absent(payslip_latest_pay_date_timestamp_seconds{job="payslip-freshness"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "payslip freshness has never reported to Pushgateway"
+              description: "No payslip_latest_pay_date_timestamp_seconds series exists at all, so PayslipStale is evaluating nothing and the payslip gap that produced code-oqyb could repeat unseen. Either payslip-freshness-export has never had a successful run, or the Pushgateway URL is unreachable from the payslip-ingest namespace."
+      # =====================================================================
+      # F1 Stream sources
+      # =====================================================================
+      # The failure these rules exist for: f1.viktorbarzin.me served ZERO
+      # streams from 2026-08-26 10:36 to 2026-09-05, about ten days, and
+      # nothing told anyone. Two upstreams broke independently (pitsport
+      # rewrote its API to /v1/live-now and started 404ing the old paths;
+      # aceztrims' embed host swapped a base64 blob for a pair of XORed hex
+      # strings). f1-stream/docs/playback-guard.md has the incident.
+      #
+      # There IS already a guard, and this does not replace it. The playback
+      # guard (stacks/f1-stream/f1-source-guard.tf) plays a real stream in a
+      # browser and files a Forgejo issue that dispatches a repair agent — a
+      # much stronger assertion than any of these rules make. It is
+      # CALENDAR-GATED though: hourly CronJob, acting only inside T-2h and
+      # T-30m of a session per /api/schedule. So a break that happens midweek
+      # waits for the next race weekend to be noticed, which is exactly how
+      # ten days passed. These rules are the always-on floor underneath it.
+      #
+      # Metric contract (backend/, f1-stream): f1_streams_served is a gauge
+      # labelled by `source` (site_key: pitsport, aceztrims, streamed) counting
+      # currently-served verified streams. The two *_timestamp_seconds gauges
+      # report 0 — NOT the current time — for a source that has never
+      # succeeded, because a now-valued timestamp reads as healthy and is how a
+      # ten-day outage stays invisible. No total is exposed; sum() it here.
+      #
+      # Scrape job: `f1-stream` (extraScrapeConfigs), 1m, straight at
+      # f1.f1-stream.svc.cluster.local:80/metrics. `up{job="f1-stream"} == 0`
+      # is already covered by ScrapeTargetDown (30m, warning) — no rule here
+      # duplicates it.
+      - name: F1 Stream Sources
+        rules:
+          # THE rule. Sustained zero across every source is the ten-day
+          # outage's own signature, and it fires on day one of a repeat.
+          #
+          # 2h, from the extraction logs in Loki rather than a guess. Over
+          # 2026-08-18..08-23 — midweek, no F1 on — f1-stream logged 284
+          # extraction runs and NOT ONE of them returned zero streams;
+          # aceztrims published 1-2 streams around the clock, 02:00 UTC
+          # included. Over 2026-08-27..08-30, inside the outage, 156 runs
+          # returned zero in a row. So an all-zero run is not a quiet period
+          # here, it is a fault, and there is no measured healthy stretch this
+          # threshold has to clear. Extraction runs every 30 min while idle
+          # (5 min during a live session, backend/main.py
+          # _scheduled_extraction), so 2h is 4 consecutive idle cycles — past
+          # any single bad run or a deploy, well short of a day.
+          #
+          # keep_firing_for damps the half-recovered shape: a site that goes
+          # dry, catches one stream on one cycle, and goes dry again is still
+          # broken, and without this it would resolve and re-fire on that.
+          #
+          # Two defences against reading its own metric wrong. `or on()
+          # vector(0)` covers f1_streams_served emitting NO series for a dry
+          # source rather than an explicit 0 — sum() over an empty vector
+          # returns no series, not zero, so without this the rule would go
+          # silent in precisely the all-sources-dry case it is named after.
+          # The `and on()` guard then requires the exposition to be live, so a
+          # dead pod produces F1MetricsMissing alone instead of both.
+          # f1_extraction_last_run_timestamp_seconds is the anchor because the
+          # contract makes it a single unlabelled gauge that is always present
+          # while /metrics answers.
+          - alert: F1AllSourcesDry
+            expr: |
+              (sum(f1_streams_served) or on() vector(0)) == 0
+              and on() f1_extraction_last_run_timestamp_seconds > 0
+            # 12h is Viktor's choice, asked directly on 2026-09-06 when offered
+            # 20m / 2h / 12h. It still catches the failure that prompted all of
+            # this: during the 2026-08-26..09-05 outage 156 consecutive runs
+            # came back empty, so this fires on day one rather than day nine.
+            # What it gives up is a Friday-evening break surfacing before
+            # Saturday morning, which he accepted because the repair agent is
+            # autonomous and race weekends are the playback guard's job.
+            for: 12h
+            keep_firing_for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream has served zero streams from every source for over 2h — the site shows nothing"
+              description: "sum(f1_streams_served) has been 0 across all sources for two hours. Measured over 284 healthy extraction runs (2026-08-18..08-23, midweek) this never once happened, so treat it as every upstream extractor being broken rather than a quiet period. Check f1_source_last_extraction_ok per source to see whether they are raising or returning empty, then `homelab logs query '{namespace=\"f1-stream\"} |= \"Extraction run complete\"'`. The playback guard will not help until the next race weekend."
+          # Without this every other rule in the group evaluates nothing and
+          # goes quiet, which is the same silence the ten-day outage had.
+          # sum() over an empty vector returns NO series rather than 0, so
+          # F1AllSourcesDry cannot fire when the endpoint disappears — only
+          # this can. Causes worth expecting: /metrics removed or renamed, the
+          # scrape job misconfigured, or Anubis challenging the scrape (see the
+          # f1-metrics ALLOW rule in stacks/f1-stream/main.tf).
+          #
+          # 30m matches ScrapeTargetDown's hold so a dead pod produces one
+          # alert rather than two at different times.
+          #
+          # Anchored on the extraction timestamp, NOT on f1_streams_served.
+          # If the backend omits a source's gauge while that source is dry,
+          # then f1_streams_served vanishes entirely when everything is dry —
+          # and keying on it would report a healthy pod as a missing endpoint
+          # while the real fault (nothing being served) went unnamed. The
+          # extraction timestamp is a single unlabelled gauge that is always
+          # exposed, so its absence means the exposition itself is gone.
+          - alert: F1MetricsMissing
+            expr: absent(f1_extraction_last_run_timestamp_seconds)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream /metrics has returned nothing for 30m — every F1 stream alert is now blind"
+              description: "Prometheus has no f1_extraction_last_run_timestamp_seconds series at all, so F1AllSourcesDry, F1ExtractionStalled, F1SourceStale and F1SourceExtractionErroring are all evaluating nothing. Either the f1-stream pod is down (ScrapeTargetDown says so too), /metrics moved, or Anubis started challenging the scrape. Confirm with `homelab k8s status f1-stream` and a direct `curl f1.f1-stream.svc.cluster.local/metrics` from in-cluster."
+          # The extraction loop itself stopping. Distinct from every source
+          # failing: the sources look frozen at their last values rather than
+          # empty, so nothing above notices while the site quietly serves
+          # yesterday's links.
+          #
+          # 2h = 4 missed runs at the idle 30-minute cadence. The live-session
+          # cadence is 5 min, so this is loose by design — it should not fire
+          # on a slow run holding a chrome-fleet lease.
+          - alert: F1ExtractionStalled
+            # Same `> 0` guard as F1SourceStale, and for the same reason: this
+            # gauge reads 0 until the first extraction completes after a pod
+            # restart, so without it every deploy fires this instantly.
+            expr: |
+              (time() - f1_extraction_last_run_timestamp_seconds) > 7200
+              and f1_extraction_last_run_timestamp_seconds > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream has not run an extraction in {{ $value | humanizeDuration }} (>4 missed cycles)"
+              description: "The APScheduler stream_extraction job (30 min idle, 5 min during a live session) has not completed a run in over two hours, so every stream the site is serving is stale and no new ones are being found. This is the scheduler, not the upstreams — check the f1-stream pod logs for an exception that killed the job, and whether the pod restarted into a bad state."
+          # Per-source staleness, scoped to aceztrims ON PURPOSE.
+          #
+          # 6h = 12 consecutive dry cycles at the idle cadence. aceztrims is
+          # the one source with a measured around-the-clock baseline: 284 of
+          # 284 runs over five midweek days returned its streams, so its normal
+          # gap between successes is one extraction interval and 6h is two
+          # orders of magnitude above it.
+          #
+          # pitsport and streamed are deliberately NOT in this selector.
+          # pitsport publishes per session, so returning nothing between race
+          # weekends is CORRECT — a wall-clock staleness rule for it cannot
+          # tell "extractor broken" from "no F1 on" without a threshold wider
+          # than the summer break, which is too slow to be worth having. Their
+          # season-independent signal is F1SourceExtractionErroring below, and
+          # their in-session coverage is the playback guard's job. Add a source
+          # to this regex only once it has a measured around-the-clock
+          # baseline of its own.
+          #
+          # The `> 0` guard is load-bearing: the contract makes 0 mean "never
+          # succeeded", and time() - 0 is 56 years, so without it this fires
+          # instantly for any source that has not yet had a first success.
+          # severity=info ON PURPOSE. Asked directly on 2026-09-06, Viktor
+          # chose "repair silently, tell me only if the fix fails" for a
+          # single dead source while the site still plays. info routes to
+          # #alerts with repeat_interval 8760h, so this posts one line and
+          # never nags while the repair agent works, and the guard's own
+          # Slack message covers the case where that repair fails.
+          #
+          # Not removed altogether, because Prometheus is the only thing
+          # watching midweek: the playback guard is calendar-gated to race
+          # weekends, so without this a source dying on a Tuesday is seen by
+          # nobody until Friday.
+          - alert: F1SourceStale
+            # The age must be the LEFT operand: `A and B` returns the samples
+            # of A, so with the operands the other way round $value renders the
+            # raw unix timestamp and the Slack line reads "dry for 56.7 years".
+            expr: |
+              (time() - f1_source_last_success_timestamp_seconds{source=~"aceztrims"}) > 21600
+              and f1_source_last_success_timestamp_seconds{source=~"aceztrims"} > 0
+            for: 30m
+            labels:
+              severity: info
+            annotations:
+              summary: "f1-stream source {{ $labels.source }} has produced no streams in {{ $value | humanizeDuration }} (normal gap is one 30-min cycle)"
+              description: "This source publishes around the clock — measured 1-2 streams on every one of 284 extraction runs over 2026-08-18..08-23, including 02:00 UTC midweek — so six hours of nothing means its extractor or its upstream has changed. This is the shape aceztrims broke in on 2026-08-26, when the embed host swapped a base64 encodedUrl blob for a pair of XORed hex strings and the resolver returned nothing while the page still looked fine."
+          # The season-independent per-source check, and the one that catches
+          # what actually happened to pitsport: it rewrote its API, the old
+          # /v1/streams/live and /v1/streams/24h started 404ing, and the
+          # extractor raised. A source returning nothing can be correct at any
+          # hour; a source whose extraction attempt does not complete cannot.
+          #
+          # 2h = 4 consecutive failed cycles at the idle cadence. Upstreams
+          # rate-limit and time out transiently, so a single bad run must not
+          # page; four in a row is a change, not weather.
+          # severity=info ON PURPOSE. Asked directly on 2026-09-06, Viktor
+          # chose "repair silently, tell me only if the fix fails" for a
+          # single dead source while the site still plays. info routes to
+          # #alerts with repeat_interval 8760h, so this posts one line and
+          # never nags while the repair agent works, and the guard's own
+          # Slack message covers the case where that repair fails.
+          #
+          # Not removed altogether, because Prometheus is the only thing
+          # watching midweek: the playback guard is calendar-gated to race
+          # weekends, so without this a source dying on a Tuesday is seen by
+          # nobody until Friday.
+          - alert: F1SourceExtractionErroring
+            expr: f1_source_last_extraction_ok == 0
+            for: 2h
+            labels:
+              severity: info
+            annotations:
+              summary: "f1-stream extractor for {{ $labels.source }} has been raising for 2h"
+              description: "This source's last four extraction attempts ended in an exception rather than returning a (possibly empty) list, so the site has lost it entirely. Unlike an empty result, this is wrong in any season — pitsport returning nothing between race weekends is normal, pitsport throwing is not. That is the exact 2026-09-05 failure: pitsport moved to /v1/live-now and 404'd the paths the extractor still asked for. Read the traceback in the f1-stream pod logs before assuming the upstream is down."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
@@ -4680,6 +6262,74 @@ extraScrapeConfigs: |
   # homelab WAN /32 in the OCI security list, so this scrape (egressing as
   # 176.12.22.76) is the only thing that can reach it. Alerts: BackupMxDown /
   # BackupMxQueueStuck (alerting_rules.yml, group "Backup MX").
+  # --- VPN transports (infra#49) ---------------------------------------------
+  # Until 2026-09-02 the ONLY probe covering vpn-portal was /sub/uptime-probe,
+  # which proves the portal serves configs and says nothing about whether the
+  # transports in those configs still answer. A dead transport was silent: the
+  # page kept listing it and the subscription kept handing it out, so it would
+  # be discovered by a client failing abroad.
+  #
+  # These probe ORIGINS, not the published endpoints, deliberately. xray-ws and
+  # xray-grpc are Cloudflare-proxied on :443, so a TCP connect to the public
+  # name proves Cloudflare is up and nothing about xray. Internally those names
+  # resolve to the Traefik LB via split-horizon DNS, and the backing Services
+  # are reachable directly — so the probe tests the thing that can actually
+  # break. The two OCI targets have no such indirection and are probed over the
+  # WAN, the same way backup-mx-smtp is.
+  #
+  # Endpoint map (secret/vpn-portal -> config.estate):
+  #   reality      176.12.22.76:8080          -> xray-reality LB :7443
+  #   ws           xray-ws.viktorbarzin.me    -> xray svc :8443 (port "websocket")
+  #   xhttp        xray-grpc.viktorbarzin.me  -> xray svc :9443 (port "grpc")
+  #   shadowsocks  176.12.22.76:8388          -> shadowsocks LB :8388
+  #   reality_oci  92.5.132.215:8443          -> probed as published
+  #   ss_oci       92.5.132.215:8388          -> probed as published
+  #
+  # Alert: VpnTransportDown (alerting_rules.yml).
+  - job_name: 'vpn-transports'
+    scrape_interval: 2m
+    scrape_timeout: 15s
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets: ["xray-reality.xray.svc.cluster.local:7443"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'reality'
+          pop: 'home'
+      - targets: ["xray.xray.svc.cluster.local:8443"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'ws'
+          pop: 'cloudflare'
+      - targets: ["xray.xray.svc.cluster.local:9443"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'xhttp'
+          pop: 'cloudflare'
+      - targets: ["shadowsocks.shadowsocks.svc.cluster.local:8388"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'shadowsocks'
+          pop: 'home'
+      - targets: ["92.5.132.215:8443"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'reality_oci'
+          pop: 'oci'
+      - targets: ["92.5.132.215:8388"]
+        labels:
+          service: 'vpn-transport'
+          transport: 'ss_oci'
+          pop: 'oci'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
   - job_name: 'backup-mx-smtp'
     scrape_interval: 2m
     scrape_timeout: 15s
@@ -4767,6 +6417,32 @@ extraScrapeConfigs: |
       - source_labels: [__address__]
         target_label: instance
         replacement: 'devvm' # Giving it a friendly name
+  # registry-cache VM (10.0.20.10): the five pull-through caches behind nginx.
+  # Its node_exporter answers 200 and was scraped by nothing until 2026-09-03,
+  # which is the larger half of why /opt/registry sat at 100% full for 45 days
+  # without an alert. The `registry` job below reaches :5001 for the registry
+  # app's own metrics, and those carry no filesystem series at all.
+  #
+  # No new alert is needed for the disk: the LowDiskSpace rule is
+  # `node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.*"} / node_filesystem_size_bytes
+  # * 100 < 5` with no job selector, so it starts covering this host the moment
+  # the series exist. The reason a full disk went unnoticed was a missing target,
+  # not a missing rule.
+  #
+  # What ENOSPC looks like here, so nobody re-learns it: /v2/ and /healthz are
+  # both storage-free and answer 200 while content requests 500, so an HTTP
+  # probe reads healthy through the whole failure. Watch the bytes.
+  - job_name: 'registry-cache-host'
+    static_configs:
+      - targets:
+        - "10.0.20.10:9100"
+        labels:
+          node: 'registry-cache'
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'registry-cache' # Giving it a friendly name
   # t3-probe: differential t3 path-health prober (stacks/t3code). Legs:
   # cloudflare (full public path), internal (Traefik only), t3serve (the
   # serve process). See docs/runbooks/t3-drop-attribution.md.
@@ -4901,11 +6577,173 @@ extraScrapeConfigs: |
     - source_labels: [__meta_kubernetes_pod_name]
       target_label: pod
 
-  - job_name: 'crowdsec'
-    static_configs:
-        - targets:
-          - "crowdsec-service.crowdsec.svc.cluster.local:6060"
+  # Dawarich's Sidekiq exporter (code-1q5, 2026-09-04). Dawarich 1.7.11 runs
+  # yabeda, so the Sidekiq server process serves its own metrics from a WEBrick
+  # thread on 9394 inside the dawarich-sidekiq container. That is the target
+  # here, NOT the web container's /metrics on 3000: the web route is behind
+  # Rails host authorization (config.hosts from APPLICATION_HOSTS), and a pod-SD
+  # scrape sends `Host: <pod-ip>:3000`, which Rails answers 403. Prometheus has
+  # no way to override the Host header, so 9394 it is. Measured on the live pod
+  # 2026-09-04: :3000/metrics returned 403 with correct credentials and 200 with
+  # `Host: dawarich.viktorbarzin.me`.
+  #
+  # Scraping 9394 also makes `up` mean what the alerts need it to mean. The web
+  # container's aggregated endpoint fetches this one and, on failure, logs a
+  # warning and serves its local metrics with a 200 (lib/dawarich/
+  # aggregating_metrics.rb) — a dead Sidekiq exporter would look like missing
+  # series, not a failed scrape. Here it is a failed scrape, which is what
+  # DawarichSidekiqDown keys off.
+  #
+  # Both endpoints are wrapped in Dawarich::MetricsBasicAuth. There was no
+  # basic_auth on any job in this file before; the credentials come from Vault
+  # secret/dawarich through stacks/monitoring/main.tf, the same pair the pod
+  # gets from its ExternalSecret.
+  - job_name: 'dawarich-sidekiq-metrics'
+    basic_auth:
+      username: '${dawarich_metrics_username}'
+      password: '${dawarich_metrics_password}'
+    kubernetes_sd_configs:
+    - role: pod
+      namespaces:
+        names:
+        - dawarich
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_label_app, __meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: 'dawarich;prometheus'
+    - source_labels: [__meta_kubernetes_namespace]
+      target_label: namespace
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+
+  # Applied 2026-09-02.
+  - job_name: 'alloy'
+    # Alloy ships every Loki-based alert in the cluster and had NO health
+    # telemetry of its own until 2026-09-02: 93 metric families exposed on
+    # :12345, none scraped, no prometheus.io annotations, no `up` series. That
+    # is why an auto-upgrade to v1.19.2 could silently stop honouring the
+    # `labels` argument on loki.source.journal, kill job="node-journal" and
+    # job="node-runtime-journal", and blind NodeImageGCThresholdCrossed,
+    # NodeImageCacheMassEviction and NodeEvictionManagerReclaiming for 100
+    # minutes. A Loki dead-man switch eventually caught the missing data
+    # downstream; alloy_component_controller_running_components would have said
+    # so immediately, and alloy_build_info would have named the version that
+    # did it.
+    #
+    # A dedicated job rather than pod annotations. Annotating routes to
+    # kubernetes-pods, which has no metric_relabel_configs at all, so it would
+    # store all 518 series per pod = 3,108 across the DaemonSet. Measured
+    # against 98,535 head series that is +3.2% for mostly Go runtime detail, and
+    # it would quietly undercut the cardinality budget the
+    # kubernetes-service-endpoints allowlist exists to enforce. The keep below
+    # holds it to a measured 21 series per pod (126 total): component health,
+    # config-reload success, build version, RSS, loki.write delivery failures
+    # and per-source line counters.
+    #
+    # loki_source_file_read_lines_total is deliberately EXCLUDED — it is
+    # per-file, and with a log file per container that is the one genuinely
+    # expensive series here. files_active_total covers the same question.
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - monitoring
+    relabel_configs:
+    - action: keep
+      regex: alloy
+      source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+    - source_labels: [__meta_kubernetes_pod_ip]
+      target_label: __address__
+      replacement: '$1:12345'
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+    - source_labels: [__meta_kubernetes_pod_node_name]
+      target_label: node
+    metric_relabel_configs:
+    - action: keep
+      source_labels: [__name__]
+      regex: 'alloy_build_info|alloy_component_controller_running_components|alloy_config_last_load_successful|alloy_config_load_failures_total|alloy_resources_process_resident_memory_bytes|loki_write_dropped_entries_total|loki_write_dropped_bytes_total|loki_write_batch_retries_total|loki_source_journal_target_lines_total|loki_source_file_files_active_total'
     metrics_path: '/metrics'
+
+  - job_name: 'crowdsec'
+    # Pod discovery, not the crowdsec-service ClusterIP (changed 2026-09-02).
+    # LAPI runs 3 replicas and each pod counts only the bouncers that talked to
+    # THAT pod, so a single target on the service VIP sampled a random replica
+    # per scrape. Measured 2026-09-02: all three Traefik bouncers were pinned to
+    # pod ...-6h69x (the plugin holds a keep-alive connection, so it sticks to
+    # one backend), which had cs_lapi_bouncer_requests_total for every
+    # traefik@<ip>; the other two pods had no traefik series at all. Two scrapes
+    # in three therefore saw nothing from the L7 bouncer and
+    # CrowdSecL7BouncerNotPolling fired, then resolved on the next scrape that
+    # happened to land on 6h69x — 3 fired / 3 resolved in 24h while cscli showed
+    # every bouncer pulling on schedule. The firewall bouncers hid the problem
+    # because they long-poll /v1/decisions/stream and so appear on all three.
+    # Scraping each pod gives every counter its own monotonic series, which is
+    # what sum(rate(...)) needs. This supersedes the 2026-08-31 selector
+    # widening documented on CrowdSecL7BouncerNotPolling; that fixed a different
+    # cause (per-pod bouncer registration names) and left this one in place.
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - crowdsec
+    relabel_configs:
+    - action: keep
+      regex: crowdsec;lapi
+      source_labels: [__meta_kubernetes_pod_label_k8s_app, __meta_kubernetes_pod_label_type]
+    - source_labels: [__meta_kubernetes_pod_ip]
+      target_label: __address__
+      replacement: '$1:6060'
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+    metrics_path: '/metrics'
+
+  - job_name: 'crowdsec-agent'
+    # The AGENTS, added 2026-09-10. The `crowdsec` job above keeps only
+    # type=lapi pods, so until now nothing scraped the five DaemonSet agents
+    # and `up{namespace="crowdsec"}` returned no series at all. Everything the
+    # LAPI exposes is about decisions AFTER the fact; the agent is where
+    # detection actually happens, and all 319 of its cs_* series were invisible.
+    #
+    # What this makes visible, and why it is worth a job:
+    #   cs_buckets                      live leaky buckets, per scenario
+    #   cs_bucket_overflowed_total      detections, per scenario
+    #   cs_bucket_instantiation_total   bucket churn
+    #   cs_parser_hits_total            whether a parser or whitelist runs
+    #   cs_node_hits_ok_total / _ko_    per-node parse success
+    #
+    # Concretely: the 2026-09-09 node3 OOM was caused by 5.29k live
+    # forgejo-crawl-slow buckets on one agent, and diagnosing it meant running
+    # `cscli metrics show scenarios` inside each of five pods by hand, because
+    # cs_buckets was not in Prometheus. It is a graph now.
+    #
+    # SEPARATE JOB NAME on purpose. Three existing alerts key on
+    # `up{job="crowdsec"}` (CrowdSecDown uses max(up{job="crowdsec"}) == 0,
+    # CrowdSecL7BouncerNotPolling uses == 1), and folding five more targets into
+    # that job would quietly change what those expressions mean. The metric
+    # names do not collide either way: cs_lapi_* and cs_alerts are LAPI-only,
+    # cs_bucket_* and cs_parser_* are agent-only.
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - crowdsec
+    relabel_configs:
+    - action: keep
+      regex: crowdsec;agent
+      source_labels: [__meta_kubernetes_pod_label_k8s_app, __meta_kubernetes_pod_label_type]
+    - source_labels: [__meta_kubernetes_pod_ip]
+      target_label: __address__
+      replacement: '$1:6060'
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+    # The node label is the point for the agent: bucket count and memory are a
+    # per-node property, since whichever node runs the Traefik pod carrying the
+    # crawl parses every http_* event for the whole cluster.
+    - source_labels: [__meta_kubernetes_pod_node_name]
+      target_label: node
+    metrics_path: '/metrics'
+
   - job_name: 'snmp-idrac'
     # 30s (was 1m) so the HA dashboard iDRAC metrics (temps / fan RPM / power /
     # voltage, read by ha-sofia's prometheus-query.lan REST sensors) refresh
@@ -5111,7 +6949,9 @@ extraScrapeConfigs: |
         - targets:
           - "ha-sofia.viktorbarzin.lan.:8123"
     metrics_path: '/api/prometheus'
-    bearer_token: "${haos_api_token}"
+    # infra#80: read from a mounted Secret, never inlined here — this file is
+    # rendered into a ConfigMap that oidc-power-user-readonly can read.
+    bearer_token_file: /etc/secrets/haos/token
   - job_name: 'nvidia'
     static_configs:
         - targets:
@@ -5196,3 +7036,28 @@ extraScrapeConfigs: |
         regex: 'goflow2_flow_process_nf_templates_total'
         action: drop
 
+  # f1-stream: how many verified streams the site is actually serving, per
+  # upstream source. Added 2026-09-06 after the site served ZERO streams from
+  # 2026-08-26 10:36 to 2026-09-05, about ten days, with nothing to notice it —
+  # the app exposed no metrics at all until now. Alerts: the "F1 Stream
+  # Sources" group in alerting_rules.yml. Incident and timing analysis:
+  # f1-stream/docs/playback-guard.md.
+  #
+  # Straight at the app Service (`f1` in ns f1-stream, :80 -> pod :8000), NOT
+  # through the ingress. The Anubis instance sits only in front of the Ingress,
+  # so this scrape never meets a proof-of-work challenge; the /metrics ALLOW
+  # rule in stacks/f1-stream/main.tf exists so a human can curl the endpoint
+  # from outside, not for this job.
+  #
+  # 1m rather than the 30m extraction cadence: the gauges are cheap (a handful
+  # of series) and a fast scrape keeps `up` meaningful and the alert clocks
+  # honest without adding data the extraction loop does not produce.
+  - job_name: 'f1-stream'
+    scrape_interval: 1m
+    static_configs:
+      - targets:
+        - "f1.f1-stream.svc.cluster.local:80"
+    metrics_path: '/metrics'
+    relabel_configs:
+      - target_label: instance
+        replacement: 'f1-stream'

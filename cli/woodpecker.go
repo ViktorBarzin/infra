@@ -113,8 +113,31 @@ func (c *wpClient) findPipeline(repoID int, commit string) (wpPipeline, error) {
 	if len(ps) == 0 {
 		return wpPipeline{}, fmt.Errorf("no pipelines for repo %d", repoID)
 	}
+	return pickPipeline(ps, commit)
+}
+
+// newestPipeline returns the highest-numbered pipeline. Do NOT substitute
+// ps[0]: the API's list order is not reliably newest-first when pipelines run
+// concurrently, and on 2026-08-31 that made `ci watch --repo infra` report
+// #1324 (another session's FAILING build) while #1330 already existed. A
+// confident status report about somebody else's pipeline is worse than an error.
+func newestPipeline(ps []wpPipeline) wpPipeline {
+	var best wpPipeline
+	for _, p := range ps {
+		if p.Number > best.Number {
+			best = p
+		}
+	}
+	return best
+}
+
+// pickPipeline resolves which pipeline a status/watch call means: the one for
+// the named commit when there is one, else the newest. A named commit always
+// wins over recency — asking about a commit and being told about a newer
+// unrelated build is the same class of wrong answer.
+func pickPipeline(ps []wpPipeline, commit string) (wpPipeline, error) {
 	if commit == "" {
-		return ps[0], nil
+		return newestPipeline(ps), nil
 	}
 	for _, p := range ps {
 		if strings.HasPrefix(p.Commit, commit) {

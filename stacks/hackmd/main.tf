@@ -36,6 +36,7 @@ module "nfs_hackmd" {
   nfs_server = var.nfs_server
   nfs_path   = "/srv/nfs/hackmd"
   storage    = "5Gi"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "hackmd" {

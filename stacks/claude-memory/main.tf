@@ -40,7 +40,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "claude-memory"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -127,6 +127,14 @@ resource "kubernetes_job" "db_init" {
               PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='claude_memory'" | grep -q 1 || \
                 PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -c "CREATE DATABASE claude_memory OWNER claude_memory"
               PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE claude_memory TO claude_memory"
+              # pg_prewarm, for warming the HNSW index by hand (infra#86). The
+              # autoprewarm background worker that keeps it warm across restarts
+              # needs only shared_preload_libraries (set on the CNPG cluster in
+              # stacks/dbaas) and not this extension — the extension is what
+              # provides the pg_prewarm() function a person or a script calls,
+              # e.g. after a restore, or to re-warm pages added since the last
+              # buffer dump. Needs superuser, hence -U root.
+              PGPASSWORD='${data.vault_kv_secret_v2.secrets.data["dbaas_root_password"]}' psql -h ${var.postgresql_host} -U root -d claude_memory -c "CREATE EXTENSION IF NOT EXISTS pg_prewarm"
               echo "Database init complete"
             EOT
           ]
@@ -266,21 +274,30 @@ resource "kubernetes_deployment" "claude-memory" {
             # runbook Phase 5). Read live by embeddings_enabled(); rollback =
             # set to "0" and re-apply (instant lexical-only, schema untouched).
             name  = "MEMORY_EMBEDDINGS_ENABLED"
-            value = "0"
+            value = "1"
           }
           env {
             # Model swap, 2026-09-01: BAAI/bge-large-en-v1.5 -> Qwen/Qwen3-Embedding-0.6B,
             # served by onnxruntime from a graph baked into the image. Native 1024-d, so
             # the halfvec(1024) column and the HNSW index are untouched and the migration
             # is a re-embed rather than a schema change. It is also multilingual, which
-            # bge-large is not: 9.2% of a 400-memory sample carries Bulgarian that the
-            # English-only model has no representation for.
+            # bge-large is not: 6.1% of the corpus (663 of 10,914, counted in full rather
+            # than sampled) carries Cyrillic the English-only model cannot represent, and
+            # 16.5% of the 400 most recent do.
             #
-            # MEMORY_EMBEDDINGS_ENABLED is 0 above ONLY for the cutover. The re-embed
-            # (scripts/reembed.py) rewrites the embedding column in place, so until it
-            # finishes the index holds a mix of bge and Qwen vectors; recall serves
-            # lexical-only for the duration rather than ranking against both. Flip back
-            # to "1" once the backfill completes and the eval gate passes.
+            # CUTOVER DONE 2026-09-01. All 10,892 non-sensitive memories were re-embedded
+            # on the T4 in 22.8 min at 8.0/s, coverage verified at 10,892 of 10,892 with
+            # memory_embeddings_pending back to 0 and zero sensitive rows embedded
+            # (ADR-0003). Rows at both ends of the id range reproduce a fresh Qwen embed
+            # at cosine 1.00000.
+            #
+            # The eval gate passed on the preserved 119-query harness: a paired bootstrap
+            # against the stored bge baseline puts EVERY metric's 95% CI across zero in
+            # every stratum, i.e. statistical parity on English retrieval, no regression.
+            # The swap is justified by latency (21ms on CUDA against 250-900ms for
+            # bge-large on CPU) and by multilingual coverage, NOT by English quality --
+            # and the multilingual gain remains unmeasured, because that eval set contains
+            # no Cyrillic queries.
             #
             # Rolling back the model is this flag, not a vector restore: an in-place
             # re-embed leaves no bge vectors behind, and api/recall.py documents
@@ -383,29 +400,74 @@ resource "kubernetes_deployment" "claude-memory" {
               cpu    = "1000m"
             }
             limits = {
-              # 2560Mi -> 3Gi with the ONNX backend (2026-09-01). torch is gone, but
-              # onnxruntime's CUDA provider adds a host-side allocation for the CUDA
-              # context on top of the ~600MiB int8 graph. The limit does not affect
-              # scheduling (only the request does, and that is unchanged), so raising it
-              # costs nothing and avoids an OOM-kill on a path that is hard to attribute.
-              memory = "3Gi"
+              # 2560Mi -> 6Gi with the ONNX backend (2026-09-01), in two steps. 3Gi was
+              # sized for the int8 graph (~600 MiB); int8 was then rejected on vector
+              # fidelity and fp16 could not be produced, so the image carries the fp32
+              # graph at ~2.4 GiB of weights. onnxruntime reads external tensor data into
+              # host memory before handing it to a device, so 3Gi OOM-killed the process
+              # (exit 137) the first time an embed loaded the model — on the CPU provider
+              # in a verification run, which is the same load path the GPU takes.
+              #
+              # 4Gi is the CEILING the tier-4-aux LimitRange allows per container. 6Gi was
+              # tried first and made every pod unschedulable ("maximum memory usage per
+              # Container is 4Gi, but limit is 6Gi") — the service was down until it came
+              # back to 4Gi. Raising the ceiling means a namespace-scoped LimitRange
+              # override, not a bigger number here. The limit does not affect scheduling
+              # (only the request does, unchanged at 512Mi).
+              memory = "4Gi"
 
               # ONE time-slice of the T4 (the operator advertises 100), plus the VRAM
               # contract the scheduler counts and the gpu-vram-watchdog enforces.
               #
-              # 1200 -> 2000 MiB (2026-09-01). The first attempt baked an int8 graph at
-              # ~600 MiB of weights; int8 was then rejected because it produced vectors
-              # scoring cosine 0.16-0.37 against the reference model, so the image now
-              # carries an fp16 graph at ~1.2 GiB. 2000 = ~1200 weights + ~300 CUDA
-              # context + arena and margin.
+              # 1200 -> 3200 MiB (2026-09-01), following the precision the graph ended up
+              # at. int8 (~600 MiB) was rejected because it produced vectors scoring
+              # cosine 0.16-0.37 against the reference model. fp16 (~1.2 GiB) could not be
+              # produced at all: onnxconverter_common cannot serialise a graph this size
+              # with shape inference on, and emits a type-inconsistent graph with it off.
+              # So the image carries the fp32 graph the fidelity gate accepted at cosine
+              # 1.00000, at ~2.4 GiB of weights. 3200 = ~2400 weights + ~300 CUDA context
+              # + arena and margin.
               #
-              # Still a first estimate, to be tightened from gpu_pod_memory_used_bytes
-              # once it has run, exactly as ADR-0016 asks. It fits without a capacity
-              # change: after the 2026-08-31 re-basing of every tenant to measured
-              # footprints, declared totals are 7,684 of the 14,000 advertised, so this
-              # takes headroom from 6,316 to 4,316.
+              # 3200 -> 4000 -> 5000, each step from a measurement (2026-09-01).
+              #
+              # A single model load reads 3,260 MiB, which is what 4000 was sized for. But
+              # onnxruntime's CUDA arena GROWS under sustained use: during the 14/s
+              # re-embed backfill the pod reached 4,236 MiB and the watchdog logged
+              # "over budget (used=4236MiB > 4000MiB) but nothing is blocked". That is the
+              # same arena-growth pattern ADR-0016 documents for immich-ml, so a
+              # declaration taken from one load is structurally too low. 5000 covers the
+              # observed sustained peak with margin.
+              #
+              # Two sampling notes for whoever re-tunes this. The pod reads ~100 MiB, the
+              # CUDA context alone, until the model actually loads — sample after the
+              # first embed, never before. And the backfill is the heaviest load this
+              # workload ever sees (thousands of document embeds back to back); steady
+              # recall is one query embed per request, so 5000 is deliberately sized for
+              # the worst case rather than the common one.
+              #
+              # Still fits without a capacity change: declared totals are 12,600 of the
+              # 14,000 advertised, leaving 1,400 MiB of headroom. (Was written as
+              # 11,684/2,316 — stale once other tenants were re-seated. bead code-n3xl.)
+              #
+              # 2026-09-02: this seat looked badly under-declared for a day. Resident
+              # VRAM held 3,218 MiB for eighteen hours, stepped to 7,314 in one hour
+              # and stayed flat there for six more without a restart, so the pod sat
+              # 2,314 MiB over this budget with only 1,400 MiB of node headroom to
+              # raise it into. The cause was not the workload: onnxruntime's CUDA BFC
+              # arena defaults to arena_extend_strategy=kNextPowerOfTwo, so it DOUBLES
+              # on demand and never gives memory back — +4,096 exactly, and a flat line
+              # rather than a climbing one. Fixed in claude-memory-mcp 62271e36 by
+              # pinning kSameAsRequested, as immich's ML container already does.
+              # Measured after: 2,466 MiB under ten minutes of active recall, growing
+              # in tens rather than doubling.
+              #
+              # 5000 is now generous, deliberately. It is kept because the burst this
+              # was sized for (thousands of back-to-back document embeds) has not been
+              # re-measured since the arena change, and an under-seated tenant is worse
+              # than an over-seated one — the watchdog recycles offenders. Worth
+              # lowering once a re-embed run has been observed under the new strategy.
               "nvidia.com/gpu"         = "1"
-              "viktorbarzin.me/gpumem" = "2000"
+              "viktorbarzin.me/gpumem" = "5000"
             }
           }
         }
