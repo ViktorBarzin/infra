@@ -241,3 +241,38 @@ func parseServicesQuery(args []string) string {
 	}
 	return ""
 }
+
+// catalogJSON renders the inventory as a JSON array so a script can consume it
+// (`homelab services --json | jq -r '.[].host'`). It deliberately omits the
+// routing table that formatCatalog prints above the inventory: that half is
+// prose aimed at a human, and every consumer would have to strip it back out.
+//
+// Keys are always present, empty string included, so a consumer indexes by key
+// instead of testing for one. in_cluster carries the same warning as the
+// `[in-cluster]` marker in the text output — the host is reachable from inside
+// the cluster only, and a consumer that treats it as a URL will conclude a
+// healthy service is down.
+func catalogJSON(svcs []service) (string, error) {
+	type row struct {
+		Name        string `json:"name"`
+		Host        string `json:"host"`
+		Description string `json:"description"`
+		Group       string `json:"group"`
+		InCluster   bool   `json:"in_cluster"`
+	}
+	rows := make([]row, 0, len(svcs))
+	for _, s := range svcs {
+		rows = append(rows, row{
+			Name:        s.Name,
+			Host:        s.Host,
+			Description: s.Description,
+			Group:       s.Group,
+			InCluster:   s.Internal,
+		})
+	}
+	b, err := json.MarshalIndent(rows, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}

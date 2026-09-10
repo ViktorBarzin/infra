@@ -245,11 +245,12 @@ module "ingress" {
 # -----------------------------------------------------------------------------
 
 module "nfs_vaultwarden_backup_host" {
-  source     = "../../../../modules/kubernetes/nfs_volume"
-  name       = "vaultwarden-backup-host"
-  namespace  = kubernetes_namespace.vaultwarden.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/vaultwarden-backup"
+  source             = "../../../../modules/kubernetes/nfs_volume"
+  name               = "vaultwarden-backup-host"
+  namespace          = kubernetes_namespace.vaultwarden.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/vaultwarden-backup"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_cron_job_v1" "vaultwarden-backup" {

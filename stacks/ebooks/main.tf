@@ -107,7 +107,7 @@ resource "kubernetes_manifest" "calibre_external_secret" {
       namespace = "ebooks"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -137,7 +137,7 @@ resource "kubernetes_manifest" "audiobookshelf_external_secret" {
       namespace = "ebooks"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -167,7 +167,7 @@ resource "kubernetes_manifest" "servarr_external_secret" {
       namespace = "ebooks"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -223,11 +223,12 @@ module "tls_secret" {
 
 # NFS Volumes - Calibre (prefixed with ebooks- to avoid PV name clash with old stacks)
 module "nfs_calibre_library_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-library-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/calibre-library"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-calibre-library-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/calibre-library"
+  storage_class_name = "nfs-pve"
 }
 
 # iSCSI volume for config (SQLite DBs) - enables WAL mode for concurrent reads/writes
@@ -260,44 +261,49 @@ resource "kubernetes_persistent_volume_claim" "calibre_config_iscsi" {
 }
 
 module "nfs_calibre_ingest_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-ingest-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-calibre-ingest-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/cwa-book-ingest"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_mam_farming_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-mam-farming-host"
-  namespace  = "ebooks"
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/servarr/mam-farming"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-mam-farming-host"
+  namespace          = "ebooks"
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/servarr/mam-farming"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_calibre_stacks_config_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-calibre-stacks-config-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/calibre-web-automated/stacks"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-calibre-stacks-config-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/calibre-web-automated/stacks"
+  storage_class_name = "nfs-pve"
 }
 
 # NFS Volumes - Audiobookshelf (prefixed with ebooks- to avoid PV name clash)
 module "nfs_audiobookshelf_audiobooks_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-audiobooks-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/audiobooks"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-abs-audiobooks-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/audiobooks"
+  storage_class_name = "nfs-pve"
 }
 
 module "nfs_audiobookshelf_podcasts_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-podcasts-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/podcasts"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-abs-podcasts-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/podcasts"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_persistent_volume_claim" "abs_config_proxmox" {
@@ -330,11 +336,12 @@ resource "kubernetes_persistent_volume_claim" "abs_config_proxmox" {
 }
 
 module "nfs_audiobookshelf_metadata_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebooks-abs-metadata-host"
-  namespace  = kubernetes_namespace.ebooks.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiobookshelf/metadata"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebooks-abs-metadata-host"
+  namespace          = kubernetes_namespace.ebooks.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiobookshelf/metadata"
+  storage_class_name = "nfs-pve"
 }
 
 # Calibre-Web-Automated Deployment
@@ -925,6 +932,16 @@ resource "kubernetes_deployment" "book_search" {
             name  = "GOODREADS_KINDLE_EMAIL"
             value = var.goodreads_kindle_email
           }
+          # The iOS Shortcut sends a recipient NAME, not an address. Only the
+          # first attachment in a shortcut's HTTP header dictionary resolves,
+          # so the api key is the one variable it can carry and everything else
+          # it sends is a literal string. Holding the addresses here also keeps
+          # them out of the shortcut file, which /shortcut serves without
+          # authentication, and lets one change without a reinstall.
+          env {
+            name  = "KINDLE_RECIPIENTS"
+            value = "anca:${var.goodreads_kindle_email}"
+          }
           env {
             name = "QBITTORRENT_PASS"
             value_from {
@@ -1401,5 +1418,21 @@ resource "kubernetes_deployment" "goodreads_sync" {
         }
       }
     }
+  }
+
+  # Kyverno stamps keel.sh/policy, keel.sh/trigger and keel.sh/pollSchedule onto
+  # every workload in this keel-enrolled namespace, and the kubernetes provider
+  # manages metadata.annotations as a whole map even where none is declared, so
+  # all three planned as removals on every apply. That is the same two-owners,
+  # one-field fight the siblings in this file already settle; this deployment
+  # was simply missing the block. dns_config comes from inject-ndots and is the
+  # repo-wide requirement for any kubernetes_deployment.
+  lifecycle {
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+    ]
   }
 }

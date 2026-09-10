@@ -89,11 +89,18 @@ resource "kubernetes_deployment" "error_pages" {
 
           resources {
             requests = {
-              cpu    = "5m"
+              cpu = "5m"
+              # Request stays 32Mi. Measured high-water is 25 MiB and the
+              # 5-minute peak over 7d is 31 MiB, so 32Mi is the right
+              # reservation. Requests are the scarce thing on this cluster.
               memory = "32Mi"
             }
             limits = {
-              memory = "32Mi"
+              # 32Mi -> 128Mi, 2026-09-06. OOM-killed on 2026-09-05 with a
+              # 31 MiB peak against a 32Mi cap, i.e. no headroom at all for a
+              # burst. Limits do not reserve, so this costs no schedulable
+              # capacity. Namespace LimitRange allows 8Gi.
+              memory = "128Mi"
             }
           }
         }

@@ -30,6 +30,8 @@ func buildRegistry() []Command {
 	reg = append(reg, vaultCommands()...)
 	reg = append(reg, inviteCommands()...)
 	reg = append(reg, servicesCommands()...)
+	reg = append(reg, reflectCommands()...)
+	reg = append(reg, qualityCommands()...)
 	reg = append(reg, shareCommands()...)
 	reg = append(reg, pasteCommands()...)
 	reg = append(reg, crowdsecCommands()...)
@@ -80,6 +82,22 @@ func isCommandGroup(reg []Command, group string) bool {
 		}
 	}
 	return false
+}
+
+// flagToken splits one argv token into a dash-insensitive flag name and its
+// inline value: "--field=x" and "-field=x" both give ("field", "x", true), and
+// "--burn" gives ("burn", "", false).
+//
+// Accepting either dash count is deliberate. The tools these verbs wrap (`vault`,
+// `bw`, `kubectl`) disagree on the convention, so muscle memory produces both —
+// and a flag we fail to recognise must be an ERROR, never a token dropped on the
+// floor. A parser that silently ignores an unmatched flag falls through to its
+// DEFAULT, which is how `vault kv get -field=K` printed a whole secret and
+// `vault get item -field=username` returned the password (both 2026-09-10).
+// Reach for this in any hand-rolled arg loop, and end the switch with a
+// `default:` that errors.
+func flagToken(a string) (name, value string, hasValue bool) {
+	return strings.Cut(strings.TrimLeft(a, "-"), "=")
 }
 
 func containsArg(args []string, want string) bool {

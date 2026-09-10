@@ -52,7 +52,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "resume"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -202,6 +202,7 @@ module "nfs_data_host" {
   nfs_path     = "/srv/nfs/resume"
   storage      = "1Gi"
   access_modes = ["ReadWriteOnce"]
+  storage_class_name = "nfs-pve"
 }
 
 # Reactive Resume app

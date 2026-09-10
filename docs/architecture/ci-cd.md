@@ -222,9 +222,9 @@ Woodpecker is **deploy + cluster-touching steps only**:
 | Pipeline | File | Purpose |
 |----------|------|---------|
 | per-app deploy | `.woodpecker/deploy.yml` (each repo) | `kubectl set image` + Slack notify (event: **manual**) |
-| terragrunt apply | `.woodpecker/default.yml` | Changed-stacks apply on push to master (runs in `infra-ci`). **Skips Tier-0 `vault`** — it's human-applied via OIDC; the CI `ci` role lacks Vault-admin perms (`sys/mounts`, `sys/policies/acl`) so a CI apply 403s |
+| terragrunt apply | `.woodpecker/default.yml` | Changed-stacks apply on push to master (runs in `infra-ci`). **Skips Tier-0 `vault`** — it's human-applied via OIDC; the CI `ci` role lacks Vault-admin perms (`sys/mounts`, `sys/policies/acl`) so a CI apply 403s. **Since 2026-09-02 (infra#84) the skip is loud**: the run records the stack, posts to Slack naming the commit and the remediation (`cd stacks/vault && ../../scripts/tg apply`), and pushes the `ci_stack_pending_human_apply` gauge, which `CIStackPendingHumanApply` alerts on after 2h. The run still exits **0** — a deliberate skip is not a failure, and turning ~4 of 32 runs red for correct behaviour trains people to ignore red |
 | certbot | `.woodpecker/renew-tls.yml` | TLS renewal cron. Schedule `@weekly` (Sunday 00:00) |
-| drift-detection | `.woodpecker/drift-detection.yml` | Terraform drift, **`0 4 * * *`** (was `@daily`/00:00 until 2026-08-16, which collided with `renew-tls`). Runs in `infra-ci`. **Skips Tier-0 `vault`** (its `plan` 403s under the `ci` role and would fail the whole run). Re-plans drifted stacks against current master before reporting, and lists the changed **resources** per stack via `scripts/drift-report.py` — see "Reading a drift report" below |
+| drift-detection | `.woodpecker/drift-detection.yml` | Terraform drift, **`0 4 * * *`** (was `@daily`/00:00 until 2026-08-16, which collided with `renew-tls`). Runs in `infra-ci`. **Skips Tier-0 `vault`** (its `plan` 403s under the `ci` role and would fail the whole run). Re-plans drifted stacks against current master before reporting, and lists the changed **resources** per stack via `scripts/drift-report.py` — see "Reading a drift report" below. Known gap: drift-detection remains **blind to vault**, so a hand-applied vault change is neither verified nor reported by the nightly run |
 | provision-user | `.woodpecker/provision-user.yml` | Add namespace-owner user from Vault spec |
 | registry-config-sync | `.woodpecker/registry-config-sync.yml` | SCP `modules/docker-registry/*` → `10.0.20.10` on change |
 | pve-nfs-exports-sync | `.woodpecker/pve-nfs-exports-sync.yml` | Sync `scripts/pve-nfs-exports` → `/etc/exports` on PVE |
@@ -255,8 +255,23 @@ Three things the report tells you that the old count could not:
 - **Symbols** are `+` created, `-` destroyed, `~` updated in-place, `±` replaced.
   A stack showing only `±` on `null_resource` is almost always a
   `triggers = { always = timestamp() }` resource, which can never plan clean by
-  construction — `infra`, `monitoring`, `technitium` and `dbaas` are the standing
-  examples. Those are expected, not a backlog.
+  construction. As of 2026-09-03 there is exactly ONE left, `monitoring`, and it
+  is deliberate: `null_resource.grafana_admin_only_folder_acl` re-asserts the
+  folder ACL on every apply so that a permission edited in the Grafana UI is put
+  back, and nothing else enforces that. Treat a `±` there as expected.
+
+  `infra`, `technitium` and `dbaas` used to be listed here too. As of 2026-09-03
+  none of them contains a `timestamp()` or `uuid()` trigger any more, checked by
+  grep across the whole `stacks/` tree. `technitium`'s gate had its `always`
+  trigger removed once its four digest triggers were shown to cover every real
+  rollout, with Prometheus watching DNS health continuously in between (commit
+  `3e75f574`); `technitium` and `tts` were each re-planned afterwards and both
+  report `No changes`. `infra` was separately resolved earlier the same day.
+  `dbaas` was not re-planned, so treat "no nondeterministic trigger" as the
+  claim there rather than "plans clean".
+
+  Before treating any remaining `±` as unavoidable, check whether the trigger is
+  doing work nothing else does, as `monitoring`'s is.
 - **"Could not be planned" is separate from "differs"**, and means state
   unknown. When the errored stacks form a contiguous **alphabetical tail** the
   report says the run most likely aborted partway and the counts are incomplete.
@@ -293,8 +308,22 @@ separates it from `renew-tls` and from the PVE backup chain; and metrics are emi
 *after* the confirmation pass rather than inside the plan loop, so a reclassified
 stack needs no metric rewritten (the Pushgateway is also read once for the
 first-seen timestamps instead of once per drifted stack). `drift_stack_first_seen`
-is still preserved across runs, so `DriftUnaddressed` keeps ageing a stack that
-genuinely keeps drifting.
+is preserved across runs, so `DriftUnaddressed` ages a stack that genuinely keeps
+drifting.
+
+The read-back is fussier than it looks. The Pushgateway does not serve a metric
+in the shape you pushed it: it adds `instance` and `job` grouping labels, sorts
+the label set, and renders the value as a Go float
+(`drift_stack_first_seen{instance="",job="drift-detection",stack="monitoring"}
+1.788494507e+09`). The lookup compared the whole label set as a literal string
+against what the run had pushed, so it matched nothing, every drifted stack was
+stamped as first seen at the current run, and `drift_stack_age_hours` read 0 for
+every stack from the day the metric was added until 2026-09-04. Anything else
+reading a metric back off the gateway wants to match on the metric name plus the
+label it cares about, and to parse the value as a float rather than feeding it to
+shell arithmetic. Ages accumulate from the first run after the fix; the earlier
+first-seen history was overwritten nightly and is only recoverable from
+`drift_stack_state` in Prometheus.
 
 **Errored stacks are deliberately not re-planned** — "could not be planned" is a
 different signal from "differs", and re-running a failing plan does not make the

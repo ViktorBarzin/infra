@@ -634,7 +634,7 @@ resource "kubernetes_manifest" "beadboard_agent_service_secret" {
       namespace = kubernetes_namespace.beads.metadata[0].name
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

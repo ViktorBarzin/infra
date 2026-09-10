@@ -37,7 +37,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "n8n"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -67,7 +67,7 @@ resource "kubernetes_manifest" "external_secret_claude_agent" {
       namespace = "n8n"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -101,7 +101,7 @@ resource "kubernetes_manifest" "external_secret_instagram_pipeline" {
       namespace = "n8n"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"

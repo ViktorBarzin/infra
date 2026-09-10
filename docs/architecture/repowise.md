@@ -247,6 +247,29 @@ Current sizing: API requests **4Gi**, limit **6Gi**; `mcp` requests 256Mi, limit
 genuine leak and a different problem. Expect the plateau to track repo count and
 index size, so re-measure when the Corpus grows rather than assuming it holds.
 
+### CPU, and why the request is not a formality
+
+API requests **1200m**, `sync` **400m**, `web` and `mcp` **10m** each, raised
+from 50m/50m/10m/10m on 2026-09-03. Measured over the six hours before the
+change the API averaged 1383m and peaked at 1995m, so its request was 28x short.
+
+That is not a cosmetic mismatch. CFS hands out contended CPU in proportion to
+the request, so on a busy node the API held roughly a 0.6% slice while needing
+1.4 cores, and its `/health` probe blew a 15s timeout. It logged 1025
+`Unhealthy` events in six hours, and because `failureThreshold` is 10 it never
+actually restarted, so nothing recovered and nothing paged beyond the noise.
+
+The namespace `ResourceQuota` caps `requests.cpu` at **2**, which is what holds
+the API at 1200m rather than its measured average. Raising it further means
+raising the quota first.
+
+What made the numbers that high in the first place was a stale
+`/workspace/infra/.git/index.lock`: every sync pass failed `git reset --hard`,
+then triggered a full 40-repo reindex anyway, every 60-120 seconds. After the
+lock was removed a pass completed and the next was scheduled 3412s out, and API
+CPU fell to 3m. So re-measure against a healthy sync loop before treating 1.4
+cores as this service's steady state.
+
 **Before changing any memory number here, read the namespace ceilings:**
 
 ```bash

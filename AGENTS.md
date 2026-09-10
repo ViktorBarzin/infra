@@ -100,7 +100,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - `config.tfvars` — non-secret configuration (plaintext)
 - `secrets.sops.json` — all secrets (SOPS-encrypted JSON)
 - `terraform.tfvars` — legacy secrets file (git-crypt, kept for reference)
-- `scripts/cluster_healthcheck.sh` — 49-check cluster health script (nodes, workloads, monitoring, certs, backups, external reachability, Slack #alerts traffic)
+- `scripts/cluster_healthcheck.sh` — 50-check cluster health script (nodes, workloads, monitoring, certs, backups, external reachability, Slack #alerts traffic)
 
 ## Storage
 - **NFS** (`nfs-proxmox` StorageClass): For app data. Use the `nfs_volume` module, never inline `nfs {}` blocks.
@@ -111,7 +111,8 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - **NFS mount options**: Always `soft,timeo=30,retrans=3` to prevent uninterruptible sleep (D state).
 - **NFS export directory must exist** on the Proxmox host before Terraform can create the PV.
 - **Backup (3-2-1)**: Copy 1 = live PVCs on sdc. Copy 2 = sda `/mnt/backup` (PVC file backups, auto SQLite backups, pfSense, PVE config, **VM images via `vzdump-vms`**). Copy 3 = Synology offsite (two-tier: sda→`pve-backup/`, NFS→`nfs/`+`nfs-ssd/` via inotify change tracking).
-- **vzdump-vms** (Daily 01:00): live `vzdump --mode snapshot` of hand-managed VMs (NOT in TF) → `/mnt/backup/vzdump/`, keep 3/VMID. `VZDUMP_VMIDS` default `102` (devvm) — the only VM imaged today; before this (2026-06-09) no VM was ever imaged. NOT in the incremental offsite manifest; monthly full pass mirrors it. See `docs/architecture/backup-dr.md`.
+- **vzdump-vms** (**Weekly Sun 01:00**): live `vzdump --mode snapshot` of hand-managed VMs (NOT in TF) → `/mnt/backup/vzdump/`, keep 3/VMID. `VZDUMP_VMIDS` default `102` (devvm) — the only VM imaged today; before this (2026-06-09) no VM was ever imaged. Nightly until 2026-08-16, when the full-disk re-read proved too expensive for sdc; it is now the bare-metal restore floor and `devvm-home-backup` does the daily work. NOT in the incremental offsite manifest; monthly full pass mirrors it. See `docs/architecture/backup-dr.md`.
+- **devvm-home-backup** (Daily 03:30): `rsync --link-dest` incremental of devvm `/home` → `/mnt/backup/devvm-home/`, keep 14 hardlinked generations (~29 GB each). PULL from the PVE host over an `rrsync -ro /home`-pinned key, so devvm cannot reach its own backups. Covers what nothing else does: two repos with no remote, unpushed commits, uncommitted work, `~/.claude` and `~/.t3`. Deployed by `.woodpecker/pve-scripts-sync.yml`.
 - **daily-backup** (Daily 05:00): Auto-discovered BACKUP_DIRS (glob), auto SQLite backup (magic number + `?mode=ro`), pfSense, PVE config. No NFS mirror step (NFS syncs directly to Synology via inotify).
 - **offsite-sync-backup** (Daily 06:00): Step 1: sda→Synology `pve-backup/`. Step 2: NFS→Synology `nfs/`+`nfs-ssd/` via `rsync --files-from` (inotify change log). Monthly full `--delete`.
 - **nfs-change-tracker.service**: inotifywait on `/srv/nfs` + `/srv/nfs-ssd`, logs to `/mnt/backup/.nfs-changes.log`. Incremental syncs complete in seconds.

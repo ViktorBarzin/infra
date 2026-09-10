@@ -100,6 +100,33 @@ def select_offender(used, budgets):
     return offenders[0]
 
 
+def select_largest(used, exclude_namespaces=frozenset()):
+    """Biggest VRAM holder on the card, seated or not.
+
+    select_offender() answers "who broke a contract", and deliberately cannot
+    see a seatless tenant. But the emergency floor is a backstop against
+    starvation, and starvation is usually caused by whoever holds the most
+    memory — which may be a tenant with no seat at all. So the floor path falls
+    back to this.
+
+    `exclude_namespaces` holds the tenants already reporting a failed
+    allocation. They are the victims, not the cause; recycling frigate to make
+    room for frigate would be the wrong way round.
+
+    Returns (overshoot, (ns, pod), used, budget) with overshoot 0 and budget
+    None, matching select_offender's shape so callers stay uniform.
+    """
+    candidates = [
+        (u, key) for key, u in used.items()
+        if key[0] not in exclude_namespaces and u > 0
+    ]
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    u, key = candidates[0]
+    return (0.0, key, u, None)
+
+
 def contention_reason(free_mib, floor_mib, pending, cuda_oom):
     """Why we should reclaim VRAM now, or None to let a tenant keep bursting.
 
@@ -257,7 +284,16 @@ def tick(cfg, k8s):
     # Step 1: who is over contract? Cheap, and usually nobody.
     budgets = declared_budgets(k8s, cfg["resource"], node)
     chosen = select_offender(used, budgets)
-    if chosen is None:
+
+    # A seated offender is the usual trigger, but it must not be the ONLY one.
+    # When a seatless tenant fills the card there is no contract to breach, and
+    # gating the whole tick on `chosen` made the emergency floor unreachable
+    # code: measured live on 2026-09-01, free VRAM sat at 547-569MiB against a
+    # 1536MiB floor for ten consecutive minutes while llama-swap held ~7GiB,
+    # and nothing was recycled. Anything that restarted into that would have
+    # starved with the armed watchdog watching (infra#78, infra#79).
+    below_floor = free < cfg["floor"]
+    if chosen is None and not below_floor:
         return
 
     # Step 2: does anything actually want the card? Only ask once we know there
@@ -273,18 +309,32 @@ def tick(cfg, k8s):
         cuda_oom = parse_cuda_oom_alerts(alerts, cfg["cuda_oom_alertname"])
 
     reason = contention_reason(free, cfg["floor"], pending, cuda_oom)
-    overshoot, (ns, pod), u, budget = chosen
     if reason is None:
-        print(
-            "%s/%s over budget (used=%.0fMiB > %dMiB) but nothing is blocked "
-            "-> allowing the burst, no recycle" % (ns, pod, u, budget),
-            flush=True,
-        )
+        if chosen is not None:
+            _, (ns, pod), u, budget = chosen
+            print(
+                "%s/%s over budget (used=%.0fMiB > %dMiB) but nothing is blocked "
+                "-> allowing the burst, no recycle" % (ns, pod, u, budget),
+                flush=True,
+            )
         return
+
+    if chosen is None:
+        # Below the floor with nobody over contract: the holder is seatless.
+        # Reclaim the largest one that is not itself the starving victim.
+        chosen = select_largest(used, exclude_namespaces=cuda_oom)
+        if chosen is None:
+            print(
+                "%s but no reclaimable tenant -> no action" % reason, flush=True
+            )
+            return
+
+    overshoot, (ns, pod), u, budget = chosen
+    seat = ("budget=%dMiB, overshoot=%.0fMiB" % (budget, overshoot)
+            if budget is not None else "SEATLESS, largest holder on the card")
     print(
-        "CONTENTION (%s): recycling %s/%s "
-        "(used=%.0fMiB > budget=%dMiB, overshoot=%.0fMiB)%s"
-        % (reason, ns, pod, u, budget, overshoot,
+        "CONTENTION (%s): recycling %s/%s (used=%.0fMiB, %s)%s"
+        % (reason, ns, pod, u, seat,
            " [DRY_RUN]" if cfg["dry_run"] else ""),
         flush=True,
     )

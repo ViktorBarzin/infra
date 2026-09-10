@@ -48,7 +48,7 @@ resource "kubernetes_manifest" "external_secret" {
       namespace = "openclaw"
     }
     spec = {
-      refreshInterval = "15m"
+      refreshInterval = "1h"
       secretStoreRef = {
         name = "vault-kv"
         kind = "ClusterSecretStore"
@@ -307,11 +307,12 @@ resource "kubernetes_config_map" "openclaw_exporter" {
 }
 
 module "nfs_tools_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openclaw-tools-host"
-  namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/openclaw/tools"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "openclaw-tools-host"
+  namespace          = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/openclaw/tools"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_persistent_volume_claim" "home_proxmox" {
@@ -344,11 +345,12 @@ resource "kubernetes_persistent_volume_claim" "home_proxmox" {
 }
 
 module "nfs_workspace_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "openclaw-workspace-host"
-  namespace  = kubernetes_namespace.openclaw.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/openclaw/workspace"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "openclaw-workspace-host"
+  namespace          = kubernetes_namespace.openclaw.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/openclaw/workspace"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_persistent_volume_claim" "data_proxmox" {
@@ -396,7 +398,26 @@ resource "kubernetes_deployment" "openclaw" {
     strategy {
       type = "Recreate"
     }
-    replicas = 1
+    # PARKED 2026-09-04 (Viktor, bead code-hn6k). Scaled to 0 as a one-week
+    # reversibility test before deciding whether to decommission properly.
+    #
+    # Why: the cluster cannot drain a node because memory REQUESTS are
+    # oversubscribed while actual use sits at 41-54%, and this namespace
+    # reserves 2,560 MiB across five containers. Measured over 30 days the
+    # openclaw container peaked at 1,111 MiB and burnt 2,325 CPU-seconds in
+    # 7 days, about 0.4% of a core, while restarting 15 times.
+    #
+    # Evidence it is not in use: every "telegram" line in 30 days of Loki is a
+    # startup banner (15 restarts x 4 lines), with no message traffic;
+    # recruiter-responder, one of its consumers, has been at 0/0 replicas for
+    # 111 days; and nextcloud-todos shows no approval-card dispatches.
+    #
+    # Deliberately a park, not a removal. Five stacks still reference this
+    # namespace (nextcloud-todos, recruiter-responder, n8n,
+    # tuya-bridge/saksii_poller, monitoring's dashboard + walloff probe +
+    # scrape), and unpicking those is the real work. If nothing misses it in a
+    # week, that removal gets its own change. Reverting is this one line.
+    replicas = 0
     selector {
       match_labels = {
         app = "openclaw"
@@ -1693,7 +1714,10 @@ resource "kubernetes_deployment" "task_webhook" {
     }
   }
   spec {
-    replicas = 1
+    # Parked alongside the openclaw deployment above, same date and reasoning.
+    # It exists only to receive callbacks for openclaw tasks, so with openclaw
+    # at 0 it has nothing to serve. 64 MiB.
+    replicas = 0
     selector {
       match_labels = {
         app = "task-webhook"
@@ -1981,8 +2005,14 @@ resource "kubernetes_cron_job_v1" "memory_sync" {
         }
       }
       spec {
-        active_deadline_seconds    = 600
-        backoff_limit              = 0
+        active_deadline_seconds = 600
+        # Was 0, raised to 2 on 2026-09-03. The body is two kubectl execs into
+        # the openclaw pod, so it fails whenever that pod happens to be
+        # restarting or the node is stalling on IO, and at backoff_limit 0 a
+        # single such moment marked the Job Failed and paged. The sync is
+        # idempotent and concurrency_policy is Forbid, so retrying inside the
+        # 600s deadline is free.
+        backoff_limit              = 2
         ttl_seconds_after_finished = 86400
         template {
           metadata {

@@ -152,7 +152,15 @@ variable "sablier" {
     Keyword-type monitors must be switched to status-only at enrollment.
   EOT
   validation {
-    condition     = var.sablier == null || contains(["dynamic", "blocking"], coalesce(var.sablier.strategy, "dynamic"))
+    # try(), not `var.sablier == null || …`. Terraform 1.5.7 dereferences
+    # var.sablier.strategy even when var.sablier is null, so the null guard on
+    # the left of the || does not save it and every plan of a consumer that does
+    # not enrol in sablier fails. 1.15.4 short-circuits correctly, which is why
+    # CI never saw this — but the claude-agent-service image still ships 1.5.7,
+    # so the autonomous fixer could not plan most stacks in this repo (infra#60).
+    # try() cannot dereference a null and yields the same default, so the check
+    # still rejects a bad strategy on every version.
+    condition     = contains(["dynamic", "blocking"], try(var.sablier.strategy, "dynamic"))
     error_message = "sablier.strategy must be \"dynamic\" or \"blocking\"."
   }
 }
