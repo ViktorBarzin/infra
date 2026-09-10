@@ -107,17 +107,28 @@ agent:
       mountPath: /etc/crowdsec/scenarios/http-crawl-non_statics.yaml
       subPath: "http-crawl-non_statics.yaml"
       readonly: true
-    # New scenario rather than an override, so it sits alongside the stock one:
-    # the stock rule keeps catching FAST crawlers everywhere, this one catches a
-    # SLOW crawler on forgejo only. Adding a mount restarts the agent pods,
-    # which is what loads it (subPath mounts do not refresh on their own).
-    - name: custom-scenarios
-      mountPath: /etc/crowdsec/scenarios/forgejo-crawl-slow.yaml
-      subPath: "forgejo-crawl-slow.yaml"
-      readonly: true
+    # viktor/forgejo-crawl-slow WAS MOUNTED HERE and was retired 2026-09-10 on
+    # Viktor's call. Removing the mount is what unloads it; the ConfigMap key in
+    # main.tf went with it, and `git show` on this commit has the full scenario
+    # if it is ever wanted back.
+    #
+    # Measured on node3 during the live crawl, once the agents were finally
+    # scraped: it held 12,521 leaky buckets and had overflowed 0 times, while
+    # viktor/distributed-crawl-range held 1,373 and had overflowed 5,023. It
+    # grouped by IPv6 /64 and this crawler rotates ACROSS /64s, so every request
+    # minted a bucket that caught nobody. Each bucket carries a queue of parsed
+    # events, so the agent climbed 566 -> 788 MiB in two hours against its 1 GiB
+    # limit and was heading for the same OOM the limit raise had just deferred.
+    # An OOM restarts the pod and drops EVERY scenario's state, including the
+    # one doing the work, so the dead detector was endangering the live one.
+    #
+    # What is lost: it was written for a SLOW crawler patiently reading forgejo
+    # from one address. It never caught one, and Anubis has fronted forgejo
+    # since 2026-09-09, which challenges exactly that client.
+    #
     # Groups by the source's REGISTERED PREFIX rather than its address, which is
     # the only axis on which a crawl that sends one request per address is
-    # visible at all. Fleet-wide, unlike forgejo-crawl-slow above.
+    # visible at all. Fleet-wide.
     - name: custom-scenarios
       mountPath: /etc/crowdsec/scenarios/distributed-crawl-range.yaml
       subPath: "distributed-crawl-range.yaml"
