@@ -477,6 +477,15 @@ resource "kubernetes_endpoints" "session_events" {
 # session's OWN skills and custom commands, which the service reads off the
 # user's disk. The page ships the CLI's built-ins, so a missing route costs the
 # per-user half of the menu rather than the menu.
+#
+# /answer was added on 2026-09-10, when answering a multi-question dialog moved
+# out of the browser and into session-events. The text view now sends one choice
+# per request and the service drives the dialog, so without this route the whole
+# feature 404s. It needs its own prefix: `/answer-text/` does not match
+# `/answer/`, and a rule that dropped the trailing slash would swallow both.
+# Field telemetry over the ten days before the change recorded four-question
+# answers failing 4 times in 5, which is what prompted it (terminal-lobby
+# ADR-0010, amended).
 resource "kubernetes_manifest" "session_events_ingressroute" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -488,7 +497,7 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`) || PathPrefix(`/model/`))"
+        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`) || PathPrefix(`/answer/`) || PathPrefix(`/model/`))"
         kind  = "Rule"
         middlewares = [
           {
