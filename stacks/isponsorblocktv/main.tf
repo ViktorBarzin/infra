@@ -21,12 +21,13 @@ resource "kubernetes_namespace" "isponsorblocktv" {
 # (node6 LUN-cap relief, beads code-dfjn). The volume holds only config.json
 # (no embedded DB), so NFS is safe. Data pre-seeded to /srv/nfs/isponsorblocktv.
 module "nfs_data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "isponsorblocktv-data"
-  namespace  = kubernetes_namespace.isponsorblocktv.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/isponsorblocktv"
-  storage    = "1Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "isponsorblocktv-data"
+  namespace          = kubernetes_namespace.isponsorblocktv.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/isponsorblocktv"
+  storage            = "1Gi"
+  storage_class_name = "nfs-pve"
 }
 
 # Mute and skip ads for vermont smart tv

@@ -85,11 +85,12 @@ resource "kubernetes_persistent_volume_claim" "files_encrypted" {
 }
 
 module "nfs_backups_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "meshcentral-backups-host"
-  namespace  = kubernetes_namespace.meshcentral.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/meshcentral/meshcentral-backups"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "meshcentral-backups-host"
+  namespace          = kubernetes_namespace.meshcentral.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/meshcentral/meshcentral-backups"
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "meshcentral" {

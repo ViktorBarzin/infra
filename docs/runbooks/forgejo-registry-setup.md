@@ -119,12 +119,19 @@ cd infra/stacks/kyverno && scripts/tg apply
 cd infra/stacks/monitoring && scripts/tg apply
 cd infra/stacks/forgejo && scripts/tg apply
 
-# Resolved routing domain (+ vestigial containerd hosts.toml) on each
-# existing k8s node — VM cloud-init only fires on first boot. The routing
-# domain (~viktorbarzin.me -> Technitium) is what makes pulls hairpin-proof:
-# the hosts.toml mirror alone falls back to public DNS (Traefik 404s its
-# bare-IP requests, and the registry auth realm is an absolute public URL).
-infra/scripts/setup-forgejo-containerd-mirror.sh
+# Resolved routing domain on each existing k8s node — VM cloud-init only
+# fires on first boot. The routing domain (~viktorbarzin.me -> Technitium) is
+# what makes pulls hairpin-proof: the hosts.toml mirror alone falls back to
+# public DNS (Traefik 404s its bare-IP requests, and the registry auth realm
+# is an absolute public URL).
+#
+# The containerd hosts.toml half is NO LONGER this script's job. Since
+# 2026-09-03 playbooks/k8s-node-tuning.yml declares every certs.d entry,
+# forgejo's included, and reconciles them hourly — this script ran once per
+# node and never again, which is how the six nodes ended up with three
+# different configurations. Run the playbook instead:
+#   ansible-playbook -i playbooks/inventory.ini playbooks/k8s-node-tuning.yml --tags mirrors
+infra/scripts/setup-forgejo-containerd-mirror.sh   # routing domain only
 ```
 
 ## Verification

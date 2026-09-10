@@ -20,14 +20,29 @@ variable "skip_readiness" {
 resource "null_resource" "technitium_readiness_gate" {
   count = var.skip_readiness ? 0 : 1
 
-  # Re-run when any deployment image/resource changes, or on every apply
-  # (timestamp) so transient drift still gets exercised.
+  # Re-run when a deployment's container spec or the Corefile changes, which is
+  # every case where a rollout actually happens and the gate has something to
+  # catch.
+  #
+  # There is deliberately NO `always = timestamp()` here. It used to be, so that
+  # "transient drift still gets exercised", and the cost was that this stack
+  # could never plan clean: a timestamp trigger makes `terraform plan` non-empty
+  # on every run, so nightly drift-detection counted technitium as drifting
+  # forever and the cluster-wide drift count had a floor it could never reach
+  # below (bead code-yizt, 2026-09-03).
+  #
+  # Dropping it loses no coverage, because the properties this gate asserts are
+  # watched continuously by Prometheus rather than only at apply time. Verified
+  # live 2026-09-03, all inactive: TechnitiumDNSDown (deployment availability,
+  # for=5m), TechnitiumZoneCountMismatch (replica zone-count parity, for=15m),
+  # TechnitiumZoneSyncStale (sync freshness >1h) and DNSQueryRateDropped (pods
+  # actually answering, for=10m). The gate's unique value is failing an APPLY
+  # that breaks DNS, and an apply that changes nothing cannot break it.
   triggers = {
     primary_digest   = sha256(jsonencode(kubernetes_deployment.technitium.spec[0].template[0].spec[0].container[0]))
     secondary_digest = sha256(jsonencode(kubernetes_deployment.technitium_secondary.spec[0].template[0].spec[0].container[0]))
     tertiary_digest  = sha256(jsonencode(kubernetes_deployment.technitium_tertiary.spec[0].template[0].spec[0].container[0]))
     corefile         = sha256(kubernetes_config_map.coredns.data["Corefile"])
-    always           = timestamp()
   }
 
   provisioner "local-exec" {

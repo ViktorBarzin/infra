@@ -157,11 +157,17 @@ sender MTA ──► MX lookup ┤                                        ▲
   negligible. TCP 9100/9154 (exporters) restricted to the homelab WAN /32
   (176.12.22.76) in both the Oracle security list and the VM firewall.
 - **No public SSH**: management rides the headscale tailnet — cloud-init
-  enrolls via a **preauth key for a dedicated non-OIDC headscale user** with
-  node tag `tag:backup-mx` (headscale 0.28.0 file-mode ACL, content in Vault
-  `secret/headscale` → `headscale_acl`); SSH bound to the tailnet interface.
-  ACL grant: `group:admin → tag:backup-mx:22` (cluster pods are NOT tailnet
-  members — see monitoring). **[CH] Outage caveat**: headscale's control
+  enrolls via a **preauth key for a dedicated non-OIDC headscale user**
+  (headscale 0.28.0 file-mode ACL, content in Vault `secret/headscale` →
+  `headscale_acl`); SSH bound to the tailnet interface.
+  ACL grant: `group:admin → the `backup-mx` user's nodes:22` (cluster pods are
+  NOT tailnet members — see monitoring). **Superseded 2026-09-02 (infra#26)**:
+  this design called for a `tag:backup-mx` node tag. The tag was never added to
+  `tagOwners` and the enrolment never passed `--advertise-tags`, so mx2 has
+  always been untagged. Rather than build the tag after the fact, we recorded
+  what is true: the dedicated headscale user already gives the node its own
+  identity, and mx2's management path in practice is WireGuard to pfSense, not
+  the tailnet. **[CH] Outage caveat**: headscale's control
   plane + DERP live in the cluster, so mid-outage tailnet reachability is
   cached-netmap best-effort — the runbook documents the **OCI instance
   console connection as break-glass** management. (Also fix `vpn.md`'s stale

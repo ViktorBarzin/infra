@@ -30,6 +30,41 @@ As the Service count grows we want an audit-grade record of which Service talks 
 
 ## As-built (2026-06-25)
 
-Implemented across infra issues #57–#63. **One material deviation from the decision above:** the durable trail is NOT a Goldmane→Loki emitter (no such emitter exists in OSS Calico 3.30) — it is the **`goldmane-edge-aggregator`** service, which streams Goldmane's gRPC `Flows.Stream` API over mTLS and upserts the unique namespace-pair **edge set** (`edge(src_ns,dst_ns,action,first_seen,last_seen,flow_count)`, self-edges + empty-namespace flows dropped) into **CNPG DB `goldmane_edges`**, plus a daily `goldmane-edges-digest` CronJob → `#alerts` (all Slack consolidated to `#alerts`; the `#security` channel was abandoned 2026-06-25 — the shared webhook's Slack app isn't a member of it — see runbook). The mTLS client cert **reuses the operator's Tigera-CA-signed `whisker-backend-key-pair`** rather than copying the CA private key into TF state (Goldmane verifies CA-chain only, not identity) — re-apply `stacks/goldmane-edge-aggregator` if the operator rotates it. `service-identity` labels are live on the multi-Service namespaces (`monitoring`, `dbaas`). Whisker UI is Authentik-gated at `whisker.viktorbarzin.me`. Health: Prometheus alerts `AggregatorDown` + `DigestFailing` and cluster-health check #48.
+Implemented across infra issues #57–#63. **One material deviation from the decision above:** the durable trail is NOT a Goldmane→Loki emitter (no such emitter exists in OSS Calico 3.30) — it is the **`goldmane-edge-aggregator`** service, which streams Goldmane's gRPC `Flows.Stream` API over mTLS and upserts the unique per-workload **edge set** into **CNPG DB `goldmane_edges`**, plus a daily `goldmane-edges-digest` CronJob → `#alerts` (all Slack consolidated to `#alerts`; the `#security` channel was abandoned 2026-06-25 — the shared webhook's Slack app isn't a member of it — see runbook). The mTLS client cert **reuses the operator's Tigera-CA-signed `whisker-backend-key-pair`** rather than copying the CA private key into TF state (Goldmane verifies CA-chain only, not identity) — re-apply `stacks/goldmane-edge-aggregator` if the operator rotates it. `service-identity` labels are live on the multi-Service namespaces (`monitoring`, `dbaas`).
+
+**Two as-built corrections (2026-09-01).**
+
+1. **The trail was narrower than this ADR implies, and the drop rule was deleting
+   a class rather than skipping it.** From 2026-06-24 to 2026-09-01 the table was
+   `edge(src_ns, dst_ns, action, first_seen, last_seen, flow_count)` keyed on
+   `(src_ns, dst_ns, action)`. Goldmane writes the literal `-` for a non-workload
+   end (a node, or an address it does not know), so the aggregator's `src_ns ==
+   dst_ns` self-edge test matched `('-','-')` and deleted any flow carrying a
+   non-workload end at both ends — a differently shaped gap than "empty-namespace
+   flows are out of scope", which reads as a scoping choice. Fixed in the same
+   change that widened the projection:
+   the drop test is now on endpoint type, so a genuine self-edge is still dropped
+   while node and internet flows are kept and labelled. The table now carries
+   source/destination workload and endpoint type, the destination Service and the
+   destination port — every one of which was already on Goldmane's wire and was
+   being discarded at the adapter boundary. Schema and drop rules:
+   `docs/runbooks/goldmane-flow-trail.md`; design and rationale:
+   `docs/plans/2026-09-01-service-identity-and-request-attribution-design.md`.
+   One qualification worth carrying, measured on 2026-09-01 rather than assumed:
+   the flows that equality actually deleted are those with `-` on **both** ends,
+   and that class is currently empty — 0 of 2,168 flows in Goldmane's live buffer,
+   because no Calico HostEndpoint resources are defined and so no end is ever
+   typed as a host. The type test guards a class that appears once HostEndpoints
+   exist. What the widening recovers today is the one-dash class: 1,116 of those
+   2,168 flows (51%) touch an external address and were stored as a bare namespace
+   pair with no port, workload or endpoint type.
+2. **The etcd cost that drove the design has never been measured.** etcd's own
+   metrics endpoint is not scraped (verified 2026-09-01: no `etcd_server_*` series
+   in Prometheus; the only `etcd_*` metrics come from the apiserver's own client
+   instrumentation). The constraint is a reasonable prior rather than an
+   observation, and it is worth measuring before it is cited again.
+
+The rejection of a service mesh, platform-wide mTLS and SPIFFE stands on its own
+measured grounds and is unaffected by either correction. Whisker UI is Authentik-gated at `whisker.viktorbarzin.me`. Health: Prometheus alerts `AggregatorDown` + `DigestFailing` and cluster-health check #48.
 
 Full as-built, query recipes (incl. the Wave-1 egress-allowlist derivation), and troubleshooting: [`docs/runbooks/goldmane-flow-trail.md`](../runbooks/goldmane-flow-trail.md). Stacks: `stacks/calico` (Goldmane/Whisker + Whisker ingress), `stacks/goldmane-edge-aggregator` (the trail). Code: `~/code/goldmane-edge-aggregator`.

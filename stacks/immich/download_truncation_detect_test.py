@@ -6,24 +6,66 @@ The cases that matter are the ones separating a download that merely got cut
 Both look identical in the access log until the sizes are joined in, so these
 are built from real log lines captured on 2026-08-30.
 
+The line shape is Traefik's JSON access log (the format since 2026-09-01),
+copied from a line captured off traefik:v3.7.1 rather than written from the
+docs — including the `\u0026` that Traefik's encoder puts where a query string
+has an `&`, which is the detail a hand-written fixture gets wrong.
+
 Run: python3 download_truncation_detect_test.py
 """
 
+import json
 import unittest
 
 from download_truncation_detect import analyse, parse_lines
 
-SUFFIX = (
-    '"-" "Mozilla/5.0 (Android 16; Mobile; rv:154.0) Gecko/154.0 Firefox/154.0" '
-    '1995191 "immich@kubernetes" "http://10.10.122.155:2283" 9494ms'
-)
 
-
-def line(ip, aid, status, nbytes, proto="HTTP/2.0"):
+def line(ip, aid, status, nbytes, proto="HTTP/2.0", ua=None, path=None):
+    """One Traefik JSON access-log line for a GET of an original asset."""
+    obj = {
+        "ClientAddr": f"{ip}:45246",
+        "ClientHost": ip,
+        "ClientPort": "45246",
+        "ClientUsername": "-",
+        "DownstreamContentSize": nbytes,
+        "DownstreamStatus": status,
+        "Duration": 9494000000,
+        "OriginContentSize": nbytes,
+        "OriginDuration": 9490000000,
+        "OriginStatus": status,
+        "Overhead": 4000000,
+        "RequestAddr": "immich.viktorbarzin.me",
+        "RequestContentSize": 0,
+        "RequestCount": 1995191,
+        "RequestHost": "immich.viktorbarzin.me",
+        "RequestMethod": "GET",
+        "RequestPath": path if path is not None
+        else f"/api/assets/{aid}/original?key=k&edited=true",
+        "RequestPort": "-",
+        "RequestProtocol": proto,
+        "RequestScheme": "https",
+        "RetryAttempts": 0,
+        "RouterName": "immich-immich-immich-viktorbarzin-me@kubernetes",
+        "ServiceAddr": "10.10.122.155:2283",
+        "ServiceName": "immich-immich-immich-viktorbarzin-me-immich-2283@kubernetes",
+        "ServiceURL": "http://10.10.122.155:2283",
+        "StartLocal": "2026-08-30T02:23:24.416301062Z",
+        "StartUTC": "2026-08-30T02:23:24.416301062Z",
+        "TLSCipher": "TLS_AES_128_GCM_SHA256",
+        "TLSVersion": "1.3",
+        "entryPointName": "websecure",
+        "level": "info",
+        "msg": "",
+        "request_User-Agent": FF if ua is None else ua,
+        "request_X-Authentik-Username": "viktor",
+        "time": "2026-08-30T02:23:24Z",
+    }
+    # Traefik's encoder HTML-escapes &, < and > inside string values, so a real
+    # line never carries a bare & in the query string. json.dumps does not do
+    # that by default, so do it here or the fixture is not what Loki holds.
+    out = json.dumps(obj, separators=(",", ":"), sort_keys=True)
     return (
-        f'{ip} - - [30/Aug/2026:02:23:24 +0000] '
-        f'"GET /api/assets/{aid}/original?key=k&edited=true {proto}" '
-        f'{status} {nbytes} {SUFFIX}'
+        out.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
     )
 
 
@@ -43,27 +85,56 @@ class TestParse(unittest.TestCase):
 
     def test_ignores_unrelated_lines(self):
         noise = [
-            '10.0.0.1 - - [30/Aug/2026:02:00:00 +0000] "GET / HTTP/2.0" 200 5 ' + SUFFIX,
-            f'10.0.0.1 - - [30/Aug/2026:02:00:00 +0000] "GET /api/assets/{A}/thumbnail HTTP/2.0" 200 5 ' + SUFFIX,
+            line("10.0.0.1", A, 200, 5, path="/"),
+            line("10.0.0.1", A, 200, 5, path=f"/api/assets/{A}/thumbnail"),
             "not a log line at all",
+            "",
+            "{ this is not valid json",
+            # The nginx auth-proxy and bot-block-proxy sit in the same
+            # namespace and still log CLF. Their lines must be skipped, not
+            # half-parsed.
+            '10.0.20.1 - viktor [30/Aug/2026:02:00:00 +0000] "GET /auth HTTP/1.1" 200 7 "-" "curl/8.5.0"',
         ]
         self.assertEqual(parse_lines(noise), [])
 
-    def test_asset_id_is_positional_not_searched(self):
+    def test_asset_id_comes_from_the_request_path_field_only(self):
         # A crafted User-Agent must not be able to file metrics under a
-        # different asset. The id is only ever read from the request line.
-        evil = line(IP1, A, 200, 100).replace(
-            "Mozilla/5.0", f"/api/assets/{B}/original"
+        # different asset. The id is only ever read from the RequestPath field.
+        # Traefik escapes quotes inside values, so the crafted key never even
+        # looks like a key — but the parser must not depend on that: it reads
+        # the field by name off a parsed object, never by searching the line.
+        evil = line(
+            IP1, A, 200, 100,
+            ua=f'x","RequestPath":"/api/assets/{B}/original","z":"',
         )
         got = parse_lines([evil])
         self.assertEqual(len(got), 1)
         ip, aid, status, nbytes, ua = got[0]
-        # The point: the asset id comes from the request line, so the crafted
-        # id in the User-Agent is never the one metrics get filed under.
         self.assertEqual(aid, A)
         self.assertNotEqual(aid, B)
         self.assertEqual((ip, status, nbytes), (IP1, 200, 100))
         self.assertIn(B, ua)  # it IS carried through, just not as the asset
+
+    def test_asset_id_is_anchored_to_the_start_of_the_path(self):
+        # A path that merely CONTAINS an asset-original segment further along
+        # is not a download of that asset.
+        sneaky = line(IP1, A, 200, 100, path=f"/share/x/api/assets/{B}/original")
+        self.assertEqual(parse_lines([sneaky]), [])
+
+    def test_escaped_ampersand_in_the_query_string_still_parses(self):
+        # Traefik writes ?key=k&edited=true as ?key=k\u0026edited=true. A line
+        # built by hand without that escape would pass while the real one fails.
+        raw = line(IP1, A, 200, 4239182)
+        self.assertIn("\\u0026", raw)
+        self.assertEqual(parse_lines([raw]), [(IP1, A, 200, 4239182, FF)])
+
+    def test_range_response_parses(self):
+        got = parse_lines([line(IP1, A, 206, 1024)])
+        self.assertEqual(got, [(IP1, A, 206, 1024, FF)])
+
+    def test_missing_fields_do_not_raise(self):
+        # A line from a different producer that happens to be valid JSON.
+        self.assertEqual(parse_lines(['{"msg":"hello","level":"info"}']), [])
 
     def test_http3_lines_parse_too(self):
         got = parse_lines([line(IP1, A, 200, 3360762, proto="HTTP/3.0")])

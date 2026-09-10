@@ -235,6 +235,20 @@ resource "helm_release" "traefik" {
         # patch, so the missing entry was restored by hand with an additive JSON
         # patch (`kubectl patch --type=json`), which bypasses merge keys.
         #
+        # THIS IS NOW ALERTED. IngressAllTargetsUnreachable (critical, for 2m,
+        # group "Traefik Ingress" in the monitoring stack) fires when every
+        # blackbox probe target fails at once, which is what a lost 443 mapping
+        # looks like from outside. It exists because the drift is silent from
+        # every other angle: Traefik's pods stay Ready so TraefikDown cannot
+        # fire, and the websecure entrypoint's request rate does not drop
+        # either, since in-cluster clients reach the ClusterIP directly. A
+        # backtest over the 7 days to 2026-09-03 found THREE occurrences, each
+        # within ~2 min of a helm revision here (rev 72 -> 3 min, rev 75 -> 169
+        # min unnoticed, rev 76 -> 1 min because someone was watching). Treat
+        # any apply of this stack as capable of taking all ingress down, and
+        # check the mapping afterwards:
+        #   kubectl get svc -n traefik traefik -o json | jq '.spec.ports'
+        #
         # To disable HTTP/3 for real, do it at the Cloudflare edge for proxied
         # hosts (stacks/cloudflared), and for origin-direct hosts strip the
         # alt-svc response header with a middleware rather than touching this
@@ -385,28 +399,83 @@ resource "helm_release" "traefik" {
       }
     }
 
-    # Access logs. Headers default to DROP (log "-"); keep only User-Agent +
-    # Referer so visitor analytics can tell devices/browsers and preview bots
-    # apart (2026-07-06 — before this, share-link analytics were IP-only and
-    # bot detection needed reverse-DNS guesswork). CLF format prints them in
-    # the standard combined-log positions. Everything else (Authorization,
-    # Cookie, ...) stays dropped.
-    # ACCEPTED TRADE-OFF: traefik escapes embedded quotes in header values
-    # (`"` -> `\"`), which CrowdSec's traefik-logs grok (%%{NOTDQUOTE}) can't
-    # span — a deliberate quote-in-UA makes that line unparsed and invisible
-    # to the CrowdSec http-abuse scenarios (legit browsers never send quotes
-    # in UA). CrowdSec is one fail-open layer among several (rate-limit,
-    # Authentik, Anubis, CF); accepted 2026-07-06. Anything consuming these
-    # lines must NOT trust UA/Referer content — see the anchored-extraction
-    # guards on the share-link recording rules in stacks/monitoring.
+    # Access logs, JSON since 2026-09-01. Headers default to DROP; the four
+    # named below are kept.
+    #
+    # WHY JSON AND NOT CLF: CLF has fixed positions for Referer and User-Agent
+    # and nowhere to put anything else, so the authenticated principal — which
+    # forward-auth already puts on the request and every backend already sees —
+    # could not be logged at all. It is now a field. That is the recording half
+    # of docs/plans/2026-09-01-service-identity-and-request-attribution-design.md
+    # (step 5b); without it "which user made this request" is unanswerable for
+    # the ~90 forward-auth routers.
+    #
+    # X-Authentik-Username is stamped by the Authentik forward-auth middleware
+    # and cannot be set by a client (middleware.tf strips and replaces every
+    # X-authentik-* header). Verified against traefik:v3.7.1 on 2026-09-01: a
+    # header injected by forward-auth DOES reach the access log, because the
+    # accesslog handler holds the same http.Header map the middleware mutates.
+    #
+    # X-Auth-Fallback is logged here but will be EMPTY until the header is added
+    # to authResponseHeaders in middleware.tf (design step 1). The nginx auth
+    # fallback stamps it when the Authentik outpost 5xxs, but forward-auth only
+    # copies headers on that list, so today it never reaches the request. The
+    # field is declared now so the format does not have to change again.
+    #
+    # MEASURED COST (2026-09-01, 8,876 real access-log lines over five 10-minute
+    # windows): 402 bytes/line CLF -> 1,266 bytes/line JSON, a 3.15x raw growth.
+    # gzip'd, which is how Loki stores it, the growth is only 1.58x — JSON's
+    # repeated key names compress from 7.9x to 15.8x. At the measured 23.0 MB/h
+    # of access log that is 0.55 GB/day -> 1.7 GB/day raw, and roughly
+    # 70 MB/day -> 110 MB/day on disk.
+    #
+    # HEADER NAME CASING DOES NOT MATTER HERE, output casing is always
+    # canonical: the fields.headers.names lookup is case-insensitive, and the
+    # emitted keys are request_X-Authentik-Username / request_X-Auth-Fallback
+    # whatever case is written below (verified 2026-09-01).
+    #
+    # CONSUMERS — anything parsing these lines was ported in the same commit:
+    #   - CrowdSec: no change needed. crowdsecurity/traefik-logs already has a
+    #     JSON node alongside its CLF grok, verified with `cscli explain` on the
+    #     live agent: parser green, all five http-* scenarios still fire, and
+    #     evt.Parsed.status stringifies so the local http-403/429-abuse
+    #     overrides ('403' string compare) keep matching.
+    #     ONE BEHAVIOUR DIFFERENCE between the two parser paths, measured and
+    #     currently harmless: the CLF grok takes the first token of ClientHost
+    #     as the client IP, while the JSON node takes Split(ClientHost,',')[-1],
+    #     the RIGHTMOST entry. ClientHost is the whole X-Forwarded-For header
+    #     when one is present, so a multi-entry XFF would make the two disagree
+    #     about which address gets banned. Zero of 11,953 real access-log lines
+    #     sampled on 2026-09-01 carried a comma there — Cloudflare and the
+    #     pfSense HAProxy path both send a single entry — so source_ip is the
+    #     real client either way (spot-checked: `cscli explain` on a JSON line
+    #     resolved evt.Meta.source_ip correctly). If a multi-entry XFF ever
+    #     appears, the JSON path picks the nearest proxy rather than the client:
+    #     safer against spoofing, wrong for attribution. Watch for it if an
+    #     upstream proxy is ever chained in front of Cloudflare.
+    #   - Immich share-link recording rules + share-link-geo CronJob
+    #     (stacks/monitoring) and the download-truncation CronJob
+    #     (stacks/immich): re-anchored from CLF byte positions to the JSON key
+    #     names.
+    # The old CLF quote-escaping trade-off is GONE: the CrowdSec grok that
+    # %%{NOTDQUOTE} could not span is no longer on the JSON path, so a
+    # quote-bearing User-Agent no longer makes a line unparsed.
+    #
+    # Anything consuming these lines still must NOT trust UA/Referer content.
+    # JSON makes that easier, not harder — a header value cannot contain a bare
+    # `"`, so an extraction anchored to a `"FieldName":"` prefix cannot be
+    # reached from a header value. See the guards in stacks/monitoring/loki.tf.
     logs = {
       access = {
         enabled = true
+        format  = "json"
         fields = {
           headers = {
             names = {
-              "User-Agent" = "keep"
-              "Referer"    = "keep"
+              "User-Agent"           = "keep"
+              "Referer"              = "keep"
+              "X-Authentik-Username" = "keep"
+              "X-Auth-Fallback"      = "keep"
             }
           }
         }
@@ -449,7 +518,28 @@ resource "helm_release" "traefik" {
         memory = "768Mi"
       }
       limits = {
-        memory = "768Mi"
+        # Raised 1536Mi -> 2560Mi on 2026-09-06: it was OOM-killed again on
+        # 2026-09-05 at the 1536Mi ceiling. The cgroup high-water mark reads
+        # exactly 1536 MiB, so it reached the cap; a [30d:1h] sample says only
+        # 433 MiB, which is why the sampled figure must not be used to size
+        # this. 5-minute resolution over 7d catches 1,389 MiB. The namespace
+        # LimitRange allows 8Gi. Request stays 768Mi (Burstable on purpose,
+        # see below).
+        # Raised 768Mi -> 1536Mi during a live incident on 2026-09-02: all three
+        # pods were OOMKilled repeatedly (exit 137) and ALL ingress flapped.
+        # Trigger was a crawler swarm on forgejo's expensive commit/src/blame
+        # pages — hundreds of distinct IPv6 clients with real browser
+        # user-agents, ~5s per request, most ending 499. forgejo alone was 3.8
+        # of 8.2 cluster req/s and it OOMKilled forgejo too. Traefik sat at
+        # 681Mi of 768Mi between restarts, i.e. permanently at the ceiling.
+        #
+        # The request deliberately stays at 768Mi (so this is now Burstable, not
+        # Guaranteed): node2/node3 have only ~2.2-2.7GiB of free memory REQUESTS,
+        # and raising the request on three replicas would cost +2.3GiB of
+        # reservation and eat the N-1 headroom that ClusterCannotTolerateNonGpuNodeLoss
+        # watches. Actual node usage is ~40%, so the headroom to absorb a spike
+        # is real even though the reservation is not.
+        memory = "2560Mi"
       }
     }
 
@@ -954,6 +1044,38 @@ resource "kubernetes_config_map" "auth_proxy_config" {
   data = {
     "default.conf" = <<-EOT
       upstream authentik {
+          # Forward-auth MUST be answered by the SAME outpost that answers the
+          # OAuth callback, and the callback is the standalone Deployment:
+          # authentik.viktorbarzin.me/outpost.goauthentik.io is routed to
+          # ak-outpost-authentik-embedded-outpost by BOTH the authentik-outpost
+          # Ingress (ours) and the ak-outpost-... Ingress (the outpost
+          # controller's, which we do not own and cannot durably repoint).
+          #
+          # Do NOT point this at goauthentik-server (the inline outpost inside
+          # the server pods). The two implementations issue the SAME cookie
+          # name on the SAME domain in mutually unreadable formats:
+          #
+          #   inline (Rust)      authentik_proxy_34f8da53=<b64 hmac>=<uuid>
+          #   standalone (Go)    authentik_proxy_34f8da53=<base32 session id>
+          #
+          # Split across the two, a logged-in user loops forever: forward-auth
+          # (inline) cannot read the cookie the callback (standalone) just set,
+          # so it 302s to login, the callback re-issues a Go cookie, and round
+          # it goes. Nothing reaches the backend -- OriginStatus 0 on every
+          # request, XHR included, which is what took terminal.viktorbarzin.me
+          # and every other auth="required" host down on 2026-09-02 10:52.
+          # An anonymous probe cannot see this: 302-to-login is the CORRECT
+          # answer for a request with no session, so the whole estate looked
+          # healthy while every signed-in request was in a loop.
+          #
+          # STILL OPEN: nginx OSS resolves this name ONCE at startup and caches
+          # the IP for the life of the process, while the outpost controller
+          # RECREATES this Service on upgrades with a fresh ClusterIP. nginx
+          # then dials a dead address, the 3s connect timeout trips, and
+          # error_page hands every forward-auth host to @fallback_auth =
+          # Emergency Access basic-auth (the 2026-08-19 outage). The fix is a
+          # target the controller never recreates -- a Terraform-owned Service
+          # selecting the same pods -- NOT a different outpost.
           server ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000;
           # Reuse connections to the outpost. Without this every forward-auth
           # subrequest (= every request to every auth="required" ingress) opens

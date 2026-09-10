@@ -234,3 +234,75 @@ func TestFormatHowSaysSoWhenNothingMatches(t *testing.T) {
 		t.Errorf("a miss should point at the full inventory:\n%s", out)
 	}
 }
+
+// The egress row was reachable but ranked THIRD for the phrasing Viktor used on
+// 2026-09-06 ("route pod traffic through the vpn"), behind `browser run` and
+// `k8s debug`. An agent reading the top of the list takes the wrong tool, which
+// is the same failure the index exists to fix — being findable is not enough,
+// it has to WIN. The authoring moment ("the Deployment I am writing should
+// egress via the VPN") is separate from the request moment ("this curl must not
+// come from home"), and only the second was worded into the row.
+func TestVPNEgressWinsForWorkloadAuthoringPhrasings(t *testing.T) {
+	for _, q := range []string{
+		"route pod traffic through the vpn",
+		"send this workload's traffic through the vpn",
+		"make a deployment egress from another country",
+		"this service should not use our home IP",
+		"proxy a container's outbound traffic",
+		"route outbound traffic via nordvpn",
+	} {
+		hits := matchCapabilities(capabilities(), q)
+		if len(hits) == 0 {
+			t.Errorf("query %q found nothing", q)
+			continue
+		}
+		if !strings.Contains(hits[0].Use, "proxy-egress-uk") {
+			t.Errorf("query %q -> top hit %q (%s), want the VPN egress row",
+				q, hits[0].Intent, hits[0].Use)
+		}
+	}
+}
+
+// Guard the other direction: widening the egress row must not steal queries
+// that belong to its neighbours. `k8s debug` owns "pod"/"deployment" as
+// synonyms and the browser row owns the anti-bot wall, which the egress row
+// explicitly does NOT solve.
+func TestWideningVPNEgressDoesNotStealNeighbours(t *testing.T) {
+	cases := []struct {
+		task string
+		want string
+	}{
+		{"why is my pod crashlooping", "k8s debug"},
+		{"a deployment is stuck pending", "k8s debug"},
+		{"cloudflare is blocking me with a captcha", "browser run"},
+		{"the site flags automation and returns 403", "browser run"},
+	}
+	for _, c := range cases {
+		hits := matchCapabilities(capabilities(), c.task)
+		if len(hits) == 0 {
+			t.Errorf("query %q found nothing", c.task)
+			continue
+		}
+		if !strings.Contains(hits[0].Use, c.want) {
+			t.Errorf("query %q -> top hit %q (%s), want %q",
+				c.task, hits[0].Intent, hits[0].Use, c.want)
+		}
+	}
+}
+
+// A client that ignores proxy environment variables is the one case the env-var
+// contract cannot serve, and an agent that hits it will otherwise conclude the
+// cluster cannot do it. The row has to say the escape hatch exists and where
+// the recipe lives.
+func TestVPNEgressNamesThePathForProxyIgnoringClients(t *testing.T) {
+	hits := matchCapabilities(capabilities(), "my workload ignores HTTPS_PROXY")
+	if len(hits) == 0 {
+		t.Fatal("want a match")
+	}
+	joined := strings.ToLower(strings.Join(hits[0].Detail, " "))
+	for _, w := range []string{"sidecar", "stacks/proxy/readme.md"} {
+		if !strings.Contains(joined, w) {
+			t.Errorf("egress row detail does not name %q; got %q", w, joined)
+		}
+	}
+}

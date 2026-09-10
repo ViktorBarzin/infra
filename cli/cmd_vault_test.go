@@ -218,6 +218,145 @@ func TestParseGetArgs(t *testing.T) {
 	}
 }
 
+// The single-dash spellings are what the real `bw`/`vault` CLIs take, so an
+// operator or agent reaching for muscle memory must get the field they named.
+// Before 2026-09-10 `-field=username` matched no case, was silently dropped,
+// and the default sent back the PASSWORD instead.
+func TestParseGetArgsAcceptsSingleDashForms(t *testing.T) {
+	for _, args := range [][]string{
+		{"github", "--field", "username"},
+		{"github", "--field=username"},
+		{"github", "-field", "username"},
+		{"github", "-field=username"},
+		{"-field=username", "github"},
+	} {
+		o, err := parseGetArgs(args)
+		if err != nil {
+			t.Fatalf("parseGetArgs(%v): %v", args, err)
+		}
+		if o.name != "github" || o.field != "username" {
+			t.Fatalf("parseGetArgs(%v) = %+v", args, o)
+		}
+	}
+	for _, args := range [][]string{{"github", "-json"}, {"github", "--json"}} {
+		if o, err := parseGetArgs(args); err != nil || !o.json {
+			t.Errorf("parseGetArgs(%v) = %+v, %v", args, o, err)
+		}
+	}
+	for _, args := range [][]string{{"github", "-all"}, {"github", "--all"}} {
+		if o, err := parseGetArgs(args); err != nil || !o.all {
+			t.Errorf("parseGetArgs(%v) = %+v, %v", args, o, err)
+		}
+	}
+}
+
+// A flag we do not recognise must be an ERROR. Silently ignoring it left the
+// field at its "password" default, so a caller who asked for a username was
+// handed a password and nothing said so.
+func TestParseGetArgsRejectsUnknownFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"github", "--feild=username"},
+		{"github", "--fields=username"},
+		{"github", "-u", "username"},
+		{"github", "--field-username"},
+		{"--format=json", "github"},
+	} {
+		o, err := parseGetArgs(args)
+		if err == nil {
+			t.Fatalf("parseGetArgs(%v) accepted an unknown flag (o=%+v)", args, o)
+		}
+		if !strings.Contains(err.Error(), "--field") {
+			t.Errorf("parseGetArgs(%v) error should name the real flags, got %q", args, err)
+		}
+	}
+}
+
+func TestParseGetArgsRejectsSecondPositionalAndEmptyField(t *testing.T) {
+	// A second bare word used to be dropped on the floor.
+	if _, err := parseGetArgs([]string{"github", "username"}); err == nil {
+		t.Fatal("a second positional must error")
+	} else if !strings.Contains(err.Error(), "--field username") {
+		t.Errorf("error should suggest --field, got %q", err)
+	}
+	// `--field` as the LAST argument failed the old `i+1 < len(args)` guard and
+	// fell through to the default, which is the same password-instead-of-field
+	// hazard by a different route.
+	for _, args := range [][]string{{"github", "--field"}, {"github", "--field="}, {"github", "-field"}} {
+		if _, err := parseGetArgs(args); err == nil {
+			t.Errorf("parseGetArgs(%v) must error on a valueless --field", args)
+		}
+	}
+}
+
+// The `field` default stays "password" on purpose — the hazard was the silent
+// drop, not the default. Pin it so a later cleanup does not "fix" the wrong half.
+func TestParseGetArgsDefaultFieldUnchanged(t *testing.T) {
+	o, err := parseGetArgs([]string{"github"})
+	if err != nil || o.field != "password" || o.json || o.all {
+		t.Fatalf("parseGetArgs([github]) = %+v, %v; want field=password and no flags", o, err)
+	}
+}
+
+// The security assertion the parse-level tests cannot make on their own: for a
+// mistyped flag, NO bw call happens at all, so the password cannot come back;
+// and for the single-dash form the caller gets the USERNAME they asked for.
+func TestVaultGetMistypedFlagNeverReturnsPassword(t *testing.T) {
+	const fakePassword = "FAKE_ITEM_PASSWORD"
+	const fakeUsername = "FAKE_ITEM_USERNAME"
+	newFake := func() *fakeRunner {
+		return &fakeRunner{out: map[string]string{
+			"vault kv get -field=vaultwarden_master_password secret/workstation/claude-users/emo": "pw",
+			"vault kv get -field=vaultwarden_client_id secret/workstation/claude-users/emo":       "user.x",
+			"vault kv get -field=vaultwarden_client_secret secret/workstation/claude-users/emo":   "cs",
+			"bw status":              `{"status":"locked"}`,
+			"bw unlock":              "SESSION",
+			"bw get password github": fakePassword,
+			"bw get username github": fakeUsername,
+		}}
+	}
+	// getFlow mirrors vaultGet's order: parse, and fetch ONLY on a clean parse.
+	getFlow := func(f *fakeRunner, args []string) (string, error) {
+		o, err := parseGetArgs(args)
+		if err != nil {
+			return "", err
+		}
+		return getValue(f.run, "emo", fmt.Sprintf("%d", os.Getuid()), o)
+	}
+
+	for _, args := range [][]string{
+		{"github", "--feild=username"},
+		{"github", "-u", "username"},
+		{"github", "--field"},
+	} {
+		f := newFake()
+		val, err := getFlow(f, args)
+		if err == nil {
+			t.Fatalf("getFlow(%v) succeeded, returning %d bytes", args, len(val))
+		}
+		if val == fakePassword {
+			t.Fatalf("getFlow(%v) returned the PASSWORD for a mistyped flag", args)
+		}
+		for _, call := range f.calls {
+			if len(call) > 0 && call[0] == "bw" {
+				t.Errorf("getFlow(%v) reached bw %v; a parse error must fetch nothing", args, call)
+			}
+		}
+	}
+
+	for _, args := range [][]string{{"github", "-field=username"}, {"github", "-field", "username"}} {
+		val, err := getFlow(newFake(), args)
+		if err != nil {
+			t.Fatalf("getFlow(%v): %v", args, err)
+		}
+		if val == fakePassword {
+			t.Fatalf("getFlow(%v) returned the password instead of the username", args)
+		}
+		if val != fakeUsername {
+			t.Fatalf("getFlow(%v) = %q, want the username", args, val)
+		}
+	}
+}
+
 func TestListNamesParsing(t *testing.T) {
 	// bw list items returns JSON; listNames extracts name + id only.
 	js := `[{"id":"1","name":"GitHub","login":{"username":"u"}},{"id":"2","name":"AWS"}]`

@@ -254,6 +254,12 @@ data "authentik_stage" "default_authentication_password" {
 resource "authentik_stage_identification" "default_identification" {
   name           = "default-authentication-identification"
   password_stage = data.authentik_stage.default_authentication_password.id
+  # The "Sign up" link on the login page. Was null until 2026-09-02, so an
+  # invitee with no account reached this page and had no way forward — the
+  # invite flow was only reachable by someone already mid-Google redirect
+  # (infra#51, stories 1 and 2). Pinned here rather than left UI-managed
+  # because it is now load-bearing for signup.
+  enrollment_flow = authentik_flow.signup_start.uuid
   lifecycle {
     # Pin only password_stage; everything else stays UI-managed (same pattern
     # as authentik_stage_user_login.default_login above).
@@ -270,7 +276,11 @@ resource "authentik_stage_identification" "default_identification" {
       show_matched_user,
       show_source_labels,
       sources,
-      enrollment_flow,
+      # enrollment_flow is NO LONGER ignored — it is set above, deliberately.
+      # recovery_flow IS still ignored, on purpose: the "Forgot access?" link is
+      # wired in a separate commit once the complete flow has been verified
+      # live. Publishing the entry point in the same apply that builds the flow
+      # is how a partial failure went live on 2026-09-02.
       recovery_flow,
       passwordless_flow,
       pretend_user_exists,

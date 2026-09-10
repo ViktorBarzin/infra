@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -97,5 +98,149 @@ func TestHumanDuration(t *testing.T) {
 		if got := humanDuration(in); got != want {
 			t.Errorf("humanDuration(%v) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The bug this covers: `homelab crowdsec ban 2a03:2880::/32` failed with
+// "2a03:2880::/32 is not a valid ip" because the wrapper always passed
+// cscli's --ip flag. A CIDR — v4 or v6 — has to go to --range instead.
+func TestParseBanTarget(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       string
+		wantFlag string
+		wantErr  string
+	}{
+		{name: "IPv4 address", in: "192.0.2.1", wantFlag: "--ip"},
+		{name: "IPv6 address", in: "2001:db8::1", wantFlag: "--ip"},
+		{name: "IPv6 loopback", in: "::1", wantFlag: "--ip"},
+		{name: "IPv4-mapped IPv6 address", in: "::ffff:192.0.2.1", wantFlag: "--ip"},
+		{name: "IPv4 CIDR", in: "192.0.2.0/24", wantFlag: "--range"},
+		{name: "the reported IPv6 CIDR", in: "2a03:2880::/32", wantFlag: "--range"},
+		{name: "IPv6 documentation CIDR", in: "2001:db8::/32", wantFlag: "--range"},
+		{name: "single-address IPv4 CIDR", in: "192.0.2.1/32", wantFlag: "--range"},
+		{name: "single-address IPv6 CIDR", in: "2001:db8::1/128", wantFlag: "--range"},
+		{name: "surrounding whitespace is trimmed", in: "  2a03:2880::/32  ", wantFlag: "--range"},
+
+		{name: "empty is refused", in: "", wantErr: "required"},
+		{name: "hostname is refused", in: "bcube.co.uk", wantErr: "not a valid IP"},
+		{name: "garbage is refused", in: "not-an-ip", wantErr: "not a valid IP"},
+		{name: "truncated IPv4 is refused", in: "137.220.71.", wantErr: "not a valid IP"},
+		{name: "hostname with a mask is refused", in: "example.com/24", wantErr: "not a valid CIDR"},
+		{name: "IPv4 prefix out of range is refused", in: "192.0.2.0/33", wantErr: "not a valid CIDR"},
+		{name: "IPv6 prefix out of range is refused", in: "2a03:2880::/129", wantErr: "not a valid CIDR"},
+		{name: "empty prefix length is refused", in: "2a03:2880::/", wantErr: "not a valid CIDR"},
+		{name: "malformed IPv6 is refused", in: "2a03::2880::1", wantErr: "not a valid IP"},
+		{name: "a zoned link-local address is refused", in: "fe80::1%eth0", wantErr: "not a valid IP"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			flag, value, err := parseBanTarget(tc.in)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("parseBanTarget(%q) = (%q, %q), want error containing %q", tc.in, flag, value, tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("parseBanTarget(%q) error = %q, want it to contain %q", tc.in, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseBanTarget(%q) unexpected error: %v", tc.in, err)
+			}
+			if flag != tc.wantFlag {
+				t.Fatalf("parseBanTarget(%q) flag = %q, want %q", tc.in, flag, tc.wantFlag)
+			}
+			if want := strings.TrimSpace(tc.in); value != want {
+				t.Fatalf("parseBanTarget(%q) value = %q, want the address as typed %q", tc.in, value, want)
+			}
+		})
+	}
+}
+
+func TestValidateBanRequestAcceptsEveryAddressShape(t *testing.T) {
+	for _, target := range []string{"192.0.2.1", "2001:db8::1", "192.0.2.0/24", "2a03:2880::/32"} {
+		if err := validateBanRequest(target, "meta crawler swarm"); err != nil {
+			t.Errorf("validateBanRequest(%q) should succeed, got %v", target, err)
+		}
+	}
+}
+
+func TestCscliAddArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{name: "IPv4 address goes to --ip", in: "192.0.2.1",
+			want: []string{"cscli", "decisions", "add", "--ip", "192.0.2.1", "--duration", "24h", "--reason", "meta crawler swarm"}},
+		{name: "IPv6 address goes to --ip", in: "2001:db8::1",
+			want: []string{"cscli", "decisions", "add", "--ip", "2001:db8::1", "--duration", "24h", "--reason", "meta crawler swarm"}},
+		{name: "IPv4 CIDR goes to --range", in: "192.0.2.0/24",
+			want: []string{"cscli", "decisions", "add", "--range", "192.0.2.0/24", "--duration", "24h", "--reason", "meta crawler swarm"}},
+		{name: "the reported IPv6 CIDR goes to --range", in: "2a03:2880::/32",
+			want: []string{"cscli", "decisions", "add", "--range", "2a03:2880::/32", "--duration", "24h", "--reason", "meta crawler swarm"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := cscliAddArgs(tc.in, 24*time.Hour, "meta crawler swarm")
+			if err != nil {
+				t.Fatalf("cscliAddArgs(%q) unexpected error: %v", tc.in, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("cscliAddArgs(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCscliDeleteArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{name: "IPv4 address goes to --ip", in: "192.0.2.1",
+			want: []string{"cscli", "decisions", "delete", "--ip", "192.0.2.1"}},
+		{name: "IPv6 address goes to --ip", in: "2001:db8::1",
+			want: []string{"cscli", "decisions", "delete", "--ip", "2001:db8::1"}},
+		{name: "IPv4 CIDR goes to --range", in: "192.0.2.0/24",
+			want: []string{"cscli", "decisions", "delete", "--range", "192.0.2.0/24"}},
+		{name: "the reported IPv6 CIDR goes to --range", in: "2a03:2880::/32",
+			want: []string{"cscli", "decisions", "delete", "--range", "2a03:2880::/32"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := cscliDeleteArgs(tc.in)
+			if err != nil {
+				t.Fatalf("cscliDeleteArgs(%q) unexpected error: %v", tc.in, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("cscliDeleteArgs(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// The guardrails exist because of the 2026-08-16 lockout; a fix for the address
+// parsing must not loosen any of them.
+func TestBanArgvGuardrailsSurvive(t *testing.T) {
+	if _, err := cscliAddArgs("2a03:2880::/32", 169*time.Hour, "reason"); err == nil {
+		t.Error("cscliAddArgs should refuse a duration beyond the 168h cap")
+	}
+	if _, err := cscliAddArgs("2a03:2880::/32", 8717*time.Hour, "reason"); err == nil {
+		t.Error("cscliAddArgs should refuse the 363-day incident duration")
+	}
+	if _, err := cscliAddArgs("2a03:2880::/32", 0, "reason"); err == nil {
+		t.Error("cscliAddArgs should refuse a non-positive duration")
+	}
+	if _, err := cscliAddArgs("2a03:2880::/32", 24*time.Hour, "  "); err == nil {
+		t.Error("cscliAddArgs should refuse a blank reason")
+	}
+	if _, err := cscliAddArgs("meta.com", 24*time.Hour, "reason"); err == nil {
+		t.Error("cscliAddArgs should refuse a hostname")
+	}
+	if _, err := cscliDeleteArgs("meta.com"); err == nil {
+		t.Error("cscliDeleteArgs should refuse a hostname")
 	}
 }

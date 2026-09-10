@@ -304,6 +304,132 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Image pull & GC (added 2026-09-02, Phase 0 of
+          # docs/plans/2026-09-02-node1-large-image-handling.md).
+          #
+          # On 2026-09-01 kubelet on k8s-node1 discarded 130 images and
+          # 56.8567 GiB of warm image cache in one 4m38s pass, and nothing
+          # alerted. That cache wipe is what turns the next reschedule of a
+          # 3 GB GPU image into a 6m24s cold pull instead of a 405 ms warm one.
+          # There was no alert on an image-GC pass anywhere in this repo before
+          # this group.
+          #
+          # These are Loki-ruler rules because the signal is a journal line, not
+          # a metric: kubelet exposes no counter for "images discarded". They
+          # read the node-runtime-journal job that alloy.yaml ships (see the
+          # long comment there) — NOT job="node-journal", which drops these
+          # lines because they are journal priority 6.
+          #
+          # Message strings verified against the running binary rather than
+          # remembered: `strings /usr/bin/kubelet` on k8s-node1 (v1.35.7,
+          # 2026-09-02) contains "Removing image to free bytes",
+          # "Disk usage on image filesystem is over the high threshold",
+          # "Attempting to delete unused images" and "Eviction manager:
+          # attempting to reclaim" (capital E, a space, no underscore — the
+          # underscore form some notes use is the eviction_manager.go source
+          # filename klog prints, not the message). The (?i) guards the casing
+          # either way.
+          #
+          # Why 30m windows and for=0m: these fire per EVENT, and the known pass
+          # emitted its 131 lines inside 4m38s. A 5m window would have gone
+          # firing -> resolved -> firing across one incident. Same reasoning as
+          # KernelOOMKiller's 2h window above.
+          name = "Image pull & GC"
+          rules = [
+            {
+              # The threshold crossing itself, one line per pass. This is the
+              # line the plan wanted and could not read, because it states the
+              # observed usage against imageGCHighThresholdPercent — the
+              # 2026-09-01 crossing is still INFERRED (the sampled trough was
+              # 83.57%, 3.86 GB short of the 85% threshold) purely because this
+              # line had already rotated out of node1's volatile journal.
+              #
+              # Emitted only by the threshold path in image_gc_manager.go, so it
+              # stays correct after Phase 3 gives imageMaximumGCAge a finite
+              # value and age-based collection starts running routinely.
+              alert = "NodeImageGCThresholdCrossed"
+              expr  = "sum by (node) (count_over_time({job=\"node-runtime-journal\", unit=\"kubelet.service\"} |= \"Disk usage on image filesystem is over the high threshold\" [30m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "kubelet crossed the image-GC disk threshold on {{ $labels.node }} — warm image cache is being discarded"
+                description = "Live imageGCHighThresholdPercent is 85 on all six nodes and imagefs shares the root filesystem, so this fires at the same instant as evictionHard imagefs.available 15%. The line itself carries the observed usage and the amount kubelet intends to free: homelab logs query '{job=\"node-runtime-journal\", unit=\"kubelet.service\"} |= \"high threshold\"' --since 1h. Headroom per node: kubectl get --raw /api/v1/nodes/<node>/proxy/stats/summary | jq '.node.fs.availableBytes - .node.fs.capacityBytes*0.15'. As of 2026-09-02 k8s-node5 had 4.07 GB of headroom and k8s-node2 12.53 GB, against 9.2-12.3 GB written by a single cold pull of a 3 GB image."
+              }
+            },
+            {
+              # Volume signal: how much cache actually went. 130 lines in the
+              # 2026-09-01 pass. Threshold 20 in 30m, so this stays quiet for
+              # the handful of images a routine age-based sweep will remove once
+              # Phase 3 sets a finite imageMaximumGCAge, and still catches a
+              # mass eviction. Phase 3's FIRST sweep is expected to clear
+              # 100-170 GiB on node2/node5 and will legitimately fire this once
+              # — that is the alert working, not a false positive.
+              alert = "NodeImageCacheMassEviction"
+              expr  = "sum by (node) (count_over_time({job=\"node-runtime-journal\", unit=\"kubelet.service\"} |= \"Removing image to free bytes\" [30m])) > 20"
+              for   = "0m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "{{ $value }} cached images discarded on {{ $labels.node }} in 30m"
+                description = "Every image removed here is a future cold pull. The 2026-09-01 pass on k8s-node1 removed 130 images / 56.8567 GiB in 4m38s and left the node with 52 unique digests, the fewest of any worker. WHICH images: homelab logs query '{job=\"node-runtime-journal\", unit=\"kubelet.service\"} |= \"Removing image to free bytes\"' --since 1h. Pull cost that will be paid back later: kubelet_image_pull_duration_seconds_sum by image_size_in_bytes (restored to Prometheus in the same phase)."
+              }
+            },
+            {
+              # The eviction manager's own reclaim attempt. Broader than the two
+              # above — it also covers memory and nodefs pressure, so it is the
+              # earlier and less specific signal. One line appeared in the
+              # 2026-09-01 pass, ahead of the 130 removals.
+              alert = "NodeEvictionManagerReclaiming"
+              expr  = "sum by (node) (count_over_time({job=\"node-runtime-journal\", unit=\"kubelet.service\"} |~ `(?i)Eviction manager: attempting to reclaim` [30m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "kubelet eviction manager is reclaiming node resources on {{ $labels.node }}"
+                description = "Which resource is in the line's resourceName field (ephemeral-storage / memory / imagefs): homelab logs query '{job=\"node-runtime-journal\", unit=\"kubelet.service\"} |~ `(?i)attempting to reclaim`' --since 1h. This precedes pod eviction; on 2026-09-01 it preceded 130 image removals on k8s-node1 instead, and DiskPressure flipped 5m later when evictionPressureTransitionPeriod expired."
+              }
+            },
+            {
+              # Liveness guard for the three rules above. Without it they read
+              # as green when alloy stops shipping the runtime journals, which
+              # is the exact failure mode this phase exists to close — the
+              # 2026-09-01 event was invisible because these lines reached
+              # nothing, not because nothing happened.
+              #
+              # `or vector(0)` is load-bearing: when the streams disappear
+              # entirely, sum(count_over_time(...)) returns NO series and a
+              # bare `< 1` never evaluates, so the alert goes silent in exactly
+              # the case it exists to catch. Same shape as DevvmJournalSilent.
+              #
+              # Threshold: cluster-wide, measured 2026-09-02 at 23,674 lines/hr
+              # from these two units (kubelet 2,793 + containerd 20,881), with
+              # the quietest single node at ~20 lines/hr. `< 1` over 1h means
+              # total silence, not a quiet node. A per-node version would need
+              # its own calibration, because k8s-master's kubelet emits 2
+              # lines/hr and would trip a naive threshold.
+              #
+              # for=30m covers the alloy DaemonSet rollout: the rules ConfigMap
+              # and the DS apply in the same terragrunt run and the DS has a
+              # 900s helm timeout, so the ruler can start evaluating before the
+              # first line arrives.
+              alert = "RuntimeJournalSilent"
+              expr  = "(sum(count_over_time({job=\"node-runtime-journal\"}[1h])) or vector(0)) < 1"
+              for   = "30m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "No kubelet/containerd journal lines in Loki for >1h — NodeImageGCThresholdCrossed and its two siblings are blind"
+                description = "Check the alloy DaemonSet: kubectl get ds -n monitoring alloy; kubectl logs -n monitoring ds/alloy | grep -i journal. The two loki.source.journal blocks named kubelet_journal and containerd_journal in stacks/monitoring/modules/monitoring/alloy.yaml are the source of truth. Also check Loki-side stream limits: a 429 means the global 5000 active-stream cap is saturated. Expected steady state is ~23,674 lines/hr cluster-wide as measured 2026-09-02."
+              }
+            },
+          ]
+        },
+        {
           # Egress / pfSense (added 2026-06-28 after the 2026-06-27 WAN/egress
           # incident). Cloudflared edge-connection failures are the log canary
           # that fired FIRST + most reliably — the cloudflared *deployment*
@@ -538,6 +664,167 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Claude session loss on the devvm. Until this group existed, a session
+          # dying was found by looking at the sidebar and counting — which is how
+          # the 2026-09-01 05:55 kill was noticed, hours later.
+          #
+          # Two producers. The kernel writes the oom-kill line itself; everything
+          # else comes from tl-session-watch, which ships in the terminal-lobby
+          # package and logs logfmt under SyslogIdentifier=tl-session-watch. That
+          # identifier MUST stay in the allowlist in scripts/devvm-promtail.yaml:
+          # the label is what these selectors match, and without it they match
+          # nothing and say nothing about it.
+          #
+          # All four group by USER over a wide window, so a burst reads as one
+          # continuous alert rather than one Slack post per kill. Replaying the
+          # 2026-08-16 event (~21 kills in two minutes) gives one message per
+          # affected user. severity=warning means notify once, no re-ping while
+          # firing, with the daily digest carrying standing state.
+          #
+          # Design: docs/plans/2026-09-01-devvm-session-loss-alerting.md
+          name = "Claude Session Loss (devvm)"
+          rules = [
+            {
+              # The cap doing its job, on the wrong victim. constraint=MEMCG means
+              # the PANE hit its own 6G ceiling, which is independent of box
+              # memory: this fires with 20 GiB free on the box, and
+              # DevvmMemoryPressure does not fire with it. Measured over the 7
+              # days before this rule: 3 panes hit the cap, 2 of them killing a
+              # claude.
+              #
+              # Grouped by uid because that is what the kernel line carries
+              # (1000=wizard, 1002=emo); tl-session-watch's own lines carry the
+              # username.
+              # The OTHER killer on this box, and the one that acts when the
+              # BOX is short rather than a single pane. earlyoom runs with
+              # -m 5,3: SIGTERM at 5% MemAvailable, SIGKILL at 3%. It picks by
+              # badness, which on a workstation full of Claude sessions
+              # usually means a claude. Measured on 2026-09-01 18:49-18:51,
+              # the last event before this rule: 90 kill signals against uid
+              # 1000 in one 2h window, taking claude processes, a vitest run
+              # and python3; uid 1002 lost 1.
+              #
+              # Matched on "to process" deliberately. earlyoom prints its
+              # thresholds at startup as "sending SIGTERM when mem <= 5.00%",
+              # which a bare /sending SIGTERM/ matches, so that filter would
+              # have paged on every restart of the service (3 in the 397h to
+              # 2026-09-03). This version of earlyoom never prints "Killing
+              # process" at all. Both signals are counted: earlyoom escalates
+              # SIGTERM to SIGKILL for the same victim, so one stubborn process
+              # can contribute two, and it also SIGKILLs directly once below
+              # the lower threshold.
+              #
+              # 2h window grouped by uid, matching ClaudeOOMKilled, so a burst
+              # is one Slack line per affected user rather than ninety. uid
+              # 1000=wizard, 1002=emo, 0=root. Distinct from ClaudeOOMKilled,
+              # which reads the KERNEL's memcg oom-kill line: that one is a
+              # pane hitting its own 6G cap with the box otherwise healthy,
+              # this one is the box itself running out.
+              alert  = "EarlyoomKilledProcess"
+              expr   = "sum by (uid) (count_over_time({job=\"devvm-journal\", identifier=\"earlyoom\"} |~ \"sending SIG(TERM|KILL) to process\" | regexp \"uid (?P<uid>[0-9]+)\" [2h])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "earlyoom killed {{ $value }} processes on the devvm (uid={{ $labels.uid }})"
+                description = "The box ran out of memory and earlyoom started picking victims, which on this machine usually means Claude sessions. WHAT DIED: homelab logs query '{job=\"devvm-journal\", identifier=\"earlyoom\"} |~ \"to process\"' --since 2h. uid 1000=wizard, 1002=emo, 0=root. A SIGTERM that escalated counts twice. DevvmMemoryPressure should have fired first at 8% available; if it did not, the box crossed from healthy to 5% inside one 2-minute scrape. Containment design: docs/post-mortems/2026-06-22-devvm-mem-io-overload-containment.md."
+              }
+            },
+            {
+              alert  = "ClaudeOOMKilled"
+              expr   = "sum by (uid) (count_over_time({job=\"devvm-journal\", identifier=\"kernel\"} |= \"oom-kill:\" |= \"task=claude\" | regexp \"uid=(?P<uid>[0-9]+)\" [2h])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "A claude was OOM-killed on the devvm (uid={{ $labels.uid }})"
+                description = "The kernel killed a claude process to satisfy a memory limit. constraint=CONSTRAINT_MEMCG means the pane hit its own 6G cap, not that the box ran out. Which pane and which victim: homelab logs query '{job=\"devvm-journal\", identifier=\"kernel\"} |= \"oom-kill:\" |= \"task=claude\"' --since 2h. uid 1000=wizard, 1002=emo. Cap design: docs/plans/2026-08-16-devvm-pane-memory-cap.md."
+              }
+            },
+            {
+              # The effect, from the watcher rather than the kernel, so it covers
+              # every cause and not just OOM. session_died = the session left tmux
+              # with no tmux-persist TOMBSTONE written in the last 90s, which means
+              # nobody ended it on purpose. claude_died = the session survived and
+              # the conversation in it did not.
+              #
+              # The tombstone, not the manifest row: tmux-persist-forget appends to
+              # <user>.forgotten.tsv and leaves the manifest row alone until the
+              # next 5-minute save. The first version of this read an orphaned row
+              # and so called every deliberate kill a death for up to five minutes.
+              #
+              # A clean /exit used to land here too, and paged emo on
+              # 2026-09-03 for tidying up. tmux-api's DELETE handler writes the
+              # tombstone, which covers a kill from the lobby and a T3 thread
+              # deletion, since t3-sync goes through that endpoint. It never saw
+              # a user typing /exit: claude ends, its pane exits, the session
+              # closes, and tmux-api is not involved. The SessionEnd hook now
+              # records that ending itself, in /run/user/<uid>/tl-clean-exit.tsv,
+              # and the watcher reads it alongside the tombstones. A hook cannot
+              # run when the process is SIGKILLed or OOM-killed, so this narrows
+              # the rule without blinding it (terminal-lobby 239324c).
+              #
+              # Remaining false positive: `tmux kill-session` typed at a CLI.
+              # It tombstones nothing and fires no hook, so it still reads as a
+              # death.
+              alert  = "ClaudeSessionDied"
+              expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"tl-session-watch\"} |~ \"event=(session_died|claude_died)\" | logfmt [2h])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "{{ $value }} of {{ $labels.user }}'s Claude sessions died in the last 2h"
+                description = "A session disappeared without being deliberately killed, or its claude died inside a pane that survived. WHICH ONES: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |~ \"event=(session_died|claude_died)\"' --since 2h. Correlate with ClaudeOOMKilled for the memory cause; a death with no OOM line beside it was something else. A CLI `tmux kill-session` that skipped tmux-persist-forget also lands here."
+              }
+            },
+            {
+              # The pre-warning, and the only signal that arrives while the
+              # conversation can still be saved. Gated on claude being the largest
+              # process in the pane, which is the same ranking the kernel uses at
+              # the cap: when a build or a test run is the largest, the cap eating
+              # it is the mechanism working correctly and not worth a message.
+              #
+              # The watcher compares UNRECLAIMABLE memory (anon + shmem), not
+              # memory.current. current rides up to the cap in any pane doing file
+              # I/O because the cap reclaims cache instead of killing: one pane
+              # measured 6143 MB of a 6144 MB cap with memory.events max=45450 and
+              # oom_kill=0, while holding only 628 MB that could not be reclaimed.
+              #
+              # 30s detection, deliberately not a Prometheus rule. The devvm is
+              # scraped every 2 minutes and the house floor for `for:` is 3, so a
+              # metric rule cannot react to a pane that crosses and dies inside one
+              # interval. tl_pane_memory_bytes exists for history and threshold
+              # tuning, not for this.
+              alert  = "PaneNearMemoryCap"
+              expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"tl-session-watch\"} |= \"event=pane_near_cap\" | logfmt [30m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "{{ $labels.user }} has a pane approaching its 6G cap with claude as the largest process"
+                description = "The next cap kill in this pane takes the conversation, not a build. Normal claude is ~0.5 GB and the busiest pane measured is 1.5 GB, so 3 GB is already ~6x. WHICH SESSION: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |= \"event=pane_near_cap\"' --since 30m. CHECK WHAT KIND OF MEMORY IT IS FIRST: cat /sys/fs/cgroup/<scope>/memory.stat. If shmem dominates, the pane is holding RAM-backed /tmp files (8G tmpfs, 7.0G of it /tmp/claude-1000 on 2026-09-01) and closing the session will NOT help — the kernel would kill the ~0.5 GB claude and leave the tmpfs behind. Delete the scratch files instead. If anon dominates, closing a session does help (~659 MB each). Panes can also SHARE a cgroup — four of emo's claudes sat in one run-r*.scope — so several sessions may cross together and all are genuinely at risk."
+              }
+            },
+            {
+              # DEAD-MAN switch for the watcher, mirroring DevvmJournalSilent one
+              # level down: that one catches the pipeline dying, this one catches
+              # the producer dying. It exists because DevvmJournalSilent was itself
+              # added only after a t3-watchdog drill's alert never arrived, and a
+              # watcher whose whole job is preventing silent failure is the worst
+              # possible thing to lose silently.
+              #
+              # The watcher heartbeats every 30s whether or not it found anything,
+              # so 30m of absence is unambiguous. Its /health on 127.0.0.1:7689
+              # reports stale rather than up once ticks stop, which covers the
+              # running-but-wedged case at release time.
+              alert  = "SessionWatchSilent"
+              expr   = "absent_over_time({job=\"devvm-journal\", identifier=\"tl-session-watch\"}[30m]) == 1"
+              for    = "10m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "tl-session-watch has gone quiet — nothing is reporting lost Claude sessions"
+                description = "No heartbeat for >40m, so ClaudeSessionDied and PaneNearMemoryCap are blind. On the devvm: systemctl status tl-session-watch; curl -s 127.0.0.1:7689/health; journalctl -u tl-session-watch -n 50. If the journal pipeline is the problem instead, DevvmJournalSilent fires alongside this."
+              }
+            },
+          ]
+        },
+        {
           # Wave 1 security alerts (beads code-8ywc). Routed via Loki ruler →
           # prometheus-alertmanager → #security Slack receiver. Allowlist CIDRs:
           # 10.0.20.0/22, 192.168.1.0/24, K8s pod CIDR 10.10.0.0/16, K8s service
@@ -646,9 +933,16 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             # K4: Exec into pod in sensitive namespace.
+            # Excluded alongside Viktor: the vault-audit-rotate CronJob, which
+            # stat/gzip/truncates /vault/audit/vault-audit.log inside vault-0/1/2
+            # nightly at 03:30. The audit log lives in the container with no volume
+            # to mount, so rotation can only go through `kubectl exec` and this rule
+            # fired every night from 2026-09-02 (the day the CronJob was applied).
+            # Its Role is scoped to resource_names vault-0/1/2, so the exclusion
+            # cannot hide an exec into any other pod in the namespace.
             {
               alert  = "K8sExecIntoSensitiveNamespace"
-              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"pods\" | objectRef_subresource=\"exec\" | objectRef_namespace=~\"vault|kube-system|dbaas|cnpg-system\" | user_username!=\"me@viktorbarzin.me\" [5m])) > 0"
+              expr   = "sum(count_over_time({job=\"kubernetes-audit\"} | json | verb=\"create\" | objectRef_resource=\"pods\" | objectRef_subresource=\"exec\" | objectRef_namespace=~\"vault|kube-system|dbaas|cnpg-system\" | user_username!~\"^(me@viktorbarzin\\\\.me|system:serviceaccount:vault:vault-audit-rotate)$\" [5m])) > 0"
               for    = "0m"
               labels = { severity = "warning", lane = "security" }
               annotations = {
@@ -1088,18 +1382,34 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           # album link lives up to a year, so ad-hoc log sweeps can't answer
           # "total visits" after week 4. Query totals with e.g.
           # sum_over_time(immich:share_link_opens:count1m{slug="x"}[90d]).
-          # CARDINALITY / INJECTION GUARDS — all three are load-bearing:
-          # (1) slug extraction is ANCHORED to the CLF request-line position
-          #     (`^ip - user [ts] "METHOD path"`), because since 2026-07-06
-          #     the line also carries attacker-controlled User-Agent/Referer —
-          #     an unanchored regexp would let any client mint arbitrary slug
-          #     label values via a crafted header (Prometheus cardinality
-          #     bomb); (2) status 2xx/304 required — Immich 404s unknown
-          #     /s/<slug> and 401s API calls with a bad ?slug=, so junk-slug
-          #     probes don't mint series; (3) the slug charset regex bounds
-          #     label values. `|= "immich-immich"` (main immich router token;
+          # CARDINALITY / INJECTION GUARDS — all four are load-bearing:
+          # (1) slug extraction is ANCHORED to the JSON key `"RequestPath":"`,
+          #     because the line also carries attacker-controlled User-Agent and
+          #     Referer values — an unanchored regexp would let any client mint
+          #     arbitrary slug label values via a crafted header (Prometheus
+          #     cardinality bomb). This anchor is STRONGER than the CLF byte
+          #     position it replaced (2026-09-01, when the access log became
+          #     JSON): Traefik escapes `"` as `\"` inside every string value, so
+          #     the literal sequence `"RequestPath":"` cannot appear inside a
+          #     header value at all, and `[^"]*` can never cross out of one
+          #     field into another. Verified on traefik:v3.7.1 by sending
+          #     `User-Agent: x","RequestPath":"/s/EVILSLUG",...` — the log line
+          #     carries it as `x\",\"RequestPath\":\"/s/EVILSLUG` and neither
+          #     rule matches it.
+          # (2) status 2xx/304 required — Immich 404s unknown /s/<slug> and 401s
+          #     API calls with a bad ?slug=, so junk-slug probes don't mint
+          #     series. Read from the DownstreamStatus field, not a position.
+          # (3) the slug charset regex bounds label values.
+          # (4) `container="traefik"` keeps the nginx auth-proxy and
+          #     bot-block-proxy streams — still CLF, same namespace — out of the
+          #     scan entirely. `|= "immich-immich"` (main immich router token;
           #     kiosk immich-frame routers don't match) is only a scan
           #     prefilter — false positives are dropped by the anchors.
+          # NOTE ON `\\u0026`: Traefik's JSON encoder HTML-escapes `&` inside
+          # values, so a query string reaches Loki as `?size=preview\u0026slug=`.
+          # The requests rule must accept both separators; matching a bare `&`
+          # alone silently returns zero. Found by capturing a real line rather
+          # than reasoning about it.
           # Complemented by the daily share-link-geo CronJob
           # (share_link_analytics.tf) for unique-IP + per-country gauges
           # (exact distincts need IP-level data that doesn't belong in
@@ -1110,14 +1420,14 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             {
               # Page opens: successful GET/HEAD of the share page /s/<slug>.
               record = "immich:share_link_opens:count1m"
-              expr   = "sum by (slug) (count_over_time({namespace=\"traefik\"} |= \"immich-immich\" |~ `\"(GET|HEAD) /s/` | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"(?:GET|HEAD) /s/(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})[ ?/]` | slug != \"\" | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"[^\"]*\" (?P<status>[0-9]{3}) ` | status =~ \"2..|304\" [1m]))"
+              expr   = "sum by (slug) (count_over_time({namespace=\"traefik\", container=\"traefik\"} |= \"immich-immich\" |~ `\"RequestMethod\":\"(GET|HEAD)\"` |~ `\"RequestPath\":\"/s/` | regexp `\"RequestPath\":\"/s/(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})[?/\"]` | slug != \"\" | json status=\"DownstreamStatus\" | status =~ \"2..|304\" [1m]))"
               labels = { source = "loki-ruler" }
             },
             {
               # Browsing volume: successful API/asset requests carrying
               # ?slug=<slug> in the request path (thumbnails, originals, video).
               record = "immich:share_link_requests:count1m"
-              expr   = "sum by (slug) (count_over_time({namespace=\"traefik\"} |= \"immich-immich\" |= \"slug=\" | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"[A-Z]+ [^\" ]*[?&]slug=(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})` | slug != \"\" | regexp `^\\S+ - \\S+ \\[[^\\]]*\\] \"[^\"]*\" (?P<status>[0-9]{3}) ` | status =~ \"2..|304\" [1m]))"
+              expr   = "sum by (slug) (count_over_time({namespace=\"traefik\", container=\"traefik\"} |= \"immich-immich\" |= \"slug=\" | regexp `\"RequestPath\":\"[^\"]*(?:[?&]|\\\\u0026)slug=(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]{0,63})` | slug != \"\" | json status=\"DownstreamStatus\" | status =~ \"2..|304\" [1m]))"
               labels = { source = "loki-ruler" }
             },
           ]

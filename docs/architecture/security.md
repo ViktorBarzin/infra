@@ -83,8 +83,9 @@ Intelligence below):
 3. **CrowdSec** - in-kernel nftables drop on direct hosts, and the `crowdsec` entrypoint middleware for all HTTP (one map lookup; 403 on a hit)
 4. **Anti-AI Scraping** - 3-layer bot defense (optional per service, updated 2026-04-17)
 5. **Authentik ForwardAuth** - Authentication check (if `protected = true`)
-6. **Rate Limiting** - Per-source IP rate limits (returns 429 on breach)
+6. **Rate Limiting** - per-client limits keyed on `X-Real-Ip`, 10/s average and 50 burst per Traefik pod (returns 429 on breach). A chain: `real-ip` then the limiter
 7. **Retry Middleware** - Auto-retry on transient errors (2 attempts, 100ms delay)
+8. **Anubis proof-of-work** - on 8 hosts, including forgejo since 2026-09-09. The only layer that stops an undeclared crawler without recognising it first
 
 ### CrowdSec Threat Intelligence
 
@@ -97,7 +98,17 @@ CrowdSec operates in a hub-and-agent model:
 - Version pinned to prevent breaking changes
 
 **Agent**:
-- Parses Traefik access logs
+- Parses Traefik access logs. **Format-independent since 2026-09-01**: the
+  access log moved from CLF to JSON, and `crowdsecurity/traefik-logs` already
+  carries a JSON node alongside its CLF grok. Verified with `cscli explain` on
+  the live agent against the same Immich 404 in both formats — identical
+  parsers green, identical enrichers, identical scenarios firing, and
+  `evt.Parsed.status` stringifies so the local `http-403-abuse` /
+  `http-429-abuse` overrides (which compare against `'403'`) keep matching.
+  One behaviour difference worth knowing: the JSON node populates
+  `evt.Meta.target_fqdn`, which CLF never did. Nothing here reads it —
+  `viktor/immich-asset-paths-whitelist` reads `evt.Parsed.target_fqdn`, a
+  different map, and has therefore never matched in either format.
 - Detects attack scenarios (SQL injection, directory traversal, brute force)
 - Reports malicious IPs to LAPI
 - Shares threat intel with CrowdSec community (anonymized)
@@ -156,11 +167,20 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   without transiting Cloudflare — pfSense NATs WAN :443 straight to Traefik — so
   a banned client can connect directly and claim to be anyone. Verified live in
   both directions on 2026-08-18.
-- **Ban only.** `captcha` decisions are ignored. The `captcha_remediation` profile
-  diverts four false-positive-prone scenarios (`http-429-abuse`, `http-403-abuse`,
-  `http-crawl-non_statics`, `http-sensitive-files`) to a captcha that is enforced
-  nowhere; honouring it here would turn all four into live fleet-wide blocks.
-  `scope=Range` is handled as well as `scope=Ip`.
+- **Ban only.** `captcha` decisions are ignored, and `scope=Range` is handled as
+  well as `scope=Ip`. **The `captcha_remediation` profile was REMOVED on
+  2026-09-02** — it diverted `http-429-abuse`, `http-403-abuse`,
+  `http-crawl-non_statics` and `http-sensitive-files` to a captcha decision that
+  nothing enforces, so those four detected and did nothing. It cost us: a Meta
+  crawler swarm walked forgejo's git history that day and OOMKilled all three
+  traefik pods plus forgejo, while `http-crawl-non_statics` fired **60 times**
+  and every decision was discarded. A soft-fail that fails to nothing is worse
+  than no rule, because the scenario metrics look like coverage. All four now
+  fall through to `default_ip_remediation` and ban for 4h. They are genuinely
+  false-positive-prone, which is why the divert existed — the mitigation is the
+  trusted-ips whitelist, which now pins the London egress (`137.220.71.46`)
+  alongside the origin. **If a legitimate source starts getting banned,
+  whitelist it; do not reintroduce a remediation that goes nowhere.**
 - **CAPI is excluded** (`origins` config: `crowdsec`, `cscli`, `cscli-import`,
   `lists`, `console`). Those 22.7k community bans have never been enforced on
   proxied hosts, and their false positives (CGNAT, carrier ranges) would surface
@@ -169,6 +189,70 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   per poll instead of a few KB. **Consequence worth stating plainly: the enforced
   set is currently 4 decisions.** This surface is new coverage, not a like-for-like
   replacement of a large blocklist.
+- **The agents must POLL the traefik log, not trust inotify (2026-09-03).** The
+  helm chart renders every `agent.acquisition` entry with `force_inotify: true`
+  and `poll_without_inotify: false`, and with inotify alone an agent keeps
+  reading a file that has been rotated or replaced by a container restart.
+  Measured: the live container was writing `traefik/3.log` while the agent still
+  held an fd on `traefik/2.log` from the previous evening, and lines-read stayed
+  frozen at 54,238 across 80 fresh requests. Both replacements happen constantly
+  — traefik restarted five times during the crawler incident, and kubelet
+  rotates the file every 1.5-3h because traefik logs every request as JSON.
+  **Consequence: after each agent restart CrowdSec saw traefik for a couple of
+  hours and was then blind**, starving every `http_*` scenario, which is the
+  deeper reason the Meta crawl was never banned. The traefik entry is therefore
+  declared in `kubernetes_config_map.crowdsec_traefik_acquisition` (ours, with
+  polling) rather than by the chart. The mailserver entries the chart still
+  generates have the same fault, deliberately left alone.
+- **Per-IP detection cannot catch a distributed crawl, measured twice
+  (2026-09-03).** Meta sent 9,300-11,000 requests/hour to forgejo from 61-63
+  addresses, each in its own `/64`, at 0.059-0.121 req/s. Replaying that trace
+  through a simulated bucket, and accounting for requests being split across 3
+  traefik replicas (buckets are per-agent and in-memory), no usable threshold
+  works: capacity 10, 6 and 4 each catch **0 of 63**, and even capacity 2 catches
+  only 19 while banning any human who views three pages. `viktor/forgejo-crawl-slow`
+  (capacity 10, leakspeed 120s, forgejo router only) therefore catches *faster*
+  crawlers the stock rule misses but not this one. **What stops Meta is the
+  Terraform-managed static blocklist** of 117 collapsed ranges from AS32934,
+  AS63293 and AS54115, re-imported daily at 04:00 so its 168h decisions never
+  lapse.
+- **Range-grouped detection is the axis that does work (added 2026-09-09).**
+  `viktor/distributed-crawl-range` groups by `evt.Meta.SourceRange`, the
+  source's registered prefix from `crowdsecurity/geoip-enrich`, and counts
+  **distinct source addresses** rather than requests: capacity 30, leakspeed
+  30s, `scope: Range`, so the ban covers exactly the prefix that tripped it.
+  Counting addresses is what separates the two populations. A per-range
+  *request-rate* bucket cannot: the 2026-09-09 crawl ran at 150-210 req/min per
+  range while the largest confirmed legitimate single client here bursts to 587
+  req/min. Measured over three windows of real traffic, distinct addresses per
+  netblock were 2-3 for legitimate traffic (median 1) against 27-338 for
+  crawler ranges. Replaying two of those windows through the deployed scenario
+  overflowed 4 and 5 ranges respectively, every one of them a crawler, and
+  three of the four rotating-proxy ranges present were not covered by either
+  static blocklist. Grouped by prefix and not by ASN because MaxMind and RIPE
+  disagree on the AS for these addresses, and because `scope: AS` is silently
+  discarded by our bouncer plugin, which handles only `ip` and `range`.
+  `crowdsecurity/geoip-enrich` is declared in the agent's `PARSERS` for this
+  reason — it arrived as an undeclared hub dependency before, and losing it
+  would turn the scenario into a no-op with no error.
+- **`viktor/immich-asset-paths-whitelist` was inert until 2026-09-09.** It read
+  `evt.Parsed.target_fqdn`, which no traefik parser path creates, so Immich had
+  no false-positive exemption at all. Now scoped by
+  `evt.Parsed.traefik_router_name`, matching the nextcloud whitelist that is
+  verified working; `cscli explain` on an Immich asset 404 reports
+  `[whitelisted]` where it previously reported `unchanged`.
+- **Cloudflare's AI-bot block does NOT catch Meta (measured 2026-09-03).**
+  `ai_bots_protection` was enabled on the zone, and forgejo was proxied as a
+  test. Of 73 residual Meta requests in 20 minutes, **66 arrived through the
+  cloudflared tunnel** and were stopped by our own bouncer behind it. Cloudflare
+  verifies bot identity by ASN and reverse DNS, and Meta never claimed to be a
+  bot — it sent spoofed desktop Chrome user-agents, so there is nothing to match
+  on. Sending `meta-externalagent`, `GPTBot` and `ClaudeBot` user agents from our
+  own address all return 200 for the same reason, so that is not a valid test.
+  forgejo was reverted to `non-proxied`: with no bot-blocking benefit, only the
+  100MB request-body cap remained, which would reject a fresh full push of
+  `infra.git` (183 MB). `ai_bots_protection` stays on — it still covers the
+  proxied hosts against crawlers that do declare themselves.
 - **Auth carve-out**: `authentik.viktorbarzin.me` and `public-auth.viktorbarzin.me`
   are never gated, so a false-positive ban cannot wall someone out of the login /
   WebAuthn flow they would need in order to fix it. Carried over from the WAF rule
@@ -334,10 +418,26 @@ blocks privileged / host-namespace pods (no Kyverno policy touches sysctls).
 Needed by the `proxy` shared per-country NordVPN gateway + Headscale exit nodes,
 which FORWARD foreign-origin traffic onto gluetun's `tun0` (impossible without
 `ip_forward=1` in the pod netns; the runtime mounts `/proc/sys` read-only, so it
-cannot be set at runtime even with `NET_ADMIN`). Managed in
-`modules/create-template-vm/k8s-node-post-join-tune.sh` (source of truth, all
-future nodes); master + GPU node1 were not live-rolled (no gateway schedules
-there) and pick it up on re-provision.
+cannot be set at runtime even with `NET_ADMIN`). Declared in
+`playbooks/k8s-node-tuning.yml` as `kubelet_allowed_unsafe_sysctls` on all six
+nodes. The playbook is applied by hand; what runs hourly is
+`scripts/k8s-node-drift-check`, which reports divergence and does not repair it
+(corrected 2026-09-05, code-yypr — this paragraph previously said the playbook
+itself was reconciled hourly, and nothing scheduled it). The one-shot
+`modules/create-template-vm/k8s-node-post-join-tune.sh` that previously owned it
+ran once per node with nothing re-applying it, so `kubeadm upgrade node` erased
+the key cluster-wide in July 2026; that script is deleted as of 2026-09-03.
+
+Verified live on 2026-09-03 via each kubelet's `/configz`: master, node1 and
+node2 each report exactly `['net.ipv4.ip_forward']`, and
+`scripts/check-node-kubelet-tune` reports all six nodes carrying the full
+declared tune. Two properties of the reconciler are worth knowing before relying
+on it as a control. This key is **unioned**, not pinned (`current + declared |
+unique | sort`), so the playbook guarantees `net.ipv4.ip_forward` is present but
+will not remove an unsafe sysctl added out of band. Detect that case with
+`scripts/check-node-kubelet-tune`. The playbook also writes the
+file without restarting kubelet, so a change to this list takes effect at the
+node's next reboot rather than when the playbook runs.
 
 #### Operational Policies
 
@@ -401,12 +501,12 @@ Beads epic: `code-8ywc`. **Status: partially live as of 2026-05-18.**
 | W1.2 Vault `file` audit device | **LIVE** — `vault_audit.file` in `stacks/vault/main.tf:287`, writing to `/vault/audit/vault-audit.log` on `proxmox-lvm-encrypted` PVC |
 | W1.2 Vault `x_forwarded_for_authorized_addrs = 10.10.0.0/16` | **LIVE** — applied via `tg apply -target=helm_release.vault` on 2026-05-18; all 3 vault pods restarted cleanly |
 | W1.2 Vault audit log shipping to Loki | **LIVE** — `audit-tail` sidecar in vault pods + Alloy DaemonSet ships to Loki with `container="audit-tail"`. Verified via `{namespace="vault",container="audit-tail"}` LogQL query. |
-| W1.1 K8s API audit policy + shipping | **LIVE** — kube-apiserver audit policy was already configured (Metadata level, `/var/log/kubernetes/audit.log`, 7d retention). Alloy DaemonSet now tolerates control-plane taint, scrapes the audit log file, ships to Loki with `job=kubernetes-audit`. K2-K9 alert rules in Loki ruler. |
+| W1.1 K8s API audit policy + shipping | **LIVE** — kube-apiserver audit policy configured at Metadata level, writing `/var/log/kubernetes/audit/audit.log`. Alloy DaemonSet tolerates the control-plane taint, tails that file, ships to Loki with `job=kubernetes-audit`. K2-K9 alert rules in Loki ruler. **Retention corrected 2026-09-01:** `--audit-log-maxage=30 --audit-log-maxbackup=10 --audit-log-maxsize=100`, and at ~415 MB/day the size cap rotates every 6-7 h, so on-node history is **~2.8 days**, not 7 and not 30. Loki holds 30 days. |
 | W1.3 Source-IP anomaly rules (K9, V7, S1) | **LIVE** (K9, V7, S1). **S1 activated 2026-06-10** — promtail on the PVE host now ships the journal to Loki (`scripts/pve-promtail.yaml`); sshd auth lands as `job=sshd-pve` (the S1 data source). The same shipper carries snoopy `execve()` command audit as `{job="pve-journal", identifier="snoopy"}` (forensic, not alerting). Deployed because emo's agent was given root SSH to the host (shared key) — see `docs/architecture/monitoring.md` → "External host: pve". |
 | W1.4 Kyverno security policies → Enforce | **LIVE** — 3 policies in Enforce mode with 35-namespace exclude list. |
 | W1.5 Kyverno trusted-registries → Enforce | **LIVE** — explicit allowlist (15 registries + 6 DockerHub library bare names + 56 DockerHub user repos). Verified by admission dry-run: `evilcorp.example/malware:v1` BLOCKED, `alpine:3.20` and `docker.io/library/alpine:3.20` ALLOWED. |
 | W1.6 Calico observe-phase (pilot: recruiter-responder) | **LIVE** (2026-05-19) — GlobalNetworkPolicy `wave1-egress-observe-recruiter-responder` with rules `[action:Log, action:Allow]`. FelixConfiguration.flowLogsFileEnabled approach abandoned (Calico Enterprise-only field, rejected by OSS v3.26). Log action emits iptables LOG with prefix `calico-packet: ` → kernel → journald → Alloy → Loki. Verified: `{job="node-journal"} \|~ "calico-packet"` returns real packet metadata (SRC/DST/PROTO). Expand to more namespaces by adding to `namespaceSelector`. |
-| W1.7 NetworkPolicy phased enforce | **PARTIAL ANALYSIS** — first observation snapshot at `docs/architecture/wave1-egress-observation-2026-05-22.md` (36 source namespaces seen so far, 29 thin-profile candidates). Recommend continuing observation through 2026-05-29 (full week) before any enforce flip. Pilot enforce target: `recruiter-responder` (2 destinations only). `servarr` stays in Log+Allow indefinitely (BitTorrent P2P incompatible with static enforce). |
+| W1.7 NetworkPolicy phased enforce | **ANALYSIS COMPLETE, RESCOPED, NOTHING ENFORCED** (2026-09-04) — full-window snapshot at `docs/architecture/wave1-egress-observation-2026-09-04.md`, read from 7.19M banked `calico-packet` lines by `scripts/egress-observation.py` (committed and re-runnable). Of the 101 tier 3+4 namespaces, 85 ran a pod in the week, 50 reached anything external, and 2 of those (`servarr`, `chrome-service`) account for 96% of the 9,822 external addresses. **Scope changed 2026-09-04:** Viktor declined default-deny egress across all 101 namespaces; W1.7 is now per-namespace and opt-in on a named handful. Recommended order: `learn` (2 GitHub SSH addresses), `ntfy` (zero external), `webhook-handler`, `kms`. `recruiter-responder` is no longer the pilot — it has run no pods for ~16 days and `stacks/recruiter-responder/main.tf:185` sets `replicas = 0`. Calico OSS v3.30.7 offers no `domains:` selector, so every allowlist is CIDR-based. `servarr` stays in Log+Allow indefinitely (BitTorrent P2P incompatible with static enforce). |
 
 The block below documents the locked design.
 
@@ -416,7 +516,7 @@ Response model: **(I) Slack-only, daily skim.** All security alerts post to **`#
 
 | Source | Mechanism | Ships via | Loki job label |
 |---|---|---|---|
-| K8s API audit log | Custom audit policy on kube-apiserver: drop `get`/`list`/`watch` at `None` for most resources, log writes at `Metadata`, secret reads at `Metadata`, `exec`/`portforward` at `RequestResponse`, exclude kubelet+controller-manager noise. Codified in `stacks/infra` kubeadm config templating. | Alloy DaemonSet tails `/var/log/kubernetes/audit/*.log` | `job=kube-audit` |
+| K8s API audit log | Custom audit policy on kube-apiserver, **corrected against live state 2026-09-01**: `get`/`list`/`watch` are dropped at `None` for **everything**, so there are no secret-read and no `exec`/`portforward` audit events; high-churn resources and probe URLs are dropped; every remaining create/update/patch/delete is logged at `Metadata` with `omitStages: [RequestReceived]`. Source of truth is the hand-deployed `scripts/k8s-apiserver-audit-policy.yaml` (**not** `stacks/infra` templating, which carries no audit config; the policy `stacks/rbac` writes is inert, see below). Measured volume: 74,060 events / 6 h, of which 0 reads, against 366,219 read requests served. | Alloy DaemonSet tails `/var/log/kubernetes/audit/audit.log` | `job=kubernetes-audit` |
 | Vault audit log | `file` audit device on existing Vault PVC. Vault listener config sets `x_forwarded_for_authorized_addrs` trusting Traefik pod CIDR so `remote_addr` is the real client IP, not Traefik's. | Alloy tails audit log file | `job=vault-audit` |
 | PVE sshd auth log | journald (`_SYSTEMD_UNIT=ssh.service`, `SYSLOG_IDENTIFIER=sshd-session`); promtail relabels `identifier=~"sshd.*"` → `job=sshd-pve` | promtail systemd unit on Proxmox host (192.168.1.127), `scripts/pve-promtail.yaml` — **LIVE 2026-06-10** | `job=sshd-pve` |
 | Calico flow log | `flowLogsFileEnabled: true` in Calico Felix config | Alloy (cluster-wide) | `job=calico-flow` (W1.6 only) |
@@ -487,6 +587,42 @@ Viktor opted out. Gap covered indirectly by K7 (new `*,*` ClusterRole created), 
 
 Custom audit policy reduces volume ~80-90% vs default Metadata-everywhere. Loki tuned for fewer larger chunks: `chunk_target_size: 1.5MB`, `chunk_idle_period: 30m`, snappy compression. Retention 90d for security streams (matches Technitium DNS query log precedent). Net estimate: ~1-2 GB/day additional disk writes after tuning.
 
+### Who reached the Kubernetes API (design step 4, 2026-09-01)
+
+Terraform-owned and inert until a human performs the control-plane step. Runbook:
+`docs/runbooks/apiserver-oidc-agent-identity.md`; design:
+`docs/plans/2026-09-01-service-identity-and-request-attribution-design.md`.
+
+Starting point, measured: the apiserver already carries
+`--authentication-config=/etc/kubernetes/pki/auth-config.yaml` with two OIDC
+issuers (`kubernetes` for kubelogin, `k8s-dashboard`), Terraform-managed in
+`stacks/rbac/modules/rbac/apiserver-oidc.tf` and byte-identical to the node. In
+24 hours there were **zero** OIDC-authenticated audit events, while the shared
+kubeadm admin certificate produced 116 mutating events in a 1-hour sample. Every
+human, agent session and cron job on the devvm shares that certificate, so all
+of them record the same `credential-id X509SHA256=7a03b1f4…0616` and the audit
+log cannot tell them apart.
+
+What landed:
+
+| Piece | Where | State |
+| --- | --- | --- |
+| `kubernetes-agent` Authentik app + public PKCE provider | `stacks/rbac/authentik-kubernetes.tf` | created on apply. No issuer list names it, so its tokens are rejected until the flag below is set |
+| A third apiserver issuer mapping username and groups under the `agent:` prefix | `apiserver-oidc.tf`, `var.agent_oidc_enabled` | **default false.** With it off the rendered config is byte-identical to the live file (sha256 `bdefc260…97e16`), so the SSH provisioner's trigger does not move and an apply leaves the control plane alone |
+| Group-keyed ClusterRoleBindings for `kubernetes-*` and `agent:kubernetes-*` | `oidc-group-bindings.tf` | created on apply; granted nobody anything new on the day they landed |
+| The live `kubernetes` OIDC app described in Terraform with `import` blocks | `authentik-kubernetes.tf`, `var.manage_kubernetes_oidc_app` | **default false.** Adoption plans `2 to import, 0 to change` (verified 2026-09-01) |
+
+Why a separate issuer rather than a second client: the audit event records
+`user.username` and `user.groups` and not the issuer, so two clients on one
+issuer both mint the same email and stay indistinguishable. The per-issuer
+prefix is what lands the distinction in the log, and it also means an agent
+session matches only `agent:*` bindings, so it inherits no human's access. Agent
+rows are bound read-only (`oidc-power-user-readonly`: cluster-wide
+get/list/watch, no Secrets, no `pods/exec`).
+
+The shared cluster-admin certificate stays as documented break-glass, since it
+authenticates via `--client-ca-file` and so survives an Authentik outage.
+
 ### NetworkPolicy Default-Deny Egress (Wave 1 — observe-then-enforce, tier 3+4)
 
 Beads: `code-8ywc` W1.6 + W1.7. **Status: planned.**
@@ -511,7 +647,9 @@ The durable **east-west flow trail** (below) is now the preferred data source fo
 the *internal* (namespace-to-namespace) half of each Wave-1 egress allowlist —
 faster and identity-stamped vs the original iptables-`LOG`→journald→Loki path
 (ADR-0014: "Enforcement gains a better data source"). The unique observed
-namespace pairs live in CNPG DB `goldmane_edges`, table `edge`. To derive the
+namespace pairs live in CNPG DB `goldmane_edges`, table `edge` (which since
+2026-09-01 also carries workload, endpoint type, destination Service and port). To
+derive the
 namespaces a source is observed talking to (the `allow` set that seeds its
 NetworkPolicy):
 
@@ -522,9 +660,12 @@ SELECT DISTINCT dst_ns FROM edge WHERE src_ns='<ns>' AND action='allow' ORDER BY
 The full SQL recipe (whole-cluster matrix, deny sanity-checks, the ≥7-day
 observation caveat) is in
 [runbooks/goldmane-flow-trail.md → Deriving the Wave-1 egress allowlist](../runbooks/goldmane-flow-trail.md#deriving-the-wave-1-egress-allowlist-from-the-edge-table-infra-62).
-**External / public-internet egress is NOT in this table** (empty-namespace flows
-are dropped) — for those destinations keep using the Calico flow-log observation
-(the W1.6 snapshot, `wave1-egress-observation-2026-05-22.md`). This feeds the
+**External / public-internet egress is NOT in this table** (a destination with no
+namespace is normalised to the sentinel `dst_ns = '-'`, which records that a
+namespace egressed off-cluster but never to where) — for those destinations keep
+using the Calico flow-log observation (the W1.6 snapshot,
+`wave1-egress-observation-2026-09-04.md`, read by
+`scripts/egress-observation.py`). This feeds the
 existing observe-then-enforce effort (beads `code-8ywc`); **enforce-flips remain
 out of scope** of the trail — it is observe-and-derive only.
 
@@ -545,10 +686,21 @@ refined by a `service-identity` label in the few multi-Service namespaces
    **not** a trail (lost on Goldmane restart). Enabled via operator CRs in
    `stacks/calico/main.tf`; reversible toggle (Goldmane is OSS tech-preview).
 2. **`goldmane-edge-aggregator`** (`stacks/goldmane-edge-aggregator`) — streams
-   Goldmane's gRPC `Flows.Stream` over **mTLS** and upserts the low-cardinality
-   namespace-pair edge set (`edge(src_ns,dst_ns,action,first_seen,last_seen,
-   flow_count)`) into CNPG DB `goldmane_edges`. Self-edges and empty-namespace
-   (public-internet) flows are dropped — in-cluster relationships only. The mTLS
+   Goldmane's gRPC `Flows.Stream` over **mTLS** and upserts the per-workload edge
+   set into CNPG DB `goldmane_edges`: source and destination workload, their
+   namespaces and endpoint types, the destination Service and port, and the action
+   (**widened 2026-09-01**; before that it was namespace pairs alone). Dropped, and
+   counted by reason: flows where both ends are workloads in the **same namespace**,
+   and flows where an end carries no identity at all. **Node, network-set and
+   internet flows are kept** — the drop test is on endpoint type, not on string
+   equality of the two namespaces, which also matched (and deleted) any flow with
+   a non-workload end at BOTH ends, since Goldmane labels such an end `-`.
+   Measured 2026-09-01: that deleted class is currently empty (0 of 2,168 live
+   flows, because no HostEndpoints are defined), so the type test guards a class
+   that appears once they are. The immediate gain is the other half — 1,116 of
+   those 2,168 flows (51%) touch an external address and now carry a port, a
+   workload and an endpoint type where they carried a bare namespace pair. Aggregation is per workload, not per
+   pod: pod names churn on every restart, and Whisker serves live per-pod detail. The mTLS
    client cert **reuses the operator's Tigera-CA-signed `whisker-backend-key-pair`**
    (Goldmane verifies CA-chain only, not identity) rather than copying the CA
    private key into TF state — **re-apply the stack if the operator rotates that
@@ -578,12 +730,42 @@ the **`AggregatorDown`** + **`DigestFailing`** alerts and cluster-health check #
 
 ### Rate Limiting
 
-**Per-source IP limits**:
-- Default: 100 requests/minute
-- Returns **429 Too Many Requests** (not 503)
-- Higher limits for upload-heavy services:
-  - Immich: 500 req/min (photo uploads)
-  - Nextcloud: 300 req/min (file sync)
+Read from `stacks/traefik/modules/traefik/middleware.tf` on 2026-09-09. The
+earlier text here described a `rate_limit` variable in requests per minute that
+`ingress_factory` has never had, and per-service overrides for Immich and
+Nextcloud that are not how either is configured.
+
+**The shared `rate-limit` middleware**, auto-attached by `ingress_factory` to
+about 115 ingresses:
+- 10 requests/second average, burst 50. Traefik's `period` defaults to one
+  second, so `average` is a per-second figure, not per-minute.
+- Returns **429 Too Many Requests**.
+- Keyed on `X-Real-Ip` since 2026-09-09, which makes it a genuine per-client
+  limit. Before that it set no `sourceCriterion`, so Traefik keyed on the
+  request's remote address; behind the cloudflared tunnel that is the
+  cloudflared pod, and every external viewer of every proxied host shared one
+  bucket.
+- `rate-limit` is now a **chain**: the `real-ip` plugin runs first, then the
+  limiter (`rate-limit-per-client`). The order matters. Reached before
+  `real-ip`, the header extractor reads an empty value for every request and
+  they all share one bucket again, with no error logged.
+- Limits are per Traefik **pod**, and there are 3 replicas, so the effective
+  ceiling is about 3x nominal. Traefik 3.7 can share buckets through Redis
+  (`rateLimit.redis`); not adopted, because it puts Redis on the request path.
+
+**Per-service limits** are separate Middleware resources or opt-outs, not a
+variable on the shared one:
+- `skip_default_rate_limit = true` detaches the shared limiter entirely.
+  Immich, Nextcloud's ingresses, Authentik, tripit, health, actualbudget,
+  dawarich, android-emulator, prometheus and f1-stream use it, mostly because
+  parallel asset loads or sync clients exceed 10/s legitimately.
+- `f1-rate-limit` (200/2000, also keyed on `X-Real-Ip`) fronts f1-stream, where
+  HLS makes one request per video segment.
+
+**What a per-client limit cannot do**: catch a crawl that sends one request
+from each of many addresses. 1,993 distinct addresses making a single request
+each never fill any per-client bucket. That shape is handled by
+`viktor/distributed-crawl-range` in CrowdSec (see below).
 
 **Retry Middleware**:
 - 2 attempts max
@@ -640,11 +822,15 @@ module "myapp_ingress" {
   host      = "myapp.viktorbarzin.me"
 
   # Security toggles
-  protected         = true   # Enable ForwardAuth
-  anti_ai_scraping  = false  # Disable anti-AI (e.g., for public API)
-  rate_limit        = 200    # Custom rate limit (req/min)
+  protected               = true   # Enable ForwardAuth
+  anti_ai_scraping        = false  # Disable anti-AI (e.g., for public API)
+  skip_default_rate_limit = true   # Detach the shared 10/s limiter
 }
 ```
+
+There is no `rate_limit` variable. The shared limiter is either attached (the
+default) or detached with `skip_default_rate_limit`; a service needing a
+different ceiling gets its own Middleware, as f1-stream does.
 
 ### Kyverno Policy Example
 
@@ -761,8 +947,16 @@ spec:
 
 **Fix**:
 1. Check Traefik logs for rate limit hits: `kubectl logs -n traefik -l app=traefik | grep 429`
-2. Increase limit in `ingress_factory`: `rate_limit = 300`
-3. Apply: `terraform apply`
+2. Confirm the router's chain includes `traefik-real-ip` ahead of
+   `traefik-rate-limit`: `kubectl get ingress <name> -n <ns> -o jsonpath='{.metadata.annotations.traefik\.ingress\.kubernetes\.io/router\.middlewares}'`.
+   `real-ip` is inside the `rate-limit` chain, so it is there by default; a
+   hand-rolled ingress referencing `rate-limit-per-client` directly would key
+   every request on an empty value and share one bucket.
+3. Detach the shared limiter for that service:
+   `skip_default_rate_limit = true` in `ingress_factory`, or give it its own
+   Middleware with a higher `average`/`burst` (the `f1-rate-limit` pattern).
+   There is no `rate_limit` variable to raise.
+4. Apply: `scripts/tg apply` from the stack directory, or push and let CI apply.
 
 ### HTTP/3 Not Working
 

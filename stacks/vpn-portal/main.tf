@@ -93,6 +93,15 @@ resource "kubernetes_deployment" "vpn_portal" {
             name  = "PORT"
             value = "3000"
           }
+          # Per-transport reachability for the page's health pills (infra#49).
+          # The portal reads probe_success{job="vpn-transports"} from the
+          # blackbox job in stacks/monitoring. Unset or unreachable degrades to
+          # no pills — transportHealth() returns an empty map on any failure, so
+          # this can never break the config list the page exists for.
+          env {
+            name  = "PROMETHEUS_URL"
+            value = "http://prometheus-server.monitoring.svc.cluster.local"
+          }
           resources {
             requests = {
               cpu    = "20m"

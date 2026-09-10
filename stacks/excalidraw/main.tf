@@ -28,13 +28,14 @@ module "tls_secret" {
 }
 
 module "nfs_data_host" {
-  source       = "../../modules/kubernetes/nfs_volume"
-  name         = "excalidraw-data-host"
-  namespace    = kubernetes_namespace.excalidraw.metadata[0].name
-  nfs_server   = var.nfs_server
-  nfs_path     = "/srv/nfs/excalidraw"
-  storage      = "1Gi"
-  access_modes = ["ReadWriteOnce"]
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "excalidraw-data-host"
+  namespace          = kubernetes_namespace.excalidraw.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/excalidraw"
+  storage            = "1Gi"
+  access_modes       = ["ReadWriteOnce"]
+  storage_class_name = "nfs-pve"
 }
 
 resource "kubernetes_deployment" "excalidraw" {

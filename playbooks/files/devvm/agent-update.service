@@ -1,0 +1,32 @@
+[Unit]
+Description=Bring every agent CLI on this box to its latest version
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# One job, three updaters, in this order on purpose: the cheap per-user ones
+# first, and t3 last because it is the only one that restarts running services.
+#
+# Each line is prefixed with `-`, so systemd records the failure and carries on
+# to the next. Without it, codex being unreachable on npm would silently cost
+# the box its Claude Code and t3 updates for the day, which is the failure mode
+# a single job most easily introduces.
+#
+# The scripts stay separate and individually runnable. `sudo claude-update`,
+# `sudo codex-update` and `sudo t3-autoupdate` each still work by hand, which is
+# what the t3 runbook tells a person to do; this unit is the schedule, not a
+# replacement for them.
+ExecStart=-/usr/local/bin/claude-update
+ExecStart=-/usr/local/bin/codex-update
+ExecStart=-/usr/local/bin/t3-autoupdate
+
+StandardOutput=journal
+StandardError=journal
+Nice=10
+IOSchedulingClass=idle
+# Generous: t3 alone takes per-user state.sqlite backups, runs a populated-DB
+# health check against a throwaway instance, and rolls out to instances one at a
+# time. Its own unit allowed 45min; the other two are minutes.
+TimeoutStartSec=90min
