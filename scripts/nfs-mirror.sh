@@ -91,8 +91,17 @@ EXCLUDES=(
     --exclude='/temp/'     # scratch — no backup anywhere
 
     # ---- regenerable services: live-only on sdc, no offsite (2026-06-01) ----
-    # See header carve-out. --delete reaps any existing copies from sda on
-    # the next run; a one-off direct delete already cleared them from Synology.
+    # See header carve-out. A one-off direct delete cleared the existing copies
+    # from sda and from Synology.
+    #
+    # CORRECTION 2026-09-11: this block used to say "--delete reaps any existing
+    # copies from sda on the next run". It does NOT. rsync PROTECTS an excluded
+    # path on the receiver from --delete, and this job passes --exclude without
+    # --delete-excluded. Proved by dry-running the deployed script's own exclude
+    # list against a /mnt/backup holding 54G of a freshly-excluded path: 0
+    # deleting lines, exit 0, no errors. So an exclude added here stops NEW data
+    # arriving and leaves whatever is already there forever. Every entry in this
+    # section needed a manual delete, on sda as well as on Synology.
     --exclude='/ollama/'           # LLM models — re-pullable
     --exclude='/prometheus-backup/' # metrics TSDB snapshots
     --exclude='/audiblez/'         # generated audiobooks
@@ -104,15 +113,19 @@ EXCLUDES=(
     # evicted least-recently-played, so a backup would carry gigabytes of
     # transient media that the app deletes on its own. Viktor's call: do not
     # back these up. Excluding here covers the offsite leg too, since everything
-    # except immich reaches Synology through this mirror.
+    # except immich reaches Synology through this mirror. It does NOT remove
+    # anything already copied — see the correction above.
     --exclude='/servarr/downloads/f1-replays/'
 
     # ---- f1-stream CONVERTED library: same call, a path the 2026-08-22 exclude
     # above did not cover (added 2026-09-11). That line named the torrent cache
     # (/srv/nfs/servarr/downloads/f1-replays, mounted /replay-cache); the
     # CONVERTED library is a different NFS export, /srv/nfs/f1-stream, mounted
-    # /data. Measured today: 54G on sda under /mnt/backup/f1-stream/replays-mp4
-    # and on its way offsite, on a Synology volume that hit 100% full in July.
+    # /data. Measured 2026-09-11: 54G on sda under
+    # /mnt/backup/f1-stream/replays-mp4 AND another 54G already offsite at
+    # Viki/pve-backup/f1-stream/replays-mp4, on a Synology volume that hit 100%
+    # full in July. Both deleted by hand the same day, since an exclude does not
+    # reap what is already there.
     #
     # Every byte of it is regenerable, in two steps that both already exist: the
     # mp4 is a container rewrap of a torrent the swarm still has, and the .hls
