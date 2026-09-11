@@ -235,6 +235,31 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   `crowdsecurity/geoip-enrich` is declared in the agent's `PARSERS` for this
   reason — it arrived as an undeclared hub dependency before, and losing it
   would turn the scenario into a no-op with no error.
+- **This scenario bans for 24h, every other one for 4h (2026-09-11).** The
+  `persistent_crawl_remediation` profile sits ahead of the two defaults and
+  matches `Alert.GetScenario() == "viktor/distributed-crawl-range"`. A 4h ban
+  against a crawl that runs for days is re-issued rather than effective: over
+  three days the scenario minted **359** separate ban decisions for Meta's
+  `2a03:2880::/32`, of which only **two** followed a ban that had actually
+  lapsed. The other 357 were the scenario overflowing again while the range was
+  already banned, each writing a LAPI row and sending a Slack message. 24h
+  brings that to roughly three. Every other scenario keeps 4h, since the two
+  default profiles filter on scope and a Range alert from anywhere else still
+  falls through to `default_range_remediation`.
+- **Exponential ban escalation was considered here and rejected on the data.**
+  `duration_expr`, `GetDecisionsCount` and `GetDecisionsSinceCount` are all
+  present in the running v1.7.8 binary, so an escalating expression would load.
+  The obstacle is that `GetDecisionsCount` returns raw decision rows rather
+  than distinct ban episodes, and this LAPI mints a fresh decision on every
+  overflow even while a ban is active. Meta's `/32` would therefore have
+  computed 2^359 hours, and `45.148.10.123`, which collected 20 decisions
+  inside nine minutes from a single burst, would have computed 2^20. No
+  built-in helper returns an episode count. The population is also the wrong
+  shape for escalation: of **25,632** banned addresses, **25,568 (99.75%)**
+  were banned exactly once, only 64 ever returned, and 3 exceeded three
+  episodes, because these crawlers rotate addresses instead of coming back. If
+  escalation is ever revisited it needs an episode count and a hard cap, and
+  the flat per-scenario duration above should be tried first.
 - **`viktor/immich-asset-paths-whitelist` was inert until 2026-09-09.** It read
   `evt.Parsed.target_fqdn`, which no traefik parser path creates, so Immich had
   no false-positive exemption at all. Now scoped by

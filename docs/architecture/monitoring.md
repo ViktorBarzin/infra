@@ -241,6 +241,29 @@ minimum-volume guard is not a substitute. And per the kured caveat below, an
 alert that flaps also holds the node-reboot gate closed, so latency-alert noise
 is not only Slack noise.
 
+`AnubisChallengeStoreErrors` is the same lesson on a different axis, found
+**2026-09-11**. It read every 5xx from a service whose name contains `anubis`,
+at `> 0`, and the comment justifying that sensitivity said the only legitimate
+path through Anubis is a challenge or a redirect to the upstream. That was true
+of the seven instances in place when it was written. It stopped being true once
+Anubis was put in front of `f1-stream`, which proxies third-party stream
+origins and correctly answers 502 when one of them refuses: **88 such 502s in
+24h**, each firing a critical that `keep_firing_for: 1h` then held open, and
+each holding the kured reboot gate closed with it.
+
+The status code separated the two populations cleanly. Over 7 days
+`f1-stream-anubis` carried **0** 500s and **876** 502s, while every other
+instance was the reverse (`forgejo` 39/6, `blog` 21/0, `wrongmove` 2/0,
+`homepage` 1/0). The rule now reads `code="500"`, which keeps the
+challenge-store coverage it exists for, and `F1RelayUpstreamFailing` watches
+the 502/504 rate on that service at 0.3 req/s for 15m, set from its own 7-day
+distribution (p50 0, p99 0.033, max 0.833). What generalises: **an alert on a
+middleware is an alert on everything that middleware fronts**, so adding a
+proxying app behind a shared middleware is a reason to re-read the rules that
+match it by name. Two open items are recorded rather than silenced: forgejo's
+39 and the blog's 21 500s over that window are not characterised, and no
+`store` error appears in either pod's log for the same period.
+
 One caveat worth knowing: kured halts node reboots while any firing alert is
 outside its `alertFilterRegexp` allowlist (`^(Watchdog|RebootRequired|
 KuredNodeWasNotDrained|InfoInhibitor|KernelOOMKiller)$`). Holding an alert
