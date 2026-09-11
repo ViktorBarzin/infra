@@ -1064,7 +1064,176 @@
         content: "{{ docker_daemon | combine({'cgroup-parent': 'docker.slice'}) | to_nice_json }}\n"
       notify: restart docker
 
+    # ---- 14) the lobby's identity boundary ----------------------------------
+    # Measured 2026-09-11. The five lobby HTTP services and ttyd believe
+    # whatever X-Authentik-Username they are handed, they listen on every
+    # interface because Traefik runs off-host, and nothing filtered the ports:
+    # ufw inactive, both iptables and ip6tables at policy ACCEPT. One curl from
+    # the LAN, either WireGuard tunnel, Headscale, or another account on this
+    # box was a shell as any mapped user, and Authentik never saw it, because
+    # Authentik was never in the path.
+    #
+    # Three tasks, because the hole has three doors: the shared secret the
+    # services now demand, the one port that secret cannot cover, and the SSH
+    # keys that reach the same account by another route.
+    #
+    # ORDER: the proxy half lives in stacks/terminal (the tl-proxy-secret
+    # middleware) and must be applied FIRST. This file only makes the box
+    # require a header Traefik has already started sending; run it the other way
+    # round and every lobby request fails until the apply lands.
+
+    - name: Read the lobby proxy secret
+      ansible.builtin.command: vault kv get -field=proxy_secret secret/terminal-lobby
+      delegate_to: localhost
+      become: false
+      register: devvm_tl_proxy_secret
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    # Replaces the file wholesale rather than editing a line into it: the
+    # package owns /etc/terminal-lobby.conf and never touches this one, so this
+    # is the whole of what the box overrides, and a rebuilt machine gets it.
+    - name: Make the lobby services demand the proxy secret
+      ansible.builtin.copy:
+        dest: /etc/terminal-lobby.local.conf
+        owner: root
+        group: root
+        mode: "0640"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          #
+          # The identity header this box's proxy sends. Authentik's outpost sets
+          # it, and Traefik's forward-auth middleware replaces whatever the
+          # client sent, so the value arriving here is Authentik's.
+          TL_AUTH_HEADER=X-Authentik-Username
+
+          # Traefik is not on this host, so the services cannot bind loopback.
+          TL_BIND=0.0.0.0
+
+          # Which is why they demand this second header as well. Without it a
+          # caller who can reach the port is whoever they claim to be. Traefik
+          # stamps it via the tl-proxy-secret middleware in stacks/terminal;
+          # both halves read Vault secret/terminal-lobby -> proxy_secret, so
+          # rotating means writing that key and re-running both.
+          TL_PROXY_SECRET={{ devvm_tl_proxy_secret.stdout }}
+      no_log: true
+      notify: restart lobby services
+
+    # ttyd is the exception the config file itself calls out: it takes one
+    # identity header and has nowhere to check a second, so the secret above
+    # does not reach the single port that hands out a shell. A filter does.
+    #
+    # NOT the stock /etc/nftables.conf, which opens with `flush ruleset`.
+    # iptables on this box is iptables-nft, so docker's live filter and nat
+    # rules sit in the same netfilter ruleset and a global flush takes every
+    # container's networking with it. This owns one table and deletes only that.
+    - name: Filter ttyd down to the proxy
+      ansible.builtin.copy:
+        dest: /etc/nftables.conf
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/sbin/nft -f
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+
+          # Idempotent delete: `table` creates it if absent so `delete` always
+          # has something to remove. Never `flush ruleset` here -- see the task.
+          table inet devvm_lobby
+          delete table inet devvm_lobby
+
+          table inet devvm_lobby {
+            chain input {
+              # policy accept, priority ahead of docker's chains: this table
+              # adds one restriction and leaves every other port alone.
+              type filter hook input priority -10; policy accept;
+
+              iif lo accept
+
+              # The Traefik nodes, and this box reaching its own address.
+              tcp dport 7681 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
+              tcp dport 7681 drop
+            }
+          }
+      notify: reload nftables
+
+    - name: Load the filter at boot
+      ansible.builtin.systemd_service:
+        name: nftables
+        enabled: true
+        state: started
+
+    # SSH reaches the same account the lobby does, so leaving it on passwords
+    # would just move the door. sshd takes the FIRST value it reads for a
+    # keyword and reads sshd_config.d/*.conf in lexical order, so this file has
+    # to sort ahead of 50-cloud-init.conf, which ships PasswordAuthentication
+    # yes. Hence the 10- prefix; renaming it silently restores passwords.
+    - name: Refuse SSH passwords
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/10-devvm-hardening.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          # Must sort before 50-cloud-init.conf: first value wins.
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+      notify: restart ssh
+
+    # Declarative, because the interesting failure is a key nobody removed.
+    # wizard holds (ALL) NOPASSWD: ALL, so every key here is root on the box,
+    # and on 2026-09-11 five of the ten belonged to machines rather than to a
+    # person: two pods that no longer exist under those names, a phpIPAM cronjob
+    # whose key is for pfSense, a postmortem pipeline that SSHes nowhere, and
+    # openclaw. None had been used in the 30 days of sshd logs. They are gone,
+    # and `exclusive` is what keeps them gone.
+    #
+    # The set lives in Vault, not here: this repo has a public mirror, and the
+    # list of keys that reach root on the workstation is not something to
+    # publish. secret/devvm-authorized-keys -> wizard, one key per line.
+    # A service that needs back in gets its own line with a forced command, the
+    # way woodpecker-terminal-lobby already does, not a bare key.
+    - name: Read the admin's approved keys
+      ansible.builtin.command: vault kv get -field={{ devvm_admin_user }} secret/devvm-authorized-keys
+      delegate_to: localhost
+      become: false
+      register: devvm_admin_keys
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Declare the admin's authorised keys
+      ansible.posix.authorized_key:
+        user: "{{ devvm_admin_user }}"
+        key: "{{ devvm_admin_keys.stdout }}"
+        exclusive: true
+      no_log: true
+
   handlers:
+    - name: restart ssh
+      ansible.builtin.systemd_service:
+        name: ssh
+        state: restarted
+
+    # Restarting these drops no terminal: ttyd is deliberately not in the list,
+    # and the five that are hold no session state of their own.
+    - name: restart lobby services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: restarted
+      loop:
+        - clipboard-upload
+        - tmux-api
+        - session-events
+        - file-api
+        - skills-api
+
+    - name: reload nftables
+      ansible.builtin.systemd_service:
+        name: nftables
+        state: reloaded
     - name: reload systemd
       ansible.builtin.systemd_service:
         daemon_reload: true

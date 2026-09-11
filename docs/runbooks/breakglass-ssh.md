@@ -67,6 +67,59 @@ ssh -D 1080 breakglass                      # SOCKS5 → reach any internal IP
 There is **no `bg()` knock function** anymore — delete it from your shell rc if
 you added it under the old design.
 
+## Reaching your terminal sessions when the lobby is down
+
+`terminal.viktorbarzin.me` needs Traefik, Authentik and MetalLB. All three are in
+the cluster, so an ingress outage takes the lobby with it. The tmux sessions
+themselves are not in the cluster: they run on the devvm and survive it.
+
+```bash
+ssh -J breakglass wizard@10.0.10.10     # cold path, cluster down
+ssh wizard@10.0.10.10                   # from the LAN or either WireGuard tunnel
+tmux ls                                 # the same sessions the lobby lists
+tmux attach -t <name>
+```
+
+One thing to know before you need it: the lobby and SSH share a single tmux
+server on `/tmp/tmux-1000/default`, so an attach here lands you in the same pane
+the browser shows, with the same scrollback and the same running agent. Detach
+with `C-b d` rather than killing the pane.
+
+Two paths look equivalent and are not:
+
+| path | terminates | survives a cluster outage |
+|---|---|---|
+| break-glass `:52222` → Proxmox → devvm | Proxmox host | yes |
+| WireGuard `:51821` (site-to-site, pfSense) | pfSense | yes |
+| WireGuard `:51820` | a MetalLB LB in the cluster | no |
+
+If a phone or laptop is configured against `:51820`, it is not a break-glass
+path. Check which one a client uses before relying on it.
+
+### What is deliberately not a break-glass path
+
+Until 2026-09-11 the devvm's lobby ports answered anyone who could reach them.
+The five HTTP services (7683-7688) and ttyd (7681) take an identity from the
+`X-Authentik-Username` header, they bind every interface because Traefik runs
+off-host, and the box had no packet filter, so a single curl from the LAN or
+either tunnel was a shell as any mapped user, with nothing in Authentik to show
+for it. Verified against the live box, then closed:
+
+- The five HTTP services demand `X-TL-Proxy-Secret`, which only Traefik sends
+  (`tl-proxy-secret` middleware in `stacks/terminal`, secret in Vault at
+  `secret/terminal-lobby`).
+- ttyd takes one identity header and has nowhere to check a second, so the
+  nftables table in `playbooks/devvm.yml` restricts 7681 to the Traefik node
+  addresses and loopback.
+
+Both halves read the same Vault key, so rotating it means writing that key and
+re-running both. Apply the stack **before** the playbook: the box must not start
+demanding a header the proxy has not started sending.
+
+An unauthenticated port is not a break-glass path, because it helps whoever
+finds it more than it helps you. The break-glass is this runbook: a key you hold,
+on a port that depends on nothing in the cluster.
+
 ## Cold-event IP cheat sheet (cluster DNS is down)
 
 | Host | IP |
@@ -75,6 +128,7 @@ you added it under the old design.
 | pfSense | `10.0.20.1` (WAN `192.168.1.2`) |
 | k8s API | `10.0.20.100` |
 | Synology NAS | `192.168.1.13` (reach via `ssh -J breakglass`) |
+| devvm (terminal lobby, tmux sessions) | `10.0.10.10` |
 | edge router | `192.168.1.1` |
 
 ## Deploy / re-provision the host config
