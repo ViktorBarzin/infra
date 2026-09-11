@@ -3,6 +3,27 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
+# Shared secret proving a request reached the lobby through this proxy.
+#
+# The five HTTP services on the DevVM (clipboard-upload 7683, tmux-api 7684,
+# session-events 7685, file-api 7686, skills-api 7688) trust whatever
+# X-Authentik-Username they are handed, and they listen on every interface
+# because Traefik runs off-host. Without a second header they answer anyone who
+# can reach the port -- LAN, WireGuard, Headscale, or another account on the box
+# -- as that user. TL_PROXY_SECRET on the DevVM side makes them require this
+# value, so network position alone is no longer an identity.
+#
+# ttyd on 7681 is NOT covered: it has no way to check a second header, so that
+# port is restricted to the Traefik node addresses by the nftables rule in
+# playbooks/devvm.yml instead.
+#
+# ORDER MATTERS on a change: this middleware must be live BEFORE the playbook
+# sets TL_PROXY_SECRET, or every lobby request fails until it is.
+data "vault_kv_secret_v2" "terminal_lobby" {
+  mount = "secret"
+  name  = "terminal-lobby"
+}
+
 resource "kubernetes_namespace" "terminal" {
   metadata {
     name = "terminal"
@@ -104,6 +125,27 @@ resource "kubernetes_manifest" "terminal_compress" {
   }
 }
 
+# Stamps the proxy secret onto every request that reaches the five
+# secret-checking services. customRequestHeaders REPLACES any value the client
+# sent, so a caller cannot supply their own.
+resource "kubernetes_manifest" "tl_proxy_secret" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "tl-proxy-secret"
+      namespace = kubernetes_namespace.terminal.metadata[0].name
+    }
+    spec = {
+      headers = {
+        customRequestHeaders = {
+          "X-TL-Proxy-Secret" = data.vault_kv_secret_v2.terminal_lobby.data["proxy_secret"]
+        }
+      }
+    }
+  }
+}
+
 # Clipboard image upload service (same-origin path routing)
 resource "kubernetes_service" "clipboard_upload" {
   metadata {
@@ -158,6 +200,10 @@ resource "kubernetes_manifest" "clipboard_ingressroute" {
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
+          },
+          {
+            name      = "tl-proxy-secret"
+            namespace = kubernetes_namespace.terminal.metadata[0].name
           },
           {
             name      = "clipboard-strip-prefix"
@@ -363,6 +409,10 @@ resource "kubernetes_manifest" "tmux_api_ingressroute" {
             namespace = "traefik"
           },
           {
+            name      = "tl-proxy-secret"
+            namespace = kubernetes_namespace.terminal.metadata[0].name
+          },
+          {
             name      = "tmux-api-strip-prefix"
             namespace = kubernetes_namespace.terminal.metadata[0].name
           }
@@ -516,6 +566,10 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
+          },
+          {
+            name      = "tl-proxy-secret"
+            namespace = kubernetes_namespace.terminal.metadata[0].name
           }
         ]
         services = [{
@@ -585,6 +639,10 @@ resource "kubernetes_manifest" "file_api_ingressroute" {
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
+          },
+          {
+            name      = "tl-proxy-secret"
+            namespace = kubernetes_namespace.terminal.metadata[0].name
           }
         ]
         services = [{
@@ -671,6 +729,10 @@ resource "kubernetes_manifest" "skills_api_ingressroute" {
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
+          },
+          {
+            name      = "tl-proxy-secret"
+            namespace = kubernetes_namespace.terminal.metadata[0].name
           }
         ]
         services = [{
@@ -703,6 +765,10 @@ resource "kubernetes_manifest" "term_html_ingressroute" {
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
+          },
+          {
+            name      = "tl-proxy-secret"
+            namespace = kubernetes_namespace.terminal.metadata[0].name
           }
         ]
         services = [{
@@ -751,6 +817,10 @@ resource "kubernetes_manifest" "lobby_assets_ingressroute" {
           {
             name      = "authentik-forward-auth"
             namespace = "traefik"
+          },
+          {
+            name      = "tl-proxy-secret"
+            namespace = kubernetes_namespace.terminal.metadata[0].name
           }
         ]
         services = [{
