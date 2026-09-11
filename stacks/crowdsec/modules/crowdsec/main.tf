@@ -313,6 +313,18 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
           # decisions but does nothing about an already-imported one. Removing
           # the range from the static list is what lifts the existing block.
           - "2620:10d:c090::/44"
+          # The IPv4 halves of the same corporate egress, added 2026-09-11 after
+          # it happened a SECOND time. The 2026-09-07 fix above covered only the
+          # v6 prefix, so connecting over Meta corp IPv4 was still blocked
+          # zone-wide: 129 refusals in 24 h across seven hosts, worst on terminal
+          # (56), then ha-london (23), ha-sofia (20), f1 (12). Both ranges were
+          # removed from the static list in the same commit, and AS54115 was
+          # dropped from the regeneration sweep so it cannot return.
+          #
+          # Measured the same day: all 23 AS54115 prefixes are disjoint from
+          # everything AS32934 and AS63293 announce, so this exempts no crawler.
+          - "163.114.128.0/20"  # Meta corp egress, v4
+          - "199.201.64.0/22"   # Meta corp egress, v4
           # Never ban internal/cluster/LAN/tailnet sources. Enforcement (edge
           # Worker + firewall-bouncer) drops on real source IP, so an internal
           # range slipping into a decision could blackhole legit traffic — this
@@ -630,8 +642,24 @@ module "ingress" {
 # originate from this same address space. Outbound is unaffected — our own
 # devices reaching Meta still work.
 #
-# Regenerate (772 announced prefixes collapse to 117 aggregates):
-#   for as in AS32934 AS63293 AS54115; do
+# AS54115 IS DELIBERATELY NOT SWEPT (2026-09-11). It is FACEBOOK-CORP, the
+# network Meta employees browse from, and Viktor is one of them. The 2026-09-02
+# crawl came from AS32934, and measured on 2026-09-11 all 23 CORP prefixes are
+# DISJOINT from every prefix AS32934 and AS63293 announce, so dropping corp from
+# the sweep costs exactly nothing against the swarm.
+#
+# This is the SECOND time corp space has locked him out of his own sites. The
+# 2026-09-07 fix removed the IPv6 corp prefix (2620:10d:c090::/44) and
+# whitelisted it, but left the generator sweeping AS54115 and left the two IPv4
+# halves in the list, so the next time he connected over Meta corp IPv4 he was
+# blocked zone-wide again: 129 refusals in 24 h across seven hosts, worst on
+# terminal (56), then ha-london (23), ha-sofia (20), f1 (12), every one a 403
+# with no backend reached. Removing the ASN from the SWEEP is what prevents a
+# third occurrence, because a regeneration would otherwise put them straight
+# back.
+#
+# Regenerate (746 announced prefixes collapse to 114 aggregates):
+#   for as in AS32934 AS63293; do
 #     curl -s "https://stat.ripe.net/data/announced-prefixes/data.json?resource=$as" \
 #       | jq -r '.data.prefixes[].prefix'
 #   done | sort -u | python3 -c 'import sys,ipaddress as i; \
@@ -720,12 +748,10 @@ resource "kubernetes_config_map" "crowdsec_static_blocklist" {
       163.70.128.0/17
       163.77.132.0/23
       163.77.136.0/23
-      163.114.128.0/20
       173.252.64.0/18
       179.60.192.0/22
       185.60.216.0/22
       185.89.216.0/22
-      199.201.64.0/22
       204.15.20.0/22
       2620:0:1c00::/40
       2a03:2880::/32
