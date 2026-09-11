@@ -1376,6 +1376,91 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # f1-stream. Until 2026-09-11 no Loki rule matched this namespace at
+          # all, which is why a ladder build failing was one of four real
+          # failures in two days that produced no Slack message.
+          name = "f1-stream"
+          rules = [
+            {
+              # A replay's HLS ladder is what makes the whole caching story
+              # work: four rungs of 6-second chunks, each chunk its own edge
+              # cache entry, so the Nth viewer costs nothing. Without a ladder
+              # the only thing to serve is the 9 GB mp4, which is 18x over
+              # Cloudflare's 512 MB cacheable-object cap and so comes off the
+              # 32.0 Mbit/s home uplink once per viewer.
+              #
+              # The build is triggered automatically when a conversion
+              # finishes, and that automatic path has never run on a real
+              # arrival — five ladders are expected to build on their own over
+              # the coming race weekend. Nothing watches it today.
+              #
+              # One log line covers both trigger paths. `_finish_ladder_inner`
+              # (backend/replays/library.py:809) is the single completion path
+              # for every build, manual or automatic, and it logs
+              #   [library] ladder failed for <info_hash>: <ffmpeg stderr>
+              # then `shutil.rmtree`s the half-written directory, so a failure
+              # leaves no partial ladder behind and the fix is to build again.
+              #
+              # BACKTESTED rather than reasoned about, 2026-09-11 against Loki
+              # over the 30-day retention. Exactly two lines match, and they are
+              # the two real failures:
+              #   2026-08-24 04:31:39Z  ...: ffmpeg failed
+              #   2026-08-29 04:21:07Z  ...: [hls @ 0x56de89e3e200] Failed to op…
+              # Evaluated as an instant query at each of those timestamps the
+              # expression returns 1, and at 2026-08-24 03:00Z, 2026-08-24
+              # 05:00Z and 2026-09-11 12:00Z it returns no series at all.
+              #
+              # NO `or vector(0)` HERE, AND THAT IS DELIBERATE — please do not
+              # add one. The guard is load-bearing on an ABSENCE rule such as
+              # TerminalUpgradesCollapsed above, where the comparison is `< N`:
+              # a bare sum returns NO SERIES when nothing matches, `< N` over an
+              # empty result yields an empty result, and the alert then stays
+              # silent exactly when the outage is total, which is the worst
+              # case. This rule has the opposite polarity. It is PRESENCE
+              # detection: `> 0` over an empty result is also empty, and empty
+              # here means "no ladder has failed", which is the correct silent
+              # state. `or vector(0)` would make it evaluate 0 > 0, false, and
+              # change nothing — cost without benefit, and it would invite the
+              # next reader to think this rule can detect silence. It cannot,
+              # and it is not trying to: a ladder that never STARTS is a
+              # different alert nobody has written yet.
+              #
+              # 15m window with `for: 0m` because this fires per EVENT. The line
+              # is logged once per failed build, so the window has to outlive
+              # the scrape rather than the failure, and 15 minutes is long
+              # enough that one failure reads as one alert instead of flapping.
+              # severity=warning, not critical: a missing ladder degrades a
+              # replay to the mp4 path, which still plays. It needs someone to
+              # look, not to wake up.
+              alert  = "F1LadderBuildFailed"
+              expr   = "sum(count_over_time({namespace=\"f1-stream\"} |= \"[library] ladder failed\" [15m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "An f1-stream replay ladder build failed ({{ $value }} in 15m)"
+                description = <<-EOT
+                  ffmpeg could not build the HLS ladder for a replay, so that
+                  session can only be served as the whole mp4 — one full 7-9 GB
+                  origin pull per viewer, because the mp4 is far over
+                  Cloudflare's 512 MB cacheable-object limit and is deliberately
+                  cache-bypassed.
+                  The failing directory is deleted on failure, so there is no
+                  partial ladder to clean up and re-triggering the build is
+                  safe. Get the ffmpeg stderr first, it is on the same log line:
+                  homelab logs query '{namespace="f1-stream"} |= "[library] ladder failed"' --since 24h
+                  Two known shapes from the 30 days to 2026-09-11: a bare
+                  "ffmpeg failed" (non-zero exit with no usable stderr) and an
+                  "[hls @ …] Failed to open" write error. Check free space on
+                  /data before rebuilding — admission for a conversion is
+                  checked against 1.05x the source size while the ladder that
+                  follows writes about 2.45x, and the ladder itself checks
+                  nothing.
+                EOT
+              }
+            },
+          ]
+        },
+        {
           # Immich share-link analytics (recording rules → Prometheus
           # remote-write, 2026-07-06). Continuous per-slug counters that
           # OUTLIVE Loki's 30d log retention (Prometheus keeps 26w): a shared
