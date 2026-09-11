@@ -810,6 +810,48 @@ each never fill any per-client bucket. That shape is handled by
 - Fail-open prevents blocking legitimate users
 - Monitors for service health, auto-recovers
 
+### Workstation lobby identity boundary (2026-09-11)
+
+The terminal lobby's backends run on the devvm, not in the cluster, so the
+controls above do not reach them: Traefik's middleware chain, the CrowdSec
+plugin and the per-node nftables bouncer all sit on the k8s nodes.
+
+Each lobby service takes its user from an identity header (`TL_AUTH_HEADER`,
+`X-Authentik-Username` here) and binds every interface, because the proxy that
+sets that header is on another host. Measured 2026-09-11, with `TL_PROXY_SECRET`
+unset and no packet filter on the box, a request to any of those ports was
+treated as whichever user it named. Reaching them needed the LAN, one of the
+WireGuard tunnels, Headscale, or another account on the box. pfSense
+default-denies inbound IPv6 and passes only 80, 443, 25, 465, 587, 993 and 51821
+to the tunnel endpoint, so the internet was never a path.
+
+Two controls now stand between the ports and an identity, split because the
+services differ in what they can check:
+
+| port | service | control |
+|---|---|---|
+| 7683, 7684, 7685, 7686, 7688 | clipboard-upload, tmux-api, session-events, file-api, skills-api | require `X-TL-Proxy-Secret`, which only Traefik sends |
+| 7681 | ttyd | `table inet devvm_lobby` in nftables, limited to the Traefik node addresses, the box itself, and loopback |
+
+ttyd reads one identity header and has nowhere to check a second, which is why
+it gets the filter rather than the secret. Both halves of the secret read Vault
+`secret/terminal-lobby` → `proxy_secret`: Traefik through the `tl-proxy-secret`
+middleware in `stacks/terminal`, the box through `playbooks/devvm.yml`. Rotating
+it means writing that key and re-running both, and the stack has to go first, or
+the box will demand a header the proxy has not started sending.
+
+Two notes for anyone editing the nftables side. The table is deliberately its
+own, and nothing there may call `flush ruleset`: iptables on the devvm is
+iptables-nft, so docker's live filter and nat rules share the same ruleset and a
+global flush takes container networking with it. And the devvm runs no CrowdSec
+firewall-bouncer, so `table inet devvm_lobby` is the only nftables table on the
+box that anything here owns.
+
+This is a boundary around who can become a user, not around what that user may
+then do. The lobby and SSH share one tmux server on the devvm, so a session
+arriving either way lands in the same pane with the same privileges by design.
+Runbook: `docs/runbooks/breakglass-ssh.md`.
+
 ## Configuration
 
 ### Key Config Files
