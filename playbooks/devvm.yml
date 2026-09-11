@@ -172,6 +172,37 @@
             - /usr/share/keyrings/caddy-stable-archive-keyring.gpg
           register: caddy_repo_removed
 
+    # The HashiCorp repo is where terraform and vault on this box came from, and
+    # it existed only as hand-made files in /etc/apt until now, which is how its
+    # keyring went stale unnoticed: HashiCorp rotated their package signing key
+    # on 2026-09-09 and `apt-get update` has failed NO_PUBKEY FC9CA96ACA026560
+    # ever since, taking every apt task in this playbook down with it.
+    #
+    # `jammy`, not noble, because that is the suite the installed terraform and
+    # vault were resolved from and changing it here would quietly offer both an
+    # upgrade. Worth revisiting deliberately, not as a side effect of a key fix.
+    - name: Install the HashiCorp signing key
+      ansible.builtin.get_url:
+        url: https://apt.releases.hashicorp.com/gpg
+        dest: /usr/share/keyrings/hashicorp-archive-keyring.asc
+        mode: "0644"
+      register: devvm_hashicorp_key
+
+    - name: Declare the HashiCorp apt source
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/hashicorp.list
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.asc] https://apt.releases.hashicorp.com jammy main
+
+    # get_url leaves the old binary keyring in place and the source above no
+    # longer names it, so it is dead weight that still looks authoritative.
+    - name: Drop the superseded binary keyring
+      ansible.builtin.file:
+        path: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+        state: absent
+
     - name: Install the declared apt packages
       ansible.builtin.apt:
         name: "{{ devvm_packages }}"
@@ -1158,6 +1189,14 @@
           }
       notify: reload nftables
 
+    # Anti-lockout, same reason the break-glass runbook validates sshd before a
+    # reload: a ruleset that does not parse would take the nftables unit down
+    # with it, and the handler below fires at the end of the play where the
+    # failure is furthest from its cause.
+    - name: Check the filter parses
+      ansible.builtin.command: nft -c -f /etc/nftables.conf
+      changed_when: false
+
     - name: Load the filter at boot
       ansible.builtin.systemd_service:
         name: nftables
@@ -1181,6 +1220,14 @@
           PasswordAuthentication no
           KbdInteractiveAuthentication no
       notify: restart ssh
+
+    # `sshd -t` reads the real config and every drop-in, which is the only way
+    # to test one: `-f` on the fragment alone would judge it as a whole config
+    # and fail on what it does not contain. Runs before the handler, so a bad
+    # drop-in stops the play instead of stopping sshd.
+    - name: Check the SSH config parses
+      ansible.builtin.command: sshd -t
+      changed_when: false
 
     # Declarative, because the interesting failure is a key nobody removed.
     # wizard holds (ALL) NOPASSWD: ALL, so every key here is root on the box,
