@@ -5,6 +5,9 @@
 variable "tls_secret_name" { type = string }
 variable "nfs_server" { type = string }
 variable "mysql_host" { type = string }
+# Supplied globally by config.tfvars. Two consumers inside the module: the
+# stray-workload reconciler (stray_workload.tf) and the Goldmane edge-trail
+# Grafana datasource (goldmane_edges_datasource.tf). Declared once for both.
 variable "postgresql_host" { type = string }
 variable "monitoring_idrac_username" { type = string }
 
