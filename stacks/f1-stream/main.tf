@@ -365,6 +365,50 @@ resource "kubernetes_deployment" "f1-stream" {
             name  = "REPLAY_CACHE_CAP_GB"
             value = "150"
           }
+          # The converted library's own ceiling, and a DIFFERENT thing from the
+          # torrent cache above it: this one bounds `/data/replays-mp4`, the
+          # seekable mp4s plus their HLS ladders, which is what a viewer plays
+          # days after the torrent is gone.
+          #
+          # SET EXPLICITLY ON 2026-09-11. It was unset, so the cap was the code
+          # default in backend/replays/library.py:617 — `int(os.getenv(
+          # "REPLAY_LIBRARY_CAP_GB", "120")) * 1024**3`, i.e. 120 GiB. Note the
+          # units: GiB, not GB, and `int()` rather than the `float()` the cache
+          # cap above uses, so this value must stay a whole number.
+          #
+          # WHY 180 AND NOT THE 120 IT WAS, measured in-pod on 2026-09-11.
+          # `/data/replays-mp4` holds 56,914,498,254 B (53.0 GiB) in three
+          # sessions, and each session is its mp4 plus its ladder:
+          #     68fbb492  9,082,285,192 + 12,159,955,298 = 21.24 GB (19.78 GiB)
+          #     67e70279  7,282,644,360 + 10,562,067,486 = 17.84 GB (16.62 GiB)
+          #     ed641a9a  7,275,450,051 + 10,552,091,230 = 17.83 GB (16.60 GiB)
+          # A race weekend is FIVE sessions. Against the old 120 GiB cap only
+          # 67.0 GiB was left, so a weekend needed 88.4 GiB at the mean session
+          # size and 98.9 GiB at the largest, and BOTH exceed what was free.
+          # The refusal was therefore not a corner case, it was the expected
+          # outcome partway through the weekend — and the cap REFUSES rather
+          # than evicting, so the symptom is a session that never arrives.
+          # 180 GiB covers the resident 53.0 plus a worst-case weekend at 98.9
+          # plus one more largest-session of slack (19.8) = 171.7, with a little
+          # rounding room.
+          # Honest limit on that arithmetic: all three held sessions are RACES,
+          # so sizing practice and qualifying at a race's bitrate is pessimistic.
+          # Pessimism is the cheap direction here, because the cost of being
+          # wrong low is a silently missing session on a race weekend.
+          #
+          # WHY NOT SIMPLY HUGE. The volume behind this is shared, so the cap is
+          # the only thing keeping f1 off everyone else's disk. Measured the
+          # same day: `192.168.1.127:/srv/nfs/f1-stream` reports 4,327,881,048,064
+          # B total and 904,448,180,224 B (842.3 GiB) available at 79% used, and
+          # that pool is the `/srv/nfs` filesystem shared by 41 namespaces (40
+          # besides this one, counted over the `nfs-pve` PVs). 180 GiB lets f1
+          # grow by at most 127 GiB from today, which is 15% of the remaining
+          # slack and leaves ~715 GiB for everyone else. Unbounded, f1 alone
+          # would take the volume past the 95% where PVFillingUp pages.
+          env {
+            name  = "REPLAY_LIBRARY_CAP_GB"
+            value = "180"
+          }
           # Peer-assisted delivery. The backend injects these into the served
           # HTML shell as `window.__F1_CONFIG__` (backend/runtime_config.py),
           # rather than the frontend baking them at build time, because the
