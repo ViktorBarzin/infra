@@ -249,6 +249,14 @@ resource "helm_release" "traefik" {
         # check the mapping afterwards:
         #   kubectl get svc -n traefik traefik -o json | jq '.spec.ports'
         #
+        # FIXED 2026-09-11, after a 4th occurrence: `service.single = false`
+        # below moves websecure-http3/UDP:443 into its own svc/traefik-udp, so
+        # nothing shares port 443 with websecure/TCP:443 and the merge key has
+        # nothing to collide on. The history above is kept because it explains
+        # why the split exists and what to look for if 443 ever goes missing
+        # again. The check command is still the right first thing to run after
+        # an apply here.
+        #
         # To disable HTTP/3 for real, do it at the Cloudflare edge for proxied
         # hosts (stacks/cloudflared), and for origin-direct hosts strip the
         # alt-svc response header with a middleware rather than touching this
@@ -283,12 +291,36 @@ resource "helm_release" "traefik" {
 
     service = {
       type = "LoadBalancer"
+      # single = false puts the UDP entrypoint in its OWN Service, which is the
+      # fix for the 443 merge-key drift documented at the websecure http3 block
+      # above. With a single Service, websecure/TCP:443 and
+      # websecure-http3/UDP:443 collide on `port`, the strategic-merge key for
+      # Service.spec.ports, so any patch touching one could delete the other and
+      # take every ingress down. It happened four times between 2026-08-31 and
+      # 2026-09-10. Splitting removes the collision rather than repairing it:
+      # svc/traefik is then the only holder of 443/TCP and has nothing to
+      # collide with. The chart ships this for exactly this reason and cites
+      # kubernetes/kubernetes#47249 for the underlying limitation.
+      #
+      # Names: the TCP Service KEEPS the name `traefik`, so cloudflared's
+      # traefik.traefik.svc target and the ClusterIP that woodpecker dials are
+      # both unaffected. The UDP half arrives as the new svc/traefik-udp.
+      single = false
       annotations = {
         # Dedicated IP + ETP=Local so direct-app clients keep their real source
         # IP (CrowdSec) and QUIC handshakes pin to one pod. Proxied apps are
         # unaffected — cloudflared targets the in-cluster Traefik Service
         # (traefik.traefik.svc), not this LB IP, so the LB IP can move freely.
         "metallb.io/loadBalancerIPs" = "10.0.20.203"
+        # Both Services share 10.0.20.203. MetalLB allows this when the sharing
+        # key matches and the services either use ETP=Cluster or select the same
+        # pods. We keep ETP=Local and qualify on the second clause: the chart
+        # gives both Services an identical selector. MetalLB's own worked
+        # example is DNS on TCP 53 and UDP 53, the same shape as 443 here.
+        # Checked before landing: the default L2Advertisement selects by
+        # ipAddressPools only, and serviceSelectors would have blocked
+        # announcement of a shared IP.
+        "metallb.io/allow-shared-ip" = "traefik-443"
       }
       spec = {
         externalTrafficPolicy = "Local"
