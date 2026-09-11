@@ -187,6 +187,22 @@ resource "helm_release" "traefik" {
         port        = 8443
         exposedPort = 443
         protocol    = "TCP"
+        # NUMERIC on purpose, and it is load-bearing. Left unset, the chart
+        # points both Services' 443 entries at the port NAME `websecure`
+        # (svc/traefik) and `websecure-http3` (svc/traefik-udp), and a named
+        # targetPort only resolves if a container declares that name. The UDP
+        # name never can: `websecure`/8443/TCP and `websecure-http3`/8443/UDP
+        # collide on `containerPort`, the strategic-merge key for
+        # Container.ports, exactly as the two Service entries collided on
+        # `port`. So helm renders the UDP container port, cannot patch it in,
+        # and svc/traefik-udp ends up with endpoint addresses but `ports: null`,
+        # which is HTTP/3 silently dead. Measured live 2026-09-11.
+        #
+        # A numeric targetPort needs no container port at all, so both Services
+        # resolve regardless of that collision. This is what the single Service
+        # was already doing for the UDP entry before the split, which is why
+        # HTTP/3 worked then.
+        targetPort = 8443
         http = {
           tls = {
             enabled = true
