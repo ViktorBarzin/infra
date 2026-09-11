@@ -80,6 +80,7 @@ if [ "${DAY_OF_MONTH}" -le 7 ] || [ -n "${FORCE_FULL}" ]; then
         --exclude='.nfs-changes.log' \
         --exclude='.force-full-sync' \
         --exclude='/anca-elements/' \
+        --exclude='/f1-stream/replays-mp4/' \
         "${BACKUP_ROOT}/" "${PVE_BACKUP_DEST}/" 2>&1 || STATUS=1
     rm -f "${FORCE_FULL_FLAG}"
 elif [ -s "${MANIFEST}" ]; then
@@ -88,11 +89,17 @@ elif [ -s "${MANIFEST}" ]; then
     # anca-elements: now in Immich (canonical); /mnt/backup copy deleted
     # 2026-05-26. Exclude retained as a safety belt in case it re-appears.
     #
+    # f1-stream/replays-mp4: regenerable race media, excluded at the nfs-mirror
+    # source since 2026-09-11 so it should never reach BACKUP_ROOT. Belt and
+    # braces here for the same reason as anca-elements, and because 54G of it
+    # was already offsite when the exclude was written.
+    #
     # -H here only links files WITHIN this manifest batch (rsync can't see the
     # generations it isn't transferring), so it limits new breakage rather than
     # repairing old — the full pass above is what actually collapses the farm.
     rsync -rltH --chmod=Du=rwx,Dgo=rx,Fu=rw,Fog=r --files-from="${MANIFEST}" \
         --exclude='anca-elements/' \
+        --exclude='f1-stream/replays-mp4/' \
         "${BACKUP_ROOT}/" "${PVE_BACKUP_DEST}/" 2>&1 || STATUS=1
 else
     log "No changed files in manifest, nothing to sync"

@@ -107,6 +107,25 @@ EXCLUDES=(
     # except immich reaches Synology through this mirror.
     --exclude='/servarr/downloads/f1-replays/'
 
+    # ---- f1-stream CONVERTED library: same call, a path the 2026-08-22 exclude
+    # above did not cover (added 2026-09-11). That line named the torrent cache
+    # (/srv/nfs/servarr/downloads/f1-replays, mounted /replay-cache); the
+    # CONVERTED library is a different NFS export, /srv/nfs/f1-stream, mounted
+    # /data. Measured today: 54G on sda under /mnt/backup/f1-stream/replays-mp4
+    # and on its way offsite, on a Synology volume that hit 100% full in July.
+    #
+    # Every byte of it is regenerable, in two steps that both already exist: the
+    # mp4 is a container rewrap of a torrent the swarm still has, and the .hls
+    # ladder is rebuilt from that mp4 by one ffmpeg run (~17 min). Since
+    # 2026-09-11 the ladder is even built automatically once a session converts,
+    # so a restore needs no human action at all.
+    #
+    # NOT the whole directory: the JSON beside it is real state worth keeping and
+    # totals ~52K (schedule.json 28K, plus health_state / replay_plays /
+    # scraped_links / sessions / source_state / streams at 4K each). So this
+    # excludes the media subtree only.
+    --exclude='/f1-stream/replays-mp4/'
+
     # ---- Synology / Windows / macOS cruft ----
     --exclude='/@eaDir/'
     --exclude='*@synoeastream'
