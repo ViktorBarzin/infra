@@ -604,8 +604,49 @@ module "anubis" {
       # throw, and a signed-in admin would render as an anonymous visitor.
       # `admin/login` is deliberately NOT here -- it is a top-level navigation
       # gated by Authentik on its own Ingress, and never reaches Anubis.
+      #
+      # `transcode` joined on 2026-09-11, and unlike the others it was not a
+      # broken-XHR fix but a POISONED-CACHE fix. `/transcode/<key>/<rung>/seg/
+      # <name>` ends in `.ts`, so the f1 cache ruleset's segment rule pins it
+      # at the edge for a day, and that ruleset sets no cache_key or cookie
+      # config, so Cloudflare's default key ignores cookies. Real viewers pass
+      # because their browser carries the Anubis cookie; a cookieless fetch got
+      # the challenge instead, and the challenge got cached under the segment
+      # URL.
+      #
+      # Reproduced through the edge on 2026-09-11 with no cookie and a browser
+      # User-Agent, against `/transcode/0000000000000000/0/seg/s0.ts`:
+      #     edge    HTTP 200, content-type text/html, the "Making sure you're
+      #             not a bot!" page; MISS on the first fetch, then HIT with a
+      #             rising `age` on the next three
+      #     origin  HTTP 404, content-type application/json
+      # The 200 is the part that makes it stick. The segment rule carries a
+      # `status_code_ttl` of 10 s for 400-599 precisely so a failure is never
+      # pinned for a day, and a challenge page answers 200, so that guard never
+      # applied and the full 86400 did.
+      #
+      # ON CHARSETS, since the neighbouring share-link rule records a gotcha
+      # about them: a replay share id is `<post_id>:<session_type>`, so that
+      # rule's CEL charset has to admit a colon. This rule imposes no charset at
+      # all — everything after `(/|\?|$)` is unconstrained — so a colon, or any
+      # other character, in the tail cannot break a match. Nothing to do here,
+      # and the transcode key could not carry one anyway: it is
+      # `sha1(encoded_url).hexdigest()[:16]` (backend/main.py:_transcode_key),
+      # so hex and nothing else.
+      #
+      # VERIFIED against positives AND negatives with Go's own regexp package,
+      # the engine Anubis compiles path_regex with: 38 cases, 8 failing before
+      # `transcode` was added and 0 after. The negatives are the load-bearing
+      # half. `/transcoder`, `/transcoded/x` and `/transcode-admin` must NOT
+      # match, and they only fail to match because of the trailing
+      # `(/|\?|$)` group; dropping it also lets `/streamsX` and `/healthz`
+      # through. `/x/transcode/1/0/seg/s0.ts` must not match, and that rests on
+      # the `^`. Both were confirmed by removing each in turn and watching the
+      # cases fail. Bare `/transcode` DOES match, via the `$` branch, exactly as
+      # bare `/streams` and `/health` already do; it is not a route, so the app
+      # answers 404, and an un-challenged 404 costs nothing.
       - name: f1-data-routes
-        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|replays/refresh|schedule|streams)(/|\?|$)
+        path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
         action: ALLOW
       # NOTE: /metrics is deliberately NOT allow-listed here. The Prometheus
       # scrape reaches the app Service directly at
