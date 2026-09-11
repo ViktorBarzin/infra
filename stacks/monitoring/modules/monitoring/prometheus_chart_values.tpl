@@ -4586,13 +4586,37 @@ serverFiles:
               summary: "5xx rate on {{ $labels.service }}: {{ $value | printf \"%.1f\" }}% (threshold: 5% for 10m)"
           - alert: AnubisChallengeStoreErrors
             # Anubis exposes only Go-runtime metrics on :9090 (no anubis_* /
-            # challenge_* counters), so we proxy via Traefik 5xx on services
-            # whose name contains `anubis`. Catches the "store: key not found"
-            # 500 we saw — every Anubis 5xx is suspicious because the only
-            # legitimate path through it is /.within.website/x/cmd/anubis or a
-            # redirect to the upstream, both 200/3xx in healthy operation.
+            # challenge_* counters), so we proxy via Traefik on services whose
+            # name contains `anubis`. Catches the "store: key not found" 500.
+            #
+            # SCOPED TO 500 ON 2026-09-11, was code=~"5..". The old form read
+            # every 5xx, and the premise behind that (the only legitimate path
+            # through Anubis is /.within.website/x/cmd/anubis or a redirect to
+            # the upstream, both 200/3xx) stopped holding once Anubis was put in
+            # front of an app that itself proxies third-party origins. f1-stream
+            # relays grey-market stream segments and returns 502 when one of them
+            # fails, so its Anubis service carried 88 502s in 24h with the app
+            # log showing `Upstream segment returned HTTP 403 for
+            # https://love.old-snowflake-b051.workers.dev/p/...` while sibling
+            # sources answered 200 in the same second. Each one fired a critical
+            # that keep_firing_for then held for an hour.
+            #
+            # The status code separates the two cleanly. Measured over 7 days:
+            #   f1-stream-anubis            500:   0    502: 876
+            #   forgejo-anubis              500:  39    502:   6
+            #   website-anubis-blog         500:  21    502:   0
+            #   realestate-crawler-anubis   500:   2    502:   0
+            #   homepage-anubis             500:   1    502:   0
+            #   kms-anubis                  500:   0    502:   0
+            # So 500 keeps the store-error coverage this alert exists for and
+            # drops every proxied-upstream failure. Upstream relay health is
+            # covered by F1RelayUpstreamFailing instead.
+            #
+            # Not yet characterised: forgejo's 39 and the blog's 21 500s over
+            # those 7 days. No "store" error appears in either pod's log for the
+            # same window, so they are something else and still page as before.
             expr: |
-              sum(rate(traefik_service_requests_total{service=~".*anubis.*",code=~"5.."}[5m])) by (service) > 0
+              sum(rate(traefik_service_requests_total{service=~".*anubis.*",code="500"}[5m])) by (service) > 0
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 5m
             # keep_firing_for: `> 0` on a 5m rate means a single 5xx fires the
@@ -4603,7 +4627,7 @@ serverFiles:
             labels:
               severity: critical
             annotations:
-              summary: "Anubis service {{ $labels.service }} returning 5xx ({{ $value | printf \"%.2f\" }} req/s) — likely challenge-store error"
+              summary: "Anubis service {{ $labels.service }} returning 500 ({{ $value | printf \"%.2f\" }} req/s) — likely challenge-store error"
       - name: "Networking & Access"
         rules:
           - alert: CloudflaredDown
@@ -6217,6 +6241,29 @@ serverFiles:
             annotations:
               summary: "f1-stream extractor for {{ $labels.source }} has been raising for 2h"
               description: "This source's last four extraction attempts ended in an exception rather than returning a (possibly empty) list, so the site has lost it entirely. Unlike an empty result, this is wrong in any season — pitsport returning nothing between race weekends is normal, pitsport throwing is not. That is the exact 2026-09-05 failure: pitsport moved to /v1/live-now and 404'd the paths the extractor still asked for. Read the traceback in the f1-stream pod logs before assuming the upstream is down."
+          - alert: F1RelayUpstreamFailing
+            # Added 2026-09-11, when AnubisChallengeStoreErrors was narrowed to
+            # 500 and stopped reporting these. /relay and /proxy fetch segments
+            # from third-party origins, and f1-stream answers 502 when one of
+            # them refuses. A few of those a day is the normal state of a
+            # grey-market source, so this alerts on a SUSTAINED rate rather than
+            # on any single failure.
+            #
+            # Threshold from the 7-day distribution of this service's own 502
+            # rate: p50 0, p99 0.033, max 0.833 req/s. 0.3 for 15m sits well
+            # above the routine hiccup and below a full source outage, which
+            # takes every segment request with it. Warning, not critical: the
+            # site stays up on its other sources, and F1AllSourcesDry covers
+            # the case where none are left.
+            expr: |
+              sum(rate(traefik_service_requests_total{service="f1-stream-anubis-f1-8080@kubernetes",code=~"50[24]"}[5m])) > 0.3
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream relay failing upstream ({{ $value | printf \"%.2f\" }} req/s of 502/504 for 15m)"
+              description: "Segment fetches through /relay or /proxy are erroring at a sustained rate, so one of the stream sources is refusing requests rather than hiccupping. Confirm which with `homelab k8s logs f1-stream --since 30m | grep 'Upstream segment returned'` — the warning names the upstream host. A single source failing is expected between sessions; all of them failing shows up as F1AllSourcesDry."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
