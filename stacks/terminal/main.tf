@@ -486,6 +486,19 @@ resource "kubernetes_endpoints" "session_events" {
 # Field telemetry over the ten days before the change recorded four-question
 # answers failing 4 times in 5, which is what prompted it (terminal-lobby
 # ADR-0010, amended).
+#
+# It took a second commit to reach the cluster, and the reason is worth knowing
+# before anyone waits on a re-run again. The push that added the prefix landed
+# at 22:08 on 2026-09-10, inside the window where Woodpecker could not reach
+# Forgejo to fetch a pipeline config — the fourth occurrence of the Traefik 443
+# merge-key drift documented in stacks/traefik/modules/traefik/main.tf. Its
+# pipeline (#1633) therefore ran no step at all. Because `.woodpecker/default.yml`
+# applies only the stacks a commit CHANGED, every later green pipeline skipped
+# this stack, and the prefix sat in the repo while the live IngressRoute kept
+# the eleven it had. Restarting #1633 does not help: Woodpecker replays a
+# pipeline's STORED config, and a pipeline whose fetch failed has none, so the
+# restart (#1648) answered "pipeline definition not found" immediately. A commit
+# that touches the stack is what applies it, which is what this note is.
 resource "kubernetes_manifest" "session_events_ingressroute" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
