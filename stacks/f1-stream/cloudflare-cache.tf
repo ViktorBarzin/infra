@@ -192,10 +192,33 @@ resource "cloudflare_ruleset" "f1_cache" {
   #    live API confirmed the request shape is otherwise accepted and left the
   #    ruleset untouched (still version 2, same `last_updated`), but Cloudflare
   #    reports one error at a time so neither probe could isolate the TTL field.
+  #
+  #    EXCEPT master.m3u8, WHICH IS NO LONGER WRITTEN ONCE. Added 2026-09-11
+  #    while landing this branch, because the change it lands beside made the
+  #    premise above stop being true for one file. The origin now RENDERS
+  #    master.m3u8 per request rather than sending ffmpeg's copy, so it can
+  #    probe the stream-copied v0 rung and emit the `CODECS` attribute ffmpeg
+  #    omits — which is what lets hls.js pick 1080p at all. Its bytes are
+  #    therefore a function of our code, not of a file on disk.
+  #
+  #    That was measured going wrong within the hour. After the CODECS fix
+  #    deployed, 104.21.3.16 served the 398-byte pre-fix master while the
+  #    origin served the 429-byte one carrying `CODECS="avc1.4d402a,
+  #    mp4a.40.2"`, under a `cf-cache-status: REVALIDATED`. A one-year TTL on
+  #    that path does something worse than a stale revalidation: it stops
+  #    asking the origin at all, so the next rendering fix would wait a year.
+  #
+  #    So master.m3u8 falls through to `f1_cache_manifests_briefly` below and
+  #    takes its 2 seconds, which is the TTL that rule exists to give a
+  #    playlist whose bytes can change. It costs nothing to hand it over: the
+  #    file is 429 bytes, hls.js reads it once per session, and the origin now
+  #    answers a conditional request for it with a 304 and no body. The 1,506
+  #    variant playlists and their chunks are still written once by ffmpeg and
+  #    still take the year.
   rules {
     ref         = "f1_cache_vod_ladder_playlists"
-    description = "Replay ladder playlists: 1 year edge TTL, they are written once"
-    expression  = "(http.host eq \"f1.viktorbarzin.me\" and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".m3u8\"))"
+    description = "Replay ladder variant playlists: 1 year edge TTL, ffmpeg writes them once"
+    expression  = "(http.host eq \"f1.viktorbarzin.me\" and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".m3u8\") and not (ends_with(http.request.uri.path, \"/master.m3u8\")))"
     action      = "set_cache_settings"
     enabled     = true
 
