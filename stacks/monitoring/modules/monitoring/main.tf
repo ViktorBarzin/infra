@@ -42,9 +42,12 @@ variable "kube_config_path" {
 }
 variable "tier" { type = string }
 variable "mysql_host" { type = string }
+# One declaration, two consumers. Both features that arrived on this stack in
+# September 2026 need the CNPG primary, and declaring it twice is a Terraform
+# error that stops the whole stack initialising, so neither may add its own.
 variable "postgresql_host" {
   type        = string
-  description = "CNPG primary. The stray-workload reconciler reads Tier-1 Terraform state from the terraform_state database here."
+  description = "CNPG primary. The stray-workload reconciler (stray_workload.tf) reads Tier-1 Terraform state from the terraform_state database here; the Goldmane edge-trail Grafana datasource (goldmane_edges_datasource.tf) reads the goldmane_edges database."
 }
 variable "dbaas_postgresql_root_password" {
   type        = string

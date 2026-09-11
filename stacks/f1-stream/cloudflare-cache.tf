@@ -130,7 +130,48 @@ resource "cloudflare_ruleset" "f1_cache" {
     }
   }
 
-  # 2. Manifests: cached for SECONDS. Long enough to collapse a burst of viewers
+  # 2. VOD ladder playlists: immutable, so cache them properly. This sits AHEAD
+  #    of the second-level manifest rule because cache rules are first-match and
+  #    a ladder playlist ends in .m3u8 like every other one, so without this it
+  #    would fall into the 2-second rule meant for the LIVE manifest.
+  #
+  #    A replay ladder is written once by ffmpeg and never rewritten: the master
+  #    and the four variant playlists are as immutable as the segments they list.
+  #    Measured 2026-09-10 on 68fbb49285d3: a variant playlist is 42,281 bytes
+  #    and lists 1,506 segments, so a 2-second TTL made every viewer re-pull all
+  #    42 KB from the origin rather than revalidate it. Small against 1.4 GB of
+  #    segments, but it is pure waste and the fix is one rule.
+  rules {
+    ref         = "f1_cache_vod_ladder_playlists"
+    description = "Replay ladder playlists: 1 day edge TTL, they are written once"
+    expression  = "(http.host eq \"f1.viktorbarzin.me\" and starts_with(http.request.uri.path, \"/replays/library/hls/\") and ends_with(http.request.uri.path, \".m3u8\"))"
+    action      = "set_cache_settings"
+    enabled     = true
+
+    action_parameters {
+      cache = true
+
+      edge_ttl {
+        mode    = "override_origin"
+        default = 86400
+
+        # Same reasoning as the segment rule below: never pin a failure for a day.
+        status_code_ttl {
+          status_code_range {
+            from = 400
+            to   = 599
+          }
+          value = 10
+        }
+      }
+
+      browser_ttl {
+        mode = "respect_origin"
+      }
+    }
+  }
+
+  # 3. Manifests: cached for SECONDS. Long enough to collapse a burst of viewers
   #    arriving together, short enough that nobody plays a stale playlist.
   #    Matches the live manifest by path (/proxy carries its target in the query
   #    string and has no extension) and every VOD playlist by extension.
@@ -157,7 +198,7 @@ resource "cloudflare_ruleset" "f1_cache" {
     }
   }
 
-  # 3. Segments: immutable, so cache them properly. This is the rule that
+  # 4. Segments: immutable, so cache them properly. This is the rule that
   #    actually saves the upload — one origin fetch per segment however many
   #    people are watching.
   rules {
@@ -173,6 +214,29 @@ resource "cloudflare_ruleset" "f1_cache" {
       edge_ttl {
         mode    = "override_origin"
         default = 86400
+
+        # NEVER PIN A FAILURE FOR A DAY. `default` applies to every status this
+        # rule caches, not just the good ones, so before this block a 404 on a
+        # segment path was cached and re-served for 24 hours. Measured live on
+        # 2026-09-10: a request for a segment that does not exist returned 404
+        # MISS then 404 HIT from the edge.
+        #
+        # That is not hypothetical here. A ladder is built by a 40-minute ffmpeg
+        # run, so a viewer who opens a replay mid-build asks for segments that do
+        # not exist yet; without this, their colo would keep answering 404 for a
+        # day after the segments appeared. The same applies to a transient 5xx
+        # from the origin.
+        #
+        # Ten seconds still collapses a burst of bad requests, which is what the
+        # per-app rate limiter is for anyway (200/s burst 2000 on X-Real-Ip), and
+        # recovers within one playlist reload.
+        status_code_ttl {
+          status_code_range {
+            from = 400
+            to   = 599
+          }
+          value = 10
+        }
       }
 
       browser_ttl {
