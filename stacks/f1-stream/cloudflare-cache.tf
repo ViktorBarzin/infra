@@ -178,10 +178,17 @@ resource "cloudflare_ruleset" "f1_cache" {
   #    runs below its own listed minimum: the manifest rule below sets 2 seconds
   #    on Free and was measured working on 2026-09-10. So that table does not
   #    bind Cache Rules in either direction.
-  #    WHAT IS STILL UNVERIFIED: whether the edge silently clamps a value this
-  #    large. Proving that needs a PUT, which is an apply, so it was not done. A
-  #    clamp would be harmless (a shorter TTL than asked for, never an error); a
-  #    rejection would fail the apply loudly. Two read-only probes against the
+  #    THE APPLY ITSELF CANNOT FAIL ON THIS VALUE, checked with the provider
+  #    rather than hoped for. `cloudflare_ruleset` on v4.52.9 declares
+  #    `edge_ttl.default` as a plain optional `number` with no range validator
+  #    (read out of `terraform providers schema -json`), and `terraform
+  #    validate` on a rule of exactly this shape carrying 31536000 returns
+  #    Success. That is the provider's own ValidateResourceConfig, so it runs
+  #    without an API call or a plan.
+  #    WHAT IS STILL UNVERIFIED: whether the EDGE silently clamps a value this
+  #    large at serve time. Proving that needs a PUT, which is an apply, so it
+  #    was not done. A clamp would be harmless, since it means a shorter TTL
+  #    than asked for rather than an error. Two read-only probes against the
   #    live API confirmed the request shape is otherwise accepted and left the
   #    ruleset untouched (still version 2, same `last_updated`), but Cloudflare
   #    reports one error at a time so neither probe could isolate the TTL field.
