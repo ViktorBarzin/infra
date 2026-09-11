@@ -120,7 +120,7 @@ alertmanager:
       - source_matchers:
           - alertname = TraefikDown
         target_matchers:
-          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|IngressErrorRate5xxHigh|AnubisChallengeStoreErrors"
+          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|F1IngressStalled|IngressErrorRate5xxHigh|AnubisChallengeStoreErrors"
       # Traefik down makes ForwardAuth alerts redundant
       - source_matchers:
           - alertname = TraefikDown
@@ -140,7 +140,7 @@ alertmanager:
       - source_matchers:
           - alertname = TraefikReplicaConfigStale
         target_matchers:
-          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|IngressErrorRate5xxHigh|ForwardAuthFallbackActive|AnubisChallengeStoreErrors|ExternalAccessDivergence"
+          - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|F1IngressStalled|IngressErrorRate5xxHigh|ForwardAuthFallbackActive|AnubisChallengeStoreErrors|ExternalAccessDivergence"
       # HA down → every sensor goes unavailable. One root-cause alert is enough.
       - source_matchers:
           - alertname = HomeAssistantDown
@@ -4555,11 +4555,36 @@ serverFiles:
             # p95 over 30m, matching IngressTTFBHigh above — see the reasoning
             # there. This one mattered more: criticals re-ping every 6h, so a
             # single 4.5s matrix request kept re-announcing itself all day.
+            #
+            # f1-stream JOINED THE EXCLUSION LIST 2026-09-11, for the same
+            # reason nextcloud, immich and ha-sofia are on it, and with the
+            # numbers to show it is the metric rather than the service.
+            # Measured over the 30 days to 2026-09-11: this alert produced 14
+            # separate firing episodes on `f1-stream-anubis-f1-8080@kubernetes`,
+            # more than any other service. Replay chunks are up to 6 MB, so p95
+            # of traefik_service_request_duration_seconds for f1 is mostly
+            # payload transfer, and an alert that cries wolf through a race is
+            # worse than no alert.
+            #
+            # The p50 separates the two cases cleanly, which is what made this a
+            # safe exclusion rather than a blind spot. Across those same 14
+            # episodes the peak MEDIAN request duration was 0.028-0.406 s in
+            # thirteen of them — half the requests finishing in under half a
+            # second while the tail shipped video, exactly what payload transfer
+            # looks like. In one, 2026-08-27 08:35 UTC, the peak p50 was 8.4 s.
+            # That one was real, and F1IngressStalled below is scoped to catch
+            # it. IngressTTFBHigh still covers f1 at warning severity, so the
+            # p95 signal is not lost, only demoted out of the 6-hourly re-page.
+            #
+            # NOTE the exclusion is the whole service, because
+            # traefik_service_request_duration_seconds_bucket carries no path
+            # label (code, instance, job, method, protocol, service), so the
+            # chunk routes cannot be dropped on their own.
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*",protocol!="websocket"}[30m])) by (service, le)
               ) > 3
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*",protocol!="websocket"}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 5m
             keep_firing_for: 15m
@@ -4567,6 +4592,62 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Critically slow ingress on {{ $labels.service }}: p95 latency {{ $value | printf \"%.2f\" }}s (threshold: 3s for 5m)"
+          - alert: F1IngressStalled
+            # The f1-only replacement for the exclusion above, added the same
+            # day and deliberately built on a DIFFERENT statistic. Two things
+            # make it quiet through a race and loud when f1 is actually broken.
+            #
+            # THE MEDIAN, NOT THE TAIL. A 6 MB chunk being slow moves p95 and
+            # leaves p50 alone; an app that cannot answer moves both. Measured
+            # over the 30 days to 2026-09-11 on this service: p50 median 0.005 s,
+            # p90 0.020 s, p99 0.314 s. Only 8 of 7,515 five-minute samples sat
+            # above 2 s, and 7 of those 8 are the one genuine event. Evaluated
+            # at 1-minute resolution that event held p50 above 2 s for 34
+            # CONTINUOUS minutes (09:24-09:57 UTC) and peaked at 8.5 s, while
+            # f1 was pushing 0.081 Mbit/s through Traefik and the whole cluster
+            # was pushing 6.57 Mbit/s against a 32.0 Mbit/s uplink. Half the
+            # requests taking 8 seconds while the pipe is 2% full is the app
+            # being stuck, not bytes moving.
+            #
+            # A LOWER TRAFFIC FLOOR, and this is the half that actually silenced
+            # things. f1 is a low-traffic service: median 0.0036 req/s over 30
+            # days, and only 6.6% of samples clear the 0.05 req/s floor the
+            # sibling rules use. During the genuine event the rate fell to
+            # 0.0077 req/s as clients gave up, so a 0.05 floor would have
+            # dropped the whole thing — measured: at that floor the run is 0
+            # minutes long. At 0.005 it is the full 34 minutes; at 0.01, 32.
+            # 0.005 req/s is 9 requests in the 30-minute window, which is thin
+            # for a quantile on its own, and `for: 30m` is what makes it safe:
+            # roughly 30 consecutive evaluations have to agree.
+            #
+            # VERIFIED both ways against real history, not just reasoned about.
+            # Fires at 2026-08-27 09:40Z and 09:55Z (value 8.06). Returns NO
+            # series at 2026-08-30 10:20Z, 2026-09-06 13:10Z and 2026-09-11
+            # 07:45Z, three of the race-traffic episodes that produced false
+            # criticals. The 2026-09-10 22:20Z blip does reach 2.75 s, but for
+            # 3 minutes above the floor rather than 30, so `for: 30m` holds it.
+            #
+            # MARGIN, stated plainly: the one event this is sized against ran 34
+            # minutes and `for: 30m` needs 30, so there are 4 minutes of slack.
+            # A stall shorter than half an hour will not page. That was the
+            # trade asked for — a 30-minute twin — and dropping `for` to 20m is
+            # the one-line change if the margin ever proves too thin.
+            #
+            # severity=critical: a median of 8 seconds means the site does not
+            # work for anybody, which is what critical is reserved for here.
+            expr: |
+              histogram_quantile(0.5,
+                sum(rate(traefik_service_request_duration_seconds_bucket{service=~".*f1-stream.*",protocol!="websocket"}[30m])) by (service, le)
+              ) > 2
+              and sum(rate(traefik_service_request_duration_seconds_count{service=~".*f1-stream.*",protocol!="websocket"}[30m])) by (service) > 0.005
+              and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
+            for: 30m
+            keep_firing_for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "f1-stream is stalled: MEDIAN request {{ $value | printf \"%.2f\" }}s for 30m (threshold: 2s)"
+              description: "Half of all requests to f1 are taking over two seconds, sustained for half an hour. This is deliberately the median and not the p95: p95 for this service is dominated by 6 MB replay chunks and crosses 3s during any healthy race, which is why f1 is excluded from IngressTTFBCritical. A slow median means the app itself is not answering. The known cause of this shape is a blocking call on the asyncio event loop — an NFS tree walk over /data/replays-mp4 has done it before — so check whether a conversion or ladder build is running and whether /replays/events is slow in isolation: `kubectl -n f1-stream exec deploy/f1-stream -- python -c \"import time,urllib.request; t=time.time(); urllib.request.urlopen('http://localhost:8000/replays/events').read(); print(time.time()-t)\"`. Compare f1's byte rate against the 32 Mbit/s uplink before assuming congestion; during the 2026-08-27 instance f1 was serving 0.081 Mbit/s."
           - alert: IngressErrorRate5xxHigh
             # Rolling upgrades / pod migrations cause brief 5xx spikes that
             # clear within 1-2 min. Only persistent 5xx indicates a real
@@ -6264,6 +6345,50 @@ serverFiles:
             annotations:
               summary: "f1-stream relay failing upstream ({{ $value | printf \"%.2f\" }} req/s of 502/504 for 15m)"
               description: "Segment fetches through /relay or /proxy are erroring at a sustained rate, so one of the stream sources is refusing requests rather than hiccupping. Confirm which with `homelab k8s logs f1-stream --since 30m | grep 'Upstream segment returned'` — the warning names the upstream host. A single source failing is expected between sessions; all of them failing shows up as F1AllSourcesDry."
+          # The replay library filling up. Added 2026-09-11 because a refusal
+          # was not just unalerted, it had no signal at all: neither a metric
+          # nor a log rule that survived its own dedupe, so the first anyone
+          # would hear of a full library is a race session that never appears
+          # on the site.
+          #
+          # DEPENDENCY, and the reason this rule may sit inert for a while:
+          # f1_library_used_bytes and f1_library_cap_bytes DO NOT EXIST YET.
+          # They are being added to f1-stream's backend/metrics.py alongside
+          # this change. Until that ships, both selectors match nothing, the
+          # expression returns no series, and the rule is silent — verified
+          # 2026-09-11 by evaluating it against live Prometheus, which parsed it
+          # and returned an empty result. Prometheus does not reject a rule that
+          # names a metric nobody exports, so this costs nothing while it waits.
+          # If the gauges land under different names, THIS is the rule to fix.
+          #
+          # 0.70 AND NOT 0.85, which is the number a disk-fill alert would
+          # normally use. The unit that matters here is a session, not a
+          # percentage. Measured in-pod 2026-09-11, the library holds three
+          # sessions at 56.91 GB, and each session is its mp4 plus its ladder:
+          # 21.24 GB, 17.84 GB and 17.83 GB. Against the cap now set in
+          # stacks/f1-stream/main.tf (180 GiB = 193.3 GB) one largest-session is
+          # 11% of the cap, so 0.85 leaves 16% — one and a half sessions, less
+          # than half a weekend, and not enough warning to do anything about it.
+          # 0.70 leaves 58 GB, which is two full sessions plus room to think.
+          #
+          # The `cap_bytes > 0` guard is load-bearing rather than tidy: a gauge
+          # that reads 0 before the library has initialised would make the
+          # division +Inf, and +Inf > 0.70 fires instantly on every pod start.
+          #
+          # severity=warning, not critical. A full library refuses NEW arrivals
+          # and breaks nothing that is already there, so it needs someone to
+          # look before the next session lands, not a page. 6h damps the
+          # sawtooth a conversion writing and a ladder building produce.
+          - alert: F1LibraryFilling
+            expr: |
+              (f1_library_used_bytes / f1_library_cap_bytes) > 0.70
+              and f1_library_cap_bytes > 0
+            for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream replay library is {{ $value | humanizePercentage }} full — new sessions will be refused soon"
+              description: "The converted-replay library is past 70% of REPLAY_LIBRARY_CAP_GB. The cap is a REFUSAL and not an eviction, so when it is reached a newly downloaded session simply does not get converted and never appears as playable — there is no cleanup that happens on its own. One session measures 17.8-21.2 GB (its mp4 plus its four-rung ladder) and a race weekend is five of them, so 70% is roughly two sessions of warning. Three things to check, cheapest first: `homelab k8s exec f1-stream -- du -sh /data/replays-mp4` for what is actually held; whether the shared /srv/nfs pool has room, since 41 namespaces share it and PVFillingUp covers the volume itself; and whether the duplication is worth reclaiming — the v0 rung is a stream copy of the mp4 it was built from, measured at a 1.029 byte ratio, so about 41% of the library is the same video stored twice."
 
 extraScrapeConfigs: |
   # Alertmanager self-metrics. The bundled Alertmanager Service carries no
