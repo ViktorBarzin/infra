@@ -5,6 +5,10 @@
 # Free Apple ID certificates last 7 days, so WDA has to be re-signed before it
 # lapses or Appium can no longer start a session.
 #
+# MUST run in the Aqua GUI session. codesign fails with errSecInternalComponent
+# in an SSH session because the login keychain holding the signing key is not
+# reachable there. Measured 2026-09-12.
+#
 # Deliberately holds no credentials. It writes a status file that the devvm
 # reads through `ios-rig doctor`, and the devvm is what talks to Slack.
 
@@ -35,10 +39,19 @@ echo "=== $(date -u +%FT%TZ) re-sign run ===" >> "$LOG"
 # The device has to be present, unlocked enough for lockdown, and in Developer
 # Mode. Failing here is normal (phone unplugged, laptop travelling) and is not
 # the same as the build being broken, so it gets its own stage name.
-idevice_id -l 2>/dev/null | grep -qF "$UDID" || fail device-absent "device $UDID not on USB"
+# Everything here goes through devicectl rather than libimobiledevice.
+# iOS 17+ keeps TWO independent pairing records: CoreDevice's RemoteXPC one,
+# and the classic lockdown one. They break independently, and the lockdown one
+# needs a Trust dialog that is easy to lose. CoreDevice's survives, so the job
+# that has to run unattended depends only on that.
+DC="$DEVELOPER_DIR/usr/bin/devicectl"
+details="$("$DC" device info details --device "$UDID" 2>&1)"
 
-devmode="$(idevicedevmodectl -u "$UDID" list 2>/dev/null | awk -v u="$UDID" '$1==u{print $2}')"
-[[ "$devmode" == "enabled" ]] || fail developer-mode "Developer Mode is '$devmode', needs to be enabled on the device"
+grep -q "bootState: booted" <<<"$details" || fail device-absent "device $UDID is not connected and booted"
+grep -q "developerModeStatus: enabled" <<<"$details" || \
+  fail developer-mode "Developer Mode is off; enable it in Settings, Privacy and Security"
+grep -q "ddiServicesAvailable: true" <<<"$details" || \
+  fail ddi "developer disk image services unavailable"
 
 # -allowProvisioningUpdates is what mints the fresh 7-day certificate against
 # the free personal team. It needs the login keychain unlocked, which is why
@@ -66,12 +79,12 @@ fi
 XCB=$!
 for _ in $(seq 1 60); do
   sleep 2
-  ideviceinstaller -u "$UDID" list 2>/dev/null | grep -qF "$WDA_BUNDLE_ID" && break
+  "$DC" device info apps --device "$UDID" 2>/dev/null | grep -qF "$WDA_BUNDLE_ID" && break
 done
 kill "$XCB" 2>/dev/null
 wait "$XCB" 2>/dev/null
 
-if ! ideviceinstaller -u "$UDID" list 2>/dev/null | grep -qF "$WDA_BUNDLE_ID"; then
+if ! "$DC" device info apps --device "$UDID" 2>/dev/null | grep -qF "$WDA_BUNDLE_ID"; then
   fail install "WDA did not appear in the installed app list after build"
 fi
 

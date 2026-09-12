@@ -72,16 +72,27 @@ cmd_doctor() {
   if grep -qi "SUCCESS" <<<"$pairstate"; then
     pass pairing-lockdown "trusted"
   else
+    # Not optional. Appium's xcuitest driver reaches the device through
+    # usbmuxd, and without this record every session dies at
+    # "Could not find a pair record for device". Measured 2026-09-12.
     fail pairing-lockdown "$(head -1 <<<"$pairstate")"
+    fail "" "Appium cannot start a session without this; see the runbook"
   fi
 
-  local devmode
-  devmode="$(on_mac "idevicedevmodectl -u $IOS_RIG_UDID list" | awk -v u="$IOS_RIG_UDID" '$1==u{print $2}')"
-  if [[ "$devmode" == "enabled" ]]; then
-    pass developer-mode "enabled"
-  else
-    fail developer-mode "is '${devmode:-unknown}'; turn it on in Settings, Privacy and Security"
-  fi
+  # CoreDevice, not libimobiledevice. iOS 17+ keeps two independent pairing
+  # records and the lockdown one is the fragile half, so the checks that matter
+  # for whether the rig can WORK go through devicectl.
+  local details
+  details="$(on_mac "$IOS_RIG_DEVELOPER_DIR/usr/bin/devicectl device info details --device $IOS_RIG_UDID")"
+  grep -q "bootState: booted" <<<"$details" \
+    && pass device-coredevice "booted, tunnel up" \
+    || fail device-coredevice "not connected or not booted"
+  grep -q "developerModeStatus: enabled" <<<"$details" \
+    && pass developer-mode "enabled" \
+    || fail developer-mode "off; Settings, Privacy and Security, Developer Mode"
+  grep -q "ddiServicesAvailable: true" <<<"$details" \
+    && pass ddi-services "available" \
+    || fail ddi-services "developer disk image services unavailable"
 
   local appium
   appium="$(on_mac "curl -s -m 8 http://127.0.0.1:${IOS_RIG_APPIUM_PORT}/status")"
@@ -92,7 +103,7 @@ cmd_doctor() {
   fi
 
   local wda
-  wda="$(on_mac "ideviceinstaller -u $IOS_RIG_UDID list 2>/dev/null | grep -F ${IOS_RIG_WDA_BUNDLE_ID}")"
+  wda="$(on_mac "$IOS_RIG_DEVELOPER_DIR/usr/bin/devicectl device info apps --device $IOS_RIG_UDID 2>/dev/null | grep -F ${IOS_RIG_WDA_BUNDLE_ID}")"
   if [[ -n "$wda" ]]; then
     pass wda-installed "$IOS_RIG_WDA_BUNDLE_ID"
   else
@@ -111,7 +122,7 @@ cmd_doctor() {
   # expected; it is worth saying out loud because it is the likeliest cause of
   # the toolchain breaking.
   local osver
-  osver="$(on_mac "ideviceinfo -u $IOS_RIG_UDID -k ProductVersion 2>/dev/null")"
+  osver="$(sed -n 's/.*osVersionNumber: //p' <<<"$details" | head -1)"
   [[ -n "$osver" ]] && warn ios-version "$osver"
 
   finish_doctor "$alert"
