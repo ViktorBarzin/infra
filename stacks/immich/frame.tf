@@ -30,7 +30,11 @@ resource "kubernetes_config_map" "mailserver_config" {
     Accounts:
         - ImmichServerUrl: http://immich.viktorbarzin.me
           ApiKey: ${data.vault_kv_secret_v2.secrets.data["frame_api_key"]}
-          ImagesFromDays: 730
+          # 4 years (was 730). ImmichFrame draws 25 random assets per batch and keeps
+          # no record of what it showed, so repeats scale with 1/pool: 730 days left
+          # 25,950 of 57,001 images and gave 29 repeats in 10.2h measured 2026-09-12;
+          # 1460 gives 47,983 over 954 days and about half that.
+          ImagesFromDays: 1460
     EOF
   }
 }
