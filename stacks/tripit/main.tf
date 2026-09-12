@@ -440,7 +440,11 @@ locals {
     IMAP_USER              = "spam@viktorbarzin.me"
     IMAP_FOLDER            = "INBOX"
     IMAP_USE_SSL           = "true"
-    IMAP_SEARCH            = "TO \"plans@viktorbarzin.me\""
+    # OR the two headers: IMAP's TO matches the To header ONLY, so a forward
+    # that Cc'd plans@ was never fetched and left no inbound_emails row at all
+    # (a Wizz return, 2026-09-12). Reply-all with plans@ in Cc is a shape Viktor
+    # actually uses, so the filter has to see it.
+    IMAP_SEARCH            = "OR TO \"plans@viktorbarzin.me\" CC \"plans@viktorbarzin.me\""
   }
 }
 

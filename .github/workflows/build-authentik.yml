@@ -39,5 +39,5 @@ jobs:
           provenance: false
           push: true
           tags: |
-            ghcr.io/viktorbarzin/authentik-server:2026.8.1-patch4
+            ghcr.io/viktorbarzin/authentik-server:2026.8.2-patch4
             ghcr.io/viktorbarzin/authentik-server:latest
