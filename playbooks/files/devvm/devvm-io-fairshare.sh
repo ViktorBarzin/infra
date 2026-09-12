@@ -31,14 +31,13 @@
 # interval. Both are things a person does, not things a leftover session does.
 set -uo pipefail
 
-INTERVAL_S="${DEVVM_IO_FAIRSHARE_INTERVAL_S:-600}"
+# Cadence lives in devvm-io-fairshare.timer (OnUnitActiveSec), not here.
 # The ceiling to divide. These are devvm's QEMU caps (scripts/apply-mbps-caps.sh),
 # which are the real limit on what this guest can pull, so dividing them is
 # dividing what actually exists rather than a number off a datasheet.
-DEVICE_RIOPS="${DEVVM_DEVICE_RIOPS:-1200}"
+DEVICE_RIOPS="${DEVVM_DEVICE_RIOPS:-400}"
 DEVICE_RBPS="${DEVVM_DEVICE_RBPS:-62914560}"   # 60 MB/s
 DEVICE_WBPS="${DEVVM_DEVICE_WBPS:-62914560}"   # 60 MB/s
-# Bytes in one interval below which a slice counts as idle rather than working.
 # Bytes in one interval below which a slice counts as idle rather than working.
 # Scales WITH the timer interval: this is a per-interval delta, so when the
 # period went 30s -> 10min the same 4 MB would have called almost everyone

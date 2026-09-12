@@ -98,6 +98,27 @@ TARGETS=(
 #   etcd_server_slow_apply_total rate   above ~2,500/hr   (was 1,493)
 #   etcd fsync p99 median over 24h      above ~50 ms      (was 26 ms)
 #
+# BOTH TRIPPED, AND THE CAP WENT BACK 2026-09-12, four hours after the raise.
+# Measured when the monitor fired:
+#
+#   etcd slow applies    19,840/hr   against the 2,500 line and a 7d p90 of 2,379
+#   etcd fsync p99        1,788 ms   against a sub-10ms target
+#   devvm reads             612/s    of the 1,200 it had just been given
+#
+# The [5m] and [15m] rates agreed (20,040 and 19,840), so this was sustained
+# and not one burst smeared across a window. Leader changes stayed at 0 and
+# the apiserver stayed ready, so nothing failed over, but etcd was running at
+# 8x its own worst month. The third line is what makes it attributable: devvm
+# was spending half the new headroom at the time, so this was us.
+#
+# The raise did buy one measurement worth keeping. At 19:19 the guest sat at
+# 100% utilisation while pulling 201 reads/s against a cap of 1,200, so past
+# roughly 400 the cap stops being the binding constraint and the spindle takes
+# over. A larger number costs etcd and buys devvm nothing.
+#
+# Which leaves the code-oflt line standing rather than weakened: etcd does not
+# belong on this spindle, and no value of this number fixes that.
+#
 # THE REAL FIX IS NOT HERE. A device at 2.72% utilisation with 10.63 ms await
 # is not saturated, it is serialised, which is what fsync-heavy small writes
 # look like on a spindle. etcd on rotational storage is the cause; capping
@@ -113,7 +134,7 @@ TARGETS=(
 # k8s-master (200) is deliberately left without an IOPS cap: it holds etcd, it
 # reads 0.28/s, and it is the workload being protected.
 declare -A EXTRA_OPTS=(
-  [102]="iops_rd=1200,iops_rd_max=2400,iops_rd_max_length=30"
+  [102]="iops_rd=400,iops_rd_max=800,iops_rd_max_length=30"
 )
 
 # Sort a disk spec's comma-separated options so two specs with the same
