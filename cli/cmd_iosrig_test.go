@@ -207,9 +207,11 @@ func TestIosCommandsRegistered(t *testing.T) {
 // stopped anyone reaching for the rig, so it is worth a test.
 func TestCapabilityCatalogKnowsAboutIOS(t *testing.T) {
 	caps := capabilities()
+	// Key on Intent, not on Use containing "homelab ios": several entries now
+	// point at the rig, and matching the first of them found the wrong one.
 	var iosEntry *capability
 	for i := range caps {
-		if strings.Contains(caps[i].Use, "homelab ios") {
+		if strings.Contains(caps[i].Intent, "on a real iPhone") {
 			iosEntry = &caps[i]
 			break
 		}
@@ -228,6 +230,17 @@ func TestCapabilityCatalogKnowsAboutIOS(t *testing.T) {
 			t.Errorf("iOS capability is not findable by %q", syn)
 		}
 	}
+	named := 0
+	for _, c := range caps {
+		if strings.Contains(c.Use, "homelab ios") {
+			named++
+		}
+	}
+	if named < 2 {
+		t.Errorf("only %d capability summary lines name homelab ios; the browser and "+
+			"phone entries should both, since the Use line is what gets skimmed", named)
+	}
+
 	for _, c := range caps {
 		for _, d := range c.Detail {
 			if strings.Contains(d, "NO INSTRUMENT for Safari") ||
