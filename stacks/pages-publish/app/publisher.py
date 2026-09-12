@@ -31,6 +31,15 @@ DEFAULT_ATTEMPTS = 5
 # '..' check in sanitize_slug is what blocks parent traversal, not the regex.
 _SLUG_RE = re.compile(r"[0-9A-Za-z._-]+")
 
+# Every asset a rendered page can reference, as it appears in the HTML. The
+# charset has no '/' so a match is always a bare filename inside pages/assets/,
+# which is what keeps the preview from serving an arbitrary repo file.
+_ASSET_REF_RE = re.compile(r"/assets/([0-9A-Za-z._-]+)")
+
+# Assets are text (css/js). A preview of a page with a mermaid diagram carries
+# mermaid.min.js, ~3.5 MB, so the ceiling is well above that and still bounded.
+MAX_ASSET_BYTES = 8 * 1024 * 1024
+
 
 class PublishError(Exception):
     """Bad client input — maps to HTTP 400."""
@@ -325,3 +334,77 @@ def publish(
 
     log.error("publish %s for %s failed after %d attempts: %s", slug, user, attempts, last_err)
     raise RenderError(f"git push failed after {attempts} attempts: {last_err}")
+
+
+def collect_assets(cfg: Config, html: str) -> dict[str, str]:
+    """Read the ``/assets/<name>`` files a rendered page links, keyed by path.
+
+    Only names the page actually references are read, so a page with no diagram
+    does not carry mermaid.min.js. A missing or oversized asset is skipped
+    rather than raised: a preview is for looking at, and one absent stylesheet
+    is a worse reason to fail than an unstyled page is to return.
+    """
+    assets: dict[str, str] = {}
+    root = os.path.realpath(os.path.join(cfg.repo_dir, PAGES_PREFIX, "assets"))
+    for name in sorted(set(_ASSET_REF_RE.findall(html))):
+        path = os.path.realpath(os.path.join(root, name))
+        if path != root and not path.startswith(root + os.sep):
+            continue  # unreachable given the charset; kept as the explicit gate
+        try:
+            if os.path.getsize(path) > MAX_ASSET_BYTES:
+                log.warning("preview: skipping oversized asset %s", name)
+                continue
+            with open(path, encoding="utf-8") as f:
+                assets[f"assets/{name}"] = f.read()
+        except OSError as e:
+            log.warning("preview: skipping unreadable asset %s: %s", name, e)
+    return assets
+
+
+def render_preview(
+    cfg: Config,
+    *,
+    user: str,
+    content: str,
+    filename: str,
+    status: str = "draft",
+    shared: bool = False,
+) -> dict:
+    """Render a doc and hand back the bytes, without committing or pushing.
+
+    Same validation and the same renderer as :func:`publish`, so what comes
+    back is what publishing would put on the site. ``shared`` is accepted so a
+    caller can preview with the exact flags it will publish with; it changes
+    where a page LANDS, not how it renders, so it is validated and then unused.
+
+    Rendering goes to a throwaway directory rather than into the clone. An
+    untracked page left behind in ``pages/<user>/`` would be swept up by the
+    next publish's ``git add -- pages/<user>/`` and pushed as part of somebody
+    else's page, which is a far worse failure than a preview whose generated
+    index.html lists only the one page nobody is looking at.
+    """
+    slug = sanitize_slug(filename)
+    status = validate_status(status)
+    target_subdir(user, shared)  # validation parity with publish()
+
+    ensure_repo(cfg)
+    # The renderer and the stylesheet both live in the clone, so a preview of
+    # current master is only truthful after a sync.
+    sync_to_master(cfg)
+
+    with tempfile.TemporaryDirectory() as td:
+        md_path = os.path.join(td, f"{slug}.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        out_dir = os.path.join(td, "out")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = render_page(cfg, md_path, out_dir, status)
+        with open(out_path, encoding="utf-8") as f:
+            html = f.read()
+
+    log.info("previewed %s for %s (%s), no push", slug, user, status)
+    return {
+        "filename": os.path.basename(out_path),
+        "html": html,
+        "assets": collect_assets(cfg, html),
+    }

@@ -83,3 +83,20 @@ type pagesPublishResp struct {
 	URL  string `json:"url"`
 	Path string `json:"path"`
 }
+
+// pagesPreviewReq is the POST /preview body. Same shape as publish so a caller
+// can preview with the flags it is about to publish with.
+type pagesPreviewReq struct {
+	Content  string `json:"content"`
+	Filename string `json:"filename"`
+	Status   string `json:"status"`
+	Shared   bool   `json:"shared"`
+}
+
+// pagesPreviewResp is the POST /preview response: one rendered page plus the
+// /assets/* files it links, keyed by the path the page references them at.
+type pagesPreviewResp struct {
+	Filename string            `json:"filename"`
+	HTML     string            `json:"html"`
+	Assets   map[string]string `json:"assets"`
+}

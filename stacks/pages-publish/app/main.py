@@ -2,6 +2,10 @@
 
 - GET  /health  -> 200 {"status":"ok"}, no auth.
 - POST /publish -> bearer-authenticated; renders + commits + pushes one page.
+- POST /preview -> bearer-authenticated; renders one page and returns the bytes
+  plus the assets it links. Nothing is committed or pushed. It exists so a
+  caller with no monorepo checkout can look at a page before publishing it;
+  the site itself is owner-gated and 403s every automated client.
 
 Concurrent publishes serialize on an asyncio lock; the blocking render + git
 work runs in a worker thread so /health stays responsive.
@@ -29,6 +33,13 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+class PreviewRequest(BaseModel):
+    content: str  # raw markdown
+    filename: str  # e.g. "2026-07-27-foo.md" — only the sanitized slug is used
+    status: str = "draft"
+    shared: bool = False  # validated, then unused: it moves a page, not its look
+
+
 class PublishRequest(BaseModel):
     content: str  # raw markdown
     filename: str  # e.g. "2026-07-27-foo.md" — only the sanitized slug is used
@@ -50,6 +61,33 @@ def create_app(cfg: config.Config | None = None) -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.post("/preview")
+    async def preview_endpoint(
+        body: PreviewRequest, user: str = Depends(current_user)
+    ) -> dict:
+        # Shares /publish's lock: a preview re-syncs the one clone, so running
+        # it alongside a publish would reset that publish's working tree
+        # mid-flight.
+        try:
+            async with lock:
+                return await asyncio.to_thread(
+                    publisher.render_preview,
+                    cfg,
+                    user=user,
+                    content=body.content,
+                    filename=body.filename,
+                    status=body.status,
+                    shared=body.shared,
+                )
+        except publisher.PublishError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except publisher.RenderError as e:
+            log.error("preview failed for %s (%s): %s", user, body.filename, e)
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception:
+            log.exception("unhandled error previewing %s for %s", body.filename, user)
+            raise
 
     @app.post("/publish")
     async def publish_endpoint(

@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from app import publisher
@@ -366,3 +368,132 @@ def test_publish_syncs_before_rendering(tmp_path, monkeypatch):
     monkeypatch.setattr(publisher, "push_to_master", lambda *a, **k: (True, ""))
     publisher.publish(cfg, user="emo", content="# hi", filename="foo.md")
     assert order == ["sync", "render"]
+
+
+# ---- preview (render without publishing) ----------------------------------
+
+
+def _preview_cfg(tmp_path, monkeypatch, html, assets=None):
+    """A cfg whose repo has a pages/assets/ tree, with git + render stubbed."""
+    cfg = make_cfg(str(tmp_path))
+    assets_dir = tmp_path / "pages" / "assets"
+    assets_dir.mkdir(parents=True)
+    for name, body in (assets or {}).items():
+        (assets_dir / name).write_text(body, encoding="utf-8")
+
+    calls = {"ensure": 0, "sync": 0, "render": None}
+
+    def fake_ensure_repo(_cfg):
+        calls["ensure"] += 1
+
+    def fake_sync(_cfg):
+        calls["sync"] += 1
+
+    def fake_render(_cfg, md_path, abs_target, status):
+        calls["render"] = {"abs_target": abs_target, "status": status}
+        with open(md_path, encoding="utf-8") as f:
+            calls["render"]["content"] = f.read()
+        out = os.path.join(abs_target, "2026-07-27-foo.html")
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(html)
+        return out
+
+    monkeypatch.setattr(publisher, "ensure_repo", fake_ensure_repo)
+    monkeypatch.setattr(publisher, "sync_to_master", fake_sync)
+    monkeypatch.setattr(publisher, "render_page", fake_render)
+    return cfg, calls
+
+
+def test_preview_returns_the_page_and_only_the_assets_it_links(tmp_path, monkeypatch):
+    html = '<link rel="stylesheet" href="/assets/page.css"><h1>hi</h1>'
+    cfg, calls = _preview_cfg(
+        tmp_path,
+        monkeypatch,
+        html,
+        {"page.css": "body{}", "mermaid.min.js": "// 3.5MB in real life"},
+    )
+
+    out = publisher.render_preview(
+        cfg, user="emo", content="# hi\n", filename="2026-07-27-foo.md", status="done"
+    )
+
+    assert out["filename"] == "2026-07-27-foo.html"
+    assert out["html"] == html
+    # page.css is linked, mermaid.min.js is not — a doc with no diagram must not
+    # drag 3.5MB of javascript through the API
+    assert out["assets"] == {"assets/page.css": "body{}"}
+    assert calls["render"]["status"] == "done"
+    assert calls["render"]["content"] == "# hi\n"
+
+
+def test_preview_carries_mermaid_when_the_page_asks_for_it(tmp_path, monkeypatch):
+    html = '<script src="/assets/mermaid.min.js"></script><pre class="mermaid">x</pre>'
+    cfg, _ = _preview_cfg(
+        tmp_path, monkeypatch, html, {"page.css": "body{}", "mermaid.min.js": "MERMAID"}
+    )
+
+    out = publisher.render_preview(
+        cfg, user="emo", content="# d\n", filename="d.md"
+    )
+
+    assert out["assets"] == {"assets/mermaid.min.js": "MERMAID"}
+
+
+def test_preview_renders_outside_the_clone(tmp_path, monkeypatch):
+    """The render must not land in <repo>/pages/<user>/.
+
+    An untracked page left there is staged by the NEXT publish's
+    `git add -- pages/<user>/` and pushed as part of someone else's page.
+    """
+    cfg, calls = _preview_cfg(tmp_path, monkeypatch, "<h1>x</h1>")
+
+    publisher.render_preview(cfg, user="emo", content="# x\n", filename="x.md")
+
+    target = calls["render"]["abs_target"]
+    assert not target.startswith(cfg.repo_dir)
+    assert not os.path.exists(os.path.join(cfg.repo_dir, "pages", "emo"))
+
+
+def test_preview_syncs_before_rendering(tmp_path, monkeypatch):
+    # The renderer and the stylesheet both live in the clone, so a preview of
+    # stale master would show a page the site would not serve.
+    cfg, calls = _preview_cfg(tmp_path, monkeypatch, "<h1>x</h1>")
+
+    publisher.render_preview(cfg, user="emo", content="# x\n", filename="x.md")
+
+    assert calls["ensure"] == 1
+    assert calls["sync"] == 1
+
+
+def test_preview_never_commits_or_pushes(tmp_path, monkeypatch):
+    cfg, _ = _preview_cfg(tmp_path, monkeypatch, "<h1>x</h1>")
+
+    def explode(*a, **k):  # pragma: no cover - the assertion is that it is unused
+        raise AssertionError("preview must not touch git history")
+
+    monkeypatch.setattr(publisher, "stage_and_commit", explode)
+    monkeypatch.setattr(publisher, "push_to_master", explode)
+
+    publisher.render_preview(cfg, user="emo", content="# x\n", filename="x.md")
+
+
+@pytest.mark.parametrize("bad", ["../x", "a/b", "", "café"])
+def test_preview_rejects_a_bad_filename(tmp_path, monkeypatch, bad):
+    cfg, _ = _preview_cfg(tmp_path, monkeypatch, "<h1>x</h1>")
+    with pytest.raises(publisher.PublishError):
+        publisher.render_preview(cfg, user="emo", content="# x\n", filename=bad)
+
+
+def test_preview_rejects_a_bad_status(tmp_path, monkeypatch):
+    cfg, _ = _preview_cfg(tmp_path, monkeypatch, "<h1>x</h1>")
+    with pytest.raises(publisher.PublishError):
+        publisher.render_preview(
+            cfg, user="emo", content="# x\n", filename="x.md", status="bogus"
+        )
+
+
+def test_collect_assets_skips_a_missing_file(tmp_path, monkeypatch):
+    # An unstyled preview beats a 500: the caller still gets to look at the page.
+    cfg, _ = _preview_cfg(tmp_path, monkeypatch, "<h1>x</h1>", {})
+    assets = publisher.collect_assets(cfg, '<link href="/assets/gone.css">')
+    assert assets == {}
