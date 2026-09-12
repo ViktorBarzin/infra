@@ -106,6 +106,12 @@ python3 -c "import plistlib,sys; plistlib.load(open(sys.argv[1],'rb'))" "$TMP/wd
 put "$TMP/wdarun.plist" "Library/LaunchAgents/me.viktorbarzin.wda-run.plist"
 (( DRY )) || reload_agent me.viktorbarzin.wda-run
 
+say "Keep-awake LaunchAgent"
+render "$HERE/launchagents/me.viktorbarzin.ios-rig-awake.plist.tmpl" > "$TMP/awake.plist"
+python3 -c "import plistlib,sys; plistlib.load(open(sys.argv[1],'rb'))" "$TMP/awake.plist"
+put "$TMP/awake.plist" "Library/LaunchAgents/me.viktorbarzin.ios-rig-awake.plist"
+(( DRY )) || reload_agent me.viktorbarzin.ios-rig-awake
+
 say "Build and install LaunchAgent (on demand)"
 run 'export PATH=/opt/homebrew/bin:$PATH HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1
 brew list --formula xcodegen >/dev/null 2>&1 || brew install xcodegen

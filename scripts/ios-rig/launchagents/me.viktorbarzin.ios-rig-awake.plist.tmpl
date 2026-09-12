@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>me.viktorbarzin.ios-rig-awake</string>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <!-- The Mac is configured to sleep 1 minute after the display sleeps, even
+       on AC, so the rig dies about 11 minutes after the human walks away.
+       `caffeinate -s` asserts PreventSystemSleep, which only applies while on
+       AC power, so the laptop still sleeps normally on battery. Doing it this
+       way needs no sudo, which we do not have on this machine. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-s</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>

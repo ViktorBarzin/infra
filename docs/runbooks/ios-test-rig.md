@@ -16,6 +16,7 @@ rig that day.
 | `me.viktorbarzin.wda-run` | Mac LaunchAgent, KeepAlive | keeps WebDriverAgent running, publishes its URL to `~/.ios-rig-wda-url` |
 | `me.viktorbarzin.wda-resign` | Mac LaunchAgent, every 48h | re-signs WebDriverAgent before its 7-day certificate lapses |
 | `me.viktorbarzin.ios-rig-build` | Mac LaunchAgent, on demand | builds an Xcode project with the free team and installs it |
+| `me.viktorbarzin.ios-rig-awake` | Mac LaunchAgent, KeepAlive | `caffeinate -s`, stops the laptop sleeping the rig away |
 | `ios-rig-tunnel.service` | devvm, `systemd --user` | SSH tunnel carrying Appium 4723 |
 | `ios-rig-doctor.timer` | devvm, `systemd --user`, 6-hourly | checks every link, posts to Slack when degraded |
 | `scripts/ios-rig/` | this repo | the whole rig, including the Mac bootstrap |
@@ -112,6 +113,55 @@ iOS 26: exporting a free-team P12 and profile as files is an open upstream
 issue, `AltServer-Linux` has been unmaintained since 2022, and
 nested-framework signing fails on the `.xctrunner` shape WebDriverAgent has.
 If that changes, the re-sign job is the only piece that would move.
+
+## What autonomous operation needs
+
+Everything below was measured on 2026-09-12. The rig runs unattended only
+while all of it holds, and two of them are human-dependent by design.
+
+| Link | Held by | Fails when |
+|---|---|---|
+| WireGuard Sofia to London | pfSense and the Flint | tunnel down |
+| Mac reachable | Flint static lease, Technitium record | it leaves the London LAN |
+| Mac **awake** | `me.viktorbarzin.ios-rig-awake` running `caffeinate -s` | on battery, where the assertion deliberately does not apply |
+| Mac **logged in** | a human, once per boot | **any reboot**, see below |
+| Phone cabled and booted | the cable | unplugged |
+| Phone **unlocked** | Auto-Lock setting | **the screen locks**, see below |
+| Developer Mode on | survives reboots | a factory reset |
+| Certificate under 7 days old | `me.viktorbarzin.wda-resign` for WDA only | your own apps, which need a reinstall |
+
+### The phone must stay unlocked
+
+A locked phone can still be screenshotted, and nothing else. Measured: a
+`deepLink` on a locked device fails with
+`FBSOpenApplicationServiceErrorDomain Code=1`, WebDriverAgent's listener on
+port 8100 stops answering, and `POST /wda/unlock` times out without unlocking,
+because WebDriverAgent cannot get past a passcode.
+
+So **set Auto-Lock to Never**, in Settings, Display & Brightness, Auto-Lock.
+The phone is permanently on the cable, so there is no battery cost. Without
+it the rig stops the first time the screen times out and stays stopped until
+someone picks the phone up.
+
+`doctor` checks this first and fails in about 10 seconds rather than spending
+the WebDriverAgent retry window on something no restart can fix.
+
+### FileVault means a reboot needs a human
+
+FileVault is on, so after any reboot the Mac sits at the pre-boot login screen
+with the disk still encrypted. No SSH, no Aqua session, no LaunchAgents. There
+is no unattended path through that, and disabling FileVault on a
+corporate-managed laptop is not the answer. A Mac reboot simply ends autonomous
+operation until someone types the password.
+
+### Sleep
+
+The Mac is configured to sleep one minute after the display sleeps, and the
+display sleeps at ten, even on AC. Left alone, it would take the rig down about
+eleven minutes after the last keypress. `caffeinate -s` holds
+`PreventSystemSleep` for as long as the agent runs, which needs no `sudo` and
+still lets the laptop sleep normally on battery. `doctor` reports whether the
+assertion is actually held rather than whether the agent is merely loaded.
 
 ## Normal operation
 
