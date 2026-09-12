@@ -93,36 +93,40 @@ TARGETS=(
 # 1.6 MB/s against a 60 MB/s ceiling, and even at 128K sequential it is 51
 # MB/s. The IOPS cap is the binding constraint for essentially everything here.
 #
-# REVERT CRITERIA, both in Prometheus with 26 weeks of history so they diff
-# against the June baseline directly:
-#   etcd_server_slow_apply_total rate   above ~2,500/hr   (was 1,493)
-#   etcd fsync p99 median over 24h      above ~50 ms      (was 26 ms)
+# THE REVERT CRITERIA THAT USED TO SIT HERE WERE WRONG, and the 400 -> 1200 ->
+# 400 round trip on 2026-09-12 changed nothing. Written down so nobody strings
+# the same tripwire again.
 #
-# BOTH TRIPPED, AND THE CAP WENT BACK 2026-09-12, four hours after the raise.
-# Measured when the monitor fired:
+# The line was "etcd_server_slow_apply_total above ~2,500/hr". Measured over 7
+# days at 5-minute resolution, that metric's own distribution is p50 180/hr,
+# p90 5,490, p95 11,280, p99 43,155, max 101,370. So 2,500 is crossed 17.2% of
+# the time by etcd on its own, and the 19,840/hr reading that triggered the
+# revert sits between p95 and p99, inside the ordinary range.
 #
-#   etcd slow applies    19,840/hr   against the 2,500 line and a 7d p90 of 2,379
-#   etcd fsync p99        1,788 ms   against a sub-10ms target
-#   devvm reads             612/s    of the 1,200 it had just been given
+# The correlation it was meant to detect is not there. That same evening etcd
+# reached 12,060/hr at 18:02 with devvm pulling 88 reads/s under the old 400
+# cap, sat at 1,275/hr at 20:17 when devvm was at its busiest 369 reads/s under
+# the new 1,200, and went to 30,195/hr after the revert with devvm at 154.
 #
-# The [5m] and [15m] rates agreed (20,040 and 19,840), so this was sustained
-# and not one burst smeared across a window. Leader changes stayed at 0 and
-# the apiserver stayed ready, so nothing failed over, but etcd was running at
-# 8x its own worst month. The third line is what makes it attributable: devvm
-# was spending half the new headroom at the time, so this was us.
+# AND THE CAP BARELY BINDS AT EITHER VALUE. devvm's read IOPS over the same 7
+# days are p50 1, p90 120, p95 137, p99 357, max 604. 400 clips 0.8% of
+# 5-minute samples and 1,200 clips none. The guest's own LV reads 100.22%
+# utilisation at 227 reads/s, so the spindle stops it long before the token
+# bucket does.
 #
-# The raise did buy one measurement worth keeping. At 19:19 the guest sat at
-# 100% utilisation while pulling 201 reads/s against a cap of 1,200, so past
-# roughly 400 the cap stops being the binding constraint and the spindle takes
-# over. A larger number costs etcd and buys devvm nothing.
+# What is actually wrong is not on this line. apiserver traffic was 29 req/s
+# against 26 three hours earlier and etcd was committing its usual 8.2
+# proposals/s while each fsync took 1.5 s. The workload did not change, the
+# disk under it did.
 #
-# Which leaves the code-oflt line standing rather than weakened: etcd does not
-# belong on this spindle, and no value of this number fixes that.
+# BEFORE CHANGING THIS NUMBER, check devvm's read IOPS against the cap. Do not
+# use etcd's slow-apply rate, which is too noisy on this spindle to attribute
+# anything to.
 #
 # THE REAL FIX IS NOT HERE. A device at 2.72% utilisation with 10.63 ms await
 # is not saturated, it is serialised, which is what fsync-heavy small writes
-# look like on a spindle. etcd on rotational storage is the cause; capping
-# devvm treats the symptom, which is why it only got halfway. Bead code-oflt
+# look like on a spindle. etcd on rotational storage is the cause, and the
+# measurement above is why capping devvm never addressed it. Bead code-oflt
 # moves etcd's 64 GB disk to the SSD (475 GB free, 0.22% utilised). Once that
 # lands this cap can go up again or away entirely.
 #
