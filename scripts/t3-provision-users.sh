@@ -701,6 +701,65 @@ PERSONAL
   return 0
 }
 
+# Claude settings every user should START on, written ONCE per key.
+#
+# Today that is one key: fastMode. Fast mode runs Opus 5 / Opus 4.8 at up to
+# 2.5x the output speed for 2x the per-token price ($10/$50 per MTok against
+# $5/$25), billed from the org's usage credits rather than the plan allowance,
+# so it is a deliberate spend Viktor asked for on 2026-09-12 — for both users,
+# not just whoever happened to type /fast. It only reaches a session at process
+# start, and only an Opus model honours it; picking Sonnet or Haiku turns it off
+# by itself.
+#
+# IF-ABSENT, and that is the whole design. `/fast` writes this same key, so a
+# reconcile that set it every hour would quietly undo a user who turned fast
+# mode off and hand them the bill. Present, at any value, means the user has an
+# opinion and we leave it alone. Same contract as the 99-personal.md slot above.
+#
+# Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
+install_claude_defaults() {
+  local user="$1" home settings added
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home/.claude" ]] || return 0
+  settings="$home/.claude/settings.json"
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] claude defaults (fastMode) -> $user"; return 0; fi
+
+  # Runs as ROOT, like the memory wiring, then hands the file back: it holds the
+  # per-user MEMORY_API_KEY and must stay 0600 and user-owned.
+  added="$(python3 - "$settings" <<'PYEOF'
+import json, os, sys
+
+path = sys.argv[1]
+DEFAULTS = {"fastMode": True}
+
+if os.path.exists(path) and os.path.getsize(path) > 0:
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"ERROR: cannot read {path}: {e}", file=sys.stderr)
+        sys.exit(1)
+else:
+    data = {}
+
+missing = {k: v for k, v in DEFAULTS.items() if k not in data}
+if missing:
+    data.update(missing)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+    print(" ".join(sorted(missing)))
+PYEOF
+  )" || { log "WARN: claude defaults failed for $user (retries next reconcile)"; return 0; }
+
+  chown "$user:$user" "$settings" 2>/dev/null || true
+  chmod 600 "$settings" 2>/dev/null || true
+  [[ -n "$added" ]] && log "claude default set -> $user ($added)"
+  return 0
+}
+
 [[ $EUID -eq 0 ]] || { echo "t3-provision-users: must run as root" >&2; exit 1; }
 for bin in python3 jq; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [[ -f "$ROSTER" && -f "$ENGINE" ]] || { echo "roster/engine not under $WORKSTATION_DIR" >&2; exit 1; }
@@ -986,6 +1045,14 @@ done < <(jq -r '.accounts[].os_user' "$desired_file")
 while IFS=$'\t' read -r os_user; do
   id "$os_user" >/dev/null 2>&1 || continue
   install_shared_rules "$os_user"
+done < <(jq -r '.accounts[].os_user' "$desired_file")
+
+# 5d-ter) per-user Claude defaults (ALL users): settings.json keys everyone should
+#     start on — currently fastMode. Written once per key, never re-asserted, so a
+#     user's own /fast stands. Runs after 5d, which is what creates ~/.claude.
+while IFS=$'\t' read -r os_user; do
+  id "$os_user" >/dev/null 2>&1 || continue
+  install_claude_defaults "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
 
 # 5e) per-user agent skills: RETIRED 2026-08-19. The reconcile used to vendor a
