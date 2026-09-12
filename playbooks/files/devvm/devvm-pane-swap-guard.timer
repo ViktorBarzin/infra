@@ -1,0 +1,15 @@
+[Unit]
+Description=Reconcile tmux pane swap protection every 5 minutes
+
+[Timer]
+# 5 minutes is chosen against the thing being tracked. Panes are marked hot for
+# 24 hours, so the window moves slowly and a pane created just after a run waits
+# at most 5 minutes for protection. Tighter would add writes without changing
+# any outcome.
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

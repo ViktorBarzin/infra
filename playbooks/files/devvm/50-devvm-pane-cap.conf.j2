@@ -34,4 +34,14 @@
 # OOMPolicy=continue the same test leaves the pane at "A process of this unit
 # has been killed by the OOM killer" and the session keeps running.
 # Same lesson t3-serve@.service learned on 2026-06-10.
+#
+# The [Scope] header below is load-bearing in its own right. It was lost on
+# 2026-09-02 in c61292f7, which rewrote this comment block and took the header
+# and MemoryMax with it. systemd then loaded a drop-in with no section and
+# applied nothing from it, so every pane ran uncapped with OOMPolicy=stop for
+# ten days. An ansible --check run stayed a clean no-op throughout, because the
+# box matched this template exactly and the template was what was wrong. Assert
+# the outcome, not the file: `systemctl --user show <scope> -p MemoryMax`.
+[Scope]
+MemoryMax={{ devvm_pane_memory_max }}
 OOMPolicy=continue

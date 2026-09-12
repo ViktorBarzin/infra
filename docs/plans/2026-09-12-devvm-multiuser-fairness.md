@@ -1,6 +1,6 @@
 # devvm: fairness and responsiveness for multiple users
 
-Status: proposed, one step already landed
+Status: approved 2026-09-12. Steps 0 to 8 executing. Step 9 deferred.
 Date: 2026-09-12
 Author: wizard (with Claude)
 Trigger: emo reported that his sessions on the shared devvm become unusable
@@ -154,18 +154,30 @@ reclaim target.
 
 | slice | `memory.low` |
 |---|---|
-| wizard | 5.7 GiB |
-| ancamilea | 5.7 GiB |
-| emo | 5.7 GiB |
-| breakglass | 1 GiB |
+| every user slice, via the `user-.slice` template | 8.5 GiB |
 | `system.slice` | 2 GiB |
-| `user.slice` (parent) | sum of its children |
+| `user.slice` (parent) | 17 GiB |
+
+Sized for the users who are actually active rather than the four enrolled.
+ancamilea has not logged in and holds 13 pids and zero bytes, so the floors are
+divided between wizard and emo.
+
+One uniform value on the template rather than per-uid drop-ins, because an empty
+slice protects nothing. An absent user reserves no memory while away and is
+covered automatically if they return, which gets the same result as carving out
+per-user files without the files.
+
+The parent is set to the sum of the two active floors, and that is
+self-balancing. If more users become active than 17 GiB covers, the kernel
+scales every child's protection down proportionally, which is still an equal
+share of the protection that exists. Summing all four enrolled accounts would
+reserve 34 GiB on a 31 GiB box and dilute every floor to nothing.
 
 The parent matters. `memory.low` protection is distributed from the parent
 down, so leaving `user.slice` at zero would cap every child's effective
 protection at zero.
 
-Total protection is 20.1 GiB of 31 GiB, leaving roughly 11 GiB unprotected.
+Total protection is 19 GiB of 31 GiB, leaving roughly 12 GiB unprotected.
 That headroom is deliberate: `memory.low` is best-effort, and once every
 remaining page sits inside somebody's floor, reclaim proceeds anyway and the
 protection stops meaning anything.
@@ -173,8 +185,8 @@ protection stops meaning anything.
 This is work-conserving with no extra machinery. An empty slice protects
 nothing, so one user alone can still use most of the box and is only reclaimed
 when somebody else actually needs memory. For context, emo's slice currently
-holds 4.24 GiB and wizard's 21.49 GiB, so a 5.7 GiB floor protects emo's whole
-working set and makes wizard's excess the first thing reclaimed.
+holds 4.24 GiB and wizard's 21.49 GiB, so an 8.5 GiB floor protects emo's whole
+working set twice over and makes wizard's excess the first thing reclaimed.
 
 `system.slice` needs its floor for a reason that is easy to miss: protecting
 the user slices makes everything unprotected into the preferred reclaim
@@ -247,7 +259,13 @@ what that costs. Once a refault is served from flash in about a millisecond
 instead of twenty from the spindle, preferring file eviction stops being
 expensive.
 
-### 9. An SSD read cache in front of the root LV
+### 9. An SSD read cache in front of the root LV (deferred)
+
+Deferred on 2026-09-12, after the cap raise. Not rejected: the research below
+stands and the configuration is settled, so this is ready to pick up if steps
+1 to 8 leave the box still stalling on refaults. Deferring it also avoids
+adding a new hardware dependency and a new failure mode while we are still
+measuring what the cap raise alone was worth.
 
 Add a 60 GiB disk from the `ssd` volume group, add it as a second PV to the
 guest's `ubuntu-vg`, and convert the root LV to a cached LV in writethrough
@@ -364,10 +382,27 @@ Decided deliberately, not overlooked.
 - Raising the per-user swap ceiling.
 - Any change to CPU shares, which are already equal.
 
+## Is more swap worth it
+
+No. The box has 24 GiB of swap and 8.8 GiB of it is in use. The remaining
+15 GiB is unreachable, because `memory.swap.max` bounds each user at 4 GiB and
+neither can get to it. Adding swap would add a file nothing touches.
+
+The question worth asking is whether to raise the per-user ceiling, and the
+answer for now is not yet, for three reasons. Swap moves 0.34 MB/s against the
+filesystem's 6.48 MB/s inside stall windows, so it is a small share of the
+problem. It sits on the same spindle that is already the constraint. And the
+4 GiB bound was chosen deliberately on 2026-09-02, after a runaway ran swap to
+15 GB in June and the box had to be hard-killed.
+
+The floors in step 2 change which pages get reclaimed in the first place. If
+the failed-swapout counts are still in the millions afterwards, raising the
+ceiling is the next lever and there will be evidence for the number.
+
 ## Open questions
 
 - Clearing the 43 GB of `.cache` under `/home/wizard` would take `/` from 86%
   to about 61% and shrink what the cache has to hold. It is a deletion, so it
   needs a decision rather than an assumption.
-- Whether the raised cap alone is enough. It may be, and steps 2 to 9 are
-  worth measuring against rather than assuming.
+- Whether the raised cap plus steps 1 to 8 are enough on their own. Step 9 is
+  deferred on exactly that question.
