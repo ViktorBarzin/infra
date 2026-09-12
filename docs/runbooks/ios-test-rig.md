@@ -19,7 +19,7 @@ rig that day.
 | `me.viktorbarzin.ios-rig-awake` | Mac LaunchAgent, KeepAlive | `caffeinate -s`, stops the laptop sleeping the rig away |
 | `ios-rig-tunnel.service` | devvm, `systemd --user` | SSH tunnel carrying Appium 4723 |
 | `ios-rig-doctor.timer` | devvm, `systemd --user`, 6-hourly | checks every link, posts to Slack when degraded |
-| `scripts/ios-rig/` | this repo | the whole rig, including the Mac bootstrap |
+| `homelab ios` | this repo, `cli/` | every verb; the Mac-side assets are embedded in the binary |
 
 ```mermaid
 flowchart TD
@@ -114,6 +114,24 @@ issue, `AltServer-Linux` has been unmaintained since 2022, and
 nested-framework signing fails on the `.xctrunner` shape WebDriverAgent has.
 If that changes, the re-sign job is the only piece that would move.
 
+## Where the code lives
+
+Everything is `homelab ios`. The Go half (`cli/ios.go`, `cli/cmd_iosrig.go`)
+owns the devvm side; the Mac side stays shell and plists in `cli/ios_assets/`
+because it has to run under `launchd`, and it is embedded in the binary so
+`bootstrap` works without a checkout.
+
+> [!NOTE]
+> The command file is `cmd_iosrig.go`, not `cmd_ios.go`. Go reads a trailing
+> `_<GOOS>` in a file name as an implicit build constraint and `ios` is a real
+> GOOS, so the obvious name excluded the file from every build here while
+> compiling cleanly on its own. The symptom is `undefined: iosCommands` with no
+> error reported in the file itself.
+
+The capability catalog (`homelab how`) knows about the rig, and a test asserts
+that no entry still claims no iOS instrument exists — that claim was what kept
+agents from reaching for it.
+
 ## What autonomous operation needs
 
 Everything below was measured on 2026-09-12. The rig runs unattended only
@@ -166,18 +184,18 @@ assertion is actually held rather than whether the agent is merely loaded.
 ## Normal operation
 
 ```sh
-scripts/ios-rig/ios-rig doctor          # check every link in the chain
-scripts/ios-rig/ios-rig wda-url         # where WebDriverAgent is listening now
-scripts/ios-rig/ios-rig apps            # what is installed, against the 3-app cap
-scripts/ios-rig/ios-rig screenshot /tmp/shot.png
-scripts/ios-rig/ios-rig screenshot /tmp/shot.png --url https://example.com
-scripts/ios-rig/ios-rig screenshot /tmp/shot.png --tap 200,400
+homelab ios doctor          # check every link in the chain
+homelab ios wda-url         # where WebDriverAgent is listening now
+homelab ios apps            # what is installed, against the 3-app cap
+homelab ios shot /tmp/shot.png
+homelab ios shot /tmp/shot.png --url https://example.com
+homelab ios shot /tmp/shot.png --tap 200,400
 ```
 
 ## Sideloading an app
 
 ```sh
-scripts/ios-rig/ios-rig install <project-dir> [--scheme S] [--bundle-id B] [--no-launch]
+homelab ios install <project-dir> [--scheme S] [--bundle-id B] [--no-launch]
 ```
 
 It copies the project to the Mac, builds it there in the Aqua session with the
@@ -187,14 +205,14 @@ free team, installs with `devicectl device install app`, and launches it.
 
 The project can carry its own `.xcodeproj`, or a `project.yml` for xcodegen,
 which is regenerated on every build so no generated file has to live in git.
-`scripts/ios-rig/testapp/` is a minimal app that exists to verify this path
+`cli/ios_assets/testapp/` is a minimal app that exists to verify this path
 works; it is not a template to copy.
 
 > [!IMPORTANT]
 > Each **new** bundle identifier consumes one of the 10 App IDs a free account
 > may register per week, and each installed app one of the 3 slots, of which
 > WebDriverAgent permanently holds one. Reusing a bundle id costs neither.
-> `ios-rig apps` shows what is currently taking up space.
+> `homelab ios apps` shows what is currently taking up space.
 
 Builds go through `devicectl`, not `ideviceinstaller`, because the lockdown
 pairing `ideviceinstaller` needs is blocked on this phone.
@@ -217,8 +235,8 @@ noticing it went stale.
 ## Rebuilding from nothing
 
 ```sh
-scripts/ios-rig/bootstrap-mac.sh --dry-run   # see what would change
-scripts/ios-rig/bootstrap-mac.sh             # tooling and all three LaunchAgents
+homelab ios bootstrap --dry-run   # see what would change
+homelab ios bootstrap             # tooling and all three LaunchAgents
 systemctl --user enable --now ios-rig-tunnel.service ios-rig-doctor.timer
 ```
 
@@ -284,13 +302,16 @@ a blurred frame means the poll was skipped or timed out. It prints
 ### `doctor` says `ssh` failed
 
 The Mac is addressed as `mbp-london.viktorbarzin.lan`, which resolves through
-Technitium to its Flint static lease at `192.168.8.168`. If both go stale:
+Technitium to its Flint static lease at `192.168.8.168`. If both go stale,
+point the rig somewhere else without touching code:
 
 ```sh
-scripts/ios-rig/ios-rig discover
+IOS_RIG_MAC_HOST=192.168.8.42 homelab ios doctor
 ```
 
-Then set `IOS_RIG_MAC_HOST`, or update `scripts/ios-rig/rig.env`.
+Every field has an `IOS_RIG_*` override: `MAC_HOST`, `MAC_USER`, `UDID`,
+`TEAM_ID`, `WDA_BUNDLE_ID`, `DEVELOPER_DIR`, `APPIUM_PORT`. A second phone
+needs no code change.
 
 **Check which SSID it is on first.** The Flint's names are near-identical and
 land on different networks, which is how both devices ended up isolated on

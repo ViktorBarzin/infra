@@ -35,6 +35,7 @@ func buildRegistry() []Command {
 	reg = append(reg, shareCommands()...)
 	reg = append(reg, pasteCommands()...)
 	reg = append(reg, crowdsecCommands()...)
+	reg = append(reg, iosCommands()...)
 	return reg
 }
 
