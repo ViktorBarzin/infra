@@ -131,6 +131,12 @@ The phone takes a DHCP lease and WebDriverAgent rebinds on every restart, so
 its address is never hardcoded. The runner writes whatever WDA actually bound
 to into `~/.ios-rig-wda-url`, and the CLI reads it from there.
 
+WebDriverAgent reports that address only once, at launch, so a new lease leaves
+it listening on a socket while the published URL points somewhere nobody
+answers. The CLI checks the published URL before using it and restarts the
+runner when it does not answer, so a stale address heals without anyone
+noticing it went stale.
+
 ## Rebuilding from nothing
 
 ```sh
@@ -200,14 +206,34 @@ a blurred frame means the poll was skipped or timed out. It prints
 
 ### `doctor` says `ssh` failed
 
-The Mac roams between the Flint LAN `192.168.8.0/24` and the Hyperoptic guest
-network `192.168.9.0/24`, taking a new DHCP address each time.
+The Mac is addressed as `mbp-london.viktorbarzin.lan`, which resolves through
+Technitium to its Flint static lease at `192.168.8.168`. If both go stale:
 
 ```sh
 scripts/ios-rig/ios-rig discover
 ```
 
 Then set `IOS_RIG_MAC_HOST`, or update `scripts/ios-rig/rig.env`.
+
+**Check which SSID it is on first.** The Flint's names are near-identical and
+land on different networks, which is how both devices ended up isolated on
+guest until 2026-09-12:
+
+| SSID | network |
+|---|---|
+| `5G-Tower Admin` | lan, `192.168.8.0/24` |
+| `5G-Tower` | guest, `192.168.9.0/24` |
+| `2.4G-Tower` | lan |
+
+The Mac belongs on `5G-Tower Admin`. The phone currently sits on guest, which
+works: the Flint forwards LAN to guest, so Appium on the Mac reaches
+WebDriverAgent on the phone across the two subnets, and so does the devvm.
+Verified 2026-09-12, both returning 200.
+
+macOS keeps a **stable per-SSID** private Wi-Fi address rather than a rotating
+one, so a reservation matching that address holds as long as the Mac stays on
+that SSID. The `mbp-london` reservation carries both the hardware MAC
+`84:2f:57:39:9a:d9` and the private address for that network.
 
 ### Re-running `bootstrap-mac.sh` left nothing loaded
 
