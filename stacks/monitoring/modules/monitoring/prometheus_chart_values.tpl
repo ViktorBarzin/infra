@@ -1837,6 +1837,37 @@ serverFiles:
           # for whoever sets it: emo's slice read 0.7393 during the 2026-09-12
           # incident and 0.0102 an hour after the fix. Re-derive against a week
           # of data, the way the sdc rules above were set against measured p99s.
+      - name: Terminal Lobby
+        rules:
+          # Added 2026-09-12 with the tmux-api /metrics endpoint. Before it,
+          # nothing could answer "is the lobby up": t3-serve, tmux-api and ttyd
+          # exposed nothing to Prometheus and node_exporter was the only target
+          # on the host. SessionWatchSilent is a dead-man switch on
+          # tl-session-watch's journal and T3ProbeLegDown watches the probe leg
+          # from inside the cluster, but neither sees the API process itself.
+          - alert: TerminalLobbyDown
+            # The scrape IS the liveness check. /metrics answers 200 with build
+            # and uptime even when tmux is unreachable and every session gauge
+            # is therefore unknown, precisely so a failed scrape means the
+            # process is gone rather than that tmux hiccuped.
+            #
+            # 5m rather than the 15m used for load rules: this is binary and
+            # does not need smoothing. It covers the deb upgrade restart, which
+            # is seconds.
+            expr: up{job="terminal-lobby"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Terminal Lobby's API is not answering — nobody can open or list a session"
+              description: "tmux-api serves every session list, open, rename and kill in the lobby, so while it is down the UI loads and does nothing. Check it: systemctl status tmux-api on devvm, and journalctl -u tmux-api -n 50. It binds 0.0.0.0:7684 and is scraped there directly. If the box itself is gone, DevvmDown fires alongside this and is the one to act on first; if the box is up and stalled on disk, DevvmIOStalled is the better description and this may just be the scrape timing out behind it."
+          # NOT ADDED YET, deliberately: error-rate and latency rules on
+          # tl_http_requests_total and tl_http_request_duration_ms. Both series
+          # start today, so there is no history to set a threshold against, and
+          # a guessed threshold is how an alert becomes noise nobody reads.
+          # The sdc rules in the R730 group above were set against measured
+          # p99s; do the same here after a week, with
+          # homelab metrics query 'rate(tl_http_requests_total{outcome="server_error"}[15m])' --since 7d
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp
@@ -6704,6 +6735,37 @@ extraScrapeConfigs: |
       - source_labels: [__address__]
         target_label: instance
         replacement: 'devvm' # Giving it a friendly name
+  # Terminal Lobby's own service metrics (tmux-api), added 2026-09-12.
+  #
+  # A SEPARATE JOB rather than a second target on 'devvm' above, because that
+  # job relabels every target's instance to the literal 'devvm'. Two targets
+  # sharing a job and an instance label produce duplicate `up` series and you
+  # cannot tell which one is down, which is the single thing this is for.
+  #
+  # It exists because on 2026-09-12 the box stalled for about three hours and
+  # nothing could answer "is the lobby up": t3-serve, tmux-api and ttyd exposed
+  # nothing and node_exporter was the only target on the host. ADR-0006 in the
+  # terminal-lobby repo had already named this gap, choosing Loki for usage
+  # events while recording that "long-term trends would need counters in
+  # Prometheus (26 weeks)".
+  #
+  # :7684 is reachable because the service binds 0.0.0.0 in production
+  # (TL_BIND in /etc/terminal-lobby.local.conf). The API routes there are gated
+  # by TL_PROXY_SECRET; /metrics is not, and carries counts, latencies and
+  # per-OS-user session counts, never session names or content.
+  - job_name: 'terminal-lobby'
+    static_configs:
+      - targets:
+        - "10.0.10.10:7684"
+        labels:
+          node: 'devvm'
+          service: 'tmux-api'
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'tmux-api'
+
   # registry-cache VM (10.0.20.10): the five pull-through caches behind nginx.
   # Its node_exporter answers 200 and was scraped by nothing until 2026-09-03,
   # which is the larger half of why /opt/registry sat at 100% full for 45 days
