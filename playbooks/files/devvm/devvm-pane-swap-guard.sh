@@ -37,6 +37,13 @@
 #
 # Idempotent, and safe to run while sessions come and go: a scope that vanishes
 # between listing and writing is skipped rather than failing the run.
+#
+# A systemd daemon-reload CLEARS what this writes. These are cgroup writes made
+# behind systemd's back, and a reload re-applies systemd's own view of each
+# unit's properties, so every pane returns to the slice default. Observed
+# 2026-09-12: protection went from 22 panes to 0 across a reload and back to 22
+# on the next tick. The timer is the reconciliation, so the exposure is at most
+# one interval. Read a zero right after a reload as expected, not as a failure.
 set -uo pipefail
 
 WINDOW_HOURS="${DEVVM_PANE_HOT_HOURS:-24}"
