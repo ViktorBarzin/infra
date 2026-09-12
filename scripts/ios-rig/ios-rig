@@ -37,7 +37,30 @@ on_mac() { ssh "${SSH_OPTS[@]}" "$MAC" "bash -lc $(printf '%q' "$RIG_PATH; $1")"
 
 # The phone's Wi-Fi address is a DHCP lease and WDA rebinds on every restart,
 # so it is read from what the runner published, never hardcoded.
-wda_url_from_mac() { on_mac 'cat ~/.ios-rig-wda-url 2>/dev/null' | grep -oE 'https?://[0-9a-zA-Z.:-]+' | head -1; }
+wda_url_published() { on_mac 'cat ~/.ios-rig-wda-url 2>/dev/null' | grep -oE 'https?://[0-9a-zA-Z.:-]+' | head -1; }
+
+# WebDriverAgent reports its address once, at launch. The phone holds a DHCP
+# lease, so a new lease leaves WDA listening happily on a socket while the
+# published URL points at an address nobody answers on. Restarting the runner
+# makes it rebind and republish, so a stale URL heals itself rather than
+# needing a human to notice.
+wda_url_from_mac() {
+  local url; url="$(wda_url_published)"
+  if [[ -n "$url" ]] && curl -sf -m 8 "$url/status" >/dev/null 2>&1; then
+    printf '%s\n' "$url"; return 0
+  fi
+  [[ -n "$url" ]] && echo "published $url is not answering, restarting the runner" >&2
+  on_mac 'launchctl kickstart -k gui/$(id -u)/me.viktorbarzin.wda-run' >/dev/null 2>&1
+  local deadline=$((SECONDS + 180))
+  while (( SECONDS < deadline )); do
+    url="$(wda_url_published)"
+    if [[ -n "$url" ]] && curl -sf -m 8 "$url/status" >/dev/null 2>&1; then
+      printf '%s\n' "$url"; return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
 
 cmd_discover() {
   echo "Scanning for the Mac on the London subnets..."
@@ -133,13 +156,10 @@ cmd_doctor() {
   # WDA is reached over Wi-Fi, not usbmuxd, and the phone's address is a DHCP
   # lease. The runner publishes whatever WDA actually bound to.
   local wda_url
-  wda_url="$(wda_url_from_mac)"
-  if [[ -z "$wda_url" ]]; then
-    fail wda-running "runner has not published a URL; check /tmp/wda-run.log on the Mac"
-  elif curl -sf -m 10 "$wda_url/status" >/dev/null 2>&1; then
+  if wda_url="$(wda_url_from_mac)"; then
     pass wda-reachable "$wda_url"
   else
-    fail wda-reachable "published $wda_url but the devvm cannot reach it"
+    fail wda-reachable "no answering WebDriverAgent; check /tmp/wda-run.log on the Mac"
   fi
 
   local st
