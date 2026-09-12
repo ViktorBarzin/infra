@@ -1779,6 +1779,40 @@ serverFiles:
             annotations:
               summary: "devvm fairness guard has not run for {{ $value | humanizeDuration }}"
               description: "devvm-pane-swap-guard.timer runs every 5 minutes and does two jobs: it keeps recently used tmux panes out of swap, and it is the only thing exporting the per-slice floor, pressure and swap-failure metrics the other rules in this group depend on. While it is stale those metrics are frozen, so absence of an alert stops meaning anything. Check it: systemctl status devvm-pane-swap-guard.timer and journalctl -u devvm-pane-swap-guard.service -n 20. Run it by hand with DEVVM_PANE_GUARD_DRY_RUN=1 to see what it would do without writing."
+          - alert: DevvmIOStalled
+            # The alert that was missing on 2026-09-12, when emo could not use
+            # his sessions for about three hours and nothing fired. The only
+            # devvm alerts that went off that day were ClaudeSessionDied and one
+            # PaneNearMemoryCap, both of which report a session that has already
+            # died. DevvmMemoryPressure, DevvmSwapThrashing and DevvmDown all
+            # stayed silent, because none of them looks at IO.
+            #
+            # `full` rather than `some`: full means every runnable task was
+            # blocked on IO at once, which is the state a person describes as
+            # the box being unusable. `some` is true whenever anything waits and
+            # is far too common to page on.
+            #
+            # 0.70 is not a new number. It is the very-busy line Terminal
+            # Lobby's machine-health indicator already shows a human, calibrated
+            # over 696 hours of PSI history (ADR-0028), so the alert and the UI
+            # agree on what unusable means. The amber line it shows at 0.50 is
+            # deliberately NOT the alert line: backtested over 14 days it gives
+            # 9 sustained episodes against 2 at 0.70, and a human reading the
+            # dot can act on busy without being paged for it.
+            #
+            # Backtest, 14 days to 2026-09-12 at for:15m: 2 episodes, 09-08
+            # 03:19 for 25 min and 09-12 01:54 for 15 min. Roughly one a week,
+            # and that window still contains the 120-IOPS cap that caused most
+            # of them. After it was raised on 2026-09-12 io full fell to 0.8%,
+            # so the real rate should be lower. If this never fires for a month,
+            # 0.50 is the considered next line rather than a guess.
+            expr: rate(node_pressure_io_stalled_seconds_total{job="devvm"}[10m]) > 0.70
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "devvm is stalled on disk {{ $value | humanizePercentage }} of the time — every session on the box is frozen"
+              description: "This is what users report as the machine being unusable, and it is not a CPU problem: on 2026-09-12 the affected user's slice read cpu.pressure 0.00 against io.pressure 73.93. Find who is generating it: homelab metrics query 'devvm_slice_pressure_ratio{resource=\"io\"}' shows it per user slice. Check the guest is not being throttled below what the disk can do — that was the 2026-09-12 cause, iops_rd=120 in scripts/apply-mbps-caps.sh against a host disk that was 80% idle. Compare the two sides: guest read latency in node_disk_read_time_seconds_total{job=\"devvm\"} against the host's own sdc. If the guest is far slower than the host, the cap is the constraint rather than the spindle."
           # DevvmIOSchedulerNotBFQ WAS HERE, and is deleted rather than
           # inverted. BFQ went on sda on 2026-09-12 to make the cgroup IOWeight
           # values do something, and was reverted the same evening because it
