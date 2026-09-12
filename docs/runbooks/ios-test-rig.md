@@ -219,7 +219,7 @@ pairing `ideviceinstaller` needs is blocked on this phone.
 
 `doctor` is the first thing to run for any symptom. It reports each link
 separately, so it distinguishes "the laptop is away" from "the certificate
-expired". A healthy run is **9 ok, 0 failing**, with two standing warnings:
+expired". A healthy run is **11 ok, 0 failing**, with two standing warnings:
 `pairing-lockdown` unavailable, and the current iOS version.
 
 The phone takes a DHCP lease and WebDriverAgent rebinds on every restart, so
@@ -236,7 +236,7 @@ noticing it went stale.
 
 ```sh
 homelab ios bootstrap --dry-run   # see what would change
-homelab ios bootstrap             # tooling and all three LaunchAgents
+homelab ios bootstrap             # tooling, all five LaunchAgents, devvm units
 systemctl --user enable --now ios-rig-tunnel.service ios-rig-doctor.timer
 ```
 
