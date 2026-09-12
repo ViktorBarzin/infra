@@ -1722,6 +1722,87 @@ serverFiles:
             annotations:
               summary: "devvm is swap-thrashing — paging {{ $value | printf \"%.0f\" }} pages/s back IN while still evicting, the 2026-06-22 hard-kill shape"
               description: "Pages are coming back in as fast as they leave, which is churn rather than the one-way eviction that freeing RAM looks like. Normal on this box is 0. Find the source: for d in /sys/fs/cgroup/user.slice/user-*.slice; do echo $d $(cat $d/memory.swap.current); done. A user sitting at their 4G MemorySwapMax ceiling is the likely one. To stop it while investigating, systemctl set-property user-<uid>.slice MemorySwapMax=0 puts that user back to cap-and-kill. The reason paging hurts here at all is the shared seek-bound spindle; bead code-oflt moves devvm's disk to SSD and is still open."
+          # ---- the fairness controls, and whether they are actually in force ----
+          # Added 2026-09-12 with the multi-user fairness work
+          # (docs/plans/2026-09-12-devvm-multiuser-fairness.md). Every rule here
+          # answers the same question: is a control we believe in still doing
+          # anything? None of them measures how loaded the box is. The load
+          # alerts above already do that.
+          #
+          # They exist because of a measured failure. The per-pane 6 GiB memory
+          # cap was inert from 2026-09-02 to 2026-09-12 after a commit deleted
+          # the [Scope] header from its drop-in, and nothing noticed for ten
+          # days. An ansible --check run was a clean no-op throughout, because
+          # the box matched the template and the template was what was wrong.
+          # A control that fails silently is worse than no control, because it
+          # is still in the runbook.
+          - alert: DevvmPaneCapInert
+            # tl-session-watch has exported this all along. Backtested over 14
+            # days: min(tl_pane_memory_max_bytes) read 0 on every sample from
+            # 09-06 through the morning of 09-12, and 6.44e9 after the repair.
+            # This rule would have fired on day one of the regression. Nothing
+            # was watching the series, which is the whole lesson.
+            #
+            # 0 rather than a threshold: the exporter writes 0 for an uncapped
+            # scope, so this is "the cap is absent", not "the cap is small".
+            # for: 30m clears a pane created between the drop-in landing and the
+            # user manager reloading.
+            expr: min(tl_pane_memory_max_bytes{instance="devvm"}) == 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "devvm per-pane memory cap is not in force — at least one tmux pane is uncapped"
+              description: "The 6 GiB per-pane cap is the guard meant to fire first, so a runaway build dies inside its own pane instead of taking the user's whole slice to its 24 GiB ceiling. With it absent, earlyoom becomes the only net and it picks by raw RSS across the box. Check the drop-in has a [Scope] section and a MemoryMax line: cat /etc/systemd/user/scope.d/50-devvm-pane-cap.conf. Then check it took effect rather than just existing, because those differ: systemctl --machine=wizard@.host --user show <scope> -p MemoryMax. A system daemon-reload does not reach user managers; the drop-in needs a per-user reload to reach panes that already exist."
+          - alert: DevvmMemoryFloorInert
+            # The parent is the one that matters. cgroup v2 hands protection
+            # downwards, so user.slice at 0 pins every per-user floor to an
+            # effective 0 no matter what the per-user drop-in declares. That is
+            # exactly the state the box was in between the first apply attempt
+            # and the fix in d87e6377, with every file correct on disk.
+            expr: devvm_slice_memory_low_bytes{slice="user.slice"} == 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "devvm per-user memory floors are not in force — user.slice has no protection to hand down"
+              description: "Reclaim is no longer preferring whoever is over their share, so one user's build can evict another user's idle session and that session then faults its working set back off a 7200rpm spindle. That is the failure emo reported on 2026-09-12, measured at io.pressure 73.93 against cpu.pressure 0.00 in his slice. Check what is live rather than what is on disk: cat /sys/fs/cgroup/user.slice/memory.low. Expect 17G. The drop-in is /etc/systemd/system/user.slice.d/50-devvm-user-slice-floor.conf and it needs systemctl daemon-reload to take effect."
+          - alert: DevvmFairnessGuardStale
+            # Staleness rather than unit failure, because the failure mode that
+            # matters is "stopped running" however it happened: a masked timer,
+            # a syntax error, a hung run. The timer fires every 5 minutes, so
+            # 30 minutes is six missed runs.
+            expr: time() - devvm_fairness_last_run_timestamp_seconds{instance="devvm"} > 1800
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "devvm fairness guard has not run for {{ $value | humanizeDuration }}"
+              description: "devvm-pane-swap-guard.timer runs every 5 minutes and does two jobs: it keeps recently used tmux panes out of swap, and it is the only thing exporting the per-slice floor, pressure and swap-failure metrics the other rules in this group depend on. While it is stale those metrics are frozen, so absence of an alert stops meaning anything. Check it: systemctl status devvm-pane-swap-guard.timer and journalctl -u devvm-pane-swap-guard.service -n 20. Run it by hand with DEVVM_PANE_GUARD_DRY_RUN=1 to see what it would do without writing."
+          - alert: DevvmIOSchedulerNotBFQ
+            # IOWeight has been declared on the user slices since long before
+            # this, and did nothing, because sda ran the `none` scheduler and no
+            # blk-iocost model was configured. Only BFQ honours cgroup weights
+            # here. If the scheduler reverts, the weights go quietly inert again
+            # in exactly the way the pane cap did.
+            #
+            # The udev rule reapplies on an add|change event, so a reboot is
+            # covered; this catches a manual override or a rule that stopped
+            # matching.
+            expr: devvm_block_scheduler_bfq{instance="devvm", device="sda"} == 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "devvm sda is not using BFQ — cgroup IO weights are inert"
+              description: "Without BFQ the IOWeight values on the user and system slices are declared and ignored, so one user can take the whole disk queue. That matters more since the read cap went from 120 to 400 IOPS on 2026-09-12: below the old cap no user could saturate the disk, above it they can. Check: cat /sys/block/sda/queue/scheduler. Restore with udevadm control --reload-rules && udevadm trigger --subsystem-match=block --action=change, and confirm the module is present with lsmod | grep bfq. Declared in playbooks/files/devvm/60-devvm-bfq.rules."
+          # NOT ADDED YET, deliberately: a per-user IO stall alert on
+          # devvm_slice_pressure_ratio{resource="io"}. The metric starts today,
+          # so there is no history to derive a threshold from, and a guessed
+          # threshold is how an alert becomes noise nobody reads. Two anchors
+          # for whoever sets it: emo's slice read 0.7393 during the 2026-09-12
+          # incident and 0.0102 an hour after the fix. Re-derive against a week
+          # of data, the way the sdc rules above were set against measured p99s.
       - name: Nvidia Tesla T4 GPU
         rules:
           - alert: HighGPUTemp

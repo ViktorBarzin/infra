@@ -47,6 +47,9 @@
 set -uo pipefail
 
 WINDOW_HOURS="${DEVVM_PANE_HOT_HOURS:-24}"
+# Where node_exporter picks up the fairness metrics this also writes. Empty
+# disables the export; the guard still does its job.
+TEXTFILE_DIR="${DEVVM_TEXTFILE_DIR:-/var/lib/prometheus/node-exporter}"
 # 6 GiB of the 15.5 GiB of pane anonymous memory, leaving the rest to compete
 # for the 8 GiB the two active users share. Raise it only with a measurement.
 BUDGET_BYTES="${DEVVM_PANE_SWAP_BUDGET_BYTES:-$(( 6 * 1024 * 1024 * 1024 ))}"
@@ -123,3 +126,78 @@ while IFS= read -r -d '' scope_dir; do
 done < <(find "$CG" -maxdepth 4 -type d -name 'tmux-spawn-*.scope' -print0 2>/dev/null)
 
 log "pane swap guard: ${hot_count} protected, $(( spent / 1048576 )) MiB anon of $(( BUDGET_BYTES / 1048576 )) MiB budget, window ${WINDOW_HOURS}h; ${cold_count} swappable"
+
+# ---------------------------------------------------------------------------
+# Export the fairness state to Prometheus.
+#
+# WHY THIS LIVES HERE. Prometheus has no per-cgroup series for this box: no
+# cAdvisor, no cgroup exporter, only node-level metrics on job="devvm". That
+# gap is why the per-user IO stall emo reported could only ever be seen by
+# reading /sys by hand, and why the per-pane memory cap could sit inert for ten
+# days without anything noticing. This script already walks every slice and
+# every pane scope once every five minutes, so the data costs nothing extra to
+# emit and the alerts get something real to sit on.
+#
+# The `low`/`fail`/`oom` values are what turn a silently broken control back
+# into a visible one. A floor reading 0 means the drop-in did not take effect,
+# which is a different failure from the floor being too small.
+emit_metrics() {
+  [[ -n "$TEXTFILE_DIR" && -d "$TEXTFILE_DIR" ]] || return 0
+  local out="$TEXTFILE_DIR/devvm_fairness.prom"
+  local tmp="${out}.$$"
+  {
+    echo "# HELP devvm_fairness_last_run_timestamp_seconds When the fairness guard last completed."
+    echo "# TYPE devvm_fairness_last_run_timestamp_seconds gauge"
+    echo "devvm_fairness_last_run_timestamp_seconds $(date +%s)"
+
+    echo "# HELP devvm_slice_memory_low_bytes Protected memory floor in force on a slice. 0 means no protection is being applied."
+    echo "# TYPE devvm_slice_memory_low_bytes gauge"
+    echo "# HELP devvm_slice_pressure_ratio Share of the last 60s the slice was stalled, from cgroup PSI some avg60."
+    echo "# TYPE devvm_slice_pressure_ratio gauge"
+    echo "# HELP devvm_slice_memory_swap_fail_total Swapout attempts refused because the slice was at its swap ceiling."
+    echo "# TYPE devvm_slice_memory_swap_fail_total counter"
+    echo "# HELP devvm_slice_memory_oom_kill_total Processes killed by the kernel inside the slice."
+    echo "# TYPE devvm_slice_memory_oom_kill_total counter"
+
+    local d name
+    for d in "$CG" "$CG"/user-*.slice /sys/fs/cgroup/system.slice; do
+      [[ -d "$d" ]] || continue
+      name="${d#/sys/fs/cgroup/}"
+      echo "devvm_slice_memory_low_bytes{slice=\"$name\"} $(cat "$d/memory.low" 2>/dev/null || echo 0)"
+      local res
+      for res in cpu io memory; do
+        local v
+        v=$(awk '/^some/{for(i=1;i<=NF;i++) if($i ~ /^avg60=/) {sub(/avg60=/,"",$i); print $i; exit}}' "$d/$res.pressure" 2>/dev/null)
+        [[ -n "${v:-}" ]] && echo "devvm_slice_pressure_ratio{slice=\"$name\",resource=\"$res\"} $(awk -v x="$v" 'BEGIN{printf "%.4f", x/100}')"
+      done
+      echo "devvm_slice_memory_swap_fail_total{slice=\"$name\"} $(awk '/^fail /{print $2; exit}' "$d/memory.swap.events" 2>/dev/null || echo 0)"
+      echo "devvm_slice_memory_oom_kill_total{slice=\"$name\"} $(awk '/^oom_kill /{print $2; exit}' "$d/memory.events" 2>/dev/null || echo 0)"
+    done
+
+    echo "# HELP devvm_panes_total tmux pane scopes present."
+    echo "# TYPE devvm_panes_total gauge"
+    echo "devvm_panes_total $(( hot_count + cold_count ))"
+    echo "# HELP devvm_panes_swap_protected Pane scopes currently held out of swap."
+    echo "# TYPE devvm_panes_swap_protected gauge"
+    echo "devvm_panes_swap_protected ${hot_count}"
+    echo "# HELP devvm_pane_swap_protected_anon_bytes Anonymous memory inside the protected panes."
+    echo "# TYPE devvm_pane_swap_protected_anon_bytes gauge"
+    echo "devvm_pane_swap_protected_anon_bytes ${spent}"
+    echo "# HELP devvm_pane_swap_budget_bytes The ceiling the protected set is held under."
+    echo "# TYPE devvm_pane_swap_budget_bytes gauge"
+    echo "devvm_pane_swap_budget_bytes ${BUDGET_BYTES}"
+
+    # 1 when the device is on BFQ, which is what makes cgroup IOWeight do
+    # anything at all. It read `none` for months while the weights were declared.
+    echo "# HELP devvm_block_scheduler_bfq 1 when the block device is using the BFQ scheduler."
+    echo "# TYPE devvm_block_scheduler_bfq gauge"
+    local dev
+    for dev in /sys/block/sd*; do
+      [[ -r "$dev/queue/scheduler" ]] || continue
+      grep -q '\[bfq\]' "$dev/queue/scheduler" && echo "devvm_block_scheduler_bfq{device=\"$(basename "$dev")\"} 1" \
+                                                 || echo "devvm_block_scheduler_bfq{device=\"$(basename "$dev")\"} 0"
+    done
+  } > "$tmp" 2>/dev/null && mv -f "$tmp" "$out" || rm -f "$tmp"
+}
+
+emit_metrics
