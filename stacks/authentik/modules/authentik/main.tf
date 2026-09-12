@@ -29,12 +29,15 @@ resource "kubernetes_namespace" "authentik" {
     labels = {
       tier                               = var.tier
       "resource-governance/custom-quota" = "true"
-      # Keel intentionally NOT enrolled: server+worker run our custom overlay image
-      # (ghcr.io/viktorbarzin/authentik-server — see values.yaml global.image +
-      # stacks/authentik/Dockerfile). The tag is pinned explicitly and bumped
-      # manually (rebuild the overlay FROM the new authentik version + repoint), so
-      # a Keel auto-bump would only risk re-introducing the upstream tag / the
-      # 2026-06-10 downgrade-boot-storm class. Re-enroll only if the overlay is dropped.
+      # Keel intentionally NOT enrolled, and the reason outlived the overlay.
+      # The image is stock again as of 2026-09-12, but the upgrade unit for
+      # authentik is the HELM CHART version below, not an image tag: the chart
+      # supplies the tag from its appVersion, and its templates and migrations
+      # move with it. Keel only rewrites image tags, so it would drift the image
+      # away from the chart and recreate the 2026-06-10 boot storm, and it picks
+      # the newest tag it can see, which can skip a minor line that authentik's
+      # upgrade docs require landing in turn. Automate this with something that
+      # raises the chart version here instead.
     }
   }
   lifecycle {
