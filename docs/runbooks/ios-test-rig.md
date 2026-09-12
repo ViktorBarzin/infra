@@ -1,4 +1,4 @@
-# Runbook — iOS test rig
+# Runbook: iOS test rig
 
 A personal iPhone, permanently cabled to the London MacBook, driven from the
 devvm over the WireGuard tunnel. Sideloads and drives custom builds with a free
@@ -19,21 +19,36 @@ rig that day.
 | `ios-rig-doctor.timer` | devvm, `systemd --user`, 6-hourly | checks every link, posts to Slack when degraded |
 | `scripts/ios-rig/` | this repo | the whole rig, including the Mac bootstrap |
 
+```mermaid
+flowchart TD
+  CLI["ios-rig CLI + doctor timer<br/>devvm, Sofia"]
+  AP["Appium 3.5.2<br/>127.0.0.1:4723"]
+  RUN["wda-run agent<br/>KeepAlive"]
+  RES["wda-resign agent<br/>every 48h"]
+  P["iPhone 13 Pro<br/>WebDriverAgent :8100"]
+
+  CLI -->|SSH tunnel over WireGuard| AP
+  AP -->|Wi-Fi, webDriverAgentUrl| P
+  RUN -->|USB, CoreDevice| P
+  RES -->|USB, signs with the free team| P
 ```
-devvm (Sofia)                    MacBook (London)              iPhone 13 Pro
-  ios-rig CLI    ──WireGuard──▶    Appium :4723      ──Wi-Fi──▶   WebDriverAgent
-  doctor timer                     wda-run agent                  :8100
-                                   wda-resign agent
-                                          │
-                                          └────────USB────────▶  signing, install,
-                                                                 Developer Mode
+
+```stats
+7 | days a free certificate lasts
+48 | hours between re-signs
+3 | sideloaded apps at once
+2 | slots left after WebDriverAgent
 ```
 
 The USB cable carries signing, installs and device state through CoreDevice.
-Actual automation goes over **Wi-Fi** to WebDriverAgent. That split is not a
-design preference, it is forced, and the next section explains why.
+Automation itself goes over **Wi-Fi** to WebDriverAgent. That split is forced
+rather than chosen, and the next section explains what forces it.
 
 ## Constraints that shape everything else
+
+> [!IMPORTANT]
+> The rig deliberately does not use usbmuxd. Everything below follows from
+> that, and it is the first thing to understand before changing anything.
 
 **The lockdown pairing cannot be established on this phone.** Stolen Device
 Protection gates "Trust This Computer" behind Face ID with no passcode
@@ -47,11 +62,12 @@ What that costs, measured: `idevicesyslog` device logs, `ideviceinstaller`,
 screenshots, page source and `mobile: deepLink`. Installing builds goes through
 `devicectl device install app` instead of `ideviceinstaller`.
 
-A **default** Appium session does need that pairing and fails with `Could not
-find a pair record for device`. This rig never takes that path. It passes
-`appium:webDriverAgentUrl`, which makes the driver proxy straight to a
-WebDriverAgent already running on the device and skip the usbmux attach
-entirely.
+> [!NOTE]
+> A **default** Appium session does need that pairing and fails with `Could
+> not find a pair record for device`. This rig never takes that path. It
+> passes `appium:webDriverAgentUrl`, which makes the driver proxy straight to
+> a WebDriverAgent already running on the device and skip the usbmux attach
+> entirely.
 
 **iOS 17+ keeps two independent pairing records.** CoreDevice has its own
 RemoteXPC pairing, created by `devicectl manage pair`, alongside the classic
@@ -223,8 +239,10 @@ laptop sits on. The devvm reaches it through SSH forwarding rather than an
 exposed port, so the rig adds no open listener to a machine on an untrusted
 network.
 
-WebDriverAgent itself listens on the phone's Wi-Fi address on port 8100 with no
-authentication. That is unavoidable given the pairing constraint above, and it
-means anyone on the London LAN can drive the phone while the rig is up. It is a
-dedicated test device holding no data we care about, which is what makes that
-acceptable. Do not extend this pattern to a phone that matters.
+> [!WARNING]
+> WebDriverAgent listens on the phone's Wi-Fi address on port 8100 with no
+> authentication, which the pairing constraint leaves no way around. While the
+> rig is up, anyone on the London LAN can drive the phone. That is a
+> reasonable trade for a dedicated test device holding nothing we care about,
+> and worth re-examining before applying the same pattern to a phone that
+> holds real data.
