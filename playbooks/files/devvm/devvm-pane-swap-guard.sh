@@ -49,7 +49,17 @@ set -uo pipefail
 WINDOW_HOURS="${DEVVM_PANE_HOT_HOURS:-24}"
 # Where node_exporter picks up the fairness metrics this also writes. Empty
 # disables the export; the guard still does its job.
-TEXTFILE_DIR="${DEVVM_TEXTFILE_DIR:-/var/lib/prometheus/node-exporter}"
+#
+# This path is /var/lib/node_exporter/textfile and NOT the Debian package
+# default /var/lib/prometheus/node-exporter, which still exists on this box and
+# still has stale apt.prom and nvme.prom in it. Nothing reads that directory:
+# the running exporter carries
+# --collector.textfile.directory=/var/lib/node_exporter/textfile from
+# /etc/default/prometheus-node-exporter, and tl-session-watch writes to the
+# same place. Writing to the wrong one fails silently, with
+# node_textfile_scrape_error still reading 0, because the collector simply
+# never looks. Confirmed by the metrics not appearing while the file existed.
+TEXTFILE_DIR="${DEVVM_TEXTFILE_DIR:-/var/lib/node_exporter/textfile}"
 # 6 GiB of the 15.5 GiB of pane anonymous memory, leaving the rest to compete
 # for the 8 GiB the two active users share. Raise it only with a measurement.
 BUDGET_BYTES="${DEVVM_PANE_SWAP_BUDGET_BYTES:-$(( 6 * 1024 * 1024 * 1024 ))}"
