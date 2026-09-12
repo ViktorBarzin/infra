@@ -4,7 +4,8 @@
 #   ios-rig doctor [--alert]   check every link in the chain, optionally Slack
 #   ios-rig discover           find the Mac again after it changed address
 #   ios-rig tunnel             foreground SSH tunnel (systemd unit does this)
-#   ios-rig screenshot [path]  device screenshot via Appium, written locally
+#   ios-rig screenshot [path] [--url U] [--tap X,Y]   drive and screenshot
+#   ios-rig wda-url            where WebDriverAgent is listening right now
 #   ios-rig shell <cmd>        run a command on the Mac with the rig PATH set
 #
 # The chain: devvm -> WireGuard -> Mac -> USB -> iPhone. Appium and usbmuxd on
@@ -27,7 +28,16 @@ fail() { printf '  \033[31mFAIL\033[0m  %-22s %s\n' "$1" "${2:-}"; bad=$((bad+1)
 warn() { printf '  \033[33mwarn\033[0m  %-22s %s\n' "$1" "${2:-}"; }
 FAILURES=()
 
-on_mac() { ssh "${SSH_OPTS[@]}" "$MAC" "bash -lc $(printf '%q' "$RIG_PATH; $1")" 2>&1; }
+# `bash -lc` on the Mac sources a profile with iTerm2 shell integration, which
+# emits OSC escape sequences (ESC ] 1337 ; SetUserVar=... BEL) into the command
+# output. They are invisible in a terminal and silently break any anchored
+# match, so they are stripped here rather than in every caller.
+strip_osc() { sed -E $'s/\x1b\][0-9;]*[a-zA-Z=]*(\x07|\x1b\\\\)?//g; s/\x1b\[[0-9;]*[A-Za-z]//g'; }
+on_mac() { ssh "${SSH_OPTS[@]}" "$MAC" "bash -lc $(printf '%q' "$RIG_PATH; $1")" 2>&1 | strip_osc; }
+
+# The phone's Wi-Fi address is a DHCP lease and WDA rebinds on every restart,
+# so it is read from what the runner published, never hardcoded.
+wda_url_from_mac() { on_mac 'cat ~/.ios-rig-wda-url 2>/dev/null' | grep -oE 'https?://[0-9a-zA-Z.:-]+' | head -1; }
 
 cmd_discover() {
   echo "Scanning for the Mac on the London subnets..."
@@ -72,11 +82,21 @@ cmd_doctor() {
   if grep -qi "SUCCESS" <<<"$pairstate"; then
     pass pairing-lockdown "trusted"
   else
-    # Not optional. Appium's xcuitest driver reaches the device through
-    # usbmuxd, and without this record every session dies at
-    # "Could not find a pair record for device". Measured 2026-09-12.
-    fail pairing-lockdown "$(head -1 <<<"$pairstate")"
-    fail "" "Appium cannot start a session without this; see the runbook"
+    # Expected on this rig, and not a failure. Stolen Device Protection gates
+    # this pairing behind a Face ID that is not enrolled for the phone's
+    # current owner, so it cannot be established at all.
+    #
+    # A DEFAULT Appium session does need it and dies at "Could not find a pair
+    # record for device". This rig never takes that path: it passes
+    # webDriverAgentUrl, which makes the driver proxy straight to a WDA already
+    # running on the device, over Wi-Fi, with no usbmux attach.
+    #
+    # What it actually costs, measured 2026-09-12: idevicesyslog device logs,
+    # ideviceinstaller, idevicescreenshot and iproxy. Taps, gestures,
+    # screenshots, page source and mobile: deepLink are unaffected. Installing
+    # builds goes through `devicectl device install app` instead.
+    warn pairing-lockdown "unavailable (Stolen Device Protection)"
+    warn "" "costs device logs and ideviceinstaller; device control is unaffected"
   fi
 
   # CoreDevice, not libimobiledevice. iOS 17+ keeps two independent pairing
@@ -108,6 +128,18 @@ cmd_doctor() {
     pass wda-installed "$IOS_RIG_WDA_BUNDLE_ID"
   else
     fail wda-installed "$IOS_RIG_WDA_BUNDLE_ID not installed; run resign-wda.sh on the Mac"
+  fi
+
+  # WDA is reached over Wi-Fi, not usbmuxd, and the phone's address is a DHCP
+  # lease. The runner publishes whatever WDA actually bound to.
+  local wda_url
+  wda_url="$(wda_url_from_mac)"
+  if [[ -z "$wda_url" ]]; then
+    fail wda-running "runner has not published a URL; check /tmp/wda-run.log on the Mac"
+  elif curl -sf -m 10 "$wda_url/status" >/dev/null 2>&1; then
+    pass wda-reachable "$wda_url"
+  else
+    fail wda-reachable "published $wda_url but the devvm cannot reach it"
   fi
 
   local st
@@ -147,21 +179,27 @@ finish_doctor() {
 }
 
 cmd_tunnel() {
-  echo "Forwarding Appium ${IOS_RIG_APPIUM_PORT}, WDA ${IOS_RIG_WDA_PORT}, usbmuxd ${IOS_RIG_USBMUX_PORT} from $MAC"
+  # Appium only. The usbmuxd socket forward was dropped on 2026-09-12: Stolen
+  # Device Protection means no lockdown pair record exists for it to carry, and
+  # WebDriverAgent is reached directly over Wi-Fi rather than through usbmux.
+  echo "Forwarding Appium ${IOS_RIG_APPIUM_PORT} from $MAC"
   exec ssh -N \
     -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
     -o ConnectTimeout=10 -o BatchMode=yes \
     -L "${IOS_RIG_APPIUM_PORT}:127.0.0.1:${IOS_RIG_APPIUM_PORT}" \
-    -L "${IOS_RIG_WDA_PORT}:127.0.0.1:${IOS_RIG_WDA_PORT}" \
-    -L "${IOS_RIG_USBMUX_PORT}:/var/run/usbmuxd" \
     "$MAC"
 }
 
 cmd_screenshot() {
-  local out="${1:-/tmp/ios-rig-$(date +%s).png}"
-  python3 "$HERE/appium_screenshot.py" "$out" || return 1
+  local out="$1"; shift || true
+  [[ -n "$out" ]] || out="/tmp/ios-rig-$(date +%s).png"
+  local url; url="$(wda_url_from_mac)"
+  [[ -n "$url" ]] || { echo "WebDriverAgent is not running; ios-rig doctor" >&2; return 1; }
+  IOS_RIG_WDA_URL="$url" python3 "$HERE/appium_screenshot.py" "$out" "$@" || return 1
   echo "$out"
 }
+
+cmd_wda_url() { wda_url_from_mac; }
 
 cmd_shell() { on_mac "$*"; }
 
@@ -170,6 +208,7 @@ case "${1:-doctor}" in
   discover)   cmd_discover ;;
   tunnel)     cmd_tunnel ;;
   screenshot) shift || true; cmd_screenshot "$@" ;;
+  wda-url)    cmd_wda_url ;;
   shell)      shift; cmd_shell "$@" ;;
   *) sed -n '3,12p' "$0"; exit 2 ;;
 esac

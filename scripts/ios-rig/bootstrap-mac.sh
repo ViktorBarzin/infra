@@ -99,5 +99,12 @@ python3 -c "import plistlib,sys; plistlib.load(open(sys.argv[1],'rb'))" "$TMP/re
 put "$TMP/resign.plist" "Library/LaunchAgents/me.viktorbarzin.wda-resign.plist"
 (( DRY )) || reload_agent me.viktorbarzin.wda-resign
 
+say "WebDriverAgent runner LaunchAgent"
+put "$HERE/run-wda.sh" "bin/ios-rig-run-wda.sh" 0755
+render "$HERE/launchagents/me.viktorbarzin.wda-run.plist.tmpl" > "$TMP/wdarun.plist"
+python3 -c "import plistlib,sys; plistlib.load(open(sys.argv[1],'rb'))" "$TMP/wdarun.plist"
+put "$TMP/wdarun.plist" "Library/LaunchAgents/me.viktorbarzin.wda-run.plist"
+(( DRY )) || reload_agent me.viktorbarzin.wda-run
+
 say "Done"
 echo "Next: scripts/ios-rig/ios-rig doctor"

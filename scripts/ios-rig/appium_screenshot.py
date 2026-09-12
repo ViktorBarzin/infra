@@ -14,13 +14,12 @@ import base64
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
 APPIUM = f"http://127.0.0.1:{os.environ.get('IOS_RIG_APPIUM_PORT', '4723')}"
 UDID = os.environ.get("IOS_RIG_UDID", "00008110-001614D03442801E")
-TEAM = os.environ.get("IOS_RIG_TEAM_ID", "26NB4W97WL")
-WDA_BUNDLE = os.environ.get("IOS_RIG_WDA_BUNDLE_ID", "me.viktorbarzin.wda")
 
 
 def call(method, path, body=None, timeout=180):
@@ -42,24 +41,49 @@ def call(method, path, body=None, timeout=180):
         )
 
 
+# Stolen Device Protection on this phone gates the classic lockdown pairing
+# behind Face ID, and Face ID is not enrolled for its current owner. Without
+# that pairing Appium's usbmuxd device layer cannot attach, and a normal
+# session dies at "Could not find a pair record for device".
+#
+# webDriverAgentUrl routes around it: the driver skips building, installing and
+# launching WDA, and proxies straight to a WDA already running on the device,
+# reached over Wi-Fi. assertWdaHostPlatformSupported early-returns on this cap,
+# so no device-layer attach happens at all. Taps, gestures, screenshots, page
+# source and mobile: deepLink all work; app install and device logs do not,
+# because those genuinely need usbmux. Use `devicectl install app` for those.
+WDA_URL = os.environ.get("IOS_RIG_WDA_URL", "http://192.168.9.205:8100")
+
 CAPS = {
     "capabilities": {
         "alwaysMatch": {
             "platformName": "iOS",
             "appium:automationName": "XCUITest",
             "appium:udid": UDID,
-            "appium:xcodeOrgId": TEAM,
-            "appium:xcodeSigningId": "Apple Development",
-            "appium:updatedWDABundleId": WDA_BUNDLE,
-            # Reuse a WDA that is already installed and signed rather than
-            # rebuilding on every session. The 48h LaunchAgent owns re-signing.
-            "appium:usePrebuiltWDA": True,
+            "appium:webDriverAgentUrl": WDA_URL,
             "appium:newCommandTimeout": 120,
-            "appium:wdaLaunchTimeout": 180_000,
         },
         "firstMatch": [{}],
     }
 }
+
+
+def wait_for_front(bundle_id, sid, timeout=30):
+    """Block until bundle_id is the foreground app, or give up."""
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        info = call("POST", f"/session/{sid}/execute/sync",
+                    {"script": "mobile: activeAppInfo", "args": []})["value"]
+        last = info.get("bundleId")
+        if last == bundle_id:
+            # Frontmost is not the same as finished animating.
+            time.sleep(1.5)
+            print(f"{bundle_id} frontmost", file=sys.stderr)
+            return True
+        time.sleep(0.5)
+    print(f"warning: {bundle_id} never came to the front (saw {last})", file=sys.stderr)
+    return False
 
 
 def main():
@@ -81,6 +105,10 @@ def main():
             call("POST", f"/session/{sid}/execute/sync",
                  {"script": "mobile: deepLink",
                   "args": [{"url": args.url, "bundleId": "com.apple.mobilesafari"}]})
+            # A screenshot taken straight after a deepLink catches the iOS
+            # app-switch animation and comes back as a blurred frosted pane.
+            # Poll until the target app is actually frontmost instead.
+            wait_for_front("com.apple.mobilesafari", sid)
         if args.tap:
             x, y = (int(v) for v in args.tap.split(","))
             call("POST", f"/session/{sid}/actions", {"actions": [{

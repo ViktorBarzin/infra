@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>me.viktorbarzin.wda-run</string>
+  <!-- Aqua: xcodebuild needs the login keychain, same as the re-sign job. -->
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>exec "$HOME/bin/ios-rig-run-wda.sh"</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <!-- WDA dying and relaunching in a tight loop when the phone is absent
+       would hammer the device, so back off between attempts. -->
+  <key>ThrottleInterval</key><integer>60</integer>
+  <key>StandardOutPath</key><string>/tmp/wda-run.out</string>
+  <key>StandardErrorPath</key><string>/tmp/wda-run.err</string>
+</dict>
+</plist>

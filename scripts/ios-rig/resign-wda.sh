@@ -34,11 +34,15 @@ fail() { echo "FAIL [$1] $2" | tee -a "$LOG"; write_status false "$1" "$2"; exit
 
 echo "=== $(date -u +%FT%TZ) re-sign run ===" >> "$LOG"
 
+# The runner holds the old build open. Stop it, rebuild, and let its KeepAlive
+# start it again against the freshly signed bundle.
+launchctl bootout "gui/$(id -u)/me.viktorbarzin.wda-run" 2>/dev/null || true
+trap 'launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/me.viktorbarzin.wda-run.plist" 2>/dev/null || true' EXIT
+
 [[ -f "$WDA_PROJ/project.pbxproj" ]] || fail project-missing "no WebDriverAgent project at $WDA_PROJ"
 
-# The device has to be present, unlocked enough for lockdown, and in Developer
-# Mode. Failing here is normal (phone unplugged, laptop travelling) and is not
-# the same as the build being broken, so it gets its own stage name.
+# Failing these is normal (phone unplugged, laptop travelling) and is not the
+# same as the build being broken, so each gets its own stage name.
 # Everything here goes through devicectl rather than libimobiledevice.
 # iOS 17+ keeps TWO independent pairing records: CoreDevice's RemoteXPC one,
 # and the classic lockdown one. They break independently, and the lockdown one
@@ -68,25 +72,7 @@ if ! xcodebuild \
   fail build "xcodebuild build-for-testing failed, see $LOG"
 fi
 
-# build-for-testing signs and stages it; test-without-building is what actually
-# puts it on the device. It never returns on its own because WDA is a server,
-# so it gets a window to install and come up, then is stopped.
-( xcodebuild \
-    -project "$WDA_PROJ" \
-    -scheme WebDriverAgentRunner \
-    -destination "id=$UDID" \
-    test-without-building >> "$LOG" 2>&1 ) &
-XCB=$!
-for _ in $(seq 1 60); do
-  sleep 2
-  "$DC" device info apps --device "$UDID" 2>/dev/null | grep -qF "$WDA_BUNDLE_ID" && break
-done
-kill "$XCB" 2>/dev/null
-wait "$XCB" 2>/dev/null
-
-if ! "$DC" device info apps --device "$UDID" 2>/dev/null | grep -qF "$WDA_BUNDLE_ID"; then
-  fail install "WDA did not appear in the installed app list after build"
-fi
-
-echo "OK installed $WDA_BUNDLE_ID" >> "$LOG"
-write_status true ok "re-signed and installed $WDA_BUNDLE_ID"
+# build-for-testing signs and stages the bundle. Installing and launching it is
+# the runner LaunchAgent's job, which the trap above restarts on the way out.
+echo "OK re-signed $WDA_BUNDLE_ID" >> "$LOG"
+write_status true ok "re-signed $WDA_BUNDLE_ID, runner restarting"

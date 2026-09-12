@@ -1,5 +1,5 @@
 [Unit]
-Description=iOS test rig — SSH tunnel to the London Mac (Appium, WDA, usbmuxd)
+Description=iOS test rig, SSH tunnel to the London Mac (Appium)
 Documentation=https://forgejo.viktorbarzin.me/viktor/infra/src/branch/master/docs/runbooks/ios-test-rig.md
 After=network-online.target
 StartLimitIntervalSec=0
