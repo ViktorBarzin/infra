@@ -3,4 +3,4 @@ Description=iOS test rig — health check, alerts Slack when degraded
 
 [Service]
 Type=oneshot
-ExecStart=%h/code/infra/scripts/ios-rig/ios-rig doctor --alert
+ExecStart=/usr/local/bin/homelab ios doctor --alert
