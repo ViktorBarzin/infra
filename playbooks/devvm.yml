@@ -345,6 +345,11 @@
         - /etc/apt/keyrings
         - /etc/apt/sources.list.d
         - /etc/systemd/system/user-.slice.d
+        # user.slice, not user-.slice: the parent of every per-user slice, and
+        # a separate unit with a separate drop-in directory. MemoryLow on a
+        # child is capped by what its parent has to give, so without this the
+        # per-user floors have an effective value of zero.
+        - /etc/systemd/system/user.slice.d
         - /etc/systemd/system/system.slice.d
         - /etc/systemd/system/systemd-tmpfiles-clean.timer.d
         - /etc/systemd/user/scope.d
