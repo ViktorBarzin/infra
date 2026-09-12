@@ -154,7 +154,7 @@ reclaim target.
 
 | slice | `memory.low` |
 |---|---|
-| every user slice, via the `user-.slice` template | 8.5 GiB |
+| every user slice, via the `user-.slice` template | 8 GiB |
 | `system.slice` | 2 GiB |
 | `user.slice` (parent) | 17 GiB |
 
@@ -177,7 +177,7 @@ The parent matters. `memory.low` protection is distributed from the parent
 down, so leaving `user.slice` at zero would cap every child's effective
 protection at zero.
 
-Total protection is 19 GiB of 31 GiB, leaving roughly 12 GiB unprotected.
+Total protection is 18 GiB of 31 GiB, leaving roughly 13 GiB unprotected.
 That headroom is deliberate: `memory.low` is best-effort, and once every
 remaining page sits inside somebody's floor, reclaim proceeds anyway and the
 protection stops meaning anything.
@@ -185,7 +185,7 @@ protection stops meaning anything.
 This is work-conserving with no extra machinery. An empty slice protects
 nothing, so one user alone can still use most of the box and is only reclaimed
 when somebody else actually needs memory. For context, emo's slice currently
-holds 4.24 GiB and wizard's 21.49 GiB, so an 8.5 GiB floor protects emo's whole
+holds 4.24 GiB and wizard's 21.49 GiB, so an 8 GiB floor protects emo's whole
 working set twice over and makes wizard's excess the first thing reclaimed.
 
 `system.slice` needs its floor for a reason that is easy to miss: protecting
@@ -381,6 +381,44 @@ Decided deliberately, not overlooked.
 - Backups, which already run daily, weekly and monthly.
 - Raising the per-user swap ceiling.
 - Any change to CPU shares, which are already equal.
+
+## What landed, and what it took
+
+Steps 1 to 8 applied on 2026-09-12 and were verified against live cgroup values
+rather than against the files, which mattered: an intermediate state had every
+drop-in correct on disk and every value still at its default.
+
+| change | live evidence |
+|---|---|
+| pane cap repaired | 60 of 60 scopes at `memory.max` 6442450944 |
+| per-user `memory.low` | 8 GiB on each user slice |
+| `user.slice` parent floor | 17 GiB |
+| `system.slice` floor | 2 GiB |
+| BFQ | `sda` reads `none mq-deadline [bfq]` |
+| `io.weight` | 100 users, 200 system, now arbitrating |
+| `vm.swappiness` | 10, declared, both undeclared copies removed |
+| pane swap guard | 22 panes protected, 6,097 MiB of a 6,144 MiB budget |
+
+Three things the measurements changed along the way.
+
+**The swap guard needed a budget.** The estimate of roughly 659 MB per protected
+pane was right, and the conclusion drawn from it was not. Pane-level
+`memory.swap.max` is not bounded by the slice floor, so at a 24 hour window the
+guard would have protected 36 of 60 panes holding 21.3 GB on a 31 GB box,
+against 15.5 GB of pane anonymous memory and 8 GiB of shared swap. That would
+have closed the swapout path for most of the swappable memory and pushed reclaim
+onto file pages, which is the mechanism this work reduces. The guard now
+protects most-recently-used first up to 6 GiB of anonymous memory and stops.
+
+**A daemon-reload clears the guard's writes.** The guard writes
+`memory.swap.max` directly on each pane scope, and systemd re-applies its own
+view of a unit's properties on reload, so a `daemon-reload` returns every pane
+to the slice default. The 5 minute timer reconciles it, which was confirmed by
+observing protection drop to 0 after a reload and return to 22 panes on the next
+tick. Worth knowing before reading a zero as a failure.
+
+**The per-user floor is 8 GiB, not the 8.5 GiB first proposed.** The playbook
+variable takes `min(8, round(RAM_GiB x 0.27))`, which caps at 8 on this box.
 
 ## Is more swap worth it
 
