@@ -43,6 +43,25 @@ CommandLineTools. Changing that needs sudo we do not have, so every Xcode call
 sets `DEVELOPER_DIR` explicitly instead. It is also a laptop: when it travels,
 the rig stops, which is expected rather than a fault.
 
+**iOS 17+ keeps two independent pairing records.** CoreDevice has its own
+RemoteXPC pairing, created by `devicectl manage pair`, and there is the classic
+lockdown pairing that usbmuxd and libimobiledevice use. They break
+independently, so `devicectl` can report `pairingState: paired` with a healthy
+tunnel while `idevicepair validate` fails. Appium's `xcuitest` driver reaches
+the device through usbmuxd, so it needs the **lockdown** one: without it every
+session fails at `Could not find a pair record for device`. The re-sign job and
+`doctor` use CoreDevice for everything they can, because that record survives
+better, but driving the phone still depends on both.
+
+**Signing has to happen in the Aqua GUI session.** `xcodebuild` over SSH fails
+at `CodeSign ... errSecInternalComponent`, because the login keychain holding
+the signing key is not reachable from a Background session. `launchctl
+managername` prints `Background` in an SSH session and `Aqua` in a login
+session. This is the whole reason the re-sign job is a LaunchAgent with
+`LimitLoadToSessionType: Aqua` rather than something the devvm runs directly
+over SSH. To run it on demand:
+`launchctl kickstart gui/$(id -u)/me.viktorbarzin.wda-resign`.
+
 **Signing has to happen on the Mac.** Minting a free Apple ID certificate and
 re-signing WebDriverAgent from Linux was investigated on 2026-09-12 and no
 working path was found for iOS 26. Exporting a free-team P12 and profile as
@@ -83,12 +102,24 @@ confirmation and no amount of tooling gets around it:
 
 ### `doctor` says `pairing-lockdown` failed with "user denied the trust dialog"
 
-iOS caches a denial and then stops showing the dialog, so retrying pairing
-achieves nothing. CoreDevice and libimobiledevice keep **separate** trust
-records, so `devicectl` can report `paired` while this is broken.
+iOS caches the denial and then stops showing the dialog at all, so retrying
+achieves nothing and repeated rapid `idevicepair pair` calls re-poison it.
+Appium cannot start a session in this state.
 
-On the phone: Settings, General, Transfer or Reset iPhone, Reset, **Reset
-Location & Privacy**. Then unplug and replug the cable, and tap Trust.
+First check whether the phone is simply locked, since a locked device resolves
+the dialog to "denied":
+
+```sh
+devicectl device info lockState --device <udid>
+```
+
+`passcodeRequired: false` and `unlockedSinceBoot: true` mean the screen is not
+the problem and the denial is cached. To clear it, on the phone: Settings,
+General, Transfer or Reset iPhone, Reset, **Reset Location & Privacy**. It
+needs the passcode, not Face ID, and it is not one of the actions Stolen Device
+Protection gates. Then unplug, leave the phone unlocked, replug, and tap Trust.
+
+Run `idevicepair pair` **once** after the tap, not in a loop.
 
 ### `doctor` says `developer-mode` is disabled
 
@@ -129,6 +160,18 @@ The device tracks iOS updates by choice rather than being pinned, so this is
 expected occasionally. `doctor` reports the current version on every run.
 Check whether the Appium `xcuitest` driver and libimobiledevice support the
 new version before spending time debugging, and update them first.
+
+### Re-running `bootstrap-mac.sh` left nothing loaded
+
+`launchctl bootout` is asynchronous. Bootstrapping before the old job has
+finished unloading fails with `Bootstrap failed: 5: Input/output error` and
+leaves the agent unloaded, which took Appium down once on 2026-09-12. The
+script now waits for the label to disappear and retries the bootstrap, so a
+plain re-run fixes it. By hand:
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.viktorbarzin.appium.plist
+```
 
 ## Security notes
 

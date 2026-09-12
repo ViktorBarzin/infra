@@ -49,10 +49,23 @@ render() {  # render <template> -> stdout
       -e "s|@APPIUM_PORT@|${IOS_RIG_APPIUM_PORT}|g" "$1"
 }
 
+# launchctl bootout is asynchronous. Bootstrapping before the old job has
+# finished unloading fails with "Bootstrap failed: 5: Input/output error" and
+# leaves NOTHING loaded, which is how a re-run of this script took Appium down
+# on 2026-09-12. Wait for the label to disappear, then retry the bootstrap.
 reload_agent() {  # reload_agent <label>
-  run "launchctl bootout gui/\$(id -u)/$1 2>/dev/null || true
-       launchctl bootstrap gui/\$(id -u) \$HOME/Library/LaunchAgents/$1.plist
-       launchctl list | grep -F $1"
+  run "label=$1
+       plist=\$HOME/Library/LaunchAgents/$1.plist
+       launchctl bootout gui/\$(id -u)/\$label 2>/dev/null || true
+       for _ in \$(seq 1 20); do
+         launchctl list | grep -qF \$label || break
+         sleep 0.5
+       done
+       for attempt in 1 2 3 4 5; do
+         if launchctl bootstrap gui/\$(id -u) \$plist 2>/dev/null; then break; fi
+         sleep 1
+       done
+       launchctl list | grep -F \$label || { echo \"FAILED to load \$label\"; exit 1; }"
 }
 
 say "Homebrew formulae"
@@ -60,7 +73,7 @@ run 'export PATH=/opt/homebrew/bin:$PATH HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_A
 for f in libimobiledevice ideviceinstaller socat; do
   brew list --formula "$f" >/dev/null 2>&1 || brew install "$f"
 done
-echo "present: $(brew list --formula libimobiledevice ideviceinstaller socat | tr "\n" " ")"'
+brew list --versions libimobiledevice ideviceinstaller socat'
 
 say "Node and Appium"
 run 'export PATH="$HOME/.npm-global/bin:/opt/homebrew/bin:$PATH"
