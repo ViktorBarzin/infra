@@ -1,0 +1,16 @@
+[Unit]
+Description=iOS test rig — SSH tunnel to the London Mac (Appium, WDA, usbmuxd)
+Documentation=https://forgejo.viktorbarzin.me/viktor/infra/src/branch/master/docs/runbooks/ios-test-rig.md
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+# The Mac is a laptop on a roaming DHCP address behind a WireGuard tunnel, so
+# the connection drops often and by design. Restart forever rather than
+# entering a failed state that needs a human.
+ExecStart=%h/code/infra/scripts/ios-rig/ios-rig tunnel
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

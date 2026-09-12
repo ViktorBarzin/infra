@@ -1,0 +1,10 @@
+[Unit]
+Description=iOS test rig — health check every 6h
+
+[Timer]
+OnCalendar=*-*-* 02,08,14,20:17:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
