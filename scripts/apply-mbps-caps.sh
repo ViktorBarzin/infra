@@ -68,6 +68,43 @@ TARGETS=(
 # await when this landed, so there is headroom, but not without limit. Watch
 # etcd fsync latency and slow-op counts; revert this hunk if they regress.
 #
+# RAISED AGAIN 2026-09-12, 400 -> 1200, and this time with the host measured
+# rather than assumed. Evidence taken the same evening:
+#
+#   guest read await                   90 ms
+#   host await for devvm's own LV      13.02 ms
+#   host sdc utilisation               2.72%
+#
+# So roughly 77 ms of the 90 was queueing inside this throttle and the spindle
+# underneath was idle 97% of the time. The cap, not the disk, was the limit.
+#
+# The cap is still load-bearing and is NOT being removed. It was added to stop
+# devvm's reads starving etcd's WAL fsync, and it half-worked: etcd slow
+# applies fell from 3,157/hr in June to 1,493/hr. But etcd still sits at 1,493
+# with fsync p99 peaking above a second against a sub-10ms target, so devvm was
+# paying its whole ceiling for half a fix.
+#
+# 3x rather than 4x deliberately. The host has headroom for far more, but this
+# cap is demonstrably doing work for a control-plane component, and finding the
+# edge in one reversible step beats overshooting onto etcd. Projected host
+# utilisation goes 2.72% -> roughly 8%, still an idle device.
+#
+# Only iops_rd moves. mbps_rd almost never binds: at 4K random, 400 IOPS is
+# 1.6 MB/s against a 60 MB/s ceiling, and even at 128K sequential it is 51
+# MB/s. The IOPS cap is the binding constraint for essentially everything here.
+#
+# REVERT CRITERIA, both in Prometheus with 26 weeks of history so they diff
+# against the June baseline directly:
+#   etcd_server_slow_apply_total rate   above ~2,500/hr   (was 1,493)
+#   etcd fsync p99 median over 24h      above ~50 ms      (was 26 ms)
+#
+# THE REAL FIX IS NOT HERE. A device at 2.72% utilisation with 10.63 ms await
+# is not saturated, it is serialised, which is what fsync-heavy small writes
+# look like on a spindle. etcd on rotational storage is the cause; capping
+# devvm treats the symptom, which is why it only got halfway. Bead code-oflt
+# moves etcd's 64 GB disk to the SSD (475 GB free, 0.22% utilised). Once that
+# lands this cap can go up again or away entirely.
+#
 # This is an interim unblock. The intended fix is an SSD read cache in front of
 # the guest's root LV, which removes the reason for a read cap on this VM at
 # all. Measured on a loop-device rig: 73.6% hit rate after 60 s of warming, and
@@ -76,7 +113,7 @@ TARGETS=(
 # k8s-master (200) is deliberately left without an IOPS cap: it holds etcd, it
 # reads 0.28/s, and it is the workload being protected.
 declare -A EXTRA_OPTS=(
-  [102]="iops_rd=400,iops_rd_max=800,iops_rd_max_length=30"
+  [102]="iops_rd=1200,iops_rd_max=2400,iops_rd_max_length=30"
 )
 
 # Sort a disk spec's comma-separated options so two specs with the same
