@@ -227,3 +227,98 @@ func TestResolvePagesBase(t *testing.T) {
 		t.Errorf("resolvePagesBase() = %q, want https://p.example", got)
 	}
 }
+
+func TestPagesPreviewWritesPageAndAssets(t *testing.T) {
+	// The whole point of preview is that the caller ends up with files it can
+	// open: the page at the top of the dir, the assets under assets/ where the
+	// page's absolute /assets/... links expect them.
+	var gotPath, gotMethod, gotBody string
+	newPagesTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotPath, gotMethod, gotBody = r.URL.Path, r.Method, string(b)
+		w.Write([]byte(`{"filename":"2026-01-01-x.html","html":"<h1>x</h1>","assets":{"assets/page.css":"body{}"}}`))
+	}))
+	fp := writeTempMD(t, "2026-01-01-x.md", "# X\n")
+	dir := t.TempDir()
+
+	out, err := captureStdout(t, func() error {
+		return pagesPreview([]string{fp, "--status", "done", "--out", dir})
+	})
+	if err != nil {
+		t.Fatalf("pagesPreview: %v", err)
+	}
+	if gotMethod != "POST" || gotPath != "/preview" {
+		t.Fatalf("want POST /preview, got %s %s", gotMethod, gotPath)
+	}
+	var body pagesPreviewReq
+	if err := json.Unmarshal([]byte(gotBody), &body); err != nil {
+		t.Fatalf("request body is not valid JSON: %q", gotBody)
+	}
+	if body.Filename != "2026-01-01-x.md" || body.Status != "done" {
+		t.Errorf("body = %+v, want the basename and status done", body)
+	}
+
+	page := filepath.Join(dir, "2026-01-01-x.html")
+	if b, err := os.ReadFile(page); err != nil || string(b) != "<h1>x</h1>" {
+		t.Fatalf("page file = %q / %v, want the rendered html", b, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "assets", "page.css")); err != nil || string(b) != "body{}" {
+		t.Fatalf("asset file = %q / %v, want the stylesheet", b, err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 || lines[0] != page || lines[1] != dir {
+		t.Fatalf("want page path then dir on two lines, got %q", out)
+	}
+}
+
+func TestPagesPreviewDefaultsToATempDirNamedForThePage(t *testing.T) {
+	// No --out: a stable path per page, so re-previewing the same doc replaces
+	// the previous render instead of leaving a trail of directories.
+	newPagesTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"filename":"2026-01-01-y.html","html":"<h1>y</h1>","assets":{}}`))
+	}))
+	fp := writeTempMD(t, "2026-01-01-y.md", "# Y\n")
+
+	out, err := captureStdout(t, func() error { return pagesPreview([]string{fp}) })
+	if err != nil {
+		t.Fatalf("pagesPreview: %v", err)
+	}
+	want := filepath.Join(os.TempDir(), "homelab-pages-preview", "2026-01-01-y")
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 || lines[1] != want {
+		t.Fatalf("dir = %q, want %q", out, want)
+	}
+	t.Cleanup(func() { os.RemoveAll(want) })
+	if _, err := os.Stat(filepath.Join(want, "2026-01-01-y.html")); err != nil {
+		t.Fatalf("page not written to the default dir: %v", err)
+	}
+}
+
+func TestPagesPreviewRefusesAnAssetPathOutsideTheDir(t *testing.T) {
+	// The server is ours, so this is belt and braces — but a path-traversing
+	// asset key is the one thing a compromised or buggy server could use to
+	// write through this client, so it must not depend on the server's charset.
+	newPagesTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"filename":"x.html","html":"<h1>x</h1>","assets":{"../../pwned":"x"}}`))
+	}))
+	fp := writeTempMD(t, "x.md", "# X\n")
+	dir := t.TempDir()
+
+	_, err := captureStdout(t, func() error { return pagesPreview([]string{fp, "--out", dir}) })
+	if err == nil {
+		t.Fatal("want an error for an asset path escaping the output dir")
+	}
+	if !strings.Contains(err.Error(), "refusing asset path") {
+		t.Fatalf("error = %v, want it to name the refused path", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Fatalf("output dir is not empty after a refused asset: %v", entries)
+	}
+}
+
+func TestPagesPreviewNeedsASourcePath(t *testing.T) {
+	if err := pagesPreview(nil); err == nil || !strings.Contains(err.Error(), "usage:") {
+		t.Fatalf("err = %v, want a usage error", err)
+	}
+}

@@ -64,6 +64,32 @@ homelab logs query '{namespace="pages-publish"} |~ "ERROR|WARNING"' --since 24h
 - `POST /publish` (Bearer): body `{content, filename, status?, shared?}` →
   `{"url": "...", "path": "pages/<user>/<file>.html"}`. `status` ∈
   {draft,approved,executing,done} (default draft); `shared` default false.
+- `POST /preview` (Bearer): same body → `{"filename", "html", "assets"}`.
+  Renders one page and hands back the bytes plus the `/assets/*` files that page
+  links, keyed by the path it links them at. Nothing is committed or pushed.
+
+### Why /preview exists
+
+A page is not verified by having been rendered, and `pages.viktorbarzin.me` is
+owner-gated: it returns 403 to every automated client, in-cluster included. A
+user with a monorepo checkout can serve the tree locally and look at the page
+before publishing. A user without one had no way to see a page at all, so the
+first look happened after it was live, on someone else's screen. That is how a
+page with an inline SVG chart shipped on 2026-09-12 with a 555px hole in it.
+
+`/preview` closes that: `homelab pages preview <doc.md>` writes the page and its
+assets into a local directory laid out the way the site lays them out, so serving
+that directory as the document root reproduces the published page exactly.
+
+Two design notes worth keeping:
+
+- It renders into a throwaway directory, never into `<repo>/pages/<user>/`. An
+  untracked page left in the clone is staged by the next publish's
+  `git add -- pages/<user>/` and pushed as part of somebody else's page.
+- It takes the same lock as `/publish`, because it re-syncs the one shared clone
+  and would otherwise reset a publish's working tree mid-flight.
+- Only assets the page actually links are read, so a doc with no diagram does not
+  carry mermaid.min.js (3.5 MB) through the API.
 
 ## Config (env)
 

@@ -109,3 +109,86 @@ def test_missing_body_fields_422(client):
     # content + filename are required by the schema
     r = client.post("/publish", headers=AUTH_V, json={"content": "# Hi"})
     assert r.status_code == 422
+
+
+# ---- /preview: same auth and validation, no git ---------------------------
+
+
+@pytest.fixture
+def preview_calls(client, monkeypatch):
+    """Stub the preview pipeline and record what the endpoint passed it."""
+    from app import publisher
+
+    seen = {}
+
+    def fake_render_preview(_cfg, *, user, content, filename, status, shared):
+        seen.update(
+            user=user, content=content, filename=filename, status=status, shared=shared
+        )
+        return {"filename": "2026-07-27-foo.html", "html": "<h1>hi</h1>", "assets": {}}
+
+    monkeypatch.setattr(publisher, "render_preview", fake_render_preview)
+    return seen
+
+
+def test_preview_unknown_token_401(client, preview_calls):
+    r = client.post(
+        "/preview",
+        headers={"Authorization": "Bearer nope"},
+        json={"content": "# Hi", "filename": "x.md"},
+    )
+    assert r.status_code == 401
+    assert preview_calls == {}
+
+
+def test_preview_missing_token_401(client, preview_calls):
+    r = client.post("/preview", json={"content": "# Hi", "filename": "x.md"})
+    assert r.status_code == 401
+    assert preview_calls == {}
+
+
+def test_preview_returns_page_and_assets(client, preview_calls):
+    r = client.post(
+        "/preview",
+        headers=AUTH_E,
+        json={"content": "# Hi", "filename": "2026-07-27-foo.md", "status": "done"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {
+        "filename": "2026-07-27-foo.html",
+        "html": "<h1>hi</h1>",
+        "assets": {},
+    }
+    assert preview_calls["status"] == "done"
+
+
+def test_preview_user_comes_from_the_token_not_the_body(client, preview_calls):
+    r = client.post(
+        "/preview",
+        headers=AUTH_E,
+        json={"content": "# Hi", "filename": "x.md", "user": "wizard"},
+    )
+    assert r.status_code == 200
+    assert preview_calls["user"] == "emo"
+
+
+def test_preview_never_publishes(client, preview_calls):
+    client.post("/preview", headers=AUTH_E, json={"content": "# Hi", "filename": "x.md"})
+    assert "commit" not in client.calls
+    assert "push" not in client.calls
+
+
+@pytest.mark.parametrize("bad", ["../x", "a/b", "", "foo bar.md"])
+def test_preview_slug_rejected_400(client, bad):
+    r = client.post("/preview", headers=AUTH_V, json={"content": "# Hi", "filename": bad})
+    assert r.status_code == 400
+    assert "commit" not in client.calls
+
+
+def test_preview_bad_status_400(client):
+    r = client.post(
+        "/preview",
+        headers=AUTH_V,
+        json={"content": "# Hi", "filename": "x.md", "status": "bogus"},
+    )
+    assert r.status_code == 400
