@@ -251,6 +251,27 @@ confirmation:
    Management, under Developer App. Passcode, not Face ID. Until this is done
    WebDriverAgent installs but will not launch.
 
+## What it cannot do yet
+
+**Reach anything behind Authentik forward-auth.** `homelab ios shot --url` opens
+a URL and taps; it cannot set a request header or run JavaScript, so it cannot
+plant a bearer token the way the Playwright-based tooling does. A blind agent
+sent to reproduce a logged-in bug on `tripit.viktorbarzin.me` on 2026-09-12 got
+the landing page and correctly reported "reproduced the platform, not the bug".
+Most of what we host is gated, so this is the limitation most likely to stop a
+real task.
+
+Two ways round it, neither built:
+
+- type the credentials on the phone once through the real login flow, and let
+  the session cookie persist, or
+- drive Appium directly (it is already up on the Mac at `127.0.0.1:4723`) and
+  use a script that plants the token before the page loads, rather than the
+  `shot` verb.
+
+**Read device logs.** `idevicesyslog` needs the lockdown pairing that Stolen
+Device Protection blocks. There is no workaround while that holds.
+
 ## Symptoms
 
 ### WebDriverAgent will not launch
