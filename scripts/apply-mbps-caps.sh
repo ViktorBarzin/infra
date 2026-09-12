@@ -45,14 +45,38 @@ TARGETS=(
 # writes in 1.929 ms lifetime average, but it does not cache reads, which cost
 # 4.483 ms each and queue in front of etcd's next write.
 #
-# 120 sustained is 2x devvm's 7-day average, so ordinary work is unaffected.
-# The 400/10s burst covers legitimate spikes such as a container image pull or
-# a build, and only sustained read storms are clipped.
+# RAISED 2026-09-12 from 120/400/10s to 400/800/30s, after the cap was measured
+# as the dominant cost on the guest's interactive path.
+#
+# What 120 did to devvm. Read latency inside the guest was 190 ms while the host
+# served the same LV in 21.65 ms; the ~168 ms difference is this token bucket,
+# not the disk. The guest sat at or above the 120 ceiling in 10.8% of 5-minute
+# windows over 7 days. Per-user cgroup pressure during a stall read
+# io.pressure 73.93 with cpu.pressure 0.00 for the affected user, i.e. sessions
+# were waiting on the bucket rather than on CPU or on the spindle.
+#
+# The 10s burst window was also too short for the case that hurts most. A tmux
+# session whose pages have been reclaimed faults its working set back in over
+# tens of seconds, not ten, so re-attaching to a session fell back to the
+# sustained rate partway through and stalled.
+#
+# 400 sustained was already judged safe as a 10s burst by the 2026-09-08
+# reasoning above; this makes it the sustained rate and moves the burst to
+# 800/30s. Accepted risk, stated plainly: this can take sdc towards ~500
+# reads/s against the 150-200 random IOPS the comment above attributes to a
+# 7200rpm RAID1 pair. Host sdc measured 19.9% utilisation and 5.31 ms read
+# await when this landed, so there is headroom, but not without limit. Watch
+# etcd fsync latency and slow-op counts; revert this hunk if they regress.
+#
+# This is an interim unblock. The intended fix is an SSD read cache in front of
+# the guest's root LV, which removes the reason for a read cap on this VM at
+# all. Measured on a loop-device rig: 73.6% hit rate after 60 s of warming, and
+# 394 MB written to cache a 400 MB working set at a 32 KiB block size.
 #
 # k8s-master (200) is deliberately left without an IOPS cap: it holds etcd, it
 # reads 0.28/s, and it is the workload being protected.
 declare -A EXTRA_OPTS=(
-  [102]="iops_rd=120,iops_rd_max=400,iops_rd_max_length=10"
+  [102]="iops_rd=400,iops_rd_max=800,iops_rd_max_length=30"
 )
 
 # Sort a disk spec's comma-separated options so two specs with the same
