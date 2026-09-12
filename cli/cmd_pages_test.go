@@ -271,9 +271,9 @@ func TestPagesPreviewWritesPageAndAssets(t *testing.T) {
 	}
 }
 
-func TestPagesPreviewDefaultsToATempDirNamedForThePage(t *testing.T) {
-	// No --out: a stable path per page, so re-previewing the same doc replaces
-	// the previous render instead of leaving a trail of directories.
+func TestPagesPreviewDefaultsToAPerUserDirNamedForThePage(t *testing.T) {
+	// No --out: a stable per-user path per page, so re-previewing the same doc
+	// replaces the previous render instead of leaving a trail of directories.
 	newPagesTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(`{"filename":"2026-01-01-y.html","html":"<h1>y</h1>","assets":{}}`))
 	}))
@@ -283,7 +283,7 @@ func TestPagesPreviewDefaultsToATempDirNamedForThePage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pagesPreview: %v", err)
 	}
-	want := filepath.Join(os.TempDir(), "homelab-pages-preview", "2026-01-01-y")
+	want := defaultPreviewDir("2026-01-01-y")
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(lines) != 2 || lines[1] != want {
 		t.Fatalf("dir = %q, want %q", out, want)
@@ -291,6 +291,22 @@ func TestPagesPreviewDefaultsToATempDirNamedForThePage(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(want) })
 	if _, err := os.Stat(filepath.Join(want, "2026-01-01-y.html")); err != nil {
 		t.Fatalf("page not written to the default dir: %v", err)
+	}
+}
+
+func TestDefaultPreviewDirIsPerUser(t *testing.T) {
+	// The devvm is shared. A path any two users resolve to the same string is
+	// a directory the second user cannot write into.
+	dir := defaultPreviewDir("some-page")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir in this environment")
+	}
+	if !strings.HasPrefix(dir, home+string(os.PathSeparator)) {
+		t.Fatalf("preview dir %q is not under this user's home %q", dir, home)
+	}
+	if !strings.HasSuffix(dir, filepath.Join("pages-preview", "some-page")) {
+		t.Fatalf("preview dir %q does not end in pages-preview/<slug>", dir)
 	}
 }
 
