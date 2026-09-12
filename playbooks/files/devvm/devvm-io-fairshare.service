@@ -1,0 +1,16 @@
+[Unit]
+Description=Divide the disk between whoever is actually using it
+Documentation=https://github.com/ViktorBarzin/infra/blob/master/playbooks/files/devvm/devvm-io-fairshare.sh
+ConditionPathExists=/sys/fs/cgroup/user.slice
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/devvm-io-fairshare.sh
+# It reads two files per user and writes one. Nice it anyway: a fairness
+# reconciler that competes with the work it is arbitrating is self-defeating.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=4
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=devvm-io-fairshare
