@@ -2,14 +2,19 @@
 Description=Re-divide the disk every 30 seconds
 
 [Timer]
-# 30s is the worst-case time someone keeps the whole device after a second
-# person starts working. Half a minute of one user being fast is a fair price
-# for not capping a lone user at a quarter all night, which is the trade this
-# whole script exists to make. Tighter would spend more on reading cgroups
-# than it saves.
-OnBootSec=45s
-OnUnitActiveSec=30s
-AccuracySec=5s
+# THE INTERVAL IS THE REACTION TIME. It is the worst case for how long one
+# user keeps the whole device after a second person starts working, and during
+# that window the interference this script exists to prevent can happen.
+#
+# 10 minutes, set 2026-09-12 at Viktor's direction after he judged 30s
+# wasteful. The measured cost either way: one run is 106 ms of CPU, so 30s was
+# 0.35% of one core and 0.011% of this 32-core box, and 10 min is 0.018% of a
+# core. The saving is real but small; the reaction time is what was traded for
+# it. If a user ever reports being squeezed for several minutes after someone
+# else starts a build, this number is the first thing to look at.
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
 
 [Install]
 WantedBy=timers.target
