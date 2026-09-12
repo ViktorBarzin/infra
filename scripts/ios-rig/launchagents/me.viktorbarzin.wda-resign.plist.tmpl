@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>me.viktorbarzin.wda-resign</string>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>exec "$HOME/bin/ios-rig-resign-wda.sh"</string>
+  </array>
+  <!-- Free-team certificates last 7 days. Every 48h gives three chances to
+       renew before one expires, which covers a weekend of a closed laptop. -->
+  <key>StartInterval</key><integer>172800</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/tmp/wda-resign.out</string>
+  <key>StandardErrorPath</key><string>/tmp/wda-resign.err</string>
+</dict>
+</plist>

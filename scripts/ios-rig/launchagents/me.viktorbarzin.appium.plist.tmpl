@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>me.viktorbarzin.appium</string>
+  <!-- Aqua only: the login keychain must be unlocked for -allowProvisioningUpdates
+       to mint a free-team certificate, and it is not in an SSH session. -->
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>export PATH="$HOME/bin:$HOME/.npm-global/bin:$HOME/.local/bin:/opt/homebrew/bin:$PATH"; export DEVELOPER_DIR="@DEVELOPER_DIR@"; exec appium --address 127.0.0.1 --port @APPIUM_PORT@</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/appium.out</string>
+  <key>StandardErrorPath</key><string>/tmp/appium.err</string>
+</dict>
+</plist>
