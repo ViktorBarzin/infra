@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# iOS test rig, devvm side.
+#
+#   ios-rig doctor [--alert]   check every link in the chain, optionally Slack
+#   ios-rig discover           find the Mac again after it changed address
+#   ios-rig tunnel             foreground SSH tunnel (systemd unit does this)
+#   ios-rig screenshot [path]  device screenshot via Appium, written locally
+#   ios-rig shell <cmd>        run a command on the Mac with the rig PATH set
+#
+# The chain: devvm -> WireGuard -> Mac -> USB -> iPhone. Appium and usbmuxd on
+# the Mac listen on loopback only; this reaches them over an SSH tunnel so no
+# port is exposed on a laptop that sits on a shared guest network.
+
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$HERE/rig.env"
+
+MAC="${IOS_RIG_MAC_USER}@${IOS_RIG_MAC_HOST}"
+SSH_OPTS=(-o ConnectTimeout=10 -o BatchMode=yes)
+RIG_PATH='export PATH="$HOME/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"'
+
+ok=0; bad=0
+pass() { printf '  \033[32mok\033[0m    %-22s %s\n' "$1" "${2:-}"; ok=$((ok+1)); }
+fail() { printf '  \033[31mFAIL\033[0m  %-22s %s\n' "$1" "${2:-}"; bad=$((bad+1)); FAILURES+=("$1: ${2:-}"); }
+warn() { printf '  \033[33mwarn\033[0m  %-22s %s\n' "$1" "${2:-}"; }
+FAILURES=()
+
+on_mac() { ssh "${SSH_OPTS[@]}" "$MAC" "bash -lc $(printf '%q' "$RIG_PATH; $1")" 2>&1; }
+
+cmd_discover() {
+  echo "Scanning for the Mac on the London subnets..."
+  for net in 192.168.9 192.168.8; do
+    for i in $(seq 1 254); do
+      ( ip="$net.$i"
+        if timeout 2 bash -c "cat </dev/null >/dev/tcp/$ip/22" 2>/dev/null; then
+          host="$(timeout 6 ssh "${SSH_OPTS[@]}" -o StrictHostKeyChecking=no \
+                   "${IOS_RIG_MAC_USER}@$ip" 'hostname; uname -s' 2>/dev/null | tr '\n' ' ')"
+          [[ "$host" == *Darwin* ]] && echo "  FOUND $ip  $host"
+        fi ) &
+    done
+    wait
+  done
+  echo "Set IOS_RIG_MAC_HOST, or edit scripts/ios-rig/rig.env, to the address above."
+}
+
+cmd_doctor() {
+  local alert=0
+  [[ "${1:-}" == "--alert" ]] && alert=1
+
+  echo "iOS test rig, $(date -u +%FT%TZ)"
+  echo
+  echo "Mac ${IOS_RIG_MAC_HOST}"
+
+  if ! ssh "${SSH_OPTS[@]}" "$MAC" true 2>/dev/null; then
+    fail ssh "cannot reach $MAC; try 'ios-rig discover'"
+    finish_doctor "$alert"; return
+  fi
+  pass ssh "$MAC"
+
+  local udids
+  udids="$(on_mac 'idevice_id -l')"
+  if grep -qF "$IOS_RIG_UDID" <<<"$udids"; then
+    pass device-usb "$IOS_RIG_UDID"
+  else
+    fail device-usb "phone not on the cable (usbmuxd sees: ${udids:-nothing})"
+  fi
+
+  local pairstate
+  pairstate="$(on_mac "idevicepair -u $IOS_RIG_UDID validate")"
+  if grep -qi "SUCCESS" <<<"$pairstate"; then
+    pass pairing-lockdown "trusted"
+  else
+    fail pairing-lockdown "$(head -1 <<<"$pairstate")"
+  fi
+
+  local devmode
+  devmode="$(on_mac "idevicedevmodectl -u $IOS_RIG_UDID list" | awk -v u="$IOS_RIG_UDID" '$1==u{print $2}')"
+  if [[ "$devmode" == "enabled" ]]; then
+    pass developer-mode "enabled"
+  else
+    fail developer-mode "is '${devmode:-unknown}'; turn it on in Settings, Privacy and Security"
+  fi
+
+  local appium
+  appium="$(on_mac "curl -s -m 8 http://127.0.0.1:${IOS_RIG_APPIUM_PORT}/status")"
+  if grep -q '"ready":true' <<<"$appium"; then
+    pass appium "$(sed -n 's/.*"version":"\([^"]*\)".*/\1/p' <<<"$appium")"
+  else
+    fail appium "not answering on 127.0.0.1:${IOS_RIG_APPIUM_PORT}"
+  fi
+
+  local wda
+  wda="$(on_mac "ideviceinstaller -u $IOS_RIG_UDID list 2>/dev/null | grep -F ${IOS_RIG_WDA_BUNDLE_ID}")"
+  if [[ -n "$wda" ]]; then
+    pass wda-installed "$IOS_RIG_WDA_BUNDLE_ID"
+  else
+    fail wda-installed "$IOS_RIG_WDA_BUNDLE_ID not installed; run resign-wda.sh on the Mac"
+  fi
+
+  local st
+  st="$(on_mac 'cat ~/.ios-rig-status.json 2>/dev/null')"
+  if [[ -n "$st" ]]; then
+    grep -q '"ok":true' <<<"$st" && pass last-resign "$st" || fail last-resign "$st"
+  else
+    warn last-resign "never run"
+  fi
+
+  # iOS version drift. The phone tracks updates by choice, so a bump is
+  # expected; it is worth saying out loud because it is the likeliest cause of
+  # the toolchain breaking.
+  local osver
+  osver="$(on_mac "ideviceinfo -u $IOS_RIG_UDID -k ProductVersion 2>/dev/null")"
+  [[ -n "$osver" ]] && warn ios-version "$osver"
+
+  finish_doctor "$alert"
+}
+
+finish_doctor() {
+  echo
+  printf '%d ok, %d failing\n' "$ok" "$bad"
+  if (( bad > 0 && ${1:-0} == 1 )); then
+    local hook msg
+    hook="$(vault kv get -field=slack_webhook secret/k8s-upgrade 2>/dev/null)"
+    if [[ -n "$hook" ]]; then
+      msg="iOS test rig degraded ($bad failing): $(printf '%s; ' "${FAILURES[@]}")"
+      python3 -c 'import json,sys;print(json.dumps({"text":sys.argv[1]}))' "$msg" \
+        | curl -sf -X POST "$hook" -H "Content-Type: application/json" -d @- >/dev/null \
+        && echo "alerted Slack"
+    else
+      echo "no Slack webhook in vault secret/k8s-upgrade, not alerting" >&2
+    fi
+  fi
+  (( bad == 0 ))
+}
+
+cmd_tunnel() {
+  echo "Forwarding Appium ${IOS_RIG_APPIUM_PORT}, WDA ${IOS_RIG_WDA_PORT}, usbmuxd ${IOS_RIG_USBMUX_PORT} from $MAC"
+  exec ssh -N \
+    -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
+    -o ConnectTimeout=10 -o BatchMode=yes \
+    -L "${IOS_RIG_APPIUM_PORT}:127.0.0.1:${IOS_RIG_APPIUM_PORT}" \
+    -L "${IOS_RIG_WDA_PORT}:127.0.0.1:${IOS_RIG_WDA_PORT}" \
+    -L "${IOS_RIG_USBMUX_PORT}:/var/run/usbmuxd" \
+    "$MAC"
+}
+
+cmd_screenshot() {
+  local out="${1:-/tmp/ios-rig-$(date +%s).png}"
+  python3 "$HERE/appium_screenshot.py" "$out" || return 1
+  echo "$out"
+}
+
+cmd_shell() { on_mac "$*"; }
+
+case "${1:-doctor}" in
+  doctor)     shift || true; cmd_doctor "$@" ;;
+  discover)   cmd_discover ;;
+  tunnel)     cmd_tunnel ;;
+  screenshot) shift || true; cmd_screenshot "$@" ;;
+  shell)      shift; cmd_shell "$@" ;;
+  *) sed -n '3,12p' "$0"; exit 2 ;;
+esac
