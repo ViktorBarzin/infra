@@ -8,7 +8,7 @@ StartLimitIntervalSec=0
 # The Mac is a laptop on a roaming DHCP address behind a WireGuard tunnel, so
 # the connection drops often and by design. Restart forever rather than
 # entering a failed state that needs a human.
-ExecStart=%h/code/infra/scripts/ios-rig/ios-rig tunnel
+ExecStart=/usr/local/bin/homelab ios tunnel-fg
 Restart=always
 RestartSec=15
 
