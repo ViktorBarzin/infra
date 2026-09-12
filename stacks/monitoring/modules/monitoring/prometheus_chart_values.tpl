@@ -1792,27 +1792,36 @@ serverFiles:
             # the box being unusable. `some` is true whenever anything waits and
             # is far too common to page on.
             #
-            # 0.70 is not a new number. It is the very-busy line Terminal
-            # Lobby's machine-health indicator already shows a human, calibrated
-            # over 696 hours of PSI history (ADR-0028), so the alert and the UI
-            # agree on what unusable means. The amber line it shows at 0.50 is
-            # deliberately NOT the alert line: backtested over 14 days it gives
-            # 9 sustained episodes against 2 at 0.70, and a human reading the
-            # dot can act on busy without being paged for it.
+            # LOWERED 0.70/15m -> 0.60/10m on 2026-09-12, after 0.70 let a real
+            # episode through: the guest sat at 100% disk utilisation at 19:19
+            # while io full read 67.3%, just under the line, and nothing fired.
             #
-            # Backtest, 14 days to 2026-09-12 at for:15m: 2 episodes, 09-08
-            # 03:19 for 25 min and 09-12 01:54 for 15 min. Roughly one a week,
-            # and that window still contains the 120-IOPS cap that caused most
-            # of them. After it was raised on 2026-09-12 io full fell to 0.8%,
-            # so the real rate should be lower. If this never fires for a month,
-            # 0.50 is the considered next line rather than a guess.
-            expr: rate(node_pressure_io_stalled_seconds_total{job="devvm"}[10m]) > 0.70
-            for: 15m
+            # Backtested over 14 days, episodes per week by threshold and for:
+            #
+            #             for:5m   for:10m  for:15m
+            #   th=0.50     8.5      7.0      4.5
+            #   th=0.60     5.0      4.0      3.0
+            #   th=0.70     2.0      1.5      1.0
+            #
+            # 0.60/10m is ~4 a week on that window, and the window still
+            # contains the 120-IOPS cap that caused most episodes, so the real
+            # rate should be lower. Re-derive after a week at the new cap
+            # rather than guessing a second time.
+            #
+            # NOT utilisation, deliberately, and this is the part worth keeping.
+            # Guest dm-0 utilisation over the same 14 days: p50 3.1%, p75 15.2%,
+            # p90 96.3%. The disk sits above 90% for 38.3 hours a fortnight,
+            # about 2.7 hours a day. Saturation is NORMAL here, so an alert on
+            # utilisation fires constantly and teaches everyone to ignore it.
+            # PSI stall asks whether the saturation is actually hurting anyone,
+            # which is the only version of the question worth paging on.
+            expr: rate(node_pressure_io_stalled_seconds_total{job="devvm"}[10m]) > 0.60
+            for: 10m
             labels:
               severity: warning
             annotations:
               summary: "devvm is stalled on disk {{ $value | humanizePercentage }} of the time — every session on the box is frozen"
-              description: "This is what users report as the machine being unusable, and it is not a CPU problem: on 2026-09-12 the affected user's slice read cpu.pressure 0.00 against io.pressure 73.93. Find who is generating it: homelab metrics query 'devvm_slice_pressure_ratio{resource=\"io\"}' shows it per user slice. Check the guest is not being throttled below what the disk can do — that was the 2026-09-12 cause, iops_rd=120 in scripts/apply-mbps-caps.sh against a host disk that was 80% idle. Compare the two sides: guest read latency in node_disk_read_time_seconds_total{job=\"devvm\"} against the host's own sdc. If the guest is far slower than the host, the cap is the constraint rather than the spindle."
+              description: "This is what users report as the machine being unusable, and it is not a CPU problem: on 2026-09-12 the affected user's slice read cpu.pressure 0.00 against io.pressure 73.93. Find who is generating it: homelab metrics query 'devvm_slice_pressure_ratio{resource=\"io\"}' shows it per user slice. Check whether the cap or the device is the limit, and expect the device: since iops_rd went to 1200 the guest has hit 100% utilisation at only 201 reads/s, nowhere near its ceiling, so the old advice of raising the cap usually will not apply. Compare the two sides: guest node_disk_io_time_seconds_total{job=\"devvm\",device=\"dm-0\"} against the host dm-217 for the same window. Guest saturated while the host is not means the cap; both saturated means the spindle, and etcd shares it. Compare the two sides: guest read latency in node_disk_read_time_seconds_total{job=\"devvm\"} against the host's own sdc. If the guest is far slower than the host, the cap is the constraint rather than the spindle."
           # DevvmIOSchedulerNotBFQ WAS HERE, and is deleted rather than
           # inverted. BFQ went on sda on 2026-09-12 to make the cgroup IOWeight
           # values do something, and was reverted the same evening because it
