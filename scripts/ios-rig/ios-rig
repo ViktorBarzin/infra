@@ -6,6 +6,8 @@
 #   ios-rig tunnel             foreground SSH tunnel (systemd unit does this)
 #   ios-rig screenshot [path] [--url U] [--tap X,Y]   drive and screenshot
 #   ios-rig wda-url            where WebDriverAgent is listening right now
+#   ios-rig install <dir>      build an Xcode project and put it on the phone
+#   ios-rig apps               what is installed (counts against the 3-app cap)
 #   ios-rig shell <cmd>        run a command on the Mac with the rig PATH set
 #
 # The chain: devvm -> WireGuard -> Mac -> USB -> iPhone. Appium and usbmuxd on
@@ -223,12 +225,76 @@ cmd_wda_url() { wda_url_from_mac; }
 
 cmd_shell() { on_mac "$*"; }
 
+# Build an Xcode project and put it on the phone.
+#
+# The build runs on the Mac in the Aqua session, because codesign needs the
+# login keychain and cannot reach it over SSH. This copies the project up,
+# writes the job inputs, kickstarts the agent and waits for its status file.
+cmd_install() {
+  local src="" scheme="" bundle="" launch=1
+  while (( $# )); do
+    case "$1" in
+      --scheme)    scheme="$2"; shift 2 ;;
+      --bundle-id) bundle="$2"; shift 2 ;;
+      --no-launch) launch=0; shift ;;
+      *)           src="$1"; shift ;;
+    esac
+  done
+  [[ -n "$src" && -d "$src" ]] || { echo "usage: ios-rig install <project-dir> [--scheme S] [--bundle-id B] [--no-launch]" >&2; return 2; }
+
+  local name; name="$(basename "$(cd "$src" && pwd)")"
+  scheme="${scheme:-$name}"
+  bundle="${bundle:-me.viktorbarzin.$(tr '[:upper:]' '[:lower:]' <<<"$name")}"
+  local remote="ios-rig-builds/$name"
+
+  echo "copying $src to $MAC:$remote"
+  ssh "${SSH_OPTS[@]}" "$MAC" "mkdir -p \$HOME/$remote" >/dev/null
+  # Delete-on-sync so a removed source file does not linger and get compiled.
+  rsync -az --delete -e "ssh ${SSH_OPTS[*]}" "$src/" "$MAC:$remote/" || return 1
+
+  on_mac "cat > \$HOME/.ios-rig-build.env <<EOF
+RIG_BUILD_DIR=\$HOME/$remote
+RIG_BUILD_SCHEME=$scheme
+RIG_BUILD_BUNDLE=$bundle
+RIG_BUILD_LAUNCH=$launch
+EOF" >/dev/null
+
+  on_mac 'rm -f ~/.ios-rig-build-status.json' >/dev/null
+  echo "building $scheme as $bundle"
+  on_mac 'launchctl kickstart gui/$(id -u)/me.viktorbarzin.ios-rig-build' >/dev/null
+
+  local deadline=$((SECONDS + 900)) st=""
+  while (( SECONDS < deadline )); do
+    st="$(on_mac 'cat ~/.ios-rig-build-status.json 2>/dev/null')"
+    [[ -n "$st" ]] && break
+    sleep 5
+  done
+  if [[ -z "$st" ]]; then
+    echo "build did not finish within 15 minutes" >&2
+    on_mac 'tail -20 /tmp/ios-rig-build.log' >&2
+    return 1
+  fi
+  echo "$st"
+  if grep -q '"ok":true' <<<"$st"; then
+    return 0
+  fi
+  on_mac 'tail -25 /tmp/ios-rig-build.log' >&2
+  return 1
+}
+
+cmd_apps() {
+  on_mac "$IOS_RIG_DEVELOPER_DIR/usr/bin/devicectl device info apps --device $IOS_RIG_UDID 2>/dev/null" \
+    | grep -vE '^[0-9]{2}:[0-9]{2}:[0-9]{2}'
+}
+
 case "${1:-doctor}" in
   doctor)     shift || true; cmd_doctor "$@" ;;
   discover)   cmd_discover ;;
   tunnel)     cmd_tunnel ;;
   screenshot) shift || true; cmd_screenshot "$@" ;;
   wda-url)    cmd_wda_url ;;
+  install)    shift; cmd_install "$@" ;;
+  apps)       cmd_apps ;;
   shell)      shift; cmd_shell "$@" ;;
   *) sed -n '3,12p' "$0"; exit 2 ;;
 esac

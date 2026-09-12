@@ -106,5 +106,15 @@ python3 -c "import plistlib,sys; plistlib.load(open(sys.argv[1],'rb'))" "$TMP/wd
 put "$TMP/wdarun.plist" "Library/LaunchAgents/me.viktorbarzin.wda-run.plist"
 (( DRY )) || reload_agent me.viktorbarzin.wda-run
 
+say "Build and install LaunchAgent (on demand)"
+run 'export PATH=/opt/homebrew/bin:$PATH HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1
+brew list --formula xcodegen >/dev/null 2>&1 || brew install xcodegen
+brew list --versions xcodegen'
+put "$HERE/build-install.sh" "bin/ios-rig-build-install.sh" 0755
+render "$HERE/launchagents/me.viktorbarzin.ios-rig-build.plist.tmpl" > "$TMP/build.plist"
+python3 -c "import plistlib,sys; plistlib.load(open(sys.argv[1],'rb'))" "$TMP/build.plist"
+put "$TMP/build.plist" "Library/LaunchAgents/me.viktorbarzin.ios-rig-build.plist"
+(( DRY )) || reload_agent me.viktorbarzin.ios-rig-build
+
 say "Done"
 echo "Next: scripts/ios-rig/ios-rig doctor"

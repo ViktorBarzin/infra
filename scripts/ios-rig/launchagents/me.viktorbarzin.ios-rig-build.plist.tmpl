@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>me.viktorbarzin.ios-rig-build</string>
+  <!-- Aqua only: codesign cannot reach the login keychain from an SSH
+       (Background) session and fails with errSecInternalComponent. -->
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>exec "$HOME/bin/ios-rig-build-install.sh"</string>
+  </array>
+  <!-- On demand only: `ios-rig install` writes the inputs then kickstarts it. -->
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+  <key>StandardOutPath</key><string>/tmp/ios-rig-build.out</string>
+  <key>StandardErrorPath</key><string>/tmp/ios-rig-build.err</string>
+</dict>
+</plist>
