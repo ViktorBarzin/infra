@@ -31,7 +31,7 @@
 # interval. Both are things a person does, not things a leftover session does.
 set -uo pipefail
 
-INTERVAL_S="${DEVVM_IO_FAIRSHARE_INTERVAL_S:-30}"
+INTERVAL_S="${DEVVM_IO_FAIRSHARE_INTERVAL_S:-600}"
 # The ceiling to divide. These are devvm's QEMU caps (scripts/apply-mbps-caps.sh),
 # which are the real limit on what this guest can pull, so dividing them is
 # dividing what actually exists rather than a number off a datasheet.
@@ -39,7 +39,12 @@ DEVICE_RIOPS="${DEVVM_DEVICE_RIOPS:-1200}"
 DEVICE_RBPS="${DEVVM_DEVICE_RBPS:-62914560}"   # 60 MB/s
 DEVICE_WBPS="${DEVVM_DEVICE_WBPS:-62914560}"   # 60 MB/s
 # Bytes in one interval below which a slice counts as idle rather than working.
-IDLE_FLOOR_BYTES="${DEVVM_IO_IDLE_FLOOR_BYTES:-$((4 * 1024 * 1024))}"
+# Bytes in one interval below which a slice counts as idle rather than working.
+# Scales WITH the timer interval: this is a per-interval delta, so when the
+# period went 30s -> 10min the same 4 MB would have called almost everyone
+# active. 40 MB over 10 minutes is 68 kB/s, which is a slice doing nothing much
+# rather than a person working.
+IDLE_FLOOR_BYTES="${DEVVM_IO_IDLE_FLOOR_BYTES:-$((40 * 1024 * 1024))}"
 STATE="${DEVVM_IO_FAIRSHARE_STATE:-/run/devvm-io-fairshare.state}"
 TEXTFILE_DIR="${DEVVM_TEXTFILE_DIR:-/var/lib/node_exporter/textfile}"
 DRY_RUN="${DEVVM_IO_FAIRSHARE_DRY_RUN:-0}"
