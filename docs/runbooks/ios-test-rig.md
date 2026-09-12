@@ -15,6 +15,7 @@ rig that day.
 | `me.viktorbarzin.appium` | Mac LaunchAgent | Appium 3.5.2 + `xcuitest` 11.17.1, bound to `127.0.0.1:4723` |
 | `me.viktorbarzin.wda-run` | Mac LaunchAgent, KeepAlive | keeps WebDriverAgent running, publishes its URL to `~/.ios-rig-wda-url` |
 | `me.viktorbarzin.wda-resign` | Mac LaunchAgent, every 48h | re-signs WebDriverAgent before its 7-day certificate lapses |
+| `me.viktorbarzin.ios-rig-build` | Mac LaunchAgent, on demand | builds an Xcode project with the free team and installs it |
 | `ios-rig-tunnel.service` | devvm, `systemd --user` | SSH tunnel carrying Appium 4723 |
 | `ios-rig-doctor.timer` | devvm, `systemd --user`, 6-hourly | checks every link, posts to Slack when degraded |
 | `scripts/ios-rig/` | this repo | the whole rig, including the Mac bootstrap |
@@ -117,10 +118,36 @@ If that changes, the re-sign job is the only piece that would move.
 ```sh
 scripts/ios-rig/ios-rig doctor          # check every link in the chain
 scripts/ios-rig/ios-rig wda-url         # where WebDriverAgent is listening now
+scripts/ios-rig/ios-rig apps            # what is installed, against the 3-app cap
 scripts/ios-rig/ios-rig screenshot /tmp/shot.png
 scripts/ios-rig/ios-rig screenshot /tmp/shot.png --url https://example.com
 scripts/ios-rig/ios-rig screenshot /tmp/shot.png --tap 200,400
 ```
+
+## Sideloading an app
+
+```sh
+scripts/ios-rig/ios-rig install <project-dir> [--scheme S] [--bundle-id B] [--no-launch]
+```
+
+It copies the project to the Mac, builds it there in the Aqua session with the
+free team, installs with `devicectl device install app`, and launches it.
+`--scheme` defaults to the directory name and `--bundle-id` to
+`me.viktorbarzin.<dirname>` lowercased.
+
+The project can carry its own `.xcodeproj`, or a `project.yml` for xcodegen,
+which is regenerated on every build so no generated file has to live in git.
+`scripts/ios-rig/testapp/` is a minimal app that exists to verify this path
+works; it is not a template to copy.
+
+> [!IMPORTANT]
+> Each **new** bundle identifier consumes one of the 10 App IDs a free account
+> may register per week, and each installed app one of the 3 slots, of which
+> WebDriverAgent permanently holds one. Reusing a bundle id costs neither.
+> `ios-rig apps` shows what is currently taking up space.
+
+Builds go through `devicectl`, not `ideviceinstaller`, because the lockdown
+pairing `ideviceinstaller` needs is blocked on this phone.
 
 `doctor` is the first thing to run for any symptom. It reports each link
 separately, so it distinguishes "the laptop is away" from "the certificate
