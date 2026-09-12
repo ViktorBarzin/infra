@@ -18,7 +18,7 @@
 # modules/authentik/values.yaml all move together — see the UPGRADE note in
 # values.yaml for the full per-hop procedure. patch-compat-sfe.py asserts its
 # upstream anchors, so the build fails LOUDLY if upstream moves underneath it.
-FROM ghcr.io/goauthentik/server:2026.8.1
+FROM ghcr.io/goauthentik/server:2026.8.2
 
 USER root
 # PATCH #2 — old-browser BLANK LOGIN. authentik's modern flow SPA is ES2022 and
