@@ -47,7 +47,7 @@ func capabilities() []capability {
 	return []capability{
 		{
 			Intent:  "reproduce or verify a bug someone saw on a phone or tablet",
-			Use:     "android-emulator.viktorbarzin.me (shared Android + real Chrome, adb + noVNC)",
+			Use:     "android-emulator.viktorbarzin.me (shared Android + real Chrome, adb + noVNC); homelab ios for an iPhone",
 			Instead: "a resized desktop browser (Playwright/Chromium at a mobile viewport)",
 			Synonyms: []string{"mobile", "phone", "tablet", "android", "touch", "viewport",
 				"soft keyboard", "keyboard", "scroll", "device", "reproduce", "repro",
@@ -94,7 +94,7 @@ func capabilities() []capability {
 		},
 		{
 			Intent:  "reproduce a bug that happens in one browser and not another",
-			Use:     "android-emulator.viktorbarzin.me for Chrome/Firefox ON ANDROID (sideload the APK); homelab browser run for a real desktop Chrome",
+			Use:     "android-emulator.viktorbarzin.me for Chrome/Firefox ON ANDROID; homelab ios for Safari on a real iPhone; homelab browser run for a real desktop Chrome",
 			Instead: "installing a desktop browser locally via Playwright and calling it the same thing",
 			Synonyms: []string{"browser", "firefox", "chrome", "safari", "webkit", "edge",
 				"works in chrome", "fails in firefox", "browser-specific", "differential",
