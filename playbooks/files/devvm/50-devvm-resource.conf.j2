@@ -19,8 +19,32 @@
 # dying, and a 4G swap ceiling does not change that: past the ceiling the band
 # is unreclaimable again. Straight-to-OOM at MemoryMax remains the containment
 # (see post-mortem addendum 2026-07-02).
+# MemoryLow is the fairness knob, added 2026-09-12. It is a protected floor:
+# reclaim leaves a slice's pages alone up to this size and takes from whoever is
+# above theirs instead. That is what "equal share under contention" means for
+# memory, which has no weight the way CPU and IO do.
+#
+# It is work-conserving with no extra machinery. An empty slice protects
+# nothing, so one user alone still gets most of the box and is only reclaimed
+# when somebody else actually needs the memory. Absent users therefore cost
+# zero, which is why this stays a uniform value on the user-.slice template
+# rather than per-uid drop-ins: anca and breakglass are covered automatically
+# if they ever return, and reserve nothing while they are away.
+#
+# Sized for the active population rather than the enrolled one. Protection is
+# best-effort, so it stops meaning anything once every remaining page sits
+# inside somebody's floor and reclaim proceeds regardless. On 31 GiB with two
+# active humans, 8.5 GiB each plus 2 GiB for system.slice leaves roughly 12 GiB
+# unprotected, which is the headroom that makes the floors real.
+#
+# Why this was needed: measured 2026-09-12, wizard's slice had re-read 609 GiB
+# of file pages against 196 MiB of anonymous pages since boot, a ratio of 3183
+# to 1. With MemorySwapMax reached, reclaim cannot page anon out, so it evicts
+# file cache and the box re-reads it from a spindle. Floors make that eviction
+# land on whoever is over their share instead of on an idle user's session.
 [Slice]
 MemoryAccounting=yes
+MemoryLow={{ devvm_user_memory_low }}
 MemoryHigh=infinity
 MemoryMax={{ devvm_user_memory_max }}
 MemorySwapMax={{ devvm_user_swap_max }}

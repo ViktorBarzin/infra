@@ -1,0 +1,63 @@
+---
+# Proxmox host state that is not VM lifecycle.
+#
+# WHY THIS EXISTS. The per-VM disk I/O caps are the one piece of PVE host
+# configuration that changes with any regularity, and until 2026-09-12 nothing
+# deployed them. The script sat at /usr/local/bin/apply-mbps-caps.sh, placed by
+# hand, with no reconciliation against the repository; the comment in
+# stacks/infra/main.tf still pointed at an even earlier copy in /tmp that no
+# longer exists. Landing a commit to scripts/apply-mbps-caps.sh therefore
+# changed nothing on the box until somebody remembered to scp it.
+#
+# WHY NOT TERRAFORM. devvm (102), home-assistant (103), pfSense (101) and
+# Windows10 (300) are deliberately outside Terraform, decided 2026-05-26 after
+# the telmate/proxmox provider rewrote entire disk lists and corrupted the
+# config of k8s-node2 and node3 twice. That decision stands. This playbook
+# manages the capping mechanism, not the VMs.
+#
+#   ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml --check --diff
+#   ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
+#
+# A --check run against the live host should be a no-op. Anything else is drift.
+- name: Proxmox host configuration
+  hosts: pve
+  gather_facts: true
+
+  tasks:
+    # ---- per-VM disk I/O caps ------------------------------------------------
+    # The values and the reasoning for each one live in the script itself, which
+    # is the file to read before changing a number. Briefly: sdc is a 7200rpm
+    # RAID1 pair shared by every VM, the CSI fleet and etcd's write-ahead log,
+    # and it is oversubscribed on random IOPS rather than on bandwidth. The caps
+    # keep one VM's reads out of the queue etcd's fsync waits in.
+    - name: Install the I/O cap script
+      ansible.builtin.copy:
+        src: ../scripts/apply-mbps-caps.sh
+        dest: /usr/local/bin/apply-mbps-caps.sh
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Install the I/O cap units
+      ansible.builtin.copy:
+        src: "../scripts/apply-mbps-caps.{{ item }}"
+        dest: "/etc/systemd/system/apply-mbps-caps.{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - service
+        - timer
+      notify: reload systemd
+
+    - name: Enable the I/O cap timer
+      ansible.builtin.systemd_service:
+        name: apply-mbps-caps.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true

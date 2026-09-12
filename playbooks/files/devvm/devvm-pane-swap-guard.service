@@ -1,0 +1,16 @@
+[Unit]
+Description=Keep recently used tmux panes out of swap
+Documentation=https://github.com/ViktorBarzin/infra/blob/master/playbooks/files/devvm/devvm-pane-swap-guard.sh
+ConditionPathExists=/sys/fs/cgroup/user.slice
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/devvm-pane-swap-guard.sh
+# It reads tmux state and writes one cgroup file per pane. Nice it so the guard
+# never competes with the sessions it exists to protect.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=devvm-pane-swap-guard
