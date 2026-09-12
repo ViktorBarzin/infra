@@ -86,6 +86,17 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/claude-tmux-state running 2>/dev/null || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -114,6 +125,17 @@
           {
             "type": "command",
             "command": "/usr/local/bin/claude-tmux-state notify 2>/dev/null || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/claude-tmux-state teammate-idle 2>/dev/null || true",
             "timeout": 5
           }
         ]
