@@ -122,7 +122,7 @@ func pagesPreview(args []string) error {
 		return fmt.Errorf("pages API returned no rendered page")
 	}
 	if outDir == "" {
-		outDir = filepath.Join(os.TempDir(), "homelab-pages-preview", strings.TrimSuffix(resp.Filename, ".html"))
+		outDir = defaultPreviewDir(strings.TrimSuffix(resp.Filename, ".html"))
 	}
 	pagePath, err := writePreview(outDir, resp)
 	if err != nil {
@@ -131,6 +131,22 @@ func pagesPreview(args []string) error {
 	fmt.Println(pagePath)
 	fmt.Println(outDir)
 	return nil
+}
+
+// defaultPreviewDir is where a preview lands when --out is not given: one
+// directory per page, so re-previewing the same doc replaces the last render
+// instead of leaving a trail.
+//
+// It must be PER USER. The devvm is shared, and a single /tmp/homelab-pages-preview
+// owned by whoever ran the verb first is a directory every other user gets
+// EACCES from — measured, not theorised: the first run as a second user failed
+// exactly that way. The cache dir is per-user by construction; the uid-suffixed
+// temp path is the fallback for an account with no HOME.
+func defaultPreviewDir(slug string) string {
+	if cache, err := os.UserCacheDir(); err == nil && cache != "" {
+		return filepath.Join(cache, "homelab", "pages-preview", slug)
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("homelab-pages-preview-%d", os.Getuid()), slug)
 }
 
 // safeAssetPath accepts only a plain relative path, which is what the server

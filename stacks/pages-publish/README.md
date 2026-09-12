@@ -79,7 +79,10 @@ page with an inline SVG chart shipped on 2026-09-12 with a 555px hole in it.
 
 `/preview` closes that: `homelab pages preview <doc.md>` writes the page and its
 assets into a local directory laid out the way the site lays them out, so serving
-that directory as the document root reproduces the published page exactly.
+that directory as the document root reproduces the published page exactly. The
+default output dir is per user (`~/.cache/homelab/pages-preview/<slug>`); the
+devvm is shared, and a single path under `/tmp` is one every user after the
+first gets EACCES from.
 
 Two design notes worth keeping:
 
