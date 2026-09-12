@@ -46,10 +46,22 @@ wda_url_published() { on_mac 'cat ~/.ios-rig-wda-url 2>/dev/null' | grep -oE 'ht
 # published URL points at an address nobody answers on. Restarting the runner
 # makes it rebind and republish, so a stale URL heals itself rather than
 # needing a human to notice.
+phone_locked() {
+  on_mac "$IOS_RIG_DEVELOPER_DIR/usr/bin/devicectl device info lockState --device $IOS_RIG_UDID" \
+    | grep -q "passcodeRequired: true"
+}
+
 wda_url_from_mac() {
   local url; url="$(wda_url_published)"
   if [[ -n "$url" ]] && curl -sf -m 8 "$url/status" >/dev/null 2>&1; then
     printf '%s\n' "$url"; return 0
+  fi
+  # A locked phone takes WebDriverAgent's listener down with it, and restarting
+  # the runner cannot bring it back while the screen stays locked. Bail at once
+  # rather than burning the full retry window on something only a human fixes.
+  if phone_locked; then
+    echo "phone is locked; WebDriverAgent cannot run until someone unlocks it" >&2
+    return 1
   fi
   [[ -n "$url" ]] && echo "published $url is not answering, restarting the runner" >&2
   on_mac 'launchctl kickstart -k gui/$(id -u)/me.viktorbarzin.wda-run' >/dev/null 2>&1
@@ -157,6 +169,25 @@ cmd_doctor() {
 
   # WDA is reached over Wi-Fi, not usbmuxd, and the phone's address is a DHCP
   # lease. The runner publishes whatever WDA actually bound to.
+  # A locked phone can still be screenshotted but cannot be driven, and WDA
+  # cannot unlock a device with a passcode. Measured 2026-09-12: a deepLink on
+  # a locked phone fails with FBSOpenApplicationServiceErrorDomain Code=1.
+  # So this is the difference between a rig that works and one that only looks
+  # like it does.
+  if phone_locked; then
+    fail phone-unlocked "locked; WDA cannot drive it and cannot unlock it. Set Auto-Lock to Never"
+  else
+    pass phone-unlocked "screen is unlocked"
+  fi
+
+  # The Mac is set to sleep 1 minute after the display sleeps, even on AC, so
+  # without an assertion the rig dies ~11 minutes after the human walks away.
+  if on_mac 'pmset -g assertions' | grep -q "caffeinate"; then
+    pass mac-awake "caffeinate holding sleep off"
+  else
+    warn mac-awake "nothing holding sleep off; the rig stops when the laptop idles"
+  fi
+
   local wda_url
   if wda_url="$(wda_url_from_mac)"; then
     pass wda-reachable "$wda_url"
