@@ -982,6 +982,36 @@
         - devvm-pane-swap-guard.timer
       notify: reload systemd
 
+    # io.weight would be the natural way to do this and is inert without BFQ,
+    # which was measured 2.5x worse on reads here and reverted. io.max works
+    # under any scheduler but is a fixed number, so a share sized for several
+    # users still caps a lone user at 3am. io.latency would solve both and is
+    # not compiled into this kernel. So the work-conserving half is done in
+    # userspace: count who is actually working and divide the device between
+    # them, lifting the caps entirely when someone is alone.
+    - name: Install the IO fairshare reconciler
+      ansible.builtin.copy:
+        src: files/devvm/devvm-io-fairshare.sh
+        dest: /usr/local/bin/devvm-io-fairshare.sh
+        mode: "0755"
+
+    - name: Install the IO fairshare units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - devvm-io-fairshare.service
+        - devvm-io-fairshare.timer
+      notify: reload systemd
+
+    - name: Enable the IO fairshare timer
+      ansible.builtin.systemd_service:
+        name: devvm-io-fairshare.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
     - name: Enable the pane swap guard timer
       ansible.builtin.systemd_service:
         name: devvm-pane-swap-guard.timer

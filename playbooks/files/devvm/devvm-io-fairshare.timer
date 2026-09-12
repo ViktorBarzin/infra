@@ -1,0 +1,15 @@
+[Unit]
+Description=Re-divide the disk every 30 seconds
+
+[Timer]
+# 30s is the worst-case time someone keeps the whole device after a second
+# person starts working. Half a minute of one user being fast is a fair price
+# for not capping a lone user at a quarter all night, which is the trade this
+# whole script exists to make. Tighter would spend more on reading cgroups
+# than it saves.
+OnBootSec=45s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
