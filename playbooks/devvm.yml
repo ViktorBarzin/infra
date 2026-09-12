@@ -926,6 +926,34 @@
         mode: "0644"
       notify: reload sysctl
 
+    # Deleting the tasks that wrote these does NOT delete the files: the copy
+    # module only ever adds. Proved it the hard way on 2026-09-12 — the BFQ
+    # tasks were removed, the playbook reported changed=0, and a
+    # `udevadm trigger` put the scheduler straight back to bfq because the rule
+    # was still sitting in /etc/udev/rules.d. An artefact needs an explicit
+    # absent task for at least one release after its writer goes.
+    - name: Remove the BFQ scheduler artefacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/udev/rules.d/60-devvm-bfq.rules
+        - /etc/modules-load.d/devvm-bfq.conf
+      notify: reload udev
+
+    - name: Put rotational disks back on mq-deadline
+      # BFQ was reverted on 2026-09-12 after measuring it 2.5x worse on reads
+      # and 13x worse on writes than mq-deadline at identical load. Setting the
+      # value rather than only deleting the rule, because a running machine
+      # keeps whatever the rule last selected until something changes it.
+      ansible.builtin.shell: |
+        set -e
+        for d in /sys/block/sd[a-z]; do
+          [ -w "$d/queue/scheduler" ] || continue
+          grep -q '\[bfq\]' "$d/queue/scheduler" && echo mq-deadline > "$d/queue/scheduler" || true
+        done
+      changed_when: false
+
     - name: Remove the undeclared swappiness files this replaces
       ansible.builtin.file:
         path: "{{ item }}"
@@ -1370,6 +1398,13 @@
     - name: reload systemd
       ansible.builtin.systemd_service:
         daemon_reload: true
+
+    - name: reload udev
+      ansible.builtin.shell: |
+        set -e
+        udevadm control --reload-rules
+        udevadm trigger --subsystem-match=block --action=change
+      changed_when: true
 
     - name: reload sysctl
       ansible.builtin.command: sysctl --system
