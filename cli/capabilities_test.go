@@ -108,6 +108,26 @@ func TestEmulatorCapabilityStatesTheIOSLimit(t *testing.T) {
 	}
 }
 
+func TestCapabilityForWritingAPasswordIntoTheManager(t *testing.T) {
+	// infra#94: the read path was indexed and the write path did not exist, so
+	// the question "how do I get this secret onto my phone" routed to nothing
+	// and the answer was a hand-rolled script.
+	for _, q := range []string{
+		"save a password into the password manager",
+		"put a credential in vaultwarden",
+		"get this secret onto my phone",
+	} {
+		hits := matchCapabilities(capabilities(), q)
+		if len(hits) == 0 {
+			t.Errorf("query %q found nothing", q)
+			continue
+		}
+		if !strings.Contains(hits[0].Use, "vault put") {
+			t.Errorf("query %q ranked %q first, want the `vault put` row", q, hits[0].Use)
+		}
+	}
+}
+
 func TestCapabilitiesNameTheCompetitor(t *testing.T) {
 	// The one controlled result we have (2026-08-15) is that naming the built-in
 	// competitor is what makes a rule fire. Every capability that exists to beat
