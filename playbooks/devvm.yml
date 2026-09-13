@@ -473,6 +473,71 @@
         - docker-disk-gc.timer
         - networkd-dhcp-watchdog.timer
 
+    # Retired evaluations, 2026-09-13. Neither agent-conductor nor Orca is
+    # declared anywhere: classifying all 59 units in /etc/systemd/system by
+    # owner found 23 from this playbook, 12 from Debian packages, 19 committed
+    # under infra/scripts/ but installed by no task, and these 6 with no copy
+    # in any repository or package at all. That last set is exactly the gap the
+    # weekly vzdump image backup was covering, and retiring it is what lets
+    # that backup go: the restore path is this playbook plus devvm-home-backup,
+    # and neither can restore what it does not know about.
+    #
+    # Measured before retiring. agent-conductor: under 5 MiB resident, 15 MB on
+    # disk, binaries dated 2026-07-16, source not present anywhere in ~/code.
+    # Orca: 41 MiB resident and 748 MB on disk, a third-party AppImage from the
+    # 2026-08-29 evaluation and re-downloadable. Both were archived to
+    # /mnt/backup/devvm-retired-2026-09-13/agent-conductor-archive-2026-09-13.tar.gz
+    # (114 files, sha256 1f607238a251...) before this landed, because
+    # agent-conductor has no other copy in existence.
+    #
+    # Masked rather than deleted so the decision is one command from being
+    # reversed. Deleting the files is a separate, later step.
+    - name: Retire the undeclared evaluation services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+        masked: true
+        daemon_reload: true
+      loop:
+        - acd-demux.service
+        - ac-spa.service
+        - orca-serve.service
+        - orca-xvfb.service
+
+    # Templates and their socket, which take no enabled/state of their own.
+    # The live instance ac-relay@wizard.socket is stopped by masking the
+    # template it is generated from.
+    - name: Retire the agent-conductor relay units
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        masked: true
+      loop:
+        - ac-relay@.service
+        - ac-relay@.socket
+
+    - name: Stop the live agent-conductor relay instances
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - ac-relay@wizard.socket
+        - ac-relay@wizard.service
+      failed_when: false
+
+    # multipathd ships enabled by default and this VM presents no multipath
+    # devices: `multipath -ll` returns nothing. It holds 18.8 MiB for that.
+    # Disabled rather than masked, because open-iscsi is installed and a
+    # dependency should still be able to pull it if one ever appears.
+    - name: Stop multipathd, which has no devices to manage here
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop:
+        - multipathd.service
+        - multipathd.socket
+
     # Claude Code leaves one scratch directory per session under /tmp and never
     # reaps them. /tmp is a RAM-backed tmpfs here, so that is a slow memory leak:
     # it reached 8.0G of 8.0G on 2026-09-06 and background commands began failing
