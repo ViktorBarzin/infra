@@ -1,6 +1,7 @@
 # devvm: fairness and responsiveness for multiple users
 
-Status: approved 2026-09-12. Steps 0 to 8 executing. Step 9 deferred.
+Status: approved 2026-09-12. Steps 0 to 8 landed. Step 9 deferred.
+Amended 2026-09-13, see the amendment section at the end.
 Date: 2026-09-12
 Author: wizard (with Claude)
 Trigger: emo reported that his sessions on the shared devvm become unusable
@@ -437,10 +438,104 @@ The floors in step 2 change which pages get reclaimed in the first place. If
 the failed-swapout counts are still in the millions afterwards, raising the
 ceiling is the next lever and there will be evidence for the number.
 
+## Amendment, 2026-09-13: what the next day changed
+
+Three things happened after the steps above landed. Two of them correct the
+plan rather than extend it.
+
+### The cap went to 1200 and came back, and the revert criterion was wrong
+
+Step 6 landed `iops_rd=400`. On the evening of 2026-09-12 the host measured
+idle underneath the throttle (guest read await 90 ms against 13.02 ms for the
+same LV on the host, host sdc at 2.72% utilisation) and the cap was raised to
+1200. Four hours later etcd read 19,840/hr slow applies, the pre-agreed revert
+line of about 2,500/hr was crossed, and the cap went back to 400.
+
+That attribution does not hold, and the round trip changed nothing measurable.
+Checking it produced two findings worth keeping.
+
+`etcd_server_slow_apply_total` is much noisier than the line assumed. Over 7
+days at 5-minute resolution it reads p50 180/hr, p90 5,490, p95 11,280, p99
+43,155, max 101,370. So 2,500/hr is crossed 17.2% of the time by etcd on its
+own, and 19,840 sits between p95 and p99. The correlation with devvm's read
+rate is absent as well: etcd reached 12,060/hr at 18:02 with devvm at 88
+reads/s under the old cap, sat at 1,275/hr at 20:17 when devvm was busiest at
+369 reads/s under the new one, and reached 30,195/hr after the revert with
+devvm at 154.
+
+The cap also barely binds at either value. devvm's read IOPS over those same 7
+days are p50 1, p90 120, p95 137, p99 357, max 604, so 400 clips 0.8% of
+5-minute samples and 1,200 clips none. The guest's own LV reads 100.22%
+utilisation at 227 reads/s, which puts the spindle at its limit well before
+the token bucket reaches its own.
+
+The criterion is removed from `scripts/apply-mbps-caps.sh` and replaced with
+that distribution, plus the guidance to judge a change by devvm's read IOPS
+against the cap rather than by etcd's slow-apply rate.
+
+### The reconciler interval is 2 minutes
+
+The reconciler ran every 30s, then every 10 min from 2026-09-12, and every 2
+min from 2026-09-13. The interval is the reaction time, so the trade is
+direct. Measured over three runs the script costs 0.09 to 0.11 s wall and
+about 0.10 s CPU, putting the three settings at 0.33%, 0.017% and 0.083% of
+one core against 32 cores. The difference between 10 min and 2 min is 0.002%
+of the box.
+
+### Per-user monitoring, which this plan did not include
+
+"How we will know it worked" relies on box-wide signals, and those cannot say
+who is affected. The per-slice numbers disagreed with them: over 24 hours on
+2026-09-12 emo peaked at 0.921 IO pressure against wizard's 0.807, while
+holding 2.6 GB to wizard's 22.0 and issuing a seventh of the reads.
+
+`DevvmUserIOStarved` fires on a user stalled above 0.60 for 15 minutes while
+issuing under 50 reads a second. The conjunction is what separates a user
+running their own build from a user being starved by someone else.
+
+`DevvmSlowKeystrokes` fires on p95 keystroke-to-echo above 400 ms for 5
+minutes, and is the only signal here measured from the seat rather than from
+the machine. It needed a change in tmux-api first: nothing there clears a
+gauge, and a browser stops posting the moment its tab is hidden, so emo's p95
+sat at 527 ms unchanged to the millisecond across 29 consecutive scrapes
+covering 145 minutes. Every rollup now stamps
+`tl_echo_latency_updated_timestamp_seconds` and the alert gates on it, beside
+a minimum of 5 samples, because the median rollup window holds one and a p95
+over one sample is that sample.
+
+The fairness exporter grew what both need: a username label, PSI `full` beside
+`some`, and per-slice read and write counters.
+
+Both thresholds rest on thinner evidence than the sdc rules beside them,
+roughly 100 samples and 14 gated windows against 14 days, and both rule
+comments record that. They are worth re-deriving after a week.
+
+### The memory floors are over-committed
+
+Step 2 gives each user an 8 GiB floor. Four slices declare 32 GiB of floors on
+a 31 GiB box, and `user.slice` sits at 24.6 GiB against its own 17 GiB floor,
+so the protection cannot be honoured in full. Over a clean 60-second window
+emo's `memory.events low` counter, which counts reclaim that happened despite
+the floor, rose by 79 while wizard's rose by 12, with emo holding 2.6 GB
+against his floor and wizard 22.0. An idle user's pages are cold and therefore
+the cheapest thing to reclaim.
+
+Scale matters here: emo's memory stall in that window was 27 ms per minute,
+0.045% of wall clock, so this is latent rather than active. It would bite him
+while he is working rather than while he is away. The remedy is a sizing
+decision rather than a configuration fix, between lowering wizard's
+`memory.max`, giving the VM more RAM, and accepting it.
+
 ## Open questions
 
+- Whether the cap stays at 400. The amendment shows neither 400 nor 1200 binds
+  often enough to matter, so this is close to a free choice; 400 is the value
+  with the most evidence behind it.
+- How to resolve the over-committed memory floors: lower wizard's
+  `memory.max`, add RAM, or accept the breach rate. A sizing decision.
 - Clearing the 43 GB of `.cache` under `/home/wizard` would take `/` from 86%
   to about 61% and shrink what the cache has to hold. It is a deletion, so it
   needs a decision rather than an assumption.
-- Whether the raised cap plus steps 1 to 8 are enough on their own. Step 9 is
-  deferred on exactly that question.
+- Whether steps 1 to 8 plus the per-user alerts are enough on their own. Step
+  9 is deferred on that question, and bead `code-oflt`, moving etcd off the
+  spindle, remains the change that addresses the shared-disk cause directly.
