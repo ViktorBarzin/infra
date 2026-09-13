@@ -42,8 +42,15 @@ locals {
   # Pinned to .168 by a static lease on the London Flint covering BOTH its
   # hardware MAC and its current macOS private Wi-Fi address — the previous
   # reservation had gone stale because that private address rotated.
+  #
+  # projector-london: the Anker projector that plays the F1 stream. It sits on
+  # the Flint's GUEST network (192.168.9.0/24), not the LAN, and is pinned to
+  # .100 there by a static lease tagged projector-london. The Flint answers
+  # projector-london.lan for its own clients; this record is what lets Sofia,
+  # the cluster and the devvm reach it by name over the tunnel.
   static_lan_a_records = {
-    "mbp-london" = "192.168.8.168"
+    "mbp-london"       = "192.168.8.168"
+    "projector-london" = "192.168.9.100"
   }
 }
 
