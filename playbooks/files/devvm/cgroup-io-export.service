@@ -1,0 +1,17 @@
+[Unit]
+Description=Export per-cgroup block IO to the node_exporter textfile collector
+Documentation=file:///usr/local/bin/cgroup-io-export
+# Nothing to do before the textfile directory exists.
+ConditionPathIsDirectory=/var/lib/node_exporter/textfile
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cgroup-io-export
+# Measured 0.03 s and 2.5 MB for a full sweep of 86 cgroups on 2026-09-13.
+# The ceiling is 32x that, so a runaway is caught rather than absorbed.
+MemoryMax=80M
+TimeoutStartSec=60
+Nice=10
+IOSchedulingClass=idle
+# This unit measures IO, so it should not be a meaningful source of it.
+IOAccounting=yes
