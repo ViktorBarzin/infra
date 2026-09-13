@@ -56,7 +56,16 @@ resource "helm_release" "keel" {
     # that the default is safe. Workloads pinned out-of-band (uptime-kuma
     # via keel.sh/policy=never LABEL) stay opted-out via the Kyverno
     # exclude rule, not via Keel's own annotation.
-    replicaCount = 1
+    # OVERNIGHT FREEZE, 2026-09-13 (Viktor). Set back to 1 to resume.
+    # Committed so an unattended Woodpecker apply cannot restart Keel while the
+    # authentik cleanup is outstanding. Reason it is in scope at all: Keel wrote
+    # ak-outpost-rac at 20:57 on 2026-09-12 despite keel.sh/policy=never on all
+    # six authentik deployments (bead code-q9iy), so its scope is not currently
+    # understood, and every fix in the recovery plan assumes only declared
+    # actors write these objects. There is precedent above for exactly this
+    # value being used as an emergency stop.
+    # Plan: https://pages.viktorbarzin.me/2026-09-13-authentik-outage-recovery.html
+    replicaCount = 0
     # Prometheus pod-annotation scrape — picks up Keel-specific metrics
     # (pending_approvals, poll_trigger_tracked_images, registries_scanned_total{image,registry})
     # on container port 9300 /metrics. The cluster's `kubernetes-pods`
