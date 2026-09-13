@@ -655,7 +655,7 @@ fitted, which the backplane supports without a reboot
 
 devvm is the only VM on this host with an image-level backup, and it holds the
 irreplaceable local state: three home directories totalling 115 GB, local-only
-git repositories, and a monorepo root with no remote. Removing `vzdump` removes
+git repositories, and one repository with no remote. Removing `vzdump` removes
 the one-shot bare-metal restore.
 
 The reasoning for removing it anyway is that everything on that box should be
