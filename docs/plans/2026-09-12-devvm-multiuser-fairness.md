@@ -482,6 +482,16 @@ about 0.10 s CPU, putting the three settings at 0.33%, 0.017% and 0.083% of
 one core against 32 cores. The difference between 10 min and 2 min is 0.002%
 of the box.
 
+Changing it also broke the idle test, which is worth recording because the
+break was silent and pointed the wrong way. A slice counted as idle below a
+fixed 40 MB moved per interval, and that constant encoded the old period: 40
+MB over 10 minutes is the 68 kB/s the code intended. At 2 minutes the same
+number became a 333 kB/s test. An idle slice is deliberately left uncapped, so
+a user working without an attached terminal read as idle and was handed the
+whole device while the person at a keyboard was capped to a share. The floor
+is now a rate multiplied by the period the run actually observed, with the
+state file carrying a timestamp, so retuning the timer cannot do this again.
+
 ### Per-user monitoring, which this plan did not include
 
 "How we will know it worked" relies on box-wide signals, and those cannot say
