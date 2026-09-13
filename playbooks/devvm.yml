@@ -1229,6 +1229,16 @@
     # unit properties, so `systemctl show <unit> -p IOReadBytes -p IOWriteBytes`
     # answers directly, and units whose parent does not already delegate `io`
     # get the controller too. It applies to units started after a daemon-reexec.
+    # ansible.builtin.copy does not create parent directories, and a stock
+    # Ubuntu 24.04 has no /etc/systemd/system.conf.d until something makes one.
+    - name: Make room for systemd manager drop-ins
+      ansible.builtin.file:
+        path: /etc/systemd/system.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Account for IO on every unit
       ansible.builtin.copy:
         src: files/devvm/50-devvm-io-accounting.conf
