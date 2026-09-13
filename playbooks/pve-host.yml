@@ -57,7 +57,52 @@
         state: started
         daemon_reload: true
 
+    # ---- journald in RAM -----------------------------------------------------
+    # This host was the last one still writing its journal to disk, and that
+    # disk is pve-root on sdc. Measured 2026-09-13: 258.9 GB over 57.6 days of
+    # uptime = 4.5 GB/day, and 30 writes/s in a live 60-second sample, 15% of
+    # the whole thin pool. The k8s nodes were moved to volatile on 2026-06-30
+    # under code-oflt and node5's OS-disk writes fell about 94%. The reasoning
+    # and the trade live in the file itself.
+    - name: Make room for journald drop-ins
+      ansible.builtin.file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Put the journal in RAM
+      ansible.builtin.copy:
+        src: files/pve/90-journald-volatile.conf
+        dest: /etc/systemd/journald.conf.d/90-journald-volatile.conf
+        mode: "0644"
+        owner: root
+        group: root
+      notify: restart journald
+
+    # Restart journald BEFORE deleting the directory, not after. Handlers run
+    # at the end of the play, and journald keeps its journal files open, so a
+    # delete that happens first frees no space until the restart closes the
+    # descriptors. Flushing here makes the order explicit.
+    - name: Switch journald over before reclaiming its files
+      ansible.builtin.meta: flush_handlers
+
+    # Storage=volatile makes journald use /run and stop writing
+    # /var/log/journal, but it does not remove what is already there. Without
+    # this the 3.9 GB measured on 2026-09-13 would sit on sdc forever, read by
+    # nothing.
+    - name: Reclaim the on-disk journal
+      ansible.builtin.file:
+        path: /var/log/journal
+        state: absent
+
   handlers:
+    - name: restart journald
+      ansible.builtin.systemd_service:
+        name: systemd-journald
+        state: restarted
+
     - name: reload systemd
       ansible.builtin.systemd_service:
         daemon_reload: true
