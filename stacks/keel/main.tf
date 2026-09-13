@@ -56,16 +56,35 @@ resource "helm_release" "keel" {
     # that the default is safe. Workloads pinned out-of-band (uptime-kuma
     # via keel.sh/policy=never LABEL) stay opted-out via the Kyverno
     # exclude rule, not via Keel's own annotation.
-    # OVERNIGHT FREEZE, 2026-09-13 (Viktor). Set back to 1 to resume.
+    replicaCount = 1
+
+    # OVERNIGHT FREEZE, 2026-09-13 (Viktor). Delete this nodeSelector to resume.
+    #
     # Committed so an unattended Woodpecker apply cannot restart Keel while the
-    # authentik cleanup is outstanding. Reason it is in scope at all: Keel wrote
+    # authentik cleanup is outstanding. Keel is in scope because it wrote
     # ak-outpost-rac at 20:57 on 2026-09-12 despite keel.sh/policy=never on all
-    # six authentik deployments (bead code-q9iy), so its scope is not currently
-    # understood, and every fix in the recovery plan assumes only declared
-    # actors write these objects. There is precedent above for exactly this
-    # value being used as an emergency stop.
+    # six authentik deployments (bead code-q9iy), so its real scope is not
+    # currently understood, and every fix in the recovery plan assumes only
+    # declared actors write these objects.
     # Plan: https://pages.viktorbarzin.me/2026-09-13-authentik-outage-recovery.html
-    replicaCount = 0
+    #
+    # WHY NOT replicaCount = 0, which is what the comment above records as the
+    # 2026-05-26 emergency stop: IT DOES NOT WORK ON THIS CHART, and it fails
+    # silently. keel 1.2.0 renders `replicas: {{ .Values.replicaCount | default 1 }}`,
+    # and Helm's `default` treats 0 as empty, so 0 renders as 1. Measured
+    # 2026-09-13: `helm get values` reported `replicaCount: 0` while
+    # `helm get manifest` carried `replicas: 1` and the pod kept running. Read
+    # the rendered manifest, not the values, when a chart appears to ignore you.
+    #
+    # A nodeSelector no node carries makes the pod unschedulable instead, which
+    # the chart cannot undo. Note this alone does not stop an ALREADY-RUNNING
+    # Deployment — the rolling update keeps the old pod until the new one is
+    # Ready, and it never will be — so the live freeze also needed
+    # `kubectl scale deploy keel -n keel --replicas=0`. After an apply restores
+    # replicas to 1 the new pod simply stays Pending, which is the intent.
+    nodeSelector = {
+      "keel-frozen-2026-09-13" = "true"
+    }
     # Prometheus pod-annotation scrape — picks up Keel-specific metrics
     # (pending_approvals, poll_trigger_tracked_images, registries_scanned_total{image,registry})
     # on container port 9300 /metrics. The cluster's `kubernetes-pods`
