@@ -318,11 +318,19 @@ steps:
               if echo "$OUTPUT" | grep -qE 'is locked by|Error acquiring the state lock|already locked'; then
                 echo "[$stack] SKIPPED (locked by another session/run)"; break
               fi
-              # Transient: provider-registry download timeout / Vault 5xx → bounded
-              # retry. Deliberately NOT helm atomic-timeouts or config errors
-              # (missing arg, invalid index) — those must fail fast, retry can't fix
-              # them and can worsen a stuck helm release.
-              if [ $ATTEMPT -lt 3 ] && echo "$OUTPUT" | grep -qE 'Failed to install provider|Client\.Timeout exceeded while awaiting headers|error reading from Vault.*Code: 5[0-9][0-9]'; then
+              # Transient: provider-registry download timeout / Vault 5xx /
+              # Vault read deadline → bounded retry. Deliberately NOT helm
+              # atomic-timeouts or config errors (missing arg, invalid index) —
+              # those must fail fast, retry can't fix them and can worsen a
+              # stuck helm release.
+              #
+              # The deadline arm was added 2026-09-13 after run #1699 failed the
+              # tripit stack on
+              #   Error reading database/static-creds/pg-terraform-state: context deadline exceeded
+              # A Vault read that times out never reaches an HTTP status, so the
+              # `Code: 5xx` arm could not match it and a blip reading the PG
+              # state credentials turned the run red with no retry.
+              if [ $ATTEMPT -lt 3 ] && echo "$OUTPUT" | grep -qE 'Failed to install provider|Client\.Timeout exceeded while awaiting headers|error reading from Vault.*Code: 5[0-9][0-9]|Error reading .*: context deadline exceeded|Cannot read PG credentials from Vault'; then
                 echo "[$stack] transient error (attempt $ATTEMPT/3) — retrying in 15s..."; sleep 15; continue
               fi
               echo "$OUTPUT" | tail -50; echo "[$stack] FAILED (exit $EXIT)"
@@ -355,7 +363,7 @@ steps:
                 echo "[$stack] SKIPPED (locked by another session/run)"; break
               fi
               # Transient provider-download / Vault 5xx → bounded retry (see platform loop).
-              if [ $ATTEMPT -lt 3 ] && echo "$OUTPUT" | grep -qE 'Failed to install provider|Client\.Timeout exceeded while awaiting headers|error reading from Vault.*Code: 5[0-9][0-9]'; then
+              if [ $ATTEMPT -lt 3 ] && echo "$OUTPUT" | grep -qE 'Failed to install provider|Client\.Timeout exceeded while awaiting headers|error reading from Vault.*Code: 5[0-9][0-9]|Error reading .*: context deadline exceeded|Cannot read PG credentials from Vault'; then
                 echo "[$stack] transient error (attempt $ATTEMPT/3) — retrying in 15s..."; sleep 15; continue
               fi
               echo "$OUTPUT" | tail -50; echo "[$stack] FAILED (exit $EXIT)"
