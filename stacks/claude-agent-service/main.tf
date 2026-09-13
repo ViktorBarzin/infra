@@ -1089,6 +1089,18 @@ resource "kubernetes_cron_job_v1" "fixer_tick" {
   }
 
   spec {
+    # OVERNIGHT FREEZE, 2026-09-13 (Viktor). Set back to false to resume.
+    # Committed so an unattended Woodpecker apply cannot re-arm the fixer while
+    # the authentik cleanup is outstanding. During the outage the embedded
+    # outpost Deployment took 11 pod-template writes between 23:59:10 and
+    # 00:57:10, and NINE of them came from
+    # system:serviceaccount:claude-agent:claude-agent (apiserver audit log) —
+    # each one opening another window where a pod was in Service Endpoints
+    # before its proxy bound :9000. This tick is the dispatcher for that
+    # identity's autonomous repair runs. Narrowing its RBAC is bead code-7u62
+    # and needs Viktor's call on scope; this is the reversible hold until then.
+    # Plan: https://pages.viktorbarzin.me/2026-09-13-authentik-outage-recovery.html
+    suspend                       = true
     schedule                      = "*/2 * * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 1
