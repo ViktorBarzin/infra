@@ -444,7 +444,7 @@ locals {
     # that Cc'd plans@ was never fetched and left no inbound_emails row at all
     # (a Wizz return, 2026-09-12). Reply-all with plans@ in Cc is a shape Viktor
     # actually uses, so the filter has to see it.
-    IMAP_SEARCH            = "OR TO \"plans@viktorbarzin.me\" CC \"plans@viktorbarzin.me\""
+    IMAP_SEARCH = "OR TO \"plans@viktorbarzin.me\" CC \"plans@viktorbarzin.me\""
   }
 }
 
@@ -1048,8 +1048,8 @@ module "ingress" {
   ]
   extra_annotations = {
     "gethomepage.dev/description" = "Self-hosted travel itinerary planner"
-    "gethomepage.dev/icon" = "mdi-airplane-takeoff"
-    "gethomepage.dev/name" = "TripIt"
+    "gethomepage.dev/icon"        = "mdi-airplane-takeoff"
+    "gethomepage.dev/name"        = "TripIt"
   }
 }
 
