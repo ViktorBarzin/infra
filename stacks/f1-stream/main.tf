@@ -135,8 +135,32 @@ resource "kubernetes_deployment" "f1-stream" {
   }
   spec {
     replicas = 1
+    # RollingUpdate with NO surge, which at one replica behaves exactly as
+    # Recreate did and is simply the conventional spelling.
+    #
+    # A surge was the first plan and cannot be scheduled. Two f1-stream pods
+    # alive at once need 14,500 of the 14,000 `viktorbarzin.me/gpumem` budget
+    # advertised on k8s-node1, where 13,300 is already declared (claude-memory
+    # 5,000, frigate 2,800, immich-machine-learning 2,500, immich-worker 1,500,
+    # this pod 1,200, android-emulator 300). The second pod would sit Pending
+    # and the rollout would stall. Measured 2026-09-13; it is admission control
+    # rather than real memory, since the T4 holds 15,360 MiB and 8,070 was in
+    # use at the time.
+    #
+    # A second, independent reason: TokenRefreshManager._active_streams, the
+    # extraction lock and the report-dead debounce maps are all per-process, so
+    # two pods would let a viewer take /streams from one and have /activate
+    # land on the other, which holds no record of that stream and would never
+    # refresh its CDN token.
+    #
+    # What removes the gap instead is the persisted stream list the app now
+    # reads at boot (backend/stream_cache_store.py).
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate"
+      rolling_update {
+        max_surge       = 0
+        max_unavailable = 1
+      }
     }
     selector {
       match_labels = {
@@ -247,6 +271,41 @@ resource "kubernetes_deployment" "f1-stream" {
           port {
             container_port = 8000
           }
+          # READINESS ONLY, DELIBERATELY NO LIVENESS PROBE. A liveness probe
+          # that misfires kills a working pod, and with one replica nothing is
+          # left serving while the replacement warms -- a blank we would have
+          # caused ourselves. Measured over 30 days to 2026-09-13, 177 distinct
+          # f1-stream pods reported a maximum container restart count of 0, so
+          # a hung process is not a failure this service has produced.
+          #
+          # /health/ready answers on whether a full extract-and-verify pass has
+          # finished in THIS process, not on whether there are streams to serve.
+          # On 2026-09-11 an extraction genuinely found nothing for an hour, and
+          # a gate waiting for a stream would have held that rollout open until
+          # it timed out and rolled back. /health keeps meaning "this process is
+          # alive" and is what the Anubis allow-list names.
+          #
+          # At one replica this closes no gap on its own; what it buys is that
+          # the Service drops the endpoint honestly instead of serving an empty
+          # list, and that `kubectl rollout status` means something. It matters
+          # most on a first boot, or after an outage long enough that the
+          # persisted stream list has aged past its freshness window.
+          readiness_probe {
+            http_get {
+              path = "/health/ready"
+              port = 8000
+            }
+            # A cold pod defers its first extraction 8s (backend/main.py), then
+            # spends 13-60s extracting and verifying. 5s initial + 5s period x
+            # 24 failures allows just over two minutes before the pod is called
+            # broken, which covers the slowest run measured (60.5s) with room
+            # for a race weekend's fuller set.
+            initial_delay_seconds = 5
+            period_seconds        = 5
+            timeout_seconds       = 3
+            failure_threshold     = 24
+            success_threshold     = 1
+          }
           # Signs the admin session cookie. Unset, the app issues and accepts
           # nothing rather than signing with a guessable key.
           env {
@@ -270,6 +329,20 @@ resource "kubernetes_deployment" "f1-stream" {
           env {
             name  = "DISCORD_CHANNELS"
             value = var.discord_f1_channel_ids
+          }
+          # Announces a television taking a different build, to the same
+          # #alerts webhook the source-guard already carries in this namespace.
+          # optional=true so the pod starts before the guard's ExternalSecret
+          # has synced; the app logs the line instead of posting it when unset.
+          env {
+            name = "TV_SLACK_WEBHOOK"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-guard-secrets"
+                key      = "slack_webhook"
+                optional = true
+              }
+            }
           }
           # Replays feature (app repo ADR-0002). optional=true so the pod still
           # starts before the Reddit app credentials exist; the app treats missing
