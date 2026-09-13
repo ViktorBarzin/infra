@@ -1216,6 +1216,59 @@
           ARGS="--collector.textfile.directory=/var/lib/node_exporter/textfile"
       notify: restart node-exporter
 
+    # Per-cgroup IO accounting, 2026-09-13.
+    #
+    # The kernel was already counting: the `io` controller is delegated into
+    # system.slice and user.slice, so every cgroup carries a populated io.stat.
+    # What was missing was anyone reading it, so "which service wrote those
+    # 2 TB" had no answer past the whole-disk total. Measured that day, over
+    # 56.7 days of uptime: 2,124 GB written box-wide, of which user-1002 467 GB,
+    # user-1000 349 GB and containerd 111 GB.
+    #
+    # DefaultIOAccounting adds the other half: systemd surfaces the counters as
+    # unit properties, so `systemctl show <unit> -p IOReadBytes -p IOWriteBytes`
+    # answers directly, and units whose parent does not already delegate `io`
+    # get the controller too. It applies to units started after a daemon-reexec.
+    - name: Account for IO on every unit
+      ansible.builtin.copy:
+        src: files/devvm/50-devvm-io-accounting.conf
+        dest: /etc/systemd/system.conf.d/50-devvm-io-accounting.conf
+        mode: "0644"
+        owner: root
+        group: root
+      notify: reexec systemd
+
+    # Counters in sysfs have no history and no attribution once a cgroup dies,
+    # so they are sampled into the textfile collector every 30 s. The script's
+    # own docstring carries the measurements and the reason it accumulates
+    # rather than snapshots.
+    - name: Install the cgroup IO exporter
+      ansible.builtin.copy:
+        src: files/devvm/cgroup-io-export
+        dest: /usr/local/bin/cgroup-io-export
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Install the cgroup IO exporter units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - cgroup-io-export.service
+        - cgroup-io-export.timer
+      notify: reload systemd
+
+    - name: Enable the cgroup IO exporter timer
+      ansible.builtin.systemd_service:
+        name: cgroup-io-export.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
     - name: Enable node_exporter
       ansible.builtin.systemd_service:
         name: prometheus-node-exporter
@@ -1469,6 +1522,13 @@
       no_log: true
 
   handlers:
+    # DefaultIOAccounting is a manager-level setting, so a reload is not
+    # enough: systemd has to re-execute to pick it up. It is a re-exec of PID 1
+    # and not a reboot, so nothing running is disturbed.
+    - name: reexec systemd
+      ansible.builtin.command: systemctl daemon-reexec
+      changed_when: true
+
     - name: restart ssh
       ansible.builtin.systemd_service:
         name: ssh

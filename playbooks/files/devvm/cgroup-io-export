@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Export per-cgroup block IO to node_exporter's textfile collector.
+
+Why this exists
+---------------
+The kernel already counts IO per cgroup: the `io` controller is delegated on
+this box, so every cgroup has an `io.stat` with real byte and IOP counters.
+Nothing was reading them, so "which service wrote those 2 TB" had no answer
+beyond the whole-disk total.
+
+Why it ACCUMULATES rather than snapshotting
+-------------------------------------------
+`io.stat` counters live and die with the cgroup. When a transient unit exits,
+systemd removes its cgroup and the kernel rolls its counters up into the
+parent, where the attribution is gone. Measured on devvm 2026-09-13:
+`docker.slice` reported 33.3 GB written while its live scopes held 1.4 GB, and
+`system.slice` reported 854.8 GB against 279.6 GB across its named children.
+So most of the volume belongs to cgroups that no longer exist.
+
+A plain snapshot would keep losing that. Instead this keeps a per-path running
+total in a state file, adds each sample's delta to it, and treats a counter
+that went backwards as a recreated cgroup (charge the whole current value).
+A timer unit therefore accumulates under its own name across runs rather than
+resetting to zero and vanishing into its parent.
+
+What it still cannot see: a cgroup that is created and destroyed entirely
+between two samples. Catching those needs a cgroup-release hook, which is a
+different mechanism and is not worth its complexity here.
+
+Cost, measured on devvm 2026-09-13: 86 cgroups, a full sysfs sweep in 0.03 s
+at 2.5 MB peak.
+
+Deploy to /usr/local/bin/cgroup-io-export. Declared in playbooks/devvm.yml.
+Stdlib only, no runtime pip: this runs every 30 s and a package install on a
+hot path is the anti-pattern that broke the status-page pusher.
+"""
+
+import json
+import os
+import pwd
+import sys
+import tempfile
+import time
+
+CGROUP_ROOT = "/sys/fs/cgroup"
+STATE_PATH = "/var/lib/cgroup-io-export/state.json"
+OUT_PATH = "/var/lib/node_exporter/textfile/cgroup_io.prom"
+
+# Only cgroups that have moved this many bytes in total are emitted, so a few
+# hundred idle scopes do not each cost four Prometheus series.
+MIN_BYTES = 16 * 1024 * 1024
+
+FIELDS = (("rbytes", "read_bytes"), ("wbytes", "written_bytes"),
+          ("rios", "read_ios"), ("wios", "write_ios"))
+
+
+def root_device():
+    """major:minor of the device backing /, as io.stat spells it."""
+    st = os.stat("/")
+    return f"{os.major(st.st_dev)}:{os.minor(st.st_dev)}"
+
+
+def backing_devices(dev):
+    """The root device plus whatever it sits on, so LVM and its PV both count.
+
+    io.stat charges the same IO to both the dm device and the physical one it
+    maps to. Reading only the dm device would miss anything issued straight to
+    the disk; reading both and preferring the dm number keeps one figure per
+    cgroup without double counting.
+    """
+    devs = [dev]
+    major, minor = dev.split(":")
+    slaves = f"/sys/dev/block/{major}:{minor}/slaves"
+    try:
+        for name in os.listdir(slaves):
+            try:
+                with open(f"/sys/class/block/{name}/dev") as fh:
+                    devs.append(fh.read().strip())
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return devs
+
+
+def parse(path, devs):
+    """Return the first matching device's counters from one io.stat."""
+    try:
+        with open(path) as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return None
+    by_dev = {}
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        vals = {}
+        for kv in parts[1:]:
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                try:
+                    vals[k] = int(v)
+                except ValueError:
+                    pass
+        by_dev[parts[0]] = vals
+    for d in devs:
+        if d in by_dev:
+            return by_dev[d]
+    return None
+
+
+def user_label(rel):
+    """Resolve user.slice/user-1002.slice to a username, else empty."""
+    for part in rel.split("/"):
+        if part.startswith("user-") and part.endswith(".slice"):
+            try:
+                return pwd.getpwuid(int(part[5:-6])).pw_name
+            except (ValueError, KeyError):
+                return ""
+    return ""
+
+
+def unescape_systemd(value):
+    """systemd writes `-` in a slice name as `\\x2d`, so the cgroup path reads
+    `system-t3\\x2dserve.slice`. Decode it, or every label needs mental
+    translation and a PromQL matcher has to carry a double backslash."""
+    out = []
+    i = 0
+    while i < len(value):
+        if value[i] == "\\" and value[i:i + 2] == "\\x" and i + 4 <= len(value):
+            try:
+                out.append(chr(int(value[i + 2:i + 4], 16)))
+                i += 4
+                continue
+            except ValueError:
+                pass
+        out.append(value[i])
+        i += 1
+    return "".join(out)
+
+
+def escape(value):
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "")
+
+
+def load_state():
+    try:
+        with open(STATE_PATH) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def write_atomic(path, text):
+    """node_exporter reads the directory continuously, so a partial file would
+    be scraped as truncated. Rename is the only safe way in."""
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".cgroup-io-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def main():
+    devs = backing_devices(root_device())
+    state = load_state()
+    last = state.get("last", {})
+    total = state.get("total", {})
+
+    seen = {}
+    for dirpath, _dirnames, filenames in os.walk(CGROUP_ROOT):
+        if "io.stat" not in filenames:
+            continue
+        vals = parse(os.path.join(dirpath, "io.stat"), devs)
+        if not vals:
+            continue
+        rel = os.path.relpath(dirpath, CGROUP_ROOT)
+        if rel == ".":
+            rel = "/"
+        seen[rel] = vals
+
+    for rel, vals in seen.items():
+        prev = last.get(rel, {})
+        acc = total.setdefault(rel, {})
+        for key, _name in FIELDS:
+            cur = vals.get(key, 0)
+            was = prev.get(key, 0)
+            # A counter that went backwards means the cgroup was recreated
+            # under the same path, so the whole current value is new.
+            delta = cur - was if cur >= was else cur
+            acc[key] = acc.get(key, 0) + delta
+
+    state = {"last": seen, "total": total}
+    os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+    write_atomic(STATE_PATH, json.dumps(state))
+
+    out = []
+    for key, name in FIELDS:
+        metric = f"cgroup_io_{name}_total"
+        unit = "Bytes" if key.endswith("bytes") else "IO operations"
+        out.append(f"# HELP {metric} {unit} charged to this cgroup for the "
+                   f"root block device, accumulated across cgroup lifetimes.")
+        out.append(f"# TYPE {metric} counter")
+        for rel, acc in sorted(total.items()):
+            if max(acc.get("rbytes", 0), acc.get("wbytes", 0)) < MIN_BYTES:
+                continue
+            out.append(
+                f'{metric}{{cgroup="{escape(unescape_systemd(rel))}",'
+                f'user="{escape(user_label(rel))}",'
+                f'live="{"1" if rel in seen else "0"}"}} {acc.get(key, 0)}')
+
+    out.append("# HELP cgroup_io_export_timestamp_seconds Unix time of the "
+               "last successful export, for staleness alerting.")
+    out.append("# TYPE cgroup_io_export_timestamp_seconds gauge")
+    out.append(f"cgroup_io_export_timestamp_seconds {time.time():.0f}")
+    out.append("# HELP cgroup_io_export_cgroups Number of cgroups tracked.")
+    out.append("# TYPE cgroup_io_export_cgroups gauge")
+    out.append(f'cgroup_io_export_cgroups{{state="live"}} {len(seen)}')
+    out.append(f'cgroup_io_export_cgroups{{state="known"}} {len(total)}')
+
+    write_atomic(OUT_PATH, "\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:  # noqa: BLE001 - a timer unit, log and fail loudly
+        print(f"cgroup-io-export: {exc}", file=sys.stderr)
+        sys.exit(1)
