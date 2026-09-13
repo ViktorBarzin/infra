@@ -1821,7 +1821,7 @@ serverFiles:
               severity: warning
             annotations:
               summary: "devvm is stalled on disk {{ $value | humanizePercentage }} of the time — every session on the box is frozen"
-              description: "This is what users report as the machine being unusable, and it is not a CPU problem: on 2026-09-12 the affected user's slice read cpu.pressure 0.00 against io.pressure 73.93. Find who is generating it: homelab metrics query 'devvm_slice_pressure_ratio{resource=\"io\"}' shows it per user slice. Check whether the cap or the device is the limit, and expect the device: since iops_rd went to 1200 the guest has hit 100% utilisation at only 201 reads/s, nowhere near its ceiling, so the old advice of raising the cap usually will not apply. Compare the two sides: guest node_disk_io_time_seconds_total{job=\"devvm\",device=\"dm-0\"} against the host dm-217 for the same window. Guest saturated while the host is not means the cap; both saturated means the spindle, and etcd shares it. Compare the two sides: guest read latency in node_disk_read_time_seconds_total{job=\"devvm\"} against the host's own sdc. If the guest is far slower than the host, the cap is the constraint rather than the spindle."
+              description: "This is what users report as the machine being unusable, and it is not a CPU problem: on 2026-09-12 the affected user's slice read cpu.pressure 0.00 against io.pressure 73.93. Find who is generating it: homelab metrics query 'devvm_slice_pressure_ratio{resource=\"io\"}' shows it per user slice. Check whether the cap or the device is the limit, and expect the device: the guest has hit 100% utilisation at only 201 reads/s against a 400 cap it reaches in 0.8% of 5-minute samples, so the old advice of raising the cap usually will not apply. Compare the two sides: guest node_disk_io_time_seconds_total{job=\"devvm\",device=\"dm-0\"} against the host dm-217 for the same window. Guest saturated while the host is not means the cap; both saturated means the spindle, and etcd shares it. Compare the two sides: guest read latency in node_disk_read_time_seconds_total{job=\"devvm\"} against the host's own sdc. If the guest is far slower than the host, the cap is the constraint rather than the spindle."
           # DevvmIOSchedulerNotBFQ WAS HERE, and is deleted rather than
           # inverted. BFQ went on sda on 2026-09-12 to make the cgroup IOWeight
           # values do something, and was reverted the same evening because it
@@ -1846,13 +1846,53 @@ serverFiles:
           # io.weight on the user slices is inert again. Per-user IO fairness
           # does not exist on this box. blk-iocost is the way to get it back
           # and needs a calibrated cost model, which nobody has measured yet.
-          # NOT ADDED YET, deliberately: a per-user IO stall alert on
-          # devvm_slice_pressure_ratio{resource="io"}. The metric starts today,
-          # so there is no history to derive a threshold from, and a guessed
-          # threshold is how an alert becomes noise nobody reads. Two anchors
-          # for whoever sets it: emo's slice read 0.7393 during the 2026-09-12
-          # incident and 0.0102 an hour after the fix. Re-derive against a week
-          # of data, the way the sdc rules above were set against measured p99s.
+          - alert: DevvmUserIOStarved
+            # The gap DevvmIOStalled above cannot close. That rule watches the
+            # whole guest, so it fires when the box is stalled and says nothing
+            # about WHO is stalled or whose work caused it. On 2026-09-12 the
+            # per-slice numbers told a different story from the box-wide one:
+            # over 24h emo peaked at 0.921 io pressure against wizard's 0.807,
+            # while holding 2.6 GB to wizard's 22.0 and issuing a seventh of
+            # the reads. The quiet user was suffering more than the loud one,
+            # and nothing was watching for it.
+            #
+            # The conjunction is the whole point. A user stalled on IO while
+            # doing plenty of IO is a user running a build, which is fine and
+            # is most of wizard's day. A user stalled on IO while issuing
+            # almost none is being starved by somebody else, which is the
+            # fairness property this box is supposed to have. 50 reads/s is
+            # under a quarter of the ~200 riops share a user gets when two are
+            # active, so it reads as "not my doing" with room to spare.
+            #
+            # CALIBRATION IS THIN AND THAT IS STATED ON PURPOSE. The per-slice
+            # metric started 2026-09-12, so this was derived from ~100 samples
+            # over roughly 8 hours, not the 14 days behind DevvmIOStalled:
+            #
+            #              for:10m  for:15m       p50     p90     p95
+            #   th=0.40  w 7 / e 3  w 4 / e 2
+            #   th=0.60  w 3 / e 2  w 2 / e 2   w .308  w .856  w .881
+            #   th=0.80  w 2 / e 1  w 1 / e 1   e .031  e .487  e .921
+            #
+            # 0.60/15m before the conjunction is ~2 episodes each across that
+            # window; the read-rate gate is what should take wizard's own
+            # builds out of it. Re-derive after a week, the way the sdc rules
+            # above were set against measured p99s, and check first whether the
+            # gate is silencing real episodes as well as self-inflicted ones.
+            #
+            # `some` not `full` here, unlike DevvmIOStalled, because this is
+            # scoped to one user's slice already. Within a single slice full
+            # means every one of that user's ~1000 tasks was blocked at once,
+            # which is stricter than the question being asked.
+            expr: |
+              (devvm_slice_pressure_ratio{resource="io", user!=""} > 0.60)
+              and on(user)
+              (rate(devvm_slice_io_rios_total{user!=""}[15m]) < 50)
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.user }} is stalled on disk {{ $value | humanizePercentage }} of the time while barely reading — someone else is using their share"
+              description: "This is the fairness guarantee failing rather than the box being busy, so do not treat it as ordinary load. Find who is spending the device: homelab metrics query 'topk(3, rate(devvm_slice_io_rios_total[15m]))'. Then check the reconciler actually divided it: devvm_io_active_users and devvm_io_share_riops should show one share per active user, and /sys/fs/cgroup/user.slice/user-*/io.max should carry those numbers. A share of 0 means it decided one person was alone. Its interval is the worst-case reaction time, so a burst shorter than that is expected to slip through and is not a bug in the split. If the reconciler did its job and a user is still starved, the contention is below the guest: check the host's sdc, which etcd and every other VM share."
       - name: Terminal Lobby
         rules:
           # Added 2026-09-12 with the tmux-api /metrics endpoint. Before it,
@@ -1861,6 +1901,57 @@ serverFiles:
           # on the host. SessionWatchSilent is a dead-man switch on
           # tl-session-watch's journal and T3ProbeLegDown watches the probe leg
           # from inside the cluster, but neither sees the API process itself.
+          - alert: DevvmSlowKeystrokes
+            # Viktor, 2026-09-13: "as soon as a user presses a key and there's
+            # any latency before that key gets typed into their shell. that's
+            # one of the most user-visible indicators something is wrong."
+            #
+            # This is the only signal here measured from the seat rather than
+            # the machine. Every other devvm alert reads a counter on the box;
+            # this one reads the round trip a person actually waits through,
+            # so it can fire while CPU, memory and disk all look fine, and it
+            # can stay quiet while the box looks busy but nobody is typing.
+            #
+            # The measurement is the lobby's own and predates this alert. A
+            # sample is taken only for a lone keystroke into a terminal quiet
+            # for 300ms, an echo slower than 2s counts as unmatched rather
+            # than being guessed at, and a second keystroke arriving before
+            # the echo makes the pairing ambiguous and discards it. Those
+            # three rules are what make the number mean anything on a TUI that
+            # redraws on its own schedule. See terminal-lobby frontend/diag.js.
+            #
+            # TWO GATES, both load-bearing, both from measurement.
+            #
+            # samples >= 5: the rollup carries whatever it collected in its
+            # 60s window, and wizard's median window holds ONE sample. A p95
+            # over one sample is that sample.
+            #
+            # freshness < 5m: nothing in tmux-api ever clears a gauge, and a
+            # browser stops posting the instant its tab is hidden. Measured
+            # 2026-09-13, emo's p95 read 527ms unchanged to the millisecond
+            # across 29 consecutive scrapes covering 145 minutes: one real
+            # measurement and then a frozen number. Without this gate the
+            # alert latches onto a stale reading and never resolves. The
+            # timestamp ships from tmux-api for exactly this.
+            #
+            # 400ms against a measured distribution, gated windows only:
+            # wizard p50 99ms, p90 316ms, p95 748ms over 14 windows. So this
+            # sits just above p90, which is the intent: 100ms feels instant,
+            # 400ms is a visible wait. Calibration is thin, 14 gated windows
+            # rather than a week, and it is deliberately on the sensitive side
+            # because Viktor asked for sensitivity here. Warnings notify once
+            # and then stay quiet, so the cost of being early is low. Re-derive
+            # once a week of gated windows exists.
+            expr: |
+              (tl_echo_latency_p95_ms > 400)
+              and on(user) (tl_echo_latency_samples >= 5)
+              and on(user) (time() - tl_echo_latency_updated_timestamp_seconds < 300)
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.user }} waits {{ $value | printf \"%.0f\" }}ms to see a keystroke appear — typing feels broken to them right now"
+              description: "Someone is sitting in front of this and feeling it, so treat it as live. Check whether it is the box or their link: tl_input_latency_p95_ms is keydown to ws.send and never leaves their device, so input high with echo high is their laptop or network, while input low with echo high is us. If it is us, DevvmIOStalled and DevvmUserIOStarved say whether the disk is the cause and whose work is doing it; homelab metrics query 'devvm_slice_pressure_ratio{resource=\"io\"}' breaks it down per user. A quiet board with slow echo points at the pty path rather than the machine: check ttyd and tmux-api in the devvm journal. The metric only exists while a browser is open and posting, so absence means nobody is typing, not that typing is fast."
           - alert: TerminalLobbyDown
             # The scrape IS the liveness check. /metrics answers 200 with build
             # and uptime even when tmux is unreachable and every session gauge

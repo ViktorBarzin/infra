@@ -162,26 +162,59 @@ emit_metrics() {
 
     echo "# HELP devvm_slice_memory_low_bytes Protected memory floor in force on a slice. 0 means no protection is being applied."
     echo "# TYPE devvm_slice_memory_low_bytes gauge"
-    echo "# HELP devvm_slice_pressure_ratio Share of the last 60s the slice was stalled, from cgroup PSI some avg60."
+    echo "# HELP devvm_slice_pressure_ratio Share of the last 60s SOME task in the slice was stalled, from cgroup PSI some avg60."
     echo "# TYPE devvm_slice_pressure_ratio gauge"
+    echo "# HELP devvm_slice_pressure_full_ratio Share of the last 60s EVERY task in the slice was stalled, from cgroup PSI full avg60. This is the one that means the user is blocked rather than merely busy."
+    echo "# TYPE devvm_slice_pressure_full_ratio gauge"
+    echo "# HELP devvm_slice_io_rios_total Read operations the slice has issued to the root device."
+    echo "# TYPE devvm_slice_io_rios_total counter"
+    echo "# HELP devvm_slice_io_wios_total Write operations the slice has issued to the root device."
+    echo "# TYPE devvm_slice_io_wios_total counter"
     echo "# HELP devvm_slice_memory_swap_fail_total Swapout attempts refused because the slice was at its swap ceiling."
     echo "# TYPE devvm_slice_memory_swap_fail_total counter"
     echo "# HELP devvm_slice_memory_oom_kill_total Processes killed by the kernel inside the slice."
     echo "# TYPE devvm_slice_memory_oom_kill_total counter"
 
-    local d name
+    # The root device as a MAJ:MIN, the same way devvm-io-fairshare.sh derives
+    # it, so the two agree on which disk they are talking about. io.stat lists
+    # sda and dm-0 with near-identical counters; picking one avoids reporting
+    # every read twice.
+    local devnum
+    devnum="$(lsblk -no MAJ:MIN "$(awk '$2=="/"{print $1}' /proc/mounts | head -1)" 2>/dev/null | head -1 | tr -d ' ')"
+
+    local d name uid user labels
     for d in "$CG" "$CG"/user-*.slice /sys/fs/cgroup/system.slice; do
       [[ -d "$d" ]] || continue
       name="${d#/sys/fs/cgroup/}"
-      echo "devvm_slice_memory_low_bytes{slice=\"$name\"} $(cat "$d/memory.low" 2>/dev/null || echo 0)"
+      # A uid is not a name anyone reading Slack at 2am wants to decode, so the
+      # username rides along. Slices that are not a user's get an empty one,
+      # which Prometheus treats the same as absent.
+      uid=""; user=""
+      [[ "$name" =~ user-([0-9]+)\.slice$ ]] && uid="${BASH_REMATCH[1]}"
+      [[ -n "$uid" ]] && user="$(id -nu "$uid" 2>/dev/null || echo "")"
+      labels="slice=\"$name\",user=\"$user\""
+
+      echo "devvm_slice_memory_low_bytes{$labels} $(cat "$d/memory.low" 2>/dev/null || echo 0)"
       local res
       for res in cpu io memory; do
-        local v
+        local v f
         v=$(awk '/^some/{for(i=1;i<=NF;i++) if($i ~ /^avg60=/) {sub(/avg60=/,"",$i); print $i; exit}}' "$d/$res.pressure" 2>/dev/null)
-        [[ -n "${v:-}" ]] && echo "devvm_slice_pressure_ratio{slice=\"$name\",resource=\"$res\"} $(awk -v x="$v" 'BEGIN{printf "%.4f", x/100}')"
+        [[ -n "${v:-}" ]] && echo "devvm_slice_pressure_ratio{$labels,resource=\"$res\"} $(awk -v x="$v" 'BEGIN{printf "%.4f", x/100}')"
+        f=$(awk '/^full/{for(i=1;i<=NF;i++) if($i ~ /^avg60=/) {sub(/avg60=/,"",$i); print $i; exit}}' "$d/$res.pressure" 2>/dev/null)
+        [[ -n "${f:-}" ]] && echo "devvm_slice_pressure_full_ratio{$labels,resource=\"$res\"} $(awk -v x="$f" 'BEGIN{printf "%.4f", x/100}')"
       done
-      echo "devvm_slice_memory_swap_fail_total{slice=\"$name\"} $(awk '/^fail /{print $2; exit}' "$d/memory.swap.events" 2>/dev/null || echo 0)"
-      echo "devvm_slice_memory_oom_kill_total{slice=\"$name\"} $(awk '/^oom_kill /{print $2; exit}' "$d/memory.events" 2>/dev/null || echo 0)"
+      if [[ -n "$devnum" && -r "$d/io.stat" ]]; then
+        awk -v dn="$devnum" -v lb="$labels" '$1==dn{
+          for (i=1;i<=NF;i++) {
+            if ($i ~ /^rios=/) r=substr($i,6)
+            if ($i ~ /^wios=/) w=substr($i,6)
+          }
+          printf "devvm_slice_io_rios_total{%s} %d\ndevvm_slice_io_wios_total{%s} %d\n", lb, r+0, lb, w+0
+          exit
+        }' "$d/io.stat" 2>/dev/null
+      fi
+      echo "devvm_slice_memory_swap_fail_total{$labels} $(awk '/^fail /{print $2; exit}' "$d/memory.swap.events" 2>/dev/null || echo 0)"
+      echo "devvm_slice_memory_oom_kill_total{$labels} $(awk '/^oom_kill /{print $2; exit}' "$d/memory.events" 2>/dev/null || echo 0)"
     done
 
     echo "# HELP devvm_panes_total tmux pane scopes present."
