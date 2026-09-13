@@ -25,6 +25,34 @@
 #     ClusterPodReadyRatioDropped, NodeMemoryPressure, NodeDiskPressure,
 #     KubeQuotaAlmostFull) provides explicit cluster-health gating.
 
+# -----------------------------------------------------------------------------
+# OVERNIGHT FREEZE, 2026-09-13 (Viktor). REMOVE WHEN THE CLEANUP IS DONE.
+# -----------------------------------------------------------------------------
+# Applied live during the authentik forward-auth outage and committed here so an
+# unattended Woodpecker apply cannot quietly undo it. Plan and unfreeze order:
+# https://pages.viktorbarzin.me/2026-09-13-authentik-outage-recovery.html
+#
+# Four nodes carry /var/run/reboot-required (master, node2, node3, node4) and
+# kured's window is 02:00-06:00 Europe/London, which was OPEN when this landed.
+# Two conditions were holding it back by luck rather than intent: no
+# /sentinel/gated-reboot-required existed, and ClusterCannotTolerateNonGpuNodeLoss
+# was firing, which sits in kured's own --alert-filter-regexp block list. Both
+# can clear on their own.
+#
+# Flip to false to unfreeze. Do that only AFTER the outpost has a readiness probe
+# (bead code-f1zd) and the four pending reboots are being done deliberately, one
+# node at a time, master last.
+variable "frozen" {
+  type        = bool
+  default     = true
+  description = "Overnight freeze after the 2026-09-13 auth outage: keeps kured and its sentinel gate off every node so no reboot happens unattended. Flip to false to resume."
+}
+
+locals {
+  # A label no node carries, so the DaemonSets schedule nowhere.
+  freeze_node_selector = var.frozen ? { "kured-frozen-2026-09-13" = "true" } : {}
+}
+
 resource "kubernetes_namespace" "kured" {
   metadata {
     name = "kured"
@@ -92,7 +120,7 @@ resource "helm_release" "kured" {
       # alerts that would otherwise deadlock kured. alertFilterMatchOnly stays
       # false (default) so the regex marks alerts to IGNORE — every other
       # firing alert blocks. See "Upgrade Gates" group in monitoring stack.
-      prometheusUrl        = "http://prometheus-server.monitoring.svc.cluster.local:80"
+      prometheusUrl = "http://prometheus-server.monitoring.svc.cluster.local:80"
       # INVERTED 2026-09-02 to match-only, which is what the "Upgrade Gates"
       # group above was built for. As an ignore-list this halted every reboot:
       # the list named five alerts against a standing floor of five to eight
@@ -149,6 +177,11 @@ resource "helm_release" "kured" {
     # re-listed here (replicating the chart default exactly) alongside the GPU
     # toleration — kured must still reboot the control-plane AND keep a pod on
     # the GPU-tainted k8s-node1.
+    # FREEZE: merged with the chart default so the DaemonSet matches no node
+    # while var.frozen is true. Setting nodeSelector at all REPLACES the chart
+    # default, so kubernetes.io/os must be restated here.
+    nodeSelector = merge({ "kubernetes.io/os" = "linux" }, local.freeze_node_selector)
+
     tolerations = [
       { key = "node-role.kubernetes.io/control-plane", effect = "NoSchedule" },
       { key = "node-role.kubernetes.io/master", effect = "NoSchedule" },
@@ -237,6 +270,9 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
         }
       }
       spec {
+        # FREEZE: the gate is what creates /sentinel/gated-reboot-required, so
+        # stopping it is the second half of holding kured. Empty when not frozen.
+        node_selector                   = local.freeze_node_selector
         service_account_name            = kubernetes_service_account.kured_sentinel_gate.metadata[0].name
         automount_service_account_token = true
         enable_service_links            = false
