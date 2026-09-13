@@ -38,12 +38,20 @@ set -uo pipefail
 DEVICE_RIOPS="${DEVVM_DEVICE_RIOPS:-400}"
 DEVICE_RBPS="${DEVVM_DEVICE_RBPS:-62914560}"   # 60 MB/s
 DEVICE_WBPS="${DEVVM_DEVICE_WBPS:-62914560}"   # 60 MB/s
-# Bytes in one interval below which a slice counts as idle rather than working.
-# Scales WITH the timer interval: this is a per-interval delta, so when the
-# period went 30s -> 10min the same 4 MB would have called almost everyone
-# active. 40 MB over 10 minutes is 68 kB/s, which is a slice doing nothing much
-# rather than a person working.
-IDLE_FLOOR_BYTES="${DEVVM_IO_IDLE_FLOOR_BYTES:-$((40 * 1024 * 1024))}"
+# The rate below which a slice counts as idle rather than working. 68 kB/s is
+# a slice ticking over rather than a person doing something.
+#
+# A RATE, not a byte count, and that is the fix for a real regression. This
+# used to be a fixed 40 MB per interval, which encoded the timer period into
+# the number: 40 MB over the then-current 10 minutes IS 68 kB/s. When the
+# timer went to 2 minutes on 2026-09-13 the same 40 MB silently became a
+# 333 kB/s test, five times stricter, and the failure is the wrong way round.
+# An idle slice is deliberately left UNCAPPED further down, so a user working
+# without an attached terminal was misread as idle and handed the whole
+# device, while the person sitting at a keyboard got capped. Deriving the
+# floor from the observed period means the timer can be retuned without
+# anybody remembering this line exists.
+IDLE_FLOOR_RATE_BPS="${DEVVM_IO_IDLE_FLOOR_RATE_BPS:-68000}"
 STATE="${DEVVM_IO_FAIRSHARE_STATE:-/run/devvm-io-fairshare.state}"
 TEXTFILE_DIR="${DEVVM_TEXTFILE_DIR:-/var/lib/node_exporter/textfile}"
 DRY_RUN="${DEVVM_IO_FAIRSHARE_DRY_RUN:-0}"
@@ -61,7 +69,20 @@ DEVNUM="$(lsblk -no MAJ:MIN "$(awk '$2=="/"{print $1}' /proc/mounts | head -1)" 
 declare -A prev=()
 [[ -r "$STATE" ]] && while read -r k v; do prev["$k"]="$v"; done < "$STATE"
 
+# The period this run is judging, measured rather than assumed, so a missed
+# run or a retuned timer changes the floor instead of skewing the verdict.
+# Clamped at both ends: a clock jump backwards must not produce a zero floor
+# that calls everyone active, and a long gap (the box was off, the timer was
+# masked) must not produce one so large that nobody ever is.
+now_ts=$(date +%s)
+elapsed=$(( now_ts - ${prev[__ts]:-0} ))
+(( ${prev[__ts]:-0} == 0 )) && elapsed=120
+(( elapsed < 10 )) && elapsed=10
+(( elapsed > 1800 )) && elapsed=1800
+IDLE_FLOOR_BYTES=$(( IDLE_FLOOR_RATE_BPS * elapsed ))
+
 active=(); idle=(); : > "$STATE.tmp"
+echo "__ts $now_ts" >> "$STATE.tmp"
 for d in "$CG"/user-*.slice; do
   [[ -d "$d" ]] || continue
   uid="${d##*/user-}"; uid="${uid%.slice}"
