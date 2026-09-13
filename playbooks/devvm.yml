@@ -490,14 +490,23 @@
     # (114 files, sha256 1f607238a251...) before this landed, because
     # agent-conductor has no other copy in existence.
     #
-    # Masked rather than deleted so the decision is one command from being
-    # reversed. Deleting the files is a separate, later step.
+    # Stopped and disabled rather than deleted, so reversing this is one
+    # command. Deleting the files is a separate, later step.
+    #
+    # NOT masked, and that is deliberate. Masking works by putting a symlink to
+    # /dev/null at a higher-priority path than the unit file, and these unit
+    # files already live in /etc/systemd/system, which is that path. systemd
+    # cannot place the symlink over them, ansible reports `changed` anyway, and
+    # the mask never sticks, so a masked: true here would make every future
+    # --check run report drift that no apply can ever settle. Verified on the
+    # box 2026-09-13: after an apply claiming success, every one of these was
+    # still a regular file and `systemctl is-enabled` read `disabled`, not
+    # `masked`.
     - name: Retire the undeclared evaluation services
       ansible.builtin.systemd_service:
         name: "{{ item }}"
         enabled: false
         state: stopped
-        masked: true
         daemon_reload: true
       loop:
         - acd-demux.service
@@ -505,25 +514,17 @@
         - orca-serve.service
         - orca-xvfb.service
 
-    # Templates and their socket, which take no enabled/state of their own.
-    # The live instance ac-relay@wizard.socket is stopped by masking the
-    # template it is generated from.
-    - name: Retire the agent-conductor relay units
+    # The relay is a template, so the INSTANCE carries the enablement:
+    # /etc/systemd/system/sockets.target.wants/ac-relay@wizard.socket is what
+    # starts it at boot, and stopping the instance does not remove that
+    # symlink. The template ac-relay@.service is `static` and ac-relay@.socket
+    # is `indirect`, so neither takes an enablement of its own and there is
+    # nothing to do to them.
+    - name: Retire the agent-conductor relay instance
       ansible.builtin.systemd_service:
-        name: "{{ item }}"
-        masked: true
-      loop:
-        - ac-relay@.service
-        - ac-relay@.socket
-
-    - name: Stop the live agent-conductor relay instances
-      ansible.builtin.systemd_service:
-        name: "{{ item }}"
+        name: ac-relay@wizard.socket
+        enabled: false
         state: stopped
-      loop:
-        - ac-relay@wizard.socket
-        - ac-relay@wizard.service
-      failed_when: false
 
     # multipathd ships enabled by default and this VM presents no multipath
     # devices: `multipath -ll` returns nothing. It holds 18.8 MiB for that.
