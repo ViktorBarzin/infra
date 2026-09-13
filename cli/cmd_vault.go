@@ -30,6 +30,8 @@ func vaultCommands() []Command {
 			Summary: "[vaultwarden] fetch one login: vault get <name> [--field password|username|uri|notes|totp] [--json] [--all]", Run: vaultGet},
 		{Path: []string{"vault", "search"}, Tier: TierRead,
 			Summary: "[vaultwarden] search your item names: vault search <query>", Run: vaultSearch},
+		{Path: []string{"vault", "put"}, Tier: TierWrite,
+			Summary: "[vaultwarden] create/update one login: vault put <name> (--from-kv <path>#<key> | --password-stdin)", Run: vaultPut},
 		{Path: []string{"vault", "code"}, Tier: TierRead,
 			Summary: "[vaultwarden] current TOTP code for an item: vault code <name>", Run: vaultCode},
 		{Path: []string{"vault", "lock"}, Tier: TierWrite,
@@ -61,7 +63,18 @@ func vaultHelp() string {
   homelab vault get <name> --all  all fields (incl. custom) as JSON; piped only.
                                   TOTP shown as presence flag — use 'vault code' for a code.
   homelab vault code <name>       current TOTP code
+  homelab vault put <name> --from-kv <path>#<key>   create a login, password
+                                  taken from the infra KV store (never printed)
+  homelab vault put <name> --password-stdin         same, password piped in
+                                  --username U --uri URL --note TEXT --field N=V
+                                  --totp SEED   set the other fields
+                                  --update      change an item that exists
+                                                (without it, a name clash errors)
   homelab vault lock              lock / log out the local bw session
+
+Moving a value the OTHER way — password manager into the infra KV store — needs
+no verb, the two existing ones pipe:
+  homelab vault get <name> | homelab vault kv put secret/<path> <key>
 
 ── HashiCorp Vault / OpenBao  (infra secrets; uses your own OIDC vault token) ──
   homelab vault kv get <path>               the secret's key names (NO values)

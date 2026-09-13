@@ -25,6 +25,12 @@ homelab vault list [--search Q]  item names (no secrets)
 homelab vault get <name> [--field password|username|uri|notes|totp] [--json]
 homelab vault get <name> --all  all fields (incl. custom) as JSON; pipe it (| jq)
 homelab vault code <name>       current TOTP code
+homelab vault put <name> --from-kv <path>#<key>   create a login whose password
+                                comes from the infra KV store (never printed)
+homelab vault put <name> --password-stdin         same, password piped in
+                                --username U --uri URL --note TEXT
+                                --field N=V --totp SEED   the other fields
+                                --update    change an item that already exists
 homelab vault lock              lock / log out the local bw session
 
 # HashiCorp Vault / OpenBao (infra secrets; uses your own OIDC token)
@@ -113,6 +119,62 @@ path.
    homelab vault status       # → "vault: configured, unlocked, reachable ✓"
    homelab vault list         # item names (own vault + any shared Collections)
    ```
+
+## Writing a login (`homelab vault put`)
+
+Added 2026-09-13 for [infra#94](https://forgejo.viktorbarzin.me/viktor/infra/issues/94).
+Before it, the CLI could read Vaultwarden and write only the HashiCorp side, so
+moving a credential into the password manager meant copy-paste from the web UI
+or a script that prompted for the master password on every run.
+
+```bash
+# create, password taken from the infra KV store
+homelab vault put "Вермонт панели (admin)" --username admin \
+  --uri http://192.168.1.150:81 \
+  --note "Шестте входни панела и NVR-ът." \
+  --from-kv secret/emo/vermont-panels#password
+
+# create, password piped in (or typed at a no-echo prompt on a TTY)
+printf '%s' "$PW" | homelab vault put "Some Login" --password-stdin
+
+# rotate the password of an item that already exists
+homelab vault put "Вермонт панели (admin)" --update \
+  --from-kv secret/emo/vermont-panels#password
+```
+
+`<path>#<key>` and `<path>/<key>` both address one KV key, matching
+`vault kv get`.
+
+Behaviour worth knowing:
+
+- **A name that already exists is refused** unless `--update` is passed, so a
+  mistyped name cannot overwrite a working credential. Two items sharing a name
+  are refused either way — rename one in the web UI first.
+- **`--update` changes only what you pass.** Fields you leave out keep their
+  current values, and the item's folder, favourite flag, collections and
+  password history survive the round trip.
+- **Custom fields are written hidden**, so the web UI masks them the way it
+  masks a password. `--field NAME=VALUE` puts the value in `argv`, where any
+  process of the same UID can read it while the command runs; the command says
+  so on stderr and names the alternative, `--field-from-kv NAME=<path>#<key>`,
+  which reads it from the KV store instead. The same pair exists for a TOTP
+  seed (`--totp` / `--totp-from-kv`). The password never travels in argv on
+  either path.
+- **Two tokens, in order.** `--from-kv` reads the HashiCorp store with the
+  caller's OWN Vault token, and that read happens before the CLI swaps in the
+  scoped `workstation-claude-<user>` token for the Vaultwarden session. The
+  scoped token has `deny` outside `secret/workstation/claude-users/<user>`, so
+  resolving in the other order would 403 on every real path.
+
+The other direction — a password-manager item into the infra KV store — needs
+no verb, because the two existing ones pipe:
+
+```bash
+homelab vault get "Some Login" | homelab vault kv put secret/emo/some-login password
+```
+
+`vault get` writes the value to stdout when stdout is not a terminal, and
+`vault kv put` reads its value from stdin, so nothing is printed anywhere.
 
 ## Shared-Collection access (sharing passwords with a user)
 

@@ -147,6 +147,22 @@ func capabilities() []capability {
 			},
 		},
 		{
+			Intent:  "save a password into the password manager, or onto my phone",
+			Use:     "homelab vault put <name> --from-kv secret/<path>#<key>",
+			Instead: "copy-pasting it out of the Vault web UI, or a one-off script that asks for the master password",
+			Synonyms: []string{"save", "store", "write", "put", "add", "password manager",
+				"vaultwarden", "bitwarden", "phone", "mobile", "credential", "login",
+				"move a secret", "share a password", "on my phone"},
+			Detail: []string{
+				"Creates the login; --update changes one that exists (a name clash errors).",
+				"--username U --uri URL --note TEXT --field N=V --totp SEED  the other fields",
+				"--field-from-kv N=<path>#<key>  keeps the value out of argv, unlike --field",
+				"The value is never printed, and never reaches argv on the password path.",
+				"Other direction (password manager → infra KV) needs no verb, it pipes:",
+				"  homelab vault get <name> | homelab vault kv put secret/<path> <key>",
+			},
+		},
+		{
 			Intent:  "start, land, or clean up work on a task",
 			Use:     "homelab work start <topic>  /  homelab work land  /  homelab work clean",
 			Instead: "git worktree add / git push HEAD:master / git worktree remove by hand",
