@@ -1211,6 +1211,53 @@
       when: docker_key.changed or docker_source.changed or retired_sources.changed
       tags: aptsource
 
+    # ---- root filesystem mount options -------------------------------------
+    # Measured 2026-09-13, and both halves of this had drifted because the
+    # value was declared NOWHERE in this repository, only described in prose.
+    # An undeclared default and an erased setting look identical from the
+    # repo, which is exactly how this happened.
+    #
+    # commit: ext4 flushes its journal every `commit` seconds, default 5.
+    # node1/node2/node3/master ran 60; node4 and node5 ran 30, so they
+    # committed twice as often as their peers. node5 is the heaviest writer
+    # on the box and its journal thread alone (jbd2/sda1-8) writes 39.5 GB/day
+    # onto the shared sdc spindle, so the cadence is not free.
+    #
+    # discard: node4 and node5 carried it, the other four did not, and
+    # fstrim.timer is enabled on all six. So those two were running
+    # CONTINUOUS TRIM on top of a weekly batch job. Measured on node5 over
+    # 47.8 days: 16,541,765 discard operations covering 8,774 GB, 183.5 GB/day,
+    # against exactly zero on node1. Each one is a request that reaches the
+    # thin pool and dirties its metadata. Dropping it aligns node4 and node5
+    # with the four nodes that have run without it all along, and fstrim
+    # still reclaims weekly.
+    #
+    # Unlike the kubelet and containerd settings above, this one is applied
+    # live: a remount is instant and restarts nothing.
+    #
+    # The regexp rewrites only the OPTIONS field. It has to, because the two
+    # node families spell the device differently: node1/2/3/master use
+    # `UUID=...` separated by spaces, node4/node5 use `LABEL=cloudimg-rootfs`
+    # separated by tabs. Matching the whole line would need two patterns and
+    # would silently miss a third spelling on a future node.
+    - name: The root filesystem mounts with the same options on every node
+      ansible.builtin.replace:
+        path: /etc/fstab
+        # [ \t] not \s throughout: \s matches a NEWLINE, and with ansible's
+        # multiline matching a trailing \s*$ swallowed the final newline of
+        # /etc/fstab on the four nodes that were already correct, which made
+        # the task report changed on every run forever. Caught by --check.
+        regexp: '^(\S+[ \t]+/[ \t]+ext4[ \t]+)\S+([ \t]+\d+[ \t]+\d+)'
+        replace: '\1errors=remount-ro,commit=60\2'
+      register: root_mount_opts
+      tags: fstab
+
+    - name: Apply them now rather than waiting for a reboot
+      ansible.builtin.command: mount -o remount,commit=60,nodiscard /
+      when: root_mount_opts.changed
+      changed_when: true
+      tags: fstab
+
     # ---- what the operator still has to do --------------------------------
     - name: Say plainly that nothing is live yet
       ansible.builtin.debug:
