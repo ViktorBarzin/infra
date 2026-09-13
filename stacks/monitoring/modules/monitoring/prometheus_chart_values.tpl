@@ -6513,7 +6513,7 @@ serverFiles:
               severity: warning
             annotations:
               summary: "f1-stream /metrics has returned nothing for 30m — every F1 stream alert is now blind"
-              description: "Prometheus has no f1_extraction_last_run_timestamp_seconds series at all, so F1AllSourcesDry, F1ExtractionStalled, F1SourceStale and F1SourceExtractionErroring are all evaluating nothing. Either the f1-stream pod is down (ScrapeTargetDown says so too), /metrics moved, or Anubis started challenging the scrape. Confirm with `homelab k8s status f1-stream` and a direct `curl f1.f1-stream.svc.cluster.local/metrics` from in-cluster."
+              description: "Prometheus has no f1_extraction_last_run_timestamp_seconds series at all, so F1AllSourcesDry, F1ExtractionStalled, F1SourceStale, F1SourceExtractionErroring and F1ExtractionNotResolving are all evaluating nothing. Either the f1-stream pod is down (ScrapeTargetDown says so too), /metrics moved, or Anubis started challenging the scrape. Confirm with `homelab k8s status f1-stream` and a direct `curl f1.f1-stream.svc.cluster.local/metrics` from in-cluster."
           # The extraction loop itself stopping. Distinct from every source
           # failing: the sources look frozen at their last values rather than
           # empty, so nothing above notices while the site quietly serves
@@ -6608,6 +6608,53 @@ serverFiles:
             annotations:
               summary: "f1-stream extractor for {{ $labels.source }} has been raising for 2h"
               description: "This source's last four extraction attempts ended in an exception rather than returning a (possibly empty) list, so the site has lost it entirely. Unlike an empty result, this is wrong in any season — pitsport returning nothing between race weekends is normal, pitsport throwing is not. That is the exact 2026-09-05 failure: pitsport moved to /v1/live-now and 404'd the paths the extractor still asked for. Read the traceback in the f1-stream pod logs before assuming the upstream is down."
+          # The gap the three rules above leave: a source that finds F1,
+          # recognises it, and still ends the run with nothing. Every rule so
+          # far reads the END of the funnel — served, cached, or an exception —
+          # and at the end those are all 0 whether the upstream had nothing,
+          # our F1 detector rejected everything, or resolution failed. All
+          # three look like a quiet Sunday.
+          #
+          # Added 2026-09-13, the day the middle stage broke and nothing said
+          # so. streamed.pk changed its `language` field from
+          # "English - Sky Sports F1" to a bare "English"; the series regex had
+          # only ever been matching the broadcaster's brand, so both English
+          # feeds of the Spanish GP stopped being recognised as Formula 1 and
+          # the site served one aceztrims channel through a live race. sum() was
+          # 1, not 0, so F1AllSourcesDry stayed quiet; F1SourceStale watches
+          # aceztrims alone; the extractor raised nothing. Viktor noticed by
+          # looking at the page.
+          #
+          # Metric contract (backend/metrics.py, f1-stream): the funnel is
+          # measured at two points per source. f1_extraction_discovered is what
+          # the upstream offered before any series filtering — always non-zero
+          # for streamed, whose motorsport endpoint carries NASCAR and rally
+          # year-round. f1_extraction_matched is how many of those the
+          # extractor recognised as F1 and tried to serve. Neither is
+          # zero-filled: an extractor that does not report its funnel emits no
+          # series rather than a standing 0, so this rule only ever speaks for
+          # sources that actually measure themselves.
+          #
+          # Why match and not discovered. `discovered > 0 and cached == 0` is
+          # equally an ordinary Tuesday — five NASCAR candidates, no F1, cache
+          # correctly empty — and would fire most days of the year until
+          # someone muted it. `matched > 0` is only true when we believe F1 is
+          # there, which makes the rule silent between race weekends without
+          # needing a calendar gate.
+          #
+          # 2h = 4 idle cycles, matching F1SourceExtractionErroring. Resolution
+          # leans on a shared chrome-fleet lease and a third-party embed host,
+          # so single-cycle failures are expected and must not page.
+          - alert: F1ExtractionNotResolving
+            expr: |
+              f1_extraction_matched > 0
+              and on(source) f1_streams_cached == 0
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream found {{ $value }} F1 stream(s) from {{ $labels.source }} and could not turn any of them into a playable one for 2h"
+              description: "Discovery and F1 detection both worked — this source recognised Formula 1 — and nothing reached the cache, so the failure is in resolution: the browser capture returned no playlist, or every candidate resolved to something unplayable. Check `homelab logs query '{namespace=\"f1-stream\"} |= \"yielded a playlist\"'` for the capture's own count, then whether chrome-fleet is leasing (`homelab k8s status chrome-service`). A dead embed host after a session ends is the benign case and clears itself; four consecutive cycles during a race weekend is not. Compare f1_extraction_discovered against f1_extraction_matched to rule out a detection problem instead."
           - alert: F1RelayUpstreamFailing
             # Added 2026-09-11, when AnubisChallengeStoreErrors was narrowed to
             # 500 and stopped reporting these. /relay and /proxy fetch segments
