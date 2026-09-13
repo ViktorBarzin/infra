@@ -6,3 +6,11 @@
 # A personal skill of the same name would shadow the bundled one, so it has to
 # stay uninstalled rather than merely unused.
 code-review
+
+# Viktor replaced /implement with his own skill of the same name, 2026-09-13.
+# His version opens a worktree, runs the build and a 3-reviewer loop as one
+# Workflow (CRITICAL/MAJOR/NIT, up to 5 rounds), and ends with a screenshot or
+# pasted live output. `implement` is in upstream's promoted set, so without
+# this line the nightly run reinstalls matt's copy straight over it.
+# Skill lives in ~/.claude/skills/implement/, deliberately not provisioned.
+implement
