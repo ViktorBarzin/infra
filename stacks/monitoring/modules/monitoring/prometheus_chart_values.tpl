@@ -1815,8 +1815,41 @@ serverFiles:
             # utilisation fires constantly and teaches everyone to ignore it.
             # PSI stall asks whether the saturation is actually hurting anyone,
             # which is the only version of the question worth paging on.
-            expr: rate(node_pressure_io_stalled_seconds_total{job="devvm"}[10m]) > 0.60
-            for: 10m
+            #
+            # SHORTENED 10m/10m -> 2m/2m on 2026-09-13, because the rule only
+            # described episodes that had already lasted about twenty minutes.
+            # Viktor asked for the shorter freezes to alert too. The threshold
+            # is unchanged at 0.60 and still sits between p95 (0.52) and p99
+            # (0.78) measured over the 7 days to 2026-09-13; what changed is
+            # how long the box has to stay there.
+            #
+            # The 2m rate window depends on the 30s scrape pinned on the devvm
+            # job above. At the old 2m scrape a [2m] window holds one sample
+            # and evaluates to nothing, so the two changes only work together.
+            #
+            # Backtested over the 7 days to 2026-09-13, episodes per week
+            # (an episode is one Slack pair under alert-on-change):
+            #
+            #   [10m] rate, 0.60, for 10m   11   the rule as it stood
+            #   [5m]  rate, 0.60, for 2m    35   same change, no keep_firing_for
+            #   ... with keep_firing_for 5m 28
+            #   ... with keep_firing_for 10m 21
+            #   ... with keep_firing_for 15m 19   chosen
+            #   ... with keep_firing_for 20m 16
+            #
+            # [5m] is the finest window backtestable against 2m-scraped data,
+            # so those counts are a floor: once 30s sampling sharpens the peaks
+            # the real rate will be somewhat higher. Re-derive after a week
+            # rather than assuming this held.
+            #
+            # keep_firing_for carries most of the value here. Without it this
+            # signal crosses 0.60 repeatedly inside one bad patch and each
+            # crossing costs a firing and a resolved message; 15m merges those
+            # into one episode and lands close to the old volume while still
+            # reacting in about four minutes instead of twenty.
+            expr: rate(node_pressure_io_stalled_seconds_total{job="devvm"}[2m]) > 0.60
+            for: 2m
+            keep_firing_for: 15m
             labels:
               severity: warning
             annotations:
@@ -6831,7 +6864,18 @@ extraScrapeConfigs: |
   # root-cause work had NO memory/IO-pressure history for the very box whose
   # stalls fire every t3 client's watchdog. Pressure/swap/load here is the
   # primary correlate for t3probe drop events.
+  #
+  # Pinned to 30s rather than inheriting the 2m global (2026-09-13). PSI is a
+  # cumulative counter, so a short freeze is not lost at 2m, but it is averaged
+  # down: 60 seconds of total stall reads 0.20 over the 10m rate window
+  # DevvmIOStalled used, which is below the p90 of 0.30 and so cannot be
+  # separated from an ordinary busy patch. At 30s the rate window can drop to
+  # 2m, where the same 60 seconds reads 0.50 and is distinguishable. Cost
+  # measured before the change: 3460 series move from 29 to 115 samples/s,
+  # about +10% on Prometheus's 890/s, against a TSDB at 38.8 GB of its 180 GB
+  # retention cap. Five other jobs in this file already run at 30s.
   - job_name: 'devvm'
+    scrape_interval: 30s
     static_configs:
       - targets:
         - "10.0.10.10:9100"
