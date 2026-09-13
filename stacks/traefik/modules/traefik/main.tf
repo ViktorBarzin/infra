@@ -1142,13 +1142,60 @@ resource "kubernetes_config_map" "auth_proxy_config" {
           client_header_buffer_size 8k;
           large_client_header_buffers 8 64k;
 
+          # RETRY ONCE BEFORE SURRENDERING THE WHOLE ESTATE TO BASIC AUTH.
+          # This location decides, for EVERY request to EVERY auth="required"
+          # host, whether the user is signed in. It had a single upstream peer,
+          # no proxy_next_upstream and no retry, so ONE refused connect became
+          # an Emergency Access challenge everywhere at once.
+          #
+          # That is not theoretical. On 2026-09-13 the outpost Deployment was
+          # rewritten 11 times between 23:59 and 00:57. It carries no readiness
+          # probe (and rolls maxUnavailable 25%), so each rewrite put a pod into
+          # Service Endpoints seconds before the Go proxy bound :9000. Every one
+          # of those windows dropped the estate to Basic auth, at up to 86
+          # fallback responses per minute across 45 hosts. The tell that it was a
+          # half-up backend rather than a dead one: 200 and 401 interleaved for
+          # the same host within the same second.
+          #
+          # A retry costs one extra connect on a path that is already failing,
+          # and the ClusterIP load-balances, so the second attempt lands on the
+          # other endpoint in almost every case.
           location /outpost.goauthentik.io/auth/traefik {
               proxy_pass http://authentik;
               proxy_http_version 1.1;
               proxy_set_header Connection "";
               proxy_connect_timeout 3s;
-              proxy_read_timeout 5s;
-              proxy_send_timeout 5s;
+              # 5s was too tight for this cluster's worst case. Measured the same
+              # night: authentik Postgres took 1.74s for a trivial SET and the
+              # login executor 3.71s, while etcd fsync p99 sat at 1.63s on a disk
+              # at 80-90% utilisation. A slow outpost tripped the read timeout,
+              # 504 was in the same error_page list as a dead backend, and every
+              # protected host degraded to Basic auth at 1-2 responses a minute
+              # with the outpost perfectly healthy and 2/2 Ready.
+              proxy_read_timeout 15s;
+              proxy_send_timeout 15s;
+              proxy_intercept_errors on;
+              # Refused or unavailable is worth one more attempt; a timeout is
+              # not, since retrying a slow backend only makes the user wait
+              # twice. Both still end at @fallback_auth if they keep failing.
+              error_page 502 503 = @retry_auth;
+              error_page 504 = @fallback_auth;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+          }
+
+          # Second and final attempt. Identical to the location above except that
+          # every failure here goes to the fallback: no third try, no loop.
+          location @retry_auth {
+              proxy_pass http://authentik;
+              proxy_http_version 1.1;
+              proxy_set_header Connection "";
+              proxy_connect_timeout 3s;
+              proxy_read_timeout 15s;
+              proxy_send_timeout 15s;
               proxy_intercept_errors on;
               error_page 502 503 504 = @fallback_auth;
               proxy_set_header Host $host;
