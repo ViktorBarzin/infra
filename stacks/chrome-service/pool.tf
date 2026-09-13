@@ -66,7 +66,17 @@ resource "kubernetes_deployment" "worker_warm" {
             protocol       = "TCP"
           }
           readiness_probe {
-            tcp_socket { port = 9222 }
+            # httpGet, NOT tcpSocket: cdp_bridge.py binds :9222 seconds before
+            # Chrome finishes coming up on :9223, so a tcpSocket probe marks the
+            # pod Ready while a CDP request still gets "Server disconnected
+            # without sending a response" (the broker then hands out a worker
+            # that can't serve). /json/version only 200s once Chrome truly
+            # serves CDP through the bridge (infra#95). Keep in sync with
+            # files/broker/worker_pod.json.
+            http_get {
+              path = "/json/version"
+              port = 9222
+            }
             initial_delay_seconds = 3
             period_seconds        = 3
             failure_threshold     = 30

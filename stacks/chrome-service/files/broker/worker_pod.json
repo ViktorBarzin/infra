@@ -49,7 +49,7 @@
         ],
         "ports": [{"name": "cdp", "containerPort": 9222}],
         "readinessProbe": {
-          "tcpSocket": {"port": 9222},
+          "httpGet": {"path": "/json/version", "port": 9222},
           "initialDelaySeconds": 3,
           "periodSeconds": 3,
           "failureThreshold": 30
