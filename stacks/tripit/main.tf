@@ -775,6 +775,31 @@ locals {
       suspend   = false
       extra_env = {}
     }
+    # Segment Watchers (tripit ADR-0059): re-send the iTIP invitation for every
+    # Watcher whose Segment moved or whose flight was delayed, and cancel the
+    # ones that are gone. Without this the feature only ever sends the FIRST
+    # invitation, and the promise in that mail ("if the flight changes, you will
+    # get an updated copy") is not kept.
+    #
+    # Every 15 minutes, matching run-reminders: a Watcher is typically someone
+    # collecting the traveller, so a delay reaches them in the same quarter-hour
+    # the poller sees it. Cost is bounded by the standing Watcher population
+    # rather than by traffic, and a sweep with nothing to say sends nothing --
+    # the worker compares a fingerprint of the rendered event, so an edit to a
+    # field the event does not carry is silent.
+    #
+    # SMTP_* and EMAIL_PROVIDER come from app_env, SMTP_PASSWORD from the
+    # tripit-secrets ES, exactly as the API's own send path uses them, so a
+    # correction leaves by the route the first invitation did.
+    watcher-sync = {
+      schedule  = "*/15 * * * *"
+      command   = ["python", "-m", "tripit_api", "watcher-sync"]
+      suspend   = false
+      extra_env = {}
+      # A sweep is seconds; bound it so a hung run cannot block later ones
+      # under concurrency_policy=Forbid (same reasoning as ingest-plans).
+      active_deadline_seconds = 600
+    }
     # Forward-to-parse — the SOLE ingest channel: forward any booking
     # confirmation to plans@viktorbarzin.me (which the @viktorbarzin.me catch-all
     # delivers into the spam@ mailbox). The realtime listener is the normal
