@@ -679,6 +679,41 @@ repository, keeping `scripts/vzdump-vms.sh` in place. That keeps it one command
 from coming back and matches the principle that drove the decision, rather than
 deleting a script and leaving the box and the repo disagreeing.
 
+## What shipped on 2026-09-13, and what it measured
+
+Five changes landed. The results are separated into what is verified and what
+is not, because most of the night's encouraging numbers did not survive
+contact with the 7-day distribution.
+
+| change | commit | verified outcome |
+|---|---|---|
+| Retire the undeclared agent-conductor and Orca services on devvm | `1a4ddf46`, `7e19701c` | 6 units stopped and disabled, `--check` a clean no-op, the "no copy anywhere" set went from 6 units to 0 |
+| Per-cgroup IO accounting and an accumulating exporter on devvm | `41491cb4`, `9bff0c05` | 155 series in Prometheus every 30 s, `DefaultIOAccounting=yes` |
+| PVE host journald into RAM | `0dc01ee3` | `pve-root` 30.0 → 8.5 writes/s, 3.9 GB reclaimed, journal still shipping to Loki |
+| Root mount options declared for the k8s nodes | `50fcf48b` | all six at `commit=60`; `discard` retired from node4 and node5, about 2.4M ops/week → 61,000 in one 20-second Monday batch |
+| Disk discard and service-time metrics collected | `a7862078` | the series exists for the first time; node5 frozen at 16,541,865, node1 at 0 |
+
+Plus an etcd cleanup that needed no code: 45,301 orphaned kyverno ephemeral
+reports deleted, then compact and defrag. The database went from 504 MB to
+122.9 MB and from 56,297 keys to 11,182, with zero control-plane restarts.
+
+**What is not verified, and matters most.** sdc's write IOPS read 232.4/s as a
+7-day p50 before all of this and 230.7/s after. The individual gains total
+roughly 26 of 232 IOPS, about 11%, which sits inside the noise of that
+comparison. etcd remains about 53.5 writes/s, roughly 23% of sdc's writes, and
+the CNPG cluster with MySQL accounts for most of the rest. Those are databases
+doing real work rather than waste, which is a different and harder problem
+than the dead reports and the redundant TRIM that this night removed.
+
+**A methodological note worth keeping.** Two claims were made and withdrawn in
+the same session. node5 appeared to fall from 134.2 to 8.1 GB/day, which was an
+above-p99 sample compared against a p50 one; its true 7-day distribution is p50
+9.0, p90 24.1, p99 121.5, max 225.5. etcd appeared to halve on five 60-second
+samples measured against an 8.8-day average. Prometheus held 26 weeks of the
+data needed to catch both, and it was not consulted first. Match the metric to
+the change as well: retiring `discard` and raising `commit` reduce operations
+rather than bytes, so GB/day could never have shown either.
+
 ## How we will know it worked
 
 - Per-user `io.pressure` avg60 on devvm below 10 during normal work. It read
