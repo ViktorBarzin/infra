@@ -697,8 +697,35 @@ Plus an etcd cleanup that needed no code: 45,301 orphaned kyverno ephemeral
 reports deleted, then compact and defrag. The database went from 504 MB to
 122.9 MB and from 56,297 keys to 11,182, with zero control-plane restarts.
 
-**What is not verified, and matters most.** sdc's write IOPS read 232.4/s as a
-7-day p50 before all of this and 230.7/s after. The individual gains total
+**What is not verified, and matters most.** A controlled comparison over the 24
+hours after the changes, against the 6 days before them, shows no separable
+effect on write volume. sdc's write IOPS went 257.3/s to 205.9/s and its read
+await 12.9 ms to 9.2 ms, but sdc's *reads* fell 29% over the same window and
+nothing in this work touches reads, so the cluster was simply quieter.
+
+The control makes it plain. Write volume per VM disk, 6 days before against the
+24 hours after:
+
+| VM disk | before | after | change | changed? |
+|---|---|---|---|---|
+| node4 | 24.0 GB/d | 27.6 | **+15%** | yes |
+| node5 | 16.5 GB/d | 8.8 | −47% | yes |
+| node1 | 11.2 GB/d | 8.3 | −26% | no |
+| node2 | 36.0 GB/d | 17.7 | −51% | no |
+| node3 | 20.2 GB/d | 7.5 | −63% | no |
+| devvm | 29.9 GB/d | 8.2 | −73% | no |
+
+The untouched disks fell further than the changed ones and node4 rose, so the
+mount-option work has no measurable effect on write volume. `pve-root` fell 75%
+after the journald change, which is the largest single move, but the control
+range reaches −73%, so even that is not separable on 24 hours of data.
+
+What remains true are the counters and sizes rather than the rates: 16,541,765
+discard operations replaced by one 20-second weekly batch, an etcd database of
+122.9 MB where there was 504 MB, and 3.9 GB of journal no longer on the
+spindle. Those are not load-dependent.
+
+The earlier figure quoted here, 232.4/s before and 230.7/s after, The individual gains total
 roughly 26 of 232 IOPS, about 11%, which sits inside the noise of that
 comparison. etcd remains about 53.5 writes/s, roughly 23% of sdc's writes, and
 the CNPG cluster with MySQL accounts for most of the rest. Those are databases
