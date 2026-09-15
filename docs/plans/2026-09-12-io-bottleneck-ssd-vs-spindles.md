@@ -528,7 +528,7 @@ measurement, and it was in the host journal the whole time.
 seconds. On the PVE host those lines are frequent, and every sampled one is
 over eleven seconds:
 
-| | |
+| stall duration | |
 |---|---|
 | samples examined | 5,000 (query cap) |
 | minimum | 11.0 s |
