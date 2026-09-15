@@ -598,10 +598,15 @@ through the raw API, which the apiserver serves server-side; `kubectl delete
 -l` lists and then deletes one object at a time and was roughly fifty times
 slower for the same work.
 
+Result after compaction and defrag on 2026-09-15: **124 MB, 11,483 keys, 0%
+of the file unused**, against 488 MB and 47,732 keys that morning. The defrag
+took 3.1 seconds and the apiserver stayed ready throughout.
+
 One honest caveat: production had already stopped at 00:01:40 that day, nine
 hours before the change, at the same second as the leader-election losses
 above. The change makes it structurally impossible rather than having caught
-it mid-flow.
+it mid-flow. Whether it holds is the thing to check tomorrow, since the
+2026-09-13 sweep looked identical at this point and did not.
 
 ### Moving the journal to RAM broke the host's log shipping
 
