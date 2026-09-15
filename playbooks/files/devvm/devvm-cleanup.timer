@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily Docker disk garbage collection
+Description=Daily devvm disk cleanup
 
 [Timer]
 OnCalendar=*-*-* 04:00:00

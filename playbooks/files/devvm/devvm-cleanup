@@ -1,0 +1,96 @@
+#!/bin/bash
+# The devvm's one cleanup job. Everything with an expiry policy lives here.
+#
+# It replaces docker-disk-gc, which only ever pruned three of Docker's four
+# object types. One timer rather than one per cache is a deliberate choice:
+# the schedules were identical anyway, and a single unit means one log, one
+# failure to notice, and one place to add the next thing that grows.
+#
+# Sized against what was measured on 2026-09-15, when the root filesystem was
+# 190 GB of 223 GB used. The code on the box was 10.4 GB of that. Everything
+# below is either regenerable or compressible.
+set -uo pipefail
+
+KEEP_AGE="${KEEP_AGE:-24h}"        # docker objects
+UV_MAX_AGE_DAYS="${UV_MAX_AGE_DAYS:-30}"
+
+avail_kb() { df --output=avail / | tail -1; }
+gib() { awk -vk="$1" 'BEGIN { printf "%.2f", k/1024/1024 }'; }
+step() { echo "  --- $* ---"; }
+
+echo "[$(date -Is)] devvm-cleanup start (docker keep=${KEEP_AGE}, uv keep=${UV_MAX_AGE_DAYS}d)"
+before=$(avail_kb)
+echo "  before: $(df -h / | awk 'NR==2 {print $3" used, "$4" free, "$5}')"
+
+# ---------------------------------------------------------------- docker ----
+# Volumes are the addition. docker-disk-gc pruned containers, images and the
+# builder cache and left volumes alone, so anonymous volumes from removed
+# containers accumulated untouched: 84 of 85 were dangling on 2026-09-15.
+#
+# `docker volume prune` only removes volumes no container references, running
+# or stopped, so a named volume in use is never a candidate. It takes no
+# `until` filter, which is why it has no age argument here.
+step docker
+if command -v docker >/dev/null 2>&1; then
+  docker container prune -f --filter "until=${KEEP_AGE}" 2>&1 | sed 's/^/    /'
+  docker image     prune -a -f --filter "until=${KEEP_AGE}" 2>&1 | sed 's/^/    /'
+  docker builder   prune -f --filter "unused-for=${KEEP_AGE}" 2>&1 | sed 's/^/    /'
+  docker volume    prune -f 2>&1 | sed 's/^/    /'
+else
+  echo "    docker not installed, skipped"
+fi
+
+# ------------------------------------------------------------- uv cache ----
+# uv keeps every wheel it has ever downloaded and prunes nothing on its own.
+# wizard's was 20.2 GB. Measured by last-access time: zero bytes older than
+# 90 days, so a 90-day policy would be a no-op, and roughly 12 GB older than
+# 30, which is the window chosen.
+#
+# Deleting a cached file is safe even while a venv uses it. uv hardlinks out
+# of the cache rather than copying (705,847 files carried more than one link
+# here), so removing the cache path drops one link and the venv's own link
+# keeps the data alive. That same hardlinking is why `du` and a `find` sum
+# disagree on this directory: `find` counts every link.
+#
+# `uv cache prune` afterwards drops entries the age pass left dangling. Both
+# run as the owning user so cache permissions stay intact.
+step "uv cache"
+for home in /home/*; do
+  u=$(basename "$home")
+  id "$u" >/dev/null 2>&1 || continue
+  [ -d "$home/.cache/uv" ] || continue
+  sz_before=$(du -sx "$home/.cache/uv" 2>/dev/null | awk '{printf "%.1f", $1/1048576}')
+  find "$home/.cache/uv" -type f -atime +"$UV_MAX_AGE_DAYS" -delete 2>/dev/null
+  find "$home/.cache/uv" -type d -empty -delete 2>/dev/null
+  su -s /bin/bash -c 'command -v uv >/dev/null 2>&1 && uv cache prune' "$u" >/dev/null 2>&1
+  sz_after=$(du -sx "$home/.cache/uv" 2>/dev/null | awk '{printf "%.1f", $1/1048576}')
+  echo "    ${u}: ${sz_before:-0} GB -> ${sz_after:-0} GB"
+done
+
+# ------------------------------------------------- t3 state backups --------
+# t3-backup-state already keeps only KEEP=6 generations per user, so this is
+# not a retention problem. It is a size one: each state.sqlite is ~2.4 GB, so
+# six of them is 14.2 GB for one user.
+#
+# They compress 6.6x (measured on a 10 MB sample), so gzipping is worth more
+# than halving the rollback window would be. The NEWEST generation is left
+# uncompressed on purpose, so the copy most likely to be restored needs no
+# extra step under pressure.
+step "t3 state backups"
+if [ -d /var/backups/t3-state ]; then
+  for d in /var/backups/t3-state/*/; do
+    [ -d "$d" ] || continue
+    find "$d" -maxdepth 1 -name '*.sqlite' -printf '%T@ %p\n' 2>/dev/null \
+      | sort -rn | tail -n +2 | cut -d' ' -f2- \
+      | while read -r f; do gzip -6 "$f" 2>/dev/null || true; done
+  done
+  # SQLite rollback journals left behind by an interrupted copy; the live DB
+  # is never touched here, so a stray zero-length journal is just litter.
+  find /var/backups/t3-state -name '*-journal' -size -1k -delete 2>/dev/null
+  echo "    $(du -sh /var/backups/t3-state 2>/dev/null | cut -f1) after compression"
+fi
+
+after=$(avail_kb)
+echo "  after:  $(df -h / | awk 'NR==2 {print $3" used, "$4" free, "$5}')"
+echo "  freed:  $(gib $((after - before))) GiB"
+echo "[$(date -Is)] devvm-cleanup done"
