@@ -1,7 +1,9 @@
 # Relieving the IO bottleneck on the Proxmox host
 
-Status: draft. Decisions agreed in session on 2026-09-12. Revised 2026-09-13
-after four measurements landed, one of which changed the ordering.
+Status: executing. Decisions agreed in session on 2026-09-12. Revised
+2026-09-13 after four measurements landed, one of which changed the ordering,
+and again on 2026-09-15 when a symptom measurement replaced write volume as
+the way to judge the work.
 
 ## Summary
 
@@ -378,7 +380,11 @@ fitted, which the backplane supports without a reboot
 devvm holds the irreplaceable local state on this host: three home directories
 totalling 115 GB, local-only git repositories, and a monorepo root with no
 remote. Removing `vzdump` removes the one-shot bare-metal restore, so the
-decision rests on everything else being declared and committed.
+decision rests on everything else being declared and committed. The
+replacement path, clone Proxmox template 1000, run `playbooks/devvm.yml`,
+restore `/home` from `devvm-home-backup`, was validated end to end on
+2026-08-29 against a fresh VM, with all six services up and all eight
+verification probes passing.
 
 **That premise is partly true today, and the measurement is worth recording.**
 `ansible-playbook --check --diff` against the live box returns `ok=84
@@ -445,240 +451,6 @@ Recommended form: mask the timer, declare the disabled state in the repository,
 and keep `scripts/vzdump-vms.sh` in place, so it is one command from coming
 back and the box and the repo agree.
 
-## Which directories devvm reads
-
-Measured with `bpftrace` on 2026-09-12, two windows, correlating
-`mm_filemap_add_to_page_cache` back to the enclosing readahead call so the
-figures are bytes actually fetched rather than bytes requested. Overall
-overstatement between the two is 1.18x, and the inflated entries are all worth
-tenths of a percent, so the ranking is unaffected.
-
-**The working set moves, and that is the finding.** Two windows 45 minutes
-apart:
-
-| tree | 23:06 window, 13 min | 23:52 window, 4 min |
-|---|---|---|
-| `/home/wizard/.rustup` | absent | **38.4%** |
-| `/home/emo/.claude` | 22.6% | 31.7% |
-| `/var/lib/docker` | 2.0% | 16.0% |
-| `/var/lib/containerd` | 0.7% | 5.7% |
-| `/home/wizard/.local` | 12.2% | 4.3% |
-| `/home/wizard/code` | **32.1%** | 2.4% |
-| `/usr/bin/terraform` | 20.5% | absent |
-
-Whichever agents happen to be running decides the shape, so sizing against one
-window understates it. Sizing against the union of both:
-
-| tree | size |
-|---|---|
-| `/home/wizard/code` | 10.91 GB |
-| `/var/lib/docker` | 6.49 GB |
-| `/home/wizard/.local` | 3.83 GB |
-| `/home/wizard/.claude` | 3.49 GB |
-| `/var/lib/containerd` | 2.27 GB |
-| `/usr/bin` | 1.77 GB |
-| `/home/wizard/.rustup` | 1.26 GB |
-| `/home/wizard/.cargo` | 0.68 GB |
-| `/home/emo/.claude` | 0.29 GB |
-| **total** | **30.99 GB** |
-
-**Volume size: 32 GB floor, 48 GB comfortable.** That lands on the earlier
-estimate of roughly 27 GB of hot data rather than contradicting it.
-`/home/wizard/.cache` stays on spinning disk: about 43 GB for 0.17% of reads,
-the worst ratio on the box.
-
-Three other measurements from the same run:
-
-- Two thirds of read IOs are 4 KiB random metadata, and 223 of 226 one-GiB
-  regions of the disk were touched in 13 minutes. The access pattern is
-  scattered, which is the case flash serves well and a spindle serves worst.
-- PSI `io full avg10` read 76.28 during the window, so the box was genuinely
-  blocked on IO rather than merely busy.
-- **23:00 UTC is near devvm's daily peak, not a quiet hour.** Its load tracks
-  agent activity rather than office hours: 13:00 to 23:00 UTC runs 1.3 to
-  4.0 MB/s, and 05:00 to 10:00 UTC runs 5 to 33 KB/s. The 7-day mean is
-  523 kB/s, or 45.2 GB/day.
-
-This also settles the choice between explicit placement and a cache. A
-writethrough cache costs flash writes in proportion to its write hit rate, and
-the same rig measured that a **shifting** working set restarts promotion in
-bursts and roughly doubles that ratio against a stable one. devvm's working set
-shifts hard, so explicit directory placement is both cheaper in wear and more
-predictable here.
-
-## The 850 EVO's wear, measured
-
-From `smartctl -A -d sat+megaraid,4 /dev/sdc`.
-
-| attribute | raw | reading |
-|---|---|---|
-| `Wear_Leveling_Count` | 61 | normalized 97, so 3% of the P/E budget used |
-| `Total_LBAs_Written` | 83,598,075,428 | 42.80 TB written, 28.5% of the 150 TBW rating |
-| `Power_On_Hours` | 19,581 | 816 days, across 6,420 power cycles of which 732 unclean |
-| `Reallocated_Sector_Ct` | 0 | no bad blocks, reserve pool untouched, error log empty |
-
-61 P/E cycles for 42.8 TB of host writes gives a real write amplification of
-1.43. 61 cycles costing 3 normalized points implies Samsung rates it near 2,000
-cycles, leaving roughly 1.36 PB of headroom.
-
-| scenario | host writes/yr | years to the 150 TBW warranty | years to the drive's own counter |
-|---|---|---|---|
-| today | 0.19 TB | 380 | ~7,000 |
-| devvm's whole disk on it | 13.4 TB | 4.0 | ~101 |
-
-The two readings differ by a factor of 25. Both are shown because the honest
-answer sits between them.
-
-What constrains this drive is not wear. It is a single device with no
-power-loss protection, in a server that bead `code-xgcg` records hard-dying in
-an outage, and it has already logged 732 unclean power cycles.
-
-## Flash wear from a cache is a dial, not a fixed cost
-
-Measured on this stack with loopback rigs, dm_cache v2.2.0, LVM 2.03.16.
-
-**SSD bytes written divided by application bytes written equals the dm-cache
-write hit rate, exactly.** Three cache sizes, three exact matches. Writethrough
-never exceeds 1:1.
-
-| behaviour | measured ratio | note |
-|---|---|---|
-| write to an uncached block | 0.013 to 0.014 | misses are not promoted; the data goes to the origin only |
-| write to a cached block | 1.000 | no read-modify-write at chunk granularity; a 20 KiB write puts 20 KiB on flash |
-
-Sizing the cache against a 4.6:1 read-heavy 20 KiB random workload:
-
-| cache vs working set | SSD write ratio | read hit rate | GB/day on flash at devvm's write rate |
-|---|---|---|---|
-| 0.11x | 0.134 | 12% | 4.9 |
-| 0.45x | 0.475 | 48% | 17.4 |
-| 2.2x (fits entirely) | 1.000 | 100% | 36.7 |
-
-Read performance and flash wear move together on a straight line, so the cache
-size is the knob. **A smaller cache does not thrash**: demotions stayed at zero
-in every steady-state pass, including at 8.5x oversubscription. Cold fill costs
-1.02x the cache size once. One caveat: with a working set that shifts rather
-than repeats, promotion restarts in bursts and the ratio roughly doubles.
-
-## The two options, compared
-
-| | idle SSD (850 EVO) | spare enterprise SAS drives |
-|---|---|---|
-| random read IOPS added | ~10,000+ for what it holds | ~150 to 200 per mirror |
-| capacity available | 475 GB unallocated in VG `ssd` | up to 1 TB usable per mirror |
-| bays needed | 0, already fitted | 2 per mirror, 3 free |
-| redundancy | none, single RAID0 VD | RAID1 |
-| wear | 3% consumed, ~1.36 PB left | not a consideration |
-| power-loss protection | none, 732 unclean cycles logged | PERC BBU, status Ready |
-| what it is good for | random re-reads of a small hot set | capacity, endurance, queue isolation |
-
-They are complementary. The SAS drives give a latency-sensitive tenant a queue
-nobody else shares, which is what etcd needs. The SSD serves random re-reads at
-a rate no number of 7200rpm spindles reaches, which is what devvm needs.
-
-## Hardware inventory
-
-PowerEdge R730, service tag GCFSDN2. `racadm storage get enclosures -o` reports
-`SlotCount = 8` for `Enclosure.Internal.0-1` (BP13G+ 0:1, firmware 2.25), and
-`ipmitool sdr elist` shows only BP2 present, so there is no rear flex bay.
-Bays are 3.5 inch LFF, confirmed by `smartctl` reporting
-`Form Factor: 3.5 inches`. Five bays populated, **three free**.
-
-| bay | drive | serial | virtual disk | role |
-|---|---|---|---|---|
-| 0 | ST12000NM007H, 11.7 TB, 7200rpm | ZZ301LW9 | VD2, RAID-1 | `sdc`, VG `pve` |
-| 1 | ST12000NM007H, 11.7 TB, 7200rpm | ZZ301N21 | VD2, RAID-1 | `sdc`, VG `pve` |
-| 2 | ST1200MM0099, 1.2 TB, 10,000rpm | WFK068MP | VD3, RAID-1 | `sda`, VG `backup` |
-| 3 | ST1200MM0099, 1.2 TB, 10,000rpm | WFK04FV2 | VD3, RAID-1 | `sda`, VG `backup` |
-| 4 | Samsung SSD 850 EVO 1TB | S2RFNX0J411986X | VD4, **RAID-0** | `sdb`, VG `ssd` |
-
-Controller state: PERC H730 Mini, 1024 MB cache, BBU `Status Ok, State Ready`,
-`PreservedCache Not Present`, all three VDs Write Back, zero
-unconfigured-good drives and zero hot spares. New virtual disks can be created
-online: `RealtimeConfigurationCapability = Capable`.
-
-Two things worth knowing before ordering carriers or planning a cache.
-
-- **`sdb` is not a non-RAID passthrough.** It is a single-drive RAID-0 virtual
-  disk, so it already sits behind the BBU-backed write cache, and **TRIM does
-  not reach the SSD**. Write amplification is measured at 1.43 today, so this
-  is not biting yet, but it will not improve as the drive fills.
-- **The three free bays are 3.5 inch.** Bays 2 to 4 already use hybrid carriers
-  for 2.5 inch drives. 1 TB enterprise SAS is usually a 2.5 inch part, so this
-  probably needs three more hybrid carriers.
-
-## Decisions taken
-
-| decision | rationale |
-|---|---|
-| etcd stays on spinning disk | Its writes are 94% of its IO. Moving it to flash spends wear on the one workload a read cache cannot help. Isolating it addresses the measured cause, which is queue wait behind neighbours' reads. |
-| Database memory before any hardware | 45.3 read IOPS for a config change, inside RAM the node VMs already hold. |
-| `/srv/nfs` stays on `sdc` | 0.013 IOPS per GB of cache, 76x worse than the best candidate. A 10.7 TB mirror is the right home for 3 TB of sequentially read media. |
-| Anything stateful is mirrored | A single consumer SSD does not hold an authoritative copy. |
-| New storage is thick, no thin pool, no snapshots | Removes copy-on-write amplification on a small mirror. |
-| The new mirror is a shared pool, with IO controls | Per-VM QEMU caps plus a cgroup `io.latency` floor, so sharing does not recreate the contention being removed. |
-| devvm's read cap is removed once it is isolated | The 400 IOPS cap exists only to protect etcd on a shared spindle. |
-| Project directories move to flash, backed by git remotes | Uncommitted work is accepted as losable, so the nightly `/home` rsync does not need extending. |
-| TrueNAS VM 9000 is kept | It is a useful historical snapshot, worth more than the 256 GB of SSD and 2.46 TB of thin pool it holds. |
-| The weekly devvm image backup is disabled, not throttled | Everything on that machine should be declared in configuration and its code committed, which makes a full-image backup redundant rather than merely expensive. A `--bwlimit` would spread 235 GB/week that does not need to be read at all. Costs and residual risk in the section above. |
-| Spindles are held until the free changes are measured | The backup explained most of devvm's apparent read load and the databases are fixable in RAM, so the hardware case should be re-made against post-change numbers. Doing hardware first would also mix several changes into one measurement. |
-| Zero spend holds | Existing hardware, drives already bought, and the hybrid carriers are on hand. Nothing in this plan costs money. |
-
-## Plan
-
-Free and reversible first, hardware last, one change at a time so each stays
-attributable.
-
-| # | change | cost | expected gain | reversible |
-|---|---|---|---|---|
-| 1 | Disable the weekly `vzdump-vms` image backup of devvm | free | removes 235 GB/week and a 466x latency cliff | yes, one timer |
-| 2 | Raise MySQL's InnoDB buffer pool and its pod memory limit | free | up to 29.7 read IOPS, 41% of peak read load | yes |
-| 3 | Raise `pg-cluster-4` `shared_buffers` and its pod limit | free | up to 15.6 read IOPS, the highest re-read on the box | yes |
-| 4 | Re-measure `sdc` read IOPS and per-user `io.pressure` after 48 h | free | establishes what remains, and whether steps 6 to 9 are needed at all | n/a |
-| 5 | Attach a 32 to 48 GB SSD volume for devvm's hottest directories | free | 94% of devvm's reads served from flash, measured | yes |
-| 6 | Fit two spare SAS drives, create a mirrored VD online, new thick VG | 2 bays, carriers on hand | a queue not shared with `sdc` | yes |
-| 7 | Move devvm's disk to the new mirror, remove its read cap | none | devvm stops contending with `/srv/nfs` | yes |
-| 8 | Add per-VM IO caps and a cgroup `io.latency` floor on the new pool | free | makes sharing safe | yes |
-| 9 | Consider moving etcd to a quiet mirror once `sda`'s future is settled | free | removes the last neighbour from the control plane | yes |
-
-**Steps 6 to 9 are held at the gate in step 4.** The backup accounted for most
-of devvm's apparent read load and the two databases are fixable in RAM, so the
-case for new spindles should be re-made against measurements taken after steps
-1 to 3, not against the numbers that opened this document. The drives and their
-hybrid carriers are on hand either way, so holding costs nothing.
-
-Steps 1 to 5 need no chassis access and no downtime. Step 6 needs the drives
-fitted, which the backplane supports without a reboot
-(`RealtimeConfigurationCapability = Capable`).
-
-### What disabling the image backup costs
-
-devvm is the only VM on this host with an image-level backup, and it holds the
-irreplaceable local state: three home directories totalling 115 GB, local-only
-git repositories, and one repository with no remote. Removing `vzdump` removes
-the one-shot bare-metal restore.
-
-The reasoning for removing it anyway is that everything on that box should be
-declared and committed, so the restore path becomes: clone Proxmox template
-1000, run `playbooks/devvm.yml`, restore `/home` from `devvm-home-backup`. That
-path was validated end to end on 2026-08-29 against a fresh VM, all six
-services up and all eight verification probes passing.
-
-What stays covered: `devvm-home-backup` runs daily at 03:30, keeps 14
-hardlinked generations of a ~29 GB tracked set, deliberately includes `~/code`,
-`~/.ssh`, `~/.config` and `~/.claude`, and is pulled by the PVE host rather
-than pushed, so a compromised devvm cannot delete its own backups.
-
-What stops being covered: anything on the box that is neither in `/home` nor
-declared in the playbook. The ongoing proof that this set is empty is that
-`ansible-playbook --check --diff` against the live box returns a no-op. Worth
-re-running before the timer is disabled rather than after.
-
-Recommended form: mask the timer and declare the disabled state in the
-repository, keeping `scripts/vzdump-vms.sh` in place. That keeps it one command
-from coming back and matches the principle that drove the decision, rather than
-deleting a script and leaving the box and the repo disagreeing.
-
 ## What shipped on 2026-09-13, and what it measured
 
 Five changes landed. The results are separated into what is verified and what
@@ -741,6 +513,132 @@ data needed to catch both, and it was not consulted first. Match the metric to
 the change as well: retiring `discard` and raising `commit` reduce operations
 rather than bytes, so GB/day could never have shown either.
 
+## What 2026-09-15 added
+
+Three things came out of a state check on 2026-09-15. One of them changes how
+this plan should be judged.
+
+### The bottleneck has a symptom with a number on it
+
+Until now this plan measured write volume, and write volume turned out not to
+separate the changed machines from the unchanged ones. There is a better
+measurement, and it was in the host journal the whole time.
+
+`pvestatd` logs a line whenever its status update takes longer than five
+seconds. On the PVE host those lines are frequent, and every sampled one is
+over eleven seconds:
+
+| | |
+|---|---|
+| samples examined | 5,000 (query cap) |
+| minimum | 11.0 s |
+| median | 12.0 s |
+| p90 | 13.3 s |
+| maximum | 16.0 s |
+
+A Kubernetes leader-election lease is fifteen seconds. On 2026-09-15 at
+00:01:52 UTC, ten leader-election clients across four nodes gave up their
+leases in the same second: `csi-nfs-controller` on two nodes,
+`proxmox-csi-plugin-controller`, `pvc-autoresizer`, `gpu-operator`,
+`node-feature-discovery`, `tigera-operator` and all three kyverno controllers.
+The host journal has a `pvestatd` stall of 12.634 seconds at 00:01:30 and
+another of 13.613 at 00:01:44, bracketing it.
+
+Daily counts of those stall lines, from Loki:
+
+| day | slow `pvestatd` updates |
+|---|---|
+| 2026-09-08 | 5,000+ (query cap) |
+| 2026-09-09 | 5,000+ |
+| 2026-09-10 | 3,077 |
+| 2026-09-11 | 5,000+ |
+| 2026-09-12 | 5,000+ |
+| 2026-09-13 | 3,615 |
+| 2026-09-14 onward | not measurable, see below |
+
+The matching Prometheus figure is `sdc`'s weighted IO time, which is average
+queue depth. Its daily p99: 18.9, 10.8, 12.3, 40.4, 14.3, 107.9, 24.0 for
+09-08 through 09-14, and 7.0 over the last 24 hours. The last day is below the
+whole week's range, but day-to-day variance is already tenfold, so one day is
+not yet a trend.
+
+What this gives the plan is a target that is not a proxy. The question is no
+longer "did writes go down" but "how often does the host's storage disappear
+for longer than a controller can survive". Both remaining options, moving
+random reads onto flash and spreading IO across more spindles, act directly on
+queue depth.
+
+What it does not give yet is a cause. Host storage is entirely local, three
+Proxmox storages and no NFS, the thin pool is at 69.42% data and 15.88%
+metadata, and `lvs` returns in 0.5 s against 360 logical volumes of which 234
+are snapshots. So the stalls are not a slow metadata walk. They remain
+unexplained.
+
+### The etcd sweep did not hold, and now the producer is off
+
+etcd was swept on 2026-09-13 from 504 MB and roughly 56,000 keys to 123 MB and
+11,841. Forty-two hours later it was at 488 MB and 47,732 keys. The objects
+had been deleted; the thing creating them had not been turned off.
+
+`features.reporting` in the kyverno chart is a separate block from the three
+disabled on 2026-06-12 and 2026-06-28. It defaults to every value enabled and
+it is what builds the `--enableReporting` flag, so the background controller
+was running with `validate,mutate,mutateExisting,imageVerify,generate`
+regardless of the other switches. The result, measured on 2026-09-15: 1,121
+`clusterephemeralreports` created every hour on the hour, 26,904 a day, every
+one labelled `audit.kyverno.io/source=background-scan`, owned by a Namespace,
+and produced by `generate-limitrange-by-tier` and
+`generate-resourcequota-by-tier`. With the reports controller disabled nothing
+aggregated them and nothing reaped them.
+
+Turned off at the source in `06b5fa91`. Both controllers now run
+`--enableReporting=` empty. The 33,391 cluster-scoped and 3,453 namespaced
+reports already on disk were cleared with one `DELETECOLLECTION` per namespace
+through the raw API, which the apiserver serves server-side; `kubectl delete
+-l` lists and then deletes one object at a time and was roughly fifty times
+slower for the same work.
+
+One honest caveat: production had already stopped at 00:01:40 that day, nine
+hours before the change, at the same second as the leader-election losses
+above. The change makes it structurally impossible rather than having caught
+it mid-flow.
+
+### Moving the journal to RAM broke the host's log shipping
+
+The 2026-09-13 change that made the PVE journal volatile deleted
+`/var/log/journal`, which is where promtail was reading. Its `journal:` block
+carried no `path:`, so it fell back to the persistent directory, found nothing
+and stopped. The last line Loki holds from this host is journald's own
+`Journal stopped` at 2026-09-13T21:26:41Z.
+
+Nothing alerted. It surfaced two days later, while chasing the leader-election
+losses above: the host journal had a `pvestatd` entry for the exact second and
+Loki had nothing within thirty-six hours of it. Two days of host history are
+gone, because volatile means volatile.
+
+Fixed in `8ed84d1f`, which points the path at `/run/log/journal` and adds a
+note to the playbook task that makes the journal volatile, so the dependency
+is written down. Verified by content rather than by exit status: 1,872 real
+journal lines reached Loki in the ten minutes after the restart.
+
+The general lesson is worth keeping. A change that moves where data lives has
+to account for everything reading it from the old place, and a silent reader
+is the dangerous kind. This one removed the instrument that the org rules say
+to reach for first, during the exact days this plan was using it.
+
+### Two observations not acted on
+
+`nut-driver@huaweiups` on the PVE host has restarted 48,866 times and has
+never started successfully. It retries roughly every sixteen seconds and
+writes about 2,371 journal lines an hour. A UPS driver that never starts means
+there is no UPS monitoring, which connects to the open issue about the server
+hard-dying in a power outage. Power handling was left to the owner.
+
+The host also runs `snoopy`, which logs every `execve`. Combined with the
+`nut-driver` loop it is most of the 1,872 lines per ten minutes now reaching
+Loki. It costs no disk, since the journal is in RAM, but it is real ingest and
+one observed line contained a Home Assistant bearer token in plain text.
+
 ## How we will know it worked
 
 - Per-user `io.pressure` avg60 on devvm below 10 during normal work. It read
@@ -749,10 +647,21 @@ rather than bytes, so GB/day could never have shown either.
   against 289 in the preceding thirty.
 - For step 1 specifically: `sdc` r_await during the Sunday 01:00 window stays
   under 10 ms, against the 107.26 ms measured on 2026-09-13.
+- **The primary measure, added 2026-09-15: `pvestatd` stall lines per day
+  reaching zero**, from thousands a day across 09-08 to 09-13. This is the
+  symptom the whole plan exists to remove, it is counted rather than
+  estimated, and it does not depend on write volume separating the changed
+  machines from the unchanged ones, which it did not. Query:
+  `{job="pve-journal"} |~ "status update time"`.
+- Alongside it, `sdc` weighted IO time p99 below 10 on every day rather than
+  on one. Its daily p99 ranged 10.8 to 107.9 across the week to 09-14.
 
 Baseline before step 1, and re-measure after each numbered step rather than at
 the end. The 2026-09-08 etcd work sized itself against a single anomalous day
 and overstated its own effect, which is the mistake this sequencing avoids.
+The same mistake was made again on 2026-09-13 and 2026-09-14, repeatedly, by
+reading single windows as trends; the daily tables above exist so that a
+distribution is visible rather than a point.
 
 ## Open questions
 
@@ -785,6 +694,19 @@ and overstated its own effect, which is the mistake this sequencing avoids.
 6. **Does the missing TRIM passthrough matter over time?** Measured write
    amplification is 1.43 today with the drive 20% full. It is worth re-reading
    `Wear_Leveling_Count` after any cache goes in.
+7. **What actually stalls the host for eleven to sixteen seconds?** Added
+   2026-09-15. Storage is entirely local, the thin pool is at 69.42% data and
+   15.88% metadata, and `lvs` returns in 0.5 s over 360 logical volumes, so a
+   slow metadata walk is ruled out. Candidates still open: thin-pool
+   allocation under concurrent snapshot writes, the PERC's cache flushing
+   behaviour, and a single VM saturating the shared queue. Now that journal
+   shipping is restored, the stall lines can be correlated against per-VM IO.
+8. **Why did every leader-election lease in the cluster break at 00:01:52 on
+   2026-09-15?** The `pvestatd` stalls bracket it, but etcd reported no leader
+   change and its fsync p99 stayed at or below 31 ms over the surrounding
+   twenty-four hours. Either the stall did not reach etcd's disk path and
+   something else caused the lease losses, or the fsync histogram at one-hour
+   resolution is too coarse to show a two-minute event.
 
 ## How the IO paths change
 
