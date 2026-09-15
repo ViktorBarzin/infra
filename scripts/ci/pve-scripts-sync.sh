@@ -23,6 +23,25 @@ set -eu
 
 PVE_HOST="${PVE_HOST:-192.168.1.127}"
 NAMES="${NAMES:-lvm-pvc-snapshot daily-backup offsite-sync-backup devvm-home-backup vzdump-vms nfs-mirror}"
+
+# Timers that are deployed but must stay off. Their script and units keep
+# arriving with everyone else's, so re-enabling one is a single systemctl
+# away, but this loop makes sure nothing quietly turns them back on.
+#
+# vzdump-vms, retired 2026-09-15. It read all 228 GiB of devvm's disk every
+# Sunday at 01:00 and was the largest single IO cliff on the host: measured
+# live on 2026-09-13, sdc read latency went from 0.23 ms to 107.26 ms and
+# etcd write latency from 1.36 ms to 22.07 ms for the duration. Its own
+# --ionice 7 does nothing, because sdc runs mq-deadline, which ignores
+# ionice classes. The restore path it covered is now the devvm playbook plus
+# devvm-home-backup, validated end to end on 2026-08-29, and the last three
+# full images stay on /mnt/backup as a floor that no longer advances.
+# Reasoning in docs/plans/2026-09-12-io-bottleneck-ssd-vs-spindles.md.
+#
+# Disabled rather than masked on purpose: these unit files live in
+# /etc/systemd/system, and a mask puts its symlink at that same path, so it
+# never takes and every run reports a change that no apply can settle.
+DISABLED_TIMERS="${DISABLED_TIMERS:-vzdump-vms}"
 SSH="ssh -o BatchMode=yes root@$PVE_HOST"
 
 echo "---diff---"
@@ -52,11 +71,18 @@ for n in $NAMES; do
     echo "$n: deployed"
 done
 
+echo "---disabling---"
+for n in $DISABLED_TIMERS; do
+    $SSH "systemctl disable --now $n.timer" || true
+    echo "$n.timer: $($SSH "systemctl is-enabled $n.timer" 2>&1 || true) / $($SSH "systemctl is-active $n.timer" 2>&1 || true)"
+done
+
 echo "---reloading---"
 $SSH "systemctl daemon-reload"
 # Naming every timer explicitly: list-timers with no argument would hide a unit
 # that failed to load, which is the failure this sync exists to surface.
 for n in $NAMES; do
+    case " $DISABLED_TIMERS " in *" $n "*) continue ;; esac
     $SSH "systemctl list-timers --no-pager --all $n.timer"
 done
 
