@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily devvm disk cleanup (docker, uv cache, t3 state backups)
+Documentation=https://pages.viktorbarzin.me/2026-09-15-remaining-read-iops.html
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/devvm-cleanup
+# The box is read-IOPS bound on a shared spindle, so the cleanup must never
+# be the thing competing with a person at a terminal.
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=2h

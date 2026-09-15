@@ -441,7 +441,7 @@
         group: root
       loop:
         - { src: codex-auth-backup.sh, dest: /usr/local/bin/codex-auth-backup.sh }
-        - { src: docker-disk-gc, dest: /usr/local/bin/docker-disk-gc }
+        - { src: devvm-cleanup, dest: /usr/local/bin/devvm-cleanup }
         - { src: networkd-dhcp-watchdog.sh, dest: /usr/local/sbin/networkd-dhcp-watchdog.sh }
 
     - name: Install the adopted units
@@ -455,8 +455,8 @@
         - codex-auth-backup.service
         - codex-auth-backup.timer
         - codex-auth-backup.path
-        - docker-disk-gc.service
-        - docker-disk-gc.timer
+        - devvm-cleanup.service
+        - devvm-cleanup.timer
         - networkd-dhcp-watchdog.service
         - networkd-dhcp-watchdog.timer
       notify: reload systemd
@@ -470,8 +470,39 @@
       loop:
         - codex-auth-backup.timer
         - codex-auth-backup.path
-        - docker-disk-gc.timer
+        - devvm-cleanup.timer
         - networkd-dhcp-watchdog.timer
+
+    # docker-disk-gc is folded into devvm-cleanup, 2026-09-15. It pruned
+    # containers, images and the builder cache and left VOLUMES alone, so
+    # anonymous volumes from removed containers accumulated with nothing to
+    # reap them: 84 of 85 were dangling when measured, and pruning them
+    # returned 3.45 GB. Rather than add a second timer beside it for the uv
+    # cache and a third for the t3 backups, one job now owns everything on
+    # this box that expires.
+    #
+    # Disabled rather than masked. Its unit file lives in
+    # /etc/systemd/system, and a mask puts its symlink at that same path, so
+    # the mask never takes and every run reports a change no apply settles.
+    - name: Retire the docker-only GC it replaces
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop:
+        - docker-disk-gc.timer
+        - docker-disk-gc.service
+      failed_when: false
+
+    - name: Remove the retired docker GC files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /usr/local/bin/docker-disk-gc
+        - /etc/systemd/system/docker-disk-gc.service
+        - /etc/systemd/system/docker-disk-gc.timer
+      notify: reload systemd
 
     # Retired evaluations, 2026-09-13. Neither agent-conductor nor Orca is
     # declared anywhere: classifying all 59 units in /etc/systemd/system by
