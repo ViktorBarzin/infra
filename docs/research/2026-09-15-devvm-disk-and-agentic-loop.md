@@ -86,6 +86,63 @@ reclaimable in volumes; the prune returned 3.45. And the t3 backups compress
 6.6x, measured on a 10 MB sample, which made gzipping worth more than cutting
 the retention: six generations compressed beat three generations uncompressed.
 
+### The largest single item is swap, and it hid from every listing
+
+After the reclaim the filesystem sat at 158 GB with 136 GB visible across
+`/home`, `/var`, `/usr`, `/root` and `/opt`. The missing 24 GB is two swap
+files at the filesystem root:
+
+| file | size | in use |
+|---|---|---|
+| `/swapfile` | 14 GB | 8.9 GB |
+| `/swapfile2` | 10 GB | **9.4 MB** |
+
+**`du -x -d1 /` never named them.** It summarises at depth 1 and rolls plain
+files directly under `/` into the total line rather than listing them, so a
+24 GB pair of files is present in the number and absent from every row. The
+gap read as an accounting error for several measurements before anyone looked
+for files rather than directories. `find / -maxdepth 1 -type f` is the check.
+
+This is not really a storage finding. Swap is 24 GB because 26.3 GB of
+anonymous demand sits on a 31 GB box, which is the same shortage that drives
+the 56% refault rate above. `/swapfile2` holding 9.4 MB of its 10 GB says it
+has effectively never been needed, and it exists as a second file rather than
+a larger first one because a swapfile cannot be extended in place.
+
+It also sharpens the memory recommendation. Moving 8 to 16 GB from
+k8s-node1's idle 33 GB would cut the refaults, reduce paging, and allow
+`/swapfile2` to be dropped for 10 GB of disk. One change, three effects.
+
+### Complete accounting after the reclaim
+
+158 GB, nothing unexplained:
+
+| | GB |
+|---|---|
+| swap files | 24.0 |
+| `.cache` (uv 7.6, pip 4.2, go-build 3.6, yarn 2.5, playwright 2.4, huggingface 2.4, claude-yt 2.3) | 28.9 |
+| `/var/lib`, docker 11.8 of it | 13.4 |
+| `/usr` | 11.6 |
+| **`/home/wizard/code`** | **10.7** |
+| `/home/emo`, entire | 7.6 |
+| `.npm` | 7.0 |
+| the three kept archives | 7.5 |
+| `go` | 4.6 |
+| `.local` | 4.4 |
+| `.claude` | 4.0 |
+| t3 backups | 4.0 |
+| `.virtualenvs` + `bg-bakeoff-venv` | 4.5 |
+| `.terraform.d` | 1.9 |
+| `.rustup` | 1.4 |
+| `/root`, `/opt`, `/var/cache`, `/var/log` | 4.5 |
+
+Real work is `code` 10.7 plus emo 7.6, **18.3 GB**. `/usr` at 11.6 GB is not
+Ubuntu base; it is the toolchains installed into it.
+
+The remaining candidates with no expiry are `.npm` at 7.0 and the two
+virtualenv trees at 4.5. Everything else is work, OS, or a cache measured as
+actively used.
+
 ### What was deliberately left
 
 `reel-archive-countries` 3.6 GB, `vault-audit-archive` 1.6 GB and `claude-yt`
