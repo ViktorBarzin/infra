@@ -34,7 +34,13 @@ scrape_configs:
     journal:
       max_age: 12h
       json: false
-      path: /var/log/journal
+      # The host journal is volatile (pve-host.yml, 90-journald-volatile.conf),
+      # so it lives in /run and /var/log/journal does not exist. Promtail's
+      # default is the persistent directory, so it read nothing and shipping
+      # stopped dead at 2026-09-13T21:26:41Z, the moment the switch was made.
+      # The last line Loki has from this host is journald's own "Journal
+      # stopped". Point it at the volatile directory instead.
+      path: /run/log/journal
       labels:
         host: pve
         job: pve-journal

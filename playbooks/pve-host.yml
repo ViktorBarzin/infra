@@ -72,6 +72,11 @@
         group: root
         mode: "0755"
 
+    # Anything reading this host's journal from disk has to be told where it
+    # went. Promtail was not, and shipping to Loki stopped at the moment of
+    # the switch on 2026-09-13, which cost the host its 30 days of searchable
+    # history until it was noticed on 2026-09-15. Its path now says
+    # /run/log/journal (scripts/pve-promtail.yaml).
     - name: Put the journal in RAM
       ansible.builtin.copy:
         src: files/pve/90-journald-volatile.conf
