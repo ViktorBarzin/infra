@@ -34,13 +34,23 @@ scrape_configs:
     journal:
       max_age: 12h
       json: false
-      # The host journal is volatile (pve-host.yml, 90-journald-volatile.conf),
-      # so it lives in /run and /var/log/journal does not exist. Promtail's
-      # default is the persistent directory, so it read nothing and shipping
-      # stopped dead at 2026-09-13T21:26:41Z, the moment the switch was made.
-      # The last line Loki has from this host is journald's own "Journal
-      # stopped". Point it at the volatile directory instead.
-      path: /run/log/journal
+      # path deliberately UNSET. An empty path makes promtail's sd_journal do
+      # its default open, which follows BOTH /run/log/journal and
+      # /var/log/journal, so it survives the journal moving either way.
+      #
+      # This host journal is volatile (pve-host.yml,
+      # 90-journald-volatile.conf) and lives in /run. Pinning
+      # /var/log/journal shipped nothing from 2026-09-13T21:26:41Z, the moment
+      # the switch was made, until 2026-09-15; the last line Loki holds from
+      # this host is journald's own "Journal stopped". Pinning
+      # /run/log/journal, the first fix on 2026-09-15, has the mirror-image
+      # fault and breaks if the journal ever goes persistent again.
+      #
+      # devvm hit the identical failure on 2026-06-30 and shipped nothing for
+      # nine days. The fix there, commit ca74adc8 on 2026-07-09, was to unset
+      # the path, and scripts/devvm-promtail.yaml says so in the same words.
+      # This is the third journald-volatile rollout here to take a promtail
+      # with it, so both shippers now match.
       labels:
         host: pve
         job: pve-journal

@@ -630,6 +630,36 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             {
+              # DEAD-MAN switch for the PVE host log pipeline, the same shape
+              # as DevvmJournalSilent above and added for the same reason,
+              # after the same failure.
+              #
+              # On 2026-09-13 the host journal was moved to Storage=volatile
+              # to stop 4.5 GB a day of writes. That deleted /var/log/journal,
+              # which the hand-deployed promtail was reading, and shipping
+              # stopped at 21:26:41Z. Nothing alerted. It was found two days
+              # later only because someone went looking for a host journal
+              # line and Loki had nothing within 36 hours of it. Two days of
+              # history are unrecoverable, and the pvestatd stall counts that
+              # the IO plan now depends on have a hole in them.
+              #
+              # devvm had the identical failure on 2026-06-30 and was blind
+              # for nine days, which is what DevvmJournalSilent exists to
+              # catch. That alert was never given a sibling for this host.
+              #
+              # The host is never quiet: 653 lines in five minutes measured
+              # 2026-09-15, driven by snoopy execve logging, the fan-control
+              # loop and a nut-driver restart loop. 30m of silence is dead.
+              alert  = "PveJournalSilent"
+              expr   = "absent_over_time({job=\"pve-journal\"}[30m]) == 1"
+              for    = "15m"
+              labels = { severity = "critical" }
+              annotations = {
+                summary     = "PVE host journal has stopped reaching Loki"
+                description = "No {job=\"pve-journal\"} lines for >45m, so the host's journal, its sshd auth feed and the snoopy command audit are all blind. Check on 192.168.1.127: systemctl status promtail; curl -s localhost:9080/metrics | grep -E 'sent_entries|journal_target_lines|429'; journalctl -u promtail. Config source-of-truth: scripts/pve-promtail.yaml, deployed by .woodpecker/pve-scripts-sync.yml. journald is Storage=volatile here, so the journal lives in /run/log/journal and the promtail journal block must leave path UNSET, which follows both locations."
+              }
+            },
+            {
               # Per-user Claude refresh/backup/restore exhausted its automatic
               # recovery path. This is actionable: that user needs interactive SSO,
               # or the scoped Vault token/bootstrap needs repair.
