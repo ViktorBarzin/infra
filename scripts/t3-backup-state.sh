@@ -40,8 +40,16 @@ for u in "${users[@]}"; do
   else
     LOG "WARN: backup FAILED for $u ($src)"; rc=1; rm -f "$dst"
   fi
-  # retention: keep newest $KEEP per user
-  ls -1t "$out"/state-*.sqlite 2>/dev/null | tail -n +$((KEEP+1)) | xargs -r rm -f
+  # Retention: keep newest $KEEP per user.
+  #
+  # The glob must match BOTH state-*.sqlite and state-*.sqlite.gz. devvm-cleanup
+  # compresses every generation but the newest (they shrink 6.6x, so six
+  # compressed beat three uncompressed), and a .sqlite-only glob stopped seeing
+  # them the moment it first ran on 2026-09-15: retention silently became a
+  # no-op and the directory would have grown without bound. Found the same day,
+  # before any generation was lost.
+  ls -1t "$out"/state-*.sqlite "$out"/state-*.sqlite.gz 2>/dev/null \
+    | tail -n +$((KEEP+1)) | xargs -r rm -f
 done
 LOG "done (rc=$rc)"
 exit $rc
