@@ -100,9 +100,26 @@
     # page back into RAM. Measured 2026-09-02 that would be 5.2 GiB arriving into
     # 7.4 GiB of available RAM beside 30 live Claude sessions, for a cosmetic
     # gain. Same call, same reason, as the 2026-06-10 growth.
-    # ONE file is the target. It is two right now because growing swap on a live
-    # box has to be additive (see the swap tasks), and converging to one needs a
-    # swapoff, which reads every page in that file back into RAM. Measured
+    # ONE file, 14 GiB. It was two totalling 24 GiB from 2026-09-02 until
+    # 2026-09-15, when /swapfile2 was retired live: it held 9.4 MB of its 10 GiB
+    # and had never carried anything, so the swapoff migrated almost nothing.
+    #
+    # 24 GiB was more than this box can reach. Swap is capped per slice at
+    # devvm_user_swap_max per user, and system.slice sat at 2.76 GiB, so the
+    # realistic ceiling is around 11 GiB against 24 provisioned. 14 leaves
+    # headroom over that without parking 10 GiB of disk nothing can use.
+    #
+    # THE BINDING CONSTRAINT IS THE PER-SLICE CAP, NOT THE FILE. Measured
+    # 2026-09-15: user-1000 sat at exactly 4.00 of its 4 GiB with
+    # memory.swap.events fail at 2,244,821, and user-1002 at 68.7% with 148,725.
+    # A slice denied swap makes the kernel evict page cache instead, which is
+    # the mechanism behind 56% of this box's reads being refaults. Raising the
+    # cap or adding RAM is the fix; a bigger file is not.
+    #
+    # The two-file history, kept because the mechanics still apply to any future
+    # growth: growing swap on a live box has to be additive (see the swap
+    # tasks), and converging to one needs a swapoff, which reads every page in
+    # that file back into RAM. Measured
     # 2026-09-02: /swapfile held 9 GiB against 8.2 GiB of MemAvailable, so the
     # merge cannot be done while the box is carrying pages.
     #
@@ -112,7 +129,7 @@
     # /swapfile to the target and retires /swapfile2, and every apply before that
     # is a no-op. Same approach, same reason, as the 2026-06-12 merge, which was
     # also done post-boot at 0B used.
-    devvm_swap_target: { path: /swapfile, size_gb: 24 }
+    devvm_swap_target: { path: /swapfile, size_gb: 14 }
     # The one account this playbook owns. Everyone else comes from the roster.
     devvm_admin_user: wizard
     devvm_admin_ssh_key: ""
@@ -910,11 +927,13 @@
       register: devvm_swap_target_now
 
     # Retire superseded areas, only when they hold nothing AND the target has
-    # already reached its declared size. That second guard is load-bearing: with
-    # /swapfile still 14G and /swapfile2 empty, retiring on emptiness alone would
-    # drop total swap from 24G to 14G while the user slices hold 8G of ceiling
-    # between them — shrinking capacity in the name of tidiness. The path guard
-    # keeps this from ever acting on a device rather than a file we made.
+    # already reached its declared size. Both guards stay even though there is
+    # only one file today, because they are what makes a future resize safe.
+    # The size guard was written when /swapfile was 14G and /swapfile2 empty:
+    # retiring on emptiness alone would have dropped total swap while the user
+    # slices still held ceiling between them, shrinking capacity in the name of
+    # tidiness. The path guard keeps this from ever acting on a device rather
+    # than a file we made.
     - name: Retire superseded swap areas
       when:
         - item != devvm_swap_target.path
