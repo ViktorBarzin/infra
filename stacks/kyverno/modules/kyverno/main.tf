@@ -55,6 +55,33 @@ resource "helm_release" "kyverno" {
       backgroundScan = {
         enabled = false
       }
+
+      # Stop the controllers emitting ephemeralreports at all (2026-09-15).
+      # The 2026-06-12 and 2026-06-28 changes turned off the report features
+      # and the reports controller, but this block is separate: it builds the
+      # --enableReporting flag, it defaults to every value on, and the
+      # background controller was still running with
+      # --enableReporting=validate,mutate,mutateExisting,imageVerify,generate.
+      # Measured 2026-09-15: 1,121 clusterephemeralreports created every hour,
+      # 26,904 a day, all labelled audit.kyverno.io/source=background-scan and
+      # owned by a Namespace, from the generate-limitrange-by-tier and
+      # generate-resourcequota-by-tier policies. With the reports controller
+      # off nothing aggregates or reaps them, so they accumulate: a sweep on
+      # 2026-09-13 took etcd from 504 MB to 123 MB and it was back to 488 MB
+      # and 47,732 keys within 42 hours.
+      #
+      # Reports are still not consumed here (policyreports and
+      # clusterpolicyreports are both empty; violations reach Slack through
+      # Loki), and enforcement, mutation and generation do not depend on
+      # reporting, so turn every producer off rather than run a controller to
+      # clean up after them.
+      reporting = {
+        validate       = false
+        mutate         = false
+        mutateExisting = false
+        imageVerify    = false
+        generate       = false
+      }
     }
 
     # Fully disable the reports controller (2026-06-28). The 2026-06-12 change
