@@ -50,6 +50,18 @@ OUT_PATH = "/var/lib/node_exporter/textfile/cgroup_io.prom"
 # hundred idle scopes do not each cost four Prometheus series.
 MIN_BYTES = 16 * 1024 * 1024
 
+# How long a departed cgroup keeps its own series before its totals are folded
+# into a "<parent>/(departed)" bucket and its path is dropped.
+#
+# Without this the series count grows without bound, which it did: measured
+# 2026-09-15 after 26 hours, 131 known paths against 77 live, and the 76 dead
+# ones were docker.slice/docker-<64 hex>.scope, a fresh path per container
+# instance. That is roughly 60 new paths a day forever. Folding keeps the
+# accounting complete, which was the whole point of accumulating, while
+# bounding cardinality to the live set plus one bucket per parent.
+RETAIN_DEAD_SECONDS = 6 * 3600
+DEPARTED = "(departed)"
+
 FIELDS = (("rbytes", "read_bytes"), ("wbytes", "written_bytes"),
           ("rios", "read_ios"), ("wios", "write_ios"))
 
@@ -171,11 +183,33 @@ def write_atomic(path, text):
         raise
 
 
+def fold_departed(total, seen, seen_at, now):
+    """Move long-gone cgroups into a per-parent bucket and drop their paths."""
+    for rel in [r for r in total if r not in seen]:
+        if rel.endswith("/" + DEPARTED) or rel == DEPARTED:
+            continue
+        if rel not in seen_at:
+            # First run that has missed it, so start its clock now rather
+            # than folding a cgroup that may only have blinked.
+            seen_at[rel] = now
+            continue
+        if now - seen_at[rel] <= RETAIN_DEAD_SECONDS:
+            continue
+        parent = rel.rsplit("/", 1)[0] if "/" in rel else "/"
+        bucket = f"{parent}/{DEPARTED}" if parent != "/" else DEPARTED
+        dst = total.setdefault(bucket, {})
+        for key, _name in FIELDS:
+            dst[key] = dst.get(key, 0) + total[rel].get(key, 0)
+        del total[rel]
+        seen_at.pop(rel, None)
+
+
 def main():
     devs = backing_devices(root_device())
     state = load_state()
     last = state.get("last", {})
     total = state.get("total", {})
+    seen_at = state.get("seen_at", {})
 
     seen = {}
     for dirpath, _dirnames, filenames in os.walk(CGROUP_ROOT):
@@ -200,7 +234,12 @@ def main():
             delta = cur - was if cur >= was else cur
             acc[key] = acc.get(key, 0) + delta
 
-    state = {"last": seen, "total": total}
+    now = time.time()
+    for rel in seen:
+        seen_at[rel] = now
+    fold_departed(total, seen, seen_at, now)
+
+    state = {"last": seen, "total": total, "seen_at": seen_at}
     os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
     write_atomic(STATE_PATH, json.dumps(state))
 
