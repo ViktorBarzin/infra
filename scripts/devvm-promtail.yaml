@@ -23,6 +23,7 @@
 #   {job="devvm-journal", unit="t3-dispatch.service"}        — dispatch (ws open/close lines)
 #   {job="devvm-journal", unit="t3-serve@wizard.service"}    — per-user t3 serve
 #   {job="sshd-devvm"}                        — sshd auth lines (parity with sshd-pve)
+#   {job="agent-api-trace"}                   — agent-api's request trace (JSONL, see below)
 server:
   http_listen_port: 9080
   grpc_listen_port: 0
@@ -73,3 +74,48 @@ scrape_configs:
         regex: 'sshd.*'
         target_label: job
         replacement: 'sshd-devvm'
+
+  # agent-api's request trace. Every call a machine caller (Muse first) makes
+  # to Terminal Lobby's machine-facing API is appended here as one JSON object
+  # per line; the design is docs/plans/2026-09-14-muse-agent-broker-design.md.
+  # Shipping it to Loki is what gives it cluster-wide search, 30 days of
+  # history and a life beyond a rebuilt devvm. The local copy is bounded by
+  # /etc/logrotate.d/agent-api, declared in playbooks/devvm.yml.
+  #
+  # LABELS ARE job AND host, DELIBERATELY, plus the `filename` promtail adds
+  # for every file target — one path, so one stream. Every interesting field
+  # in this file is unbounded — trace_id, task_id and conversation_id are
+  # per-request ULIDs/UUIDs — so promoting any of them to a label mints a Loki
+  # stream per request. The journal job above carries the note: this tenant
+  # shares a GLOBAL 5000-active-stream cap, and once it is saturated Loki
+  # 429-rejects NEW streams for EVERY shipper, not just the greedy one. The
+  # fields stay in the line and are read at query time, which costs nothing:
+  #   homelab logs query '{job="agent-api-trace"} | json | trace_id="01JB..."'
+  #   homelab logs query '{job="agent-api-trace"} | json | actor="muse"' --since 24h
+  #
+  # File job, not journal: agent-api writes the trace itself rather than
+  # logging it, because the trace is a replayable record and the journal is
+  # volatile on this box (Storage=volatile since 2026-06-30).
+  - job_name: agent-api-trace
+    static_configs:
+      - targets: ['localhost']
+        labels:
+          host: devvm
+          job: agent-api-trace
+          __path__: /var/log/agent-api/trace.jsonl
+    pipeline_stages:
+      # The only reason to parse the JSON here is to take the event's OWN
+      # timestamp instead of the moment promtail read the line, so a replay
+      # by trace_id comes back in the order the run happened. Nothing is
+      # promoted to a label — see above.
+      - json:
+          expressions:
+            ts: ts
+      - timestamp:
+          source: ts
+          format: RFC3339Nano
+          # Keyed to the `ts` field in the design doc. If agent-api ever
+          # renames it or writes a different format, `fudge` keeps shipping
+          # (last good timestamp + 1ns) rather than dropping lines, and
+          # promtail logs the parse failure. Silent loss is the worse trade.
+          action_on_failure: fudge
