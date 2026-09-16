@@ -1394,11 +1394,9 @@ serverFiles:
             # against false alarms. This one reports that the detector itself
             # fired, so it needs no tuning and does not move when traffic does.
             #
-            # cs_alerts is a LAPI counter labelled by scenario. All three LAPI
-            # replicas carry the same value, so this is max() rather than sum():
-            # summing would treble the rate, and a replica restart resets one
-            # series to zero while the others keep climbing, which max() rides
-            # out.
+            # (The paragraph that stood here claimed "cs_alerts is a LAPI
+            # counter labelled by scenario". That single wrong word was the
+            # whole bug — see the correction note below the threshold.)
             #
             # `> 0` is deliberate and is not a placeholder. An overflow of
             # viktor/distributed-crawl-range means 30 distinct addresses inside
@@ -1411,12 +1409,62 @@ serverFiles:
             # It stays firing for as long as the crawl runs, which is intended.
             # A crawl in its fourth hour is still a crawl, and the resolve is
             # the useful part: it says the thing stopped.
-            expr: max by (reason) (rate(cs_alerts{reason=~"viktor/.*crawl.*"}[10m])) > 0
-            for: 10m
+            # CORRECTED 2026-09-16. The expression below used to be
+            #   max by (reason) (rate(cs_alerts{reason=~"viktor/.*crawl.*"}[10m])) > 0
+            # and the comment above called cs_alerts a counter. It is not:
+            #
+            #   # HELP cs_alerts Number of alerts (excluding CAPI).
+            #   # TYPE cs_alerts gauge
+            #
+            # It is a cumulative gauge of the LAPI's lifetime alert count. All
+            # three replicas read the same flat value (1,628 when this was
+            # found), so rate() over it produces a number with no physical
+            # meaning, and `> 0` trips whenever the gauge last stepped rather
+            # than while a crawl runs. Measured 2026-09-16: the rule reported
+            # 13.60 "alerts/s" and 175,039 alerts over 6h while `cscli
+            # decisions list --scope Range` had NO active decisions, the
+            # entrypoint 403 rate was 0.08 req/s and the busiest service in the
+            # cluster was a Tuya bridge at 1.06 req/s. There was no crawl.
+            #
+            # THIS IS THE THIRD ALERT IN THIS FAMILY TO READ THE WRONG SERIES.
+            # EdgeBlockSurge read the per-service 403 counter when a CrowdSec
+            # 403 only ever increments the entrypoint counter, and the captcha
+            # remediation diverted four scenarios to a decision nothing
+            # enforces. In all three the metrics looked like coverage. When
+            # writing a CrowdSec alert, check the metric TYPE at the exporter
+            # (`wget -qO- 127.0.0.1:6060/metrics | grep "# TYPE <name>"`) before
+            # putting rate() around it; promtool validates syntax, not
+            # semantics, so nothing else will catch this.
+            #
+            # cs_bucket_overflowed_total IS a genuine counter, and it is the
+            # agent-side signal — the agent is where detection happens, so an
+            # overflow means the scenario actually fired. It became scrapeable
+            # on 2026-09-10 (job crowdsec-agent; the pre-existing `crowdsec`
+            # job keeps only type=lapi pods).
+            #
+            # THRESHOLD, from the real distribution rather than a guess. The
+            # crawl of 2026-09-13/14 ran for ~38 hours and its hourly overflow
+            # counts for viktor/distributed-crawl-range were:
+            #     67h..29h before 2026-09-16 17:00: 2,8,16,7,14,14,18,13,6,5,3,
+            #                                       1,16,16,13,18,14,18,19,17,
+            #                                       17,12,11,7
+            # i.e. sustained 13-19/hr with a 19/hr peak, and 0 in every hour
+            # outside it. Quiet is a flat zero, so 5/hr sits in an empty gap:
+            # it catches the whole window and cannot be reached by background.
+            # For contrast crowdsecurity/http-crawl-non_statics, the generic
+            # scenario, peaked at 7.5/hr on an ordinary day — which is why this
+            # rule scopes to viktor/* and not to every crawl scenario.
+            #
+            # sum() not max(): cs_bucket_overflowed_total is per-AGENT and each
+            # agent parses only the traefik pod on its own node, so the crawl
+            # appears on whichever agent holds the access log. Summing is
+            # correct here, unlike the LAPI series where all replicas duplicate.
+            expr: sum(rate(cs_bucket_overflowed_total{name=~"viktor/.*crawl.*"}[1h])) * 3600 > 5
+            for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "CrowdSec {{ $labels.reason }} is firing at {{ $value | printf \"%.2f\" }} alerts/s — a distributed crawl is in progress and being banned. `cscli decisions list --scope Range` shows which prefixes."
+              summary: "A distributed crawl is in progress: {{ $value | printf \"%.0f\" }} viktor/*crawl* bucket overflows per hour (background is 0, a real crawl sustains 13-19). `cscli decisions list --scope Range` shows which prefixes are banned."
 
       - name: R730 Host
         rules:
