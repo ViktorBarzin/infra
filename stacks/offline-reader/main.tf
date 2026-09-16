@@ -187,6 +187,7 @@ resource "kubernetes_deployment" "offline_reader" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
   depends_on = [kubernetes_role_binding.app, kubernetes_manifest.offline_reader_secrets]

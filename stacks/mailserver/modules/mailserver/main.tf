@@ -69,18 +69,18 @@ resource "kubernetes_config_map" "mailserver_env_config" {
   data = {
     DMS_DEBUG = "0"
     # LOG_LEVEL                              = "debug"
-    ENABLE_CLAMAV                          = "0"
-    ENABLE_AMAVIS                          = "0"
-    ENABLE_FAIL2BAN                        = "0"
-    ENABLE_FETCHMAIL                       = "0"
-    ENABLE_POSTGREY                        = "0"
-    ENABLE_SASLAUTHD                       = "0"
-    ENABLE_SPAMASSASSIN                    = "0"
-    ENABLE_RSPAMD                          = "1"
-    ENABLE_OPENDKIM                        = "0"
-    ENABLE_OPENDMARC                       = "0"
-    ENABLE_RSPAMD_REDIS                    = "0"
-    RSPAMD_LEARN                           = "1"
+    ENABLE_CLAMAV       = "0"
+    ENABLE_AMAVIS       = "0"
+    ENABLE_FAIL2BAN     = "0"
+    ENABLE_FETCHMAIL    = "0"
+    ENABLE_POSTGREY     = "0"
+    ENABLE_SASLAUTHD    = "0"
+    ENABLE_SPAMASSASSIN = "0"
+    ENABLE_RSPAMD       = "1"
+    ENABLE_OPENDKIM     = "0"
+    ENABLE_OPENDMARC    = "0"
+    ENABLE_RSPAMD_REDIS = "0"
+    RSPAMD_LEARN        = "1"
     # DISABLED 2026-07-08: postsrsd 1.10 deterministically busy-loops at ~100%
     # CPU without binding tcp:10001/10002 on a fresh start (independent of args
     # / secret / node) — so sender_canonical_maps=tcp:10001 makes postfix 451
@@ -741,7 +741,8 @@ resource "kubernetes_deployment" "mailserver" {
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 }

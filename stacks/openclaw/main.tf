@@ -1551,10 +1551,11 @@ resource "kubernetes_deployment" "openclaw" {
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
       # container[2] is openclaw-exporter, the only one floating a tag
       # (python:3.12-slim). container[0] pins openclaw itself — leave it to TF.
-      spec[0].template[0].spec[0].container[2].image, # KEEL_IGNORE_IMAGE
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      spec[0].template[0].spec[0].container[1].image, # KEEL_IGNORE_IMAGE
-      spec[0].template[0].spec[0].container[3].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[2].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[1].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[3].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 }
