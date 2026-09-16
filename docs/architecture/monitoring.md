@@ -566,6 +566,84 @@ Verified live 2026-08-28 against a filter matching no lines. The same guard also
 makes the rule cover the journal ceasing to ship at all, which reads as
 "terminals are dead" — acceptable at warning severity, since both want a look.
 
+#### agent-api trace — `AgentApiTraceSilent`
+
+`agent-api` is Terminal Lobby's machine-facing interface, reached over the
+Headscale tailnet by an external agent (Muse first) and driving real Claude Code
+sessions on the devvm. Design:
+[plans/2026-09-14-muse-agent-broker-design.md](../plans/2026-09-14-muse-agent-broker-design.md).
+
+**The trace is the compensating control.** The design carries no human approval
+gate, and the worker runs as `wizard` with that account's access, so the record
+of what was asked for is what makes the arrangement reviewable. Every request
+`agent-api` serves is appended as one JSON object per line to
+`/var/log/agent-api/trace.jsonl`.
+
+**Shipping.** A file job in `scripts/devvm-promtail.yaml` tails that path as
+`{job="agent-api-trace"}`, giving cluster-wide search, Loki's 30 days and a copy
+that survives the devvm being rebuilt. `playbooks/devvm.yml` creates the
+directory, deploys the shipper config and bounds the local copy at 30 daily
+rotations (`/etc/logrotate.d/agent-api`, `copytruncate` because `agent-api`
+holds the descriptor open and has no reopen signal).
+
+Labels are `job`, `host` and promtail's automatic `filename`, and nothing else.
+`trace_id`, `task_id` and `conversation_id` are per-request identifiers, so
+promoting any of them would mint a Loki stream per request against a tenant that
+shares a global 5000-active-stream cap; past that cap Loki 429-rejects new
+streams for every shipper on it. The fields stay in the line and are read at
+query time:
+
+```sh
+homelab logs query '{job="agent-api-trace"} | json | trace_id="01JB..."'
+homelab logs query '{job="agent-api-trace"} | json | actor="muse"' --since 24h
+```
+
+A `json` + `timestamp` pipeline stage takes the event's own `ts` instead of the
+moment promtail read the line, so a replay by `trace_id` comes back in the order
+the run happened. A `ts` that will not parse falls back to the last good
+timestamp plus 1ns and logs the failure, rather than dropping the line.
+
+| Alert | Expr | For | Severity |
+|---|---|---|---|
+| `AgentApiTraceSilent` | `((sum(count_over_time({job="agent-api-trace"}[7d])) or vector(0)) < 1) and (sum(count_over_time({job="agent-api-trace"}[28d])) > 0)` | 2h | warning |
+
+Group `agent-api` in `loki.tf`. The two clauses do different jobs.
+
+**Left, the silence test.** `or vector(0)` is load-bearing here for the reason
+`TerminalUpgradesCollapsed` above spells out: a bare `sum(count_over_time(...))`
+returns no series when nothing matches, so `< 1` yields an empty result and the
+rule says nothing at exactly zero. Verified live 2026-09-16 against this
+selector, which matches nothing today: the bare form returned no series, the
+guarded form returned `{} 0`.
+
+**Right, the enabled gate.** `agent-api` is step 3 of the design and this
+observability is step 5, so the stream does not exist yet; ungated, the rule
+would fire the day it deployed and keep firing until the service shipped. The
+gate arms itself on the first trace line ever written and disarms after 28 days
+of total silence, when "nobody uses agent-api" is the honest state. There is no
+flag to flip, which is the point: a hand-maintained enabled switch that nobody
+flips is an alert that is silently off. No `or vector(0)` on this clause — it is
+a `> 0` comparison, where an empty result already means "no activity", and the
+guard would only make it evaluate `0 > 0`.
+
+**Windows.** Seven days for the silence test rather than 24 hours, because the
+caller is one program driven by a person plus its own cron and quiet days are
+ordinary; `TerminalUpgradesCollapsed` reaches for 24h one notch in, where the
+traffic is every terminal on the box rather than a single caller. 28 days for
+the gate sits inside Loki's 30-day retention with room to spare.
+
+Verified live 2026-09-16 against real Loki in three states: gate closed (today)
+returns no series and stays silent; gate open with traffic present returns the
+7-day count; gate open with the trace at zero returns `{} 0` and fires. The last
+was simulated by pairing this rule's left clause with a gate on a stream that
+does have traffic, since `agent-api` has never written a line.
+
+**Open limit.** The rule cannot tell a broken trace from an unused one. Nothing
+readable from the file can; only a heartbeat `agent-api` does not currently write
+would, and adding one is a change to that service. The seven-day window is
+chosen so the ambiguous case is rare, and the alert description asks the reader
+to settle it with one query.
+
 #### Backup Alerts
 - **PostgreSQLBackupStale**: >36h since last backup
 - **MySQLBackupStale**: >36h since last backup

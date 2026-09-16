@@ -1441,6 +1441,126 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # agent-api, Terminal Lobby's machine-facing interface, and the one
+          # alert its trace needs. Design:
+          # docs/plans/2026-09-14-muse-agent-broker-design.md.
+          #
+          # agent-api serves an external agent (Muse first) over the Headscale
+          # tailnet and drives real Claude Code sessions on this box. It has no
+          # human approval gate, by decision, and the worker runs as wizard
+          # with that account's full access. The trace is the compensating
+          # control: one JSON object per line in /var/log/agent-api/trace.jsonl
+          # holding the caller's verbatim request and the run it produced,
+          # shipped to Loki as {job="agent-api-trace"} by the file job in
+          # scripts/devvm-promtail.yaml and bounded on disk by
+          # /etc/logrotate.d/agent-api, both declared in playbooks/devvm.yml.
+          #
+          # A trace that has quietly stopped recording leaves that decision
+          # with nothing behind it, and nothing else would say so: the file is
+          # written by the service itself, promtail reports a missing file as
+          # no lines rather than an error, and a service answering /health
+          # happily writes nothing at all.
+          name = "agent-api"
+          rules = [
+            {
+              # TWO clauses, and both earn their place.
+              #
+              # LEFT: the silence test. `or vector(0)` is load-bearing, the
+              # same way it is on TerminalUpgradesCollapsed above. A bare
+              # `sum(count_over_time(...))` returns NO SERIES when nothing
+              # matches, `< 1` over an empty result is empty, and the rule then
+              # says nothing at exactly zero, which is the whole case it
+              # exists to catch. Verified live 2026-09-16 against this very
+              # selector, which matches nothing today:
+              #   sum(count_over_time({job="agent-api-trace"}[1h])) < 1
+              #     -> no series
+              #   (sum(count_over_time({job="agent-api-trace"}[1h]))
+              #      or vector(0)) < 1
+              #     -> {} 0
+              #
+              # RIGHT: the enabled gate, and it is what keeps this rule quiet
+              # until there is something to watch. agent-api is step 3 of the
+              # design and this is step 5, so the stream does not exist yet;
+              # without the gate the rule would fire the day it deployed and
+              # keep firing until the service shipped. The gate ARMS ITSELF on
+              # the first trace line ever written and DISARMS after 28 days of
+              # total silence, when "nobody uses agent-api" is the honest state
+              # and a standing alert about it is noise. Nothing to remember to
+              # flip, which is the point: a hand-maintained enabled flag that
+              # nobody flips is an alert that is silently off.
+              #
+              # NO `or vector(0)` ON THE RIGHT, deliberately. It is a `> 0`
+              # comparison, so an empty result already means "no activity" and
+              # the guard would only make it evaluate 0 > 0, false, changing
+              # nothing while inviting the next reader to think the gate can
+              # detect silence. Same reasoning the f1-stream rule below spells
+              # out at length.
+              #
+              # WINDOWS. 7 days for the silence test, not 24 hours. The caller
+              # is one program driven by a person plus its own cron, so quiet
+              # days are ordinary and a 24h window would post on every one of
+              # them; TerminalUpgradesCollapsed reaches for 24h for the same
+              # reason one notch in, because its traffic is every terminal on
+              # the box rather than a single caller. A full week of literally
+              # zero calls is either broken or unused, and the description says
+              # how to tell those apart. 28 days for the gate keeps it inside
+              # Loki's 30-day retention with room to spare.
+              #
+              # Verified live 2026-09-16, all three against real Loki:
+              #   gate closed (today)        -> no series, silent
+              #   gate open, traffic present -> returns the 7d count
+              #   gate open, trace at zero   -> returns {} 0, fires
+              # The last was simulated by pairing this rule's left clause with
+              # a gate on a stream that does have traffic, since agent-api has
+              # never written a line.
+              #
+              # KNOWN LIMIT, stated rather than papered over: this cannot tell
+              # a broken trace from an unused one. Nothing in the file can —
+              # only a heartbeat agent-api does not write could, and adding one
+              # is a change to that service, not to this rule. The 7-day window
+              # is chosen so the ambiguous case is rare; the description asks
+              # the reader to settle it in one command.
+              #
+              # severity=warning, per the severity hygiene the Terminal Lobby
+              # group records: critical is for something down for everyone
+              # right now. This is slow-burning and needs someone to look, not
+              # a 3am page. `for: 2h` over a 7-day window only guards against a
+              # transient Loki read, which is all it needs to do.
+              alert  = "AgentApiTraceSilent"
+              expr   = "((sum(count_over_time({job=\"agent-api-trace\"}[7d])) or vector(0)) < 1) and (sum(count_over_time({job=\"agent-api-trace\"}[28d])) > 0)"
+              for    = "2h"
+              labels = { severity = "warning" }
+              annotations = {
+                summary     = "agent-api has traced nothing for 7 days ({{ $value }} lines) while it was in use last month"
+                description = <<-EOT
+                  agent-api wrote trace lines within the last 28 days and none
+                  in the last 7, so either nobody has called it or the trace has
+                  stopped recording. Settle which in one command, from any
+                  session:
+                  homelab logs query '{job="agent-api-trace"}' --since 28d
+                  Then on the devvm, in this order, because each step rules out
+                  the one below it:
+                  systemctl status agent-api  (the service itself)
+                  ls -l /var/log/agent-api/trace.jsonl  (is it being appended
+                  to, and is it owned by the account agent-api runs as)
+                  systemctl status promtail; journalctl -u promtail -n 50
+                  (the shipper; a missing file is silence, not an error, and a
+                  JSON line whose ts will not parse is logged here)
+                  If the file is growing and Loki has nothing, the shipper is
+                  the problem. Promtail dead altogether stops the journal too,
+                  so DevvmJournalSilent fires beside this; this alert on its
+                  own points at the file job specifically. If the file is not
+                  growing and the service is up, the caller has simply been
+                  idle — no action, and this clears on its own once a call
+                  lands or 28 quiet days pass.
+                  Trace and its place in the design:
+                  docs/plans/2026-09-14-muse-agent-broker-design.md.
+                EOT
+              }
+            },
+          ]
+        },
+        {
           # f1-stream. Until 2026-09-11 no Loki rule matched this namespace at
           # all, which is why a ladder build failing was one of four real
           # failures in two days that produced no Slack message.
