@@ -1,9 +1,9 @@
 # Muse as an orchestrator of homelab agents
 
 **Status:** approved, not started
-**Date:** 2026-09-14, revised 2026-09-16
+**Date:** 2026-09-14, revised 2026-09-16 (twice)
 **Author:** Viktor Barzin (design worked out with Claude in a grilling session)
-**Component:** `agent-broker` (new), Headscale, devvm
+**Component:** `agent-api` (new service in the `terminal-lobby` repo), Headscale, devvm
 
 ## Summary
 
@@ -12,26 +12,44 @@ VM. We want it to act as an orchestrator over the agents that already run on the
 devvm: Muse holds the conversation with Viktor, and the real work happens here,
 in Claude Code sessions it can create, address and read.
 
-Muse reaches exactly one thing: a small REST service called `agent-broker`,
-listening on the devvm's Headscale tailnet address. The broker starts and
-resumes Claude Code conversations, returns task ids, and writes a replayable
-trace of everything Muse asked for. Nothing else on the tailnet is reachable
-from Muse's node.
+Muse reaches exactly one thing: `agent-api`, a small REST service listening on
+the devvm's Headscale tailnet address. It starts and drives Claude Code
+conversations, returns task ids, and writes a replayable trace of everything
+Muse asked for. Nothing else on the tailnet is reachable from Muse's node.
+
+`agent-api` is **Terminal Lobby's machine-facing interface**, not a Muse
+appendage. Lobby is the browser front door to real tmux sessions; this is the
+same thing for callers that are programs. Muse is its first caller rather than
+its reason, which is why it is named for the role and lives in that repo.
 
 Research shrank the build twice. Claude Code 2.1.270 already provides
 persistent conversations addressable by id, a background session manager and a
 machine-readable directory of live sessions. Then a second pass found that
-**Terminal Lobby already serves most of the broker's job over HTTP**: it keeps
+**Terminal Lobby already serves most of the job over HTTP**: it keeps
 interactive Claude conversations alive in tmux and exposes them on the devvm at
 `:7684` and `:7685`. The broker is therefore an authenticating, translating,
 tracing proxy in front of services that are running today, plus one small
 addition upstream, plus the network policy.
 
-**Revision, 2026-09-16.** The first version of this design had the broker drive
-`claude -p --session-id` / `--resume` itself. That works, and was verified, but
-it reimplements prompt injection and transcript reading that Terminal Lobby
-already does. Building on Lobby is the reuse-first choice; the consequences are
-recorded in the decisions table and the risk register.
+**Revision, 2026-09-16, in two steps.** The first version had a standalone
+service drive `claude -p --session-id` / `--resume` itself. That works and was
+verified, but it reimplements prompt injection and transcript reading Terminal
+Lobby already does. The second step went further: rather than a separate repo
+calling Lobby over HTTP, `agent-api` is a **seventh service inside the
+`terminal-lobby` repo**, beside `tmux-api`, `session-events`, `file-api`,
+`skills-api`, `clipboard-upload` and `tl-session-watch`.
+
+That removes three things the standalone design needed. It calls `sessionio`
+in-process, so no session-creation endpoint has to be added upstream and the
+shared `TL_PROXY_SECRET` is never handed to anything. It extends `authuser`,
+the module every Lobby service already routes identity through, so per-caller
+bearer auth benefits all of them rather than one. And it ships in the existing
+Debian package, so there is no second CI or deploy path.
+
+The coupling this risks is bounded by the repo's own shape: a separate binary
+and a separate systemd unit, so restarting it is the roughly one-second gap a
+`tmux-api` restart costs, not a `ttyd` restart that drops every attached
+terminal.
 
 ## What Muse is
 
@@ -71,47 +89,47 @@ flowchart TB
     direction LR
     muse["Muse agent<br/>runtime cell"] --> sentinel["Sentinel<br/>L4 + L7 egress"] --> ts["tailscaled<br/>userspace mode"]
   end
-  head["Headscale<br/>ACL: tag:muse reaches<br/>the broker and nothing else"]
-  broker["agent-broker :8710<br/>per-caller bearer, trace<br/>holds the Lobby secret"]
+  head["Headscale<br/>ACL: tag:muse reaches<br/>agent-api and nothing else"]
+  subgraph lobby["terminal-lobby package, running as wizard"]
+    direction TB
+    api["agent-api :8710<br/>per-caller bearer, trace"]
+    subgraph shared["shared Go modules"]
+      direction LR
+      au["authuser<br/>identity"]
+      sio["sessionio<br/>sessions"]
+      tel["telemetry"]
+    end
+    sibs["tmux-api :7684<br/>session-events :7685<br/>file-api, skills-api"]
+    api --> shared
+    sibs --> shared
+  end
+  tmux["tmux: 36 claude sessions"]
   trace[("trace.jsonl<br/>tailed to Loki")]
-  subgraph lobby["Terminal Lobby, already running as wizard"]
-    direction LR
-    tmuxapi["tmux-api :7684<br/>list, rename, kill"]
-    sessev["session-events :7685<br/>prompt, SSE, cancel"]
-  end
-  subgraph tm["tmux"]
-    direction LR
-    c1["claude session A"]
-    c2["claude session B"]
-    c3["Viktor's 36 sessions"]
-  end
   ts -.registers with.-> head
-  ts -->|"100.64.x.x:8710"| broker
-  broker --> trace
-  broker --> tmuxapi
-  broker --> sessev
-  tmuxapi --> tm
-  sessev --> tm
+  ts -->|"100.64.x.x:8710"| api
+  api --> trace
+  sio --> tmux
 ```
 
 ## Decisions
 
-Settled during the grilling session on 2026-09-13 and 2026-09-14. Four rows were
-revised on 2026-09-16 when the recon found Terminal Lobby already serving this;
-those rows say so.
+Settled during the grilling session on 2026-09-13 and 2026-09-14. The rows marked
+revised changed on 2026-09-16, when the recon found Terminal Lobby already
+serving this and the design moved inside that repo.
 
 | Decision | Settled as | Why |
 |---|---|---|
-| Name | `agent-broker`, systemd unit on the devvm | Describes the role without naming one caller, so it survives the next SaaS agent |
-| Placement | devvm, declared in `playbooks/devvm.yml` | It drives `claude` processes that live on the devvm as `wizard`. Anywhere else needs a remote-exec hop |
+| Name (**revised**) | `agent-api`, a service in the `terminal-lobby` repo | Matches `tmux-api`, `file-api`, `skills-api`. Describes the role rather than one caller, so it survives the next agent |
+| Placement (**revised**) | Seventh service in the `terminal-lobby` repo, its own binary and systemd unit | Adding it to `packaging/build-deb.sh:33` is one word on an existing list. It ships in the Debian package with the other six, so no second CI or deploy path |
+| Session creation (**revised**) | `sessionio.NewSession` in-process | Supersedes adding `POST /sessions` to tmux-api. Nothing upstream has to change, because the caller is now inside the repo |
 | Transport | Headscale tailnet only | We own the coordination server, so we own the policy and the revocation |
 | Kill switch | Revoke the `tag:muse` node in Headscale | Removes network reachability rather than relying on the service behaving |
 | Auth | Long-lived bearer token from Vault | What a Muse-written custom connector does naturally. Muse stores it where its model cannot freely read it |
 | Protocol | REST plus a published OpenAPI document | Consumer Muse has no MCP. An MCP face over the same handlers can be added later if a caller wants one |
-| Worker (**revised**) | Terminal Lobby: `POST /prompt/{session}` and `GET /events/{session}` on `:7685` | Running today, verified by curl. Keeps the conversation in tmux, so it survives every reconnect and service restart. Supersedes driving `claude -p --resume` directly, which was verified working and stays the fallback |
-| Directory (**revised**) | `GET /sessions` on tmux-api `:7684` | Returns 36 live sessions with name, state, owner, tool, origin, lastActivity, driven. Richer than `claude agents --json`, and it is the same set |
+| Worker (**revised**) | The same tmux sessions `session-events` drives, reached through `sessionio` | Verified live over HTTP first: `POST /prompt/{session}` and `GET /events/{session}` on `:7685` do this today. In-repo, `agent-api` shares the packages rather than calling the ports. Supersedes driving `claude -p --resume` directly, which was verified working and stays the fallback |
+| Directory (**revised**) | The session map `sessionio` already maintains | Verified as `GET :7684/sessions`, returning 36 live sessions with name, state, owner, tool, origin, lastActivity, driven. Richer than `claude agents --json`, and the same set |
 | Durability (**revised**) | Always warm, in tmux | Supersedes "warm while active, cold after idle". Lobby holds every session resident. The cost is recorded under resource pressure below |
-| Auth layering (**new**) | Broker holds the Lobby secret; Muse gets its own bearer | Lobby authenticates with one shared `TL_PROXY_SECRET` and a spoofable identity header, so it has no per-caller credential. The broker supplies that, and is the only thing that ever sees the Lobby secret |
+| Auth layering (**revised**) | Per-caller bearer added to `authuser`, the shared identity module | Lobby authenticates with one shared `TL_PROXY_SECRET` plus an identity header the service cannot verify, so it has no per-caller credential. Putting the bearer in `authuser` gives every Lobby service one, not just this caller, and `agent-api` never handles the shared secret at all because it makes no HTTP call to its siblings |
 | Conversations | Muse creates and addresses many by id. Nothing auto-closes; compact in place | Matches "remembers what we did last week" |
 | Concurrency | One turn per conversation, parallel across conversations | A second message to a busy conversation queues, which keeps each history coherent |
 | Async | Task id, Muse polls | Muse runs cron jobs and persists when closed, so polling is native to it. No inbound path into Meta's VM is needed |
@@ -157,45 +175,47 @@ including tool calls.
 Conversations created by Muse are readable and writable by Muse. Conversations
 Viktor started are listed and readable, and reject `POST .../messages`.
 
-**How each verb maps onto Terminal Lobby.** The broker translates; it does not
-reimplement. Routes take the session as a path segment.
+**How each verb is served.** `agent-api` reuses the packages its siblings use
+rather than calling their ports. The middle column names the mechanism; the
+right column says how the equivalent behaviour was confirmed to work.
 
-| Broker verb | Lobby call | State |
+| `agent-api` verb | Served by | Evidence |
 |---|---|---|
-| `GET /v1/conversations` | `GET :7684/sessions` | exists, verified |
-| `GET /v1/conversations/{id}` | same listing, filtered | exists, verified |
-| `GET /v1/conversations/{id}/transcript` | `GET :7685/events/{session}` SSE, plus `/earlier/{session}` and `/search/{session}` | `/events` verified; the other two read from source, not exercised |
-| `POST /v1/conversations/{id}/messages` | `POST :7685/prompt/{session}` | exists, read from source, deliberately not exercised against a live conversation |
-| `POST /v1/tasks/{id}/cancel` | `POST :7685/cancel/{session}` | exists, read from source |
-| needs-input answer | `POST :7685/answer/{session}` | exists, read from source |
-| `POST /v1/conversations` | **nothing** | the one gap, below |
+| `GET /v1/conversations` | `sessionio` session map | verified as `GET :7684/sessions`, 36 sessions |
+| `GET /v1/conversations/{id}` | same, filtered | verified the same way |
+| `GET /v1/conversations/{id}/transcript` | the transcript reader behind `session-events` | verified as `GET :7685/events/{session}`, streamed `event: ready` |
+| `POST /v1/conversations/{id}/messages` | the tmux injector in `sessionio` | read from source and its tests; deliberately not fired at a live conversation |
+| `POST /v1/tasks/{id}/cancel` | same injector's cancel path | read from source |
+| needs-input answer | same injector's answer path | read from source |
+| `POST /v1/conversations` | `sessionio.NewSession` with `NewSessionSpec{OSUser, Name, Dir, Command, Env}` | exported in `sessionio/tmux.go:467`; `NewSession` already refuses a duplicate name |
 
-**The one upstream change.** Terminal Lobby has no REST session creation. A
-session is born through ttyd's WebSocket; the only HTTP births are
-`POST /sessions/prewarm`, restricted to directories already in a project list,
-and `POST /restore`, which needs a prior kill snapshot. Closing this is a single
-handler: `POST /sessions` in tmux-api calling `sessionio.NewSession` with a
-`claude --session-id <uuid>` command. `NewSessionSpec{OSUser, Name, Dir, Command,
-Env}` already exists in `terminal-lobby/sessionio/tmux.go`, and `NewSession`
-already refuses a duplicate name.
+The last row is the one that made the in-repo choice worth making. Terminal
+Lobby has no REST session creation: a session is born through ttyd's WebSocket,
+and the only HTTP births are `POST /sessions/prewarm`, restricted to directories
+already in a project list, and `POST /restore`, which needs a prior kill
+snapshot. A standalone service would have needed a new `POST /sessions` endpoint
+added upstream first. From inside the repo it is a function call, and that step
+leaves the plan.
 
 ```mermaid
 sequenceDiagram
   participant M as Muse
-  participant B as broker
-  participant L as Lobby
-  M->>B: POST /v1/conversations
-  B->>L: POST :7684/sessions
-  B-->>M: conversation_id
-  M->>B: POST .../messages
-  B-->>M: task_id, accepted
-  B->>L: POST :7685/prompt
+  participant A as agent-api
+  participant S as sessionio
+  participant T as tmux
+  M->>A: POST /v1/conversations
+  A->>S: NewSession(spec)
+  S->>T: claude --session-id
+  A-->>M: conversation_id
+  M->>A: POST .../messages
+  A-->>M: task_id, accepted
+  A->>S: inject prompt
   loop poll
-    M->>B: GET /v1/tasks/{id}
-    B->>L: GET :7685/events SSE
-    B-->>M: running
+    M->>A: GET /v1/tasks/{id}
+    A->>S: read transcript
+    A-->>M: running
   end
-  B-->>M: done, result, detail_url
+  A-->>M: done, result, detail_url
 ```
 
 ## Network policy
@@ -209,7 +229,7 @@ userspace-networking mode. Muse's VM joins as `tag:muse`. The Headscale ACL in
   "tag:muse": ["group:admin"],
 },
 "acls": [
-  { "action": "accept", "src": ["tag:muse"], "dst": ["tag:agent-broker:8710"] },
+  { "action": "accept", "src": ["tag:muse"], "dst": ["tag:agent-api:8710"] },
 ],
 ```
 
@@ -217,11 +237,11 @@ userspace-networking mode. Muse's VM joins as `tag:muse`. The Headscale ACL in
 checkout only, per the pfSense subnet router runbook.
 
 Revoking the node in Headscale removes Muse's reachability. That is the kill
-switch, and it works whether or not the broker is behaving.
+switch, and it works whether or not `agent-api` is behaving.
 
 ## Trace
 
-One JSON object per line, in `/var/log/agent-broker/trace.jsonl`, rotated at 30
+One JSON object per line, in `/var/log/agent-api/trace.jsonl`, rotated at 30
 days by logrotate declared in the playbook, scraped into Loki alongside the
 existing devvm journal jobs.
 
@@ -248,8 +268,8 @@ the devvm being rebuilt.
 The trace is the main control, so it is worth being precise about its reach.
 
 **Holds.** Muse reaches one host and one port, enforced at the coordination
-server rather than by the broker. Revocation is one action and does not depend
-on the broker. Every request Muse makes is recorded verbatim and replayable.
+server rather than by the service. Revocation is one action and does not
+depend on it. Every request Muse makes is recorded verbatim and replayable.
 Muse cannot set the spawned agent's system prompt. Infra changes take the
 Terraform and CI path, so they are reviewable in git regardless of who asked.
 
@@ -264,18 +284,26 @@ transcript of any of Viktor's own Claude Code sessions, of which 36 were live
 when measured, and those transcripts contain whatever has passed through them.
 
 **Scoped narrower than it looks.** Terminal Lobby resolves the OS user from
-`/etc/ttyd-user-map` and scopes `/sessions` to that user, so the broker
-presenting `vbarzin` sees wizard's 36 sessions and not emo's or ancamilea's.
+`/etc/ttyd-user-map` and scopes the session list to that user, so `agent-api`
+resolving to `wizard` sees those 36 sessions and not emo's or ancamilea's.
 Verified: `GET :7684/whoami` returns `{"admin":true,"authentik":"vbarzin","osUser":"wizard"}`.
 
-**Closed by the broker.** Terminal Lobby's own auth is one shared 48-character
+**Closed by `agent-api`.** Terminal Lobby's own auth is one shared 48-character
 `TL_PROXY_SECRET` plus an identity header the service cannot verify, so anything
 reaching `:7684`/`:7685` with the secret can claim to be any user. That is
 adequate for a browser behind forward-auth and inadequate for an external
-caller. The broker is the fix: it holds the secret, Muse never sees it, and
-Muse's own bearer is revocable on its own. Note the secret does not cover ttyd
-on `:7681`, which hands out a shell; the Headscale ACL is what keeps Muse away
-from that port.
+caller. Building in-repo improves this twice over. `agent-api` makes no HTTP
+call to its siblings, so the shared secret is never handed to anything on
+Muse's behalf. And the per-caller bearer goes into `authuser`, the module every
+Lobby service already routes identity through, so the fix lands for all of them
+rather than one. Note the secret does not cover ttyd on `:7681`, which hands
+out a shell; the Headscale ACL is what keeps Muse away from that port.
+
+**Release coupling, and why it is bounded.** `agent-api` ships in the same
+Debian package as the terminal Viktor uses daily, so a bad release touches
+both. It is its own binary and its own systemd unit, which is what keeps that
+bounded: restarting it is the roughly one-second API gap a `tmux-api` restart
+costs, not a `ttyd` restart, which drops every attached terminal's WebSocket.
 
 **Would not hold if we went public.** pfSense NATs WAN :443 straight to Traefik
 with no Cloudflare-source restriction, so any control placed at the Cloudflare
@@ -324,7 +352,7 @@ well-formed authenticated request and runs it.
 
 **Step 0. Put the devvm on the tailnet.** Add a Tailscale role to
 `playbooks/devvm.yml`: `tailscaled` in userspace-networking mode as a systemd
-unit, registered to Headscale with a pre-auth key under `tag:agent-broker`.
+unit, registered to Headscale with a pre-auth key under `tag:agent-api`.
 `playbooks/devvm.yml` has no Tailscale tasks yet, and the userspace daemon
 running under `/home/emo/.tailscale-us` since 2026-08-14 predates any playbook
 entry for it. Bringing both under the playbook is the tidy outcome; filing the
@@ -338,17 +366,16 @@ fails, the finding is that Sentinel blocks CGNAT destinations, and the design
 returns to Viktor for a transport decision rather than adding a public
 endpoint without one.
 
-**Step 2. `POST /sessions` in tmux-api.** One handler in the `terminal-lobby`
-repo calling `sessionio.NewSession` with `claude --session-id <uuid>`. Its spec
-type already exists. This is the only upstream change the design needs, it ships
-in the Debian package like every other Lobby change, and it is useful to Lobby
-independently of Muse.
+**Step 2. Per-caller bearer in `authuser`.** Extend the shared identity module
+with a token credential beside the existing header-and-secret path, tokens held
+in Vault. Test-first; `authuser` already has its own test suite. Every Lobby
+service gains the option, and `agent-api` is the first to require it.
 
-**Step 3. `agent-broker` v1.** New repo under `~/code`, semver from `v0.1.0`,
-test-first. Per-caller bearer auth against a Vault-held token, the nine verbs
-translated onto Lobby's routes, the Lobby secret held here and never passed on,
-and the trace file. Concurrency is one turn per conversation; Lobby serializes
-that for us, because a tmux session processes one turn at a time.
+**Step 3. `agent-api` v1.** A seventh service in the `terminal-lobby` repo,
+added to the list in `packaging/build-deb.sh:33` with its own systemd unit.
+Test-first. The nine verbs over `sessionio`, bearer auth through `authuser`,
+the trace through `telemetry`. Concurrency is one turn per conversation, which
+comes free because a tmux session processes one turn at a time.
 
 **Step 4. Connect Muse.** Publish the OpenAPI document at the tailnet address and
 have Muse build its custom connector from it. Verify by driving a real task
@@ -382,3 +409,6 @@ What was actually run on 2026-09-13 and 2026-09-14, rather than assumed.
 | Resource pressure on the devvm | `df`, `pgrep`, `free` | Root filesystem 90% full, 24G free; 46 `claude` processes; 8 of 23G swap used |
 | `tmux-persist-save` is not failed | `systemctl status` | Timer-driven oneshot, `inactive (dead)`, `status=0/SUCCESS`, last run 83s earlier |
 | `OPENAI_COMPAT_AGENT` is no longer `recruiter-triage` | read `claude-agent-service/app/main.py:79` | `None` since 2026-09-11. Memory #6186 corrected |
+| A seventh Lobby service is a one-word change | read `packaging/build-deb.sh:33` | A literal list: `for svc in tmux-api clipboard-upload session-events file-api skills-api tl-session-watch` |
+| `authuser` is the shared identity seam | `ls authuser/`, `grep` its exports, read a consumer's `go.mod` | Its own Go module exporting `Gate.Effective` (`authuser.go:170`); `session-events/go.mod` imports it alongside `sessionio`, `spendstore` and `telemetry` |
+| `sessionio` can create a session in-process | `grep` its exports | `NewSessionSpec` at `sessionio/tmux.go:467` |
