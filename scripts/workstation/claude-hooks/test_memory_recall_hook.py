@@ -55,6 +55,32 @@ def test_render_line_falls_back_to_importance_without_rank():
     assert "(0.90)" in hook.render_memory_line(m)
 
 
+def test_render_marks_an_external_agents_memory():
+    m = _mem(7, content="he prefers window seats", category="preferences",
+             rank=0.42, tags="travel,source:muse")
+    assert hook.render_memory_line(m) == "#7 [preferences] [via muse] (0.42) he prefers window seats"
+
+
+def test_render_leaves_an_ordinary_memory_unmarked():
+    assert "[via" not in hook.render_memory_line(_mem(7, tags="travel,preferences"))
+
+
+def test_render_marker_survives_whitespace_around_the_tag():
+    assert "[via muse]" in hook.render_memory_line(_mem(7, tags="a, source:muse ,b"))
+
+
+def test_render_marker_is_generic_in_the_agent_name():
+    assert "[via someone-else]" in hook.render_memory_line(_mem(7, tags="source:someone-else"))
+
+
+def test_render_ignores_a_bare_source_tag_with_no_agent():
+    assert "[via" not in hook.render_memory_line(_mem(7, tags="source:"))
+
+
+def test_render_marker_tolerates_tags_as_a_list():
+    assert "[via muse]" in hook.render_memory_line(_mem(7, tags=["travel", "source:muse"]))
+
+
 def test_render_flattens_newlines():
     line = hook.render_memory_line(_mem(3, content="line one\nline two"))
     assert "\n" not in line
