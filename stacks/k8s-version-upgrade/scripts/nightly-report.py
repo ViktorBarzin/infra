@@ -10,6 +10,8 @@ back — is visible at a glance during the upgrade-cleanup window.
 Outcomes it distinguishes:
   ⚪ no upgrade needed     — cluster already at the latest supported patch
   🔴 BLOCKED              — compat gate refused the target; lists live reasons
+  ⏸️ DEFERRED             — target is upgradable, but the cluster was not quiet
+                            enough to start; names the blocking condition
   🟢 UPGRADED             — all nodes now on the detected target
   🟡 in progress / passed — gate passed, chain mid-flight (or partial)
   ⚠️  detector STALE       — the weekly (Sun 23:00) detector did not run
@@ -122,6 +124,14 @@ def compose_report(now_ts, nodes, metrics, blocker_reasons, jobs):
     avail = [(lbl, val) for lbl, val in select(metrics, "k8s_upgrade_available") if val == 1]
     blocked = any(val == 1 for _, val in select(metrics, "k8s_upgrade_blocked"))
     held = any(val == 1 for _, val in select(metrics, "k8s_upgrade_held"))
+    # Deferred is a DIFFERENT fact from held: the target is upgradable, the
+    # cluster just was not quiet enough to start (a firing critical alert, an
+    # unhealthy node, a node that only just came Ready). preflight pushes the
+    # blocking condition as labels, and naming it here is the whole point — a
+    # pause with no reason is what let an expired bank consent hold Kubernetes
+    # back for 2d20h with nothing in Slack saying so. The three are mutually
+    # exclusive by construction (each recorder zeroes the other two gauges).
+    deferral = next((lbl for lbl, val in select(metrics, "k8s_upgrade_deferred") if val == 1), None)
 
     if avail:
         lbl = avail[0][0]
@@ -131,6 +141,10 @@ def compose_report(now_ts, nodes, metrics, blocker_reasons, jobs):
         if blocked:
             # actionable block — an addon upgrade would clear it (K8sUpgradeBlocked fired)
             headline = f"🔴 BLOCKED (action needed) — {target}"
+        elif deferral is not None:
+            # cluster not quiet enough to start; clears itself when the condition does
+            cond = deferral.get("condition", "unknown condition")
+            headline = f"⏸️ DEFERRED — {target} not started ({cond})"
         elif held:
             # waiting on upstream and/or a pinned addon — nothing to do but wait;
             # intentionally NO alert, this nightly line is the only signal
@@ -148,6 +162,12 @@ def compose_report(now_ts, nodes, metrics, blocker_reasons, jobs):
         headline = "⚠️ Detector did not run last night — " + headline
 
     msg = [f"*[k8s-upgrade nightly]* {headline}", node_line, run_line, tgt_line]
+
+    if avail and deferral is not None:
+        detail = deferral.get("detail", "")
+        msg.append(f"Deferred by: *{deferral.get('condition', 'unknown')}*"
+                   + (f" — {detail}" if detail else ""))
+        msg.append("  Re-checked every detector run; proceeds on its own once the condition clears.")
 
     if (blocked or held) and blocker_reasons:
         msg.extend(_render_reasons(blocker_reasons))
