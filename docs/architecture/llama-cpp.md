@@ -115,7 +115,7 @@ kubectl scale -n immich deploy/immich-machine-learning --replicas=1
 
 | ID | HF repo | Quant | Ctx | mmproj |
 |----|---------|-------|-----|--------|
-| `qwen3-8b` | `unsloth/Qwen3-8B-GGUF` | Q4_K_M | 16384 | no (text-only) |
+| `qwen3-8b` | `unsloth/Qwen3-8B-GGUF` | Q4_K_M | 8192 | no (text-only) |
 | `qwen3vl-8b` | `Qwen/Qwen3-VL-8B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
 | `qwen3vl-4b` | `Qwen/Qwen3-VL-4B-Instruct-GGUF` | Q4_K_M | 3072 | yes |
 | `qwen38-27b` | `unsloth/Qwen3.8-27B-GGUF` | UD-Q2_K_XL | 8192 | no (text-only) |
@@ -217,3 +217,48 @@ Method, numbers, and the broader SoTA survey:
   llama-swap config doesn't need to track exact HF filenames (which
   change between releases).
 - **TF schema** — `llama-cpp` (PG backend on dbaas).
+
+## Why qwen3-8b runs at 8192 and not 16384
+
+Lowered 2026-09-16. At 16384 the model stopped loading: it needs 6986 MiB
+resident, and after the seated GPU tenants (7069 MiB) and the watchdog's 1536
+MiB emergency floor, only 6755 MiB of the T4's 15360 is available to
+llama-swap. Short by 231 MiB.
+
+Being short is not a soft failure. llama-swap holds no `gpumem` seat by design,
+so the gpu-vram-watchdog reads it as the largest over-budget tenant and
+recycles it the moment it loads, which is the non-converging loop first seen on
+2026-09-04. A seat cannot fix it either: seats already total 13300 of the 14000
+the node advertises, so a 7000 seat would never schedule.
+
+At 8192 resident is ~5900 MiB, leaving ~2400 above the floor.
+
+The reduction costs nothing measurable. Over the seven days to 2026-09-16 the
+largest prompt any consumer sent was **1993 tokens**, so 8192 is still four
+times the observed maximum. The three consumers (paperless-ai,
+recruiter-responder, nextcloud-todos) are short-prompt classifiers. Note that
+llama.cpp clamps an oversized `max_tokens` and returns HTTP 200 rather than
+erroring, so a consumer that outgrows the window will truncate silently instead
+of failing loudly.
+
+Before raising it again, re-do that arithmetic with live numbers. The binding
+constraint is the emergency floor rather than the seats, and claude-memory's
+CUDA arena ratchets roughly 260 MiB/day between restarts, so the headroom
+shrinks on its own.
+
+## The liveness probe is deliberately patient
+
+`timeout_seconds` is 10 with `failure_threshold` 10, giving a cold model load
+300s of grace against a typical ~90s load. It was unset until 2026-09-16, which
+meant Kubernetes' 1s default: `GET /` costs ~15ms with a model resident but
+blocks while llama-swap spawns a llama-server child and reads several GB off
+the models PVC, so the pod was killed on a ~150s cycle during any cold load.
+Callers saw `httpx RemoteProtocolError`, and because pods were **replaced**
+rather than restarted in place, `RESTARTS` stayed 0 and it did not read as a
+crash loop.
+
+Patience costs nothing this probe was detecting. It cannot catch the documented
+wedge where llama-swap accepts `/v1/chat/completions` and never spawns a child,
+because a wedged instance still answers `GET /`. It only detects a dead
+listener, and a refused connection fails immediately rather than waiting out
+the timeout.

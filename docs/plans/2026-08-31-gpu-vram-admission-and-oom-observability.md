@@ -349,6 +349,17 @@ The two contention signals are complementary and both are required:
   (`GpuCudaOom`) counts these log lines per namespace, and the watchdog reads
   the active alert from Alertmanager.
 
+  **The rule shipped matching the wrong string and was corrected 2026-09-16.**
+  It looked for `CUDA_ERROR_OUT_OF_MEMORY|CUDA error: out of memory`. ggml uses
+  those on other paths; a starved model load reports
+  `cudaMalloc failed: out of memory`, so the alert never fired and this signal
+  never reached the watchdog. Because the same alert supplies
+  `exclude_namespaces`, nothing was ever excluded from victim selection, and
+  the starving seatless tenant was therefore always chosen as the cause of its
+  own starvation. That is the mechanism behind the non-converging recycle loop
+  of 2026-09-04. Check a real log line against the regex before treating a
+  quiet CUDA alert as a calm card.
+
   The design called for a Loki *recording* rule feeding Prometheus. That path
   does not exist here: the Loki ruler is configured for alerting only, with no
   `remote_write`, so a recording rule would have nowhere to land that Prometheus

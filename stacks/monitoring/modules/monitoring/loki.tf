@@ -201,16 +201,27 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # it reclaim a ratcheted arena instead of waiting for free VRAM to
               # hit the emergency floor.
               #
-              # Both spellings are matched deliberately: llama.cpp/ggml emits
-              # "CUDA error: out of memory" while ffmpeg's CUDA hwcontext emits
-              # "CUDA_ERROR_OUT_OF_MEMORY".
+              # THREE spellings, because the two this rule shipped with never
+              # matched the failure it exists to catch. ggml's buffer allocator
+              # reports a starved model load as
+              #   ggml_backend_cuda_buffer_type_alloc_buffer: allocating
+              #   2304.00 MiB on device 0: cudaMalloc failed: out of memory
+              # i.e. "cudaMalloc failed: out of memory" — not the "CUDA error:
+              # out of memory" this rule looked for, which ggml uses on a
+              # different path. Measured 2026-09-16 while llama-swap could not
+              # load qwen3-8b at all: over 100 lines of the real spelling in
+              # under 8 hours, and zero matches for either spelling this rule
+              # had, so GpuCudaOom never fired and the watchdog never saw the
+              # contention. ffmpeg's CUDA hwcontext is the "CUDA_ERROR_OUT_OF_
+              # MEMORY" one and is kept. Check a log line against the regex
+              # before trusting a quiet CUDA alert.
               #
               # 5m window: long enough that a load failure is still visible on
               # the watchdog's next tick, short enough that the signal clears
               # once the starvation is resolved rather than pinning the guard on.
               # It is a first estimate; tune from observed behaviour.
               alert = "GpuCudaOom"
-              expr  = "sum by (namespace) (count_over_time({namespace=~\"llama-cpp|frigate|immich|tts|ytdlp|f1-stream|stremio|android-emulator\"} |~ \"CUDA_ERROR_OUT_OF_MEMORY|CUDA error: out of memory\" [5m])) > 0"
+              expr  = "sum by (namespace) (count_over_time({namespace=~\"llama-cpp|frigate|immich|tts|ytdlp|f1-stream|stremio|android-emulator\"} |~ \"CUDA_ERROR_OUT_OF_MEMORY|CUDA error: out of memory|cudaMalloc failed: out of memory\" [5m])) > 0"
               for   = "0m"
               labels = {
                 severity = "warning"
