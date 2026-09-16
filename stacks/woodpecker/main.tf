@@ -525,3 +525,180 @@ resource "kubernetes_cron_job_v1" "rotation_sync" {
     }
   }
 }
+
+# ---------------------------------------------------------------------------
+# Workspace-PVC reaper.
+#
+# WHY THIS EXISTS. Woodpecker's kubernetes backend creates one PVC per pipeline
+# ("a temporary PVC is created for the lifetime of the pipeline") and deletes it
+# in DestroyWorkflow. That cleanup is best-effort and leaks on two paths, both
+# observed here:
+#
+#   1. DestroyWorkflow deletes every step pod BEFORE the volume, and returns on
+#      the first pod error:
+#
+#          for _, stage := range conf.Stages {
+#              for _, step := range stage.Steps {
+#                  err := stopPod(ctx, e, step, ...)
+#                  if err != nil { return err }   // <- never reaches stopVolume
+#              }
+#          }
+#          ...
+#          err = stopVolume(ctx, e, conf.Volume, ...)
+#
+#      stopPod suppresses only 404. Any apiserver timeout, conflict or 500
+#      propagates and the PVC survives.
+#
+#   2. If the agent process dies while holding the task, DestroyWorkflow never
+#      runs at all. The DB shows 23 workflows stuck `running` with finished=0
+#      out of 7,556, plus 433 `killed` (Woodpecker cancels on the next push).
+#      Workflow 6860 started 2026-08-16 00:38:27 and its PVC was created
+#      00:38:28 — one second apart, still present 31 days later.
+#
+# NO WOODPECKER SETTING FIXES THIS. All 20 documented WOODPECKER_BACKEND_K8S_*
+# vars were checked; none controls volume lifecycle, TTL, retention or reuse.
+# The three touching storage are VOLUME_SIZE, STORAGE_CLASS and STORAGE_RWX.
+#
+# AND KUBERNETES GC CANNOT HELP. mkPersistentVolumeClaim sets only Name and
+# Namespace in ObjectMeta — no ownerReferences and no labels — so there is no
+# edge for the garbage collector to follow, and a reaper cannot use a label
+# selector either. Hence the `wp-` name prefix below.
+#
+# WHAT IT ACTUALLY COSTS. Not much disk: measured with du on each node the seven
+# orphans held ~130 MB total (node2 66M, node5 34M, node4 27M, node3 28K),
+# because local-path enforces no quota and the 10G VOLUME_SIZE is a claim figure
+# only. The real cost is that a leaked PVC on the WaitForFirstConsumer binding
+# mode stays Pending forever with no consumer ever arriving, which fires
+# PVCStuckPending permanently — two of them had been firing for 10 days.
+resource "kubernetes_service_account" "pvc_reaper" {
+  metadata {
+    name      = "woodpecker-pvc-reaper"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "pvc_reaper" {
+  metadata {
+    name      = "woodpecker-pvc-reaper"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  # Namespaced deliberately. The sibling pod reaper in infra-maintenance uses a
+  # ClusterRole because it sweeps -A; this one must never reach outside
+  # woodpecker. No PV verbs are needed: local-path is reclaimPolicy=Delete, so
+  # deleting the PVC cascades to the PV and the provisioner's teardown pod
+  # removes /opt/local-path-provisioner/<pv>_woodpecker_<pvc>.
+  rule {
+    api_groups = [""]
+    resources  = ["persistentvolumeclaims"]
+    verbs      = ["list", "delete"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["list"]
+  }
+}
+
+resource "kubernetes_role_binding" "pvc_reaper" {
+  metadata {
+    name      = "woodpecker-pvc-reaper"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.pvc_reaper.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.pvc_reaper.metadata[0].name
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+}
+
+resource "kubernetes_cron_job_v1" "pvc_reaper" {
+  metadata {
+    name      = "woodpecker-pvc-reaper"
+    namespace = kubernetes_namespace.woodpecker.metadata[0].name
+  }
+  spec {
+    # Daily is plenty — a leak costs ~20 MB and a permanently-firing alert, not
+    # an outage. Offset minute is the house convention so reapers do not all
+    # land on the same tick.
+    schedule                      = "37 4 * * *"
+    successful_jobs_history_limit = 1
+    failed_jobs_history_limit     = 1
+    concurrency_policy            = "Forbid"
+    job_template {
+      metadata {
+        name = "woodpecker-pvc-reaper"
+      }
+      spec {
+        ttl_seconds_after_finished = 600
+        # Same reasoning as cleanup-failed-pods (infra-maintenance, commit
+        # 22ba5c67): with concurrency_policy Forbid, a run that never finishes
+        # silently cancels every later schedule, so the deadline is what keeps
+        # the cadence. That job wedged for real when the apiserver restarted
+        # mid-run.
+        active_deadline_seconds = 300
+        template {
+          metadata {
+            name = "woodpecker-pvc-reaper"
+          }
+          spec {
+            service_account_name = kubernetes_service_account.pvc_reaper.metadata[0].name
+            container {
+              name  = "reap"
+              image = "bitnami/kubectl:latest"
+              command = ["/bin/sh", "-c", <<-EOT
+                set -u
+
+                # Every PVC referenced by any pod in the namespace, in ANY phase.
+                # Phase matters: a pipeline mid-run has a Running pod holding its
+                # claim, and a pod that is Pending because its node is busy still
+                # owns one. Filtering by phase here would delete a live workspace.
+                kubectl -n woodpecker get pods \
+                  -o go-template='{{range .items}}{{range .spec.volumes}}{{if .persistentVolumeClaim}}{{.persistentVolumeClaim.claimName}}{{"\n"}}{{end}}{{end}}{{end}}' \
+                  | sort -u > /tmp/inuse
+
+                now=$(date +%s)
+
+                # Only wp-* claims. Woodpecker names them wp-<workflow-ulid>-N-<volume>,
+                # and nothing else in this namespace uses that prefix. There are no
+                # labels to select on, which is the upstream gap this works around.
+                kubectl -n woodpecker get pvc \
+                  -o go-template='{{range .items}}{{.metadata.name}} {{.metadata.creationTimestamp}}{{"\n"}}{{end}}' \
+                  | while read -r name created; do
+                      case "$name" in wp-*) ;; *) continue ;; esac
+                      [ -n "$created" ] || continue
+
+                      # Never touch a claim a pod still references.
+                      if grep -qxF "$name" /tmp/inuse; then continue; fi
+
+                      # Age gate. A pipeline can outlive its own pods briefly
+                      # between steps, so a claim is only orphaned if it has been
+                      # unreferenced AND is older than any plausible pipeline. The
+                      # longest observed infra pipeline is well under an hour; 24h
+                      # is deliberately far past it, because deleting a live
+                      # workspace fails a build and reclaiming 20 MB a day later
+                      # costs nothing.
+                      age_start=$(date -d "$created" +%s 2>/dev/null) || continue
+                      [ $((now - age_start)) -gt 86400 ] || continue
+
+                      echo "reaping orphaned workspace PVC $name (created $created)"
+                      kubectl -n woodpecker delete pvc "$name" --ignore-not-found
+                    done
+              EOT
+              ]
+            }
+            restart_policy = "Never"
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
