@@ -168,6 +168,10 @@
     # before the first run. See the registration task for the two commands.
     devvm_tailscale_vault_path: secret/devvm-tailscale
     devvm_tailscale_vault_field: preauth_key
+    # The key is handed to `tailscale up` through this file rather than on its
+    # argv — see "Write the pre-auth key to a private file" below. It lives in
+    # the 0700 state dir and is removed by the block's `always`.
+    devvm_tailscale_preauth_file: "{{ devvm_tailscale_state_dir }}/preauth.key"
     # Re-register a node that was deleted or expired in Headscale:
     #   -e devvm_tailscale_force_register=true
     devvm_tailscale_force_register: false
@@ -1750,8 +1754,44 @@
           check_mode: false
           no_log: true
 
+        - name: Write the pre-auth key to a private file
+          # `tailscale up --auth-key <key>` puts a live single-use credential
+          # in the process table for as long as registration runs, and no_log
+          # suppresses Ansible's copy of the line, not the kernel's. /proc here
+          # is mounted without hidepid, and four accounts have shells, so any
+          # of them can read another's argv — measured 2026-09-16 by reading
+          # the emo tailscaled command line as wizard.
+          #
+          # The installed tailscale (1.98.3) documents the indirection:
+          #   --auth-key value  node authorization key; if it begins with
+          #                     "file:", then it's a path to a file containing
+          #                     the authkey
+          # Verified against that binary: a missing path fails with
+          # "open <path>: no such file or directory", so the file really is
+          # read rather than the string being taken literally.
+          #
+          # 0600 inside the 0700 state dir, and removed by the `always` below
+          # whether registration succeeds or fails. The play runs as root, so
+          # root reads it regardless of the owner.
+          ansible.builtin.copy:
+            dest: "{{ devvm_tailscale_preauth_file }}"
+            content: "{{ devvm_ts_preauth.stdout }}"
+            owner: "{{ devvm_tailscale_user }}"
+            group: "{{ devvm_tailscale_user }}"
+            mode: "0600"
+          no_log: true
+
         - name: Register with Headscale
           # No --advertise-tags — see the section comment.
+          #
+          # no_log was dropped when the key moved off the argv. It was hiding
+          # the secret in this command line, and the line no longer has one;
+          # what it also hid was the stderr that says WHY registration failed,
+          # so a spent key surfaced as "output has been hidden" and nothing
+          # else. The remaining output goes to the terminal of whoever ran the
+          # play, and the Vault read above uses that same person's token
+          # (delegate_to: localhost, become: false), so they can already read
+          # the key directly. This playbook is hand-run; no CI job invokes it.
           #
           # --accept-dns=false because accepting DNS means rewriting
           # /etc/resolv.conf, which an unprivileged userspace daemon cannot do
@@ -1761,22 +1801,53 @@
           ansible.builtin.command: >-
             tailscale --socket={{ devvm_tailscale_state_dir }}/ts.sock up
             --login-server {{ devvm_tailscale_login_server }}
-            --auth-key {{ devvm_ts_preauth.stdout }}
+            --auth-key file:{{ devvm_tailscale_preauth_file }}
             --hostname {{ devvm_tailscale_hostname }}
             --accept-dns=false
             --accept-routes=false
             --timeout 60s
           changed_when: true
-          no_log: true
 
         - name: Wait for the node to reach Running
+          # Guarded on rc and on stdout being non-empty, for the same reason
+          # "Parse the tailnet login state" above is: `tailscale status --json`
+          # exits 1 with EMPTY stdout when the daemon is momentarily gone (it
+          # hit Restart=on-failure, or the socket is not back yet), and
+          # `'' | from_json` raises INSIDE the until condition. That aborts the
+          # task on the first attempt with "Unexpected failure during module
+          # execution: Expecting value: line 1 column 1", consuming none of the
+          # retries — so the task that exists to tolerate a slow start would be
+          # the one that kills the play. Reproduced on ansible-core 2.16.3 and
+          # pinned by tests/devvm-agent-tailnet.test.sh.
+          #
+          # An empty string never equals 'Running', so a bad read degrades into
+          # a retry. Exhausting all 20 still fails the play, which is right: a
+          # daemon that never comes back is not a success.
           ansible.builtin.command: >-
             tailscale --socket={{ devvm_tailscale_state_dir }}/ts.sock status --json
           register: devvm_ts_wait
-          until: (devvm_ts_wait.stdout | from_json).BackendState | default('') == 'Running'
+          until: >-
+            ((devvm_ts_wait.stdout | from_json).BackendState | default('')
+             if devvm_ts_wait.rc == 0 and devvm_ts_wait.stdout | trim | length > 0
+             else '') == 'Running'
           retries: 20
           delay: 6
           changed_when: false
+
+      # Runs whether registration succeeded or failed, which a trailing task in
+      # the block would not: a `tailscale up` that errors out is exactly when a
+      # live key must not be left on disk. The block's `when` is inherited here
+      # too, so a converged re-run skips this along with the rest and still
+      # reports changed=0.
+      #
+      # Nothing is lost by removing it: the registered node key lives in the
+      # state dir, not in the pre-auth key. Same reasoning as "Clear the stored
+      # pre-auth key" in playbooks/pfsense-tailscale.yml.
+      always:
+        - name: Remove the pre-auth key file
+          ansible.builtin.file:
+            path: "{{ devvm_tailscale_preauth_file }}"
+            state: absent
 
     - name: Verify the node holds a tailnet address
       ansible.builtin.command: >-
@@ -1790,13 +1861,23 @@
     # do, so it is kept for 30 days on disk and then it goes. Promtail ships the
     # same file to Loki, which is where cluster-wide search and the longer
     # history live; this only bounds the local copy.
+    # 0700, not 0755. The trace holds Muse's verbatim request and a full
+    # replay of the run, and ancamilea, emo and breakglass all have shells on
+    # this box. agent-api picks the trace file's own mode, and a Go
+    # os.OpenFile(..., 0666) under the default umask lands at 0644, so the
+    # directory is what has to close it. Promtail reads it as root either way,
+    # and logrotate is told `su {{ devvm_tailscale_user }}` below, so nothing
+    # needs group access — which is also why this is 0700 rather than 0750
+    # root:adm: adm membership can grow later without anyone rereading this.
+    # Matches the 0700 on the tailscaled state dir above, and on
+    # /var/log/private and /var/log/letsencrypt.
     - name: Create the agent-api log directory
       ansible.builtin.file:
         path: "{{ devvm_agent_api_log_dir }}"
         state: directory
         owner: "{{ devvm_tailscale_user }}"
         group: "{{ devvm_tailscale_user }}"
-        mode: "0755"
+        mode: "0700"
 
     - name: Rotate the agent-api trace
       ansible.builtin.copy:
