@@ -48,6 +48,26 @@ encrypt_state() {
   local name
   name="$(stack_name_from_dir "$dir")"
   [ -f "$src" ] || return 0
+
+  # Refuse to encrypt a state file that is empty or not valid JSON. Terraform
+  # reads a 0-byte state as "no resources exist", so encrypting one over a good
+  # .enc replaces a stack's entire state with nothing. The old guard was
+  # `[ -f "$src" ]` alone, which a 0-byte file passes, and the mtime test below
+  # treats a freshly-truncated file as newer and therefore worth encrypting.
+  # A failed decrypt used to leave exactly such a file (see decrypt_state), so
+  # decrypt-then-encrypt was a two-command path to an empty state. Recoverable,
+  # because the .enc is committed, but silent, which is the part worth fixing.
+  if [ ! -s "$src" ]; then
+    echo "state-sync: REFUSING to encrypt $name — $src is empty." >&2
+    echo "  A 0-byte state means Terraform would plan to create every resource" >&2
+    echo "  in this stack. Restore it with: git checkout -- $dst" >&2
+    return 1
+  fi
+  if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$src" 2>/dev/null; then
+    echo "state-sync: REFUSING to encrypt $name — $src is not valid JSON." >&2
+    return 1
+  fi
+
   # Only re-encrypt if state is newer than encrypted version
   if [ ! -f "$dst" ] || [ "$src" -nt "$dst" ]; then
     sops -e --input-type json --output-type json \
@@ -57,24 +77,75 @@ encrypt_state() {
   fi
 }
 
+# Decrypt to a temp file and only move it into place once it is non-empty and
+# valid JSON.
+#
+# This used to redirect sops straight onto the real state file. The shell
+# truncates a redirect target BEFORE the command runs, so a failed decrypt left
+# a 0-byte terraform.tfstate where the state had been. Measured 2026-09-16:
+# one `state-sync decrypt` per stack produced four of them across platform,
+# cnpg, dbaas and external-secrets. `scripts/tg` survives it (its `set -e`
+# catches the exit 128 and aborts before terragrunt runs), but the truncated
+# file stays on disk, and `encrypt` would then happily seal it over the good
+# .enc. That second half is now refused too, see encrypt_state.
+#
+# The age fallback also keyed on the WRONG condition. It asked "is Vault
+# reachable", not "did the Vault decrypt work", and those differ: sops records
+# the Transit key's ADDRESS at encrypt time and reuses it verbatim, so a file
+# encrypted in-cluster carries http://vault-active.vault.svc.cluster.local:8200
+# and cannot be decrypted from the devvm no matter how valid the token is.
+# With a good token the old code took the Vault branch, failed on DNS, and
+# never tried the age key that was sitting on disk. It now falls back whenever
+# the Vault attempt fails, for any reason.
 decrypt_state() {
   local dir="$1"
   local src="$dir/terraform.tfstate.enc"
   local dst="$dir/terraform.tfstate"
+  local tmp
   [ -f "$src" ] || return 0
 
+  local age_key="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"
+  tmp="$(mktemp "${dst}.XXXXXX")"
+  # The temp file carries decrypted state, so remove it on every exit path.
+  trap 'rm -f "$tmp"' RETURN
+
+  local got=false
   if vault_available; then
-    # Vault Transit — per-stack key, no local key needed
-    sops -d --input-type json --output-type json "$src" > "$dst"
-  elif [ -f "${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}" ]; then
-    # Fallback: age key on disk (bootstrap / Vault down)
-    echo "state-sync: Vault unavailable, falling back to age key" >&2
-    SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}" \
-      sops -d --input-type json --output-type json "$src" > "$dst"
-  else
-    echo "state-sync: ERROR — no Vault token and no age key at ~/.config/sops/age/keys.txt" >&2
+    if sops -d --input-type json --output-type json "$src" > "$tmp" 2>/dev/null; then
+      got=true
+    else
+      echo "state-sync: Vault Transit decrypt failed for $(stack_name_from_dir "$dir")" >&2
+    fi
+  fi
+
+  if [ "$got" = false ] && [ -f "$age_key" ]; then
+    echo "state-sync: trying the age key" >&2
+    if SOPS_AGE_KEY_FILE="$age_key" \
+        sops -d --input-type json --output-type json "$src" > "$tmp" 2>/dev/null; then
+      got=true
+    fi
+  fi
+
+  if [ "$got" = false ]; then
+    echo "state-sync: ERROR — could not decrypt $src." >&2
+    echo "  Tried Vault Transit at the address recorded IN THE FILE (not \$VAULT_ADDR)" >&2
+    echo "  and the age key at $age_key." >&2
+    echo "  A file encrypted inside the cluster records an in-cluster Vault address" >&2
+    echo "  and needs an age recipient to be readable from anywhere else." >&2
+    echo "  $dst was left untouched." >&2
     return 1
   fi
+
+  if [ ! -s "$tmp" ]; then
+    echo "state-sync: ERROR — decrypt produced an empty file, refusing to install it." >&2
+    return 1
+  fi
+  if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$tmp" 2>/dev/null; then
+    echo "state-sync: ERROR — decrypt produced invalid JSON, refusing to install it." >&2
+    return 1
+  fi
+
+  mv -f "$tmp" "$dst"
 }
 
 case "$cmd" in
