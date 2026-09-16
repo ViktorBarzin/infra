@@ -150,8 +150,33 @@ def _score(m):
     return 0.0
 
 
+def _origin_marker(m):
+    """'[via muse] ' when the entry carries a source:<agent> tag, else ''.
+
+    The claude-memory API stamps `source:<user_id>` server-side on every write
+    from a key whose scope is `external`, so the tag is the one thing that
+    distinguishes a memory written by an outside assistant from one written
+    here. Recall output is injected verbatim into every turn, so a session that
+    cannot see the difference has no way to weigh the claim
+    (infra/docs/plans/2026-09-16-muse-memory-connector-design.md).
+
+    Generic in the agent name on purpose: a second external key gets its own
+    source tag and renders without another change here.
+    """
+    raw = m.get("tags") or ""
+    tags = raw if isinstance(raw, str) else ",".join(str(t) for t in raw)
+    for tag in tags.split(","):
+        tag = tag.strip()
+        if tag.startswith("source:") and len(tag) > len("source:"):
+            return f"[via {tag[len('source:'):]}] "
+    return ""
+
+
 def render_memory_line(m, indent="", prefix=""):
-    """One compact line: '#<id> [<category>] (<score>) <content>'.
+    """One compact line: '#<id> [<category>] [via X] (<score>) <content>'.
+
+    The '[via X]' marker appears only for entries written by an external agent;
+    everything else renders as before.
 
     Legacy oversize content is clipped at CLIP_AT unicode CHARACTERS (python
     str slicing is character-based, so multibyte runes are never split) with a
@@ -162,7 +187,8 @@ def render_memory_line(m, indent="", prefix=""):
     content = " ".join(str(m.get("content") or "").splitlines())
     if len(content) > CLIP_THRESHOLD:
         content = content[:CLIP_AT] + f"… [full: homelab memory get {mid}]"
-    return f"{indent}{prefix}#{mid} [{category}] ({_score(m):.2f}) {content}"
+    origin = _origin_marker(m)
+    return f"{indent}{prefix}#{mid} [{category}] {origin}({_score(m):.2f}) {content}"
 
 
 def link_pointer_lines(m):
