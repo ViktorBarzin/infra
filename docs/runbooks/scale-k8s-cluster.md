@@ -6,7 +6,7 @@ Use when block-PVC pressure, memory pressure, or planned workload growth require
 
 | Node | VMID | Memory | Disk | Special |
 |------|------|--------|------|---------|
-| k8s-master | 200 | 32 GiB | 64G | Control plane, no worker workloads |
+| k8s-master | 200 | 16 GiB | 64G | Control plane, no worker workloads. Right-sized 32->16 GiB on 2026-09-15; guest working set is 7.2 GiB |
 | k8s-node1 | 201 | 48 GiB | 256G | GPU host (NVIDIA Tesla T4 passthrough), DNS primary |
 | k8s-node2 | 202 | 32 GiB | 256G | |
 | k8s-node3 | 203 | 32 GiB | 256G | |

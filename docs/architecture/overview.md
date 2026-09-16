@@ -86,7 +86,7 @@ graph TB
 | 101 | pfsense | 8 | 16GB | vmbr0, vmbr1:vlan10, vmbr1:vlan20 | - | Gateway/firewall routing between VLANs |
 | 102 | devvm | 16 | 8GB | vmbr1:vlan10 | - | Development VM |
 | 103 | home-assistant | 8 | 8GB | vmbr0 | - | Home Assistant Sofia instance |
-| 200 | k8s-master | 8 | 32GB | vmbr1:vlan20 | 10.0.20.100 | Kubernetes control plane |
+| 200 | k8s-master | 8 | 16GB | vmbr1:vlan20 | 10.0.20.100 | Kubernetes control plane |
 | 201 | k8s-node1 | 16 | 32GB | vmbr1:vlan20 | - | GPU worker node (Tesla T4 passthrough) |
 | 202 | k8s-node2 | 8 | 32GB | vmbr1:vlan20 | - | Worker node |
 | 203 | k8s-node3 | 8 | 32GB | vmbr1:vlan20 | - | Worker node |
@@ -135,7 +135,7 @@ This three-tier network design isolates Kubernetes workloads from management inf
 ### Compute Layer
 
 The Kubernetes cluster consists of 6 nodes:
-- **k8s-master (200)**: 8c/32GB control plane running kube-apiserver, etcd, controller-manager
+- **k8s-master (200)**: 8c/16GB control plane running kube-apiserver, etcd, controller-manager
 - **k8s-node1 (201)**: 16c/48GB GPU node with Tesla T4 passthrough, tainted for GPU workloads only
 - **k8s-node2-5 (202-205)**: 8c/32GB workers running general-purpose workloads (k8s-node6/206 was removed 2026-07-18 — see the power-outage post-mortem)
 
