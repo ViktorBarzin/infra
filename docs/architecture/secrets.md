@@ -382,6 +382,42 @@ First-apply issue:
 3. Check age key fallback: `~/.config/sops/age/keys.txt` exists
 4. Run manual decrypt: `scripts/state-sync decrypt path/to/state.tfstate.enc`
 
+**A valid Vault token is not enough, because sops uses the address recorded in
+the FILE.** sops writes the Transit key's address at encrypt time and reuses it
+verbatim when decrypting, ignoring `$VAULT_ADDR`. A state file last encrypted
+from inside the cluster therefore carries
+`http://vault-active.vault.svc.cluster.local:8200` and cannot be decrypted from
+the devvm at all, which surfaces as `server misbehaving` from the local
+resolver rather than as anything about keys. Check which address a file carries
+before debugging credentials:
+
+```bash
+grep -o 'vault_address[^,}]*' state/stacks/<stack>/terraform.tfstate.enc | head -1
+```
+
+**Four of the six Tier-0 states have no age recipient, so they have no second
+path.** Measured 2026-09-16:
+
+| stack | recorded Vault address | age recipients | decryptable off-cluster |
+|---|---|---|---|
+| `vault` | `https://vault.viktorbarzin.me` | 2 | yes |
+| `infra` | `https://vault.viktorbarzin.me` | 2 | yes |
+| `platform` | in-cluster | **0** | no |
+| `cnpg` | in-cluster | **0** | no |
+| `dbaas` | in-cluster | **0** | no |
+| `external-secrets` | in-cluster | **0** | no |
+
+This is worth knowing before it is needed, because Tier-0 exists precisely to
+bootstrap the cluster when Postgres or the cluster itself is unavailable, and
+`dbaas` is the stack this document names as that recovery path. Today those four
+are readable only from inside the cluster whose recovery they are meant to
+serve. `encrypt_state` does pass `--age`, so the gap comes from encrypting where
+the age recipient list resolved empty, which is what happens in CI.
+
+Closing it means one in-cluster `sops updatekeys` pass over those four `.enc`
+files to add the age recipients from `.sops.yaml`. Until that runs, treat those
+four as cluster-dependent and do not rely on them for disaster recovery.
+
 ### Complex type (map/list) not parsing from Vault
 
 Ensure value in Vault is valid JSON:
