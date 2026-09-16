@@ -15,8 +15,19 @@ ARG VAULT_VERSION=1.18.1
 # Install system packages (single layer).
 # python3: required by scripts/check-ingress-auth-comments.py, invoked
 #   by scripts/tg before every plan/apply.
+# py3-yaml: required by scripts/state-sync, which reads the age recipients out
+#   of .sops.yaml. Alpine's python3 does NOT bundle PyYAML, and its absence was
+#   SILENT and destructive: the extraction ends in `2>/dev/null || echo ""`, so
+#   the import error was swallowed and AGE_RECIPIENTS became the empty string,
+#   and `sops -e --age ""` writes a state file with NO age recipient at all.
+#   Every Tier-0 state CI encrypted was therefore recoverable only through
+#   Vault Transit — and only at the in-cluster address CI itself records, so
+#   platform, cnpg, dbaas and external-secrets could not be decrypted from
+#   anywhere but inside the cluster whose recovery they exist to serve. Found
+#   and repaired 2026-09-16. state-sync now refuses to encrypt with an empty
+#   recipient list, so this can fail loudly rather than silently again.
 RUN apk add --no-cache \
-    bash curl git git-crypt jq openssh-client openssl python3 unzip \
+    bash curl git git-crypt jq openssh-client openssl python3 py3-yaml unzip \
     && rm -rf /var/cache/apk/*
 
 # Terraform

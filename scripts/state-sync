@@ -30,7 +30,20 @@ is_tier0() {
   echo "$TIER0_STACKS" | tr ' ' '\n' | grep -qx "$1"
 }
 
-# Read age recipients from .sops.yaml
+# Read age recipients from .sops.yaml.
+#
+# The `2>/dev/null || echo ""` that used to end this block made a missing
+# PyYAML indistinguishable from "no recipients configured", and the result was
+# not a warning but an unrecoverable file: `sops -e --age ""` succeeds and
+# writes state with NO age key group. The CI image had python3 but not
+# py3-yaml, so every Tier-0 state CI encrypted lost its age fallback and was
+# left decryptable only through Vault Transit at the in-cluster address CI
+# records. Four of the six were in that condition on 2026-09-16, dbaas among
+# them, which is the stack the runbooks name as the recovery path when
+# Postgres is down.
+#
+# Stderr is kept so the real error is visible, and encrypt_state refuses an
+# empty list below. py3-yaml is now in ci/Dockerfile.
 AGE_RECIPIENTS="$(python3 -c "
 import yaml, sys
 with open('$REPO_ROOT/.sops.yaml') as f: c = yaml.safe_load(f)
@@ -39,7 +52,7 @@ for r in c.get('creation_rules', []):
     if age:
         print(age.replace('\n', '').strip())
         break
-" 2>/dev/null || echo "")"
+" || echo "")"
 
 encrypt_state() {
   local dir="$1"
@@ -65,6 +78,20 @@ encrypt_state() {
   fi
   if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$src" 2>/dev/null; then
     echo "state-sync: REFUSING to encrypt $name — $src is not valid JSON." >&2
+    return 1
+  fi
+
+  # Refuse to encrypt without an age recipient. Vault Transit alone is not a
+  # recoverable configuration: sops records the Transit ADDRESS in the file and
+  # reuses it over $VAULT_ADDR, so a state encrypted in-cluster becomes
+  # readable only from in-cluster. Tier 0 exists to bootstrap the cluster, so
+  # that is precisely backwards. An empty list here means .sops.yaml could not
+  # be read (usually a missing PyYAML), never that no recipients are wanted.
+  if [ -z "$AGE_RECIPIENTS" ]; then
+    echo "state-sync: REFUSING to encrypt $name — no age recipients resolved from .sops.yaml." >&2
+    echo "  Encrypting with Vault Transit alone produces a state file that can only be" >&2
+    echo "  decrypted from wherever it was encrypted. Check that PyYAML is importable:" >&2
+    echo "    python3 -c 'import yaml'" >&2
     return 1
   fi
 
