@@ -45,7 +45,13 @@ PROM='http://prometheus-server.monitoring.svc.cluster.local:80'
 # ignores. Only CRITICAL alerts reach this filter (halt_on_alert_query selects
 # severity==critical), so warning-level K8sUpgradeChainJobFailed / K8sUpgradeBlocked
 # deliberately do NOT belong here.
-HALT_IGNORE='RecentNodeReboot|IngressTTFBCritical|K8sUpgradeStalled|EtcdPreUpgradeSnapshotMissing'
+#
+# BankSyncConsentExpired (added 2026-09-16) is a critical alert about an expired
+# GoCardless bank consent in actualbudget. It says nothing about cluster health,
+# it clears only when a human re-authorises at the bank, and so it sat firing for
+# days while blocking every Kubernetes patch — it gated v1.35.8 from 2026-09-13.
+# See halt_on_alert_query() for the standing question about this gate's scope.
+HALT_IGNORE='RecentNodeReboot|IngressTTFBCritical|K8sUpgradeStalled|EtcdPreUpgradeSnapshotMissing|BankSyncConsentExpired'
 KUBECTL=kubectl
 JOB_TEMPLATE=/template/job-template.yaml
 UPDATE_K8S_SH=/scripts/update_k8s.sh
@@ -82,6 +88,18 @@ slack() {
     "$SLACK_URL" >/dev/null || echo "warn: slack post failed"
 }
 
+# Abort with the reason on the Job's stdout as well as in Slack. Until
+# 2026-09-16 the alert-gated aborts Slacked and then `exit 1` silently, so a
+# refused run's pod log simply STOPPED after the last success line, and
+# K8sUpgradeChainJobFailed then read as a crash. The Slack line scrolls away;
+# `kubectl logs` / Loki is where anyone debugging starts, so the reason has to
+# be there. Slack text is unchanged — callers pass the same string.
+abort() {
+  echo "ABORT $1" >&2
+  slack "ABORT $1"
+  exit 1
+}
+
 # Kill-switch — checked before every phase. If the ConfigMap
 # `k8s-upgrade-killswitch` exists in the `k8s-upgrade` namespace, the chain
 # halts immediately (exit 0, not 1 — this is an intentional pause, not a
@@ -107,6 +125,28 @@ push() {
     | curl -sS --data-binary @- "$PG" || echo "warn: pushgateway push failed"
 }
 
+# push() with labels, so a gauge can carry WHY as well as whether. The
+# exposition format this builds by hand has no escaping, so a quote, backslash
+# or newline in a label value corrupts the body and Pushgateway rejects the
+# whole push — the gauge then silently never lands. sanitize_label() is
+# therefore not cosmetic: every value must go through it.
+#
+# Pushgateway POST semantics matter here too: a POST replaces the whole metric
+# FAMILY within the job group, so pushing k8s_upgrade_deferred with a new
+# `condition` label drops the previous one rather than leaving two series
+# side by side. That is what keeps stale reasons from accumulating — the group
+# itself is only DELETEd on the rare leaked-latch reconcile (main.tf), never
+# per run, so anything pushed here outlives the pod indefinitely.
+push_labeled() {
+  local name="$1" labels="$2" value="$3"
+  printf '# TYPE %s gauge\n%s{%s} %s\n' "$name" "$name" "$labels" "$value" \
+    | curl -sS --data-binary @- "$PG" || echo "warn: pushgateway push failed"
+}
+sanitize_label() {
+  printf '%s' "$1" | tr -cd 'A-Za-z0-9_.,:|/<>=() -' | cut -c1-140 \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
 # Compat-gate verdict recorders. A gate refusal is a DECISION, not a crash: the
 # Job Completes cleanly and the chain simply doesn't advance (spawn_next checks
 # HALT_CHAIN). The two outcomes differ only in how they're signalled:
@@ -122,6 +162,7 @@ push() {
 record_blocked() {
   push k8s_upgrade_blocked 1
   push k8s_upgrade_held 0
+  push k8s_upgrade_deferred 0
   HALT_CHAIN=1
   echo "BLOCKED (action needed) preflight v$TARGET_VERSION:" >&2
   printf '%s\n' "$1" >&2
@@ -129,9 +170,38 @@ record_blocked() {
 record_held() {
   push k8s_upgrade_held 1
   push k8s_upgrade_blocked 0
+  push k8s_upgrade_deferred 0
   HALT_CHAIN=1
   echo "HELD (not yet upgradable — waiting upstream / pinned) preflight v$TARGET_VERSION:" >&2
   printf '%s\n' "$1" >&2
+}
+# Third verdict, same shape (2026-09-16): the cluster is not quiet enough to
+# START an upgrade — a critical alert is firing, a node is unhealthy, or a node
+# only just came Ready. Like a gate refusal this is a DECISION, not a crash, and
+# all three checks run BEFORE any mutation, so the right outcome is a clean
+# Complete plus a re-evaluation on the next detector run (main.tf:565 re-spawns
+# a Complete preflight that spawned no master Job, keying on that shape and not
+# on why). All three used to `exit 1`, which made a deliberate refusal fire
+# K8sUpgradeChainJobFailed with a pod log that stopped mid-stream — v1.35.8 sat
+# Failed for 2d20h that way over an expired bank consent.
+#
+# It gets its OWN gauge rather than reusing k8s_upgrade_held, because the two
+# are not the same fact and the report has to say which: a hold means the target
+# is not upgradable at all, a deferral means today is not the day. The gauge
+# carries the condition and detail as LABELS so the nightly report can name the
+# blocking thing — "HELD" that never says why is precisely what cost 2d20h of
+# nobody knowing a bank alert was holding Kubernetes back. Like held, it
+# deliberately raises NO alert: the weekly report is the signal, and a condition
+# worth paging about is already paging on its own account.
+record_deferred() {
+  local condition="$1" detail="$2"
+  push_labeled k8s_upgrade_deferred \
+    "condition=\"$(sanitize_label "$condition")\",detail=\"$(sanitize_label "$detail")\"" 1
+  push k8s_upgrade_blocked 0
+  push k8s_upgrade_held 0
+  HALT_CHAIN=1
+  echo "DEFERRED ($condition — will re-evaluate next run) preflight v$TARGET_VERSION:" >&2
+  printf '%s\n' "$detail" >&2
 }
 
 halt_on_alert_query() {
@@ -153,6 +223,19 @@ halt_on_alert_query() {
   # filtering, RecentNodeReboot (severity=info) is filtered automatically.
   # We still build the regex for any critical alert the caller wants to
   # explicitly ignore (e.g. a known-broken thing we're aware of).
+  #
+  # Open question, raised 2026-09-16 by BankSyncConsentExpired (an expired bank
+  # consent in actualbudget) holding back a Kubernetes patch for 2d20h:
+  # severity=critical selects "wake a human", not "the cluster is unfit to
+  # upgrade", so this gate also counts application-level criticals that a
+  # control-plane bump cannot affect and that no upgrade can make worse. The
+  # tighter model would be to keep the severity filter AND require the alert to
+  # be plausibly about cluster health — e.g. an opt-in `upgrade_gate: "true"`
+  # label on the rules that should block, or a namespace/category allowlist —
+  # which turns HALT_IGNORE from an ever-growing denylist into a small allowlist.
+  # Not done here: it needs every critical rule in the monitoring stack reviewed
+  # and labelled, and a mislabelled rule fails OPEN (upgrade proceeds during a
+  # real outage), so it wants a deliberate pass rather than a drive-by.
   local ignore_regex=""
   [ -n "$extra_ignore" ] && ignore_regex="^($extra_ignore)\$"
 
@@ -290,7 +373,7 @@ esac
 
 spawn_next() {
   if [ "${HALT_CHAIN:-0}" = "1" ]; then
-    echo "Chain halted by compat-gate (blocked/held) — not spawning next phase."
+    echo "Chain halted by preflight (gate blocked/held, or cluster not quiet) — not spawning next phase."
     return 0
   fi
   [ -z "$NEXT_PHASE" ] && { echo "End of chain."; return 0; }
@@ -371,6 +454,9 @@ phase_preflight() {
     0)
       push k8s_upgrade_blocked 0
       push k8s_upgrade_held 0
+      # Clear any deferral from a previous run BEFORE the quiet checks below get
+      # a chance to set it again — the gauge never expires on its own.
+      push k8s_upgrade_deferred 0
       echo "compat-gate passed for v$TARGET_VERSION"
       ;;
     4)
@@ -397,8 +483,10 @@ phase_preflight() {
         or (.status.conditions[] | select(.type=="DiskPressure").status) == "True")
     | .metadata.name')
   if [ -n "$bad_nodes" ]; then
-    slack "ABORT preflight — nodes unhealthy: $bad_nodes"
-    exit 1
+    slack "DEFERRED preflight — nodes unhealthy: $bad_nodes"
+    record_deferred nodes_unhealthy \
+      "not Ready / under memory or disk pressure: $(echo "$bad_nodes" | tr '\n' ' ')"
+    return 0
   fi
 
   # 2. Halt-on-alert. RecentNodeReboot is fully redundant with check 3
@@ -410,8 +498,9 @@ phase_preflight() {
   local alerts
   alerts=$(halt_on_alert_query "$HALT_IGNORE")
   if [ -n "$alerts" ]; then
-    slack "ABORT preflight — firing alerts:\n$alerts"
-    exit 1
+    slack "DEFERRED preflight — firing critical alerts:\n$alerts"
+    record_deferred firing_critical_alerts "$(echo "$alerts" | tr '\n' ' ')"
+    return 0
   fi
 
   # 3. Quiet-baseline check — fail if any node had a Ready transition in the
@@ -420,9 +509,11 @@ phase_preflight() {
   # reboot for an hour. 10min is sufficient for kubelet/control-plane to
   # stabilise; the kured-sentinel-gate DaemonSet enforces the broader
   # 24h-between-cluster-reboots invariant.
-  local recent=0 now_ep ts_ep
+  local recent=0 recent_node="" now_ep ts_ep
   now_ep=$(date -u +%s)
-  while IFS= read -r ts; do
+  # Two fields per line ("<node> <ready-transition-ts>") so the deferral reason
+  # can name the node that moved, not just that one did.
+  while IFS=' ' read -r node ts; do
     [ -z "$ts" ] && continue
     # Portable ISO8601(UTC) -> epoch. GNU `date -d` parses ISO8601 directly;
     # busybox `date` (the ghcr claude-agent-service base) does NOT and needs an
@@ -432,11 +523,12 @@ phase_preflight() {
     ts_ep=$(date -u -d "$ts" +%s 2>/dev/null || true)
     if [ -z "$ts_ep" ]; then ts_ep=$(date -u -D '%Y-%m-%dT%H:%M:%SZ' -d "$ts" +%s 2>/dev/null || true); fi
     if [ -z "$ts_ep" ]; then echo "WARN quiet-baseline: cannot parse Ready ts '$ts' (date impl?); skipping"; continue; fi
-    if [ "$(( now_ep - ts_ep ))" -lt 600 ]; then recent=1; break; fi
-  done < <($KUBECTL get nodes -o jsonpath='{range .items[*]}{range .status.conditions[?(@.type=="Ready")]}{.lastTransitionTime}{"\n"}{end}{end}')
+    if [ "$(( now_ep - ts_ep ))" -lt 600 ]; then recent=1; recent_node="$node"; break; fi
+  done < <($KUBECTL get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.conditions[?(@.type=="Ready")]}{.lastTransitionTime}{"\n"}{end}{end}')
   if [ "$recent" -eq 1 ]; then
-    slack "ABORT preflight — node transitioned Ready <10min ago (settle window)"
-    exit 1
+    slack "DEFERRED preflight — $recent_node transitioned Ready <10min ago (settle window)"
+    record_deferred settle_window "$recent_node went Ready less than 600s ago"
+    return 0
   fi
 
   # 4. kubeadm upgrade plan matches target. `plan` runs the same CoreDNS
@@ -600,7 +692,7 @@ phase_master() {
   # mid-chain (e.g. master was already upgraded+rebooted before this phase).
   local alerts
   alerts=$(halt_on_alert_query "$HALT_IGNORE")
-  [ -n "$alerts" ] && { slack "ABORT master — alerts firing pre-drain: $alerts"; exit 1; }
+  [ -n "$alerts" ] && abort "master — alerts firing pre-drain: $alerts"
 
   # Quiesce noisy operators that crashloop when apiserver briefly disappears
   # during the static-pod manifest swaps. The crashloop generates a disk-I/O
@@ -648,7 +740,7 @@ phase_master() {
   fi
 
   alerts=$(halt_on_alert_query "$HALT_IGNORE")
-  [ -n "$alerts" ] && { slack "ABORT master — alerts firing post-upgrade: $alerts"; exit 1; }
+  [ -n "$alerts" ] && abort "master — alerts firing post-upgrade: $alerts"
 
   # Re-apply apiserver OIDC. `kubeadm upgrade apply` regenerates the apiserver
   # static-pod manifest and DROPS --authentication-config, silently breaking SSO
@@ -710,7 +802,7 @@ phase_worker() {
     echo "Waiting for alerts to clear (attempt $attempt/30): $alerts"
     sleep 60
   done
-  [ -n "$alerts" ] && { slack "ABORT $TARGET_NODE — alerts firing after 30min: $alerts"; exit 1; }
+  [ -n "$alerts" ] && abort "$TARGET_NODE — alerts firing after 30min: $alerts"
 
   drain_node "$TARGET_NODE"
 
@@ -737,7 +829,7 @@ phase_worker() {
   echo "Soaking $TARGET_NODE for 10 min..."
   for i in $(seq 1 10); do
     alerts=$(halt_on_alert_query "$HALT_IGNORE")
-    [ -n "$alerts" ] && { slack "ABORT $TARGET_NODE mid-soak — alerts: $alerts"; exit 1; }
+    [ -n "$alerts" ] && abort "$TARGET_NODE mid-soak — alerts: $alerts"
     sleep 60
   done
 
@@ -769,7 +861,8 @@ phase_postflight() {
   # rebooted every node; this alert clears naturally in <1h.
   local alerts
   alerts=$(halt_on_alert_query "$HALT_IGNORE")
-  [ -n "$alerts" ] && slack "Postflight WARN — alerts still firing (cluster on target, please check):\n$alerts"
+  [ -n "$alerts" ] && { echo "WARN postflight — alerts still firing: $alerts" >&2
+    slack "Postflight WARN — alerts still firing (cluster on target, please check):\n$alerts"; }
 
   # Pod-ready ratio
   local ratio
@@ -841,6 +934,7 @@ phase_postflight() {
   push k8s_upgrade_started_timestamp 0
   push k8s_upgrade_blocked 0
   push k8s_upgrade_held 0
+  push k8s_upgrade_deferred 0
 
   slack ":white_check_mark: K8s upgrade complete: cluster on v$TARGET_VERSION (pod-ready ratio $ratio)"
 }
