@@ -74,13 +74,37 @@ scrape_configs:
         regex: 'sshd.*'
         target_label: job
         replacement: 'sshd-devvm'
-
   # agent-api's request trace. Every call a machine caller (Muse first) makes
-  # to Terminal Lobby's machine-facing API is appended here as one JSON object
-  # per line; the design is docs/plans/2026-09-14-muse-agent-broker-design.md.
-  # Shipping it to Loki is what gives it cluster-wide search, 30 days of
-  # history and a life beyond a rebuilt devvm. The local copy is bounded by
-  # /etc/logrotate.d/agent-api, declared in playbooks/devvm.yml.
+  # to Terminal Lobby's machine-facing API is appended to that file as one JSON
+  # object per line; the design is docs/plans/2026-09-14-muse-agent-broker-design.md.
+  # The local file is bounded by /etc/logrotate.d/agent-api, declared in
+  # playbooks/devvm.yml.
+  #
+  # WHAT REACHES LOKI IS A METADATA PROJECTION, NOT THE LINE (2026-09-16).
+  # The trace schema carries `request.text` verbatim and `tool_calls[].input`
+  # verbatim — whatever a caller typed, which for this caller includes shell
+  # commands and their arguments. Loki here runs auth_enabled: false and its
+  # .lan ingress is auth = "none" gated only by source IP (192.168.1.0/24 +
+  # 10.0.0.0/8, so every pod in the cluster and every host on the home LANs),
+  # and it keeps 30 days. Shipping the line as written would move the verbatim
+  # record from one 0640 file on one box to a store any unauthenticated client
+  # on those ranges can read — an audience the rest of this job's reasoning,
+  # which is all about label cardinality, never considered.
+  #
+  # So the pipeline REBUILDS the line from an enumerated keep-set and ships
+  # that. The projection is an allowlist, which fails in the safe direction: a
+  # field added to the trace later is absent from Loki until someone adds it
+  # here, rather than silently published. It is deliberately NOT a regex hunt
+  # for secret-shaped substrings — a redaction that misses is worse than none,
+  # because the metrics then look like coverage.
+  #
+  # THE COST, STATED RATHER THAN HIDDEN: the verbatim content no longer
+  # survives a devvm rebuild, only the last 30 rotations of the local file do.
+  # Replay was always meant to read the file (see the design's Trace section),
+  # and cluster-wide search by trace_id / task_id / conversation_id / actor /
+  # verb still works here, so what is lost is durability of the content, not
+  # any stated use. Reversing this is a deliberate decision about where the
+  # verbatim audit record should live, not an edit to make in passing.
   #
   # LABELS ARE job AND host, DELIBERATELY, plus the `filename` promtail adds
   # for every file target — one path, so one stream. Every interesting field
@@ -89,7 +113,8 @@ scrape_configs:
   # stream per request. The journal job above carries the note: this tenant
   # shares a GLOBAL 5000-active-stream cap, and once it is saturated Loki
   # 429-rejects NEW streams for EVERY shipper, not just the greedy one. The
-  # fields stay in the line and are read at query time, which costs nothing:
+  # projected fields stay in the line and are read at query time, which costs
+  # nothing:
   #   homelab logs query '{job="agent-api-trace"} | json | trace_id="01JB..."'
   #   homelab logs query '{job="agent-api-trace"} | json | actor="muse"' --since 24h
   #
@@ -104,18 +129,49 @@ scrape_configs:
           job: agent-api-trace
           __path__: /var/log/agent-api/trace.jsonl
     pipeline_stages:
-      # The only reason to parse the JSON here is to take the event's OWN
-      # timestamp instead of the moment promtail read the line, so a replay
-      # by trace_id comes back in the order the run happened. Nothing is
-      # promoted to a label — see above.
+      # Extract the keep-set. Anything not named here never reaches Loki —
+      # notably request.text and tool_calls[].input. Tool NAMES are kept
+      # (they say what was done) while their inputs are not (those say what
+      # with). response.status, not response: the body may echo the request.
       - json:
           expressions:
             ts: ts
+            trace_id: trace_id
+            task_id: task_id
+            conversation_id: conversation_id
+            actor: actor
+            verb: verb
+            status: response.status
+            duration_ms: duration_ms
+            tools: 'tool_calls[].name'
       - timestamp:
           source: ts
           format: RFC3339Nano
-          # Keyed to the `ts` field in the design doc. If agent-api ever
-          # renames it or writes a different format, `fudge` keeps shipping
-          # (last good timestamp + 1ns) rather than dropping lines, and
-          # promtail logs the parse failure. Silent loss is the worse trade.
-          action_on_failure: fudge
+          # `skip`, NOT `fudge`. Both keep the line — neither drops it — and
+          # the difference is which timestamp a failing line gets. `skip`
+          # keeps promtail's read time, which is approximately right. `fudge`
+          # pins it to the LAST GOOD event timestamp + 1ns, i.e. frozen in the
+          # past: measured with promtail 3.5.1 -dry-run, four consecutive
+          # unparseable lines after a good one at 2026-09-14T11:02:31.442Z came
+          # out at .442000001 through .442000004, two days behind the clock.
+          # That destroys the replay-by-trace_id ordering this stage exists for,
+          # and once those frozen stamps age past Loki's reject_old_samples_max_age
+          # (live: 1w) the distributor 400-rejects the whole stream. A release
+          # that renames `ts` or writes epoch ms would trigger exactly that.
+          #
+          # A failure here is NOT visible in the promtail journal: every
+          # json/timestamp stage failure is logged at level=debug and this
+          # shipper runs log_level: warn (line 30), so stderr carries nothing.
+          # The symptom to look for is in Loki instead — an entry whose Loki
+          # timestamp is far from its own `ts` field.
+          action_on_failure: skip
+      # Rebuild the line from the keep-set. sprig's dict|toJson does the
+      # escaping, so a quote or newline in any kept value cannot break the
+      # JSON — verified with promtail 3.5.1 -dry-run over fixtures carrying
+      # both. A line that is not JSON at all projects to all-nulls rather
+      # than vanishing, so a malformed trace still shows up as traffic.
+      - template:
+          source: projected
+          template: '{{ dict "ts" .ts "trace_id" .trace_id "task_id" .task_id "conversation_id" .conversation_id "actor" .actor "verb" .verb "status" .status "duration_ms" .duration_ms "tools" .tools | toJson }}'
+      - output:
+          source: projected

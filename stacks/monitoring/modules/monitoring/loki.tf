@@ -1478,16 +1478,41 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               #      or vector(0)) < 1
               #     -> {} 0
               #
-              # RIGHT: the enabled gate, and it is what keeps this rule quiet
-              # until there is something to watch. agent-api is step 3 of the
-              # design and this is step 5, so the stream does not exist yet;
-              # without the gate the rule would fire the day it deployed and
-              # keep firing until the service shipped. The gate ARMS ITSELF on
-              # the first trace line ever written and DISARMS after 28 days of
-              # total silence, when "nobody uses agent-api" is the honest state
-              # and a standing alert about it is noise. Nothing to remember to
-              # flip, which is the point: a hand-maintained enabled flag that
-              # nobody flips is an alert that is silently off.
+              # RIGHT: the enabled gate, TWO clauses, and the pair is what
+              # keeps this rule quiet until there is something to watch.
+              # agent-api is step 3 of the design and this is step 5, so the
+              # stream does not exist yet; ungated the rule would fire the day
+              # it deployed and keep firing until the service shipped.
+              #
+              # A SINGLE `[28d] > 0` GATE DOES NOT WORK, and this is the second
+              # attempt. That form arms on ONE trace line ever written, so the
+              # design's own step 4 ("verify by driving a real task end to end
+              # and reading the trace back") arms it on day D; if the caller is
+              # not yet in regular use, the left clause goes true at D+7 and
+              # the rule then stands at warning until D+28. Twenty-one days of
+              # a standing alert whose own description says "no action" is the
+              # noise the gate was added to prevent, moved 7 days later.
+              #
+              # Two PRIOR-WEEK clauses instead. A single burst occupies exactly
+              # one 7-day window at any evaluation time, so it can never
+              # satisfy both `offset 7d` and `offset 14d` — a one-off smoke
+              # test cannot arm this. What does arm it is traffic in each of
+              # the two weeks before the silent one, i.e. the service was in
+              # use and stopped, which is the thing worth a Slack message.
+              #
+              # MEASURED, not reasoned about (2026-09-16, live Loki, against
+              # {job="devvm-journal",unit="session-12689.scope"} — a real login
+              # session whose every line falls in the single hour 2026-08-30
+              # 18:00Z, so a genuine one-off burst). Evaluated at D+8d, D+10d,
+              # D+12d, D+14d and D+16d the committed `[28d]` form FIRED at all
+              # five; this form was silent at all five. Paired with gates on a
+              # stream that does have traffic it still returns {} 0 and fires,
+              # so the regression case is unaffected.
+              #
+              # THE TRADE, stated: this will not report the very first lapse of
+              # a service used for less than two weeks. That is deliberate —
+              # for a caller with no track record, silence and idleness are not
+              # distinguishable, and the rule should not guess.
               #
               # NO `or vector(0)` ON THE RIGHT, deliberately. It is a `> 0`
               # comparison, so an empty result already means "no activity" and
@@ -1503,16 +1528,19 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # reason one notch in, because its traffic is every terminal on
               # the box rather than a single caller. A full week of literally
               # zero calls is either broken or unused, and the description says
-              # how to tell those apart. 28 days for the gate keeps it inside
-              # Loki's 30-day retention with room to spare.
+              # how to tell those apart. The gate reaches back 21 days in total
+              # (a 7-day window at offset 14d), inside Loki's 30-day retention
+              # with room to spare.
               #
-              # Verified live 2026-09-16, all three against real Loki:
+              # Verified live 2026-09-16, all four against real Loki:
               #   gate closed (today)        -> no series, silent
               #   gate open, traffic present -> returns the 7d count
               #   gate open, trace at zero   -> returns {} 0, fires
-              # The last was simulated by pairing this rule's left clause with
-              # a gate on a stream that does have traffic, since agent-api has
-              # never written a line.
+              #   one-off burst, D+8..D+16d  -> no series at every step
+              # The third was simulated by pairing this rule's left clause with
+              # gates on a stream that does have traffic, since agent-api has
+              # never written a line; the fourth used the real single-hour
+              # session scope named above.
               #
               # KNOWN LIMIT, stated rather than papered over: this cannot tell
               # a broken trace from an unused one. Nothing in the file can —
@@ -1527,7 +1555,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # a 3am page. `for: 2h` over a 7-day window only guards against a
               # transient Loki read, which is all it needs to do.
               alert  = "AgentApiTraceSilent"
-              expr   = "((sum(count_over_time({job=\"agent-api-trace\"}[7d])) or vector(0)) < 1) and (sum(count_over_time({job=\"agent-api-trace\"}[28d])) > 0)"
+              expr   = "((sum(count_over_time({job=\"agent-api-trace\"}[7d])) or vector(0)) < 1) and (sum(count_over_time({job=\"agent-api-trace\"}[7d] offset 7d)) > 0) and (sum(count_over_time({job=\"agent-api-trace\"}[7d] offset 14d)) > 0)"
               for    = "2h"
               labels = { severity = "warning" }
               annotations = {
@@ -1543,9 +1571,18 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                   systemctl status agent-api  (the service itself)
                   ls -l /var/log/agent-api/trace.jsonl  (is it being appended
                   to, and is it owned by the account agent-api runs as)
-                  systemctl status promtail; journalctl -u promtail -n 50
-                  (the shipper; a missing file is silence, not an error, and a
-                  JSON line whose ts will not parse is logged here)
+                  systemctl status promtail  (the shipper; a missing file is
+                  silence, not an error)
+                  Do NOT expect the promtail journal to explain a bad line.
+                  Every json and timestamp stage failure is logged at
+                  level=debug and scripts/devvm-promtail.yaml runs
+                  log_level: warn, so the journal is clean whatever the shipper
+                  made of the line. A mis-parsed ts shows up in Loki instead,
+                  as an entry whose Loki timestamp is far from its own ts
+                  field:
+                  homelab logs query '{job="agent-api-trace"} | json' --since 1h
+                  To see promtail's own view, raise log_level to debug in that
+                  file and restart the unit.
                   If the file is growing and Loki has nothing, the shipper is
                   the problem. Promtail dead altogether stops the journal too,
                   so DevvmJournalSilent fires beside this; this alert on its

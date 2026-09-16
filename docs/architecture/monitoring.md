@@ -586,12 +586,36 @@ directory, deploys the shipper config and bounds the local copy at 30 daily
 rotations (`/etc/logrotate.d/agent-api`, `copytruncate` because `agent-api`
 holds the descriptor open and has no reopen signal).
 
+**What reaches Loki is a metadata projection, not the line.** The trace schema
+carries `request.text` verbatim and `tool_calls[].input` verbatim — whatever the
+caller typed, which for this caller includes shell commands and their arguments.
+Loki runs `auth_enabled: false` and its `.lan` ingress is `auth = "none"` gated
+only by source IP (`192.168.1.0/24` + `10.0.0.0/8`, so every pod in the cluster
+and every host on the home LANs), with 30-day retention. Shipping the line as
+written would move the verbatim record from one file on one box to a store any
+unauthenticated client on those ranges can read.
+
+So the pipeline rebuilds the line from an enumerated keep-set — `ts`,
+`trace_id`, `task_id`, `conversation_id`, `actor`, `verb`, `response.status`,
+`duration_ms` and the tool *names* — and ships that. The projection is an
+allowlist, which fails safe: a field added to the trace later is absent from
+Loki until someone adds it to the pipeline, rather than silently published. It
+is deliberately not a regex hunt for secret-shaped substrings, because a
+redaction that misses is worse than none — the metrics then look like coverage.
+
+The cost, stated rather than hidden: **the verbatim content no longer survives a
+devvm rebuild**, only the last 30 rotations of the local file do. Replay was
+always meant to read the file (see the design's Trace section) and cluster-wide
+search by identifier, actor and verb still works, so what is lost is durability
+of the content, not any stated use. Reversing it is a deliberate decision about
+where the verbatim audit record should live.
+
 Labels are `job`, `host` and promtail's automatic `filename`, and nothing else.
 `trace_id`, `task_id` and `conversation_id` are per-request identifiers, so
 promoting any of them would mint a Loki stream per request against a tenant that
 shares a global 5000-active-stream cap; past that cap Loki 429-rejects new
-streams for every shipper on it. The fields stay in the line and are read at
-query time:
+streams for every shipper on it. The projected fields stay in the line and are
+read at query time:
 
 ```sh
 homelab logs query '{job="agent-api-trace"} | json | trace_id="01JB..."'
@@ -600,12 +624,28 @@ homelab logs query '{job="agent-api-trace"} | json | actor="muse"' --since 24h
 
 A `json` + `timestamp` pipeline stage takes the event's own `ts` instead of the
 moment promtail read the line, so a replay by `trace_id` comes back in the order
-the run happened. A `ts` that will not parse falls back to the last good
-timestamp plus 1ns and logs the failure, rather than dropping the line.
+the run happened.
+
+`action_on_failure` is **`skip`, not `fudge`**, and the difference matters.
+Neither drops the line. `skip` gives a line promtail cannot timestamp the read
+time, which is approximately right. `fudge` pins it to the *last good event
+timestamp + 1ns* — frozen in the past: measured with promtail 3.5.1 `-dry-run`,
+four consecutive unparseable lines after a good one at `2026-09-14T11:02:31.442Z`
+came out at `.442000001` through `.442000004`, two days behind the clock. That
+destroys the ordering the stage exists for, and once those stamps age past
+Loki's `reject_old_samples_max_age` (live: `1w`) the distributor 400-rejects the
+whole stream. A release that renamed `ts` or wrote epoch milliseconds would do
+exactly that.
+
+**A parse failure is not visible in the promtail journal.** Promtail logs every
+`json` and `timestamp` stage failure at `level=debug`, and this shipper runs
+`log_level: warn`, so stderr stays clean whatever it made of the line —
+confirmed by running the same fixtures at both levels. The symptom to look for
+is in Loki: an entry whose Loki timestamp is far from its own `ts` field.
 
 | Alert | Expr | For | Severity |
 |---|---|---|---|
-| `AgentApiTraceSilent` | `((sum(count_over_time({job="agent-api-trace"}[7d])) or vector(0)) < 1) and (sum(count_over_time({job="agent-api-trace"}[28d])) > 0)` | 2h | warning |
+| `AgentApiTraceSilent` | `((sum(count_over_time({job="agent-api-trace"}[7d])) or vector(0)) < 1) and (sum(count_over_time({job="agent-api-trace"}[7d] offset 7d)) > 0) and (sum(count_over_time({job="agent-api-trace"}[7d] offset 14d)) > 0)` | 2h | warning |
 
 Group `agent-api` in `loki.tf`. The two clauses do different jobs.
 
@@ -616,27 +656,51 @@ rule says nothing at exactly zero. Verified live 2026-09-16 against this
 selector, which matches nothing today: the bare form returned no series, the
 guarded form returned `{} 0`.
 
-**Right, the enabled gate.** `agent-api` is step 3 of the design and this
-observability is step 5, so the stream does not exist yet; ungated, the rule
-would fire the day it deployed and keep firing until the service shipped. The
-gate arms itself on the first trace line ever written and disarms after 28 days
-of total silence, when "nobody uses agent-api" is the honest state. There is no
-flag to flip, which is the point: a hand-maintained enabled switch that nobody
-flips is an alert that is silently off. No `or vector(0)` on this clause — it is
-a `> 0` comparison, where an empty result already means "no activity", and the
-guard would only make it evaluate `0 > 0`.
+**Right, the enabled gate — two clauses.** `agent-api` is step 3 of the design
+and this observability is step 5, so the stream does not exist yet; ungated, the
+rule would fire the day it deployed and keep firing until the service shipped.
+
+A single `[28d] > 0` gate does not work, and this is the second attempt. That
+form arms on **one** trace line ever written, so the design's own step 4
+("verify by driving a real task end to end and reading the trace back") arms it
+on day D; if the caller is not yet in regular use the silence clause goes true
+at D+7 and the rule then stands at warning until D+28. Twenty-one days of a
+standing alert whose own description says "no action" is the noise the gate was
+added to prevent, moved seven days later.
+
+Two **prior-week** clauses instead. A single burst occupies exactly one 7-day
+window at any evaluation time, so it can never satisfy both `offset 7d` and
+`offset 14d` — a one-off smoke test cannot arm this. What does arm it is traffic
+in each of the two weeks before the silent one, i.e. the service was in use and
+stopped. No `or vector(0)` on either gate clause — they are `> 0` comparisons,
+where an empty result already means "no activity".
+
+The trade, stated: this will not report the very first lapse of a service used
+for less than two weeks. That is deliberate — for a caller with no track record,
+silence and idleness are not distinguishable and the rule should not guess.
 
 **Windows.** Seven days for the silence test rather than 24 hours, because the
 caller is one program driven by a person plus its own cron and quiet days are
 ordinary; `TerminalUpgradesCollapsed` reaches for 24h one notch in, where the
-traffic is every terminal on the box rather than a single caller. 28 days for
-the gate sits inside Loki's 30-day retention with room to spare.
+traffic is every terminal on the box rather than a single caller. The gate
+reaches back 21 days in total (a 7-day window at `offset 14d`), inside Loki's
+30-day retention with room to spare.
 
-Verified live 2026-09-16 against real Loki in three states: gate closed (today)
+Verified live 2026-09-16 against real Loki in four states: gate closed (today)
 returns no series and stays silent; gate open with traffic present returns the
-7-day count; gate open with the trace at zero returns `{} 0` and fires. The last
-was simulated by pairing this rule's left clause with a gate on a stream that
-does have traffic, since `agent-api` has never written a line.
+7-day count; gate open with the trace at zero returns `{} 0` and fires; and a
+genuine one-off burst stays silent at every step. The third was simulated by
+pairing this rule's silence clause with gates on a stream that does have
+traffic, since `agent-api` has never written a line. The fourth used
+`{job="devvm-journal",unit="session-12689.scope"}`, a real login session whose
+every line falls inside the single hour 2026-08-30 18:00Z: evaluated at D+8d,
+D+10d, D+12d, D+14d and D+16d the old `[28d]` form fired at all five and this
+form was silent at all five.
+
+Regression tests for all of the above, including the projection and the
+timestamp handling, are in `scripts/agent_api_trace_observability_test.py`
+(`python3 scripts/agent_api_trace_observability_test.py`; it drives the
+committed promtail config with `-dry-run`).
 
 **Open limit.** The rule cannot tell a broken trace from an unused one. Nothing
 readable from the file can; only a heartbeat `agent-api` does not currently write
