@@ -1119,18 +1119,42 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # A false-positive ban on a busy shared address would show up here
               # first, as sustained blocking on one IP across many hosts.
               #
-              # Threshold is deliberately loose: the enforced set is currently the
-              # 4 non-CAPI decisions, and normal scanner traffic against a banned
-              # IP is a handful of requests. Re-derive it before enabling CAPI —
-              # 22.7k community bans will change the baseline completely.
+              # The threshold was "deliberately loose" while the enforced set was
+              # 4 non-CAPI decisions and scanner traffic against a banned IP was
+              # a handful of requests. That baseline is gone: ~78 distinct IPs
+              # are now blocked continuously. Re-derived 2026-09-16, see below.
+              # Still re-derive before enabling CAPI — 22.7k community bans
+              # would change it again.
               alert = "CrowdSecL7BlockBurst"
-              expr  = "sum by (ip) (count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=block\" | regexp \"ip=(?P<ip>[^ ]+)\" [15m])) > 200"
-              for   = "15m"
+              # THRESHOLD RAISED 200 -> 1500 on 2026-09-16, from the measured
+              # distribution rather than the "deliberately loose" guess the
+              # paragraph above describes. Over 24h of ordinary traffic the
+              # busiest single IP reached 1,027 blocks/15m while the MEDIAN IP
+              # sat at 7, and ~78 distinct IPs were being blocked continuously
+              # at ~142 blocks/15m in total. At 200 the rule fired for 6 IPs in
+              # 10 days, every one an ordinary crawler persisting against its
+              # own ban, which is not what this alert is for.
+              #
+              # 1500 is above the observed ceiling of 1,027, so background
+              # crawlers stop tripping it while the case it EXISTS for still
+              # does: a shared address carrying legitimate traffic that we have
+              # banned by mistake generates far more than a crawler, because
+              # every real client behind it keeps retrying. That is the London
+              # WAN egress case in the annotation below, and the Meta corp
+              # ranges that self-locked twice (2026-09-07 and again 2026-09-11).
+              #
+              # Deliberately NOT repurposed into an attack detector. A crawl is
+              # now covered by DistributedCrawlDetected in
+              # prometheus_chart_values.tpl, which reads the agent's own
+              # overflow counter. This rule answers the opposite question and
+              # is the only thing that does.
+              expr = "sum by (ip) (count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=block\" | regexp \"ip=(?P<ip>[^ ]+)\" [15m])) > 1500"
+              for  = "15m"
               labels = {
                 severity = "info"
               }
               annotations = {
-                summary     = "CrowdSec bouncer has blocked {{ $labels.ip }} over 200 times in 15m"
+                summary     = "CrowdSec bouncer has blocked {{ $labels.ip }} over 1500 times in 15m — far past the 1,027 an ordinary crawler reaches, so suspect a shared address we have banned by mistake"
                 description = <<-EOT
                   Either a real attacker persisting against a ban, or a false
                   positive on an address that carries legitimate traffic — a
