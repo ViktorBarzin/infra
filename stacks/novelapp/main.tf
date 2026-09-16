@@ -112,11 +112,12 @@ resource "kubernetes_deployment" "novelapp" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      metadata[0].annotations["kubernetes.io/change-cause"],              # Keel writes this on each auto-upgrade
-      metadata[0].annotations["deployment.kubernetes.io/revision"],       # K8s increments this on every rollout
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1 — Keel writes on update
+      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      metadata[0].annotations["kubernetes.io/change-cause"],                                   # Keel writes this on each auto-upgrade
+      metadata[0].annotations["deployment.kubernetes.io/revision"],                            # K8s increments this on every rollout
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1 — Keel writes on update
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
   spec {

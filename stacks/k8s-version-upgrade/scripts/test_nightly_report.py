@@ -117,3 +117,47 @@ def test_compose_blocked_groups_actionable():
     out = nr.compose_report(LAST_RUN + 30000, NODES_UNIFORM, m, reasons, [])
     assert "🔴 BLOCKED" in out
     assert "Action needed" in out and "calico" in out
+
+METRICS_DEFERRED = f"""# TYPE k8s_upgrade_available gauge
+k8s_upgrade_available{{instance="",job="k8s-version-check",kind="patch",running="1.35.7",target="1.35.8"}} 1
+k8s_upgrade_blocked{{instance="",job="k8s-version-upgrade"}} 0
+k8s_upgrade_held{{instance="",job="k8s-version-upgrade"}} 0
+k8s_upgrade_deferred{{condition="firing_critical_alerts",detail="BankSyncConsentExpired",instance="",job="k8s-version-upgrade"}} 1
+k8s_version_check_last_run_timestamp{{instance="",job="k8s-version-check"}} {LAST_RUN}
+"""
+NODES_1357 = [(f"k8s-node{i}", "v1.35.7") for i in range(6)]
+
+
+def test_compose_deferred_names_the_blocking_condition():
+    """The whole point of the deferred gauge: the report says WHY, not just that
+    something paused. A pause with no reason is what let BankSyncConsentExpired
+    hold v1.35.8 back for 2d20h with nothing in Slack naming it."""
+    m = nr.parse_metrics(METRICS_DEFERRED)
+    out = nr.compose_report(LAST_RUN + 30000, NODES_1357, m, None, [])
+    assert "⏸️ DEFERRED" in out and "1.35.8" in out
+    assert "firing_critical_alerts" in out
+    assert "BankSyncConsentExpired" in out          # the detail label, verbatim
+    assert "🔴 BLOCKED" not in out                   # not an actionable block
+    assert "⏸️ HELD" not in out                      # and not a compat-gate hold
+    assert "🟡 IN PROGRESS" not in out               # the untrue headline it replaces
+
+
+def test_compose_deferred_distinct_from_held():
+    """held=1 and deferred=1 render different headlines from the same target, so
+    'not upgradable at all' and 'today is not the day' can't be conflated."""
+    held = nr.compose_report(LAST_RUN + 30000, NODES_135, nr.parse_metrics(METRICS_HELD), None, [])
+    deferred = nr.compose_report(LAST_RUN + 30000, NODES_1357, nr.parse_metrics(METRICS_DEFERRED), None, [])
+    assert "⏸️ HELD" in held and "⏸️ DEFERRED" not in held
+    assert "⏸️ DEFERRED" in deferred and "⏸️ HELD" not in deferred
+    assert "Deferred by:" in deferred and "Deferred by:" not in held
+
+
+def test_compose_deferred_zero_does_not_pause():
+    """A cleared deferral (gauge pushed back to 0) must not render the pause —
+    the gauge never expires on its own, so 0 is the only thing that clears it."""
+    m = nr.parse_metrics(METRICS_DEFERRED.replace(
+        'job="k8s-version-upgrade"}} 1', 'job="k8s-version-upgrade"}} 0').replace(
+        'job="k8s-version-upgrade"} 1', 'job="k8s-version-upgrade"} 0'))
+    out = nr.compose_report(LAST_RUN + 30000, NODES_1357, m, None, [])
+    assert "DEFERRED" not in out
+    assert "🟡 IN PROGRESS" in out

@@ -185,6 +185,7 @@ Pushed by upgrade-step.sh during phase execution; observed by the
 | `k8s_upgrade_snapshot_taken` (1/0) | preflight Job (set to 1 after Job=`pre-upgrade-etcd-*` completes with `Backup done:` log of ≥1 KiB) | postflight Job (0) |
 | `k8s_upgrade_blocked` (1/0) | preflight Job — set 1 on an **actionable** compat refusal (→ `K8sUpgradeBlocked`) | preflight (definitive each run; 0 when safe) / postflight (0) |
 | `k8s_upgrade_held` (1/0) | preflight Job — set 1 on a **held** (waiting-upstream/pinned) refusal; **no alert** | preflight (definitive each run; 0 when safe) / postflight (0) |
+| `k8s_upgrade_deferred{condition,detail}` (1/0) | preflight Job — set 1 when the target IS upgradable but the cluster is not quiet right now; **no alert** | preflight (definitive each run) / cleared to 0 by `record_blocked`, `record_held`, the compat-gate pass path and postflight |
 | `k8s_upgrade_available{kind,running,target}` | detection CronJob | next detection run (overwrite) |
 | `k8s_version_check_last_run_timestamp` | detection CronJob | (cumulative) |
 
@@ -193,6 +194,24 @@ Pushed by upgrade-step.sh during phase execution; observed by the
 - **`K8sVersionSkew`** — `count(count by (kubelet_version)(kube_node_info)) > 1 unless on() (<chain job>.active > 0)` for 15m (warning). Catches a half-done rollout **at rest** (master ahead of workers after an interrupted chain — the resting state a leaked-latch incident leaves). **REBUILT 2026-07-25**: the old expr keyed on `kubernetes_build_info{job=~"kubernetes-nodes|kubernetes-apiservers"}`, which is **not scraped anywhere**, so this alert could never fire and the half-done state had no working detector (RC5). Rebuilt on `kube_node_info.kubelet_version`. The `unless … active>0` guard suppresses it only during a genuinely-running phase (keyed on active>0, not mere series existence — lingering terminal Jobs do not mask a real skew); it fails open and is Pushgateway-independent.
 - **`EtcdPreUpgradeSnapshotMissing`** — `k8s_upgrade_in_flight==1 && k8s_upgrade_snapshot_taken==0` for 10m. Catches preflight Stage 2 failing silently. (Deliberately **not** given the live-Job guard: its snapshot runs while the master Job is Active, so a guard would only mask a real failure — the reconcile below clears any leaked latch for it instead.)
 - **`K8sUpgradeStalled`** — `k8s_upgrade_in_flight==1 && time()-k8s_upgrade_started_timestamp > 14400 && sum(<chain job>.active) > 0` for 5m. Catches a chain Job **genuinely running** >4h. **HARDENED 2026-07-25**: the old latch-only expr (`> 5400`, no live-Job check) fired **forever** whenever any interruption between preflight and postflight leaked `in_flight=1` (killswitch, `set -e` abort, hung drain, SIGKILL on a node reboot, spawn_next failure, or a manual off-schedule partial run) — a false critical that **also blocked kured** (RC1/RC2/RC4). The live-Job guard now requires a chain Job to actually be running; a leaked latch is cleared by the reconcile within 12h. Threshold 90m→4h so a slow-but-healthy full run doesn't false-page.
+**Deferred is a third verdict, and it is deliberately not `held` (2026-09-16).**
+A **hold** means the target is not upgradable at all (an addon has no release
+supporting it). A **deferral** means it is upgradable but today is not the day:
+a firing critical alert, a node not Ready, or a node that went Ready under 10
+minutes ago. All three of those preflight refusals now Complete cleanly via
+`HALT_CHAIN` rather than `exit 1`, so none of them reports as
+`K8sUpgradeChainJobFailed` any more. Before this, the halt-on-alert refusal
+exited non-zero and its reason went only to Slack, so a deliberate refusal
+looked exactly like a crash: `k8s-upgrade-preflight-1-35-8` sat Failed with
+`BackoffLimitExceeded` for 2 days 20 hours over one `BankSyncConsentExpired`,
+and the Job's entire log was `compat-gate passed for v1.35.8` twice.
+
+**The four MID-CHAIN alert aborts still `exit 1`, on purpose.** Preflight runs
+before any mutation, so refusing there is a decision; mid-chain the cluster is
+half-upgraded and a Failed Job is the honest report. The harness asserts that
+asymmetry structurally (exactly four `abort` sites, all three `record_deferred`
+sites inside `phase_preflight`), so an edit that blurs it fails a test.
+
 - **`K8sUpgradeChainJobFailed`** — `kube_job_status_failed{namespace="k8s-upgrade",job_name=~"k8s-upgrade-(preflight|master|worker|postflight)-.*",reason=~"BackoffLimitExceeded|DeadlineExceeded"} > 0` for 15m (warning). Catches a phase Job that **terminally failed before `k8s_upgrade_in_flight` was set** — the preflight gates exit pre-metric, so the two `in_flight`-based alerts above are blind to a failed preflight (this is what hid the 5-day 1.34.9 wedge on 2026-06-12). Reason-scoped to terminal job conditions so a retry-success doesn't false-positive (a bare failed-pod-count would otherwise also block kured for the Job's 7d TTL). The old `unless on() (k8s_upgrade_blocked == 1)` clause was **dropped 2026-06-28**: compat-gate refusals now Complete cleanly (exit 0) instead of Failing, so a terminally-Failed chain Job again means a genuine wedge with nothing to exclude.
 - **`K8sUpgradeBlocked`** — `k8s_upgrade_blocked == 1` (warning). An **ACTIONABLE** compat-gate refusal — a newer version of the lagging addon exists and upgrading it would clear the block (or an in-use deprecated API must be migrated / a node's containerd bumped). Reasons (grouped by class) are in the **morning weekly report**; clear it by doing the named upgrade/migration, after which the next weekly run proceeds (see "Auto-upgrade compat gate"). No upgrade was attempted, so this is not a half-done-rollout alert. **There is deliberately NO companion alert for the held verdict** (`k8s_upgrade_held=1` — waiting-on-upstream / pinned): nothing can be actioned now, so it is surfaced only by the weekly report's `⏸️ HELD` line.
 
