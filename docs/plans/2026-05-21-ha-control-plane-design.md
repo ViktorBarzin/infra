@@ -9,6 +9,11 @@
 
 Measured during the locking pass:
 
+> **Amendment, 2026-09-16.** The right-size named as a revisit trigger has happened:
+> k8s-master went 32 -> 16 GB on 2026-09-15 (guest working set measured at 7.2 GB).
+> A 3 x 16 GB control plane is the sizing to plan against now, not 3 x 32 GB.
+> The host-RAM objection that deferred this plan is correspondingly smaller.
+
 - **k8s-master uses 4.6 GB of 32 GB allocated** (kube-apiserver 2.6 GB + etcd 660 MB + cm 360 MB + ~1 GB everything else). The 32 GB sizing is ~5-6× oversized vs working set.
 - **PVE host is already 98% RAM-committed** — 262 GB allocated to VMs against 267 GB physical, with 1.5 GB of active swap. The planned 3 × 32 GB control plane (+64 GB net) would push allocation to 326 GB → OOM on the host.
 - **Software-only HA on a single PVE host has bounded value** — a hypervisor crash still loses all 3 masters. The big resilience wins (kubeadm upgrades, cert rotation, planned reboots) are real but the disaster-recovery angle is limited until a second PVE host exists.

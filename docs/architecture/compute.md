@@ -17,7 +17,7 @@ graph TB
 
     subgraph Proxmox["Proxmox VE"]
         direction TB
-        MASTER["VM 200: k8s-master<br/>8c / 32GB<br/>10.0.20.100"]
+        MASTER["VM 200: k8s-master<br/>8c / 16GB<br/>10.0.20.100"]
         NODE1["VM 201: k8s-node1<br/>16c / 48GB<br/>GPU Passthrough<br/>nvidia.com/gpu=true:PreferNoSchedule"]
         NODE2["VM 202: k8s-node2<br/>8c / 32GB"]
         NODE3["VM 203: k8s-node3<br/>8c / 32GB"]
@@ -72,7 +72,7 @@ graph TB
 
 | VM | VMID | vCPUs | RAM | Network | Role | Taints |
 |----|------|-------|-----|---------|------|--------|
-| k8s-master | 200 | 8 | 32GB | vmbr1:vlan20 (10.0.20.100) | Control Plane | `node-role.kubernetes.io/control-plane:NoSchedule` |
+| k8s-master | 200 | 8 | 16GB | vmbr1:vlan20 (10.0.20.100) | Control Plane | `node-role.kubernetes.io/control-plane:NoSchedule` |
 | k8s-node1 | 201 | 16 | 48GB | vmbr1:vlan20 | GPU Worker | `nvidia.com/gpu=true:PreferNoSchedule` (applied dynamically to whichever node carries the GPU) |
 | k8s-node2 | 202 | 8 | 32GB | vmbr1:vlan20 | Worker | None |
 | k8s-node3 | 203 | 8 | 32GB | vmbr1:vlan20 | Worker | None |

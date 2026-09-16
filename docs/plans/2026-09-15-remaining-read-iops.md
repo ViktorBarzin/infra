@@ -315,10 +315,17 @@ filled and carries `i_ino` and `s_dev` so it names the file, or with cgroup
 3. **A 2.08 TB gap in the thin pool.** Origins map 4,762 GB and snapshots
    604 GB, total 5,367 GB, against 7,497 GB reported used. No read-only
    explanation was found and none was guessed.
-4. **Whether any of this moves the stalls.** The `pvestatd` stall count is the
-   symptom measure this plan is judged against, and host journal shipping was
-   broken from 2026-09-13T21:26:41Z until 2026-09-15T09:06, so there is a
-   two-day hole in it. The instrument is only now reliable again.
+4. **Whether any of this moves the stalls.** Answered 2026-09-16, and the
+   answer retires the measure. `pvestatd` stall count does not track disk
+   health, so this plan should not be judged against it. Stalls run at 307 per
+   hour, 85% of all 10-second polls, in a tight 11.1 to 14.1 s band with a
+   median of 11.7 s, while `sdc` sits at queue depth 0.2. A narrow band points
+   at a fixed cost rather than contention, which produces a long tail. The host
+   has nine guests with `agent: 1` and each guest-agent ping takes 1.2 to 1.4 s;
+   polled serially that sums to the observed median. `pvesm status` across all
+   three storages takes 1.33 s and does not account for it. The measure that
+   replaces it is **`sdc` queue depth during the hours people use the
+   machine**, which is already collected and needs no new instrumentation.
 
 ## A note on reading historical `dm-N` series on this host
 
@@ -327,3 +334,47 @@ numbers. `dm-4` averaged 42 to 48 KB per read before that date, as a data
 volume, and is exactly 4.0 KB per read after it, as the pool metadata device.
 Any `dm-N` figure from before that reboot describes a different logical volume.
 An apparent 25x improvement over 120 days turned out to be exactly this.
+
+## Outcome, 2026-09-16
+
+The plan opened by saying neither the SSD nor the spare spindles question was
+answered. Both are now answered, and the answer is neither.
+
+**Not IOPS-bound during the hours people use the machine.** Over the 13 hours
+from 05:00 UTC on 2026-09-16, `sdc` queue depth held a median of 0.1 and a p95
+of 2.2, with the whole host reading 31.9 GB across that window. Nothing waits
+on the disk. The 24-hour figures look worse (queue depth p99 18.6, one 5-minute
+window at 293) and every one of those samples falls inside the nightly backup
+hours, which are deliberately out of scope.
+
+**Read latency did not improve and is not expected to.** 7.5 ms at the median,
+unchanged from the 7.4 ms measured on 2026-08-15 and from the 7.6 ms measured
+the day before this work. That figure is the seek and rotation time of a
+7200 rpm spindle. Write reduction cannot move it and did not.
+
+**What did help was page cache, not the disk.** k8s-master was allocated 32 GB
+and its guest used 7.2 GB, holding roughly 12 GB of host RAM the guest had
+already freed, because a VM with `balloon: 0` never returns freed pages.
+Resizing it to 16 GB took host page cache from 9.1 GiB to 25.5 GiB. Reads
+reaching the platter roughly halved, from a median of 29.2/s to 12.9/s, while
+per-read latency stayed flat. More cache does not make a seek faster, it stops
+the seek happening. Some of that halving is workload rather than cache, since
+the comparison window contains this investigation's own activity.
+
+**The read-heavy application bug was real and is fixed.** The wrongmove market
+aggregator ran 4,149 s and then again 5,833 s on 2026-09-15; on 2026-09-16 it
+ran once in 18.2 s. It had been exceeding Celery's one-hour visibility timeout
+and being redelivered, so the duplicate nightly execution disappeared along
+with the runtime.
+
+**Still open.** Dawarich was never touched. MySQL does 55 physical reads per
+second sustained at a 99.19% buffer pool hit rate, noticed but not
+investigated. The 2.08 TB thin-pool gap in the open questions above is
+unchanged. Roughly 44 GB of VM over-allocation remains across the other
+guests, on the same `balloon: 0` ratchet that k8s-master was on.
+
+**A measurement trap worth recording.** `pve_disk_read_bytes_total` resets when
+a VM restarts, so `increase()` over it extrapolates wildly. It reported
+k8s-node2 reading 2,889 GB in 24 hours on a disk that read 379 GB in total.
+Per-guest read attribution has to come from the host's `dm-N` device stats,
+mapped back through `dmsetup` to the logical volume.
