@@ -88,10 +88,43 @@ locals {
     # that comment). recruiter-responder also sends enable_thinking=false
     # per-request; the server flag makes it the default for all consumers.
     qwen3-8b = {
-      hf_repo        = "unsloth/Qwen3-8B-GGUF"
-      gguf_pattern   = "*Q4_K_M*.gguf"
+      hf_repo      = "unsloth/Qwen3-8B-GGUF"
+      gguf_pattern = "*Q4_K_M*.gguf"
+      # 16384 did not fit on the shared T4 and the model simply stopped
+      # loading. Arithmetic on 2026-09-16, with every figure measured live
+      # rather than estimated:
+      #
+      #   T4 physical                        15360 MiB
+      #   seated tenants, real resident       7069   (claude-memory 2400,
+      #                                              frigate 2571,
+      #                                              immich-ml 1964, emulator 134)
+      #   gpu-vram-watchdog emergency floor   1536
+      #   => left for llama-swap              6755
+      #   qwen3-8b @ ctx 16384                6986   -> short by 231
+      #
+      # Being short by 231 MiB is not a soft failure here. llama-swap holds no
+      # gpumem seat by design, so the watchdog reads it as the largest
+      # over-budget tenant and recycles it the instant it loads. Observed
+      # doing exactly that, one tick after a successful load:
+      #   CONTENTION (free 1305MiB below emergency floor 1536MiB):
+      #     recycling llama-cpp/llama-swap-... (used=6986MiB, SEATLESS,
+      #     largest holder on the card)
+      # That is the unwinnable loop recorded on 2026-09-04 (44 recycles in one
+      # hour), and no seat can fix it: seats already total 13300 of the 14000
+      # advertised, so a 7000 seat for llama-swap would never schedule.
+      #
+      # 8192 costs nothing measurable. Over the 7 days to 2026-09-16 the
+      # largest prompt any consumer sent was 1993 tokens (paperless-ai,
+      # recruiter-responder and nextcloud-todos are short-prompt classifiers),
+      # so 8192 is still 4x the observed maximum. Resident drops to ~5900 MiB
+      # (measured on this card, memory #7049), leaving ~2400 free, comfortably
+      # above the floor.
+      #
+      # Raising it back is one line, but re-do the arithmetic above first with
+      # live numbers: the binding constraint is the floor, not the seats, and
+      # claude-memory's footprint ratchets ~260 MiB/day between restarts.
+      ctx_size       = 8192
       mmproj_pattern = ""
-      ctx_size       = 16384
       gpu_layers     = 99
       text_only      = true
     }
@@ -426,7 +459,29 @@ resource "kubernetes_deployment" "llama_swap" {
             }
             initial_delay_seconds = 30
             period_seconds        = 30
-            failure_threshold     = 5
+            # timeout_seconds was unset, so it took Kubernetes' default of 1s,
+            # and that killed llama-swap on every cold model load. GET / costs
+            # ~15ms once a model is resident but blocks while llama-swap spawns
+            # a llama-server child and reads several GB off the models PVC, so
+            # each probe failed instantly and 5 x 30s put the pod on a ~150s
+            # kill cycle: 50 "cleaning up before exit" lines in 24h, and 9 of
+            # 10 extraction requests failing during cold loads. Callers see
+            # httpx RemoteProtocolError; pods are REPLACED with RESTARTS 0, so
+            # it does not read as a crash loop. Measured 2026-09-10, confirmed
+            # again 2026-09-16 when a deliberate load request replaced the pod
+            # in 43s.
+            #
+            # 10s per probe with 10 failures allowed = 300s of grace for a load
+            # (a healthy cold reload is ~90s). A genuinely dead process is
+            # still caught quickly, because a refused connection fails at once
+            # rather than waiting out the timeout.
+            #
+            # Note what this probe can and cannot do: it does NOT catch the
+            # documented wedge where llama-swap accepts /v1/chat/completions
+            # and never spawns a child, because a wedged instance still serves
+            # GET /. It only catches a dead listener, so it should be patient.
+            timeout_seconds   = 10
+            failure_threshold = 10
           }
           resources {
             requests = {
