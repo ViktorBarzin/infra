@@ -489,7 +489,10 @@ resource "kubernetes_cron_job_v1" "digest" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1 (CronJob path): Kyverno mutates dns_config with ndots=2.
-    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+    ignore_changes = [
+      spec[0].job_template[0].spec[0].template[0].spec[0].dns_config,
+      spec[0].job_template[0].spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
+    ]
   }
 }
 
