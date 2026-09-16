@@ -151,6 +151,27 @@
       - wizard
       - emo
       - ancamilea
+    # The tailnet leg agent-api listens on (section 15). The account that owns
+    # the userspace tailscaled is the account agent-api runs as, which is the
+    # one account this playbook creates.
+    devvm_tailscale_user: "{{ devvm_admin_user }}"
+    devvm_tailscale_state_dir: "/home/{{ devvm_tailscale_user }}/.tailscale-us"
+    # Loopback ports for the SOCKS5 and outbound HTTP proxies. NOT 1055/1056:
+    # emo's own userspace daemon has held those since 2026-08-14 and a second
+    # daemon binding them would fail to start.
+    devvm_tailscale_socks_port: 1057
+    devvm_tailscale_http_proxy_port: 1058
+    devvm_tailscale_login_server: https://headscale.viktorbarzin.me
+    # devvm-emo is the existing node's name, so this reads as its counterpart.
+    devvm_tailscale_hostname: "devvm-{{ devvm_tailscale_user }}"
+    # Where the pre-auth key is read from, minted by hand and written to Vault
+    # before the first run. See the registration task for the two commands.
+    devvm_tailscale_vault_path: secret/devvm-tailscale
+    devvm_tailscale_vault_field: preauth_key
+    # Re-register a node that was deleted or expired in Headscale:
+    #   -e devvm_tailscale_force_register=true
+    devvm_tailscale_force_register: false
+    devvm_agent_api_log_dir: /var/log/agent-api
 
   tasks:
     # ---- 1) the apt toolset -------------------------------------------------
@@ -1581,6 +1602,237 @@
         exclusive: true
       no_log: true
 
+    # ---- 15) the agent-api tailnet leg --------------------------------------
+    # agent-api is Terminal Lobby's machine-facing interface, and it is reached
+    # over the Headscale tailnet and nowhere else, so this box has to be a node
+    # on it. Design: docs/plans/2026-09-14-muse-agent-broker-design.md.
+    #
+    # It was not a node. Measured 2026-09-16: no tailscaled socket for wizard,
+    # the packaged tailscaled.service disabled and inactive, and no Tailscale
+    # task anywhere in this playbook — while devvm-emo (100.64.0.61) had been
+    # on the tailnet since 2026-08-14.
+    #
+    # KNOWN, NOT MISSED: that emo node is an unprivileged userspace tailscaled
+    # out of /home/emo/.tailscale-us on ports 1055 and 1056, started by hand and
+    # declared in no repository. It predates any playbook entry for Tailscale,
+    # and this section deliberately leaves it where it is — adopting it is a
+    # separate change, and the ports here are chosen so the two never collide.
+    # A rebuilt machine therefore gets this leg and not emo's, the same gap
+    # section 8a records for playwright-mcp@.service.
+    #
+    # UNTAGGED, on purpose. Tagging the node needs tagOwners and an acls entry
+    # in stacks/headscale/acl.hujson, which is git-crypt encrypted and edited
+    # from the main checkout only; that is out of scope here, and Headscale
+    # refuses a tag its ACL does not own. The node belongs to the Headscale user
+    # whose pre-auth key registered it.
+    - name: Install the Tailscale signing key
+      ansible.builtin.get_url:
+        url: https://pkgs.tailscale.com/stable/ubuntu/jammy.asc
+        dest: /usr/share/keyrings/tailscale-archive-keyring.asc
+        mode: "0644"
+
+    # jammy, not noble, for the reason the HashiCorp source above gives: it is
+    # the suite the installed tailscale was resolved from, and moving it here
+    # would offer a different upgrade path as a side effect of a key change.
+    - name: Declare the Tailscale apt source
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/tailscale.list
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.asc] https://pkgs.tailscale.com/stable/ubuntu jammy main
+
+    # Same reasoning as the HashiCorp keyring: the source above no longer names
+    # the binary copy the hand install left behind, so it is dead weight that
+    # still looks authoritative.
+    - name: Drop the superseded Tailscale binary keyring
+      ansible.builtin.file:
+        path: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        state: absent
+
+    # Already on the live box at 1.98.3 from a hand install; declared so a
+    # rebuilt machine has it too. Not in packages.txt, which documents itself as
+    # a safe argument to `apt-get install` from the standard repos — this comes
+    # from Tailscale's own.
+    #
+    # No cache_valid_time here, unlike section 1: the source above was declared
+    # seconds ago, and section 1 has already refreshed the cache this run, so a
+    # validity window would let this task skip the update and then fail to find
+    # the package on the one machine that needs it — a fresh one.
+    - name: Install tailscale
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+        update_cache: true
+
+    - name: Create the userspace tailscaled state directory
+      ansible.builtin.file:
+        path: "{{ devvm_tailscale_state_dir }}"
+        state: directory
+        owner: "{{ devvm_tailscale_user }}"
+        group: "{{ devvm_tailscale_user }}"
+        mode: "0700"
+
+    - name: Install the userspace tailscaled unit
+      ansible.builtin.template:
+        src: files/devvm/tailscaled-agent.service.j2
+        dest: /etc/systemd/system/tailscaled-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - reload systemd
+        - restart tailscaled-agent
+
+    # Skipped under --check for the same reason as the playwright reaper timer:
+    # on a machine that has never had this applied the unit file does not exist
+    # yet, and systemd cannot be asked about a unit it has never seen.
+    - name: Enable the userspace tailscaled
+      ansible.builtin.systemd_service:
+        name: tailscaled-agent.service
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    - name: Read the tailnet login state
+      ansible.builtin.command: >-
+        tailscale --socket={{ devvm_tailscale_state_dir }}/ts.sock status --json
+      changed_when: false
+      failed_when: false
+      # Read-only, and the fact below is undefined without it, so it has to run
+      # under --check as well.
+      check_mode: false
+      register: devvm_ts_status_raw
+
+    - name: Parse the tailnet login state
+      # `status --json` exits 0 with valid JSON in BOTH states — BackendState is
+      # "Running" when registered and "NeedsLogin" when not — so this parses
+      # either way. Guard on rc so a daemon that is not up yet reads as
+      # DaemonError instead of failing inside the template.
+      ansible.builtin.set_fact:
+        devvm_ts_backend_state: >-
+          {{ (devvm_ts_status_raw.stdout | from_json).BackendState | default('Unknown')
+             if devvm_ts_status_raw.rc == 0 else 'DaemonError' }}
+
+    - name: Show the tailnet login state
+      ansible.builtin.debug:
+        msg: "tailscaled ({{ devvm_tailscale_user }}) BackendState={{ devvm_ts_backend_state }}"
+
+    # Registration runs ONLY when the daemon is not already Running, which is
+    # what makes a converged re-run report changed=0 and mint nothing. Pre-auth
+    # keys are single-use: registering unconditionally would spend one on every
+    # apply and leave a trail of duplicate nodes in Headscale. Same shape as
+    # playbooks/pfsense-tailscale.yml.
+    - name: Registration block
+      when:
+        - not ansible_check_mode
+        - devvm_ts_backend_state != 'Running' or devvm_tailscale_force_register | bool
+      block:
+        - name: Read the pre-auth key from Vault
+          # Same shape as the lobby proxy secret above: read on the control
+          # node, never written to the box, never prompted for. Inside the block
+          # on purpose — a registered machine needs no key at all, so a
+          # converged re-run does not touch Vault.
+          #
+          # Mint and store one with (untagged, so no --tags):
+          #   kubectl -n headscale exec deploy/headscale -c headscale -- \
+          #     headscale preauthkeys create -u <user-id> -e 24h -o json
+          #   vault kv put {{ devvm_tailscale_vault_path }} \
+          #     {{ devvm_tailscale_vault_field }}=<key>
+          ansible.builtin.command: >-
+            vault kv get -field={{ devvm_tailscale_vault_field }}
+            {{ devvm_tailscale_vault_path }}
+          delegate_to: localhost
+          become: false
+          register: devvm_ts_preauth
+          changed_when: false
+          check_mode: false
+          no_log: true
+
+        - name: Register with Headscale
+          # No --advertise-tags — see the section comment.
+          #
+          # --accept-dns=false because accepting DNS means rewriting
+          # /etc/resolv.conf, which an unprivileged userspace daemon cannot do
+          # and should not be doing to a shared box. --accept-routes=false
+          # because there is no routing table here to install subnet routes
+          # into. Both match what the pfSense subnet router runs.
+          ansible.builtin.command: >-
+            tailscale --socket={{ devvm_tailscale_state_dir }}/ts.sock up
+            --login-server {{ devvm_tailscale_login_server }}
+            --auth-key {{ devvm_ts_preauth.stdout }}
+            --hostname {{ devvm_tailscale_hostname }}
+            --accept-dns=false
+            --accept-routes=false
+            --timeout 60s
+          changed_when: true
+          no_log: true
+
+        - name: Wait for the node to reach Running
+          ansible.builtin.command: >-
+            tailscale --socket={{ devvm_tailscale_state_dir }}/ts.sock status --json
+          register: devvm_ts_wait
+          until: (devvm_ts_wait.stdout | from_json).BackendState | default('') == 'Running'
+          retries: 20
+          delay: 6
+          changed_when: false
+
+    - name: Verify the node holds a tailnet address
+      ansible.builtin.command: >-
+        tailscale --socket={{ devvm_tailscale_state_dir }}/ts.sock ip -4
+      register: devvm_ts_ip
+      changed_when: false
+      failed_when: devvm_ts_ip.rc != 0 or devvm_ts_ip.stdout is not match('^100\\.')
+      when: not ansible_check_mode
+
+    # agent-api's trace is the record of everything a caller asked this box to
+    # do, so it is kept for 30 days on disk and then it goes. Promtail ships the
+    # same file to Loki, which is where cluster-wide search and the longer
+    # history live; this only bounds the local copy.
+    - name: Create the agent-api log directory
+      ansible.builtin.file:
+        path: "{{ devvm_agent_api_log_dir }}"
+        state: directory
+        owner: "{{ devvm_tailscale_user }}"
+        group: "{{ devvm_tailscale_user }}"
+        mode: "0755"
+
+    - name: Rotate the agent-api trace
+      ansible.builtin.copy:
+        dest: /etc/logrotate.d/agent-api
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          {{ devvm_agent_api_log_dir }}/trace.jsonl {
+            daily
+            rotate 30
+            compress
+            notifempty
+            missingok
+            # The directory belongs to {{ devvm_tailscale_user }} rather than
+            # root, and logrotate skips a log under a non-root directory unless
+            # it is told whose it is. It skips it silently, which is the part
+            # worth guarding against.
+            su {{ devvm_tailscale_user }} {{ devvm_tailscale_user }}
+            # copytruncate rather than create: agent-api appends to an open
+            # descriptor and has no reopen signal, so renaming the file would
+            # leave it writing to the rotated copy forever. Swap this for
+            # create plus a postrotate reload if it ever grows one.
+            copytruncate
+          }
+
+    - name: Check the rotation config parses
+      # --debug is logrotate's dry run: it parses, says what it would do, and
+      # writes nothing. Here for the same reason as the nftables and sshd
+      # checks above: a fragment that does not parse stops the play at its
+      # cause, where logrotate itself would only skip the file, silently, at
+      # the next daily run.
+      ansible.builtin.command: logrotate --debug /etc/logrotate.d/agent-api
+      changed_when: false
+
   handlers:
     # DefaultIOAccounting is a manager-level setting, so a reload is not
     # enough: systemd has to re-execute to pick it up. It is a re-exec of PID 1
@@ -1647,4 +1899,15 @@
     - name: restart docker
       ansible.builtin.systemd_service:
         name: docker
+        state: restarted
+
+    # Defined after `reload systemd` on purpose: handlers run in definition
+    # order, not notification order, so the daemon-reload lands before this.
+    # A restart drops the tailnet leg for a second or two, which is why it is a
+    # handler rather than a state: restarted on the task — it fires only when
+    # the unit file actually changed. Registration survives it: the node key
+    # lives in the state directory, not in the unit.
+    - name: restart tailscaled-agent
+      ansible.builtin.systemd_service:
+        name: tailscaled-agent.service
         state: restarted
