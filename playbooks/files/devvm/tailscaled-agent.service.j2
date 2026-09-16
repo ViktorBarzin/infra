@@ -1,0 +1,53 @@
+# Tailscale in userspace-networking mode for {{ devvm_tailscale_user }}, the
+# account agent-api runs as.
+#
+# Managed by playbooks/devvm.yml -- edit the template, not the installed file.
+#
+# Userspace mode needs no TUN device, no CAP_NET_ADMIN and no root: tailscaled
+# does the networking inside the process and hands it out through a SOCKS5 and
+# an outbound HTTP proxy on loopback. That is what lets this run as an ordinary
+# account. Measured rather than assumed -- emo has run the same invocation
+# unprivileged on this box since 2026-08-14.
+#
+# The packaged tailscaled.service is installed, disabled and inactive, and
+# stays that way. It wants a TUN device and root, and it would take
+# /var/lib/tailscale, which this daemon deliberately does not use: the socket
+# and the whole state directory live under the user's home instead.
+
+[Unit]
+Description=Tailscale userspace daemon for {{ devvm_tailscale_user }} (agent-api tailnet leg)
+Documentation=https://tailscale.com/kb/1112/userspace-networking
+Documentation=file:///home/wizard/code/infra/docs/plans/2026-09-14-muse-agent-broker-design.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# tailscaled sends READY=1 once its local API is listening, in userspace mode
+# as well, so systemd knows when the socket below is usable instead of the
+# registration step racing a daemon that has not finished starting.
+Type=notify
+User={{ devvm_tailscale_user }}
+Group={{ devvm_tailscale_user }}
+
+# No --port: the default (0) picks a free UDP port. emo's daemon is already
+# running on this box, so pinning the usual 41641 the way the packaged unit
+# does would make whichever of the two started second fail to bind.
+ExecStart=/usr/sbin/tailscaled --tun=userspace-networking --socket={{ devvm_tailscale_state_dir }}/ts.sock --statedir={{ devvm_tailscale_state_dir }} --socks5-server=localhost:{{ devvm_tailscale_socks_port }} --outbound-http-proxy-listen=localhost:{{ devvm_tailscale_http_proxy_port }}
+
+# No ExecStopPost=tailscaled --cleanup, which the packaged unit carries: it
+# tears down routes, firewall rules and the TUN device, none of which exist
+# here, and it needs root.
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+# The one writable path. The node key, the registration and the DERP map live
+# here, so losing this directory means registering the node again.
+ReadWritePaths={{ devvm_tailscale_state_dir }}
+LockPersonality=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
