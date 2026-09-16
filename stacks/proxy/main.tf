@@ -355,9 +355,10 @@ resource "kubernetes_deployment" "broker" {
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
+      metadata[0].annotations["keel.sh/pollSchedule"],                                         # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      metadata[0].labels["tier"],                                                              # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
   depends_on = [kubernetes_manifest.es_secrets, kubernetes_manifest.es_turn]

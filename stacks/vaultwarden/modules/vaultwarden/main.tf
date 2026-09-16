@@ -190,9 +190,10 @@ resource "kubernetes_deployment" "vaultwarden" {
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/match-tag"],                       # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["kubernetes.io/change-cause"],              # Keel rewrites this on every rollout
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      metadata[0].annotations["keel.sh/match-tag"],                                            # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["kubernetes.io/change-cause"],                                   # Keel rewrites this on every rollout
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 }

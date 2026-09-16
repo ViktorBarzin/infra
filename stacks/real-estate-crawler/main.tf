@@ -549,7 +549,8 @@ resource "kubernetes_deployment" "realestate-crawler-api" {
       spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE — .woodpecker/deploy.yml sets an immutable :<sha> tag
       metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/pollSchedule"],                                         # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 }
@@ -752,6 +753,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery" {
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/policy"],
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 }
@@ -879,6 +881,7 @@ resource "kubernetes_deployment" "realestate-crawler-celery-beat" {
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
       metadata[0].annotations["keel.sh/policy"],
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 }

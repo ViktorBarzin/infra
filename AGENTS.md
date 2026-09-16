@@ -195,6 +195,7 @@ lifecycle {
     metadata[0].annotations["kubernetes.io/change-cause"],
     metadata[0].annotations["deployment.kubernetes.io/revision"],
     spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
   ]
 }
 ```
@@ -208,6 +209,7 @@ lifecycle {
 | `# KEEL_IGNORE_IMAGE` | `container[N].image` (one line **per container index**, incl. `init_container[N]`) | Keel rewrites the image tag on `policy=patch`; without this, `apply` reverts the bump (a **downgrade**) |
 | `# KEEL_LIFECYCLE_V1` | `keel.sh/match-tag`, `keel.sh/update-time` (pod template), `kubernetes.io/change-cause`, `deployment.kubernetes.io/revision` | every Keel digest-update restamps these; without ignoring them `apply` strips them → forces a rollout → Keel re-stamps → fight loop |
 | `# METALLB_LIFECYCLE_V1` | `metallb.io/ip-allocated-from-pool` (on **LoadBalancer Services**) | MetalLB's controller writes this onto the live Service once it allocates an IP; without the ignore every apply strips it and MetalLB re-adds it |
+| `# RELOADER_LIFECYCLE_V1` | `reloader.stakater.com/last-reloaded-from` (pod template) | Stakater Reloader stamps this on the pod template when a watched Secret or ConfigMap rotates; Terraform manages the annotations map wherever the template declares one, so it plans to strip it and Reloader re-adds it |
 
 **LoadBalancer Services** are the one non-pod-owning resource class in this
 legend. Every `kubernetes_service` with `type = "LoadBalancer"` needs the
@@ -216,13 +218,23 @@ the rule is universal rather than per-service. Swept across the fleet on
 **2026-08-14** (previously only `dbaas`'s `postgresql_lb` had it; traefik's
 Service is Helm-owned and so out of Terraform's reach).
 
+**Reloader** needs the line on any workload Reloader *watches*, not only the
+ones it has already stamped. The marker went fleet-wide on **2026-09-16** to 41
+resources across 38 stacks for that reason: the live cluster had 28 workloads
+carrying the annotation but **94** watched by Reloader, and the stamp appears on
+the next secret rotation, which for the Vault static DB roles is weekly. Fixing
+only the drifting set means coming back every week, which is visible in the
+history: the count was 13 on 2026-09-03 and 28 two weeks later. Audit against
+the watched set (any workload with a `reloader.stakater.com/*` annotation other
+than `last-reloaded-from`), not against today's drift report.
+
 **Multi-container caveat**: `container[0].image` only covers the first container. Add one `container[N].image` line for **every** container index, plus `init_container[N].image` for init containers — otherwise the un-ignored container's image still drifts/downgrades.
 
 The `KEEL_LIFECYCLE_V1` + per-container `KEEL_IGNORE_IMAGE` lines were swept across all enrolled workloads on **2026-05-28** (previously only `llama-cpp` had them; the rest fought on every apply). New enrolled workloads must include the full block. Workloads in un-enrolled namespaces don't receive the annotations and don't need the block.
 
 Per-workload opt-out: add the label `keel.sh/policy: never` on the Deployment metadata (not pod template); the policy's `exclude` clause respects it, no annotation gets injected, no `ignore_changes` needed.
 
-**Audit**: `rg "KYVERNO_LIFECYCLE_V2" stacks/` — count should equal the number of enrolled workloads. `rg "KEEL_LIFECYCLE_V1" stacks/` should match it (every enrolled workload also carries the V1 lines). `rg "METALLB_LIFECYCLE_V1" stacks/` should equal the number of TF-managed LoadBalancer Services (`kubectl get svc -A --field-selector spec.type=LoadBalancer` minus the Helm-owned traefik one).
+**Audit**: `rg "KYVERNO_LIFECYCLE_V2" stacks/` — count should equal the number of enrolled workloads. `rg "KEEL_LIFECYCLE_V1" stacks/` should match it (every enrolled workload also carries the V1 lines). `rg "METALLB_LIFECYCLE_V1" stacks/` should equal the number of TF-managed LoadBalancer Services (`kubectl get svc -A --field-selector spec.type=LoadBalancer` minus the Helm-owned traefik one). `rg "RELOADER_LIFECYCLE_V1" stacks/` should equal the number of TF-managed workloads Reloader watches.
 
 ### The invariant: nothing auto-upgraded is tracked by Terraform
 

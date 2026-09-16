@@ -469,6 +469,7 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
       # image and vice versa, and egress went down until the images were pinned
       # explicitly below. Pinning is what removes the Terraform/Keel fight;
       # a positional ignore is not a safe substitute here.
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 

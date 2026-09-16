@@ -66,12 +66,12 @@ module "tls_secret" {
 # relief — tandoor is PostgreSQL-backed with no embedded DB, so NFS is safe.
 # See docs/plans/2026-06-05-block-storage-harden-nfs-design.md
 module "nfs_tandoor" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "tandoor-data-nfs"
-  namespace  = kubernetes_namespace.tandoor.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/tandoor"
-  storage    = "5Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "tandoor-data-nfs"
+  namespace          = kubernetes_namespace.tandoor.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/tandoor"
+  storage            = "5Gi"
   storage_class_name = "nfs-pve"
 }
 
@@ -236,8 +236,9 @@ resource "kubernetes_deployment" "tandoor" {
       spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].replicas,                                                                        # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
+      spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
 }
