@@ -395,28 +395,56 @@ before debugging credentials:
 grep -o 'vault_address[^,}]*' state/stacks/<stack>/terraform.tfstate.enc | head -1
 ```
 
-**Four of the six Tier-0 states have no age recipient, so they have no second
-path.** Measured 2026-09-16:
+**Four of the six Tier-0 states had no age recipient and no second path.
+Repaired 2026-09-16.** All six now carry two age recipients and the public
+Vault address, and all six were verified to decrypt with Vault unreachable
+(`VAULT_ADDR` pointed at a closed port, no token, age key only).
 
-| stack | recorded Vault address | age recipients | decryptable off-cluster |
-|---|---|---|---|
-| `vault` | `https://vault.viktorbarzin.me` | 2 | yes |
-| `infra` | `https://vault.viktorbarzin.me` | 2 | yes |
-| `platform` | in-cluster | **0** | no |
-| `cnpg` | in-cluster | **0** | no |
-| `dbaas` | in-cluster | **0** | no |
-| `external-secrets` | in-cluster | **0** | no |
+| stack | before | after |
+|---|---|---|
+| `vault`, `infra` | 2 age recipients, public address | unchanged |
+| `platform`, `cnpg`, `dbaas`, `external-secrets` | **0** age recipients, in-cluster address | 2 age recipients, public address |
 
-This is worth knowing before it is needed, because Tier-0 exists precisely to
-bootstrap the cluster when Postgres or the cluster itself is unavailable, and
-`dbaas` is the stack this document names as that recovery path. Today those four
-are readable only from inside the cluster whose recovery they are meant to
-serve. `encrypt_state` does pass `--age`, so the gap comes from encrypting where
-the age recipient list resolved empty, which is what happens in CI.
+### The cause, which was a missing Alpine package
 
-Closing it means one in-cluster `sops updatekeys` pass over those four `.enc`
-files to add the age recipients from `.sops.yaml`. Until that runs, treat those
-four as cluster-dependent and do not rely on them for disaster recovery.
+`ci/Dockerfile` installed `python3` but not `py3-yaml`, and Alpine's `python3`
+does not bundle PyYAML. `state-sync` reads the age recipients out of
+`.sops.yaml` with a Python one-liner that ended in `2>/dev/null || echo ""`, so
+the `ImportError` was swallowed and `AGE_RECIPIENTS` became the empty string.
+`sops -e --age ""` does not complain; it writes a state file with no age key
+group at all. Every Tier-0 state CI encrypted therefore lost its age fallback,
+and because sops records the Transit **address** at encrypt time and reuses it
+in preference to `$VAULT_ADDR`, it also inherited CI's in-cluster address. The
+two together made those four readable only from inside the cluster whose
+recovery they exist to serve, `dbaas` included.
+
+Both halves are fixed: `py3-yaml` is in the CI image, and `encrypt_state`
+refuses an empty recipient list with an explicit message rather than producing
+an unrecoverable file. The Python one-liner keeps its stderr now.
+
+### Repairing a state that is already in that condition
+
+No in-cluster access is needed, which was the surprise. The Transit key itself
+is reachable at `https://vault.viktorbarzin.me`; only the address recorded in
+the file is wrong. Rewrite that one field and sops decrypts normally:
+
+```bash
+python3 - state/stacks/<stack>/terraform.tfstate.enc <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for e in d["sops"]["hc_vault"]:
+    e["vault_address"] = "https://vault.viktorbarzin.me"
+json.dump(d, open(sys.argv[1], "w"))
+PY
+scripts/state-sync decrypt <stack>   # now succeeds
+touch state/stacks/<stack>/terraform.tfstate
+scripts/state-sync encrypt <stack>   # re-seals with Transit AND age
+```
+
+Verify the result decrypts to byte-identical plaintext before keeping it, and
+shred the plaintext afterwards. Note that `sops` matches its creation rules on
+the **filename**, so a temporary copy must still be named `*.tfstate` or
+re-encryption fails with `no matching creation rules found`.
 
 ### Complex type (map/list) not parsing from Vault
 
