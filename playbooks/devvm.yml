@@ -176,6 +176,16 @@
     #   -e devvm_tailscale_force_register=true
     devvm_tailscale_force_register: false
     devvm_agent_api_log_dir: /var/log/agent-api
+    # agent-api is reached over the tailnet, not through Traefik, so the
+    # proxy-secret gate above cannot cover it. It takes a per-caller bearer
+    # instead, from this file. Root must own it: authuser refuses a tokens file
+    # the service account owns, because an account that owns it can append a
+    # line naming any terminal account on the box.
+    devvm_agent_api_tokens_file: /etc/terminal-lobby-tokens
+    devvm_agent_api_vault_path: secret/terminal-lobby
+    devvm_agent_api_vault_field: agent_api_muse_token
+    # The name is what /whoami echoes and what the trace records as the actor.
+    devvm_agent_api_caller_name: muse
 
   tasks:
     # ---- 1) the apt toolset -------------------------------------------------
@@ -1470,43 +1480,6 @@
       check_mode: false
       no_log: true
 
-    # Replaces the file wholesale rather than editing a line into it: the
-    # package owns /etc/terminal-lobby.conf and never touches this one, so this
-    # is the whole of what the box overrides, and a rebuilt machine gets it.
-    - name: Make the lobby services demand the proxy secret
-      ansible.builtin.copy:
-        dest: /etc/terminal-lobby.local.conf
-        owner: root
-        group: root
-        mode: "0640"
-        content: |
-          # Managed by playbooks/devvm.yml. Local edits are overwritten.
-          #
-          # The identity header this box's proxy sends. Authentik's outpost sets
-          # it, and Traefik's forward-auth middleware replaces whatever the
-          # client sent, so the value arriving here is Authentik's.
-          TL_AUTH_HEADER=X-Authentik-Username
-
-          # Traefik is not on this host, so the services cannot bind loopback.
-          TL_BIND=0.0.0.0
-
-          # Which is why they demand this second header as well. Without it a
-          # caller who can reach the port is whoever they claim to be. Traefik
-          # stamps it via the tl-proxy-secret middleware in stacks/terminal;
-          # both halves read Vault secret/terminal-lobby -> proxy_secret, so
-          # rotating means writing that key and re-running both.
-          TL_PROXY_SECRET={{ devvm_tl_proxy_secret.stdout }}
-      no_log: true
-      notify: restart lobby services
-
-    # ttyd is the exception the config file itself calls out: it takes one
-    # identity header and has nowhere to check a second, so the secret above
-    # does not reach the single port that hands out a shell. A filter does.
-    #
-    # NOT the stock /etc/nftables.conf, which opens with `flush ruleset`.
-    # iptables on this box is iptables-nft, so docker's live filter and nat
-    # rules sit in the same netfilter ruleset and a global flush takes every
-    # container's networking with it. This owns one table and deletes only that.
     - name: Filter ttyd down to the proxy
       ansible.builtin.copy:
         dest: /etc/nftables.conf
@@ -1871,6 +1844,95 @@
     # root:adm: adm membership can grow later without anyone rereading this.
     # Matches the 0700 on the tailscaled state dir above, and on
     # /var/log/private and /var/log/letsencrypt.
+    # These three sit after registration on purpose: TL_AGENT_BIND is read
+    # from the running daemon, so the node has to hold an address first.
+
+    - name: Read agent-api's bearer token from Vault
+      ansible.builtin.command: >-
+        vault kv get -field={{ devvm_agent_api_vault_field }}
+        {{ devvm_agent_api_vault_path }}
+      delegate_to: localhost
+      become: false
+      register: devvm_agent_api_token
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    # agent-api binds loopback plus this address and refuses to start on a
+    # wildcard, so the value has to be the node's real tailnet address. Read it
+    # from the running daemon rather than pinning a literal: Headscale assigns
+    # it, and a re-registered node can come back on a different one.
+    - name: Read the node's tailnet address
+      ansible.builtin.command: >-
+        tailscale --socket={{ devvm_tailscale_state_dir }}/ts.sock ip -4
+      register: devvm_tailscale_ip
+      changed_when: false
+      check_mode: false
+      failed_when: devvm_tailscale_ip.stdout | trim | length == 0
+
+    # Replaces the file wholesale rather than editing a line into it: the
+    # package owns /etc/terminal-lobby.conf and never touches this one, so this
+    # is the whole of what the box overrides, and a rebuilt machine gets it.
+    - name: Make the lobby services demand the proxy secret
+      ansible.builtin.copy:
+        dest: /etc/terminal-lobby.local.conf
+        owner: root
+        group: root
+        mode: "0640"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          #
+          # The identity header this box's proxy sends. Authentik's outpost sets
+          # it, and Traefik's forward-auth middleware replaces whatever the
+          # client sent, so the value arriving here is Authentik's.
+          TL_AUTH_HEADER=X-Authentik-Username
+
+          # Traefik is not on this host, so the services cannot bind loopback.
+          TL_BIND=0.0.0.0
+
+          # Which is why they demand this second header as well. Without it a
+          # caller who can reach the port is whoever they claim to be. Traefik
+          # stamps it via the tl-proxy-secret middleware in stacks/terminal;
+          # both halves read Vault secret/terminal-lobby -> proxy_secret, so
+          # rotating means writing that key and re-running both.
+          TL_PROXY_SECRET={{ devvm_tl_proxy_secret.stdout }}
+
+          # agent-api is the exception to TL_BIND above. It is reached over the
+          # tailnet rather than through Traefik, so it ignores TL_BIND and binds
+          # loopback plus this address only. It refuses to start on a wildcard,
+          # which is what keeps a tailnet service off the LAN.
+          TL_AGENT_BIND={{ devvm_tailscale_ip.stdout | trim }}
+
+          # Per-caller bearer credentials for agent-api. See the task that
+          # writes this file for why root owns it.
+          TL_BEARER_TOKENS={{ devvm_agent_api_tokens_file }}
+      no_log: true
+      notify: restart lobby services
+
+    # One credential per line: <name> <token> <os-user>. Root-owned and
+    # group-readable by the account the services run as, which is the one
+    # ownership authuser accepts. Revoking a caller is deleting its line.
+    - name: Write agent-api's bearer credentials
+      ansible.builtin.copy:
+        dest: "{{ devvm_agent_api_tokens_file }}"
+        owner: root
+        group: "{{ devvm_tailscale_user }}"
+        mode: "0640"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          {{ devvm_agent_api_caller_name }} {{ devvm_agent_api_token.stdout }} {{ devvm_tailscale_user }}
+      no_log: true
+      notify: restart lobby services
+
+    # ttyd is the exception the config file itself calls out: it takes one
+    # identity header and has nowhere to check a second, so the secret above
+    # does not reach the single port that hands out a shell. A filter does.
+    #
+    # NOT the stock /etc/nftables.conf, which opens with `flush ruleset`.
+    # iptables on this box is iptables-nft, so docker's live filter and nat
+    # rules sit in the same netfilter ruleset and a global flush takes every
+    # container's networking with it. This owns one table and deletes only that.
+
     - name: Create the agent-api log directory
       ansible.builtin.file:
         path: "{{ devvm_agent_api_log_dir }}"
