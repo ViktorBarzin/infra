@@ -176,6 +176,7 @@
     #   -e devvm_tailscale_force_register=true
     devvm_tailscale_force_register: false
     devvm_agent_api_log_dir: /var/log/agent-api
+    devvm_agent_api_port: 8710
     # agent-api is reached over the tailnet, not through Traefik, so the
     # proxy-secret gate above cannot cover it. It takes a per-caller bearer
     # instead, from this file. Root must own it: authuser refuses a tokens file
@@ -1897,11 +1898,15 @@
           # rotating means writing that key and re-running both.
           TL_PROXY_SECRET={{ devvm_tl_proxy_secret.stdout }}
 
-          # agent-api is the exception to TL_BIND above. It is reached over the
-          # tailnet rather than through Traefik, so it ignores TL_BIND and binds
-          # loopback plus this address only. It refuses to start on a wildcard,
-          # which is what keeps a tailnet service off the LAN.
-          TL_AGENT_BIND={{ devvm_tailscale_ip.stdout | trim }}
+          # agent-api ignores TL_BIND and binds loopback ONLY. It is reached
+          # over the tailnet, but the daemon runs in userspace-networking mode,
+          # so there is no TUN device and the 100.64.x.x address is not a local
+          # address at all: binding it fails with "cannot assign requested
+          # address". `tailscale serve --tcp` below forwards the tailnet port to
+          # this loopback one instead, which is how userspace mode accepts
+          # inbound. Leaving TL_AGENT_BIND unset is therefore correct here, not
+          # an omission.
+          TL_AGENT_BIND=
 
           # Per-caller bearer credentials for agent-api. See the task that
           # writes this file for why root owns it.
@@ -1920,7 +1925,9 @@
         mode: "0640"
         content: |
           # Managed by playbooks/devvm.yml. Local edits are overwritten.
-          {{ devvm_agent_api_caller_name }} {{ devvm_agent_api_token.stdout }} {{ devvm_tailscale_user }}
+          # The second field is the token's sha256 digest, never the token:
+          # a reader of this file cannot then authenticate as its holder.
+          {{ devvm_agent_api_caller_name }} sha256:{{ devvm_agent_api_token.stdout | hash('sha256') }} {{ devvm_tailscale_user }}
       no_log: true
       notify: restart lobby services
 
@@ -1932,6 +1939,27 @@
     # iptables on this box is iptables-nft, so docker's live filter and nat
     # rules sit in the same netfilter ruleset and a global flush takes every
     # container's networking with it. This owns one table and deletes only that.
+
+    # Userspace mode cannot accept inbound on a bound socket, so the tailnet
+    # port is forwarded to loopback by the daemon itself. Checked before it is
+    # set so a healthy re-run reports no change.
+    - name: Read the current tailnet serve configuration
+      ansible.builtin.command: >-
+        tailscale --socket={{ devvm_tailscale_state_dir }}/ts.sock serve status
+      register: devvm_tailscale_serve
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Expose agent-api on the tailnet
+      ansible.builtin.command: >-
+        tailscale --socket={{ devvm_tailscale_state_dir }}/ts.sock
+        serve --bg --tcp {{ devvm_agent_api_port }}
+        tcp://127.0.0.1:{{ devvm_agent_api_port }}
+      when: >-
+        ('tcp://127.0.0.1:' ~ devvm_agent_api_port) not in
+        (devvm_tailscale_serve.stdout | default(''))
+      changed_when: true
 
     - name: Create the agent-api log directory
       ansible.builtin.file:
