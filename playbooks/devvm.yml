@@ -1608,6 +1608,11 @@
         url: https://pkgs.tailscale.com/stable/ubuntu/jammy.asc
         dest: /usr/share/keyrings/tailscale-archive-keyring.asc
         mode: "0644"
+        # Without this the key is re-fetched on every run and the task reports
+        # changed forever, which is the noise that teaches people to ignore a
+        # non-no-op check run. A signing key does not rotate silently; replace
+        # it deliberately by removing the file.
+        force: false
 
     # jammy, not noble, for the reason the HashiCorp source above gives: it is
     # the suite the installed tailscale was resolved from, and moving it here
