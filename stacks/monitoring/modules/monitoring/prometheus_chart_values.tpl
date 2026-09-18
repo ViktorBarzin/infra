@@ -6499,10 +6499,11 @@ serverFiles:
           # included. Over 2026-08-27..08-30, inside the outage, 156 runs
           # returned zero in a row. So an all-zero run is not a quiet period
           # here, it is a fault, and there is no measured healthy stretch this
-          # threshold has to clear. Extraction runs every 30 min while idle
-          # (5 min during a live session, backend/main.py
-          # _scheduled_extraction), so 2h is 4 consecutive idle cycles — past
-          # any single bad run or a deploy, well short of a day.
+          # threshold has to clear. Extraction runs every 10800s while idle
+          # and every 900s pre-session and live (CHECK_INTERVALS in
+          # backend/session_clock.py, reached from _scheduled_extraction), so
+          # the 12h hold below is 4 consecutive idle cycles: past any single
+          # bad run or a deploy, well short of a day.
           #
           # keep_firing_for damps the half-recovered shape: a site that goes
           # dry, catches one stream on one cycle, and goes dry again is still
@@ -6534,8 +6535,8 @@ serverFiles:
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream has served zero streams from every source for over 2h — the site shows nothing"
-              description: "sum(f1_streams_served) has been 0 across all sources for two hours. Measured over 284 healthy extraction runs (2026-08-18..08-23, midweek) this never once happened, so treat it as every upstream extractor being broken rather than a quiet period. Check f1_source_last_extraction_ok per source to see whether they are raising or returning empty, then `homelab logs query '{namespace=\"f1-stream\"} |= \"Extraction run complete\"'`. The playback guard will not help until the next race weekend."
+              summary: "f1-stream has served zero streams from every source for over 12h, so the site shows nothing"
+              description: "sum(f1_streams_served) has been 0 across all sources for twelve hours, which is the hold this rule actually carries. Measured over 284 healthy extraction runs (2026-08-18..08-23, midweek) this never once happened, so treat it as every upstream extractor being broken rather than a quiet period. Check f1_source_last_extraction_ok per source to see whether they are raising or returning empty, then `homelab logs query '{namespace=\"f1-stream\"} |= \"Extraction run complete\"'`. The playback guard will not help until the next race weekend."
           # Without this every other rule in the group evaluates nothing and
           # goes quiet, which is the same silence the ten-day outage had.
           # sum() over an empty vector returns NO series rather than 0, so
@@ -6567,29 +6568,53 @@ serverFiles:
           # empty, so nothing above notices while the site quietly serves
           # yesterday's links.
           #
-          # 2h = 4 missed runs at the idle 30-minute cadence. The live-session
-          # cadence is 5 min, so this is loose by design — it should not fire
-          # on a slow run holding a chrome-fleet lease.
+          # 7h, and the arithmetic behind it moved on 2026-09-18.
+          #
+          # This said "2h = 4 missed runs at the idle 30-minute cadence", which
+          # stopped being true when the cadence table grew phases. The idle
+          # interval is CHECK_INTERVALS[Phase.IDLE] = 10800s
+          # (backend/session_clock.py), so 2h was BELOW one normal idle gap and
+          # the rule fired on healthy midweek behaviour: measured over the 30
+          # days to 2026-09-18, the 7200s condition held in 730 of ~8640 5-min
+          # samples, 8.4% of the time. 25200s held in 0 of them.
+          #
+          # 7h is a little over two missed idle cycles, so it still catches a
+          # scheduler that died while clearing every ordinary gap. The
+          # live-session cadence is 900s, so this stays loose by design during
+          # a session and should not fire on a slow run holding a chrome-fleet
+          # lease.
           - alert: F1ExtractionStalled
             # Same `> 0` guard as F1SourceStale, and for the same reason: this
             # gauge reads 0 until the first extraction completes after a pod
             # restart, so without it every deploy fires this instantly.
             expr: |
-              (time() - f1_extraction_last_run_timestamp_seconds) > 7200
+              (time() - f1_extraction_last_run_timestamp_seconds) > 25200
               and f1_extraction_last_run_timestamp_seconds > 0
             for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "f1-stream has not run an extraction in {{ $value | humanizeDuration }} (>4 missed cycles)"
-              description: "The APScheduler stream_extraction job (30 min idle, 5 min during a live session) has not completed a run in over two hours, so every stream the site is serving is stale and no new ones are being found. This is the scheduler, not the upstreams — check the f1-stream pod logs for an exception that killed the job, and whether the pod restarted into a bad state."
+              summary: "f1-stream has not run an extraction in {{ $value | humanizeDuration }} (>2 missed idle cycles)"
+              description: "The APScheduler stream_extraction job (3h idle, 15 min pre-session and live, per CHECK_INTERVALS in backend/session_clock.py) has not completed a run in over seven hours, so every stream the site is serving is stale and no new ones are being found. This is the scheduler, not the upstreams — check the f1-stream pod logs for an exception that killed the job, and whether the pod restarted into a bad state."
           # Per-source staleness, scoped to aceztrims ON PURPOSE.
           #
-          # 6h = 12 consecutive dry cycles at the idle cadence. aceztrims is
-          # the one source with a measured around-the-clock baseline: 284 of
-          # 284 runs over five midweek days returned its streams, so its normal
-          # gap between successes is one extraction interval and 6h is two
-          # orders of magnitude above it.
+          # 6h, kept, with its arithmetic corrected on 2026-09-18.
+          #
+          # This claimed "6h = 12 consecutive dry cycles" and "two orders of
+          # magnitude above" the normal gap. Both were written against a
+          # 30-minute idle cadence that no longer exists: the idle interval is
+          # CHECK_INTERVALS[Phase.IDLE] = 10800s (backend/session_clock.py), so
+          # 21600s is TWO idle cycles, not twelve.
+          #
+          # The threshold is nonetheless the right one, which is why it did not
+          # move. aceztrims still has the only measured around-the-clock
+          # baseline (284 of 284 runs over five midweek days returned its
+          # streams), and over the 30 days to 2026-09-18 its worst observed gap
+          # between successes was 12330s, 3.4h. So 6h is 1.75x the worst real
+          # gap and it held in 0 of ~8640 5-min samples. Widening it to a
+          # literal twelve cycles would be 36h, which fires no less often and
+          # costs 30 hours of detection latency on a source the repair agent
+          # fixes unattended.
           #
           # pitsport and streamed are deliberately NOT in this selector.
           # pitsport publishes per session, so returning nothing between race
@@ -6626,7 +6651,7 @@ serverFiles:
             labels:
               severity: info
             annotations:
-              summary: "f1-stream source {{ $labels.source }} has produced no streams in {{ $value | humanizeDuration }} (normal gap is one 30-min cycle)"
+              summary: "f1-stream source {{ $labels.source }} has produced no streams in {{ $value | humanizeDuration }} (normal gap is one 3h idle cycle; worst measured 3.4h)"
               description: "This source publishes around the clock — measured 1-2 streams on every one of 284 extraction runs over 2026-08-18..08-23, including 02:00 UTC midweek — so six hours of nothing means its extractor or its upstream has changed. This is the shape aceztrims broke in on 2026-08-26, when the embed host swapped a base64 encodedUrl blob for a pair of XORed hex strings and the resolver returned nothing while the page still looked fine."
           # The season-independent per-source check, and the one that catches
           # what actually happened to pitsport: it rewrote its API, the old
@@ -6703,6 +6728,75 @@ serverFiles:
             annotations:
               summary: "f1-stream found {{ $value }} F1 stream(s) from {{ $labels.source }} and could not turn any of them into a playable one for 2h"
               description: "Discovery and F1 detection both worked — this source recognised Formula 1 — and nothing reached the cache, so the failure is in resolution: the browser capture returned no playlist, or every candidate resolved to something unplayable. Check `homelab logs query '{namespace=\"f1-stream\"} |= \"yielded a playlist\"'` for the capture's own count, then whether chrome-fleet is leasing (`homelab k8s status chrome-service`). A dead embed host after a session ends is the benign case and clears itself; four consecutive cycles during a race weekend is not. Compare f1_extraction_discovered against f1_extraction_matched to rule out a detection problem instead."
+          # The last stage of the funnel, and the one no rule watched: streams
+          # cached and none of them served. Added 2026-09-18 from the live
+          # streaming audit.
+          #
+          # F1ExtractionNotResolving above stops at the cache. Past it the
+          # verifier can still reject every candidate, and when it does the
+          # exposition reads cached > 0 with served == 0 while the site shows
+          # an empty list. Nothing in this group spoke for that shape:
+          # F1AllSourcesDry needs every source at zero AND fires on 12h,
+          # F1SourceStale watches aceztrims alone, and the extractor raises
+          # nothing because it did its job.
+          #
+          # SITE-WIDE, deliberately, and not the per-source `and on(source)`
+          # form the audit first proposed. Measured before writing it: the
+          # per-source condition held for `streamed` in 1091 of 2012 5-min
+          # samples over 7 days, 54% of the time, because that source
+          # habitually caches candidates the verifier then rejects. An alert
+          # true half the time is an alert someone mutes. The site-wide form
+          # held in 26 of ~8640 samples over 30 days and in none at all over
+          # the last 7, so it speaks only when the whole site has candidates
+          # and is serving nobody.
+          #
+          # 30m is five idle scrapes and well inside one 10800s extraction
+          # cycle, so a verifier that comes back on the next pass is not
+          # reported. The `or on() vector(0)` on the served side is the same
+          # defence F1AllSourcesDry carries: sum() over an empty vector returns
+          # no series rather than 0.
+          - alert: F1ZeroSupply
+            expr: |
+              sum(f1_streams_cached) > 0
+              and on() (sum(f1_streams_served) or on() vector(0)) == 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream has {{ $value }} stream(s) cached and is serving none of them"
+              description: "Extraction found streams and verification rejected all of them, so the site lists nothing while the pipeline reports itself healthy. This is the stage past F1ExtractionNotResolving: the cache has entries and f1_streams_served is 0 across every source. Check what the verifier is rejecting with `homelab logs query '{namespace=\"f1-stream\"} |= \"candidate(s) rejected\"' --since 1h`, which names the HTTP status per candidate. A whole-site rejection usually means the upstreams rotated a token format or an origin started refusing our egress, not that six independent streams died at once."
+          # Playback failing at the client, which no rule watched either.
+          #
+          # ADR-0003 decided against alerting on client-reported playback,
+          # because a counter fed by browsers is attacker-writable and noisy,
+          # and that reasoning still holds for the general case. This amends it
+          # rather than reverses it: the rule is GATED on the calendar phase,
+          # so it can only speak during pre-session and live, which is the one
+          # window where a burst of client fatals means the thing Viktor is
+          # about to watch is broken and nothing else will say so in time.
+          # Between sessions it is inert whatever the clients report, so the
+          # noise ADR-0003 was avoiding stays out.
+          #
+          # Threshold measured against 30 days of real data before writing it:
+          # `sum(increase(f1_playback_fatal_errors_total[15m]))` peaked at 35.4,
+          # the ungated `> 5` condition held in 17 of ~8640 5-min samples, and
+          # the phase-gated one in 6. So it can fire, it has room above the
+          # routine, and it is not going to talk during a quiet Tuesday.
+          #
+          # max() on the guard rather than a bare selector: f1_schedule_phase
+          # is one series per phase, so an unaggregated `== 1` would match the
+          # live series and the pre_session series separately and the `and on()`
+          # would find no shared label set.
+          - alert: F1PlaybackFailing
+            expr: |
+              sum(increase(f1_playback_fatal_errors_total[15m])) > 5
+              and on() (max(f1_schedule_phase{phase=~"live|pre_session"}) == 1)
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "f1-stream clients reported {{ $value | printf \"%.0f\" }} fatal playback errors in 15m during a session"
+              description: "Playback is dying outright on viewers' devices while a session is on. Break it down by site, device and rung with `sum by (site, device, rung) (increase(f1_playback_fatal_errors_total[15m]))` before touching anything: one site failing is a source problem and the answer is to switch feeds, every site failing on one device class is ours. This rule is calendar-gated by design (ADR-0003), so it says nothing between sessions no matter what clients report."
           - alert: F1RelayUpstreamFailing
             # Added 2026-09-11, when AnubisChallengeStoreErrors was narrowed to
             # 500 and stopped reporting these. /relay and /proxy fetch segments
