@@ -42,17 +42,21 @@ session id. Forward-auth could not read the cookie the callback had just set,
 so every signed-in request looped between login and callback. `OriginStatus 0`
 across the estate. `305aaca9` reverted it.
 
-That attempt recorded a reason for not moving the callback as well: the
-`ak-outpost-authentik-embedded-outpost` Ingress was believed to belong to the
-outpost controller and to be impossible to repoint durably. Checking the
-upstream tree, `authentik/outposts/controllers/k8s/` contains no ingress
-reconciler in 2026.2.6, 2026.8.1 or 2026.8.3. The `goauthentik.io` field
-manager on that Ingress is left over from an older release. Nothing recreates
-it today.
+That attempt also recorded a reason for not moving the callback with it: the
+`ak-outpost-authentik-embedded-outpost` Ingress belongs to the outpost
+controller and cannot be repointed durably. That still holds at 2026.8.3.
 
-This plan takes a different route that sidesteps the question. Rather than
-repointing nginx and the two Ingresses separately, it changes the one object
-all three already share.
+The reconciler is easy to miss, because it does not live with the others. While
+`authentik/outposts/controllers/k8s/` holds no ingress reconciler in 2026.2.6,
+2026.8.1 or 2026.8.3, `ProxyKubernetesController` registers an
+`IngressReconciler` from `authentik/providers/proxy/controllers/k8s/ingress.py`
+and appends it to the reconcile order. It defines no `noop`, so it inherits
+`False` and writes that Ingress on every pass, pointing it at the Service by
+name on port `http`. That matches the live object exactly.
+
+So the callback cannot be moved by editing an Ingress, and this plan does not
+try. It changes the one object nginx and both Ingresses already resolve
+through, which carries the callback along without touching an Ingress at all.
 
 > [!IMPORTANT]
 > Forward-auth and the OAuth callback must be answered by the same outpost.
@@ -131,16 +135,22 @@ reaches it on this code path.
 
 ## Which reconcilers are live today
 
-Worth recording, because two of them being inert explains several things that
+Worth recording, because which of them are inert explains several things that
 looked puzzling earlier.
+
+Our outpost is a proxy outpost, so the reconciler set is the five in
+`KubernetesController` plus three more that `ProxyKubernetesController` adds.
 
 | reconciler | runs for our embedded outpost | consequence |
 |---|---|---|
 | secret | no, `is_embedded` | authentik never writes the outpost token Secret |
 | deployment | no, `is_embedded` | the standalone Deployment is a frozen artifact, and `kubernetes_json_patches.deployment` has no effect |
-| **service** | **yes** | it is the only one still writing, which is why this is the object to change |
+| **service** | **yes** | the object this plan changes, and the one the disable flag targets |
 | service-metrics | no, `is_embedded` | not managed |
 | service-monitor | yes | unaffected by this plan |
+| ingress | yes, no `noop` | keeps the callback Ingress pointed at the Service by name, which is what carries the callback across |
+| httproute | no, the Gateway API CRD is absent | not managed |
+| traefik middleware | yes, delegates `noop` to its versioned inner reconciler | the live Middleware is 223 days old, unaffected by this plan |
 
 The inert deployment patches are why the readiness probe in `code-f1zd` could
 never be applied. They were written before upstream added the `is_embedded`
@@ -265,3 +275,7 @@ scaled to zero replicas, which predates this work.
   Service was checked cluster-wide and came back clean. A consumer holding the
   ClusterIP in a config file outside the cluster would not show up in that
   sweep.
+- Disabling the service component means authentik will no longer recreate that
+  Service if it is ever deleted, while the ingress reconciler keeps writing an
+  Ingress that points at it by name. That trade is the point of the change, and
+  it is worth a line in the runbook when this lands.
