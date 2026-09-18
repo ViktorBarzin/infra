@@ -105,26 +105,16 @@ resource "authentik_outpost" "embedded" {
     # subrequests. Safe since sessions moved to the shared Postgres backend
     # (authentik_providers_proxy_proxysession, 2026-05-10) — no pod-local
     # session state anymore.
-    kubernetes_replicas           = 2
-    kubernetes_namespace          = "authentik"
-    authentik_host_browser        = ""
-    object_naming_template        = "ak-outpost-%(name)s"
-    authentik_host_insecure       = false
-    kubernetes_service_type       = "ClusterIP"
-    kubernetes_ingress_path_type  = null
-    kubernetes_image_pull_secrets = []
-    kubernetes_ingress_class_name = null
-    # "service": authentik must stop writing this outpost's Service, because
-    # we now own its selector and point it at the inline outpost in the
-    # goauthentik-server pods. Honoured because outpost_controller always
-    # dispatches through up_with_logs (tasks.py), which skips any reconciler
-    # named here (kubernetes.py). Leaving it enabled would be actively
-    # harmful, not merely redundant: the reconciler updates the Service with
-    # a WHOLE-OBJECT MERGE patch, and a merge of its 2-key reference selector
-    # over our 5-key live one yields a 6-key selector matching ZERO pods,
-    # which never converges on re-run. Measured with kubectl --dry-run=server
-    # on 2026-09-18. See docs/plans/2026-09-18-authentik-inline-outpost.md.
-    kubernetes_disabled_components   = ["service"]
+    kubernetes_replicas              = 2
+    kubernetes_namespace             = "authentik"
+    authentik_host_browser           = ""
+    object_naming_template           = "ak-outpost-%(name)s"
+    authentik_host_insecure          = false
+    kubernetes_service_type          = "ClusterIP"
+    kubernetes_ingress_path_type     = null
+    kubernetes_image_pull_secrets    = []
+    kubernetes_ingress_class_name    = null
+    kubernetes_disabled_components   = []
     kubernetes_ingress_annotations   = {}
     kubernetes_ingress_secret_name   = "authentik-outpost-tls"
     kubernetes_httproute_annotations = {}
@@ -207,6 +197,19 @@ resource "authentik_outpost" "embedded" {
           value = {
             type          = "RollingUpdate"
             rollingUpdate = { maxUnavailable = 0, maxSurge = 1 }
+          }
+        },
+      ]
+      service = [
+        {
+          op   = "replace"
+          path = "/spec/selector"
+          value = {
+            "app.kubernetes.io/managed-by" = "goauthentik.io"
+            "app.kubernetes.io/name"       = "authentik-outpost-proxy"
+            "goauthentik.io/outpost-name"  = "authentik-embedded-outpost"
+            "goauthentik.io/outpost-type"  = "proxy"
+            "goauthentik.io/outpost-uuid"  = "0eecac0797c7443c892505f2f4fe3e47"
           }
         },
       ]
