@@ -306,6 +306,17 @@ resource "kubernetes_deployment" "f1-stream" {
             failure_threshold     = 24
             success_threshold     = 1
           }
+          # Proves to the app that a request came through the ingress rather
+          # than straight at the Service. Straight from the random_password
+          # rather than through f1-stream-secrets: the Middleware in
+          # ingress-proof.tf reads the same resource, so there is nothing for
+          # Vault or an ExternalSecret to add. Unset, the app keeps today's
+          # behaviour and logs a warning once, which is what lets this apply
+          # land before the image that enforces it.
+          env {
+            name  = "INGRESS_PROOF_SECRET"
+            value = random_password.ingress_proof.result
+          }
           # Signs the admin session cookie. Unset, the app issues and accepts
           # nothing rather than signing with a guessable key.
           env {
@@ -883,6 +894,11 @@ module "ingress_admin_login" {
   # regardless under ADR-0023's break-glass rule, which is who we want anyway;
   # the app checks the group again before issuing a session.
   allowed_groups = ["Home Server Admins"]
+
+  # Same proof header /pair carries, for the same reason: forward-auth says who
+  # a visitor is, not that they came through the front door. See
+  # ingress-proof.tf.
+  extra_middlewares = ["f1-stream-ingress-proof@kubernetescrd"]
 }
 
 module "ingress" {

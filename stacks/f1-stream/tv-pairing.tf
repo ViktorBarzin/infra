@@ -52,4 +52,10 @@ module "ingress_tv_pairing" {
   # before it approves a code, so this list is the outer gate rather than the
   # only one.
   allowed_groups = ["Home Server Admins"]
+
+  # Appended after the forward-auth middleware, which is where the factory puts
+  # extra_middlewares. The app refuses a request that arrives without the
+  # header this stamps, so a caller who skips the ingress and talks to the
+  # Service cannot approve a television. See ingress-proof.tf.
+  extra_middlewares = ["f1-stream-ingress-proof@kubernetescrd"]
 }
