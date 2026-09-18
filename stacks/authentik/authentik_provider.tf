@@ -166,6 +166,39 @@ resource "authentik_outpost" "embedded" {
           path  = "/spec/template/spec/containers/0/env/-"
           value = { name = "AUTHENTIK_POSTGRESQL__NAME", valueFrom = { secretKeyRef = { name = "goauthentik", key = "AUTHENTIK_POSTGRESQL__NAME" } } }
         },
+        # READINESS PROBE (bead code-f1zd). Without one, kubelet marks the pod
+        # Ready the instant the container process starts, so it joins the
+        # Service Endpoints seconds BEFORE the Go proxy binds :9000. The nginx
+        # auth-proxy then gets a refused connect and, before b64239e1 added a
+        # retry, handed every auth="required" host an Emergency Access
+        # basic-auth prompt. On 2026-09-13 that produced up to 86 fallback
+        # responses a minute across 45 hosts. The tell that it was a half-up
+        # backend rather than a dead one: 200 and 401 interleaved for the same
+        # host inside the same second.
+        #
+        # /outpost.goauthentik.io/ping answers 204, which httpGet counts as
+        # success (2xx-3xx). Measured directly against the live pod.
+        {
+          op   = "add"
+          path = "/spec/template/spec/containers/0/readinessProbe"
+          value = {
+            httpGet             = { path = "/outpost.goauthentik.io/ping", port = 9000 }
+            initialDelaySeconds = 3
+            periodSeconds       = 3
+            failureThreshold    = 2
+          }
+        },
+        # And never drop a serving pod before its replacement is Ready. The
+        # default is 25%, which on 2 replicas rounds to 1 and is what let a
+        # rollout take the last good endpoint out of rotation.
+        {
+          op   = "add"
+          path = "/spec/strategy"
+          value = {
+            type          = "RollingUpdate"
+            rollingUpdate = { maxUnavailable = 0, maxSurge = 1 }
+          }
+        },
       ]
       service = [
         {
