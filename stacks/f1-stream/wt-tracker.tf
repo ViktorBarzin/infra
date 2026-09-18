@@ -109,10 +109,16 @@ resource "kubernetes_deployment" "wt_tracker" {
           # address the tracker recorded. An in-cluster client could forge the
           # header and appear as any address in the stats; accepted, since the
           # alternative is stats that are uniformly wrong.
+          # 600000ms, raised from 120000 on 2026-09-18 by the live streaming
+          # audit. bittorrent-tracker does NOT hand this figure to a WebSocket
+          # peer as given: it divides it by five for them, so --interval
+          # 120000 asked every browser to re-announce every 24 seconds. At
+          # 600000 they re-announce every 2 minutes, which is the cadence the
+          # 120000 was meant to set in the first place.
           args = [
             "--ws",
             "--port", "8000",
-            "--interval", "120000",
+            "--interval", "600000",
             "--trust-proxy",
           ]
 
