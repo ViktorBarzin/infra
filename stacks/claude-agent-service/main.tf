@@ -1100,7 +1100,7 @@ resource "kubernetes_cron_job_v1" "fixer_tick" {
     # identity's autonomous repair runs. Narrowing its RBAC is bead code-7u62
     # and needs Viktor's call on scope; this is the reversible hold until then.
     # Plan: https://pages.viktorbarzin.me/2026-09-13-authentik-outage-recovery.html
-    suspend                       = true
+    suspend                       = false
     schedule                      = "*/2 * * * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 1
