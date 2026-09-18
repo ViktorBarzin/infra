@@ -1,0 +1,267 @@
+# Move forward-auth to the inline outpost
+
+Bead `code-osvg`. Status: draft, not executed.
+
+Retire the standalone embedded-outpost Deployment and let the outpost that runs
+inside the authentik server pods answer forward-auth and the OAuth callback.
+
+```stats
+95 | hosts behind the one Service
+2026.2.6 | outpost image today
+2026.8.3 | server image today
+1 | object the cutover changes
+```
+
+## Why this is worth doing
+
+Three open problems share one cause, and one change closes all three.
+
+| problem | today | after |
+|---|---|---|
+| `code-osvg`: the outpost is seven minor versions behind | `proxy:2026.2.6` against a 2026.8.3 server, and it cannot be upgraded | forward-auth runs at the server version by construction |
+| `code-f1zd`: no readiness probe on the outpost | pods join Service endpoints before `:9000` binds, which is the 2026-09-13 outage mechanism | the Deployment stops existing, so the bead dissolves |
+| the Service gets a new ClusterIP on upgrades | nginx caches the IP for the life of the process and dials a dead address, which is the 2026-08-19 outage | authentik stops managing the Service, so nothing recreates it |
+
+The outpost cannot be upgraded in place because of an upstream design decision,
+not a packaging gap. From 2026.8, an outpost marked embedded reaches the core
+over a unix socket that only exists inside the server pod
+(`src/outpost/event.rs:186`, guarded by `controller.is_embedded()`). Run
+`proxy:2026.8.3` in a separate pod and it never listens. `2026.2.6` is the
+newest image that works in the standalone shape, so the version gap widens with
+every authentik release.
+
+## What happened on 2026-09-02, and what is different now
+
+This change was attempted once and reverted 29 minutes later.
+
+`03692ff0` pointed the nginx forward-auth upstream at `goauthentik-server` and
+left the OAuth callback on the standalone outpost. The two implementations
+write the same cookie name on the same domain in formats neither can read: the
+inline one issues `<base64 hmac>=<uuid>`, the standalone one a bare base32
+session id. Forward-auth could not read the cookie the callback had just set,
+so every signed-in request looped between login and callback. `OriginStatus 0`
+across the estate. `305aaca9` reverted it.
+
+That attempt recorded a reason for not moving the callback as well: the
+`ak-outpost-authentik-embedded-outpost` Ingress was believed to belong to the
+outpost controller and to be impossible to repoint durably. Checking the
+upstream tree, `authentik/outposts/controllers/k8s/` contains no ingress
+reconciler in 2026.2.6, 2026.8.1 or 2026.8.3. The `goauthentik.io` field
+manager on that Ingress is left over from an older release. Nothing recreates
+it today.
+
+This plan takes a different route that sidesteps the question. Rather than
+repointing nginx and the two Ingresses separately, it changes the one object
+all three already share.
+
+> [!IMPORTANT]
+> Forward-auth and the OAuth callback must be answered by the same outpost.
+> Splitting them across the two implementations is what took the estate down on
+> 2026-09-02. Every step below preserves that invariant.
+
+## The mechanism
+
+`ak-outpost-authentik-embedded-outpost` keeps its name, its ClusterIP
+`10.101.169.236` and its ports. Only `spec.selector` changes, from the
+outpost-proxy labels to the two labels that identify the server pods. nginx and
+both callback Ingresses are untouched, so both halves of the flow move together
+in the same instant.
+
+```mermaid
+flowchart TD
+    subgraph now["today"]
+        direction TB
+        N1["nginx auth-proxy<br/>and both callback Ingresses"]
+        N1 --> S1["Service ak-outpost-authentik-embedded-outpost<br/>ClusterIP 10.101.169.236<br/>selector: the outpost-proxy labels"]
+        S1 --> P1["2 standalone pods<br/>proxy:2026.2.6, no readiness probe"]
+    end
+    subgraph after["after"]
+        direction TB
+        N2["nginx auth-proxy<br/>and both callback Ingresses<br/>all three unchanged"]
+        N2 --> S2["same Service, same ClusterIP<br/>selector: name=authentik<br/>plus component=server"]
+        S2 --> P2["3 server pods<br/>server:2026.8.3, inline outpost on :9000"]
+    end
+    now -.->|"one selector change"| after
+```
+
+Two facts make this safe, both checked against the live cluster.
+
+**The selector matches only the server pods.** Our own json patch stamps
+`app.kubernetes.io/component: server` onto the outpost pods, so that label
+alone would match both sets. `app.kubernetes.io/name` separates them: server
+pods carry `authentik`, outpost pods carry `authentik-outpost-proxy`. The
+two-label AND selector returns the three server pods and nothing else.
+
+**The inline outpost already answers.** Probed directly against a server pod
+IP: `/outpost.goauthentik.io/ping` returns 204, and
+`/outpost.goauthentik.io/auth/traefik` carrying forward-auth headers returns
+302. It is the same outpost object with the same UUID and the same provider
+assignments, running in-process instead of in its own pod.
+
+## The patch type decides whether this works
+
+The selector has to be set with an explicit JSON Patch `replace`. A merge patch
+of any flavour leaves the four stale keys in place, and the merged six-key
+selector matches zero pods. Measured with a server-side dry run against the
+live object:
+
+| patch type | resulting selector | matches |
+|---|---|---|
+| `--type=merge` | 6 keys: the 2 new plus the 4 old | no pods |
+| `--type=strategic` | 6 keys, identical result | no pods |
+| `--type=json` with `replace` | exactly the 2 new keys, ClusterIP preserved | the 3 server pods |
+
+This matters beyond the one command, because authentik's own reconciler updates
+the Service with a whole-object merge patch. It ran that way at 22:01 on
+2026-09-18 during the 2026.8.3 upgrade, in place, without changing the
+ClusterIP. If the reference selector it computes ever stops matching the live
+one, that merge produces the six-key result, and it does not converge on
+re-run: the reconciler would keep re-applying the same non-matching patch.
+
+For an embedded outpost the reference selector authentik computes is exactly
+the two server labels (`service.py:53-57`). So simply deleting our json patch
+override would trigger that merge and take forward-auth down. The override has
+to come out together with the reconciler being told to leave the Service alone.
+
+`kubernetes_disabled_components` is the supported way to say that. The
+`outpost_controller` task always dispatches through `up_with_logs()`
+(`tasks.py:21`), and that path skips any reconciler named in the list
+(`kubernetes.py:106`). The plain `up()` does not check the list, but nothing
+reaches it on this code path.
+
+## Which reconcilers are live today
+
+Worth recording, because two of them being inert explains several things that
+looked puzzling earlier.
+
+| reconciler | runs for our embedded outpost | consequence |
+|---|---|---|
+| secret | no, `is_embedded` | authentik never writes the outpost token Secret |
+| deployment | no, `is_embedded` | the standalone Deployment is a frozen artifact, and `kubernetes_json_patches.deployment` has no effect |
+| **service** | **yes** | it is the only one still writing, which is why this is the object to change |
+| service-metrics | no, `is_embedded` | not managed |
+| service-monitor | yes | unaffected by this plan |
+
+The inert deployment patches are why the readiness probe in `code-f1zd` could
+never be applied. They were written before upstream added the `is_embedded`
+guard and have had no effect since.
+
+## Steps
+
+```mermaid
+flowchart TD
+    A["1. open the fallbacks"] --> B["2. land the Terraform<br/>disable the service component"]
+    B --> C["3. confirm 'Service: Disabled'<br/>in the reconcile logs"]
+    C --> D["4. flip the selector<br/>JSON Patch replace"]
+    D --> E["5. verify with a signed-in session"]
+    E -->|"looks wrong"| R["roll back: one JSON Patch<br/>puts the old selector back"]
+    E -->|"good"| F["6. delete the standalone Deployment"]
+    F --> G["7. remove the inert patches,<br/>update the nginx comment"]
+```
+
+1. **Open the fallbacks before touching anything.** Emergency Access basic auth
+   covers the browser path. The loopback terminal-lobby proxy on
+   `127.0.0.1:7899` and the ssh plus tmux path cover getting back in if the
+   browser path is the thing that breaks. Viktor calls the abort.
+
+2. **Terraform, in `stacks/authentik/authentik_provider.tf`.** On
+   `authentik_outpost.embedded`, set
+   `kubernetes_disabled_components = ["service"]` and delete the
+   `kubernetes_json_patches.service` block. Leave the deployment patches for
+   step 7 so this commit stays small.
+
+3. **Confirm authentik has let go.** The reconcile logs should carry
+   `Service: Disabled`. Until that is true, step 4 would be undone by the next
+   reconcile.
+
+4. **Flip the selector**, with the command below. Endpoints should go from the
+   two outpost pod IPs to the three server pod IPs within a second, with the
+   ClusterIP unchanged. This is a live write on an object Terraform does not
+   own, so it needs a presence claim and a note in the commit body of step 7.
+
+5. **Verify with a request that carries a session.** This is the step the
+   2026-09-02 attempt did not do, and its absence is why the loop was not
+   caught. An unauthenticated probe gets 302-to-login, which is the correct
+   answer for a session-less request, so the estate looks healthy while every
+   signed-in request loops. Drive a protected host in the cluster browser with
+   a real session and confirm the page renders. Then check that
+   `X-Authentik-Username` still reaches terminal-lobby, since its identity
+   header comes from this outpost. In Loki, `OriginStatus 200` on real traffic
+   rather than a redirect chain is the signal.
+
+6. **Delete the standalone Deployment.** authentik will not recreate it,
+   because the deployment reconciler no-ops for embedded outposts. Keep it in
+   place until step 5 passes, since scaling it back up is the fast rollback.
+
+7. **Clean up.** Remove the inert `kubernetes_json_patches.deployment` block,
+   rewrite the nginx upstream comment in
+   `stacks/traefik/modules/traefik/main.tf` (its "STILL OPEN" note about the
+   recreated ClusterIP is resolved by this change), and close `code-osvg` and
+   `code-f1zd`.
+
+The step-4 command, which has to be a JSON Patch `replace` for the reason above:
+
+```sh
+kubectl patch svc ak-outpost-authentik-embedded-outpost -n authentik --type=json \
+  -p '[{"op":"replace","path":"/spec/selector","value":{
+         "app.kubernetes.io/name":"authentik",
+         "app.kubernetes.io/component":"server"}}]'
+```
+
+## Expect one forced re-authentication
+
+Existing `authentik_proxy_*` cookies are in the Go format and the inline Rust
+outpost cannot read them. Every signed-in user gets one redirect through
+authentik on their next request to a protected host.
+
+This should be a silent OAuth round-trip rather than a password prompt: the
+`authentik_session` cookie is issued by the server on
+`authentik.viktorbarzin.me` and is unaffected, so authentik should recognise
+the user and hand back a fresh Rust-format proxy cookie. A visible redirect
+flash is likely. Anyone whose authentik session has also expired signs in
+again. This is a one-time cost at cutover, not a recurring one.
+
+## Rollback
+
+The fast path is a single JSON Patch putting the five-key selector back, which
+returns traffic to the standalone pods. Keep those pods running until step 5
+passes so this stays available.
+
+```sh
+kubectl patch svc ak-outpost-authentik-embedded-outpost -n authentik --type=json \
+  -p '[{"op":"replace","path":"/spec/selector","value":{
+         "app.kubernetes.io/managed-by":"goauthentik.io",
+         "app.kubernetes.io/name":"authentik-outpost-proxy",
+         "goauthentik.io/outpost-name":"authentik-embedded-outpost",
+         "goauthentik.io/outpost-type":"proxy",
+         "goauthentik.io/outpost-uuid":"0eecac0797c7443c892505f2f4fe3e47"}}]'
+```
+
+Full rollback is that patch plus reverting the step-2 commit. After the
+Deployment is deleted in step 6 the fast path is gone, which is the reason
+step 6 comes after verification rather than before.
+
+## Blast radius
+
+95 distinct hosts across 103 ingresses use a forward-auth middleware, and all
+of them resolve through this one Service. A wrong selector affects every one of
+them at the same moment. That argues for doing this with the fallbacks open and
+a signed-in browser ready, in the same posture as the 2026.8.3 upgrade.
+
+Out of scope and unaffected: the `public`, `postgres-ldap` and `rac` outposts
+are genuine standalone outposts rather than embedded ones, so their reconcilers
+work normally and they already run 2026.8.2. `postgres-ldap` and `rac` are
+scaled to zero replicas, which predates this work.
+
+## Open questions
+
+- Whether the re-authentication in step 5 is genuinely silent has not been
+  measured. The reasoning about the separate `authentik_session` cookie is
+  sound but untested, and we will see the real behaviour at cutover.
+- The cookie-format difference is quoted from the 2026-09-02 measurement rather
+  than re-derived against 2026.8.3. The direction of the change is not in
+  doubt, but the exact formats may have moved.
+- Whether any consumer other than nginx and the two Ingresses depends on the
+  Service was checked cluster-wide and came back clean. A consumer holding the
+  ClusterIP in a config file outside the cluster would not show up in that
+  sweep.
