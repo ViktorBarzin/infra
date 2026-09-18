@@ -44,8 +44,8 @@
 # node at a time, master last.
 variable "frozen" {
   type        = bool
-  default     = true
-  description = "Overnight freeze after the 2026-09-13 auth outage: keeps kured and its sentinel gate off every node so no reboot happens unattended. Flip to false to resume."
+  default     = false
+  description = "Emergency hold: keeps kured and its sentinel gate off every node so no reboot happens unattended. Set true to hold. Used for the 2026-09-13 auth outage, lifted 2026-09-19 once authentik was stable."
 }
 
 locals {
