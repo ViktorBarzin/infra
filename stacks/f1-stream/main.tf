@@ -410,13 +410,35 @@ resource "kubernetes_deployment" "f1-stream" {
             name  = "CHROME_FLEET_URL"
             value = "http://chrome-fleet.chrome-service.svc.cluster.local:8080"
           }
+          # This pod's own address, for the one env var below that cannot use
+          # the Service. Declared BEFORE it, because Kubernetes expands
+          # $(VAR) only against env entries that come earlier in the list.
+          env {
+            name = "POD_IP"
+            value_from {
+              field_ref {
+                field_path = "status.podIP"
+              }
+            }
+          }
           # The embed proxy (this pod's /embed?url=…) must be reachable from
           # the remote chrome-service pod. Default 127.0.0.1 only works for
-          # in-process Chromium — for the remote browser we point it at our
-          # own ClusterIP service.
+          # in-process Chromium, so the remote browser needs a routable
+          # address.
+          #
+          # The pod IP rather than the ClusterIP service, changed 2026-09-18
+          # from the live streaming audit. Routing through
+          # f1.f1-stream.svc.cluster.local closes a loop on every cold start:
+          # the Service only carries endpoints for a READY pod, readiness is
+          # /health/ready, and reaching ready involves the verification that
+          # has to call back through this address. So the first verification
+          # of a pod's life dials a Service that does not yet list it.
+          # Measured 16 of 16 boots. The downward API address skips the
+          # Service entirely and is reachable from the chrome-service pod the
+          # moment the container has an IP.
           env {
             name  = "PLAYBACK_VERIFY_PROXY_BASE"
-            value = "http://f1.f1-stream.svc.cluster.local"
+            value = "http://$(POD_IP):8000"
           }
           # Replay torrent streaming: qBittorrent does the fetching (auth is
           # bypassed for 10.0.0.0/8, so no credentials), we read the partial
@@ -508,6 +530,20 @@ resource "kubernetes_deployment" "f1-stream" {
           env {
             name  = "P2P_STUN"
             value = "stun:stun.l.google.com:19302"
+          }
+          # Peer assist is OFF for live, on for replays, since 2026-09-18.
+          #
+          # It was never carrying live traffic worth the machinery. Measured
+          # at the live edge over 16 samples, peers moved 0.1 KB against
+          # 85.9 MB total, because a live viewer's neighbours are all inside
+          # the same few seconds of the same playlist and have nothing the
+          # CDN has not already sent. Replays are the opposite shape and keep
+          # it, so the code stays and only the live path is gated.
+          #
+          # Set to 1 to put it back without a code change.
+          env {
+            name  = "P2P_LIVE"
+            value = "0"
           }
           volume_mount {
             name       = "data"
