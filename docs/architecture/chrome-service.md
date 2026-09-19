@@ -488,6 +488,21 @@ CDP client is **patchright-core** (playwright-core drop-in that closes the
   policy, not an infra defect.
 - **Single replica + RWO PVC** — the deployment uses `Recreate` strategy.
   Brief outage on rollout, ~30s for browser warmup.
+- **Orphaned CDP targets can poison a shared worker** — a target that
+  outlives its browser context reports no `browserContextId`, and
+  patchright's attach handler asserts that field is present, so
+  `connectOverCDP` throws before the caller's script runs. The assert
+  surfaces through an EventEmitter rather than a promise, so the
+  runner's own error handling does not catch it. Since 2026-09-19
+  `browser_runner.js` sweeps the target list before connecting and
+  closes every non-browser target with no `browserContextId`, which is
+  the assert's own condition; targets that carry a context id are left
+  alone, so the worker's extension service workers keep running. The
+  sweep addresses the symptom. The broker annotates the pod on release
+  without clearing the browser, and the warm replica is not reaped, so
+  an orphan can persist until the pod is replaced. Seen on infra #98,
+  where an `embed.st` service worker left by an F1 extraction made
+  `homelab browser run` fail for every user for 4d20h.
 - **No `/metrics` endpoint** — the cluster's generic
   `KubePodCrashLooping` rule covers basic alerting. A Prometheus scrape
   exporter is day-2 work.
