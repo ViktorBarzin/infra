@@ -159,23 +159,36 @@ resource "authentik_outpost" "public" {
   protocol_providers = [authentik_provider_proxy.public.id]
   service_connection = "99e227a7-4562-4888-9660-4c27da678c50"
   config = jsonencode({
-    log_level                        = "info"
-    docker_labels                    = null
-    authentik_host                   = "https://authentik.viktorbarzin.me/"
-    docker_network                   = null
-    container_image                  = null
-    docker_map_ports                 = true
-    refresh_interval                 = "minutes=5"
-    kubernetes_replicas              = 1
-    kubernetes_namespace             = "authentik"
-    authentik_host_browser           = ""
-    object_naming_template           = "ak-outpost-%(name)s"
-    authentik_host_insecure          = false
-    kubernetes_service_type          = "ClusterIP"
-    kubernetes_ingress_path_type     = null
-    kubernetes_image_pull_secrets    = []
-    kubernetes_ingress_class_name    = null
-    kubernetes_disabled_components   = []
+    log_level                     = "info"
+    docker_labels                 = null
+    authentik_host                = "https://authentik.viktorbarzin.me/"
+    docker_network                = null
+    container_image               = null
+    docker_map_ports              = true
+    refresh_interval              = "minutes=5"
+    kubernetes_replicas           = 1
+    kubernetes_namespace          = "authentik"
+    authentik_host_browser        = ""
+    object_naming_template        = "ak-outpost-%(name)s"
+    authentik_host_insecure       = false
+    kubernetes_service_type       = "ClusterIP"
+    kubernetes_ingress_path_type  = null
+    kubernetes_image_pull_secrets = []
+    kubernetes_ingress_class_name = null
+    # "ingress": authentik's controller wrote a SECOND Ingress for
+    # public-auth.viktorbarzin.me/outpost.goauthentik.io, the same host and path
+    # as the module.ingress_public_outpost one below. Traefik takes both,
+    # because it runs with no ingressClass filter, so which router serves a
+    # request is arbitrary and the two are not equivalent: ours carries
+    # retry, error-pages, rate-limit and CSP middleware plus the tls-secret
+    # certificate, and the controller's carries none of them and
+    # authentik-outpost-tls instead.
+    #
+    # Same fix and same reasoning as the embedded outpost on 2026-09-19
+    # (bead code-osvg, authentik_provider.tf). Note this outpost is NOT
+    # embedded, so unlike that one its Deployment and Service reconcilers are
+    # real and stay enabled, and the json patch below genuinely applies.
+    kubernetes_disabled_components   = ["ingress"]
     kubernetes_ingress_annotations   = {}
     kubernetes_ingress_secret_name   = "authentik-outpost-tls"
     kubernetes_httproute_annotations = {}
