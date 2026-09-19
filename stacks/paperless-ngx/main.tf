@@ -202,7 +202,17 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_REDIS_PREFIX"
             value = "paperless-ngx"
           }
-          # Moved off the shared MySQL onto pg-cluster on 2026-09-08.
+          # Moved off the shared MySQL onto pg-cluster on 2026-09-08. The old
+          # MySQL database was kept as a fallback for a week and DROPPED on
+          # 2026-09-19 (bead code-lile), reclaiming 908.8 MB on
+          # mysql-standalone-0, which 17 other databases share. There is no
+          # MySQL copy of the document set any more, so this is the only one.
+          #
+          # A final dump was taken first and is deliberately named so the
+          # 14-day rotation in the mysql-backup-per-db CronJob cannot sweep it:
+          # /backup/per-db/paperless-ngx/FINAL-before-drop_20260919T103948Z.sql.gz
+          # on the dbaas-mysql-backup-host PVC, 147,829,942 bytes, gzip verified,
+          # 74 CREATE TABLE and 939 INSERT statements.
           #
           # WHY, and do not undo this casually: paperless 3.x annotates every
           # row of the documents list with a correlated subquery resolving
