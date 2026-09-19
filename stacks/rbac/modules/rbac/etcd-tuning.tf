@@ -19,8 +19,21 @@
 #    deliberately NOT widened here. The port is reachable only from the
 #    10.0.20.0/24 management network.
 #
-# This patches the kubeadm-managed static pod manifest. Note: kubeadm upgrades
-# will reset this, so re-apply after any kubeadm upgrade.
+# This patches the kubeadm-managed static pod manifest AND records the same
+# value in the kubeadm-config ClusterConfiguration, because the manifest alone
+# does not survive an upgrade.
+#
+# Measured 2026-09-19: the v1.35.8 control-plane upgrade on 2026-09-16 rewrote
+# etcd.yaml and `up{job="etcd"}` went 1 -> 0 that evening, staying down for
+# three days. --snapshot-count=50000 came back and --listen-metrics-urls did
+# not, and the reason is which of the two kubeadm knows about. snapshot-count
+# is in kubeadm-config under etcd.local.extraArgs, so kubeadm re-emits it every
+# time it regenerates the manifest; listen-metrics-urls was only ever written
+# into the file on disk, so kubeadm reset it to its own default of
+# 127.0.0.1:2381 and Prometheus, which scrapes the node IP, got connection
+# refused. Putting it in extraArgs alongside snapshot-count is what makes it
+# durable; the manifest edit below is what makes it take effect now without
+# waiting for the next upgrade.
 #
 # Applying this RESTARTS the etcd static pod on a single-node control plane, so
 # the apiserver briefly loses its datastore. Rollback is a file copy: the
@@ -79,6 +92,61 @@ else:
     print('etcd manifest updated: --snapshot-count=50000, --listen-metrics-urls=' + METRICS_URLS)
 "
       SCRIPT
+      ,
+      # Reconcile kubeadm-config so the NEXT `kubeadm upgrade` regenerates
+      # etcd.yaml with the node IP still in --listen-metrics-urls. Writing only
+      # the manifest above is what let the 2026-09-16 upgrade silently take
+      # etcd metrics away for three days. Stdlib-only: the master is guaranteed
+      # python3 but not pyyaml. Idempotent, and it leaves every other field of
+      # the ClusterConfiguration verbatim. Best-effort: a failure here loses
+      # durability across the next upgrade, not the fix applied above, so it
+      # warns rather than failing the apply.
+      <<-SCRIPT
+      set -u
+      KC="sudo kubectl --kubeconfig /etc/kubernetes/admin.conf"
+      CC=$($KC -n kube-system get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}' 2>/dev/null || true)
+      if [ -z "$CC" ]; then
+        echo "WARN: could not read kubeadm-config; etcd metrics will not survive the next kubeadm upgrade"
+      elif printf '%s' "$CC" | grep -q 'name: listen-metrics-urls'; then
+        echo "kubeadm-config already carries listen-metrics-urls (no drift)"
+      else
+        printf '%s' "$CC" > /tmp/kubeadm-cc.yaml
+        if sudo python3 -c "
+import sys
+
+WANT_NAME = 'listen-metrics-urls'
+WANT_VAL  = 'http://127.0.0.1:2381,http://${var.k8s_master_host}:2381'
+
+lines = open('/tmp/kubeadm-cc.yaml').read().split('\n')
+out, i, n, done = [], 0, len(lines), False
+while i < n:
+    ln = lines[i]
+    out.append(ln)
+    # Anchor on the snapshot-count entry, which lives in etcd.local.extraArgs
+    # and is the one arg known to survive an upgrade. Appending immediately
+    # after it puts the new entry in the same list at the same indent without
+    # having to parse the document structure.
+    if (not done) and ln.strip() == '- name: snapshot-count':
+        indent = ln[:len(ln) - len(ln.lstrip())]
+        if i + 1 < n and lines[i + 1].strip().startswith('value:'):
+            out.append(lines[i + 1]); i += 1
+        out.append(indent + '- name: ' + WANT_NAME)
+        out.append(indent + '  value: ' + WANT_VAL)
+        done = True
+    i += 1
+if not done:
+    sys.stderr.write('ANCHOR-NOT-FOUND: no etcd.local.extraArgs snapshot-count entry\n')
+    sys.exit(3)
+open('/tmp/kubeadm-cc-new.yaml', 'w').write('\n'.join(out))
+print('kubeadm-config rewritten with ' + WANT_NAME)
+" && sudo kubeadm init phase upload-config kubeadm --config /tmp/kubeadm-cc-new.yaml; then
+          echo "kubeadm-config reconciled: etcd metrics survive the next control-plane upgrade"
+        else
+          echo "WARN: kubeadm-config reconcile failed; re-apply this stack after the next kubeadm upgrade"
+        fi
+        rm -f /tmp/kubeadm-cc.yaml /tmp/kubeadm-cc-new.yaml
+      fi
+      SCRIPT
     ]
   }
 
@@ -86,5 +154,9 @@ else:
   triggers = {
     snapshot_count     = "50000"
     listen_metrics_url = "http://127.0.0.1:2381,http://${var.k8s_master_host}:2381"
+    # Bumped when the kubeadm-config reconcile step was added (2026-09-19) so
+    # the new step actually runs against a master that already has the right
+    # manifest — the other two triggers were unchanged by that work.
+    kubeadm_config_reconcile = "v1"
   }
 }

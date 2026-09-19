@@ -326,25 +326,31 @@ resource "kubernetes_manifest" "middleware_security_headers" {
   depends_on = [helm_release.traefik]
 }
 
-# TLS option for mTLS (client certificate auth)
-resource "kubernetes_manifest" "tls_option_mtls" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "TLSOption"
-    metadata = {
-      name      = "mtls"
-      namespace = kubernetes_namespace.traefik.metadata[0].name
-    }
-    spec = {
-      clientAuth = {
-        secretNames    = ["ca-secret"]
-        clientAuthType = "RequireAndVerifyClientCert"
-      }
-    }
-  }
-
-  depends_on = [helm_release.traefik]
-}
+# The `mtls` TLSOption was removed on 2026-09-19. It asked Traefik to verify
+# client certificates against a Secret named `ca-secret` in this namespace, and
+# that Secret has never existed anywhere in the cluster — the only near-match is
+# cnpg-system/cnpg-ca-secret, which is CNPG's own and unrelated. Nothing
+# referenced the option either: zero Ingresses carried a tls-options annotation
+# and zero IngressRoutes set spec.tls.options, checked cluster-wide on the same
+# date. So mTLS was never actually enforced on any route by this.
+#
+# What it did do was cost. Every Traefik pod logged
+# `Secret traefik/ca-secret does not exist` about 259 times an hour, 780/hour
+# across the three replicas, which is noise in the one component whose logs you
+# read during an ingress incident.
+#
+# It dates from the nginx-ingress era: config.tfvars still carries
+# `client_certificate_secret_name = "default/ca-secret"`, which
+# scripts/gen_service_stacks.py threads into stacks as a variable, and
+# stacks/dbaas has the matching commented-out
+# `nginx.ingress.kubernetes.io/auth-tls-secret` annotation. That variable is
+# left alone here because it is plumbed through every generated stack; this
+# change removes only the Traefik object that referenced a Secret nobody
+# creates.
+#
+# Bringing mTLS back means three things together, not one: create the CA
+# Secret, re-add the TLSOption, and point a route at it. Doing only the first
+# two rebuilds exactly the state removed here.
 
 # ServersTransport for backends with self-signed certificates
 resource "kubernetes_manifest" "servers_transport_insecure" {
