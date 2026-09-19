@@ -3294,12 +3294,22 @@ serverFiles:
           #
           # severity: info is deliberate. It routes to slack-info, whose
           # repeat_interval is 8760h, so a container that lives permanently near
-          # its limit posts once rather than re-pinging. Several will fire on the
-          # first evaluation and that is correct rather than noise: measured
-          # 2026-09-06, loki sits at 100.0% of its 4Gi limit, prometheus-server at
-          # 94.7%, and traefik, crowdsec-agent and error-pages have all been
-          # OOMKilled recently. Promote to warning once that backlog is worked
-          # through and the alert is normally silent.
+          # its limit posts once rather than re-pinging.
+          #
+          # Threshold raised 0.85 -> 0.95 on 2026-09-19 at Viktor's request. At
+          # 85% the alert had five containers firing continuously and none was
+          # close to a kill: pg-cluster-2 read 85.2% because a Postgres
+          # replica's shared_buffers are working set by design, and
+          # immich-frame and wg-peer-sync had held their band for days.
+          #
+          # Know what this buys and what it costs. The whole cluster's top
+          # reading on 2026-09-19 was 93.2% (changedetection/sockpuppetbrowser
+          # and ebooks/annas-archive-stacks), so at 0.95 the alert is silent
+          # today and the warning window before a kill is now 5 points of a
+          # limit wide. That is the intended trade: the 85% band was reporting
+          # workloads sized snugly on purpose, and ContainerOOMKilled still
+          # catches the kill itself. Revisit if a container is OOMKilled
+          # without this having fired first.
           #
           # working_set is the same signal kubelet's own OOM accounting uses, so
           # this ratio is the one that predicts a kill. It cannot see a spike
@@ -3310,14 +3320,14 @@ serverFiles:
               container_memory_working_set_bytes{container!="",container!="POD"}
               / on(namespace,pod,container) group_left()
               kube_pod_container_resource_limits{resource="memory",unit="byte"}
-              > 0.85
+              > 0.95
             for: 15m
             labels:
               severity: info
             annotations:
               summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) is at {{ $value | humanizePercentage }} of its memory limit"
               description: |
-                The container has held above 85% of its memory limit for 15 minutes.
+                The container has held above 95% of its memory limit for 15 minutes.
                 It has not been killed, which is why nothing else reports it.
                 Either the limit is too tight for what the workload legitimately
                 needs, or the workload is leaking. Check the high-water mark
