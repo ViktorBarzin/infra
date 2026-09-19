@@ -7,19 +7,44 @@
 # kubernetes_resources data source reads them at apply time. "Who logs in where" is
 # therefore declared on the ingress; this file only materialises + enforces it.
 #
-# Semantics (top to bottom):
-#   1. empty host  -> grant (the OAuth authorize step of proxy OIDC clients has no
-#      host; the per-request check, host set, does the real gating).
-#   2. BREAK-GLASS -> admins (authentik Admins / Home Server Admins) ALWAYS pass,
-#      evaluated BEFORE the table so no generator/table state can lock out the owner
-#      (Viktor's explicit invariant, 2026-07-26). Non-admins are unaffected.
-#   3. table lookup -> grant iff the user is in one of the host's allowed groups;
-#      unlisted host or no-matching-group -> DENY (default-deny).
+# CORRECTION 2026-09-19: the table above is NOT an enforcement mechanism and
+# never was. In domain-level forward auth the policy engine is not in the
+# per-request path at all. The outpost answers from the session cookie and never
+# calls Python. The single evaluation happens once, at the OAuth authorize step,
+# against authentik.viktorbarzin.me, where `host` is empty. So the old body's
+# first line, `if not host: return True`, granted every authenticated user every
+# one of the 87 forward-auth hosts, and the rest of the table was unreachable.
+# Authentik's maintainer states the consequence in goauthentik/authentik
+# discussion #13823: "authorization will happen once when the user access
+# anything.my.com and then the user will have access to *.my.com without further
+# re-authorization." The docs agree: domain-level forward auth "cannot restrict
+# individual applications to different users with separate application-level
+# policies".
 #
-# Access is GROUP MEMBERSHIP ONLY: the former chrome per-identity list is now the
-# `Chrome Users` group and the proxy_only attribute path is gone (chrome_users.tf,
-# and the per-app rows in the owning stacks). The binding to the "Domain wide catch
-# all" application stays UI-managed; only the expression is adopted here.
+# This went unnoticed for eight weeks because the July verification used the
+# policy-test API (POST /api/v3/policies/all/{uuid}/test/), which SUPPLIES a host
+# in the test context. It exercised the expression and never the enforcement
+# path. A policy unit test cannot prove the outpost passes a host. Measured
+# instead on 2026-09-19: a throwaway account in ZERO groups signed in and was
+# served the full learn.viktorbarzin.me topic list and the Grafana dashboards.
+#
+# WHAT ENFORCES NOW. The expression returns False, so the catch-all application
+# is gated solely by its "Home Server Admins" group binding
+# (catchall-access-binding.tf). That is correct for 85 of the 87 hosts.
+#
+# WHAT IS STILL OWED. Six hosts are meant to be reachable by non-admins: chrome,
+# chrome-fleet, k8s, pages, proxy, t3. Those users are denied until the hosts
+# move to per-application forward_single providers with native group bindings,
+# which is the next change. Affected today: three accounts, one host each. The
+# generator below is kept because that change consumes the same annotations to
+# decide which hosts need a per-app provider.
+#
+# The declaration has not moved: `allowed_groups` on the ingress is still where
+# access is stated. Only the thing that reads it changes. Access is GROUP
+# MEMBERSHIP ONLY: the former chrome per-identity list is now the `Chrome Users`
+# group and the proxy_only attribute path is gone (chrome_users.tf, and the
+# per-app rows in the owning stacks). The binding attaching this policy to the
+# "Domain wide catch all" application stays UI-managed.
 import {
   to = authentik_policy_expression.admin_services_restriction
   id = "07a11b85-8f37-4844-aebb-ac9c112ec87c"
@@ -82,28 +107,23 @@ locals {
 resource "authentik_policy_expression" "admin_services_restriction" {
   name = "admin-services-restriction"
   expression = trimspace(<<-EOT
-    # GENERATED default-deny forward-auth authorization (ADR-0023, infra#84).
-    # HOST_GROUPS is rendered from live ingress allowed-groups annotations at
-    # `terragrunt apply` time — edit access on the ingress, never here.
-    HOST_GROUPS = ${jsonencode(local.host_groups)}
-
-    host = request.context.get("host", "")
-
-    # (1) OAuth authorize step of proxy OIDC clients has no host -> grant; the
-    # per-request check (host populated) does the real gating.
-    if not host:
-        return True
-
-    # (2) BREAK-GLASS: admins ALWAYS reach every forward-auth host. Evaluated
-    # BEFORE the table so no generator/table state can ever lock out the owner.
-    if ak_is_group_member(request.user, name="authentik Admins") or ak_is_group_member(request.user, name="Home Server Admins"):
-        return True
-
-    # (3) Default-deny table: grant iff the user is in one of the host's groups.
-    allowed = HOST_GROUPS.get(host)
-    if not allowed:
-        return False
-    return any(ak_is_group_member(request.user, name=g) for g in allowed)
+    # This policy no longer grants anything. See the file header: in
+    # domain-level forward auth the policy engine is not in the per-request
+    # path, so a host-keyed table here can never gate a host. The previous
+    # body opened with `if not host: return True`, and because host is ALWAYS
+    # empty on the only evaluation that happens, that line granted every
+    # authenticated user every one of the 87 forward-auth hosts.
+    #
+    # The catch-all application is policy_engine_mode="any" with two bindings,
+    # so returning False here leaves the "Home Server Admins" group binding
+    # (catchall-access-binding.tf) as the sole gate, which is what makes the
+    # catch-all admin-only.
+    #
+    # The binding that attaches this policy to the application is still
+    # UI-managed. Removing it is tidier than leaving an inert policy bound,
+    # and needs an import-then-destroy pair; tracked as follow-up, not done
+    # here because this change had to be small.
+    return False
   EOT
   )
 }
