@@ -18,7 +18,7 @@ rig that day.
 | `me.viktorbarzin.ios-rig-build` | Mac LaunchAgent, on demand | builds an Xcode project with the free team and installs it |
 | `me.viktorbarzin.ios-rig-awake` | Mac LaunchAgent, KeepAlive | `caffeinate -s`, stops the laptop sleeping the rig away |
 | `ios-rig-tunnel.service` | devvm, `systemd --user` | SSH tunnel carrying Appium 4723 |
-| `ios-rig-doctor.timer` | devvm, `systemd --user`, 6-hourly | checks every link, posts to Slack when degraded |
+| `ios-rig-doctor.timer` | devvm, `systemd --user`, 6-hourly | checks every link; reports by exit code, see below |
 | `homelab ios` | this repo, `cli/` | every verb; the Mac-side assets are embedded in the binary |
 
 ```mermaid
@@ -227,6 +227,31 @@ works; it is not a template to copy.
 
 Builds go through `devicectl`, not `ideviceinstaller`, because the lockdown
 pairing `ideviceinstaller` needs is blocked on this phone.
+
+> [!IMPORTANT]
+> **Nothing notifies you when the rig breaks.** The timer runs `homelab ios
+> doctor` at 02:17, 08:17, 14:17 and 20:17, and a degraded rig makes it exit
+> non-zero and stop there. systemd does not notify on unit failure by default,
+> so the result reaches a person only when someone looks.
+>
+> Until 2026-09-19 the unit said "alerts Slack when degraded" and passed an
+> `--alert` flag. `iosDoctor` reads its arguments only for `--help`, so the
+> flag was accepted and discarded and no message was ever sent. The claim is
+> removed rather than implemented: Viktor decided on 2026-09-19 that the rig
+> does not need alerting, since it is driven on demand rather than relied on
+> continuously.
+>
+> This is worth knowing because it is half of why the rig sat broken from
+> 2026-09-12 to 2026-09-19. The other half, `ios-rig-doctor.service` failing
+> at exec before the check could run, is fixed. If alerting is wanted later,
+> `secret/viktor` in Vault already holds `slack_bot_token`, and
+> `scripts/cluster_healthcheck.sh` has the established pattern.
+>
+> Checking the last run, which is less obvious than it should be: the devvm
+> user journal is not persisted and Loki's `devvm-journal` job does not carry
+> user-slice units, so `journalctl --user` and a Loki query both come back
+> empty. Use `systemctl --user show ios-rig-doctor.service -p Result -p
+> ExecMainStatus` instead.
 
 `doctor` is the first thing to run for any symptom. It reports each link
 separately, so it distinguishes "the laptop is away" from "the certificate

@@ -1,6 +1,6 @@
 [Unit]
-Description=iOS test rig — health check, alerts Slack when degraded
+Description=iOS test rig — health check, non-zero exit when degraded
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/homelab ios doctor --alert
+ExecStart=/usr/local/bin/homelab ios doctor
