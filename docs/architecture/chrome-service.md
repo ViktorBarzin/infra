@@ -107,7 +107,7 @@ so cookies actually live across pod restarts.
        │
 ┌──────┴── chrome-service-snapshot-harvester CronJob ─────────────────────┐
 │  podAffinity → same node as chrome-service (RWO PVC)                    │
-│  python: connect_over_cdp + ctx.storage_state(path=...)                 │
+│  python stdlib: raw-CDP Storage.getCookies (files/broker/cdp_cookies.py)│
 │  writes /profile/snapshots/storage-state.json (atomic rename)           │
 └──────────────────────────────────────────────────────────────────────────┘
 
@@ -117,6 +117,44 @@ External caller (dev box):
                               -o ~/.cache/playwright-shared-storage-state.json
   @playwright/mcp --isolated --storage-state ~/.cache/...storage-state.json
 ```
+
+## Why the seed path does not use `connect_over_cdp`
+
+`playwright.chromium.connect_over_cdp()` attaches at the BROWSER level: it
+enumerates every existing target and asserts that each one carries a
+`browserContextId`. A service worker that outlives the context which registered
+it has none, so the assert kills the node driver and the caller gets nothing
+back, whatever it was actually asking for.
+
+On 2026-09-18 one orphaned target on the master,
+
+```
+Error: targetInfo: { "type": "service_worker",
+                     "targetId": "B5E87D875D63402AA259A3349AEFD7D8", ... }
+```
+
+broke every `GET /seed` on the broker (343 errors, five
+`ChromePoolSeedExportFailing` episodes) and all ten hourly snapshot-harvester
+runs between 13:23 and 23:23. The master pod stayed Ready throughout, because
+its readiness probe is a TCP check on the cdp-bridge's own port and cannot see
+what the browser is doing. It cleared when the pod was recreated at 01:38.
+
+Both callers now go through `files/broker/cdp_cookies.py`, which issues ONE
+browser-level command, `Storage.getCookies`, over a stdlib websocket. It never
+lists targets and never attaches to one, so an orphan cannot take it down.
+Measured against the live master on 2026-09-19: byte-identical output to
+`storage_state()` for all 225 cookies, in 0.11s instead of 1.0-1.3s.
+
+`origins` (localStorage) is always `[]` and is not a regression. Playwright
+collects localStorage per origin by evaluating in a page, and a freshly
+connected CDP client only knows the origins of pages open at that moment
+(`chrome://newtab`), so `storage_state()` returned an empty list here too.
+
+`files/broker/screenshot.py` still uses patchright `connect_over_cdp` and
+carries the same exposure against POOL workers, which is where orphaned service
+workers were first documented (`f1-stream/backend/cdp.py`). It is left as-is
+deliberately: it is the FleetView thumbnail, best-effort with no alert, and a
+failure costs a blank tile rather than a run's logins.
 
 ## Browser binary — real Google Chrome (for proprietary codecs)
 
@@ -421,9 +459,10 @@ separate stateless workers.
 
 **Broker** (`stacks/chrome-service/broker.tf`, `files/broker/broker.py`): a
 stdlib-Python service on the stock `playwright/python` image (broker.py +
-`worker_pod.json` + `seed_export.py` + `screenshot.py` + FleetView `index.html`
-via ConfigMap; pip-installs playwright at startup for the seed/screenshot
-**subprocesses** — no custom image, the `gate.py` pattern). Stateless: session
+`worker_pod.json` + `cdp_cookies.py` + `screenshot.py` + FleetView `index.html`
+via ConfigMap; pip-installs patchright at startup for the screenshot
+**subprocess** — no custom image, the `gate.py` pattern). The seed needs no pip
+install: it reads the master over raw CDP, in-process, in about 0.1s. Stateless: session
 state is reconstructed from pod labels each request (no Redis). k8s via the in-pod
 SA token/CA. API: `POST /acquire` {owner,purpose} → {pod,cdpPort,podIP,session};
 `POST /release` {session}; `GET /sessions`; `GET /seed` (fresh cached

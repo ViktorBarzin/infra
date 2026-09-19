@@ -774,6 +774,11 @@ resource "kubernetes_config_map_v1" "snapshot_scripts" {
     # 0.0.0.0:9222 → 127.0.0.1:9223 (Chromium silently ignores
     # --remote-debugging-address on stock builds; see cdp_bridge.py).
     "cdp_bridge.py" = file("${path.module}/files/cdp_bridge.py")
+    # Reads the master's cookies over raw CDP for the harvester. Also mounted
+    # into the broker (see broker.tf) — one file, two ConfigMaps, so the seed
+    # and the hourly snapshot cannot drift apart. Unit-tested in
+    # files/broker/test_broker.py.
+    "cdp_cookies.py" = file("${path.module}/files/broker/cdp_cookies.py")
     # Pool worker Chrome launcher (mounted into broker-created worker pods, which
     # also reuse cdp_bridge.py above). See files/broker/worker_pod.json.
     "worker_entrypoint.sh" = file("${path.module}/files/worker_entrypoint.sh")
@@ -1189,11 +1194,14 @@ resource "kubernetes_cron_job_v1" "chrome_service_backup" {
   }
 }
 
-# --- Snapshot harvester CronJob: hourly storage_state() dump via CDP ---
-# Connects to the live chrome-service CDP endpoint, accesses the
-# persistent default browser context (where Viktor's noVNC logins live),
-# and writes cookies + localStorage to /profile/snapshots/storage-state.json
-# (atomic rename). The snapshot-server sidecar reads from the same file.
+# --- Snapshot harvester CronJob: hourly cookie dump via CDP ---
+# Asks the live chrome-service CDP endpoint for the persistent default
+# context's cookies (where Viktor's noVNC logins live) and writes them to
+# /profile/snapshots/storage-state.json (atomic rename). The snapshot-server
+# sidecar reads from the same file. localStorage is not in the snapshot:
+# playwright's storage_state() returned an empty origins list here anyway,
+# because a freshly connected CDP client only knows the origins of pages open
+# at that moment (measured 2026-09-19).
 resource "kubernetes_cron_job_v1" "chrome_service_snapshot_harvester" {
   metadata {
     name      = "chrome-service-snapshot-harvester"
@@ -1230,22 +1238,9 @@ resource "kubernetes_cron_job_v1" "chrome_service_snapshot_harvester" {
               name              = "harvester"
               image             = local.python_image
               image_pull_policy = "IfNotPresent"
-              # The Microsoft playwright/python image ships only browsers +
-              # Python — the `playwright` pip package itself is NOT installed
-              # (it's meant for CI that brings its own requirements). We
-              # install at startup, caching to the PVC so subsequent runs
-              # are near-instant.
-              command = ["bash", "-c"]
-              args = [
-                <<-EOT
-                set -e
-                export PIP_CACHE_DIR=/profile/.cache/pip
-                export PIP_DISABLE_PIP_VERSION_CHECK=1
-                python3 -c 'import playwright' 2>/dev/null \
-                  || pip install --quiet --no-warn-script-location playwright==1.48.0
-                exec python3 /scripts/snapshot_harvester.py
-                EOT
-              ]
+              # Stdlib only since the harvester moved to raw CDP, so there is
+              # nothing to pip-install at startup any more.
+              command = ["python3", "/scripts/snapshot_harvester.py"]
               env {
                 name  = "CDP_URL"
                 value = "http://chrome-service.chrome-service.svc.cluster.local:9222"
@@ -1253,12 +1248,6 @@ resource "kubernetes_cron_job_v1" "chrome_service_snapshot_harvester" {
               env {
                 name  = "SNAPSHOT_DIR"
                 value = local.snapshot_dir
-              }
-              # Don't try to download browsers — connect_over_cdp doesn't
-              # need them locally.
-              env {
-                name  = "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"
-                value = "1"
               }
               volume_mount {
                 name       = "profile"

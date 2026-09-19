@@ -6,6 +6,7 @@ import json
 import os
 
 import broker
+import cdp_cookies
 
 TEMPLATE = json.load(open(os.path.join(os.path.dirname(__file__), "worker_pod.json")))
 
@@ -395,3 +396,72 @@ def test_heartbeat_worker_stamps_only_the_annotation(monkeypatch):
     assert method == "PATCH" and "chrome-worker-warm-x" in path
     assert set(body["metadata"]) == {"annotations"}
     assert int(body["metadata"]["annotations"]["chrome-pool/heartbeat"]) > 0
+
+
+# ---------------------------------------------------------------- seed export
+# The shapes below were taken from the LIVE master on 2026-09-19: playwright's
+# storage_state() and Storage.getCookies returned the same 225 cookies, and
+# as_storage_state_cookie() reproduced playwright's output for all 225.
+def test_cookie_keeps_the_fields_playwright_keeps():
+    out = cdp_cookies.as_storage_state_cookie({
+        "name": "_GRECAPTCHA", "value": "09AKhCRw", "domain": "www.google.com",
+        "path": "/recaptcha", "expires": 1798213503.778284, "httpOnly": True,
+        "secure": True, "sameSite": "None",
+        # CDP-only fields playwright has no slot for
+        "priority": "High", "session": False, "size": 100,
+        "sourcePort": 443, "sourceScheme": "Secure",
+    })
+    assert out == {
+        "name": "_GRECAPTCHA", "value": "09AKhCRw", "domain": "www.google.com",
+        "path": "/recaptcha", "expires": 1798213503.778284, "httpOnly": True,
+        "secure": True, "sameSite": "None",
+    }
+
+
+def test_cookie_without_samesite_defaults_to_lax():
+    """Chrome omits sameSite for cookies set without the attribute; playwright
+    reports those as Lax, and a worker context must be seeded the same way."""
+    out = cdp_cookies.as_storage_state_cookie(
+        {"name": "_C_Auth", "value": "", "domain": "www.bing.com",
+         "path": "/rewardsapp", "expires": -1, "httpOnly": False, "secure": False})
+    assert out["sameSite"] == "Lax"
+
+
+def test_partitioned_cookie_splits_into_playwrights_two_fields():
+    out = cdp_cookies.as_storage_state_cookie({
+        "name": "__cf_ob", "value": "x", "domain": "player.kick.com",
+        "path": "/cdn-cgi/challenge-platform", "expires": -1, "httpOnly": False,
+        "secure": True, "sameSite": "None",
+        "partitionKey": {"topLevelSite": "https://chess.com", "hasCrossSiteAncestor": True},
+    })
+    assert out["partitionKey"] == "https://chess.com"
+    assert out["_crHasCrossSiteAncestor"] is True
+
+
+def test_unpartitioned_cookie_carries_neither_partition_field():
+    out = cdp_cookies.as_storage_state_cookie(
+        {"name": "a", "value": "b", "domain": "x.test", "path": "/", "expires": -1})
+    assert "partitionKey" not in out and "_crHasCrossSiteAncestor" not in out
+
+
+def test_session_cookie_keeps_the_minus_one_expiry():
+    out = cdp_cookies.as_storage_state_cookie(
+        {"name": "s", "value": "1", "domain": "x.test", "path": "/", "expires": -1})
+    assert out["expires"] == -1
+
+
+def test_stale_seed_is_served_while_it_is_inside_the_window():
+    assert broker.usable_stale_age(1000.0, 940.0, True, max_age=900) == 60.0
+
+
+def test_stale_seed_is_refused_once_it_is_too_old():
+    assert broker.usable_stale_age(2000.0, 940.0, True, max_age=900) is None
+
+
+def test_stale_seed_is_refused_when_nothing_was_ever_exported():
+    """A broker that has never read the master must 502, not serve an empty seed."""
+    assert broker.usable_stale_age(1000.0, 0.0, False) is None
+
+
+def test_stale_seed_is_refused_when_the_clock_went_backwards():
+    assert broker.usable_stale_age(900.0, 1000.0, True) is None

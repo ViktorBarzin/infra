@@ -10,7 +10,7 @@ external Claude Code sessions on the dev box. Architecture in
 |---|---|---|---|
 | chrome-service Deployment | `chrome-service` ns | always-on | headed chromium, CDP :9222, persistent /profile/chromium-data |
 | snapshot-server sidecar | same pod | always-on | serves `/api/snapshot`, bearer-gated, port 8088 |
-| snapshot-harvester CronJob | `chrome-service` ns | `23 * * * *` | dumps `storage_state()` via CDP → `/profile/snapshots/storage-state.json` |
+| snapshot-harvester CronJob | `chrome-service` ns | `23 * * * *` | reads the master's cookies over raw CDP → `/profile/snapshots/storage-state.json` |
 | dev-box refresh timer | each dev box, per OS user | hourly (`*:28`) | `playwright-snapshot-refresh@<user>.timer` curls `chrome.viktorbarzin.me/api/snapshot` → `~/.cache/playwright-shared-storage-state.json` |
 | dev-box `playwright-mcp@<user>.service` | each dev box, per OS user | always-on | pinned `@playwright/mcp@<ver> --isolated --storage-state=…` on the user's `PLAYWRIGHT_PORT`; per-MCP-connection (per-session) contexts |
 
@@ -115,12 +115,17 @@ deploy/chrome-service -c chrome-service`). The next hourly run will
 retry. If chromium is wedged: `kubectl -n chrome-service rollout restart
 deploy/chrome-service` (strategy = Recreate, brief downtime).
 
-### "connect_over_cdp failed"
+### "could not read cookies from …"
 
-Harvester or any in-cluster caller can't reach the CDP endpoint.
+The harvester, or the broker's `GET /seed`, cannot read the master's CDP
+endpoint.
 
 **Cause**: chrome-service pod not Ready, NetworkPolicy doesn't admit
 the caller's namespace, or chromium isn't listening on :9222.
+
+The master pod being Ready does not rule the master out: its readiness probe is
+a TCP check on the cdp-bridge's own port, which says nothing about the browser
+behind it.
 
 **Diagnose**:
 ```bash
@@ -135,6 +140,12 @@ curl -fsSL http://chrome-service.chrome-service.svc.cluster.local:9222/json/vers
 **Fix**: depends on the diagnosis. NetworkPolicy needs the caller's
 namespace label or an explicit name-fallback. If chromium isn't
 binding, check the container logs.
+
+**If `/json/version` answers and the read still fails**, the broker's stderr
+carries the exception (`homelab logs query '{namespace="chrome-service",
+container="broker"} |= "seed export"'`) and its 502 body repeats it. This used
+to say only "seed export failed" with no reason, which is why the 2026-09-18
+episode took a day to name.
 
 ### Dev-box `playwright-snapshot-refresh` returns 401
 
