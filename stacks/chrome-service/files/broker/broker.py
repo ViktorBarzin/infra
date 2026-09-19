@@ -35,6 +35,9 @@ MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "6"))       # burst ceiling (des
 IDLE_TTL = int(os.environ.get("IDLE_TTL_SECONDS", "1200"))  # 20m (design D7)
 DEADLINE = int(os.environ.get("SESSION_DEADLINE_SECONDS", "3600"))  # 60m hard cap (D7)
 SEED_TTL = int(os.environ.get("SEED_TTL_SECONDS", "10"))    # absorb an acquire burst (A7)
+# How long release waits for closed targets to actually disappear. /json/close
+# is asynchronous, and a release that blocks for long would hold up the caller.
+RESET_CONFIRM_SECONDS = float(os.environ.get("RESET_CONFIRM_SECONDS", "3"))
 POOL_LABEL = "app=chrome-worker"
 
 _seed = {"at": 0.0, "json": None, "last_export_seconds": 0.0, "errors": 0}
@@ -76,6 +79,45 @@ def should_reap(pod: dict, now: float, *, idle_ttl: int) -> bool:
     if pod.get("session"):
         return False
     return (now - pod.get("released_at", now)) > idle_ttl
+
+
+# Targets that belong to the worker image rather than to any session. The two
+# stealth/Chrome extension service workers and their background pages live here,
+# measured on a live worker 2026-09-19: closing them would take out the stealth
+# the pool exists to provide.
+RESET_KEEP_SCHEMES = ("chrome-extension://", "devtools://", "chrome://")
+
+
+def plan_browser_reset(tabs: list) -> tuple:
+    """What a released warm worker still has open that belonged to its session.
+
+    `tabs` is /json/list output. Returns (close_ids, need_blank): the targets to
+    close, and whether a fresh about:blank has to be opened afterwards because
+    the session navigated the baseline page away.
+
+    A burst pod is deleted on release so its browser dies with it. A warm pod is
+    only relabelled and handed to the next caller, so whatever the last session
+    left sits there until the pod is replaced. That is how an embed.st service
+    worker held the single warm worker for 4d20h and broke `homelab browser run`
+    for every user (infra #98).
+    """
+    pages, workers, kept_blank = [], [], False
+    for t in tabs or []:
+        tid, url = t.get("id"), t.get("url") or ""
+        if not tid:
+            continue
+        if url.startswith(RESET_KEEP_SCHEMES):
+            continue
+        # Keep exactly one untouched about:blank: that is the page the worker
+        # starts with, and leaving it means the reset never has to reopen one.
+        if url in ("about:blank", "") and t.get("type") == "page" and not kept_blank:
+            kept_blank = True
+            continue
+        (pages if t.get("type") == "page" else workers).append(tid)
+    # Pages before workers. A service worker closed while a page it controls is
+    # still open can be started straight back up by that page, so the client
+    # goes first and the worker has nothing left to serve.
+    return pages + workers, not kept_blank
 
 
 # ------------------------------------------------------------------ k8s I/O
@@ -134,11 +176,79 @@ def claim_worker(name, session, owner, purpose):
                                      "chrome-pool/started": str(int(time.time()))}}})
 
 
+def reset_browser(ip) -> int:
+    """Close what the finished session left in a warm worker's browser.
+
+    Best-effort and bounded: a worker that cannot be reset still goes back to
+    standby, because refusing to release it would wedge the pool, which is worse
+    than handing on a dirty browser. Returns how many targets were closed.
+
+    Stays on the CDP HTTP endpoint so broker.py keeps its no-dependency rule.
+    /json/close works on service workers as well as pages, verified against a
+    live worker; disposing empty browser contexts would need the websocket, and
+    Chrome already drops a context when its client disconnects.
+    """
+    if not ip:
+        return 0
+    base = f"http://{ip}:9222"
+    try:
+        with urllib.request.urlopen(f"{base}/json/list", timeout=3) as r:
+            tabs = json.load(r)
+    except Exception:
+        return 0
+    close_ids, need_blank = plan_browser_reset(tabs)
+    for tid in close_ids:
+        try:
+            with urllib.request.urlopen(f"{base}/json/close/{tid}", timeout=3):
+                pass
+        except Exception:
+            pass
+    # /json/close answers "Target is closing" and returns before the target has
+    # actually gone, so a 200 is not proof. Measured on a live worker: a service
+    # worker was still listed in a snapshot taken right after its close
+    # succeeded. Re-list until they are really gone, and report what survived
+    # rather than counting the 200s.
+    #
+    # One case this cannot win, and does not need to: while a Playwright client
+    # is still attached, its context restarts a service worker as fast as we
+    # close it (measured 2026-09-19, 1 of 2 confirmed). Release runs after the
+    # client has gone, and the same worker with no client attached confirmed
+    # 2 of 2. A live client is the caller's own browser, not a leftover.
+    wanted = set(close_ids)
+    closed = 0
+    deadline = time.time() + RESET_CONFIRM_SECONDS
+    while wanted and time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"{base}/json/list", timeout=3) as r:
+                still = {t.get("id") for t in json.load(r)}
+        except Exception:
+            break
+        gone = wanted - still
+        closed += len(gone)
+        wanted -= gone
+        if wanted:
+            time.sleep(0.2)
+    if need_blank:
+        # Every page was the session's, so leave the worker the blank tab it
+        # started with rather than a browser with nothing open.
+        try:
+            req = urllib.request.Request(f"{base}/json/new?about:blank", method="PUT")
+            with urllib.request.urlopen(req, timeout=3):
+                pass
+        except Exception:
+            pass
+    return closed
+
+
 def release_worker(pod):
     """Bare pods are deleted; warm-pool (Deployment-owned) pods return to standby."""
     if pod["bare"]:
         kube("DELETE", f"/api/v1/namespaces/{NS}/pods/{pod['name']}")
     else:
+        # A bare pod's browser dies with the pod. A warm one is reused as-is, so
+        # it has to be cleaned here or the next caller inherits the last
+        # session's pages, service workers and open tabs (infra #98).
+        reset_browser(pod.get("ip"))
         kube("PATCH", f"/api/v1/namespaces/{NS}/pods/{pod['name']}", {
             "metadata": {"labels": {"chrome-pool/session": ""},
                          "annotations": {"chrome-pool/released": str(int(time.time()))}}})
