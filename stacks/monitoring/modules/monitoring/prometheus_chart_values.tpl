@@ -5993,22 +5993,54 @@ serverFiles:
       # can happen for any kubernetes_ingress-managed hostname.
       - name: Traefik Router Parity
         rules:
-          - alert: TraefikRouterCountSkew
-            # Each Traefik replica should report the same number of routers.
-            # If max-min across instances is >0 for 10m, one replica is stuck
-            # and should be restarted.
+          - alert: TraefikRouterTableMissing
+            # Replaces TraefikRouterCountSkew, which was INERT from the day it
+            # was written: it read traefik_router_open_connections, a series this
+            # Traefik emits nowhere. Confirmed 2026-09-19, that name returns no
+            # data at any timestamp in the retention window, so the rule could
+            # never fire. It was meant to catch exactly the failure that then
+            # went unnoticed for seven and a half hours the same morning.
+            #
+            # WHAT HAPPENED. A traefik pod started two seconds into kured's drain
+            # of k8s-node4 and its init container did not fetch the
+            # api-token-middleware archive. Traefik disables EVERY plugin when
+            # one is missing, so the local real-ip and crowdsec plugins went too,
+            # every router referencing traefik-real-ip@kubernetescrd became
+            # invalid, and that pod answered 404 for every host on the estate.
+            # One pod in three, so roughly a third of all requests.
+            #
+            # WHY THIS EXPRESSION. A pod in that state emits NO per-router series
+            # at all, having no routers to instrument. Measured mid-outage: two
+            # instances reported 154 and 155 routers while the broken third was
+            # absent from traefik_router_requests_total entirely. So compare the
+            # pods reporting router metrics against the pods reporting anything;
+            # traefik_config_last_reload_success is one series per pod and
+            # survives a broken router table.
+            #
+            # Do NOT go back to comparing router COUNTS between pods. A router
+            # series exists only once that pod has served the route, and load
+            # balancing is uneven, so the live spread is 102/81/87 and a
+            # max-minus-min test would fire permanently. That is the trap the
+            # original rule fell into, on top of the dead metric.
+            #
+            # Validated against the incident: reads 1 at 06:00 UTC while broken,
+            # 0 after the pod was replaced, min 0 / max 1 across the 7h window.
+            #
+            # for: 15m rides out a rollout, where a fresh pod briefly has no
+            # router series because it has not served a request yet. The roll
+            # itself takes about a minute.
             expr: |
               (
-                max(count by (instance) (traefik_router_open_connections))
+                count(traefik_config_last_reload_success)
                 -
-                min(count by (instance) (traefik_router_open_connections))
+                count(count by (instance) (traefik_router_requests_total))
               ) > 0
-            for: 10m
+            for: 15m
             labels:
-              severity: warning
+              severity: critical
               subsystem: traefik
             annotations:
-              summary: "Traefik replicas have diverging router counts (skew={{ $value | printf \"%.0f\" }}). Restart the laggard pod: `kubectl get pods -n traefik` and delete the one with fewer routers."
+              summary: "{{ $value | printf \"%.0f\" }} Traefik pod(s) serve no routers and 404 every host. Find the pod missing from router metrics and delete it: `kubectl get pods -n traefik`; confirm with `kubectl logs -n traefik <pod> -c traefik | grep -c 'middleware does not exist'` and `kubectl logs -n traefik <pod> -c download-plugins`."
       # Authentik walling-off guard. Fires when a must-stay-public carve-out URL
       # (job blackbox-authentik-walloff, targets in authentik_walloff_probe.tf)
       # starts returning an Authentik forward-auth 302. probe_success==0 there

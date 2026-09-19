@@ -150,6 +150,54 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           name = "Node Health"
           rules = [
             {
+              # The direct, user-visible signature of a traefik pod whose router
+              # table is gone: a 404 served with NO RouterName and no
+              # ServiceName, meaning nothing matched at the router layer.
+              #
+              # Pairs with the Prometheus rule TraefikRouterTableMissing, which
+              # watches the same failure from the metrics side. Two angles on
+              # purpose: on 2026-09-19 the estate served 404s for seven and a
+              # half hours and NOTHING named it. The one rule written for it
+              # read a metric that does not exist, and HighService4xxRate
+              # deliberately excludes the catchall router whose whole job is
+              # returning 404 for unmatched hostnames, which is exactly where
+              # those requests landed.
+              #
+              # WHY A LINE FILTER RATHER THAN | json. On these lines the
+              # RouterName key is ABSENT, not empty, so a label filter has
+              # nothing to test. A 404 line not containing the string
+              # RouterName is precisely the case wanted.
+              #
+              # THRESHOLD, measured by running this exact expression rather
+              # than counting sampled lines, which kept hitting the query limit
+              # and reading a flat 1000. Steady state is 3 per 15m: a handful of
+              # internal probes to names with no router, such as
+              # traefik-dashboard.traefik.svc.cluster.local. During the incident
+              # the same expression read 5348, and it decayed cleanly back to 3
+              # as the 15m window slid past the fix.
+              #
+              # It stays this low because the catchall IngressRoute matches every
+              # hostname under our domain, so typos and scanner traffic get the
+              # catchall and carry its RouterName. Only a request that matches no
+              # router at all lands here.
+              #
+              # 50 therefore sits about 17x above the real baseline and 100x
+              # below the real event.
+              #
+              # The 15m window exceeds the gap between these lines during an
+              # incident, so a continuing fault reads as one alert instead of
+              # flapping, and clears 15m after the last one.
+              alert = "TraefikNoRouterMatch404s"
+              expr  = "sum(count_over_time({namespace=\"traefik\", pod=~\"traefik-.*\"} |= \"\\\"DownstreamStatus\\\":404\" != \"RouterName\" [15m])) > 50"
+              for   = "5m"
+              labels = {
+                severity = "critical"
+              }
+              annotations = {
+                summary = "Traefik served {{ $value | printf \"%.0f\" }} 404s in 15m with no router matched (baseline 3 per 15m). A pod has lost its router table and is 404ing every host. Check `kubectl get pods -n traefik` alongside TraefikRouterTableMissing."
+              }
+            },
+            {
               # Re-scoped 2026-07-27 (Viktor): fire ONLY on a REAL OOM — a
               # container/app OOM-kill OR a global node OOM — never on the
               # kured-sentinel-gate's benign memcg churn. On a pending-reboot
