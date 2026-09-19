@@ -1,6 +1,8 @@
 # Move forward-auth to the inline outpost
 
-Bead `code-osvg`. Status: draft, not executed.
+Bead `code-osvg`. Status: attempted 2026-09-18, rolled back, revised 2026-09-19.
+The mechanism works. The session cost is now measured rather than assumed, and the
+decision is to pay it at a quiet hour.
 
 Retire the standalone embedded-outpost Deployment and let the outpost that runs
 inside the authentik server pods answer forward-auth and the OAuth callback.
@@ -218,18 +220,65 @@ kubectl patch svc ak-outpost-authentik-embedded-outpost -n authentik --type=json
          "app.kubernetes.io/component":"server"}}]'
 ```
 
-## Expect one forced re-authentication
+## Every signed-in user is logged out once, and that is not avoidable
 
-Existing `authentik_proxy_*` cookies are in the Go format and the inline Rust
-outpost cannot read them. Every signed-in user gets one redirect through
-authentik on their next request to a protected host.
+This section said the re-authentication would probably be a silent OAuth
+round-trip. That was wrong, the cutover was attempted on 2026-09-18 and it is
+now measured rather than assumed.
 
-This should be a silent OAuth round-trip rather than a password prompt: the
-`authentik_session` cookie is issued by the server on
-`authentik.viktorbarzin.me` and is unaffected, so authentik should recognise
-the user and hand back a fresh Rust-format proxy cookie. A visible redirect
-flash is likely. Anyone whose authentik session has also expired signs in
-again. This is a one-time cost at cutover, not a recurring one.
+Asking each implementation what cookie it sets on an unauthenticated
+forward-auth gives the same cookie name in two incompatible formats:
+
+```
+inline Rust       authentik_proxy_34f8da53=<43-char base64 HMAC>=<36-char UUID>
+                                           total 82 characters, URL-encoded
+standalone Go     authentik_proxy_34f8da53=<52-char base32 session id>
+```
+
+Values elided on purpose. They were captured from unauthenticated requests and
+are not live sessions, but they are high-entropy session material and do not
+belong in the repository. Reproduce them by sending a forward-auth request with
+no cookie to a server pod and to a standalone outpost pod on port 9000 and
+reading the `set-cookie` header from each.
+
+Go writes a 52-character base32 session id, which is exactly the `session_key`
+column in `authentik_providers_proxy_proxysession`. Rust writes an HMAC plus a
+UUID, 82 characters. Both implementations read that one shared table, but they
+key into it differently, so neither can read the other's cookie.
+
+The cost of that is larger than a redirect. Background XHR and SSE requests
+cannot follow a 302, so a signed-in page stops working rather than
+re-authenticating itself. Measured on 2026-09-18:
+`terminal.viktorbarzin.me` held 100% allowed in every five-minute bucket for the
+preceding hour, then went to 0%. Estate-wide allow rate went 68.7%, then 22.9%,
+then 0%.
+
+Rolling back does not undo it either. Browsers that completed a callback during
+the window hold a Rust cookie that the Go outpost then rejects in turn.
+Recovery needed one real navigation per browser, confirmed live when Viktor
+reloaded and terminal went from 0 to 49 allowed requests.
+
+So the logout is the price of the migration and every route pays it, including
+a move to a separate managed outpost, because both are Rust. Upstream's v2026.8
+release note describes the rewrite as aiming to be "a 1-to-1 match with the
+previous code" and lists no session break, so this is undocumented.
+
+Decision taken 2026-09-19: cut over at a quiet hour and accept the reloads.
+
+## Two findings that change how the cutover is run
+
+**nginx keepalive hides the cutover for several minutes.** Changing the Service
+selector moved no traffic at first, because conntrack keeps established
+connections pinned to the old pod IPs and the upstream block carries
+`keepalive 32`. The cutover only took effect after `deploy/auth-proxy` was
+rolled. Treat that restart as part of the cutover, and do not read health from
+the window before it.
+
+**The inline outpost does not log per-request.** It produced five log lines in
+twenty minutes while serving, where the Go standalone logs every
+`/outpost.goauthentik.io/auth/traefik` call. On the night this was read as
+"traffic never reached it", which was an inference with nothing behind it. Judge
+the cutover from the auth-proxy verdict counts instead.
 
 ## Rollback
 
@@ -265,12 +314,13 @@ scaled to zero replicas, which predates this work.
 
 ## Open questions
 
-- Whether the re-authentication in step 5 is genuinely silent has not been
-  measured. The reasoning about the separate `authentik_session` cookie is
-  sound but untested, and we will see the real behaviour at cutover.
-- The cookie-format difference is quoted from the 2026-09-02 measurement rather
-  than re-derived against 2026.8.3. The direction of the change is not in
-  doubt, but the exact formats may have moved.
+- Both of the first two questions here are now ANSWERED, and both answers were
+  the unwelcome one. The re-authentication is not silent, and the cookie formats
+  do differ on 2026.8.3, re-derived directly from each implementation rather
+  than quoted. See the logout section above.
+- Still open: whether a cutover can be staged so that fewer sessions are in
+  flight, for example by picking an hour with no active browsers, rather than
+  simply accepting the reloads. Nothing has been designed for this.
 - Whether any consumer other than nginx and the two Ingresses depends on the
   Service was checked cluster-wide and came back clean. A consumer holding the
   ClusterIP in a config file outside the cluster would not show up in that
