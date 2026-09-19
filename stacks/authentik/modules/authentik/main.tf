@@ -124,8 +124,22 @@ module "ingress-outpost" {
   service_name     = "ak-outpost-authentik-embedded-outpost"
   port             = 9000
   ingress_path     = ["/outpost.goauthentik.io"]
-  tls_secret_name  = var.tls_secret_name
-  anti_ai_scraping = false
+  # authfix catches a 400 from this path and self-heals the client. A 400 here
+  # means the outpost said "invalid state": the state JWT was minted by one
+  # proxy-outpost implementation and presented to the other, which cannot read
+  # it. The OAuth code is single use, so the browser retries forever and only a
+  # manual cookie clear fixes it, which is not something every user of this
+  # estate can do. authfix deletes the stale cookie and bounces the browser to
+  # the redirect carried in the state. See stacks/traefik/.../authfix.tf.
+  #
+  # This is now the ONLY Ingress serving this path. The outpost controller used
+  # to write a second one, Traefik took both because it runs with no
+  # ingressClass filter, and a middleware here would have fired on only some
+  # requests. That copy was deleted on 2026-09-19 after adding "ingress" to the
+  # outpost's kubernetes_disabled_components.
+  extra_middlewares = ["traefik-authfix@kubernetescrd"]
+  tls_secret_name   = var.tls_secret_name
+  anti_ai_scraping  = false
 }
 
 # Immutable caching for the flow-executor static assets. Authentik serves
