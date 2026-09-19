@@ -1,9 +1,11 @@
 package main
 
 import (
+	"net"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The Mac's login shell sources iTerm2 shell integration, which emits OSC
@@ -333,5 +335,105 @@ func TestIosBootstrapUnitsOnlySkipsTheMac(t *testing.T) {
 	t.Setenv("IOS_RIG_MAC_HOST", "192.0.2.1") // TEST-NET-1, never answers
 	if err := iosBootstrap([]string{"--units-only", "--dry-run"}); err != nil {
 		t.Fatalf("--units-only must not touch the Mac, got %v", err)
+	}
+}
+
+// The Mac's private Wi-Fi address has rotated twice in seven days, each time
+// stranding a reservation and a DNS record that both name .168. The hardware
+// address does not rotate, which is what makes it usable as the identity.
+func TestIosHardwareAddrFromNetworksetup(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"the real output",
+			"Ethernet Address: 84:2f:57:39:9a:d9 (Device: en0)", "84:2f:57:39:9a:d9"},
+		{"uppercase normalises",
+			"Ethernet Address: 84:2F:57:39:9A:D9 (Device: en0)", "84:2f:57:39:9a:d9"},
+		// The Mac's login shell emits iTerm2 OSC escapes into every command's
+		// output, so the parser has to survive them here as it does elsewhere.
+		{"with an OSC escape in front",
+			"\x1b]1337;SetUserVar=x=\x07Ethernet Address: 84:2f:57:39:9a:d9 (Device: en0)", "84:2f:57:39:9a:d9"},
+		{"nothing there", "command not found", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := iosHardwareAddr(c.in); got != c.want {
+				t.Errorf("got %q want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestIosSubnetHosts(t *testing.T) {
+	hosts, err := iosSubnetHosts("192.168.8.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Network and broadcast are not hosts, so a /24 offers 254.
+	if len(hosts) != 254 {
+		t.Fatalf("a /24 has 254 usable hosts, got %d", len(hosts))
+	}
+	if hosts[0] != "192.168.8.1" || hosts[253] != "192.168.8.254" {
+		t.Errorf("bounds wrong: %s .. %s", hosts[0], hosts[253])
+	}
+	// A /32 is how someone pins discovery to one address; it must not be empty.
+	one, err := iosSubnetHosts("10.0.0.5/32")
+	if err != nil || len(one) != 1 || one[0] != "10.0.0.5" {
+		t.Errorf("/32 should yield exactly itself, got %v (%v)", one, err)
+	}
+	if _, err := iosSubnetHosts("not-a-cidr"); err == nil {
+		t.Error("a bad CIDR must be an error, not an empty scan that looks like 'nothing found'")
+	}
+	// A sweep of the whole internet is a mistake, not a request.
+	if _, err := iosSubnetHosts("10.0.0.0/8"); err == nil {
+		t.Error("an oversized range must be refused rather than attempted")
+	}
+}
+
+func TestIosScanPortFindsAListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := strings.TrimPrefix(ln.Addr().String(), "127.0.0.1:")
+
+	found := iosScanPort([]string{"127.0.0.1", "127.0.0.2"}, port, 2*time.Second)
+	if len(found) == 0 || found[0] != "127.0.0.1" {
+		t.Errorf("the live listener was not found: %v", found)
+	}
+
+	// A port nobody serves must come back empty rather than hang.
+	start := time.Now()
+	if got := iosScanPort([]string{"127.0.0.1"}, "1", 1*time.Second); len(got) != 0 {
+		t.Errorf("expected nothing on a dead port, got %v", got)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Error("a dead port must fail fast, not hang the scan")
+	}
+}
+
+// Discovery is a fallback, never the normal path: it must not scan the LAN
+// when the configured name answers, or every command pays for it.
+func TestIosResolveMacHostPrefersTheConfiguredName(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	host, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	c := iosDefaults()
+	c.MacHost = host
+	c.SSHPort = port
+	c.MacSubnet = "203.0.113.0/24" // TEST-NET-3; a scan here would prove we scanned
+	scanned := false
+	got, err := c.resolveMacHost(func() (string, error) { scanned = true; return "", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != host {
+		t.Errorf("got %q, want the configured %q", got, host)
+	}
+	if scanned {
+		t.Error("the configured host answered, so nothing should have been scanned")
 	}
 }

@@ -6,11 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -38,6 +42,11 @@ type iosConfig struct {
 	WDABundleID  string
 	DeveloperDir string
 	AppiumPort   string
+	// SSHPort, MacSubnet and MacHWAddr exist only for finding the Mac again
+	// after its Wi-Fi address rotates. See the discovery section below.
+	SSHPort   string
+	MacSubnet string
+	MacHWAddr string
 }
 
 func iosDefaults() iosConfig {
@@ -51,6 +60,12 @@ func iosDefaults() iosConfig {
 		WDABundleID:  envOr("IOS_RIG_WDA_BUNDLE_ID", "me.viktorbarzin.wda"),
 		DeveloperDir: envOr("IOS_RIG_DEVELOPER_DIR", "/Applications/Xcode_26.6.0_17F113_fb.app/Contents/Developer"),
 		AppiumPort:   envOr("IOS_RIG_APPIUM_PORT", "4723"),
+		SSHPort:      envOr("IOS_RIG_SSH_PORT", "22"),
+		MacSubnet:    envOr("IOS_RIG_MAC_SUBNET", "192.168.8.0/24"),
+		// The hardware address, not whatever private address the card is
+		// presenting today. This is the one identifier the rotation cannot
+		// change, which is what makes discovery trustworthy.
+		MacHWAddr: envOr("IOS_RIG_MAC_HW_ADDR", "84:2f:57:39:9a:d9"),
 	}
 }
 
@@ -188,4 +203,210 @@ func jsonErrMessage(out map[string]interface{}, raw []byte) string {
 		}
 	}
 	return strings.TrimSpace(string(raw))
+}
+
+// Finding the Mac when its address moves.
+//
+// The Mac is addressed by name through a Technitium record backed by a Flint
+// reservation. Both key on the Wi-Fi address, and macOS rotates the private
+// one: twice in the seven days after the rig was built, each time leaving the
+// name pointing at an address with nothing behind it. The symptom is the whole
+// rig looking absent, which is indistinguishable by eye from the laptop having
+// left the building.
+//
+// The hardware address does not rotate. So when the name stops answering, the
+// rig sweeps the LAN for SSH and asks each candidate for its hardware address,
+// which is the one identity the rotation cannot change. This mirrors how
+// wdaURL already heals the phone's address when its DHCP lease moves.
+
+// iosHardwareAddr pulls the MAC out of `networksetup -getmacaddress`, whose
+// output is "Ethernet Address: 84:2f:57:39:9a:d9 (Device: en0)". Compared
+// lowercase, because the two sides of the comparison come from different
+// commands and only one of them is consistent about case.
+func iosHardwareAddr(out string) string {
+	m := macAddrRe.FindString(oscRe.ReplaceAllString(out, ""))
+	return strings.ToLower(m)
+}
+
+var macAddrRe = regexp.MustCompile(`(?i)\b[0-9a-f]{2}(?::[0-9a-f]{2}){5}\b`)
+
+// iosMaxScanHosts caps a sweep. A wrong prefix should be an error rather than
+// an hour of traffic, and no home LAN the rig lives on is larger than a /22.
+const iosMaxScanHosts = 1024
+
+// iosSubnetHosts enumerates the usable addresses in a CIDR, skipping the
+// network and broadcast addresses except on a /32, which is how someone pins
+// discovery to a single host.
+func iosSubnetHosts(cidr string) ([]string, error) {
+	_, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, fmt.Errorf("%q is not a CIDR: %w", cidr, err)
+	}
+	if network.IP.To4() == nil {
+		return nil, fmt.Errorf("%q is not IPv4; the rig's LAN is v4 only", cidr)
+	}
+	ones, bits := network.Mask.Size()
+	if n := 1 << uint(bits-ones); n > iosMaxScanHosts {
+		return nil, fmt.Errorf("%q covers %d addresses, more than the %d cap; narrow it", cidr, n, iosMaxScanHosts)
+	}
+	var hosts []string
+	for ip := network.IP.Mask(network.Mask).To4(); network.Contains(ip); ip = nextIPv4(ip) {
+		hosts = append(hosts, ip.String())
+	}
+	if ones == bits {
+		return hosts, nil
+	}
+	if len(hosts) < 3 {
+		return nil, fmt.Errorf("%q has no usable host addresses", cidr)
+	}
+	return hosts[1 : len(hosts)-1], nil
+}
+
+func nextIPv4(ip net.IP) net.IP {
+	out := make(net.IP, len(ip))
+	copy(out, ip)
+	for i := len(out) - 1; i >= 0; i-- {
+		out[i]++
+		if out[i] != 0 {
+			break
+		}
+	}
+	return out
+}
+
+// iosScanPort returns the hosts answering on port, probed concurrently. A
+// closed or filtered port is not an error here, it is the common case, so
+// everything that is not a completed handshake is simply left out.
+func iosScanPort(hosts []string, port string, timeout time.Duration) []string {
+	type result struct {
+		i    int
+		host string
+	}
+	ch := make(chan result, len(hosts))
+	sem := make(chan struct{}, 64)
+	var wg sync.WaitGroup
+	for i, h := range hosts {
+		wg.Add(1)
+		go func(i int, h string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			conn, err := net.DialTimeout("tcp", net.JoinHostPort(h, port), timeout)
+			if err != nil {
+				return
+			}
+			conn.Close()
+			ch <- result{i, h}
+		}(i, h)
+	}
+	wg.Wait()
+	close(ch)
+	var found []result
+	for r := range ch {
+		found = append(found, r)
+	}
+	// Stable order, so a rescan of an unchanged LAN picks the same host and
+	// the logs do not shuffle for no reason.
+	sort.Slice(found, func(a, b int) bool { return found[a].i < found[b].i })
+	out := make([]string, 0, len(found))
+	for _, r := range found {
+		out = append(out, r.host)
+	}
+	return out
+}
+
+// iosDiscoverMac sweeps the configured subnet for a host that answers SSH as
+// our user AND reports the expected hardware address. The address check is
+// what makes this safe to run unattended: an open port 22 on the LAN is not
+// enough to start driving a machine.
+func (c iosConfig) iosDiscoverMac() (string, error) {
+	if c.MacHWAddr == "" {
+		return "", fmt.Errorf("no hardware address configured, so a discovered host cannot be identified; set IOS_RIG_MAC_HW_ADDR")
+	}
+	hosts, err := iosSubnetHosts(c.MacSubnet)
+	if err != nil {
+		return "", err
+	}
+	candidates := iosScanPort(hosts, c.SSHPort, 2*time.Second)
+	want := strings.ToLower(c.MacHWAddr)
+	for _, h := range candidates {
+		probe := c
+		probe.MacHost = h
+		out, err := probe.onMac("networksetup -getmacaddress en0")
+		if err != nil {
+			continue
+		}
+		if iosHardwareAddr(out) == want {
+			return h, nil
+		}
+	}
+	return "", fmt.Errorf("no host on %s answered SSH as %s with hardware address %s (%d had port %s open)",
+		c.MacSubnet, c.MacUser, want, len(candidates), c.SSHPort)
+}
+
+// resolveMacHost returns an address that actually answers. The configured name
+// is always tried first and discovery only runs when it does not, so the
+// normal path costs one TCP handshake and the scan stays a fallback. discover
+// is injected so the preference can be tested without a LAN.
+func (c iosConfig) resolveMacHost(discover func() (string, error)) (string, error) {
+	if hostAnswers(c.MacHost, c.SSHPort, 3*time.Second) {
+		return c.MacHost, nil
+	}
+	if cached := strings.TrimSpace(readFileString(iosMacHostCachePath())); cached != "" && cached != c.MacHost {
+		if hostAnswers(cached, c.SSHPort, 3*time.Second) {
+			return cached, nil
+		}
+	}
+	found, err := discover()
+	if err != nil {
+		return "", err
+	}
+	if found == "" {
+		return "", fmt.Errorf("%s does not answer on port %s and no replacement was found", c.MacHost, c.SSHPort)
+	}
+	// Cache it so the next command skips the sweep. It is only ever a hint:
+	// every read re-checks that it still answers.
+	_ = os.WriteFile(iosMacHostCachePath(), []byte(found+"\n"), 0o644)
+	fmt.Fprintf(os.Stderr, "%s did not answer; using %s, found by hardware address\n", c.MacHost, found)
+	return found, nil
+}
+
+func hostAnswers(host, port string, timeout time.Duration) bool {
+	if host == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), timeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+func iosMacHostCachePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".ios-rig-mac-host"
+	}
+	return filepath.Join(home, ".ios-rig-mac-host")
+}
+
+func readFileString(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// iosResolved is what every verb that talks to the Mac starts from: defaults,
+// with MacHost pointed at something that answers.
+func iosResolved() (iosConfig, error) {
+	c := iosDefaults()
+	host, err := c.resolveMacHost(c.iosDiscoverMac)
+	if err != nil {
+		return c, err
+	}
+	c.MacHost = host
+	return c, nil
 }
