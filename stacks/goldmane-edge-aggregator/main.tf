@@ -377,6 +377,40 @@ resource "kubernetes_deployment" "aggregate" {
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
+      # KEEL IS THE REDUNDANT NET HERE, NOT THE DEPLOY PATH (bead code-smm1,
+      # decided 2026-09-19). Kyverno stamps the cluster-wide default
+      # keel.sh/policy=patch, which ignores non-semver tags entirely, and this
+      # image publishes :latest. So keel watches repository TAGS with an empty
+      # digest and a new :latest is invisible to it. That is keel behaving as
+      # configured, not a misconfiguration.
+      #
+      # The defect was that this repo had the fleet BUILD half since onboarding
+      # and none of the deploy half: no deploy job in .github/workflows/build.yml,
+      # no .woodpecker/deploy.yml, and no Woodpecker registration. A successful
+      # build landed in ghcr and nothing rolled it. The ignore_changes on the
+      # container image above was already written for a kubectl set image that
+      # never came.
+      #
+      # ROUTE TAKEN: give it the same deploy path as every other first-party app.
+      # GHA posts to Woodpecker repo 378 with the immutable :<sha8>, and
+      # .woodpecker/deploy.yml runs kubectl set image. Keel stays enrolled and
+      # harmlessly inert.
+      #
+      # WHY NOT keel.sh/policy=force, which would also work. That default exists
+      # because of two incidents, and neither is made safe by this workload being
+      # small. On 2026-05-16 force alone downgraded claude-memory :71b32438 to
+      # :17, because numeric sorts above hex. On 2026-05-26 match-tag did not
+      # constrain keel and tag strings were rewritten across four services
+      # (uptime-kuma :2 to :1, n8n :1.80.5 to :0.1.2, dolt-workbench :0.3.73 to
+      # :0.1.0, wealthfolio :3.2.1 truncated). Both failures are about keel
+      # choosing a tag; the route above never lets it choose, because CI names an
+      # exact digest.
+      #
+      # WHY NOT semver image tags, the other option considered. svu already cuts
+      # semver GIT tags here, so publishing :vX.Y.Z is a one-line change, but
+      # patch policy only follows patch bumps inside the current major.minor. A
+      # single feat: commit becomes a minor bump that keel will not follow, and
+      # deploys would silently stop again with nothing to show for it.
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
