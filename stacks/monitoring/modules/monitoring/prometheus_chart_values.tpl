@@ -2933,9 +2933,30 @@ serverFiles:
           # hours of persistence before anyone is told, now with six hours of
           # room for that to elapse. Verified against live data at the time of
           # the change: the expression matches paperless-ai/rag-index-refresh.
+          # STANDALONE Jobs only, since 2026-09-19. CronJob-owned ones belong to
+          # CronJobFailingRepeatedly below, which aggregates them per CronJob.
+          #
+          # This rule is keyed per job_name and every CronJob run makes a new
+          # job_name, so one CronJob failing repeatedly raised one alert PER RUN.
+          # Measured over 24h: 21 JobFailed instances covering 10 distinct
+          # CronJobs, 12 of them helm-unstick alone, and 8 of those 10 ALSO
+          # raised CronJobFailingRepeatedly for the same failure. The duplicate
+          # was known and written down as acceptable; the per-run fan-out was
+          # not, and together they were 31 of the day's alerts where 12 would do.
+          #
+          # kube_job_owner would be the honest discriminator and is NOT exposed
+          # by this cluster's kube-state-metrics (re-checked 2026-09-19, the
+          # series does not exist), so ownership is inferred from the name.
+          # CronJob-generated names end in a unix-MINUTES stamp, 8 digits until
+          # roughly the year 2160. `[0-9]+` was too loose to invert: it also
+          # matches k8s-upgrade-master-1-35-8 and k8s-upgrade-preflight-1-35-8,
+          # two genuinely standalone Jobs, and silencing a failed cluster
+          # upgrade is the last thing this rule should do. Verified against all
+          # 188 live Jobs: `[0-9]{8,}` matches every CronJob-owned one and no
+          # standalone one, where `[0-9]+` wrongly claimed those two.
           - alert: JobFailed
             expr: |
-              kube_job_status_failed > 0
+              kube_job_status_failed{job_name!~".+-[0-9]{8,}"} > 0
               and on(namespace, job_name)
               (time() - kube_job_status_start_time) < 21600
             for: 2h
@@ -2973,18 +2994,40 @@ serverFiles:
           # -dns-optimization all failed in the same window on the same broken
           # auth path). Against live state today it returns zero series.
           #
-          # It overlaps JobFailed for SLOW CronJobs, where a single Job's series
-          # does survive 2h and both rules fire. Same severity and channel, so the
-          # cost is a duplicate warning; JobFailed is left alone because it also
-          # covers Jobs that no CronJob owns.
+          # It USED TO overlap JobFailed for SLOW CronJobs, where a single Job's
+          # series does survive 2h and both rules fire. That was written down as
+          # an acceptable duplicate warning. Measured on 2026-09-19 it was 8 of
+          # the day's 31 job alerts, so JobFailed now excludes CronJob-owned
+          # Jobs and the two rules no longer describe the same failure twice.
+          # A single failure still reaches this rule: the per-Job recency guard
+          # keeps a failure countable for 6h, comfortably past the 2h `for`,
+          # which is how tripit's one 08:00 event raised it on 2026-09-19.
           - alert: CronJobFailingRepeatedly
+            # Two corrections on 2026-09-19, both measured before shipping.
+            #
+            # REASON: was reason="BackoffLimitExceeded" alone, which missed
+            # DeadlineExceeded entirely — 11 occurrences in 7 days, and the
+            # reason behind BOTH of the CronJobs that JobFailed was carrying on
+            # its own (chesscom-streak, headscale/tailscale-subnet-router-probe).
+            # Widening it is what makes handing every CronJob-owned Job to this
+            # rule safe. It cannot start catching transient pod retries instead:
+            # kube_job_status_failed with an EMPTY reason has no series at all
+            # over 7 days here, so every sample this metric produces is already
+            # a terminally-failed Job.
+            #
+            # PATTERN: `[0-9]+` also matched k8s-upgrade-master-1-35-8 and
+            # k8s-upgrade-preflight-1-35-8, standalone Jobs with no CronJob,
+            # and label_replace then invented the cronjob "k8s-upgrade-master-1-35"
+            # for them. `[0-9]{8,}` is the unix-minutes stamp a CronJob actually
+            # appends; checked against all 188 live Jobs it matches every
+            # CronJob-owned one and no standalone one.
             expr: |
               sum by (namespace, cronjob) (
                 label_replace(
-                  kube_job_status_failed{reason="BackoffLimitExceeded", job_name=~".+-[0-9]+"} > 0
+                  kube_job_status_failed{reason=~"BackoffLimitExceeded|DeadlineExceeded", job_name=~".+-[0-9]{8,}"} > 0
                   and on(namespace, job_name)
                   (time() - kube_job_status_start_time) < 21600,
-                  "cronjob", "$1", "job_name", "(.+)-[0-9]+"
+                  "cronjob", "$1", "job_name", "(.+)-[0-9]{8,}"
                 )
               ) > 0
             for: 2h
