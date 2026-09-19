@@ -95,7 +95,7 @@ alertmanager:
       - source_matchers:
           - alertname = NodeDown
         target_matchers:
-          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeDown|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing|F1MetricsMissing"
+          - alertname =~ "NodeNotReady|NodeConditionBad|PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|NodeLowFreeMemory|PostgreSQLDown|RedisDown|HeadscaleDown|HeadscaleReplicasMismatch|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeDown|NodeExporterDown|DockerRegistryDown|HomeAssistantDown|HomeAssistantCriticalSensorsUnavailable|CloudflaredDown|TechnitiumDNSDown|iDRACRedfishMetricsMissing|iDRACSNMPMetricsMissing|HomeAssistantMetricsMissing|F1MetricsMissing"
       # Planned node maintenance (kured drain-reboot or a manual cordon): the
       # window is announced by NodeMaintenanceInProgress (info — one Slack
       # line), and everything a 3-6 min drain+reboot predictably trips is
@@ -115,7 +115,7 @@ alertmanager:
       - source_matchers:
           - alertname = NFSServerUnresponsive
         target_matchers:
-          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeDown|HomeAssistantDown|HomeAssistantCriticalSensorUnavailable"
+          - alertname =~ "PodCrashLooping|ContainerOOMKilled|DeploymentReplicasMismatch|StatefulSetReplicasMismatch|DaemonSetMissingPods|ScrapeTargetDown|PostgreSQLDown|RedisDown|AuthentikDown|PoisonFountainDown|HackmdDown|PrivatebinDown|MailServerDown|EmailRoundtripFailing|EmailRoundtripStale|ViktorBarzinApexDrift|ViktorBarzinApexProbeDown|HomeAssistantDown|HomeAssistantCriticalSensorsUnavailable"
       # Traefik down makes service-level alerts noise
       - source_matchers:
           - alertname = TraefikDown
@@ -142,10 +142,14 @@ alertmanager:
         target_matchers:
           - alertname =~ "HighServiceErrorRate|HighService4xxRate|HighServiceLatency|TraefikHighOpenConnections|IngressTTFBHigh|IngressTTFBCritical|F1IngressStalled|IngressErrorRate5xxHigh|ForwardAuthFallbackActive|AnubisChallengeStoreErrors|ExternalAccessDivergence"
       # HA down → every sensor goes unavailable. One root-cause alert is enough.
+      # HomeAssistantMassUnavailable is listed for a flapping scrape rather than
+      # a clean outage: a fully-down HA takes haos_entity_available with it, and
+      # count() over an absent metric yields no series, so that rule cannot fire
+      # on its own. A scrape that comes and goes is the case that needs this.
       - source_matchers:
           - alertname = HomeAssistantDown
         target_matchers:
-          - alertname =~ "HomeAssistantCriticalSensorUnavailable|HomeAssistantMetricsMissing"
+          - alertname =~ "HomeAssistantCriticalSensorsUnavailable|HomeAssistantMassUnavailable|HomeAssistantMetricsMissing"
       # PVFillingUp (95% used) is the immediate critical; PVPredictedFull
       # (linear projection over 6h) is the leading indicator. When the disk
       # is actually full, the prediction is redundant.
@@ -3408,14 +3412,68 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Home Assistant down: {{ $labels.instance }}"
-          - alert: HomeAssistantCriticalSensorUnavailable
-            expr: haos_entity_available{entity=~"sensor\\.(tesla_t4_gpu_(temperature|power_usage|utilization|memory_used)|r730_(cpu_temperature|power_consumption|power_supply_input_voltage_[12]|system_board_(exhaust|inlet)_temperature)|ups_(input_voltage|output_voltage|load|battery_remaining|output_source))"} == 0
+          # ONE alert for the whole critical set, not one per entity.
+          #
+          # This was per-entity and the entities do not fail independently:
+          # they are REST sensors sharing one integration, so they go together.
+          # Measured 2026-09-19, all ten firing series had the IDENTICAL window,
+          # 01:34 to 09:04 UTC, 450 minutes each. That was one event delivered
+          # as ten critical Slack messages, twenty with the resolved pairs, and
+          # it was the single largest source of alert volume after the job
+          # rules. Aggregating to a count per instance keeps the signal, which
+          # is "the R730 / UPS / GPU telemetry is gone", and sends it once.
+          #
+          # Viktor, 2026-09-19: "I don't want to have an alert when a few of
+          # them are down. I want an alert for when a big chunk or group of
+          # them is down."
+          - alert: HomeAssistantCriticalSensorsUnavailable
+            expr: |
+              count by (instance) (
+                haos_entity_available{entity=~"sensor\\.(tesla_t4_gpu_(temperature|power_usage|utilization|memory_used)|r730_(cpu_temperature|power_consumption|power_supply_input_voltage_[12]|system_board_(exhaust|inlet)_temperature)|ups_(input_voltage|output_voltage|load|battery_remaining|output_source))"} == 0
+              ) > 0
             for: 15m
             labels:
               severity: critical
             annotations:
-              summary: "HA sensor unavailable: {{ $labels.friendly_name }} ({{ $labels.entity }})"
-              description: "{{ $labels.entity }} on {{ $labels.instance }} has been unavailable for 15+ minutes. Common cause: REST sensor needs HA restart (reload_all doesn't rebuild rest: platform). Verify exporter endpoint from HA: `ssh vbarzin@192.168.1.8` → `curl -sk <exporter-url>`. Fix: `curl -X POST -H \"Authorization: Bearer $HOME_ASSISTANT_SOFIA_TOKEN\" $HOME_ASSISTANT_SOFIA_URL/api/services/homeassistant/restart`."
+              summary: "{{ $value | printf \"%.0f\" }} critical HA sensor(s) unavailable on {{ $labels.instance }}"
+              description: "The R730 / UPS / Tesla T4 telemetry sensors have been unavailable for 15+ minutes. They share a REST integration and fail together, so this counts them rather than naming one. List them with `homelab metrics query 'haos_entity_available{instance=\"{{ $labels.instance }}\"} == 0'`. Common cause: REST sensor needs an HA restart (reload_all doesn't rebuild the rest: platform). Verify the exporter endpoint from HA: `ssh vbarzin@192.168.1.8` → `curl -sk <exporter-url>`. Fix: `curl -X POST -H \"Authorization: Bearer $HOME_ASSISTANT_SOFIA_TOKEN\" $HOME_ASSISTANT_SOFIA_URL/api/services/homeassistant/restart`."
+          # A BIG CHUNK going at once, which is the thing worth waking up for.
+          #
+          # Per-entity availability is hopeless as an alert here: 175 of 1902
+          # entities on ha-sofia are unavailable at any given moment and that is
+          # the normal state of a house full of cheap WiFi devices. What matters
+          # is a whole group dropping together, an integration or an AP taking
+          # its devices with it, e.g. the Tuya set (13 devices / 23 entities in
+          # the 2026-09-02 triage).
+          #
+          # There is no integration or platform label on haos_entity_available
+          # (only domain, entity, friendly_name), so the group cannot be named
+          # directly. A sudden RISE in the total does the job instead, and the
+          # distribution makes it easy: measured over 7 days at 10-minute
+          # resolution, the 1h rise is p50 +0, p95 +14, then jumps to p99 +244
+          # and max +247. Ordinary churn and a real mass outage are separated by
+          # a wide empty gap, and the two genuine events in that week were
+          # 09-16 21:15 (+244) and 09-17 22:55 (+247).
+          #
+          # 50 sits 3.5x above the p95 of normal churn and 5x below the real
+          # events, so it is not a close call in either direction. It is a
+          # WARNING rather than critical because a mass drop is usually an AP or
+          # an upstream cloud, not something on fire here.
+          - alert: HomeAssistantMassUnavailable
+            expr: |
+              count by (instance) (haos_entity_available == 0)
+              - count by (instance) (haos_entity_available offset 1h == 0)
+              > 50
+            for: 15m
+            # The delta returns to zero an hour after the drop even when
+            # everything is still down, so without this one outage reports as
+            # several. Standing state is the digest's job, not this rule's.
+            keep_firing_for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value | printf \"%.0f\" }} more HA entities unavailable on {{ $labels.instance }} than an hour ago"
+              description: "A group of devices dropped together rather than the usual trickle. Find the group with `homelab metrics query 'count by (domain) (haos_entity_available{instance=\"{{ $labels.instance }}\"} == 0)'` and compare against an hour ago. Tuya is the usual suspect and the split that matters is direct-WiFi versus gateway-attached: if only the direct-WiFi devices are gone it is the device VLAN or its AP, not the Tuya cloud or the integration, which reports state=loaded either way."
           - alert: CoreDNSErrors
             expr: rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]) > 1 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 10m
