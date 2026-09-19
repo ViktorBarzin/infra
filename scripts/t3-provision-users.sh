@@ -868,7 +868,18 @@ build_homelab_cli() {
   # have. A content hash cannot be forgotten, so VERSION goes back to being
   # what it should be: a human-facing label, free to lag without breaking
   # deployment.
-  srchash="$(cat "$src"/*.go "$src"/go.mod "$src"/go.sum 2>/dev/null | sha256sum | cut -c1-12)"
+  #
+  # The hash covers the EMBEDDED ASSETS too, not just the Go sources. Half the
+  # binary's behaviour is //go:embed content -- browser_runner.js,
+  # browser_stealth.js, the two message_*.js, and the whole ios_assets tree --
+  # and hashing only *.go reproduced the exact bug this comment describes, one
+  # file type over. Measured 2026-09-19: appending a line to browser_runner.js
+  # left the hash at 9c21f82614a1, so the browser fix for infra #98 would have
+  # sat on master and never reached a single PATH. The rule is now the honest
+  # one: if it goes into the binary, it goes into the hash.
+  srchash="$( { cat "$src"/*.go "$src"/*.js "$src"/go.mod "$src"/go.sum 2>/dev/null
+                find "$src/ios_assets" -type f -print0 2>/dev/null | sort -z | xargs -0 cat 2>/dev/null
+              } | sha256sum | cut -c1-12 )"
   [[ -n "$srchash" ]] || { log "WARN: cannot hash $src -> skip homelab CLI rebuild"; return 0; }
   want="${semver}+${srchash}"
   [[ -x "$dst" ]] && have="$("$dst" --version 2>/dev/null | awk '{print $2}')" || true
