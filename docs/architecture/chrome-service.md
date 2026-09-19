@@ -497,12 +497,29 @@ CDP client is **patchright-core** (playwright-core drop-in that closes the
   `browser_runner.js` sweeps the target list before connecting and
   closes every non-browser target with no `browserContextId`, which is
   the assert's own condition; targets that carry a context id are left
-  alone, so the worker's extension service workers keep running. The
-  sweep addresses the symptom. The broker annotates the pod on release
-  without clearing the browser, and the warm replica is not reaped, so
-  an orphan can persist until the pod is replaced. Seen on infra #98,
-  where an `embed.st` service worker left by an F1 extraction made
-  `homelab browser run` fail for every user for 4d20h.
+  alone, so the worker's extension service workers keep running. Seen
+  on infra #98, where an `embed.st` service worker left by an F1
+  extraction made `homelab browser run` fail for every user for 4d20h.
+- **Warm workers are cleaned on release** (since 2026-09-19) — a burst
+  pod is deleted when its session ends, so its browser goes with it; a
+  warm pod is relabelled and reused, so `release_worker` now closes
+  what the session left (`plan_browser_reset` picks the targets,
+  `reset_browser` makes the CDP calls). Extension targets are kept by
+  URL scheme, pages close before their service workers, and because
+  `/json/close` answers "Target is closing" and returns early, release
+  re-lists for up to `RESET_CONFIRM_SECONDS` (3s) rather than trusting
+  the 200. Best effort throughout: a worker that will not clean still
+  returns to standby, since wedging the pool would be worse. A
+  Playwright client that is still attached will restart its own service
+  worker faster than the reset closes it, which is why this runs at
+  release and not while a session is live.
+- **A caller killed without releasing wedges the warm pod** — the pod
+  keeps its `chrome-pool/session` label, so `pick_free_worker` skips it
+  and the pool falls back to burst pods until the reaper deletes it at
+  the 60m `SESSION_DEADLINE_SECONDS`. The replacement is clean, so this
+  self-heals; it costs warm-start latency in the meantime. Observed
+  2026-09-19 on `chrome-worker-warm-774955dff-zvl62`, still labelled
+  with session `235f7f1d` after its caller was killed.
 - **No `/metrics` endpoint** — the cluster's generic
   `KubePodCrashLooping` rule covers basic alerting. A Prometheus scrape
   exporter is day-2 work.
