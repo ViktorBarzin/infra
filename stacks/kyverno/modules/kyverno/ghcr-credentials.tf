@@ -40,6 +40,12 @@ locals {
     # goldmane-edge-aggregator: PRIVATE ghcr image pulled by the aggregate
     # Deployment + digest CronJob (ADR-0014, infra#58).
     "goldmane-edge-aggregator",
+    # health: migrated off DockerHub to PRIVATE ghcr.io/viktorbarzin/health
+    # (ADR-0002) when the repo became Forgejo-canonical with a private GitHub
+    # mirror, 2026-09-19. Private packages cannot use the node-side
+    # pull-through cache, which cannot authenticate, so the Deployment needs
+    # the cloned secret.
+    "health",
     # plotting-book: image migrated from public DockerHub to PRIVATE
     # ghcr.io/passionprojectsanca/book-plotter (built by GHA in Anca's repo,
     # under her own org's ghcr). The deployment references the cloned secret.
