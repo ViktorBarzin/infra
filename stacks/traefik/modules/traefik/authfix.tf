@@ -136,7 +136,26 @@ resource "kubernetes_deployment" "authfix" {
   metadata {
     name      = "authfix"
     namespace = kubernetes_namespace.traefik.metadata[0].name
-    labels    = { app = "authfix" }
+    labels = {
+      app = "authfix"
+      # Stamped by the sync-tier-label-from-namespace Kyverno policy. Declared
+      # here because this resource sets a labels map, which makes the provider
+      # manage the whole map, so an undeclared label plans as a removal on
+      # every apply and shows up in the nightly drift report.
+      tier                           = "0-core"
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
+    annotations = {
+      # Opt out of Keel, and say so here rather than letting Kyverno decide.
+      # inject-keel-annotations EXCLUDES a workload that already carries
+      # policy=never, so declaring it also stops the trigger/pollSchedule pair
+      # being added and then removed on every apply.
+      #
+      # never, not patch: this pod answers the 400 on the forward-auth callback
+      # for the whole estate, and it runs a stock upstream python image. An
+      # unattended image bump here is not worth the patch-level CVE currency.
+      "keel.sh/policy" = "never"
+    }
   }
   spec {
     replicas = 2

@@ -71,18 +71,17 @@ resource "authentik_provider_proxy" "catchall" {
 #     PostgreSQL session backend (PR #16628). The Terraform provider does
 #     NOT expose `managed` in the schema, so the field is preserved across
 #     applies (TF only writes fields it knows about).
-#   - kubernetes_json_patches.deployment carries:
-#       * dshm 2Gi tmpfs (covers the 2026-04-18 ENOSPC class of issues)
-#       * resources requests/limits
-#       * `app.kubernetes.io/component=server` pod label so the K8s service
-#         selector lights up endpoints (works around goauthentik 2026.2.2
-#         service.py:52 selector mismatch on standalone embedded outposts).
-#       * AUTHENTIK_POSTGRESQL__{HOST,PORT,USER,PASSWORD,NAME} envFrom the
-#         shared `goauthentik` Secret so the postgres session backend has
-#         credentials to connect to the dbaas cluster.
-#   - kubernetes_json_patches.service replaces the controller-set selector
-#     (which incorrectly targets `app.kubernetes.io/name=authentik`, i.e.
-#     the goauthentik-server pods) with the outpost's own labels.
+#
+# Since 2026-09-19 this outpost has NO pods and NO Kubernetes objects of its
+# own. Forward-auth is served by the inline outpost inside the goauthentik-server
+# pods, and we own the Service that points at them (bead code-osvg). The
+# `service` and `ingress` reconcilers are disabled below; the Deployment
+# reconciler no-ops by itself because the outpost is embedded, which is why the
+# kubernetes_json_patches that used to sit here never did anything.
+#
+# What the record is still FOR: it carries the catchall proxy provider, so the
+# inline outpost knows which provider to serve, and it is the object authentik's
+# UI shows as the embedded outpost.
 # -----------------------------------------------------------------------------
 
 resource "authentik_outpost" "embedded" {
@@ -101,10 +100,11 @@ resource "authentik_outpost" "embedded" {
     container_image  = null
     docker_map_ports = true
     refresh_interval = "minutes=5"
-    # 2 replicas: removes the single-pod hot path for all forward-auth
-    # subrequests. Safe since sessions moved to the shared Postgres backend
-    # (authentik_providers_proxy_proxysession, 2026-05-10) — no pod-local
-    # session state anymore.
+    # Inert since 2026-09-19: the Deployment reconciler no-ops on an embedded
+    # outpost, so this asks for pods nobody creates. Left at 2 rather than 0 so
+    # that if the outpost ever stops being embedded it comes back redundant
+    # instead of absent. Forward-auth concurrency now comes from the three
+    # goauthentik-server replicas that host the inline outpost.
     kubernetes_replicas           = 2
     kubernetes_namespace          = "authentik"
     authentik_host_browser        = ""
@@ -138,88 +138,14 @@ resource "authentik_outpost" "embedded" {
     kubernetes_ingress_secret_name   = "authentik-outpost-tls"
     kubernetes_httproute_annotations = {}
     kubernetes_httproute_parent_refs = []
-    kubernetes_json_patches = {
-      deployment = [
-        {
-          op    = "add"
-          path  = "/spec/template/spec/volumes"
-          value = [{ name = "dshm", emptyDir = { medium = "Memory", sizeLimit = "2Gi" } }]
-        },
-        {
-          op    = "add"
-          path  = "/spec/template/spec/containers/0/volumeMounts"
-          value = [{ name = "dshm", mountPath = "/dev/shm" }]
-        },
-        {
-          op    = "add"
-          path  = "/spec/template/spec/containers/0/resources"
-          value = { limits = { memory = "2560Mi" }, requests = { cpu = "100m", memory = "128Mi" } }
-        },
-        {
-          op    = "add"
-          path  = "/spec/template/metadata/labels/app.kubernetes.io~1component"
-          value = "server"
-        },
-        {
-          op    = "add"
-          path  = "/spec/template/spec/containers/0/env/-"
-          value = { name = "AUTHENTIK_POSTGRESQL__HOST", valueFrom = { secretKeyRef = { name = "goauthentik", key = "AUTHENTIK_POSTGRESQL__HOST" } } }
-        },
-        {
-          op    = "add"
-          path  = "/spec/template/spec/containers/0/env/-"
-          value = { name = "AUTHENTIK_POSTGRESQL__PORT", valueFrom = { secretKeyRef = { name = "goauthentik", key = "AUTHENTIK_POSTGRESQL__PORT" } } }
-        },
-        {
-          op    = "add"
-          path  = "/spec/template/spec/containers/0/env/-"
-          value = { name = "AUTHENTIK_POSTGRESQL__USER", valueFrom = { secretKeyRef = { name = "goauthentik", key = "AUTHENTIK_POSTGRESQL__USER" } } }
-        },
-        {
-          op    = "add"
-          path  = "/spec/template/spec/containers/0/env/-"
-          value = { name = "AUTHENTIK_POSTGRESQL__PASSWORD", valueFrom = { secretKeyRef = { name = "goauthentik", key = "AUTHENTIK_POSTGRESQL__PASSWORD" } } }
-        },
-        {
-          op    = "add"
-          path  = "/spec/template/spec/containers/0/env/-"
-          value = { name = "AUTHENTIK_POSTGRESQL__NAME", valueFrom = { secretKeyRef = { name = "goauthentik", key = "AUTHENTIK_POSTGRESQL__NAME" } } }
-        },
-        # READINESS PROBE (bead code-f1zd). Without one, kubelet marks the pod
-        # Ready the instant the container process starts, so it joins the
-        # Service Endpoints seconds BEFORE the Go proxy binds :9000. The nginx
-        # auth-proxy then gets a refused connect and, before b64239e1 added a
-        # retry, handed every auth="required" host an Emergency Access
-        # basic-auth prompt. On 2026-09-13 that produced up to 86 fallback
-        # responses a minute across 45 hosts. The tell that it was a half-up
-        # backend rather than a dead one: 200 and 401 interleaved for the same
-        # host inside the same second.
-        #
-        # /outpost.goauthentik.io/ping answers 204, which httpGet counts as
-        # success (2xx-3xx). Measured directly against the live pod.
-        {
-          op   = "add"
-          path = "/spec/template/spec/containers/0/readinessProbe"
-          value = {
-            httpGet             = { path = "/outpost.goauthentik.io/ping", port = 9000 }
-            initialDelaySeconds = 3
-            periodSeconds       = 3
-            failureThreshold    = 2
-          }
-        },
-        # And never drop a serving pod before its replacement is Ready. The
-        # default is 25%, which on 2 replicas rounds to 1 and is what let a
-        # rollout take the last good endpoint out of rotation.
-        {
-          op   = "add"
-          path = "/spec/strategy"
-          value = {
-            type          = "RollingUpdate"
-            rollingUpdate = { maxUnavailable = 0, maxSurge = 1 }
-          }
-        },
-      ]
-    }
+    # Deliberately empty, and kept rather than dropped so the server-side value
+    # is reset to {} instead of left at whatever it last held. The deployment
+    # patches that stood here (dshm volume, resources, a component=server label,
+    # five Postgres env vars, and a readinessProbe added 2026-09-18) were inert
+    # from the day authentik added the is_embedded guard to
+    # DeploymentReconciler.noop, and the Deployment they targeted was deleted on
+    # 2026-09-19 when forward-auth moved to the inline outpost.
+    kubernetes_json_patches = {}
   })
 }
 
