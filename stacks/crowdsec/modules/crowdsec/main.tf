@@ -658,7 +658,8 @@ module "ingress" {
 # third occurrence, because a regeneration would otherwise put them straight
 # back.
 #
-# Regenerate (746 announced prefixes collapse to 114 aggregates):
+# Regenerate (748 announced prefixes collapse to 115 aggregates as of
+# 2026-09-19; was 746 -> 114 on 2026-09-11, the delta being 163.77.160.0/20):
 #   for as in AS32934 AS63293; do
 #     curl -s "https://stat.ripe.net/data/announced-prefixes/data.json?resource=$as" \
 #       | jq -r '.data.prefixes[].prefix'
@@ -746,6 +747,7 @@ resource "kubernetes_config_map" "crowdsec_static_blocklist" {
       157.240.184.0/21
       157.240.192.0/18
       163.70.128.0/17
+      163.77.160.0/20
       163.77.132.0/23
       163.77.136.0/23
       173.252.64.0/18
