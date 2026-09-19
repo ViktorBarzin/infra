@@ -37,18 +37,28 @@
 # master cleared its own when it rebooted on 2026-09-16, so the earlier "four
 # nodes, master included" note here was already out of date.
 #
-# The sentinel gate below now passes all four of its checks and has opened
-# /sentinel/gated-reboot-required on those three nodes. kured still will not
-# reboot them, because ClusterCannotTolerateNonGpuNodeLoss has been firing
-# continuously since 2026-09-06 and sits in kured's --alert-filter-regexp.
-# With --alert-filter-match-only=true that regexp is a BLOCK list, not an
-# ignore list, so a match halts every reboot. kured has been blocked by this
-# since well before the freeze existed, and logs "Reboot blocked: 1 active
-# alerts" once per hour inside each 02:00-06:00 Europe/London window.
+# ClusterCannotTolerateNonGpuNodeLoss WAS REMOVED from alertFilterRegexp on
+# 2026-09-19. It had blocked every reboot since 2026-09-06, and it was never
+# going to stop. The alert itself is honest and stays firing as a capacity
+# signal; it was simply the wrong question to gate a reboot on.
 #
-# So the reboots wait on that alert, whose remediation is manual: right-size
-# requests with krr, or add a worker. If it clears, the gate's own 24h
-# Ready-transition soak still caps it at one node per night, not three.
+# What it asks: if a worker vanished and never came back, would its pods fit on
+# the rest. Measured over the whole firing window, no. LHS floor 27.98 GiB
+# against an RHS ceiling of 17.56 GiB, 50 and 74 samples, never within 10 GiB of
+# crossing. What kured asks is different: may I borrow a node for ten to twenty
+# minutes tonight.
+#
+# Both remediations the alert's own annotation suggests are closed, which is why
+# the block had no exit. Right-sizing recovers about 3.1 GiB at p99 over 30 days
+# against a 12 to 15.5 GiB requirement, because 11 of the top 12 reservers
+# already sit at or above their own request; chasing it is the loop that shaved
+# prometheus 4Gi to 3Gi on 2026-07-26 for an unreal problem. Adding a worker is
+# out too, the hypervisor has 34.85 GiB of 267.35 GiB available with swap 70.9%
+# consumed. Capacity stays tracked in bead code-eu6l.
+#
+# The guard against a node not coming back was never this alert. It is the
+# sentinel gate below (all nodes Ready, all calico-node Running, no Ready
+# transition in 24h) plus concurrency=1 and drainTimeout=30m, all unchanged.
 #
 # An earlier version of this comment said to unfreeze only after the outpost
 # had a readiness probe. That never happened and no longer applies: the
@@ -173,7 +183,7 @@ resource "helm_release" "kured" {
       # sentinel gate's own kubectls OOM their cgroup, firing the alert that
       # blocks the reboot that would quiesce the gate) cannot recur under
       # match-only for the same reason.
-      alertFilterRegexp    = "^(KubeAPIServerDown|KubeStateMetricsDown|PrometheusRuleEvaluationFailing|NodeDown|NodeConditionBad|NodeDiskPressure|NodeMemoryPressure|NFSCSINodeDown|ClusterCannotTolerateNonGpuNodeLoss)$"
+      alertFilterRegexp    = "^(KubeAPIServerDown|KubeStateMetricsDown|PrometheusRuleEvaluationFailing|NodeDown|NodeConditionBad|NodeDiskPressure|NodeMemoryPressure|NFSCSINodeDown)$"
       alertFiringOnly      = true
       alertFilterMatchOnly = true
     }
