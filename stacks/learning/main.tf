@@ -105,6 +105,23 @@ resource "kubernetes_deployment" "learning" {
             name  = "DB_CONNECTION_STRING"
             value = "sqlite+aiosqlite:////data/learn.db"
           }
+          # Authentik email -> content directory, learning repo ADR-0004.
+          # Content lives in content/<user>/<topic>/ and each person reads their
+          # own directory and nobody else's, admins included. An identity absent
+          # from this map owns nothing and gets an empty catalog, which is the
+          # right answer for someone with no workspace rather than an error.
+          #
+          # This has to be applied BEFORE the image carrying ADR-0004 rolls out.
+          # On the older image the variable is ignored (pydantic extra="ignore");
+          # on the newer image an empty map means the owner sees no topics.
+          #
+          # Adding a person is a directory in the learning repo plus a line here.
+          # Giving two identities the same directory is how a workspace would be
+          # shared, deliberately and visibly, and nothing else grants access.
+          env {
+            name  = "USER_DIRS"
+            value = jsonencode({ "vbarzin@gmail.com" = "wizard" })
+          }
           # CONTENT_DIR + SERVE_FRONTEND_DIR are baked into the image.
           volume_mount {
             name       = "data"
