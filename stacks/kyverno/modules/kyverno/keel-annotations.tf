@@ -37,6 +37,23 @@ locals {
   }
 }
 
+# Target-level precondition keeping add-keel-annotations out of ns authentik.
+# It has to live on mutate.targets rather than in the rule's match/exclude,
+# because on a mutateExisting rule the background controller scopes its patches
+# by targets alone. See the long comment at the targets list for the measured
+# behaviour this prevents (bead code-q9iy, 2026-09-19).
+locals {
+  keel_targets_not_authentik = {
+    all = [
+      {
+        key      = "{{ target.metadata.namespace }}"
+        operator = "NotEquals"
+        value    = "authentik"
+      },
+    ]
+  }
+}
+
 resource "kubectl_manifest" "policy_inject_keel_annotations" {
   yaml_body = yamlencode({
     apiVersion = "kyverno.io/v1"
@@ -168,10 +185,45 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
         mutate = {
           # Required when mutateExistingOnPolicyUpdate=true — tells the
           # background controller which existing resources to mutate.
+          #
+          # `targets` IS THE SCOPE, NOT `match`. The namespaceSelector above
+          # filters the TRIGGER; on a mutateExisting rule the background
+          # controller patches whatever `targets` names, so an unqualified
+          # targets list reaches every Deployment, StatefulSet and DaemonSet in
+          # the cluster regardless of `keel.sh/enrolled`. This is the same trap
+          # that set policy=never on 229 workloads on 2026-08-16, and the note
+          # written afterwards did not fix the list it was written about.
+          #
+          # Measured 2026-09-19: 42 workloads in namespaces nobody enrolled
+          # carried keel annotations, 23 of them at policy=patch, including
+          # kube-system/coredns, calico-kube-controllers, calico-typha,
+          # calico-apiserver and local-path-provisioner.
+          #
+          # The precondition below excludes ns authentik ONLY, which is the
+          # scope Viktor chose on 2026-09-19 (bead code-q9iy). The other 22
+          # are a known, accepted exposure and are NOT fixed here.
+          #
+          # Why authentik needed it, specifically: authentik's outpost
+          # controller recreates its outpost Deployments, and a freshly created
+          # one has no annotations at all. This rule's `+(keel.sh/policy)` is
+          # anchor-preserve, so on that blank slate it wins the race and writes
+          # `patch` plus `trigger: poll`, which is what makes Keel watch the
+          # image. keel-never-when-another-owner then overwrites policy with
+          # `never` and Keel drops the watch -- but only after Keel has already
+          # bumped it. That is how ak-outpost-rac was rolled 2026.8.1 ->
+          # 2026.8.2 three times on 2026-09-11 while carrying policy=never, and
+          # on 2026-09-19 the gap between authentik creating the Deployment
+          # (12:43:18) and Kyverno annotating it (13:06:57) was 24 minutes.
+          #
+          # Excluding authentik here leaves the Deployment with NO trigger
+          # annotation, and Keel does not poll what has no trigger, so the race
+          # has nothing to win. keel-never-when-another-owner is deliberately
+          # left alone: it still stamps policy=never on the outposts via their
+          # goauthentik.io managed-by label, which is the outcome we want.
           targets = [
-            { apiVersion = "apps/v1", kind = "Deployment" },
-            { apiVersion = "apps/v1", kind = "StatefulSet" },
-            { apiVersion = "apps/v1", kind = "DaemonSet" },
+            { apiVersion = "apps/v1", kind = "Deployment", preconditions = local.keel_targets_not_authentik },
+            { apiVersion = "apps/v1", kind = "StatefulSet", preconditions = local.keel_targets_not_authentik },
+            { apiVersion = "apps/v1", kind = "DaemonSet", preconditions = local.keel_targets_not_authentik },
           ]
           patchStrategicMerge = {
             metadata = {
