@@ -103,16 +103,16 @@ resource "authentik_policy_expression" "skip_mfa_for_agent" {
 
   expression = <<-EOT
     # Skip the MFA stage for the agent service account, which has no
-    # authenticator and cannot enrol one. Everything else keeps MFA.
+    # authenticator and cannot enrol one. Everything else keeps MFA, and so
+    # does anything unrecognised: an empty name is not the service account.
     #
-    # ak_message rather than ak_logger: the logger wrote nothing into the
-    # policy_execution event, and this is the field that carries back what the
-    # expression actually saw. Two earlier shapes returned True here and the
-    # stage ran anyway, so the context is worth printing rather than assuming.
+    # NO ak_message HERE. A probe written with one on 2026-09-19 printed the
+    # context into the flow, which is rendered to whoever is signing in, so
+    # every human login briefly showed a debug string. The policy_execution
+    # event carries the same information for anyone debugging this; read that
+    # instead (the binding has execution_logging on).
     holder = request.context.get("pending_user") or request.user
     name = getattr(holder, "username", "") if holder is not None else ""
-    method = request.context.get("auth_method")
-    ak_message("mfa-skip probe name=%s method=%s keys=%s" % (name, method, sorted(request.context.keys())))
     return name != "${authentik_user.agent.username}"
   EOT
 }
