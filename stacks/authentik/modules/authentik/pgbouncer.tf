@@ -32,6 +32,22 @@ resource "kubernetes_deployment" "pgbouncer" {
       app  = "pgbouncer"
       tier = var.tier
     }
+    # Declared here on 2026-09-19 rather than left to Kyverno (bead code-q9iy).
+    # inject-keel-annotations no longer touches ns authentik, so a recreate of
+    # this Deployment would have come back with no keel annotations at all and
+    # quietly stopped being updated. Keel is the DELIBERATE owner of this
+    # image -- the container tracks :latest and the image is in ignore_changes
+    # below with a KEEL_IGNORE_IMAGE marker -- so the enrollment has to be
+    # stated somewhere that survives recreation.
+    #
+    # patch, not never: this is the one workload in ns authentik that is
+    # supposed to auto-update. Everything else there is pinned by Terraform,
+    # Helm or the outpost controller.
+    annotations = {
+      "keel.sh/policy"       = "patch"
+      "keel.sh/trigger"      = "poll"
+      "keel.sh/pollSchedule" = "@every 1h"
+    }
   }
 
   spec {
@@ -158,9 +174,11 @@ resource "kubernetes_deployment" "pgbouncer" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      # policy / trigger / pollSchedule are DECLARED above now, so they are
+      # deliberately no longer ignored -- Terraform owns them and an apply
+      # reasserts them. match-tag stays ignored because the Kyverno rule
+      # actively strips it (the 2026-05-26 finding that it let Keel rewrite
+      # tag strings and cross-assign images).
       metadata[0].annotations["keel.sh/match-tag"],
       spec[0].template[0].spec[0].container[0].image,             # KEEL_IGNORE_IMAGE — Keel manages tag updates
       spec[0].template[0].spec[0].container[0].image_pull_policy, # Keel flip-flops this between Always/IfNotPresent
