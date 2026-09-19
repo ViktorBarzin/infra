@@ -2,11 +2,11 @@
 #
 # Runs on the stock Playwright/python image (same as the snapshot sidecars) with
 # broker.py + templates + the static FleetView mounted via ConfigMap — NO custom
-# image, NO GHA build (the gate.py pattern). broker.py itself is pure stdlib; it
-# only needs `playwright` for the seed/screenshot SUBPROCESSES, so the entrypoint
-# pip-installs it at startup (same as the snapshot-harvester CronJob — the MS
-# image ships browsers but not the pip package). connect_over_cdp needs no local
-# browser, so PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1.
+# image, NO GHA build (the gate.py pattern). broker.py and the seed path are pure
+# stdlib; only the FleetView thumbnail SUBPROCESS (screenshot.py) needs
+# patchright, so the entrypoint pip-installs it at startup (the MS image ships
+# browsers but not the pip package). connect_over_cdp needs no local browser, so
+# PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1.
 #
 # See docs/plans/2026-07-13-chrome-service-pool-{design,plan}.md and files/broker/.
 
@@ -19,9 +19,12 @@ resource "kubernetes_config_map_v1" "broker_scripts" {
   data = {
     "broker.py"       = file("${path.module}/files/broker/broker.py")
     "worker_pod.json" = file("${path.module}/files/broker/worker_pod.json")
-    "seed_export.py"  = file("${path.module}/files/broker/seed_export.py")
     "screenshot.py"   = file("${path.module}/files/broker/screenshot.py")
     "index.html"      = file("${path.module}/files/broker/index.html")
+    # Shared with the snapshot-harvester (see main.tf's snapshot-scripts
+    # ConfigMap) so the seed and the hourly snapshot read the master the
+    # same way. Lands beside broker.py in /broker, which is how it imports.
+    "cdp_cookies.py" = file("${path.module}/files/broker/cdp_cookies.py")
   }
 }
 
@@ -67,17 +70,18 @@ resource "kubernetes_deployment" "broker" {
           name              = "broker"
           image             = local.python_image # mcr.microsoft.com/playwright/python:v1.48.0-noble
           image_pull_policy = "IfNotPresent"
-          # pip-install playwright for the seed/screenshot subprocesses (browsers
-          # already in the image; skip the download), then run the stdlib broker.
+          # pip-install patchright for the screenshot subprocess (browsers already
+          # in the image; skip the download), then run the stdlib broker.
           # Non-root (uid 1000): pip --user into a writable base ($PYTHONUSERBASE),
-          # which python3 auto-adds to sys.path for the seed/screenshot subprocesses.
+          # which python3 auto-adds to sys.path for that subprocess.
           command = ["bash", "-c"]
           args = [
             <<-EOT
             set -e
             export HOME=/tmp PYTHONUSERBASE=/tmp/py PIP_CACHE_DIR=/tmp/pipcache PIP_DISABLE_PIP_VERSION_CHECK=1
-            # patchright (playwright drop-in) for the seed/screenshot subprocesses —
-            # avoids the Runtime.enable CDP leak on the master + the caller's page.
+            # patchright (playwright drop-in) for the screenshot subprocess —
+            # avoids the Runtime.enable CDP leak on the caller's page. The seed
+            # no longer needs it: cdp_cookies.py is stdlib.
             python3 -c 'import patchright' 2>/dev/null \
               || pip install --user --quiet --no-warn-script-location patchright==1.61.1
             exec python3 /broker/broker.py

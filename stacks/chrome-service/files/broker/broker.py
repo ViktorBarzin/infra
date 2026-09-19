@@ -3,19 +3,25 @@
 
 Stateless: session state is reconstructed from pod labels each request (no Redis).
 Talks to the apiserver via the in-pod ServiceAccount token + CA (the android-emulator
-gate.py pattern). Uses Playwright over CDP ONLY (no local browser) for the on-demand
-storage_state() seed. Serves the FleetView SPA (static/) + a JSON API + /metrics.
+gate.py pattern). The on-demand storage_state() seed is read from the master over raw
+CDP (cdp_cookies.py, stdlib only). Serves the FleetView SPA (static/) + a JSON API +
+/metrics.
 
 Design: docs/plans/2026-07-13-chrome-service-pool-design.md
 """
 import json
 import os
 import ssl
+import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cdp_cookies  # noqa: E402  (mounted beside broker.py in the same ConfigMap)
 
 # ------------------------------------------------------------------ config
 NS = os.environ.get("NAMESPACE", "chrome-service")
@@ -35,6 +41,12 @@ MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "6"))       # burst ceiling (des
 IDLE_TTL = int(os.environ.get("IDLE_TTL_SECONDS", "1200"))  # 20m (design D7)
 DEADLINE = int(os.environ.get("SESSION_DEADLINE_SECONDS", "3600"))  # 60m hard cap (D7)
 SEED_TTL = int(os.environ.get("SEED_TTL_SECONDS", "10"))    # absorb an acquire burst (A7)
+# How old the last good seed may be before a failing export stops serving it.
+# The master goes away for a few minutes whenever its pod is recreated (three
+# times in 90 minutes on 2026-09-19); without this every run in that window
+# silently loses Viktor's logins instead of reusing cookies a few minutes old.
+# The error counter still ticks and the alert still fires while this is in use.
+SEED_STALE_MAX = int(os.environ.get("SEED_STALE_MAX_SECONDS", "900"))
 # How long release waits for closed targets to actually disappear. /json/close
 # is asynchronous, and a release that blocks for long would hold up the caller.
 RESET_CONFIRM_SECONDS = float(os.environ.get("RESET_CONFIRM_SECONDS", "3"))
@@ -323,31 +335,50 @@ def current_url(ip):
 
 
 # ------------------------------------------------------------------ seed
-SEED_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed_export.py")
+def usable_stale_age(now: float, cached_at: float, has_cached: bool,
+                     max_age: float = SEED_STALE_MAX):
+    """Age of the last good seed if a failed export may serve it, else None."""
+    if not has_cached:
+        return None
+    age = now - cached_at
+    if age < 0 or age > max_age:
+        return None
+    return age
 
 
 def storage_state():
-    """Fresh cookies+localStorage from the LIVE master, cached SEED_TTL seconds so an
-    acquire-burst shares one export. Runs seed_export.py as a SUBPROCESS (keeps Playwright's
-    sync API off the HTTP server's worker threads); connect_over_cdp().close() only
-    disconnects — it never kills the master (same semantics as browser_runner.js)."""
-    import subprocess
+    """The master's cookies, cached SEED_TTL seconds so an acquire-burst shares one read.
+
+    Read over raw CDP (one Storage.getCookies on the browser endpoint) rather than
+    through playwright. connect_over_cdp enumerates every target and asserts each
+    carries a browserContextId; an orphaned service worker has none, which is what
+    broke this path for ten hours on 2026-09-18. See files/cdp_cookies.py.
+
+    Returns (state, stale_age) — stale_age is None for a fresh read, or the age in
+    seconds of the last good seed being served because the export just failed.
+    """
     with _seed_lock:
         now = time.time()
         if _seed["json"] is not None and now - _seed["at"] < SEED_TTL:
-            return _seed["json"]
+            return _seed["json"], None
         t0 = time.time()
         try:
-            out = subprocess.check_output(
-                ["python3", SEED_SCRIPT],
-                env={**os.environ, "MASTER_CDP_URL": MASTER_CDP},
-                timeout=30, stderr=subprocess.PIPE)
-            st = json.loads(out)
+            st = cdp_cookies.storage_state(MASTER_CDP)
             _seed.update(at=now, json=st, last_export_seconds=time.time() - t0)
-            return st
-        except Exception:
+            return st, None
+        except Exception as e:
             _seed["errors"] += 1
-            raise
+            # The subprocess this used to run swallowed its own stderr, so a year's
+            # worth of 502s said only "seed export failed" with no reason. Log it.
+            print("[broker] seed export from %s failed: %s: %s" % (MASTER_CDP, type(e).__name__, e),
+                  file=sys.stderr, flush=True)
+            traceback.print_exc()
+            age = usable_stale_age(time.time(), _seed["at"], _seed["json"] is not None)
+            if age is None:
+                raise
+            print("[broker] serving the last good seed, %.0fs old" % age,
+                  file=sys.stderr, flush=True)
+            return _seed["json"], age
 
 
 # ------------------------------------------------------------------ thumbnails
@@ -488,9 +519,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"sessions": ws})
         if path == "/seed":
             try:
-                return self._send(200, storage_state())
+                state, stale_age = storage_state()
             except Exception as e:
-                return self._send(502, {"error": f"seed export failed: {e}"})
+                return self._send(502, {"error": f"seed export failed: {type(e).__name__}: {e}"})
+            extra = {"X-Seed-Stale-Seconds": "%.0f" % stale_age} if stale_age is not None else None
+            return self._send(200, state, extra=extra)
         if path == "/thumb":
             from urllib.parse import parse_qs, urlparse
             sess = parse_qs(urlparse(self.path).query).get("session", [""])[0]
@@ -564,7 +597,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _serve_static(self, path):
         # Allowlist static asset extensions — STATIC_DIR also holds broker.py,
-        # seed_export.py, screenshot.py, worker_pod.json (mounted in the same
+        # cdp_cookies.py, screenshot.py, worker_pod.json (mounted in the same
         # ConfigMap dir); anything not an allowlisted asset → SPA fallback so the
         # broker's own source is never served.
         allowed = (".html", ".css", ".js", ".png", ".svg", ".ico", ".woff2")
