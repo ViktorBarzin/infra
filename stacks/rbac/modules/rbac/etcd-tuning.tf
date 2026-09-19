@@ -104,9 +104,27 @@ else:
       <<-SCRIPT
       set -u
       KC="sudo kubectl --kubeconfig /etc/kubernetes/admin.conf"
+
+      # Wait for the apiserver before reading anything. The step above may have
+      # just rewritten etcd.yaml, and on a single-node control plane that
+      # restarts etcd and takes the datastore away for a few seconds, so a
+      # kubectl here races it. Getting this wrong is not theoretical: the
+      # 2026-09-19 apply that added this step fixed the manifest and then read
+      # an empty ConfigMap, took the "could not read" branch, and reported
+      # success having reconciled nothing. The ConfigMap had to be written by
+      # hand afterwards.
+      for i in $(seq 1 60); do
+        if curl -sk https://localhost:6443/livez 2>/dev/null | grep -q '^ok'; then break; fi
+        sleep 2
+      done
+
       CC=$($KC -n kube-system get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}' 2>/dev/null || true)
       if [ -z "$CC" ]; then
-        echo "WARN: could not read kubeadm-config; etcd metrics will not survive the next kubeadm upgrade"
+        # Loud on purpose. This branch reads as success to Terraform, so
+        # without the marker the only symptom is etcd metrics quietly vanishing
+        # at the NEXT upgrade, months from now.
+        echo "WARN: RECONCILE DID NOT RUN. Could not read kubeadm-config after waiting 120s for the apiserver."
+        echo "WARN: etcd metrics will NOT survive the next kubeadm upgrade. Re-apply the rbac stack once the control plane is healthy."
       elif printf '%s' "$CC" | grep -q 'name: listen-metrics-urls'; then
         echo "kubeadm-config already carries listen-metrics-urls (no drift)"
       else
@@ -157,6 +175,6 @@ print('kubeadm-config rewritten with ' + WANT_NAME)
     # Bumped when the kubeadm-config reconcile step was added (2026-09-19) so
     # the new step actually runs against a master that already has the right
     # manifest — the other two triggers were unchanged by that work.
-    kubeadm_config_reconcile = "v1"
+    kubeadm_config_reconcile = "v2"
   }
 }
