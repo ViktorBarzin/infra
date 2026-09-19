@@ -385,3 +385,53 @@ func TestMemoryUpdateInvalidUnlinkFailsBeforeAPI(t *testing.T) {
 		t.Fatalf("invalid unlink must fail before any API call, saw %+v", rec.reqs)
 	}
 }
+
+// `homelab memory update <id> "<new text>"` looks exactly like `memory store`
+// and like the real vault CLI's positional style, so it gets typed. It used
+// to take the id, silently discard the content, PUT nothing, and still print
+// {"updated":<id>}. Four memories were reported as updated on 2026-09-19 and
+// none of them were; one of them had recorded this same bug six days earlier.
+// A parser whose unrecognised input falls through to a quieter, wronger
+// default is the shape to refuse (see also the vault -field=K leak).
+func TestMemoryUpdateRejectsStrayArguments(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"content passed positionally", []string{"123", "the new text"}, "the new text"},
+		{"a flag update does not accept", []string{"123", "--category", "gotchas", "--content", "x"}, "--category"},
+		{"a second bare id", []string{"123", "456"}, "456"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := memoryUpdate(c.args)
+			if err == nil {
+				t.Fatalf("stray argument was accepted silently; that is the bug")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error must name the offending argument %q, got: %v", c.want, err)
+			}
+			// Naming --content in the message is what turns the error into a fix.
+			if !strings.Contains(err.Error(), "--content") {
+				t.Errorf("error should point at --content, got: %v", err)
+			}
+		})
+	}
+}
+
+// The forms that were always correct must keep parsing. These stop before any
+// network call, so an error here is a parse error, not a connection failure.
+func TestMemoryUpdateStillAcceptsValidFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"123", "--content", "new text"},
+		{"123", "--importance", "0.8"},
+		{"123", "--link", "part-of:456"},
+		{"--content", "flag first, id second", "123"},
+	} {
+		err := memoryUpdate(args)
+		if err != nil && (strings.Contains(err.Error(), "unexpected") || strings.Contains(err.Error(), "usage:")) {
+			t.Errorf("%v was rejected at parse time: %v", args, err)
+		}
+	}
+}
