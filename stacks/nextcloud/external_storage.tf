@@ -54,8 +54,8 @@ resource "kubernetes_config_map_v1" "nextcloud_external_storage_manifest" {
       ]
       archiveMounts = [
         {
-          mountPoint       = "/anca-elements"
-          dataDir          = "/mnt/pve-nfs/anca-elements"
+          mountPoint = "/anca-elements"
+          dataDir    = "/mnt/pve-nfs/anca-elements"
           # NC usernames (not display names): admin is Viktor, anca is Anca.
           applicableUsers  = ["anca", "admin"]
           applicableGroups = []
@@ -132,8 +132,21 @@ resource "kubernetes_job_v1" "nextcloud_external_storage_bootstrap" {
   }
 
   spec {
-    backoff_limit              = 5
-    ttl_seconds_after_finished = 600
+    backoff_limit = 5
+
+    # No ttl_seconds_after_finished on purpose (removed 2026-09-19). It was
+    # 600, and because this Job has a fixed name and Terraform manages it, the
+    # object deleted itself ten minutes after every run and every plan
+    # afterwards wanted to create it again. That is what the nightly drift
+    # detector had been reporting as nextcloud drift for 360 hours, and
+    # reconciling it only reset the clock: the Job ran, found all three mounts
+    # already present, and vanished again. Keeping the completed Job means
+    # Terraform can see what it owns, so the stack reads clean between changes.
+    #
+    # The cost is one completed Job object sitting in the namespace, and a
+    # change to the manifest ConfigMap now needs the Job replaced rather than
+    # merely created. `terraform apply -replace` on this resource, or deleting
+    # the Job first, is how you re-run the bootstrap by hand.
 
     template {
       metadata {}
