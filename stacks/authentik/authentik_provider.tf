@@ -125,7 +125,15 @@ resource "authentik_outpost" "embedded" {
     # patch, and merging its 2-key reference selector over a 5-key live one
     # yields a 6-key selector matching ZERO pods, which never converges.
     # Measured with kubectl --dry-run=server on 2026-09-18.
-    kubernetes_disabled_components   = ["service"]
+    # "ingress" added 2026-09-19 alongside "service". Both callback Ingresses
+    # serve authentik.viktorbarzin.me/outpost.goauthentik.io and Traefik takes
+    # BOTH, because it runs with no ingressClass filter, so a middleware
+    # attached to ours alone would fire only on the requests Traefik happened to
+    # route there. Measured during the cutover: 5 callbacks went to the
+    # controller's router and 1 to ours. Disabling the reconciler lets the
+    # controller's copy be deleted for good, leaving one Ingress we own and can
+    # attach middleware to.
+    kubernetes_disabled_components   = ["service", "ingress"]
     kubernetes_ingress_annotations   = {}
     kubernetes_ingress_secret_name   = "authentik-outpost-tls"
     kubernetes_httproute_annotations = {}
