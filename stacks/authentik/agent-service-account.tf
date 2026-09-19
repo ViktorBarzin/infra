@@ -100,10 +100,19 @@ resource "authentik_policy_expression" "skip_mfa_for_agent" {
   expression = <<-EOT
     # Skip the MFA stage only for the agent service account, which has no
     # authenticator and cannot enrol one. Anything else keeps MFA.
-    pending = request.context.get("pending_user")
-    if pending is None:
-        return True
-    return pending.username != "${authentik_user.agent.username}"
+    #
+    # BOTH SOURCES, because neither is reliable alone. The identification
+    # stage puts the user in context as `pending_user`, and that is what this
+    # read on 2026-09-19 found empty at the point the stage is evaluated, so
+    # an expression reading only the context returned True and the stage ran
+    # anyway. `request.user` carries it on the paths where the context does
+    # not.
+    #
+    # Unknown means MFA stays on: if neither source names a user the name is
+    # empty, which is not the service account, so this returns True.
+    holder = request.context.get("pending_user") or request.user
+    name = getattr(holder, "username", "") if holder is not None else ""
+    return name != "${authentik_user.agent.username}"
   EOT
 }
 
