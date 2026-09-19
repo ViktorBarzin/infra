@@ -61,13 +61,11 @@ resource "kubernetes_deployment" "health" {
     labels = {
       app  = "health"
       tier = local.tiers.aux
-      # Scale-to-zero enrollment (ADR-0022): parked when idle, woken by the
-      # first request through the ingress (design doc 2026-07-12).
-      "sablier.enable" = "true"
-      "sablier.group"  = "health"
-      # 5s settling delay after k8s readiness: covers Traefik endpoint-list
-      # propagation so the first forwarded request never hits a 503 race.
-      "sablier.ready-after" = "5s"
+      # NOT enrolled in scale-to-zero (ADR-0022), deliberately. This is a gym
+      # app opened mid-set on a phone, and a parked pod measured 67s to first
+      # byte on 2026-09-19 — 30s of that pulling the 269MB image onto a node
+      # with no cached copy. One small always-warm pod on hardware we already
+      # own is the cheaper trade.
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
@@ -93,9 +91,17 @@ resource "kubernetes_deployment" "health" {
         }
       }
       spec {
+        # The ghcr package is PRIVATE (it follows the private mirror repo), and
+        # the node-side pull-through cache at 10.0.20.10:5010 cannot
+        # authenticate, so pulls go straight to GitHub and need this secret.
+        # Kyverno clones it into the namespace via the ghcr_private_namespaces
+        # allowlist in stacks/kyverno.
+        image_pull_secrets {
+          name = "ghcr-credentials"
+        }
         container {
           name  = "health"
-          image = "viktorbarzin/health:latest"
+          image = "ghcr.io/viktorbarzin/health:latest"
 
           port {
             container_port = 3000
@@ -218,7 +224,8 @@ resource "kubernetes_deployment" "health" {
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].replicas,                                                   # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
+      # replicas is NOT ignored any more: Sablier no longer manages this
+      # Deployment, so Terraform owns the count and keeps it pinned at 1.
     ]
   }
 }
@@ -255,10 +262,7 @@ resource "kubernetes_service" "health" {
 
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
-  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
-  sablier = {
-    group = "health"
-  }
+  # No Sablier: the pod stays warm (see the Deployment above).
   auth = "required"
   # ADR-0026 / code-6m20: auth-grey host. Dashboard UI behind Authentik,
   # small JSON payloads. Proxied rides the zone-wide wildcard CNAME
@@ -292,10 +296,7 @@ module "ingress" {
 # (ADR-0008). Same `health` deployment; acts as DEV_AUTH_EMAIL=vbarzin@gmail.com.
 module "ingress_test" {
   source = "../../modules/kubernetes/ingress_factory"
-  # Scale-to-zero (ADR-0022): held-request wake, 3h idle park.
-  sablier = {
-    group = "health"
-  }
+  # No Sablier: the pod stays warm (see the Deployment above).
   # auth = "none": LAN-only (allow_local_access_only) test host — no public
   # exposure; the public health.viktorbarzin.me ingress above stays
   # auth="required". No user data gate here by design — it serves the real app
@@ -323,14 +324,11 @@ module "ingress_test" {
 # because Shortcuts cannot do the forward-auth dance; the spoofing hole that
 # opens is closed twice — strip-auth-headers removes any client-injected
 # X-authentik-* before the app sees it, and the path allowlist keeps every
-# other route unreachable on this host. Sablier "blocking": a programmatic
-# POST must be held while the pod wakes, never answered with the wake page.
+# other route unreachable on this host.
 module "ingress_api" {
   source = "../../modules/kubernetes/ingress_factory"
-  sablier = {
-    group    = "health"
-    strategy = "blocking"
-  }
+  # No Sablier: the pod stays warm, so an ingest POST is answered immediately
+  # rather than held while a parked pod starts.
   # auth = "none": bearer-token push-ingest endpoint (health ADR-0012) — iOS
   # Shortcuts can't do the forward-auth dance; the app validates per-user
   # hashed tokens itself, strip-auth-headers kills spoofed X-authentik-*, and
