@@ -176,7 +176,8 @@ def test_release_worker_resets_a_warm_pod_but_not_a_bare_one(monkeypatch):
     the one that has to be cleaned before the next caller gets it."""
     calls = []
     monkeypatch.setattr(broker, "kube", lambda *a, **k: calls.append(a[0]))
-    monkeypatch.setattr(broker, "reset_browser", lambda ip: calls.append(f"reset:{ip}"))
+    monkeypatch.setattr(broker, "reset_browser",
+                        lambda ip: (calls.append(f"reset:{ip}"), (1, 0))[1])
 
     broker.release_worker({"name": "w", "bare": True, "ip": "10.10.1.5"})
     assert "reset:10.10.1.5" not in calls and "DELETE" in calls
@@ -188,8 +189,8 @@ def test_release_worker_resets_a_warm_pod_but_not_a_bare_one(monkeypatch):
 
 def test_reset_browser_without_an_ip_does_nothing():
     """A pod with no IP yet must not make release hang on a connect timeout."""
-    assert broker.reset_browser("") == 0
-    assert broker.reset_browser(None) == 0
+    assert broker.reset_browser("") == (0, 0)
+    assert broker.reset_browser(None) == (0, 0)
 
 
 def test_plan_browser_reset_closes_pages_before_workers():
@@ -265,7 +266,7 @@ def _patch_cdp(monkeypatch, fake):
 def test_reset_browser_closes_the_session_targets(monkeypatch):
     fake = _FakeCDP(LIVE_TABS)
     _patch_cdp(monkeypatch, fake)
-    assert broker.reset_browser("10.0.0.1") == 2
+    assert broker.reset_browser("10.0.0.1") == (2, 0)
     assert sorted(fake.closed_calls) == ["P1", "S3"]
     assert "B1" not in fake.closed_calls and "S1" not in fake.closed_calls
 
@@ -275,7 +276,7 @@ def test_reset_browser_waits_for_an_asynchronous_close(monkeypatch):
     snapshot taken right after its close returned 200. A 200 is not proof."""
     fake = _FakeCDP(LIVE_TABS, close_delay=3)
     _patch_cdp(monkeypatch, fake)
-    assert broker.reset_browser("10.0.0.1") == 2
+    assert broker.reset_browser("10.0.0.1") == (2, 0)
     assert fake.list_calls > 2, "should have re-listed until the targets went"
 
 
@@ -284,7 +285,7 @@ def test_reset_browser_gives_up_on_a_target_that_will_not_die(monkeypatch):
     fake = _FakeCDP(LIVE_TABS, close_delay=1, never_dies=("S3",))
     _patch_cdp(monkeypatch, fake)
     monkeypatch.setattr(broker, "RESET_CONFIRM_SECONDS", 0.05)
-    assert broker.reset_browser("10.0.0.1") == 1  # the page went, the worker did not
+    assert broker.reset_browser("10.0.0.1") == (1, 1)  # the page went, the worker did not
 
 
 def test_reset_browser_reopens_a_blank_only_when_none_survived(monkeypatch):
@@ -303,7 +304,7 @@ def test_reset_browser_survives_an_unreachable_worker(monkeypatch):
     def boom(*a, **k):
         raise OSError("connection refused")
     monkeypatch.setattr(broker.urllib.request, "urlopen", boom)
-    assert broker.reset_browser("10.0.0.1") == 0
+    assert broker.reset_browser("10.0.0.1") == (0, 0)
 
 
 # ------------------------------------------------------ session heartbeat
@@ -380,12 +381,60 @@ def test_release_clears_the_heartbeat(monkeypatch):
     session look reclaimable the moment it is claimed."""
     patches = []
     monkeypatch.setattr(broker, "kube", lambda m, p, b=None: patches.append((m, b)))
-    monkeypatch.setattr(broker, "reset_browser", lambda ip: 0)
+    monkeypatch.setattr(broker, "reset_browser", lambda ip: (0, 0))
     broker.release_worker({"name": "w", "bare": False, "ip": "10.10.1.5"})
     method, body = patches[-1]
     assert method == "PATCH"
     assert body["metadata"]["annotations"]["chrome-pool/heartbeat"] is None
     assert body["metadata"]["labels"]["chrome-pool/session"] == ""
+
+
+def test_release_recycles_a_warm_pod_whose_browser_will_not_clean(monkeypatch):
+    """The whole point of counting survivors.
+
+    Measured 2026-09-19 against the real embed.st orphan: Target.closeTarget
+    returned success, the target stayed in /json/list through the release, and
+    the next caller's connectOverCDP died on it after its own sweep had logged
+    "cleared". Replacing the pod was the only remedy that worked, so a stuck
+    target must delete the pod rather than hand the browser on.
+    """
+    calls = []
+    monkeypatch.setattr(broker, "kube", lambda m, p, b=None: calls.append((m, p)))
+    monkeypatch.setattr(broker, "reset_browser", lambda ip: (1, 1))
+
+    broker.release_worker({"name": "chrome-worker-warm-x", "bare": False, "ip": "10.10.1.5"})
+
+    methods = [m for m, _ in calls]
+    assert methods == ["DELETE"], f"expected a pod delete, got {methods}"
+    assert "chrome-worker-warm-x" in calls[0][1]
+
+
+def test_release_does_not_recycle_when_the_reset_worked(monkeypatch):
+    """A clean reset keeps the pod warm. Recycling costs the next caller a
+    ~30s cold start, so it must not happen on the ordinary path."""
+    calls = []
+    monkeypatch.setattr(broker, "kube", lambda m, p, b=None: calls.append((m, p)))
+    monkeypatch.setattr(broker, "reset_browser", lambda ip: (3, 0))
+
+    broker.release_worker({"name": "chrome-worker-warm-x", "bare": False, "ip": "10.10.1.5"})
+
+    methods = [m for m, _ in calls]
+    assert methods == ["PATCH"], f"expected relabel only, got {methods}"
+
+
+def test_a_stuck_target_skips_reopening_the_blank_page(monkeypatch):
+    """No point restoring the baseline tab on a pod about to be deleted."""
+    fake = _FakeCDP(
+        [{"id": "A", "type": "page", "url": "https://example.com/"}],
+        close_delay=1, never_dies=("A",),
+    )
+    _patch_cdp(monkeypatch, fake)
+    monkeypatch.setattr(broker, "RESET_CONFIRM_SECONDS", 0.05)
+
+    closed, stuck = broker.reset_browser("10.0.0.1")
+
+    assert (closed, stuck) == (0, 1)
+    assert fake.new_calls == [], "should not reopen a blank on a doomed pod"
 
 
 def test_heartbeat_worker_stamps_only_the_annotation(monkeypatch):
