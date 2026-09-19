@@ -204,14 +204,16 @@ Pinned via Terraform in `stacks/authentik/`:
 |------|-------|---------|--------|
 | `UserLoginStage.session_duration` on `default-authentication-login` | `weeks=4` | `authentik_stage_user_login.default_login` in `authentik_provider.tf` | Authenticated users stay logged in 4 weeks across browser restarts. No sliding refresh — resets on each login. Used by password login (`default-authentication-flow`) AND passkey login (`webauthn` flow — both terminate on this stage). |
 | `UserLoginStage.session_duration` on `default-source-authentication-login` | `weeks=4` | `authentik_stage_user_login.default_source_login` in `authentik_provider.tf` (imported 2026-06-20, id `4c6977d2-…`) | **Social logins** (Google/GitHub/Facebook, via `default-source-authentication-flow`). Was the provider default `seconds=0`, which fell back to `UNAUTHENTICATED_AGE=hours=2` — so social logins expired every **2h** while password/passkey lasted 4 weeks. Pinned `weeks=4` on 2026-06-20 to make all login paths consistent. (Surfaced when the 2026-06-18 passkey wipe forced fallback to Google login → "re-login multiple times daily".) |
-| `ProxyProvider.access_token_validity` on `Provider for Domain wide catch all` | `weeks=4` | `authentik_provider_proxy.catchall.access_token_validity` in `authentik_provider.tf` | Cookie `Max-Age` on `authentik_proxy_*` and `expires` on rows in `authentik_providers_proxy_proxysession`. Bumped 2026-05-10 from `hours=168`. **Bumping requires `kubectl rollout restart deploy/ak-outpost-authentik-embedded-outpost`** — the gorilla session store binds the value once at outpost startup; the 5-min provider refresh logs `"reusing existing session store"` and skips rebuild. |
+| `ProxyProvider.access_token_validity` on `Provider for Domain wide catch all` | `weeks=4` | `authentik_provider_proxy.catchall.access_token_validity` in `authentik_provider.tf` | Cookie `Max-Age` on `authentik_proxy_*` and `expires` on rows in `authentik_providers_proxy_proxysession`. Bumped 2026-05-10 from `hours=168`. **Bumping requires restarting whatever hosts the outpost** — the session store binds the value once at outpost startup and the 5-min provider refresh logs `"reusing existing session store"` rather than rebuilding. Since 2026-09-19 that is `kubectl rollout restart deploy/goauthentik-server`, not the standalone outpost Deployment, which no longer exists. |
 | `AUTHENTIK_SESSIONS__UNAUTHENTICATED_AGE` (server + worker) | `hours=2` | `server.env` + `worker.env` in `modules/authentik/values.yaml` | Anonymous Django sessions (bots, healthcheckers, partial flows) are reaped within 2h instead of the 1d default. |
 
 Notes:
 - There is **no** `Brand.session_duration`; `UserLoginStage` is the only correct lever for authenticated session lifetime.
 - Embedded outpost session storage: PostgreSQL table `authentik_providers_proxy_proxysession` in authentik 2025.10+ (PR #16628), but **only when `IsEmbedded()` returns true** (i.e. `Outpost.managed == "goauthentik.io/outposts/embedded"`). Our outpost record had `managed=null` until 2026-05-10, which silently kept it on the gorilla `FilesystemStore` at `/dev/shm` (TMPDIR) and re-exposed the 2026-04-18 mismatched-session-ID class on every pod restart. Fix landed 2026-05-10: see `authentik_outpost.embedded` in `authentik_provider.tf` and post-mortem `2026-04-18-authentik-outpost-shm-full.md`.
-- The proxy outpost service has a known goauthentik 2026.2.2 bug (`internal/outpost/controllers/k8s/service.py:52`): for embedded outposts the controller sets the Service selector to `app.kubernetes.io/name=authentik` (the server pods), not `authentik-outpost-proxy`. We work around it via a `kubernetes_json_patches.service` patch on the outpost record (replaces `/spec/selector` with the outpost's own labels). Without this, endpoints are empty and Traefik forward-auth fails over to the Basic Auth realm `Emergency Access`.
-- The standalone embedded-outpost deployment needs `AUTHENTIK_POSTGRESQL__{HOST,PORT,USER,PASSWORD,NAME}` env vars to reach the dbaas cluster — codified via `kubernetes_json_patches.deployment` envFrom the shared `goauthentik` Secret. The `app.kubernetes.io/component=server` pod label is also injected via JSON patch (matches the `component:server` half of the Service selector that the controller adds for embedded outposts).
+- **The outpost has run INLINE in the goauthentik-server pods since 2026-09-19** (bead code-osvg), so it has no Deployment, no pods and no images of its own. What made the old standalone arrangement awkward is upstream's design rather than a defect: `src/outpost/event.rs:186` says an embedded outpost reaches the core over a unix socket that only exists when the binary is built with the core feature, which is why `proxy:2026.2.6` was the newest image that ever worked standalone.
+- Consequently `kubernetes_json_patches` on the outpost record does nothing. `DeploymentReconciler.noop` returns `self.is_embedded`, so authentik never writes that Deployment and never applies a patch to it. The patches that used to live there (dshm volume, resources, a `component=server` pod label, five `AUTHENTIK_POSTGRESQL__*` env vars, a readinessProbe) were removed on 2026-09-19 once that was understood.
+- The Service `ak-outpost-authentik-embedded-outpost` is Terraform-owned (`modules/authentik/outpost-service.tf`) with a pinned `cluster_ip`, selecting `app.kubernetes.io/{name=authentik,component=server}`. `"service"` and `"ingress"` are both in `kubernetes_disabled_components`: the Service reconciler patches with a whole-object merge, which merges its 2-key reference selector over our 5-key live one into a 6-key selector matching zero pods, and the Ingress reconciler used to write a second Ingress for the same host and path that Traefik also picked up, so a middleware on ours fired only on some requests.
+- Earlier versions of this file described a goauthentik 2026.2.2 bug at `internal/outpost/controllers/k8s/service.py:52` setting the selector to the server pods. That selector is now the correct one, because the server pods are where the outpost lives.
 - `ProxyProvider.remember_me_offset` stays UI-managed via `ignore_changes`.
 - The Authentik provider's resource schema does **not** expose the `Outpost.managed` field. We rely on TF's "write only fields it knows about" semantic: the server-set `goauthentik.io/outposts/embedded` value is preserved across applies because Terraform never writes `managed`. Don't change the resource provider schema expectations without verifying this assumption holds.
 
@@ -235,31 +237,56 @@ Run after **any** of these:
 - `goauthentik/authentik` Terraform provider version bump.
 - Outpost pod recreation (kured reboot, eviction, manual `rollout restart`, scheduler move).
 
-The fragile surfaces are the `kubernetes_json_patches` and the `Outpost.managed` field — both rely on assumptions that can silently break across upgrades. The checklist exercises the same path the alerts watch, so it doubles as a smoke test for the alerts.
+The fragile surface is the `Outpost.managed` field, which relies on an assumption that can break across upgrades. The checklist exercises the same path the alerts watch, so it doubles as a smoke test for the alerts. Rewritten 2026-09-19: steps 1-4 used to drive `deploy/ak-outpost-authentik-embedded-outpost`, which no longer exists.
 
 ```bash
-# 1. Service routes to the outpost pods (NOT the server pods).
-#    Empty endpoints => auth-proxy fallback fires; expected: TWO pod IPs
-#    (kubernetes_replicas=2 since 2026-06-10), ports 9000/9300/9443.
+# 1. The Service routes to the goauthentik-server pods, which is where the
+#    inline outpost lives. Empty endpoints => the auth-proxy fallback fires
+#    and the whole estate gets Emergency Access basic-auth. Expected: THREE
+#    pod IPs, all named goauthentik-server-*.
 kubectl -n authentik get endpoints ak-outpost-authentik-embedded-outpost
 
-# 2. Service selector still excludes the server pods. Expected: includes
-#    `app.kubernetes.io/name: authentik-outpost-proxy`. If it flips to
-#    `name: authentik`, the goauthentik upstream bug came back or our
-#    JSON patch was unset.
-kubectl -n authentik get svc ak-outpost-authentik-embedded-outpost -o jsonpath='{.spec.selector}'
+# 2. Selector and ClusterIP. Expected exactly
+#    {"app.kubernetes.io/component":"server","app.kubernetes.io/name":"authentik"}
+#    and 10.101.169.236. The address is pinned in Terraform because nginx OSS
+#    caches it for the life of the worker, so a change here means every
+#    forward-auth host is one connect timeout from the basicAuth fallback.
+kubectl -n authentik get svc ak-outpost-authentik-embedded-outpost \
+  -o jsonpath='{.spec.clusterIP}{"  "}{.spec.selector}{"\n"}'
 
-# 3. Outpost mode + session backend. Expected log lines on startup:
-#      {"embedded":true,"event":"Outpost mode",...}
-#      {"event":"using PostgreSQL session backend",...}
-#    If embedded=false or `using filesystem session backend`, the postgres
-#    fix is broken — likely `Outpost.managed` got cleared, or the upstream
-#    schema started exposing `managed` and TF reset it.
-kubectl -n authentik logs deploy/ak-outpost-authentik-embedded-outpost | grep -E '"Outpost mode"|"session backend"' | head -3
+# 3. `Outpost.managed` survived the last apply. This is the fragile bit: the
+#    Terraform provider does not expose the field, and we rely on TF only
+#    writing fields it knows about. Expected exactly
+#    'goauthentik.io/outposts/embedded' on the embedded record; None means
+#    IsEmbedded() is false, the PostgreSQL session backend is not loaded, and
+#    sessions have silently fallen back to the filesystem store.
+#    (The old grep for '"Outpost mode"' / 'session backend' log lines does NOT
+#    work here — those were emitted by the standalone Go outpost's own
+#    container, and the inline outpost does not write them to the server log.)
+kubectl -n authentik exec deploy/goauthentik-server -- ak shell -c "
+from authentik.outposts.models import Outpost
+for o in Outpost.objects.all():
+    print(f'{o.name!r} managed={o.managed!r}')
+"
 
-# 4. /dev/shm is essentially empty (postgres backend = no filesystem use).
-#    A row count > a few dozen indicates filesystem fallback is firing.
-kubectl -n authentik exec deploy/ak-outpost-authentik-embedded-outpost -- sh -c 'df -h /dev/shm; ls /dev/shm | wc -l'
+# 4. Forward-auth answers on a server pod. Expected 302 — the correct answer
+#    for a request carrying no session. 000/refused means nothing is
+#    listening, 500 means the outpost is up but broken. Redirect-following is
+#    disabled on purpose: urllib would otherwise chase the 302 to the login
+#    page and report a misleading 200.
+kubectl -n authentik exec deploy/goauthentik-server -- python3 -c "
+import urllib.request as u
+class NR(u.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k): return None
+try:
+    r = u.build_opener(NR).open(u.Request(
+        'http://127.0.0.1:9000/outpost.goauthentik.io/auth/traefik',
+        headers={'X-Forwarded-Host': 'grafana.viktorbarzin.me',
+                 'X-Forwarded-Proto': 'https', 'X-Forwarded-Uri': '/'}), timeout=6)
+    print(r.status)
+except u.HTTPError as e:
+    print(e.code)
+"
 
 # 5. Postgres session table is growing with traffic. Expected: rows with
 #    `expires` ~28 days out (matches access_token_validity = weeks=4).
