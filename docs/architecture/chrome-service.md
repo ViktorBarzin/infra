@@ -547,11 +547,29 @@ CDP client is **patchright-core** (playwright-core drop-in that closes the
   URL scheme, pages close before their service workers, and because
   `/json/close` answers "Target is closing" and returns early, release
   re-lists for up to `RESET_CONFIRM_SECONDS` (3s) rather than trusting
-  the 200. Best effort throughout: a worker that will not clean still
-  returns to standby, since wedging the pool would be worse. A
-  Playwright client that is still attached will restart its own service
-  worker faster than the reset closes it, which is why this runs at
-  release and not while a session is live.
+  the 200. A Playwright client that is still attached will restart its
+  own service worker faster than the reset closes it, which is why this
+  runs at release and not while a session is live.
+- **A worker whose browser will not clean is RECYCLED, not handed on**
+  (since 2026-09-19, and this corrects what shipped earlier the same
+  day) — the first version said "best effort: a worker that will not
+  clean still returns to standby", which was wrong about the case that
+  matters. Measured against the real `embed.st` orphan:
+  `Target.closeTarget` returns success, the target stays in
+  `/json/list` through the release, and the next caller's
+  `connectOverCDP` dies on that same target **after its own sweep has
+  logged `cleared`**. So neither the client sweep nor the release reset
+  removes this class, and the `cleared` line is not evidence. f1-stream
+  had documented exactly this on 2026-09-06 in `backend/cdp.py`
+  (`Target.closeTarget`, `ServiceWorker.unregister` and
+  `Storage.clearDataForOrigin` all return success while the target
+  stays), twelve days before infra #98 was filed against it.
+  `reset_browser` now returns `(closed, stuck)` and a non-zero `stuck`
+  makes `release_worker` DELETE the pod so the Deployment builds a
+  clean one. That is the only remedy observed to work, and it is what a
+  human does by hand. The cost is a ~30s cold start for the next
+  caller, against a poisoned worker breaking every caller until someone
+  notices.
 - **A caller killed without releasing strands its worker, and how long
   for depends on whether it heartbeats** (since 2026-09-19) — the pod
   keeps its `chrome-pool/session` label and `pick_free_worker` skips

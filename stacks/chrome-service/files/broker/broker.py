@@ -233,7 +233,10 @@ def reset_browser(ip) -> int:
 
     Best-effort and bounded: a worker that cannot be reset still goes back to
     standby, because refusing to release it would wedge the pool, which is worse
-    than handing on a dirty browser. Returns how many targets were closed.
+    than handing on a dirty browser. Returns (closed, stuck): how many
+    targets were CONFIRMED gone, and how many reported themselves closed
+    and stayed. A non-zero stuck count means this browser cannot be
+    cleaned and the pod has to be replaced instead.
 
     Stays on the CDP HTTP endpoint so broker.py keeps its no-dependency rule.
     /json/close works on service workers as well as pages, verified against a
@@ -241,13 +244,13 @@ def reset_browser(ip) -> int:
     Chrome already drops a context when its client disconnects.
     """
     if not ip:
-        return 0
+        return 0, 0
     base = f"http://{ip}:9222"
     try:
         with urllib.request.urlopen(f"{base}/json/list", timeout=3) as r:
             tabs = json.load(r)
     except Exception:
-        return 0
+        return 0, 0
     close_ids, need_blank = plan_browser_reset(tabs)
     for tid in close_ids:
         try:
@@ -280,35 +283,67 @@ def reset_browser(ip) -> int:
         wanted -= gone
         if wanted:
             time.sleep(0.2)
-    if need_blank:
+    if wanted:
+        # A target that reports itself closed and stays in the list. This is
+        # the embed.st shape: Target.closeTarget returns success, the target
+        # survives, and the next connectOverCDP still dies on it. Say so, and
+        # let the caller decide, which for a warm pod means recycling it.
+        print("[broker] %d target(s) refused to close after %.0fs: %s"
+              % (len(wanted), RESET_CONFIRM_SECONDS, ", ".join(sorted(wanted))),
+              file=sys.stderr, flush=True)
+    if need_blank and not wanted:
         # Every page was the session's, so leave the worker the blank tab it
-        # started with rather than a browser with nothing open.
+        # started with rather than a browser with nothing open. Skipped when
+        # something is stuck, because the pod is about to be replaced anyway.
         try:
             req = urllib.request.Request(f"{base}/json/new?about:blank", method="PUT")
             with urllib.request.urlopen(req, timeout=3):
                 pass
         except Exception:
             pass
-    return closed
+    return closed, len(wanted)
 
 
 def release_worker(pod):
-    """Bare pods are deleted; warm-pool (Deployment-owned) pods return to standby."""
+    """Bare pods are deleted; warm-pool (Deployment-owned) pods return to standby.
+
+    Unless the browser could not be cleaned, in which case the warm pod is
+    deleted too and the Deployment builds a fresh one.
+    """
     if pod["bare"]:
         kube("DELETE", f"/api/v1/namespaces/{NS}/pods/{pod['name']}")
-    else:
-        # A bare pod's browser dies with the pod. A warm one is reused as-is, so
-        # it has to be cleaned here or the next caller inherits the last
-        # session's pages, service workers and open tabs (infra #98).
-        reset_browser(pod.get("ip"))
-        # The heartbeat is cleared, not just left to go stale. A warm pod is
-        # reused, so a heartbeat left behind by the last caller would make the
-        # NEXT session look reclaimable the moment it is claimed, even one that
-        # never heartbeats. null removes the key under a strategic merge patch.
-        kube("PATCH", f"/api/v1/namespaces/{NS}/pods/{pod['name']}", {
-            "metadata": {"labels": {"chrome-pool/session": ""},
-                         "annotations": {"chrome-pool/released": str(int(time.time())),
-                                         "chrome-pool/heartbeat": None}}})
+        return
+    # A bare pod's browser dies with the pod. A warm one is reused as-is, so
+    # it has to be cleaned here or the next caller inherits the last
+    # session's pages, service workers and open tabs (infra #98).
+    _, stuck = reset_browser(pod.get("ip"))
+    if stuck:
+        # RECYCLE, because closing the target demonstrably does not always
+        # work and handing the browser on is the failure we are trying to end.
+        #
+        # Measured 2026-09-19 against the real embed.st orphan, after the
+        # first version of this shipped claiming otherwise: closeTarget
+        # returned success, the target stayed in /json/list through the
+        # release, and the next caller's connectOverCDP died on that same
+        # target after its own sweep had logged "cleared". Recycling the pod
+        # was the only thing that fixed it, which is what emo did by hand
+        # before filing #98. So the confirm loop's survivors are acted on
+        # rather than logged: replacing the pod costs the next caller a ~30s
+        # cold start, against a poisoned worker breaking every caller until a
+        # human notices.
+        print("[broker] %s: %d target(s) would not close — deleting the pod "
+              "so the Deployment replaces it" % (pod["name"], stuck),
+              file=sys.stderr, flush=True)
+        kube("DELETE", f"/api/v1/namespaces/{NS}/pods/{pod['name']}")
+        return
+    # The heartbeat is cleared, not just left to go stale. A warm pod is
+    # reused, so a heartbeat left behind by the last caller would make the
+    # NEXT session look reclaimable the moment it is claimed, even one that
+    # never heartbeats. null removes the key under a strategic merge patch.
+    kube("PATCH", f"/api/v1/namespaces/{NS}/pods/{pod['name']}", {
+        "metadata": {"labels": {"chrome-pool/session": ""},
+                     "annotations": {"chrome-pool/released": str(int(time.time())),
+                                     "chrome-pool/heartbeat": None}}})
 
 
 def wait_ready(name, timeout=45):
