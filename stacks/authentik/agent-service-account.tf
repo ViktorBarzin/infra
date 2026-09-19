@@ -71,3 +71,48 @@ resource "authentik_token" "agent_app_password" {
   expiring    = false
   description = "Agent flow login. Rotate by tainting this resource."
 }
+
+# --- Letting the service account past the MFA stage ---------------------------
+#
+# default-authentication-flow binds default-authentication-mfa-validation at
+# order 30 with not_configured_action=configure, so a user holding no
+# authenticator is sent to enrol one rather than waved through. That is right
+# for people and impossible for a service account: measured 2026-09-19, the
+# flow answered ak-stage-authenticator-webauthn, the ENROLMENT stage, which
+# needs a physical authenticator svc-agent will never have.
+#
+# The stage is skipped for this one account by name, and for nothing else.
+#
+# WHY A NAME AND NOT A TYPE. `user.type == "service_account"` reads better and
+# is wrong here: it would wave through every service account this instance ever
+# grows, including ones created by an app integration for their own reasons.
+# A username is the narrowest thing that unblocks the account we just made, and
+# a second agent account is one more line here, deliberately visible in a diff.
+#
+# WHY IT FAILS CLOSED. A policy bound to a stage skips that stage when it
+# returns False. Every path through this expression that is not exactly
+# svc-agent returns True, including the one where there is no pending user at
+# all, so a broken context keeps MFA on rather than turning it off for the
+# estate.
+resource "authentik_policy_expression" "skip_mfa_for_agent" {
+  name = "skip-mfa-for-agent-service-account"
+
+  expression = <<-EOT
+    # Skip the MFA stage only for the agent service account, which has no
+    # authenticator and cannot enrol one. Anything else keeps MFA.
+    pending = request.context.get("pending_user")
+    if pending is None:
+        return True
+    return pending.username != "${authentik_user.agent.username}"
+  EOT
+}
+
+resource "authentik_policy_binding" "skip_mfa_for_agent" {
+  # The order-30 stage binding of default-authentication-flow
+  # (default-authentication-mfa-validation). A raw pk because the flow and its
+  # bindings are authentik built-ins rather than resources in this stack, the
+  # same shape app-access-bindings.tf uses for the TripIt app.
+  target = "d471dda8-e258-453d-86d7-14963f87ec03"
+  policy = authentik_policy_expression.skip_mfa_for_agent.id
+  order  = 0
+}
