@@ -150,6 +150,62 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           name = "Node Health"
           rules = [
             {
+              # ANY fallback-served response is already an incident: it means
+              # forward-auth is down and every protected host is asking for a
+              # shared password instead of authenticating properly. So this
+              # alerts on presence, not on a rate. Bead code-c4b1.
+              #
+              # REPLACES a Prometheus rule of the same name that could not fire.
+              # It wanted a websecure 401 rate above 5/s sustained 5 minutes; the
+              # 2026-09-13 outage peaked at 1.4/s in windows 3 to 4 minutes long,
+              # so it missed on both the threshold and the duration while the
+              # whole estate sat behind a basic-auth prompt. Viktor found that
+              # outage himself.
+              #
+              # THE SIGNATURE, measured rather than assumed. @fallback_auth in
+              # the auth-proxy nginx config serves /usr/share/nginx/fallback/ok
+              # behind auth_basic "Emergency Access". That file is exactly 13
+              # bytes, containing "authenticated". So:
+              #   " 200 13 "  the fallback SERVED, someone used the shared password
+              #   " 401 "     the fallback CHALLENGED, someone was prompted
+              # Replaying 2026-09-13 00:30-00:57 gives 198 of the first and 107
+              # of the second. Over 24h of healthy operation both are ZERO, and
+              # the auth-proxy emits no 401 of any kind, which is why the 401
+              # half needs no byte-size match and so survives an nginx upgrade
+              # changing its error page.
+              #
+              # Do NOT match on the string "Emergency Access". That is the
+              # basic-auth realm, it appears only in a WWW-Authenticate response
+              # header, and it is never written to the access log. Grepping the
+              # log for it returns 0 whether or not the fallback is serving.
+              #
+              # Nor on $remote_user alone. A browser that once answered an
+              # Emergency Access prompt keeps sending the Authorization header,
+              # so nginx logs a username on ordinary allows too: 36 such lines in
+              # the last 24h, all " 200 0 ", none of them the fallback.
+              #
+              # Validated: fires on 231 of 231 samples across the real outage
+              # window, min 1 max 302, and produces no series at all when healthy.
+              #
+              # for: 0m because the bead asks for detection within a minute, and
+              # the ruler evaluates every minute. The 5m window keeps a
+              # continuing incident as ONE alert rather than flapping, and clears
+              # 5m after the last fallback response.
+              #
+              # Deliberately absent from every inhibit_rules target list. A node
+              # drain or a traefik restart is exactly when this can happen, so it
+              # must not be muted by NodeMaintenanceInProgress or TraefikDown.
+              alert = "AuthentikForwardAuthFallbackActive"
+              expr  = "sum(count_over_time({namespace=\"traefik\", pod=~\"auth-proxy.*\"} |~ \"\\\" (401|200 13) \" [5m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "critical"
+              }
+              annotations = {
+                summary = "THE ESTATE IS ON EMERGENCY BASIC AUTH. {{ $value | printf \"%.0f\" }} fallback responses in 5m from the auth-proxy, baseline 0. Forward-auth is down and every protected host is prompting for the shared password. Check `kubectl -n authentik get endpoints ak-outpost-authentik-embedded-outpost` and `kubectl -n authentik get pods`. Runbook: https://pages.viktorbarzin.me/2026-09-13-authentik-outage-recovery.html"
+              }
+            },
+            {
               # The direct, user-visible signature of a traefik pod whose router
               # table is gone: a 404 served with NO RouterName and no
               # ServiceName, meaning nothing matched at the router layer.
