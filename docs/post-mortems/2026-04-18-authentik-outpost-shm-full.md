@@ -113,6 +113,28 @@ Contributing distractions:
 | P1 | Uptime-Kuma meta-monitor: "N+ external monitors down simultaneously" | Alert | Either a Prometheus rule over `uptime_kuma_monitor_status == 0` counts, or a dedicated external probe. Very strong signal of shared-infra failure. | TODO |
 | P1 | Bump tmpfs `sizeLimit` from 512Mi → 2Gi + set explicit container memory limit 2560Mi | Config | Patched outpost `kubernetes_json_patches` via Authentik API. 2026-04-18 13:06 UTC (sizeLimit), 13:22 UTC (container limit). **Gotcha**: `sizeLimit` alone is insufficient — writes to tmpfs count against container cgroup memory, and Kyverno's `tier-defaults` LimitRange sets a default `limits.memory: 256Mi` which OOM-kills the container before tmpfs fills. Fix is to also set `containers[0].resources.limits.memory` ≥ `sizeLimit + working_set_headroom`. Verified 1.5 GB file write succeeds on the configured pod; df reports 2.0 GB tmpfs. Gives ~8× growth headroom at current probe rate. | **DONE** |
 
+> [!NOTE]
+> **Status of these remediations as of 2026-09-19.** Both the P0 `/dev/shm` sizing
+> and the P1 alerts above have been removed, because the workload they protected
+> no longer exists. Forward-auth moved to the inline outpost inside the
+> goauthentik-server pods that day (bead `code-osvg`), the standalone embedded
+> outpost Deployment was deleted, and authentik does not recreate it, so the 2Gi
+> `dshm` emptyDir and the `kubernetes_json_patches` that carried it are gone.
+>
+> The three alerts had also stopped being able to fire, independently of that.
+> `AuthentikOutpostDevShmFull` read `container_fs_usage_bytes`, which the
+> monitoring stack's own cadvisor drop list removes. `AuthentikOutpostMemoryHigh`
+> and `AuthentikOutpostMemoryCritical` were sized against the 2Gi tmpfs, while the
+> one remaining `ak-outpost-*` pod has a 256Mi container limit and a measured
+> 26-week peak working set of 9.375 MiB.
+>
+> The failure mode is retired as well. The remaining standalone outpost runs
+> `proxy:2026.8.3`, the Rust rewrite, which keeps no gorilla/sessions FileStore
+> files in `/dev/shm`; the inline outpost keeps sessions in PostgreSQL. What still
+> watches for this class of failure is `AuthentikOutpostForwardAuth400Spike`,
+> which is the symptom this incident actually presented as, plus
+> `AuthentikOutpostRestarts`, `ContainerOOMKilled` and `ContainerNearOOM`.
+
 ### P2 — Codify the fix so it survives drift
 
 | Priority | Action | Type | Details | Status |
