@@ -101,7 +101,7 @@ LimitRange opt-out: `resource-governance/custom-limitrange=true` + custom `kuber
 
 ## Authentik (Identity Provider)
 - **URL**: `https://authentik.viktorbarzin.me` | **API**: `/api/v3/` | **Token**: `authentik_api_token` in tfvars
-- 3 server + 3 worker + 3 PgBouncer + embedded outpost
+- 3 server + 3 worker + 3 PgBouncer. The embedded outpost runs INLINE in the server pods (2026-09-19) and has no pods of its own.
 - Forward auth: `protected = true` in ingress_factory
 - OIDC for K8s: issuer `.../application/o/kubernetes/`, client `kubernetes` (public)
 - See archived skills for management tasks and OIDC gotchas

@@ -11,7 +11,7 @@ graph TB
     User[User Browser]
     Traefik[Traefik Ingress]
     ForwardAuth[ForwardAuth Middleware]
-    Authentik[Authentik<br/>3 server + 3 worker<br/>+ embedded outpost]
+    Authentik[Authentik<br/>3 server + 3 worker<br/>outpost runs inline in the server pods]
     Backend[Protected Backend Service]
 
     Social[Social Providers<br/>Google/GitHub/Facebook]
@@ -67,7 +67,7 @@ Services pick an auth tier via the `auth` enum on the `ingress_factory` module (
 When `auth = "required"`, an unauthenticated request flows:
 
 1. Request hits Traefik ingress
-2. ForwardAuth middleware calls the `auth-proxy` nginx (basicAuth fallback when Authentik is down), which proxies to the Authentik embedded outpost over a keepalive connection pool
+2. ForwardAuth middleware calls the `auth-proxy` nginx (basicAuth fallback when Authentik is down), which proxies over a keepalive connection pool to `ak-outpost-authentik-embedded-outpost`. Since 2026-09-19 that Service selects the goauthentik-server pods, because the embedded outpost runs inline inside them rather than as its own Deployment. The Service is Terraform-owned with a pinned ClusterIP: nginx OSS resolves the name once at startup, so an address change would otherwise leave it dialling a dead one until the connect timeout dropped every forward-auth host onto the basicAuth fallback
 3. Authentik checks for valid session cookie (domain-level `authentik_proxy_*` cookie on `.viktorbarzin.me`, 4-week validity — one cookie covers all forward-auth apps)
 4. If missing/invalid, redirects to Authentik login page (authentik.viktorbarzin.me)
 5. User authenticates on a **single screen**: username + password together (the identification stage embeds the password stage), or a social provider button (Google/GitHub/Facebook), then MFA validation
