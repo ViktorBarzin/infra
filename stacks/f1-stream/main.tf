@@ -909,10 +909,16 @@ module "ingress" {
   # tunnel (ADR-0021) and no per-name record is created. Reverting is the same
   # one line back to "non-proxied".
   #
-  # Done for EDGE CACHING, not only to hide the origin: the house has 15.06
-  # Mbit/s of upload and one live viewer costs 4.55, so three concurrent
-  # viewers fill the line. Cache Rules and the accepted terms risk are in
-  # cloudflare-cache.tf. Rate limiting was already made tunnel-safe when the
+  # Done for EDGE CACHING, not only to hide the origin: one live viewer costs
+  # 4.55 Mbit/s against a measured 32.0 Mbit/s of origin egress through the
+  # tunnel, so about seven concurrent origin pulls fill it. Because the edge
+  # caches per colo, that is seven COLOS rather than seven people. The house
+  # line itself is not the limit: 148.7 Mbit/s up, averaged over 696 speedtest
+  # runs in the 30 days to 2026-09-19 (min 107, max 152). This comment used to
+  # say 15.06 Mbit/s and three viewers; that came from one client pulling one
+  # object at a time, which measures a single TCP stream and not the line.
+  # cloudflare-cache.tf has the concurrent re-measurement and the reasoning,
+  # along with the Cache Rules and the accepted terms risk. Rate limiting was already made tunnel-safe when the
   # share-link work landed: the shared `rate-limit` middleware has no
   # sourceCriterion and would key every viewer on the cloudflared pod, so f1
   # carries its own limiter keyed on X-Real-Ip (see below).
