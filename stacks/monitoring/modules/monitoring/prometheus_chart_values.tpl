@@ -5825,28 +5825,47 @@ serverFiles:
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} service(s) externally unreachable but internally healthy — check Cloudflare tunnel, DNS, or Traefik routing"
       - name: "Authentik Outpost"
-        # Guards against the 2026-04-18 incident where /dev/shm filled with
+        # Guarded the 2026-04-18 incident where /dev/shm filled with
         # gorilla/sessions FileStore files (~44k files at ~1.5KB each) and the
         # outpost returned HTTP 400 on every forward-auth request.
         # See docs/post-mortems/2026-04-18-authentik-outpost-shm-full.md.
+        #
+        # THREE RULES REMOVED 2026-09-19, all of which had stopped being able to
+        # fire. Recording why, because the incident they came from was real and
+        # somebody will wonder where they went.
+        #
+        #   AuthentikOutpostDevShmFull      read container_fs_usage_bytes and
+        #                                   container_fs_limit_bytes. Both are
+        #                                   dropped by this file's own cadvisor
+        #                                   metric_relabel_configs drop list
+        #                                   (`container_fs_.*`), so the rule had
+        #                                   no series at all. container_spec_.*
+        #                                   is on that list too, which rules out
+        #                                   the obvious rewrite.
+        #   AuthentikOutpostMemoryHigh      thresholds 1.5 GiB and 1.8 GiB, sized
+        #   AuthentikOutpostMemoryCritical  for the embedded outpost's 2Gi dshm
+        #                                   emptyDir. That pod is gone (the
+        #                                   outpost moved inline on 2026-09-19).
+        #                                   The only ak-outpost-* pod left is
+        #                                   ak-outpost-public, whose container
+        #                                   limit is 256Mi, so it is OOMKilled
+        #                                   six times over before either
+        #                                   threshold is reached. Measured peak
+        #                                   working set over 26 weeks: 9.375 MiB.
+        #
+        # The failure mode is retired as well as unmeasurable. ak-outpost-public
+        # runs proxy:2026.8.3, the Rust rewrite, which holds no gorilla FileStore
+        # sessions: after 17h uptime its /dev/shm had 4.0K used of 64M and three
+        # entries, none of them a session file, one of them session-cleanup.lock.
+        # The inline outpost keeps sessions in Postgres and has no pod at all.
+        #
+        # What covers this now, at the symptom rather than the cause:
+        #   AuthentikOutpostForwardAuth400Spike (below) is the documented way an
+        #     shm ENOSPC surfaces, and its series is live.
+        #   ContainerOOMKilled and ContainerNearOOM cover memory generically,
+        #     against kube_pod_container_resource_limits, which is not dropped.
+        #   AuthentikOutpostRestarts (below) catches an OOM restart loop.
         rules:
-          - alert: AuthentikOutpostMemoryHigh
-            # Working set includes /dev/shm tmpfs contents (session files).
-            # sizeLimit on the outpost emptyDir is 2Gi; warn at 75% to leave
-            # plenty of headroom for mitigation before ENOSPC.
-            expr: container_memory_working_set_bytes{namespace="authentik", pod=~"ak-outpost-.*", container="proxy"} > 1.5 * 1024 * 1024 * 1024
-            for: 15m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Authentik outpost working set {{ $value | humanize1024 }} — /dev/shm may be filling with session files (threshold 1.5 GiB of 2 GiB sizeLimit)"
-          - alert: AuthentikOutpostMemoryCritical
-            expr: container_memory_working_set_bytes{namespace="authentik", pod=~"ak-outpost-.*", container="proxy"} > 1.8 * 1024 * 1024 * 1024
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: "Authentik outpost near /dev/shm fill ({{ $value | humanize1024 }}) — imminent forward-auth failure. Restart the pod named in the alert. Note this now only ever fires for ak-outpost-public: the embedded outpost stopped running pods on 2026-09-19 and the inline outpost keeps its sessions in Postgres, not /dev/shm."
           - alert: AuthentikOutpostRestarts
             # Pod restarts on a stateless outpost usually mean OOM or crash.
             # Normal is 0; we expect one manual rollout per incident/upgrade.
@@ -5856,18 +5875,6 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Authentik outpost restarted {{ $value | printf \"%.0f\" }} times in 30m — check for OOM or crash loop"
-          - alert: AuthentikOutpostDevShmFull
-            # Direct filesystem measure of the /dev/shm emptyDir sizeLimit.
-            # The 2026-04-18 incident went undetected for 40h because working-set
-            # memory lags tmpfs fill (files count against memory but not always
-            # against working set). This rule catches the underlying cause.
-            # See docs/post-mortems/2026-04-18-authentik-outpost-shm-full.md.
-            expr: container_fs_usage_bytes{namespace="authentik", pod=~"ak-outpost-.*"} / container_fs_limit_bytes{namespace="authentik", pod=~"ak-outpost-.*"} > 0.8
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: "Authentik outpost filesystem at {{ $value | humanizePercentage }} on {{ $labels.pod }} — session files filling tmpfs, forward-auth imminent failure"
           - alert: AuthentikOutpostForwardAuth400Spike
             # Sudden 400 spike from the outpost means forward-auth is broken
             # for all protected services. The /dev/shm ENOSPC class of failures
