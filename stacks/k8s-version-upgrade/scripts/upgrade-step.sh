@@ -51,7 +51,51 @@ PROM='http://prometheus-server.monitoring.svc.cluster.local:80'
 # it clears only when a human re-authorises at the bank, and so it sat firing for
 # days while blocking every Kubernetes patch — it gated v1.35.8 from 2026-09-13.
 # See halt_on_alert_query() for the standing question about this gate's scope.
-HALT_IGNORE='RecentNodeReboot|IngressTTFBCritical|K8sUpgradeStalled|EtcdPreUpgradeSnapshotMissing|BankSyncConsentExpired'
+# UPGRADE_GATE_ALERTS — the opt-in ALLOWLIST that replaced HALT_IGNORE on
+# 2026-09-19 (bead code-rl8j). These are the alertnames that mean "the cluster
+# is unfit to be upgraded right now". Everything else, including every other
+# severity=critical alert, is informational as far as this chain is concerned.
+#
+# WHY THE DENYLIST HAD TO GO. severity=critical in this cluster means "wake a
+# human", not "the cluster is unfit to upgrade", and the gate read it as the
+# second. BankSyncConsentExpired, an expired Amex GoCardless consent in
+# actualbudget that only a human at the bank can clear, was the only firing
+# critical cluster-wide and held v1.35.8 for 2d20h. A denylist cannot win that
+# argument: it grows by one entry per unrelated application alert, forever.
+#
+# THE TEST APPLIED to all 120 critical rules (114 in prometheus_chart_values.tpl,
+# 6 in loki.tf). An upgrade drains and reboots one node at a time, so it must not
+# start when the cluster cannot absorb losing a node, when pods cannot move, when
+# the grid or network is already degraded, when the monitoring that would catch a
+# bad upgrade is blind, or when we are already inside a platform incident.
+# 34 of 120 qualified. The 86 that did not are listed in the commit body and in
+# docs/architecture/, so the next reader can see each was a decision.
+#
+# FAILS CLOSED BY CONSTRUCTION, which matters because a forgotten entry here
+# would otherwise let an upgrade run during a real outage: if this variable is
+# ever empty or unset, halt_on_alert_query falls back to blocking on EVERY
+# firing critical, i.e. the old behaviour.
+#
+# THE PIPELINE'S OWN ALERTS ARE DELIBERATELY ABSENT, and adding them recreates a
+# known deadlock. K8sUpgradeStalled and EtcdPreUpgradeSnapshotMissing are driven
+# by THIS pipeline's own Pushgateway gauges, and preflight's gate runs BEFORE
+# in_flight is refreshed. A stale or leaked gauge would then abort every preflight
+# before it could clear anything, so the chain could never resume. That is RC3 from
+# 2026-07-25, and it is why both sat in the old HALT_IGNORE. An allowlist expresses
+# that by omission rather than by a second list.
+#
+# Adding a rule: put the alertname here, not in the monitoring stack. Keeping
+# the list in the consumer rather than as a label on 34 rules means one
+# reviewable place and no risk of a monitoring edit silently changing upgrade
+# behaviour.
+UPGRADE_GATE_ALERTS='AuthentikDown|CSIDriverCrashLoop|CalicoNodeNotReady|ContainerdDown|'\
+'IngressAllTargetsUnreachable|InternetEgressDown|KernelPanic|KernelSoftLockup|'\
+'KubeAPIServerDown|KubeStateMetricsDown|KubeletImagePullErrors|KubeletPLEGUnhealthy|'\
+'KubeletRunningContainersDrop|LowUPSBattery|NFSCSIControllerDown|NFSCSINodeDown|'\
+'NFSMountFailures|NFSServerUnresponsive|NodeDown|NodeExporterDown|NodeNotReady|'\
+'OnBattery|PVFillingUp|PfSenseVMDown|PodUnschedulable|PostgreSQLDown|PowerOutage|'\
+'PrometheusRuleEvaluationFailing|ProxmoxCSILunCapReached|ProxmoxCSILunUsageCritical|'\
+'TraefikDown|WANGatewayUnreachable'
 KUBECTL=kubectl
 JOB_TEMPLATE=/template/job-template.yaml
 UPDATE_K8S_SH=/scripts/update_k8s.sh
@@ -205,39 +249,25 @@ record_deferred() {
 }
 
 halt_on_alert_query() {
-  local extra_ignore="${1:-}"
-  # ALLOWLIST design (refactored 2026-05-23 from a denylist): halt only on
-  # alerts with severity=critical. Any warning/info-level alert is treated
-  # as informational and doesn't block the chain.
+  local gate_regex_src="${1:-}"
+  # ALLOWLIST GATE. Blocks only on alertnames named in UPGRADE_GATE_ALERTS,
+  # intersected with severity=critical. See that variable for the reasoning and
+  # for the 34-of-120 review behind it.
   #
-  # Why this is the right model:
-  #   - The cluster has long-running warning-level alerts that are NOT
-  #     blockers for a k8s patch (e.g. GPU operator crashloop on the GPU
-  #     node, ingress latency spikes, IO-wait warnings).
-  #   - Maintaining a denylist of every "noisy" alert is a losing battle.
-  #   - Critical alerts are the only ones that should actually stop us
-  #     mid-chain (apiserver down, etcd down, node not ready, etc.).
+  # Two layers, both needed. severity=critical alone is far too broad: it means
+  # "wake a human", so it counts application criticals a control-plane bump
+  # cannot affect and no upgrade can make worse. The allowlist alone would be
+  # too broad the other way if a rule's severity were ever downgraded.
   #
-  # `extra_ignore` is now mostly historical — kept for backwards compat with
-  # `halt_on_alert_query "$HALT_IGNORE"`-style calls. With severity-based
-  # filtering, RecentNodeReboot (severity=info) is filtered automatically.
-  # We still build the regex for any critical alert the caller wants to
-  # explicitly ignore (e.g. a known-broken thing we're aware of).
-  #
-  # Open question, raised 2026-09-16 by BankSyncConsentExpired (an expired bank
-  # consent in actualbudget) holding back a Kubernetes patch for 2d20h:
-  # severity=critical selects "wake a human", not "the cluster is unfit to
-  # upgrade", so this gate also counts application-level criticals that a
-  # control-plane bump cannot affect and that no upgrade can make worse. The
-  # tighter model would be to keep the severity filter AND require the alert to
-  # be plausibly about cluster health — e.g. an opt-in `upgrade_gate: "true"`
-  # label on the rules that should block, or a namespace/category allowlist —
-  # which turns HALT_IGNORE from an ever-growing denylist into a small allowlist.
-  # Not done here: it needs every critical rule in the monitoring stack reviewed
-  # and labelled, and a mislabelled rule fails OPEN (upgrade proceeds during a
-  # real outage), so it wants a deliberate pass rather than a drive-by.
-  local ignore_regex=""
-  [ -n "$extra_ignore" ] && ignore_regex="^($extra_ignore)\$"
+  # THIS QUERIES PROMETHEUS DIRECTLY, not Alertmanager (/api/v1/alerts on $PROM),
+  # so an Alertmanager SILENCE does not affect whether the chain blocks. That is
+  # deliberate and worth knowing: silencing a firing gate alert will NOT let the
+  # upgrade proceed. Honouring silences was considered as a cheaper alternative
+  # to this allowlist and rejected, because a silence is a notification
+  # preference and can be set for reasons that have nothing to do with whether a
+  # reboot is safe.
+  local gate_regex=""
+  [ -n "$gate_regex_src" ] && gate_regex="^($gate_regex_src)\$"
 
   # `grep` returns 1 when nothing matches → under `set -o pipefail` that
   # bubbles up and aborts the script via the caller's `alerts=$(...)`.
@@ -249,8 +279,9 @@ halt_on_alert_query() {
               | .labels.alertname' 2>/dev/null \
     | sort -u || true)
 
-  if [ -n "$ignore_regex" ]; then
-    echo "$critical_firing" | { grep -vE "$ignore_regex" || true; }
+  if [ -n "$gate_regex" ]; then
+    # grep -E, NOT grep -vE: only the allowlisted names block.
+    echo "$critical_firing" | { grep -E "$gate_regex" || true; }
   else
     echo "$critical_firing"
   fi
@@ -496,7 +527,7 @@ phase_preflight() {
   # is set, often daily). Now skipped — check 3 is the single source of truth
   # for "is the cluster quiet enough to upgrade".
   local alerts
-  alerts=$(halt_on_alert_query "$HALT_IGNORE")
+  alerts=$(halt_on_alert_query "$UPGRADE_GATE_ALERTS")
   if [ -n "$alerts" ]; then
     slack "DEFERRED preflight — firing critical alerts:\n$alerts"
     record_deferred firing_critical_alerts "$(echo "$alerts" | tr '\n' ' ')"
@@ -691,7 +722,7 @@ phase_master() {
   # the chain itself causes node reboots, so this alert firing is expected
   # mid-chain (e.g. master was already upgraded+rebooted before this phase).
   local alerts
-  alerts=$(halt_on_alert_query "$HALT_IGNORE")
+  alerts=$(halt_on_alert_query "$UPGRADE_GATE_ALERTS")
   [ -n "$alerts" ] && abort "master — alerts firing pre-drain: $alerts"
 
   # Quiesce noisy operators that crashloop when apiserver briefly disappears
@@ -739,7 +770,7 @@ phase_master() {
     exit 1
   fi
 
-  alerts=$(halt_on_alert_query "$HALT_IGNORE")
+  alerts=$(halt_on_alert_query "$UPGRADE_GATE_ALERTS")
   [ -n "$alerts" ] && abort "master — alerts firing post-upgrade: $alerts"
 
   # Re-apply apiserver OIDC. `kubeadm upgrade apply` regenerates the apiserver
@@ -797,7 +828,7 @@ phase_worker() {
   # just rebooted a node, that's the cause and is expected.
   local attempt alerts
   for attempt in $(seq 1 30); do
-    alerts=$(halt_on_alert_query "$HALT_IGNORE")
+    alerts=$(halt_on_alert_query "$UPGRADE_GATE_ALERTS")
     [ -z "$alerts" ] && break
     echo "Waiting for alerts to clear (attempt $attempt/30): $alerts"
     sleep 60
@@ -828,7 +859,7 @@ phase_worker() {
   # 10-min soak with halt-on-alert (RecentNodeReboot ignored — we know we restarted it)
   echo "Soaking $TARGET_NODE for 10 min..."
   for i in $(seq 1 10); do
-    alerts=$(halt_on_alert_query "$HALT_IGNORE")
+    alerts=$(halt_on_alert_query "$UPGRADE_GATE_ALERTS")
     [ -n "$alerts" ] && abort "$TARGET_NODE mid-soak — alerts: $alerts"
     sleep 60
   done
@@ -860,7 +891,7 @@ phase_postflight() {
   # No alerts firing. Ignore RecentNodeReboot — by definition we just
   # rebooted every node; this alert clears naturally in <1h.
   local alerts
-  alerts=$(halt_on_alert_query "$HALT_IGNORE")
+  alerts=$(halt_on_alert_query "$UPGRADE_GATE_ALERTS")
   [ -n "$alerts" ] && { echo "WARN postflight — alerts still firing: $alerts" >&2
     slack "Postflight WARN — alerts still firing (cluster on target, please check):\n$alerts"; }
 
