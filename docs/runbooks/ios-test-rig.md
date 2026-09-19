@@ -423,8 +423,8 @@ IOS_RIG_MAC_HOST=192.168.8.42 homelab ios doctor
 
 Every field has an `IOS_RIG_*` override: `MAC_HOST`, `MAC_USER`, `UDID`,
 `TEAM_ID`, `WDA_BUNDLE_ID`, `DEVELOPER_DIR`, `APPIUM_PORT`, plus `SSH_PORT`,
-`MAC_SUBNET` and `MAC_HW_ADDR` for the discovery described next. A second
-phone needs no code change.
+`MAC_SUBNET`, `MAC_HW_ADDR` and `DISCOVERY_COOLDOWN` for the discovery
+described next. A second phone needs no code change.
 
 ### The rig finds the Mac when the name stops answering
 
