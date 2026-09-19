@@ -32,6 +32,15 @@ now="$(date +%s)"
 cleared=0; needs_human=0; skipped_young=0; query_failed=0
 
 for ns in $NAMESPACES; do
+  # Say which namespace we are about to read, BEFORE reading it.
+  #
+  # Everything else this script prints comes at the end, so a run killed
+  # part-way left an empty log and a Job marked Failed with no reason in it.
+  # That is how 12 OOM kills a day went undiagnosed on 2026-09-19: the
+  # container was killed buffering monitoring's 152 helm release secrets and
+  # never reached its summary line. With this, the last line of a truncated
+  # log names the namespace it died on.
+  echo "READ  $ns — listing helm release secrets"
   # TSV per helm release secret: release <TAB> version <TAB> status <TAB> created <TAB> secretName
   #
   # A FAILED query must never look like "no stuck releases". Until 2026-08-08

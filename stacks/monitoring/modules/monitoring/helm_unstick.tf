@@ -136,22 +136,39 @@ resource "kubernetes_cron_job_v1" "helm_unstick" {
                 read_only  = true
               }
               # kubectl buffers every matched Secret in memory before the
-              # jsonpath projection runs, and the monitoring namespace alone
-              # holds 61 helm release records (~8.3 MiB of gzipped manifests,
-              # loki's 7 revisions at ~0.30 MiB each). Measured peak RSS is
-              # ~128 MiB — the old 96Mi ceiling memcg-OOM-killed kubectl on
-              # EVERY run (~7-8 kills per run, ~610/day on whichever node the
-              # pod landed on), which the `|| true` below silently swallowed
-              # into an empty result: the job reported success while never
-              # actually inspecting a single release. Sized at 2x the measured
-              # peak so revision growth does not silently re-break it.
+              # jsonpath projection runs, so this scales with the number of
+              # helm REVISIONS retained, and that number only grows.
+              #
+              # 2026-08-08: 61 records in monitoring, ~128 MiB peak. The 96Mi
+              # ceiling of the day memcg-OOM-killed kubectl on EVERY run, which
+              # a `|| true` swallowed into an empty result, so the job reported
+              # success while inspecting nothing. Limit went to 256Mi, "2x the
+              # measured peak so revision growth does not silently re-break it".
+              #
+              # 2026-09-19: it re-broke, and not silently this time. 152 records
+              # in monitoring, measured peak 219 MiB against that 256Mi — 85% of
+              # the ceiling, so a run tipped over whenever the payload was a
+              # little larger. 12 of 96 runs a day were OOM-killed, and because
+              # the script prints nothing until its final summary line, a killed
+              # attempt left NO output at all: the only visible symptom was a
+              # Job marked Failed with an empty log. Each one raised a JobFailed
+              # AND a CronJobFailingRepeatedly, 13 of the 31 job alerts a day.
+              #
+              # 512Mi is 2x the new measured peak, on the same rule as before,
+              # which bought about a year last time. --chunk-size does NOT help
+              # (20-item pages measured 208 MiB against 219 unpaged) because
+              # -o jsonpath accumulates the whole list regardless of paging. The
+              # durable fix is to stop fetching the secret BODIES at all, since
+              # the script reads only labels and creationTimestamp: a
+              # PartialObjectMetadataList request, as stray_workload_detect
+              # already does in this same namespace, holds metadata only.
               resources {
                 requests = {
                   cpu    = "10m"
                   memory = "96Mi"
                 }
                 limits = {
-                  memory = "256Mi"
+                  memory = "512Mi"
                 }
               }
             }
