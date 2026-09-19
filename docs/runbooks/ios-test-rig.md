@@ -441,6 +441,18 @@ then 4s once the result is cached in `~/.ios-rig-mac-host`. The cache is only
 ever a hint, re-checked on every read, and the configured name always wins
 when it answers, so a healthy rig never pays for any of this.
 
+A failed sweep is remembered for five minutes in
+`~/.ios-rig-discovery-failed`, and a sweep inside that window is skipped.
+Without it a Mac that is genuinely away turns the tunnel unit into a scanner:
+measured on 2026-09-19, 137 restarts in the hour after the laptop left, each
+sweeping all 254 addresses, about 35,000 connection attempts for a machine
+that was not going to answer. The cooldown suppresses only the sweep, and the
+two direct probes still run every cycle, so a Mac returning to either the
+configured name or the cached address is picked up at once (14s falls to 6s
+with the sweep skipped). Only a Mac appearing at a third address waits out the
+window. `IOS_RIG_DISCOVERY_COOLDOWN` changes it, and a success deletes the
+marker.
+
 `doctor` reports a `mac-address` warning whenever discovery fired, naming both
 addresses, so the underlying drift stays visible instead of being quietly
 papered over. That warning is the cue to put the reservation right rather than
