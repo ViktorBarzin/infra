@@ -495,6 +495,17 @@ func memoryUpdate(args []string) error {
 			}
 		case !strings.HasPrefix(a, "-") && id == "":
 			id = a
+		default:
+			// Everything unrecognised used to fall through here silently. A
+			// second positional argument is the one that bites: `memory
+			// update <id> "<new text>"` reads exactly like `memory store`,
+			// so it gets typed, and the content was dropped while the PUT
+			// still reported {"updated":<id>}. Four memories were reported
+			// as updated on 2026-09-19 and none of them were. Refuse instead,
+			// and name the flag that was meant.
+			return fmt.Errorf("unexpected argument %q. Content goes in --content, "+
+				"and the other fields are --tags/--importance/--keywords/--link/--unlink; "+
+				"a bare string is NOT the content", a)
 		}
 	}
 	if id == "" {
