@@ -250,3 +250,88 @@ func TestCapabilityCatalogKnowsAboutIOS(t *testing.T) {
 		}
 	}
 }
+
+// The bug this test exists for: the embedded tunnel unit called
+// `homelab ios tunnel-fg`, a verb that existed nowhere in the repo. The rig's
+// predecessor had a `tunnel` subcommand, and folding the rig into the CLI on
+// 2026-09-12 deleted it without porting it. Nothing failed at build time,
+// nothing failed in CI, and the unit failed at exec on the devvm every 15
+// seconds for 7 days. A unit asset naming a verb is a claim the registry has
+// to honour.
+func TestIosUnitAssetsNameRegisteredVerbs(t *testing.T) {
+	registered := map[string]bool{}
+	for _, c := range buildRegistry() {
+		registered[strings.Join(c.Path, " ")] = true
+	}
+	entries, err := iosAssets.ReadDir("ios_assets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".service") {
+			continue
+		}
+		b, err := iosAssets.ReadFile("ios_assets/" + e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			if !strings.HasPrefix(line, "ExecStart=") {
+				continue
+			}
+			fields := strings.Fields(strings.TrimPrefix(line, "ExecStart="))
+			if len(fields) < 3 || !strings.HasSuffix(fields[0], "/homelab") {
+				t.Errorf("%s: ExecStart does not invoke the homelab binary: %q", e.Name(), line)
+				continue
+			}
+			verb := fields[1] + " " + fields[2]
+			checked++
+			if !registered[verb] {
+				t.Errorf("%s calls %q, which is not a registered verb", e.Name(), verb)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no ExecStart lines found; the test is not looking at anything")
+	}
+}
+
+// The tunnel is the whole reason `ios shot` can reach Appium: the Mac binds it
+// to loopback, so without this forward the devvm has nothing to dial.
+func TestIosTunnelArgs(t *testing.T) {
+	c := iosDefaults()
+	c.MacHost = "mac.example"
+	c.MacUser = "someone"
+	c.AppiumPort = "4999"
+	args := iosTunnelArgs(c)
+	joined := strings.Join(args, " ")
+
+	if got := args[len(args)-1]; got != "someone@mac.example" {
+		t.Errorf("target must be last so ssh parses it as the host, got %q", got)
+	}
+	if !strings.Contains(joined, "-L 4999:127.0.0.1:4999") {
+		t.Errorf("forward does not carry the configured port: %q", joined)
+	}
+	// Without this, ssh stays up with no forward, systemd sees a healthy
+	// process, and every `ios shot` fails on a connection nothing is watching.
+	if !strings.Contains(joined, "ExitOnForwardFailure=yes") {
+		t.Errorf("a failed forward must kill the process so systemd restarts it: %q", joined)
+	}
+	if !strings.Contains(joined, "ServerAliveInterval=") {
+		t.Errorf("a roaming laptop needs keepalives to detect a dead link: %q", joined)
+	}
+	if !strings.Contains(joined, "-N") {
+		t.Errorf("the tunnel must not request a remote command: %q", joined)
+	}
+}
+
+// Repairing the devvm side must not depend on the Mac. The units broke while
+// the Mac was away, and bootstrap refuses at its ssh precheck, so without this
+// flag the one machine that could be fixed was the one that could not be.
+func TestIosBootstrapUnitsOnlySkipsTheMac(t *testing.T) {
+	t.Setenv("IOS_RIG_MAC_HOST", "192.0.2.1") // TEST-NET-1, never answers
+	if err := iosBootstrap([]string{"--units-only", "--dry-run"}); err != nil {
+		t.Fatalf("--units-only must not touch the Mac, got %v", err)
+	}
+}
