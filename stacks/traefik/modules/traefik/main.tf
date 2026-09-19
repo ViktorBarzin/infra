@@ -117,16 +117,59 @@ resource "helm_release" "traefik" {
       initContainers = [{
         name  = "download-plugins"
         image = "alpine:3"
-        command = ["sh", "-c", join("", [
-          "set -e; ",
-          "STORAGE=/plugins-storage; ",
-          "mkdir -p \"$STORAGE/archives/github.com/Aetherinox/traefik-api-token-middleware\"; ",
-          "wget -q -T 30 -O \"$STORAGE/archives/github.com/Aetherinox/traefik-api-token-middleware/v0.1.4.zip\" ",
-          "\"https://github.com/Aetherinox/traefik-api-token-middleware/archive/refs/tags/v0.1.4.zip\"; ",
-          "printf '{\"github.com/Aetherinox/traefik-api-token-middleware\":\"v0.1.4\"}' ",
-          "> \"$STORAGE/archives/state.json\"; ",
-          "echo \"Plugins pre-downloaded successfully\"",
-        ])]
+        # Fail CLOSED. This container used to print "Plugins pre-downloaded
+        # successfully" and exit 0 whether or not the archive arrived, and on
+        # 2026-09-19 that took the estate down: a traefik pod rescheduled two
+        # seconds into kured's drain of k8s-node4, its download did not land,
+        # and traefik disables EVERY plugin when one is missing. That killed
+        # the local real-ip and crowdsec plugins too, so every router carrying
+        # traefik-real-ip@kubernetescrd became invalid and one pod in three
+        # answered 404 for every host on the estate.
+        #
+        # set -e was already here and did not help: wget -O writes the file and
+        # exits 0 for a truncated body or an HTML error page, and mkdir -p runs
+        # first, so both the directory and a plausible-looking file can exist
+        # after a failed fetch. So verify the bytes rather than the exit code,
+        # retry the transient case, and exit non-zero if it never arrives. A
+        # pod that cannot fetch this plugin must refuse to start, because a
+        # started one silently serves 404s.
+        #
+        # Checks are dependency-free on purpose: alpine:3 has no unzip and
+        # apk-add at runtime is the pattern we avoid. A zip begins "PK", which
+        # an HTML error page does not.
+        command = ["sh", "-c", <<-EOT
+          set -eu
+          STORAGE=/plugins-storage
+          DIR="$STORAGE/archives/github.com/Aetherinox/traefik-api-token-middleware"
+          ZIP="$DIR/v0.1.4.zip"
+          URL="https://github.com/Aetherinox/traefik-api-token-middleware/archive/refs/tags/v0.1.4.zip"
+          MIN_BYTES=10000
+          mkdir -p "$DIR"
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            rm -f "$ZIP"
+            if wget -q -T 30 -O "$ZIP" "$URL"; then
+              size=$(wc -c < "$ZIP")
+              if [ "$size" -ge "$MIN_BYTES" ] && [ "$(head -c 2 "$ZIP")" = "PK" ]; then
+                ok=1
+                break
+              fi
+              echo "attempt $attempt: archive did not verify, size=$size bytes, magic=$(head -c 2 "$ZIP")"
+            else
+              echo "attempt $attempt: wget failed"
+            fi
+            sleep $((attempt * 5))
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "FATAL: no valid api-token-middleware archive after 5 attempts."
+            echo "Refusing to start traefik, because a missing plugin disables ALL"
+            echo "plugins and the pod would answer 404 for every host."
+            exit 1
+          fi
+          printf '{"github.com/Aetherinox/traefik-api-token-middleware":"v0.1.4"}' > "$STORAGE/archives/state.json"
+          echo "Plugins pre-downloaded and verified: $(wc -c < "$ZIP") bytes"
+        EOT
+        ]
         volumeMounts = [{
           name      = "plugins"
           mountPath = "/plugins-storage"
