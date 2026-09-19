@@ -5,10 +5,149 @@
 // arrive via HOMELAB_* env vars set by the Go CLI.
 'use strict';
 const fs = require('fs');
-// patchright-core: playwright-core drop-in that avoids the Runtime.enable CDP leak.
-const { chromium } = require('patchright-core');
+const http = require('http');
+
+// How long the pre-connect sweep may take before we give up and connect anyway.
+const preflightTimeoutMS = 5000;
+
+// connectOverCDP attaches to the whole browser, so Chrome replays one
+// attachedToTarget event per target already open — including whatever an
+// earlier session left in the shared pool browser. patchright's handler asserts
+// targetInfo.browserContextId is present before it reaches its own "unknown
+// context, detach" path, and a worker that outlived its browser context reports
+// no browserContextId at all. That assert throws out of an EventEmitter rather
+// than a promise, so main()'s catch never sees it and node dies before the
+// script runs a line. One orphan then breaks every later caller until the pod
+// restarts (infra issue #98, where an embed.st service worker held the single
+// warm worker down for everyone).
+//
+// Targets that DO carry a context id are left alone. That is what keeps the
+// worker's own Chrome extension service workers running: measured on a live
+// pool worker, both of them sit in the default context with a real id, so a
+// blanket "close every service worker" sweep would have taken out stealth.
+function contextlessTargets(targetInfos) {
+  return (targetInfos || []).filter((t) => t && t.type !== 'browser' && !t.browserContextId);
+}
+
+// The CDP websocket lives on whatever host Chrome thinks it is; we reach it
+// through a port-forward, so keep the path and use the endpoint we dialled.
+function browserWSURL(reported, cdpURL) {
+  const ws = new URL(reported);
+  const cdp = new URL(cdpURL);
+  ws.protocol = cdp.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws.host = cdp.host;
+  return ws.toString();
+}
+
+function getJSON(url, timeoutMS) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, { timeout: timeoutMS }, (res) => {
+      let body = '';
+      res.on('data', (c) => (body += c));
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(body));
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+}
+
+// Best-effort sweep. Any failure here leaves us exactly where we were before,
+// so it logs and returns rather than throwing: a broken preflight must never be
+// worse than the crash it is trying to avoid.
+async function closeContextlessTargets(cdpURL, log) {
+  let ws;
+  try {
+    const version = await getJSON(cdpURL + '/json/version', preflightTimeoutMS);
+    if (!version.webSocketDebuggerUrl) return;
+    ws = new WebSocket(browserWSURL(version.webSocketDebuggerUrl, cdpURL));
+
+    let nextID = 1;
+    const pending = new Map();
+    const send = (method, params = {}) =>
+      new Promise((resolve, reject) => {
+        const id = nextID++;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('CDP websocket open timed out')), preflightTimeoutMS);
+      ws.onopen = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      ws.onerror = (e) => {
+        clearTimeout(timer);
+        reject(new Error('CDP websocket error: ' + (e && e.message ? e.message : 'unknown')));
+      };
+    });
+
+    ws.onmessage = (ev) => {
+      let m;
+      try {
+        m = JSON.parse(ev.data);
+      } catch (_) {
+        return;
+      }
+      const waiter = m.id && pending.get(m.id);
+      if (!waiter) return;
+      pending.delete(m.id);
+      if (m.error) waiter.reject(new Error(m.error.message || 'CDP error'));
+      else waiter.resolve(m.result);
+    };
+    // A socket that drops mid-sweep would otherwise leave every in-flight
+    // send() awaiting forever, which would hang the run we are trying to save.
+    const abandonPending = (why) => {
+      for (const [, waiter] of pending) waiter.reject(new Error(why));
+      pending.clear();
+    };
+    ws.onclose = () => abandonPending('CDP websocket closed mid-sweep');
+    ws.onerror = () => abandonPending('CDP websocket errored mid-sweep');
+
+    const sweep = async () => {
+      const { targetInfos } = await send('Target.getTargets');
+      const orphans = contextlessTargets(targetInfos);
+      for (const t of orphans) {
+        try {
+          await send('Target.closeTarget', { targetId: t.targetId });
+          log(`cleared orphaned ${t.type} left in the shared browser: ${t.url || t.targetId}`);
+        } catch (e) {
+          log(`could not clear orphaned ${t.type} ${t.targetId}: ${e.message}`);
+        }
+      }
+    };
+
+    // Whatever happens, connecting is more important than sweeping.
+    let overall;
+    await Promise.race([
+      sweep(),
+      new Promise((_, reject) => {
+        overall = setTimeout(() => reject(new Error('sweep timed out')), preflightTimeoutMS);
+      }),
+    ]).finally(() => clearTimeout(overall));
+  } catch (e) {
+    log('target preflight skipped: ' + (e && e.message ? e.message : e));
+  } finally {
+    try {
+      if (ws) ws.close();
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
 
 async function main() {
+  // Required lazily so the pure helpers above can be unit-tested without the
+  // node_modules tree the CLI installs into its cache dir.
+  // patchright-core: playwright-core drop-in that avoids the Runtime.enable CDP leak.
+  const { chromium } = require('patchright-core');
+
   const cdpURL = process.env.HOMELAB_CDP_URL;
   if (!cdpURL) throw new Error('HOMELAB_CDP_URL not set');
   const mode = process.env.HOMELAB_BROWSER_MODE || 'run';
@@ -27,6 +166,12 @@ async function main() {
   // Seed file (the broker's on-demand storage_state export) — inject the master's
   // cookies+localStorage into the fresh context, read-only. Absent for --shared-context.
   const seedPath = process.env.HOMELAB_STORAGE_STATE || '';
+
+  const log = (...a) => console.error('[browser]', ...a);
+
+  // Sweep before connecting: connectOverCDP is what trips over an orphan, so
+  // this has to happen while we can still do something about it.
+  await closeContextlessTargets(cdpURL, log);
 
   const browser = await chromium.connectOverCDP(cdpURL);
 
@@ -56,7 +201,6 @@ async function main() {
   }
 
   const page = await context.newPage();
-  const log = (...a) => console.error('[browser]', ...a);
 
   let exitCode = 0;
   try {
@@ -113,7 +257,12 @@ async function main() {
   process.exit(exitCode);
 }
 
-main().catch((e) => {
-  console.error('homelab browser: fatal:', e && e.stack ? e.stack : e);
-  process.exit(1);
-});
+// Required as a module by browser_runner_test.js; run directly by the CLI.
+if (require.main === module) {
+  main().catch((e) => {
+    console.error('homelab browser: fatal:', e && e.stack ? e.stack : e);
+    process.exit(1);
+  });
+}
+
+module.exports = { contextlessTargets, browserWSURL, closeContextlessTargets };
