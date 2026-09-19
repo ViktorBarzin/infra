@@ -52,17 +52,28 @@ rather than chosen, and the next section explains what forces it.
 > The rig deliberately does not use usbmuxd. Everything below follows from
 > that, and it is the first thing to understand before changing anything.
 
-**The lockdown pairing cannot be established on this phone.** Stolen Device
-Protection gates "Trust This Computer" behind Face ID with no passcode
-fallback, and the enrolled face belongs to the phone's previous owner, who is
-not present. Every `idevicepair pair` returns `user denied the trust dialog`.
-Turning Stolen Device Protection off is itself Face-ID gated, with a one-hour
-delay away from familiar locations, so there is no way round it from here.
+**The lockdown pairing could not be established when the rig was built, and
+the design still assumes it is absent.** On 2026-09-12 Stolen Device
+Protection gated "Trust This Computer" behind Face ID with no passcode
+fallback, the enrolled face belonged to the phone's previous owner, and every
+`idevicepair pair` returned `user denied the trust dialog`. Turning Stolen
+Device Protection off is itself Face-ID gated, with a one-hour delay away from
+familiar locations.
 
-What that costs, measured: `idevicesyslog` device logs, `ideviceinstaller`,
-`idevicescreenshot` and `iproxy`. What it does **not** cost: taps, gestures,
-screenshots, page source and `mobile: deepLink`. Installing builds goes through
-`devicectl device install app` instead of `ideviceinstaller`.
+**On 2026-09-19 that pairing was present**: `idevicepair validate` returned
+`SUCCESS`, `idevice_id -l` listed the device and `idevicename` answered. It
+appeared during a session where the phone was re-cabled and a passcode was
+entered to trust a developer certificate. Which of those established it was
+not isolated, and nothing has confirmed it survives a reboot or an unpair, so
+treat it as present rather than dependable.
+
+Nothing in the rig was changed to use it, and that is deliberate: everything
+load-bearing goes through CoreDevice, which is the record we have kept
+continuously. While the lockdown pairing holds it additionally makes
+`idevicesyslog` device logs, `ideviceinstaller`, `idevicescreenshot` and
+`iproxy` available, which are useful for debugging by hand. Taps, gestures,
+screenshots, page source and `mobile: deepLink` never needed it. Installing
+builds still goes through `devicectl device install app`.
 
 > [!NOTE]
 > A **default** Appium session does need that pairing and fails with `Could
@@ -146,7 +157,7 @@ while all of it holds, and two of them are human-dependent by design.
 | Phone cabled and booted | the cable | unplugged |
 | Phone **unlocked** | Auto-Lock setting | **the screen locks**, see below |
 | Developer Mode on | survives reboots | a factory reset |
-| Certificate under 7 days old | `me.viktorbarzin.wda-resign` for WDA only | your own apps, which need a reinstall |
+| Certificate under 7 days old | `me.viktorbarzin.wda-resign` for WDA only, and only while the phone is attached | your own apps, which need a reinstall; or the phone spends 7 days off the cable, after which WDA needs a re-sign **and** a trust tap |
 
 ### The phone must stay unlocked
 
@@ -219,8 +230,10 @@ pairing `ideviceinstaller` needs is blocked on this phone.
 
 `doctor` is the first thing to run for any symptom. It reports each link
 separately, so it distinguishes "the laptop is away" from "the certificate
-expired". A healthy run is **12 ok, 0 failing**, with two standing warnings:
-`pairing-lockdown` unavailable, and the current iOS version.
+expired". A healthy run is **13 ok, 0 failing**, with one standing warning for
+the current iOS version. It was 11 ok with two warnings when the rig was built:
+`appium-tunnel` was added on 2026-09-19, and `pairing-lockdown` moved from a
+standing warning to ok when that pairing appeared.
 
 `doctor` reports Appium twice, because there are two separate things to know.
 The `appium` check curls the Mac's own loopback over SSH, which says the server
@@ -317,6 +330,45 @@ ssh mac 'tail -30 /tmp/wda-run.log'
 launchctl kickstart -k gui/$(id -u)/me.viktorbarzin.wda-run
 ```
 
+### `0xe8008011 This provisioning profile has expired`
+
+The free-team certificate lapsed rather than rolling over, and the phone now
+needs a human. Measured on 2026-09-19, seven days after the rig was built.
+
+`me.viktorbarzin.wda-resign` runs every 48 hours and re-signs inside the
+7-day window, which normally means the identity is never new and nothing has
+to be trusted again. That only holds while the phone is attached. The run at
+2026-09-18T23:29:51Z recorded
+`{"ok":false,"stage":"device-absent"}` because the phone was unplugged, no
+later run fell inside the window, and the certificate expired.
+
+Recovering takes two steps, the second of which no automation can do:
+
+```sh
+ssh <mac> 'launchctl kickstart -k gui/$(id -u)/me.viktorbarzin.wda-resign'
+```
+
+Then, **on the phone**, Settings, General, VPN & Device Management, Developer
+App, the `Apple Development: <appleid>` entry, Trust. Passcode, not Face ID.
+A re-sign inside the window reuses an identity the device already trusts; once
+the certificate has fully lapsed the replacement is a new identity, and iOS
+refuses to launch it until someone confirms it:
+
+```
+Unable to launch me.viktorbarzin.wda.xctrunner because it has an invalid code
+signature, inadequate entitlements or its profile has not been explicitly
+trusted by the user
+```
+
+Then `launchctl kickstart -k gui/$(id -u)/me.viktorbarzin.wda-run` and the
+runner publishes its URL again.
+
+`doctor`'s `last-resign` check reports this the moment it happens, reading
+`~/.ios-rig-status.json` on the Mac. In this instance nobody saw it, because
+`ios-rig-doctor.service` was itself failing at exec for the whole week.
+Leaving the phone attached is what prevents it; the re-sign job cannot sign a
+device that is not there.
+
 ### Sessions fail after about a week
 
 The 7-day certificate lapsed and the 48-hour re-sign job has not run, usually
@@ -363,10 +415,36 @@ works: the Flint forwards LAN to guest, so Appium on the Mac reaches
 WebDriverAgent on the phone across the two subnets, and so does the devvm.
 Verified 2026-09-12, both returning 200.
 
-macOS keeps a **stable per-SSID** private Wi-Fi address rather than a rotating
-one, so a reservation matching that address holds as long as the Mac stays on
-that SSID. The `mbp-london` reservation carries both the hardware MAC
-`84:2f:57:39:9a:d9` and the private address for that network.
+**The private Wi-Fi address has now rotated twice, so do not treat it as
+stable.** macOS was expected to keep a per-SSID private address, and the
+`mbp-london` reservation carries both the hardware MAC `84:2f:57:39:9a:d9` and
+the private address recorded for that network. It went stale once before
+2026-09-12, and again by 2026-09-19, when the card was using
+`a6:80:43:81:93:8e` and DHCP handed it `192.168.8.201` out of the pool while
+`.168` stayed dark.
+
+The symptom is the whole rig looking absent: `mbp-london.viktorbarzin.lan`
+resolves to `.168`, nothing answers there, and it is easy to read that as the
+laptop being away. `networksetup -getmacaddress en0` reports the **hardware**
+address and `ifconfig en0 | awk '/ether/{print $2}'` reports the one actually
+in use, so comparing the two names the cause in one command.
+
+Setting Private Wi-Fi Address to Off for that SSID, in Settings, Wi-Fi, the
+network's info button, puts the card back on the hardware MAC the reservation
+already carries. The setting takes effect on the next association rather than
+immediately, so the Mac has to rejoin the network before `.168` returns.
+
+To find the Mac when it has moved, `ha-london` sits on the same LAN and can be
+asked from here, which avoids guessing across the tunnel:
+
+```sh
+homelab ha ssh --instance london -- 'ip neigh show dev wlan0 | grep -v FAILED'
+homelab ha ssh --instance london -- 'for i in 1 108 201 228; do nc -z -w2 192.168.8.$i 22 && echo "$i open"; done'
+```
+
+A locally-administered address, meaning the second hex digit of the first
+octet is 2, 6, A or E, is a randomised one, so that plus an open port 22 is
+almost certainly the Mac.
 
 ### `ios shot` cannot connect, but `doctor` says Appium is ready
 
