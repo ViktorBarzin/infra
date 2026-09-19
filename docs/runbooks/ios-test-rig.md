@@ -219,8 +219,15 @@ pairing `ideviceinstaller` needs is blocked on this phone.
 
 `doctor` is the first thing to run for any symptom. It reports each link
 separately, so it distinguishes "the laptop is away" from "the certificate
-expired". A healthy run is **11 ok, 0 failing**, with two standing warnings:
+expired". A healthy run is **12 ok, 0 failing**, with two standing warnings:
 `pairing-lockdown` unavailable, and the current iOS version.
+
+`doctor` reports Appium twice, because there are two separate things to know.
+The `appium` check curls the Mac's own loopback over SSH, which says the server
+is running. The `appium-tunnel` check dials `127.0.0.1:4723` on the devvm, which
+says this box can actually reach it. Appium binds loopback on the Mac, so only
+`ios-rig-tunnel.service` connects the two, and a green `appium` alongside a red
+`appium-tunnel` means the server is fine and the forward is not.
 
 The phone takes a DHCP lease and WebDriverAgent rebinds on every restart, so
 its address is never hardcoded. The runner writes whatever WDA actually bound
@@ -235,10 +242,17 @@ noticing it went stale.
 ## Rebuilding from nothing
 
 ```sh
-homelab ios bootstrap --dry-run   # see what would change
-homelab ios bootstrap             # tooling, all five LaunchAgents, devvm units
+homelab ios bootstrap --dry-run     # see what would change
+homelab ios bootstrap               # tooling, all five LaunchAgents, devvm units
+homelab ios bootstrap --units-only  # this box's systemd units alone, no Mac needed
 systemctl --user enable --now ios-rig-tunnel.service ios-rig-doctor.timer
 ```
+
+A full `bootstrap` starts by checking it can SSH to the Mac and stops there if
+it cannot, since almost everything it does happens on the Mac. The devvm units
+are the exception: they are written locally from the embedded assets and the
+Mac plays no part, so `--units-only` writes them, reloads systemd and enables
+both units while the laptop is away.
 
 Three steps need a human holding the phone, because Apple requires physical
 confirmation:
@@ -353,6 +367,29 @@ macOS keeps a **stable per-SSID** private Wi-Fi address rather than a rotating
 one, so a reservation matching that address holds as long as the Mac stays on
 that SSID. The `mbp-london` reservation carries both the hardware MAC
 `84:2f:57:39:9a:d9` and the private address for that network.
+
+### `ios shot` cannot connect, but `doctor` says Appium is ready
+
+The forward is down. `ios shot` and `ios install` dial `127.0.0.1:4723` on the
+devvm, and only `ios-rig-tunnel.service` puts anything there.
+
+```sh
+systemctl --user status ios-rig-tunnel.service
+homelab ios bootstrap --units-only     # rewrites both units, no Mac needed
+```
+
+`status=203/EXEC` means the unit is pointing at a binary that is not there.
+That happened between 2026-09-12 and 2026-09-19: the units were installed
+naming `scripts/ios-rig/ios-rig`, the commit that folded the rig into the CLI
+deleted that script 84 minutes later, and the units on disk were never
+rewritten. The running `ssh` survived long enough for that commit's own
+verification to pass, so the break only surfaced the next time the laptop
+roamed and systemd tried to restart it.
+
+Two things now catch this rather than leaving it to be noticed by hand. The
+`appium-tunnel` check reports the devvm end separately from the Mac end, and a
+test asserts that every verb an embedded unit names is a verb the CLI
+registers, which is what the original pair of unit files failed.
 
 ### Re-running `bootstrap-mac.sh` left nothing loaded
 

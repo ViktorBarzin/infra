@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -39,6 +40,8 @@ func iosCommands() []Command {
 			Summary: "print where WebDriverAgent is listening right now", Run: iosWdaURL},
 		{Path: []string{"ios", "bootstrap"}, Tier: TierWrite,
 			Summary: "provision the Mac agents and the devvm units; idempotent, safe to re-run", Run: iosBootstrap},
+		{Path: []string{"ios", "tunnel-fg"}, Tier: TierRead,
+			Summary: "run the Appium SSH tunnel in the foreground (ios-rig-tunnel.service runs this)", Run: iosTunnelFg},
 	}
 }
 
@@ -59,6 +62,8 @@ func iosHelp() string {
   ios apps                         what is installed, against the 3-app cap
   ios wda-url                      where WebDriverAgent is listening
   ios bootstrap [--dry-run]        provision the Mac and this box
+        --units-only               rewrite this box's systemd units only,
+                                   which needs no Mac and repairs the tunnel
 
 Two things the rig cannot do for itself, both by design:
   - the phone must stay UNLOCKED. Set Auto-Lock to Never. A locked phone can be
@@ -163,9 +168,21 @@ func iosDoctor(args []string) error {
 	}
 
 	if out, _ := c.onMac("curl -s -m 8 http://127.0.0.1:" + c.AppiumPort + "/status"); strings.Contains(out, `"ready":true`) {
-		add(0, "appium", "ready on 127.0.0.1:"+c.AppiumPort)
+		add(0, "appium", "ready on the Mac's 127.0.0.1:"+c.AppiumPort)
 	} else {
 		add(2, "appium", "not answering; launchctl kickstart gui/$(id -u)/me.viktorbarzin.appium")
+	}
+
+	// Appium binds the Mac's loopback, so the check above says nothing about
+	// whether THIS box can reach it. `ios shot` dials our own 127.0.0.1, which
+	// exists only while ios-rig-tunnel.service holds the forward open. Between
+	// 2026-09-12 and 2026-09-19 that unit failed at exec every 15 seconds while
+	// doctor reported every check green, so the two are worth testing apart.
+	if httpOK("http://127.0.0.1:"+c.AppiumPort+"/status", 8*time.Second) {
+		add(0, "appium-tunnel", "reachable from this box on 127.0.0.1:"+c.AppiumPort)
+	} else {
+		add(2, "appium-tunnel", "127.0.0.1:"+c.AppiumPort+" is not answering HERE; "+
+			"`systemctl --user status ios-rig-tunnel.service`, repair with `homelab ios bootstrap --units-only`")
 	}
 
 	if out, _ := c.onMac(fmt.Sprintf("%s/usr/bin/devicectl device info apps --device %s 2>/dev/null", c.DeveloperDir, c.UDID)); strings.Contains(out, c.WDABundleID) {
@@ -508,19 +525,36 @@ func iosBootstrap(args []string) error {
 		fmt.Print(iosHelp())
 		return nil
 	}
-	dry := false
+	dry, unitsOnly := false, false
 	for _, a := range args {
-		if a == "--dry-run" {
+		switch a {
+		case "--dry-run":
 			dry = true
-		} else {
+		case "--units-only":
+			unitsOnly = true
+		default:
 			return fmt.Errorf("unknown flag %q", a)
 		}
 	}
 	c := iosDefaults()
 
+	// The devvm units are ours alone and the Mac has no part in writing them.
+	// Tying them to the ssh precheck below meant that when the units broke
+	// while the laptop was away, the one side that could be repaired was the
+	// one side bootstrap refused to touch.
+	if unitsOnly {
+		fmt.Println("==> devvm units")
+		if err := iosInstallUnits(dry); err != nil {
+			return err
+		}
+		fmt.Println("\nDone. Next: homelab ios doctor")
+		return nil
+	}
+
 	if _, err := c.onMac("true"); err != nil {
 		return fmt.Errorf("cannot ssh to %s. Your key needs to be in its authorized_keys; "+
-			"that is the one step this cannot do for you: %w", c.target(), err)
+			"that is the one step this cannot do for you. To repair just this box: "+
+			"homelab ios bootstrap --units-only: %w", c.target(), err)
 	}
 	fmt.Printf("==> %s reachable\n", c.target())
 
@@ -658,6 +692,57 @@ func iosInstallUnits(dry bool) error {
 	}
 	return exec.Command("systemctl", "--user", "enable", "--now",
 		"ios-rig-tunnel.service", "ios-rig-doctor.timer").Run()
+}
+
+// iosTunnelArgs builds the ssh invocation. It is separate from iosTunnelFg so
+// the flags that matter can be asserted without opening a connection.
+//
+// Only Appium is forwarded. The usbmuxd socket forward the first version
+// carried was dropped on 2026-09-12: Stolen Device Protection blocks the
+// lockdown pair record it would need, and WebDriverAgent is reached straight
+// over Wi-Fi instead.
+func iosTunnelArgs(c iosConfig) []string {
+	port := c.AppiumPort
+	return []string{
+		"-N",
+		// A forward that cannot bind must kill the process. Without this ssh
+		// stays connected with no tunnel, systemd sees a healthy service, and
+		// every `ios shot` fails against a port nobody is watching.
+		"-o", "ExitOnForwardFailure=yes",
+		// The Mac is a roaming laptop, so the link dies without a FIN more
+		// often than it closes cleanly. Keepalives turn that into an exit the
+		// unit can restart from, instead of a socket that hangs.
+		"-o", "ServerAliveInterval=20",
+		"-o", "ServerAliveCountMax=3",
+		"-o", "ConnectTimeout=10",
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-L", port + ":127.0.0.1:" + port,
+		c.target(),
+	}
+}
+
+// iosTunnelFg carries Appium from the Mac's loopback to ours and stays in the
+// foreground, because ios-rig-tunnel.service supervises it. It is a verb
+// rather than a raw ssh line in the unit file so that the IOS_RIG_* overrides
+// reach it: a second rig changes MAC_HOST and APPIUM_PORT and nothing else.
+func iosTunnelFg(args []string) error {
+	if iosHelpWanted(args) {
+		fmt.Print(iosHelp())
+		return nil
+	}
+	if len(args) > 0 {
+		return fmt.Errorf("unknown flag %q", args[0])
+	}
+	c := iosDefaults()
+	fmt.Fprintf(os.Stderr, "forwarding Appium %s from %s\n", c.AppiumPort, c.target())
+	ssh, err := exec.LookPath("ssh")
+	if err != nil {
+		return err
+	}
+	// exec rather than run: systemd should supervise ssh itself, so a dropped
+	// link exits the unit's main process instead of being swallowed here.
+	return syscall.Exec(ssh, append([]string{"ssh"}, iosTunnelArgs(c)...), os.Environ())
 }
 
 // iosTestAppTo writes the embedded proof-of-life app into dir, so
