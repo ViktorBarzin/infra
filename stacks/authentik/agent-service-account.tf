@@ -97,22 +97,32 @@ resource "authentik_token" "agent_app_password" {
 resource "authentik_policy_expression" "skip_mfa_for_agent" {
   name = "skip-mfa-for-agent-service-account"
 
+  # Logged so the next person debugging this can read what the policy saw
+  # rather than guessing at the flow context the way this one was written.
+  execution_logging = true
+
   expression = <<-EOT
-    # Skip the MFA stage only for the agent service account, which has no
-    # authenticator and cannot enrol one. Anything else keeps MFA.
+    # Skip the MFA stage for one thing: an app-password login by the agent's
+    # own token. Everything else, and anything unrecognised, keeps MFA.
     #
-    # BOTH SOURCES, because neither is reliable alone. The identification
-    # stage puts the user in context as `pending_user`, and that is what this
-    # read on 2026-09-19 found empty at the point the stage is evaluated, so
-    # an expression reading only the context returned True and the stage ran
-    # anyway. `request.user` carries it on the paths where the context does
-    # not.
-    #
-    # Unknown means MFA stays on: if neither source names a user the name is
-    # empty, which is not the service account, so this returns True.
-    holder = request.context.get("pending_user") or request.user
-    name = getattr(holder, "username", "") if holder is not None else ""
-    return name != "${authentik_user.agent.username}"
+    # KEYED ON THE TOKEN, not on the user. The obvious version compared
+    # `pending_user.username`, and it did not work: measured 2026-09-19, that
+    # key is empty where this stage is evaluated, so the expression took its
+    # own fail-closed branch and the stage ran anyway. The password stage does
+    # set `auth_method`, and an authentik app password authenticates as
+    # `token`, so the credential itself is what this recognises.
+    method = request.context.get("auth_method")
+    args = request.context.get("auth_method_args") or {}
+    ak_logger.info("skip-mfa-for-agent", method=method, args_keys=list(args.keys()))
+
+    if method != "token":
+        return True
+
+    token = args.get("token") or {}
+    identifier = token.get("identifier", "") if isinstance(token, dict) else getattr(token, "identifier", "")
+    identifier = identifier or args.get("identifier", "")
+    ak_logger.info("skip-mfa-for-agent token", identifier=identifier)
+    return identifier != "${authentik_token.agent_app_password.identifier}"
   EOT
 }
 
