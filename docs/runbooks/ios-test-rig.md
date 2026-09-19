@@ -397,8 +397,33 @@ IOS_RIG_MAC_HOST=192.168.8.42 homelab ios doctor
 ```
 
 Every field has an `IOS_RIG_*` override: `MAC_HOST`, `MAC_USER`, `UDID`,
-`TEAM_ID`, `WDA_BUNDLE_ID`, `DEVELOPER_DIR`, `APPIUM_PORT`. A second phone
-needs no code change.
+`TEAM_ID`, `WDA_BUNDLE_ID`, `DEVELOPER_DIR`, `APPIUM_PORT`, plus `SSH_PORT`,
+`MAC_SUBNET` and `MAC_HW_ADDR` for the discovery described next. A second
+phone needs no code change.
+
+### The rig finds the Mac when the name stops answering
+
+Since 2026-09-19 an override is a convenience rather than the only way
+through. When the configured name does not answer on port 22, the rig sweeps
+`MAC_SUBNET`, asks every host with SSH open for `networksetup -getmacaddress
+en0`, and uses the one whose **hardware** address matches `MAC_HW_ADDR`. The
+hardware address is the single identifier a private-address rotation cannot
+change, which is what makes the match trustworthy: an open port 22 on the LAN
+is not on its own a reason to start driving a machine.
+
+Measured on the stranded Mac that prompted it: 14s for a cold sweep of a /24,
+then 4s once the result is cached in `~/.ios-rig-mac-host`. The cache is only
+ever a hint, re-checked on every read, and the configured name always wins
+when it answers, so a healthy rig never pays for any of this.
+
+`doctor` reports a `mac-address` warning whenever discovery fired, naming both
+addresses, so the underlying drift stays visible instead of being quietly
+papered over. That warning is the cue to put the reservation right rather than
+to leave discovery carrying it.
+
+This mirrors what `wdaURL` already does for the phone, whose WebDriverAgent
+address moves with its DHCP lease. The two failures have the same shape, and
+now the same answer.
 
 **Check which SSID it is on first.** The Flint's names are near-identical and
 land on different networks, which is how both devices ended up isolated on

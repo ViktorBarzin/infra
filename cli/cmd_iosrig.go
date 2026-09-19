@@ -105,6 +105,15 @@ func iosDoctor(args []string) error {
 		checks = append(checks, iosCheck{name: name, detail: detail, level: level})
 	}
 
+	// The configured name is a Technitium record pinned to a Flint
+	// reservation, and macOS rotates the private Wi-Fi address both key on.
+	// Resolving first means a rotated address reads as "found it elsewhere"
+	// rather than as the laptop being away.
+	configured := c.MacHost
+	if host, err := c.resolveMacHost(c.iosDiscoverMac); err == nil {
+		c.MacHost = host
+	}
+
 	fmt.Printf("iOS rig via %s, %s\n\n", c.target(), time.Now().UTC().Format(time.RFC3339))
 
 	if _, err := c.onMac("true"); err != nil {
@@ -112,6 +121,12 @@ func iosDoctor(args []string) error {
 		return iosReport(checks)
 	}
 	add(0, "ssh", c.target())
+
+	if c.MacHost != configured {
+		add(1, "mac-address", fmt.Sprintf("%s does not answer; found the Mac at %s by hardware address %s. "+
+			"The Wi-Fi private address rotated again: set Private Wi-Fi Address to Off for this SSID, "+
+			"or move the reservation", configured, c.MacHost, c.MacHWAddr))
+	}
 
 	details, err := c.deviceDetails()
 	if err != nil && !strings.Contains(details, "bootState") {
@@ -249,7 +264,10 @@ func iosShot(args []string) error {
 		}
 		return nil
 	}
-	c := iosDefaults()
+	c, err := iosResolved()
+	if err != nil {
+		return err
+	}
 	out := args[0]
 	var url, tap, bundle string
 	rest := args[1:]
@@ -405,7 +423,10 @@ func iosInstall(args []string) error {
 		}
 		return nil
 	}
-	c := iosDefaults()
+	c, err := iosResolved()
+	if err != nil {
+		return err
+	}
 	src := args[0]
 	scheme, bundle := "", ""
 	launch := "1"
@@ -490,7 +511,10 @@ func iosApps(args []string) error {
 		fmt.Print(iosHelp())
 		return nil
 	}
-	c := iosDefaults()
+	c, err := iosResolved()
+	if err != nil {
+		return err
+	}
 	out, err := c.onMac(fmt.Sprintf("%s/usr/bin/devicectl device info apps --device %s 2>/dev/null", c.DeveloperDir, c.UDID))
 	if err != nil {
 		return err
@@ -510,7 +534,11 @@ func iosWdaURL(args []string) error {
 		fmt.Print(iosHelp())
 		return nil
 	}
-	u, err := iosDefaults().wdaURL()
+	c, err := iosResolved()
+	if err != nil {
+		return err
+	}
+	u, err := c.wdaURL()
 	if err != nil {
 		return err
 	}
@@ -551,6 +579,9 @@ func iosBootstrap(args []string) error {
 		return nil
 	}
 
+	if host, rerr := c.resolveMacHost(c.iosDiscoverMac); rerr == nil {
+		c.MacHost = host
+	}
 	if _, err := c.onMac("true"); err != nil {
 		return fmt.Errorf("cannot ssh to %s. Your key needs to be in its authorized_keys; "+
 			"that is the one step this cannot do for you. To repair just this box: "+
@@ -734,7 +765,10 @@ func iosTunnelFg(args []string) error {
 	if len(args) > 0 {
 		return fmt.Errorf("unknown flag %q", args[0])
 	}
-	c := iosDefaults()
+	c, err := iosResolved()
+	if err != nil {
+		return err
+	}
 	fmt.Fprintf(os.Stderr, "forwarding Appium %s from %s\n", c.AppiumPort, c.target())
 	ssh, err := exec.LookPath("ssh")
 	if err != nil {
