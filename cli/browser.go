@@ -433,6 +433,10 @@ func setupPoolSession(o *browserOpts, addTeardown func(func())) (string, error) 
 	fmt.Fprintf(os.Stderr, "homelab browser: acquired pool session %s (pod %s)\n", session, pod)
 	// release the session when the run ends (or on signal) — best-effort.
 	addTeardown(func() { releaseSession(brokerBase, session) })
+	// Hold the claim with a heartbeat for as long as this process lives, so a
+	// run that never reaches the teardown above does not strand the worker.
+	// Registered after the release so LIFO stops the beat first.
+	addTeardown(startSessionHeartbeat(brokerBase, session))
 
 	if !o.noSeed {
 		seedFile := filepath.Join(os.TempDir(), fmt.Sprintf("homelab-browser-seed-%d.json", os.Getpid()))
@@ -542,6 +546,51 @@ func acquireSession(brokerBase, owner, purpose string) (pod, session string, err
 	b, _ := io.ReadAll(resp.Body)
 	pod, _, session, err = parseAcquire(b)
 	return pod, session, err
+}
+
+// sessionHeartbeatInterval is how often a running session tells the broker it
+// is still alive. The broker reclaims a heartbeating session after
+// HEARTBEAT_TIMEOUT_SECONDS (120s) of silence, so this leaves room for four
+// missed beats before a live run is at risk.
+const sessionHeartbeatInterval = 30 * time.Second
+
+// startSessionHeartbeat keeps the pool claim alive for as long as this process
+// is, and returns a function that stops it.
+//
+// A run killed before its teardown (SIGKILL, OOM, a dropped connection) leaves
+// chrome-pool/session set on the warm pod. pick_free_worker skips any pod
+// carrying one, so the pool falls back to cold burst pods until the reaper
+// deletes the pod 60 minutes later. With a heartbeat the broker reclaims it in
+// about two minutes instead, and reclaims it in place, so the pod stays warm.
+//
+// The first beat is sent immediately rather than after the first tick: a run
+// killed in its first 30 seconds would otherwise have no heartbeat on record
+// and fall back to the 60-minute path, which is the case being fixed.
+func startSessionHeartbeat(brokerBase, session string) func() {
+	done := make(chan struct{})
+	beat := func() {
+		reqBody, _ := json.Marshal(map[string]string{"session": session})
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Post(brokerBase+"/heartbeat", "application/json", strings.NewReader(string(reqBody)))
+		if err == nil {
+			resp.Body.Close()
+		}
+	}
+	beat()
+	go func() {
+		t := time.NewTicker(sessionHeartbeatInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				beat()
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }
 
 // releaseSession tells the broker to reap/return the worker. Best-effort.

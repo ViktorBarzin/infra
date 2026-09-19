@@ -513,13 +513,28 @@ CDP client is **patchright-core** (playwright-core drop-in that closes the
   Playwright client that is still attached will restart its own service
   worker faster than the reset closes it, which is why this runs at
   release and not while a session is live.
-- **A caller killed without releasing wedges the warm pod** — the pod
-  keeps its `chrome-pool/session` label, so `pick_free_worker` skips it
-  and the pool falls back to burst pods until the reaper deletes it at
-  the 60m `SESSION_DEADLINE_SECONDS`. The replacement is clean, so this
-  self-heals; it costs warm-start latency in the meantime. Observed
-  2026-09-19 on `chrome-worker-warm-774955dff-zvl62`, still labelled
-  with session `235f7f1d` after its caller was killed.
+- **A caller killed without releasing strands its worker, and how long
+  for depends on whether it heartbeats** (since 2026-09-19) — the pod
+  keeps its `chrome-pool/session` label and `pick_free_worker` skips
+  any pod carrying one. `homelab browser` now posts `/heartbeat` every
+  30s (`sessionHeartbeatInterval`, first beat sent immediately so a run
+  killed in its first 30s still counts), and the reaper reclaims a
+  session that has gone quiet for `HEARTBEAT_TIMEOUT_SECONDS` (120s) by
+  calling `release_worker`, which resets the browser and clears the
+  label in place, so the pod returns to the pool warm. **Reclaim is
+  opt-in by construction**: only a session that has sent at least one
+  heartbeat is eligible (`should_reclaim_session`), so callers that
+  speak to the broker directly and never heartbeat, such as f1-stream's
+  `backend/chrome_fleet.py` lease, keep the previous behaviour, where
+  the reaper deletes the pod at the 60m `SESSION_DEADLINE_SECONDS` and
+  the Deployment recreates a clean standby. That deadline stays as the
+  backstop for those callers and for a pod too broken to reset.
+  `release_worker` clears the heartbeat annotation as well as the
+  label, since a warm pod is reused and a leftover heartbeat would make
+  the next session look reclaimable as soon as it was claimed.
+  Originally observed 2026-09-19 on
+  `chrome-worker-warm-774955dff-zvl62`, still labelled with session
+  `235f7f1d` after its caller was killed.
 - **No `/metrics` endpoint** — the cluster's generic
   `KubePodCrashLooping` rule covers basic alerting. A Prometheus scrape
   exporter is day-2 work.
