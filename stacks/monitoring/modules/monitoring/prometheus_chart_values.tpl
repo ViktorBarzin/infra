@@ -3844,14 +3844,33 @@ serverFiles:
           # live pods pulling within the last 60 seconds. Stale registrations
           # still accumulate (13 of them then); pruning those with
           # `cscli bouncers delete` is housekeeping, not a fix for this.
+          # COUNTS POLLING PODS, does not SUM their request rate (2026-09-19).
+          # The sum version could only see a TOTAL outage, and the one that
+          # happened was partial: a single traefik pod lost its plugins while
+          # the other two kept polling, so the sum stayed healthy and nothing
+          # fired for seven hours. That is not a third of an outage, because
+          # IPv6 ingress is pinned to one node by externalTrafficPolicy=Local,
+          # so whichever pod sits there handles ALL IPv6 traffic. Measured over
+          # the gap: polling pods 2 of 3, cluster 403 rate collapsed 0.34 -> 0.005
+          # per second (a 98% drop) while total request volume was unchanged at
+          # 7-8/s, and Meta's crawl switched from 403 to a Traefik 404 because
+          # that pod's routers lost their plugin-backed middleware too. It
+          # self-healed on a traefik roll. One polling pod per replica is the
+          # invariant; anything less is an enforcement hole on some slice of
+          # traffic, and which slice depends on routing rather than on luck.
+          #
+          # `or vector(0)` is load-bearing, as it is on every `<` rule here:
+          # count() over an empty match returns NO series, so the comparison
+          # yields nothing and the rule goes silent in exactly the case it
+          # exists to catch.
           - alert: CrowdSecL7BouncerNotPolling
-            expr: ((sum(rate(cs_lapi_bouncer_requests_total{bouncer=~"traefik.*"}[15m])) or vector(0)) == 0) and on() (max(up{job="crowdsec"}) == 1)
+            expr: ((count(count by (bouncer) (rate(cs_lapi_bouncer_requests_total{bouncer=~"traefik.*"}[15m]) > 0)) or vector(0)) < max(kube_deployment_spec_replicas{namespace="traefik",deployment="traefik"})) and on() (max(up{job="crowdsec"}) == 1)
             for: 30m
             keep_firing_for: 30m
             labels:
               severity: warning
             annotations:
-              summary: "Traefik CrowdSec bouncer has not polled LAPI in 30m — bans are frozen"
+              summary: "{{ $value }} of the Traefik CrowdSec bouncers are polling LAPI — enforcement is partial or off"
               description: >-
                 The in-process bouncer on the websecure entrypoint polls
                 /v1/decisions every 30s; LAPI has counted no request from it for

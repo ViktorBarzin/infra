@@ -332,9 +332,28 @@ sync that no longer exists; the lesson behind them did not go away, since that
 sync sat broken for days with `crowdsec_cf_list_sync_success` correctly pushed as
 `0` and nothing reading it. Replacements:
 - `CrowdSecL7BouncerNotPolling` (Prometheus) — LAPI counts requests per bouncer
-  (`cs_lapi_bouncer_requests_total{bouncer="traefik"}`), so if the plugin stops
-  polling the counter stops moving. Guarded on LAPI being up, because the series
-  goes absent rather than flat when it is not, and `CrowdSecDown` covers that.
+  (`cs_lapi_bouncer_requests_total{bouncer=~"traefik.*"}` — the label carries the
+  pod IP, as `traefik@10.10.x.y`, so an exact match finds nothing). Guarded on
+  LAPI being up, because the series goes absent rather than flat when it is not,
+  and `CrowdSecDown` covers that.
+
+  **It counts polling pods against replicas rather than summing their request
+  rate (2026-09-19).** The sum could only see a total outage, and the outage
+  that happened was partial: one traefik pod lost its plugins while the other
+  two polled normally, so the sum stayed healthy and nothing fired for seven
+  hours. A partial loss is not a proportional loss here — IPv6 ingress is pinned
+  to one node by `externalTrafficPolicy: Local`, so whichever pod sits on that
+  node handles **all** IPv6 traffic. Measured across the gap: 2 of 3 pods
+  polling, cluster 403 rate 0.34/s → 0.005/s (98% down) with total request
+  volume flat at 7-8/s, and Meta's crawl switching from a CrowdSec 403 to a bare
+  Traefik 404 because that pod's routers had also lost their plugin-backed
+  middleware. It self-healed on the next traefik roll, which is why nothing was
+  left to find afterwards.
+
+  Diagnosing this class: compare `count(count by (bouncer) (rate(...) > 0))`
+  against the replica count, not the summed rate. If Traefik is answering a bare
+  19-byte `404 page not found` with `OriginStatus: 0`, its router is invalid
+  rather than its backend missing, and a lost plugin is the first thing to check.
 - `CrowdSecL7BouncerRefreshFailing` (Loki) — fail-open makes a LAPI outage a
   *staleness* incident, not an availability one: new bans are not enforced and a
   deleted ban keeps blocking.
