@@ -1,5 +1,28 @@
 # Repowise — as-built
 
+> **PARKED at `replicas = 0` since 2026-09-19.** Viktor's call: "we haven't
+> used repowise and agents aren't using it either so let's scale it down. don't
+> delete, just scale it down permanently." Nothing was destroyed. The PVC and
+> its index, the Service, the Ingress, the secret, the image build and this
+> whole stack are intact, so reviving it is `replicas` back to `1` in
+> `stacks/repowise/main.tf` and an apply. **The index will be stale by however
+> long it has been parked** — the hourly reconciler is in the same pod, so it
+> stops too, and the first pass after a revival re-indexes.
+>
+> The numbers behind the decision, because "unused" was not proven: over 30
+> days the ingress took 4,299 requests, all from claude-code CLI on the devvm
+> plus Uptime-Kuma probing `/`. Over 7 days, of 399 `/mcp` responses the median
+> was 105 bytes but 88 exceeded 5 KB and the largest was 1,043,685 bytes. A
+> per-session `tools/list` explains most of that shape, and the access log
+> cannot distinguish `tools/list` from a real `tools/call`, so this stayed
+> ambiguous. The 1 MB response is the one datum that does not look like a
+> handshake.
+>
+> Expected side effect: a Claude Code session still wiring this MCP server
+> fails its handshake and shows a dead server at startup. That wiring lives in
+> each user's `~/.claude.json`, which is per-user mutable state and not managed
+> here.
+
 Codebase intelligence over the Forgejo **Corpus**, serving AI agents over MCP
 and humans through a dashboard. Design rationale and the decision record live in
 `docs/plans/2026-08-14-repowise-corpus-index-design.md`; this file is the

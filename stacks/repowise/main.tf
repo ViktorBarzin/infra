@@ -267,7 +267,31 @@ resource "kubernetes_deployment" "repowise" {
     }
   }
   spec {
-    replicas = 1
+    # PARKED at 0 by Viktor, 2026-09-19: "we haven't used repowise and agents
+    # aren't using it either so let's scale it down. don't delete, just scale
+    # it down permanently."
+    #
+    # Everything else is deliberately preserved so reviving it is this one line
+    # back to 1: the PVC and its index, the Service, the Ingress, the secret,
+    # the Docker build and the whole stack. Nothing is destroyed.
+    #
+    # What the traffic actually showed, since it is not as clear-cut as "unused"
+    # and a future reader deserves the real numbers. Over 30 days the ingress
+    # took 4,299 requests, every one of them from claude-code CLI on the devvm
+    # plus Uptime-Kuma probing `/`. Over 7 days, of 399 /mcp responses the
+    # median was 105 bytes but 88 were over 5 KB and the largest was 1,043,685.
+    # A per-session `tools/list` would explain most of that shape (roughly 88
+    # sessions in a week is an ordinary number here) and the access log cannot
+    # tell `tools/list` from a real `tools/call`, so this was NOT proven either
+    # way. The 1 MB response is the one datum that does not look like a
+    # handshake. Parking it was Viktor's call made with those numbers in hand.
+    #
+    # SIDE EFFECT, expected: any Claude Code session still wiring the repowise
+    # MCP server will now fail its handshake and show a dead server at startup,
+    # the way phpipam does. The wiring lives in each user's own ~/.claude.json,
+    # which is per-user mutable state and not managed here, so it is removed by
+    # hand or left to fail visibly.
+    replicas = 0
     strategy {
       # RWO volume with a single SQLite writer: the old pod must release the
       # volume before the new one can attach.
