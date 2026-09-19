@@ -28,18 +28,33 @@
 # -----------------------------------------------------------------------------
 # OVERNIGHT FREEZE, 2026-09-13 (Viktor). REMOVE WHEN THE CLEANUP IS DONE.
 # -----------------------------------------------------------------------------
-# Applied live during the authentik forward-auth outage and committed here so an
-# unattended Woodpecker apply cannot quietly undo it. Plan and unfreeze order:
+# The 2026-09-13 freeze was LIFTED on 2026-09-19. var.frozen stays as the
+# emergency hold; set it true to stop kured again. Outage write-up:
 # https://pages.viktorbarzin.me/2026-09-13-authentik-outage-recovery.html
 #
-# Four nodes carry /var/run/reboot-required (master, node2, node3, node4) and
-# kured's window is 02:00-06:00 Europe/London, which was OPEN when this landed.
-# Two conditions were holding it back by luck rather than intent: no
-# /sentinel/gated-reboot-required existed, and ClusterCannotTolerateNonGpuNodeLoss
-# was firing, which sits in kured's own --alert-filter-regexp block list. Both
-# can clear on their own.
+# State when it was lifted, measured rather than assumed. THREE nodes carry
+# /var/run/reboot-required: node2 (since 09-10), node3 (09-10), node4 (09-12).
+# master cleared its own when it rebooted on 2026-09-16, so the earlier "four
+# nodes, master included" note here was already out of date.
 #
-# Flip to false to unfreeze. Do that only AFTER the outpost has a readiness probe
+# The sentinel gate below now passes all four of its checks and has opened
+# /sentinel/gated-reboot-required on those three nodes. kured still will not
+# reboot them, because ClusterCannotTolerateNonGpuNodeLoss has been firing
+# continuously since 2026-09-06 and sits in kured's --alert-filter-regexp.
+# With --alert-filter-match-only=true that regexp is a BLOCK list, not an
+# ignore list, so a match halts every reboot. kured has been blocked by this
+# since well before the freeze existed, and logs "Reboot blocked: 1 active
+# alerts" once per hour inside each 02:00-06:00 Europe/London window.
+#
+# So the reboots wait on that alert, whose remediation is manual: right-size
+# requests with krr, or add a worker. If it clears, the gate's own 24h
+# Ready-transition soak still caps it at one node per night, not three.
+#
+# An earlier version of this comment said to unfreeze only after the outpost
+# had a readiness probe. That never happened and no longer applies: the
+# outpost's Deployment is not reconciled by authentik at all for an embedded
+# outpost, so kubernetes_json_patches cannot add one. See code-f1zd and
+# code-osvg
 # (bead code-f1zd) and the four pending reboots are being done deliberately, one
 # node at a time, master last.
 variable "frozen" {
