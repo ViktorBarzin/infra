@@ -1137,37 +1137,37 @@ resource "kubernetes_config_map" "auth_proxy_config" {
     "default.conf" = <<-EOT
       upstream authentik {
           # Forward-auth MUST be answered by the SAME outpost that answers the
-          # OAuth callback, and the callback is the standalone Deployment:
-          # authentik.viktorbarzin.me/outpost.goauthentik.io is routed to
-          # ak-outpost-authentik-embedded-outpost by BOTH the authentik-outpost
-          # Ingress (ours) and the ak-outpost-... Ingress (the outpost
-          # controller's, which we do not own and cannot durably repoint).
+          # OAuth callback. Both are the INLINE outpost inside the
+          # goauthentik-server pods as of 2026-09-19, and this Service selects
+          # those pods (bead code-osvg). There is one Ingress for
+          # authentik.viktorbarzin.me/outpost.goauthentik.io and it points here
+          # too, so the two halves cannot drift apart.
           #
-          # Do NOT point this at goauthentik-server (the inline outpost inside
-          # the server pods). The two implementations issue the SAME cookie
-          # name on the SAME domain in mutually unreadable formats:
+          # Keeping them together is not a preference. The Go and Rust proxy
+          # outposts issue the SAME cookie name on the SAME domain in mutually
+          # unreadable formats:
           #
           #   inline (Rust)      authentik_proxy_34f8da53=<b64 hmac>=<uuid>
           #   standalone (Go)    authentik_proxy_34f8da53=<base32 session id>
           #
           # Split across the two, a logged-in user loops forever: forward-auth
-          # (inline) cannot read the cookie the callback (standalone) just set,
-          # so it 302s to login, the callback re-issues a Go cookie, and round
-          # it goes. Nothing reaches the backend -- OriginStatus 0 on every
-          # request, XHR included, which is what took terminal.viktorbarzin.me
-          # and every other auth="required" host down on 2026-09-02 10:52.
-          # An anonymous probe cannot see this: 302-to-login is the CORRECT
-          # answer for a request with no session, so the whole estate looked
-          # healthy while every signed-in request was in a loop.
+          # cannot read the cookie the callback just set, so it 302s to login,
+          # the callback re-issues its own cookie, and round it goes. Nothing
+          # reaches the backend -- OriginStatus 0 on every request, XHR
+          # included, which is what took terminal.viktorbarzin.me and every
+          # other auth="required" host down on 2026-09-02 10:52. An anonymous
+          # probe cannot see it: 302-to-login is the CORRECT answer for a
+          # request with no session, so the estate looks healthy while every
+          # signed-in request is in a loop.
           #
-          # STILL OPEN: nginx OSS resolves this name ONCE at startup and caches
-          # the IP for the life of the process, while the outpost controller
-          # RECREATES this Service on upgrades with a fresh ClusterIP. nginx
-          # then dials a dead address, the 3s connect timeout trips, and
-          # error_page hands every forward-auth host to @fallback_auth =
-          # Emergency Access basic-auth (the 2026-08-19 outage). The fix is a
-          # target the controller never recreates -- a Terraform-owned Service
-          # selecting the same pods -- NOT a different outpost.
+          # nginx OSS resolves this name ONCE at startup and caches the address
+          # for the life of the worker, so a Service that comes back with a new
+          # ClusterIP leaves nginx dialling a dead one, the 3s connect timeout
+          # trips, and error_page hands every forward-auth host to
+          # @fallback_auth = Emergency Access basic-auth (the 2026-08-19
+          # outage). Closed on 2026-09-19: the Service is Terraform-owned with a
+          # pinned cluster_ip and authentik's controller no longer writes it.
+          # See stacks/authentik/modules/authentik/outpost-service.tf.
           server ak-outpost-authentik-embedded-outpost.authentik.svc.cluster.local:9000;
           # Reuse connections to the outpost. Without this every forward-auth
           # subrequest (= every request to every auth="required" ingress) opens

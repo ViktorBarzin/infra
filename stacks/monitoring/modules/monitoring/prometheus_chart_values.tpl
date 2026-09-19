@@ -5788,7 +5788,7 @@ serverFiles:
             labels:
               severity: critical
             annotations:
-              summary: "Authentik outpost near /dev/shm fill ({{ $value | humanize1024 }}) — imminent forward-auth failure. Restart pod: kubectl -n authentik delete pod -l goauthentik.io/outpost-name=authentik-embedded-outpost"
+              summary: "Authentik outpost near /dev/shm fill ({{ $value | humanize1024 }}) — imminent forward-auth failure. Restart the pod named in the alert. Note this now only ever fires for ak-outpost-public: the embedded outpost stopped running pods on 2026-09-19 and the inline outpost keeps its sessions in Postgres, not /dev/shm."
           - alert: AuthentikOutpostRestarts
             # Pod restarts on a stateless outpost usually mean OOM or crash.
             # Normal is 0; we expect one manual rollout per incident/upgrade.
