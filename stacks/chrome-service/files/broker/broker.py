@@ -38,6 +38,11 @@ SEED_TTL = int(os.environ.get("SEED_TTL_SECONDS", "10"))    # absorb an acquire 
 # How long release waits for closed targets to actually disappear. /json/close
 # is asynchronous, and a release that blocks for long would hold up the caller.
 RESET_CONFIRM_SECONDS = float(os.environ.get("RESET_CONFIRM_SECONDS", "3"))
+# How long a heartbeating caller may go quiet before its session is reclaimed.
+# Only sessions that have sent at least one heartbeat are reclaimed this way, so
+# a caller that never heartbeats keeps the DEADLINE behaviour and nothing that
+# worked before can start being cut short.
+HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT_SECONDS", "120"))
 POOL_LABEL = "app=chrome-worker"
 
 _seed = {"at": 0.0, "json": None, "last_export_seconds": 0.0, "errors": 0}
@@ -79,6 +84,30 @@ def should_reap(pod: dict, now: float, *, idle_ttl: int) -> bool:
     if pod.get("session"):
         return False
     return (now - pod.get("released_at", now)) > idle_ttl
+
+
+def should_reclaim_session(pod: dict, now: float, *, heartbeat_timeout: int) -> bool:
+    """Has a heartbeating caller stopped heartbeating?
+
+    A caller killed without releasing leaves its chrome-pool/session label on the
+    pod. pick_free_worker skips any pod carrying one, so a warm pod stays out of
+    the pool until the reaper deletes it at DEADLINE, 60 minutes later, while the
+    pool falls back to cold burst pods. Seen live 2026-09-19 on
+    chrome-worker-warm-774955dff-zvl62, holding session 235f7f1d after its caller
+    was killed.
+
+    OPT-IN BY CONSTRUCTION: a session reclaims only once it has sent at least one
+    heartbeat and then gone quiet. Callers that never heartbeat (f1-stream leases
+    through its own try/finally, and anything else speaking to the broker
+    directly) report no heartbeat at all and keep the DEADLINE behaviour
+    unchanged, so this cannot start cutting short a session that works today.
+    """
+    if not pod.get("session"):
+        return False
+    heartbeat = pod.get("heartbeat_at", 0.0)
+    if not heartbeat:
+        return False
+    return (now - heartbeat) > heartbeat_timeout
 
 
 # Targets that belong to the worker image rather than to any session. The two
@@ -138,7 +167,7 @@ def kube(method: str, path: str, body=None):
 
 def list_workers() -> list:
     """All pool pods as normalized dicts (name, session, owner, purpose, ready, ip,
-    released_at, bare, started)."""
+    released_at, heartbeat_at, bare, started)."""
     resp = kube("GET", f"/api/v1/namespaces/{NS}/pods?labelSelector={POOL_LABEL}")
     out = []
     for p in resp.get("items", []):
@@ -147,6 +176,7 @@ def list_workers() -> list:
         cs = st.get("containerStatuses", [])
         ready = bool(cs) and all(c.get("ready") for c in cs) and st.get("phase") == "Running"
         released = ann.get("chrome-pool/released")
+        heartbeat = ann.get("chrome-pool/heartbeat")
         out.append({
             "name": md["name"],
             "session": labels.get("chrome-pool/session", ""),
@@ -157,6 +187,7 @@ def list_workers() -> list:
             "phase": st.get("phase", ""),
             "ip": st.get("podIP", ""),
             "released_at": float(released) if released else 0.0,
+            "heartbeat_at": float(heartbeat) if heartbeat else 0.0,
             "bare": not md.get("ownerReferences"),  # broker-created pods have no owner
         })
     return out
@@ -174,6 +205,15 @@ def claim_worker(name, session, owner, purpose):
         "metadata": {"labels": {"chrome-pool/session": session, "chrome-pool/owner": owner},
                      "annotations": {"chrome-pool/purpose": purpose,
                                      "chrome-pool/started": str(int(time.time()))}}})
+    # Deliberately NOT stamping a heartbeat here. The annotation is what marks a
+    # session as reclaimable on silence, so writing it at claim time would opt in
+    # every caller, including the ones that never heartbeat.
+
+
+def heartbeat_worker(name):
+    """Record that the caller holding this pod is still alive."""
+    kube("PATCH", f"/api/v1/namespaces/{NS}/pods/{name}", {
+        "metadata": {"annotations": {"chrome-pool/heartbeat": str(int(time.time()))}}})
 
 
 def reset_browser(ip) -> int:
@@ -249,9 +289,14 @@ def release_worker(pod):
         # it has to be cleaned here or the next caller inherits the last
         # session's pages, service workers and open tabs (infra #98).
         reset_browser(pod.get("ip"))
+        # The heartbeat is cleared, not just left to go stale. A warm pod is
+        # reused, so a heartbeat left behind by the last caller would make the
+        # NEXT session look reclaimable the moment it is claimed, even one that
+        # never heartbeats. null removes the key under a strategic merge patch.
         kube("PATCH", f"/api/v1/namespaces/{NS}/pods/{pod['name']}", {
             "metadata": {"labels": {"chrome-pool/session": ""},
-                         "annotations": {"chrome-pool/released": str(int(time.time()))}}})
+                         "annotations": {"chrome-pool/released": str(int(time.time())),
+                                         "chrome-pool/heartbeat": None}}})
 
 
 def wait_ready(name, timeout=45):
@@ -350,10 +395,21 @@ def reaper_loop():
                     if w["phase"] in ("Failed", "Succeeded") or should_reap(w, now, idle_ttl=IDLE_TTL):
                         release_worker(w)
                 elif w["session"]:
-                    # warm-pool pod (Deployment-owned, no activeDeadlineSeconds):
-                    # if a claim outlives the hard cap (caller died without
-                    # releasing, or a wedge), delete it — the Deployment recreates
-                    # a fresh standby, clearing the stuck session and any wedge.
+                    # warm-pool pod (Deployment-owned, no activeDeadlineSeconds).
+                    # Two ways a claim ends without a /release, cheapest first.
+                    #
+                    # A heartbeating caller that has gone quiet is reclaimed in
+                    # place: release_worker resets the browser and clears the
+                    # label, so the pod is back in the pool warm, in ~2 minutes
+                    # instead of the 60 below. Only sessions that heartbeated are
+                    # eligible, so a caller that never does is untouched here.
+                    if should_reclaim_session(w, now, heartbeat_timeout=HEARTBEAT_TIMEOUT):
+                        release_worker(w)
+                        continue
+                    # Otherwise the hard cap still applies: a claim that outlives
+                    # it is deleted, and the Deployment recreates a fresh standby.
+                    # This is the only backstop for a caller that never
+                    # heartbeats, and it also catches a pod too broken to reset.
                     try:
                         started = float(w.get("started") or now)
                     except ValueError:
@@ -459,6 +515,13 @@ class Handler(BaseHTTPRequestHandler):
             if pod:
                 release_worker(pod)
             return self._send(200, {"released": bool(pod)})
+        if path == "/heartbeat":
+            pod = next((w for w in list_workers() if w["session"] == body.get("session")), None)
+            if pod:
+                heartbeat_worker(pod["name"])
+            # 200 either way: a caller heartbeating a session the reaper already
+            # took should log and carry on, not crash on its way out.
+            return self._send(200, {"alive": bool(pod)})
         return self._send(404, {"error": "not found"})
 
     def _acquire(self, body):

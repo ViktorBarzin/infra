@@ -303,3 +303,95 @@ def test_reset_browser_survives_an_unreachable_worker(monkeypatch):
         raise OSError("connection refused")
     monkeypatch.setattr(broker.urllib.request, "urlopen", boom)
     assert broker.reset_browser("10.0.0.1") == 0
+
+
+# ------------------------------------------------------ session heartbeat
+NOW = 1_000_000.0
+
+
+def test_should_reclaim_session_when_a_heartbeating_caller_goes_quiet():
+    pod = {"session": "abc", "heartbeat_at": NOW - 300}
+    assert broker.should_reclaim_session(pod, NOW, heartbeat_timeout=120) is True
+
+
+def test_should_reclaim_session_leaves_a_live_caller_alone():
+    pod = {"session": "abc", "heartbeat_at": NOW - 30}
+    assert broker.should_reclaim_session(pod, NOW, heartbeat_timeout=120) is False
+
+
+def test_should_reclaim_session_never_touches_a_caller_that_does_not_heartbeat():
+    """f1-stream leases through its own try/finally and sends no heartbeat. It
+    must keep the DEADLINE behaviour, however old the claim is."""
+    pod = {"session": "abc", "heartbeat_at": 0.0, "started": str(int(NOW - 50_000))}
+    assert broker.should_reclaim_session(pod, NOW, heartbeat_timeout=120) is False
+    assert broker.should_reclaim_session({"session": "abc"}, NOW, heartbeat_timeout=120) is False
+
+
+def test_should_reclaim_session_ignores_a_free_pod():
+    pod = {"session": "", "heartbeat_at": NOW - 9999}
+    assert broker.should_reclaim_session(pod, NOW, heartbeat_timeout=120) is False
+
+
+def test_should_reclaim_session_is_exclusive_with_should_reap():
+    """The two reclaim paths must not both claim the same pod: should_reap only
+    ever fires on an unclaimed pod, should_reclaim_session only on a claimed one."""
+    claimed = {"session": "abc", "heartbeat_at": NOW - 300, "released_at": NOW - 9999}
+    free = {"session": "", "heartbeat_at": NOW - 300, "released_at": NOW - 9999}
+    assert broker.should_reap(claimed, NOW, idle_ttl=1200) is False
+    assert broker.should_reclaim_session(claimed, NOW, heartbeat_timeout=120) is True
+    assert broker.should_reap(free, NOW, idle_ttl=1200) is True
+    assert broker.should_reclaim_session(free, NOW, heartbeat_timeout=120) is False
+
+
+def test_list_workers_carries_the_heartbeat(monkeypatch):
+    monkeypatch.setattr(broker, "kube", lambda *a, **k: {"items": [{
+        "metadata": {"name": "chrome-worker-warm-x", "labels": {"chrome-pool/session": "abc"},
+                     "annotations": {"chrome-pool/heartbeat": "1789811724"},
+                     "ownerReferences": [{"kind": "ReplicaSet"}]},
+        "status": {"phase": "Running", "podIP": "10.10.1.5",
+                   "containerStatuses": [{"ready": True}]},
+    }]})
+    got = broker.list_workers()[0]
+    assert got["heartbeat_at"] == 1789811724.0
+    assert got["bare"] is False
+
+
+def test_list_workers_defaults_the_heartbeat_to_zero(monkeypatch):
+    monkeypatch.setattr(broker, "kube", lambda *a, **k: {"items": [{
+        "metadata": {"name": "chrome-worker-warm-x", "labels": {}, "annotations": {}},
+        "status": {"phase": "Running", "podIP": "10.10.1.5",
+                   "containerStatuses": [{"ready": True}]},
+    }]})
+    assert broker.list_workers()[0]["heartbeat_at"] == 0.0
+
+
+def test_claim_does_not_stamp_a_heartbeat(monkeypatch):
+    """Stamping one at claim time would opt every caller in, including the ones
+    that never heartbeat, and they would be reclaimed after 120s."""
+    seen = {}
+    monkeypatch.setattr(broker, "kube", lambda m, p, b=None: seen.update(b or {}))
+    broker.claim_worker("w", "abc", "wizard", "scrape")
+    assert "chrome-pool/heartbeat" not in seen["metadata"]["annotations"]
+
+
+def test_release_clears_the_heartbeat(monkeypatch):
+    """A warm pod is reused, so a heartbeat left behind would make the next
+    session look reclaimable the moment it is claimed."""
+    patches = []
+    monkeypatch.setattr(broker, "kube", lambda m, p, b=None: patches.append((m, b)))
+    monkeypatch.setattr(broker, "reset_browser", lambda ip: 0)
+    broker.release_worker({"name": "w", "bare": False, "ip": "10.10.1.5"})
+    method, body = patches[-1]
+    assert method == "PATCH"
+    assert body["metadata"]["annotations"]["chrome-pool/heartbeat"] is None
+    assert body["metadata"]["labels"]["chrome-pool/session"] == ""
+
+
+def test_heartbeat_worker_stamps_only_the_annotation(monkeypatch):
+    patches = []
+    monkeypatch.setattr(broker, "kube", lambda m, p, b=None: patches.append((m, p, b)))
+    broker.heartbeat_worker("chrome-worker-warm-x")
+    method, path, body = patches[0]
+    assert method == "PATCH" and "chrome-worker-warm-x" in path
+    assert set(body["metadata"]) == {"annotations"}
+    assert int(body["metadata"]["annotations"]["chrome-pool/heartbeat"]) > 0
