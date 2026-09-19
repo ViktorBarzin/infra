@@ -357,8 +357,16 @@ func (c iosConfig) resolveMacHost(discover func() (string, error)) (string, erro
 			return cached, nil
 		}
 	}
+	marker := iosFailureMarkerPath()
+	if !iosShouldSweep(iosReadFailureMarker(marker), time.Now(), iosDiscoveryCooldown()) {
+		return "", fmt.Errorf("%s does not answer and a sweep of %s failed less than %s ago, "+
+			"so this one is skipped; the Mac is away or on another network",
+			c.MacHost, c.MacSubnet, iosDiscoveryCooldown())
+	}
+
 	found, err := discover()
 	if err != nil {
+		iosWriteFailureMarker(marker, time.Now())
 		return "", err
 	}
 	if found == "" {
@@ -366,6 +374,7 @@ func (c iosConfig) resolveMacHost(discover func() (string, error)) (string, erro
 	}
 	// Cache it so the next command skips the sweep. It is only ever a hint:
 	// every read re-checks that it still answers.
+	iosClearFailureMarker(marker)
 	_ = os.WriteFile(iosMacHostCachePath(), []byte(found+"\n"), 0o644)
 	fmt.Fprintf(os.Stderr, "%s did not answer; using %s, found by hardware address\n", c.MacHost, found)
 	return found, nil
@@ -398,6 +407,65 @@ func readFileString(path string) string {
 	}
 	return string(b)
 }
+
+// A sweep is the expensive half of discovery, and a Mac that is away stays
+// away for hours. Left ungated the tunnel unit ran 137 sweeps in the hour
+// after the laptop left on 2026-09-19, roughly 35,000 connection attempts
+// into the LAN for a machine that was never going to answer, which is both
+// wasteful and indistinguishable from someone scanning the network.
+//
+// The cooldown suppresses only the sweep. resolveMacHost still probes the
+// configured name and the cached address on every call, and those are one
+// handshake each, so a Mac returning to either address is picked up
+// immediately. Only a Mac returning to a THIRD address waits, and that case
+// is rare enough to trade for the quiet.
+func iosDiscoveryCooldown() time.Duration {
+	if v := os.Getenv("IOS_RIG_DISCOVERY_COOLDOWN"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return 5 * time.Minute
+}
+
+// iosShouldSweep is separated from the file handling so the window logic can
+// be tested without a clock or a disk. A marker in the future means the clock
+// moved backwards; sweeping is the safe reading, since the alternative is
+// discovery disabled until the marker's time arrives.
+func iosShouldSweep(lastFailure, now time.Time, cooldown time.Duration) bool {
+	if lastFailure.IsZero() || lastFailure.After(now) {
+		return true
+	}
+	return now.Sub(lastFailure) >= cooldown
+}
+
+func iosFailureMarkerPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".ios-rig-discovery-failed"
+	}
+	return filepath.Join(home, ".ios-rig-discovery-failed")
+}
+
+// An unreadable or unparseable marker reads as zero, which sweeps. Failing
+// towards the working behaviour matters more here than saving one scan.
+func iosReadFailureMarker(path string) time.Time {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(string(b)))
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func iosWriteFailureMarker(path string, when time.Time) {
+	_ = os.WriteFile(path, []byte(when.Format(time.RFC3339)+"\n"), 0o644)
+}
+
+func iosClearFailureMarker(path string) { _ = os.Remove(path) }
 
 // iosResolved is what every verb that talks to the Mac starts from: defaults,
 // with MacHost pointed at something that answers.

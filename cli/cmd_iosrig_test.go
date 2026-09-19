@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -435,5 +436,59 @@ func TestIosResolveMacHostPrefersTheConfiguredName(t *testing.T) {
 	}
 	if scanned {
 		t.Error("the configured host answered, so nothing should have been scanned")
+	}
+}
+
+// A Mac that is genuinely away made the tunnel unit sweep all 254 addresses
+// every 15 seconds: 137 sweeps in the hour after the laptop left on
+// 2026-09-19, about 35,000 connection attempts into the LAN for a machine
+// that was not going to answer. The cooldown suppresses the expensive sweep
+// without delaying recovery, because the cheap direct checks still run every
+// cycle.
+func TestIosDiscoveryCooldown(t *testing.T) {
+	const cool = 5 * time.Minute
+	now := time.Now()
+	cases := []struct {
+		name  string
+		last  time.Time
+		sweep bool
+	}{
+		{"never failed before", time.Time{}, true},
+		{"failed a moment ago", now.Add(-10 * time.Second), false},
+		{"failed just inside the window", now.Add(-4 * time.Minute), false},
+		{"failed longer ago than the window", now.Add(-6 * time.Minute), true},
+		// A clock that jumped backwards must not disable discovery forever.
+		{"marker in the future", now.Add(time.Hour), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := iosShouldSweep(c.last, now, cool); got != c.sweep {
+				t.Errorf("shouldSweep=%v want %v", got, c.sweep)
+			}
+		})
+	}
+}
+
+func TestIosDiscoveryFailureMarkerRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "marker")
+
+	if got := iosReadFailureMarker(path); !got.IsZero() {
+		t.Errorf("a missing marker must read as zero, got %v", got)
+	}
+	when := time.Now().Add(-90 * time.Second).Truncate(time.Second)
+	iosWriteFailureMarker(path, when)
+	if got := iosReadFailureMarker(path); !got.Equal(when) {
+		t.Errorf("round trip lost the time: wrote %v read %v", when, got)
+	}
+	// A success clears it, so the Mac coming back restores full discovery at once.
+	iosClearFailureMarker(path)
+	if got := iosReadFailureMarker(path); !got.IsZero() {
+		t.Errorf("clearing must reset to zero, got %v", got)
+	}
+	// Garbage must not read as "failed in 1970", which would sweep every time.
+	os.WriteFile(path, []byte("not a timestamp"), 0o644)
+	if got := iosReadFailureMarker(path); !got.IsZero() {
+		t.Errorf("an unparseable marker must read as zero, got %v", got)
 	}
 }
