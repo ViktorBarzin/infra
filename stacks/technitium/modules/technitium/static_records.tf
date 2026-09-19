@@ -48,9 +48,20 @@ locals {
   # .100 there by a static lease tagged projector-london. The Flint answers
   # projector-london.lan for its own clients; this record is what lets Sofia,
   # the cluster and the devvm reach it by name over the tunnel.
+  #
+  # health-test: the LAN-only, auth-free test host for the health app
+  # (health ADR-0008). It points at the internal Traefik LB, the same address
+  # the ingress sync writes for ingress.viktorbarzin.lan, because it is an
+  # ordinary Ingress rather than a device. It existed once and disappeared:
+  # Prometheus recorded 6,413 requests to its Traefik router over 90 days while
+  # the name returned NXDOMAIN on 2026-09-19, so it was created by hand and
+  # lost to a reconcile. Declared here so the next rebuild keeps it. Without
+  # it there is no way to drive the app on a real phone without going through
+  # the Authentik SSO flow, which is what makes it worth a record.
   static_lan_a_records = {
     "mbp-london"       = "192.168.8.168"
     "projector-london" = "192.168.9.100"
+    "health-test"      = "10.0.20.203"
   }
 }
 
