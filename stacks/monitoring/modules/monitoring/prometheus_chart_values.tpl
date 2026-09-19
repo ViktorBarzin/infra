@@ -5779,33 +5779,25 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Authentik outpost returning {{ $value | printf \"%.0f\" }} 400s in 5m on {{ $labels.service }} — forward-auth broken for all 43 protected services"
-          - alert: AuthentikForwardAuthFallbackActive
-            # Catches the auth-proxy "Emergency Access" Basic-Auth fallback firing
-            # at the edge — symptom of the outpost service having zero ready
-            # endpoints (selector mismatch, label drift, controller bug). The
-            # auth-proxy nginx returns 401 with `WWW-Authenticate: Basic` and
-            # `X-Auth-Fallback: true` in that case; Traefik proxies the 401
-            # back through the websecure entrypoint.
-            #
-            # Why this rule and not `kube_endpoint_address_available == 0`:
-            # kube-state-metrics endpoint metrics are silently dropped by the
-            # Prometheus pipeline in this cluster (kube_endpoint_* series
-            # exist but never have current values). Detecting the failure
-            # signal at the edge is more reliable than instrumenting the
-            # broken middle.
-            #
-            # Baseline 401/s on websecure is ~0.02 (linkwarden API). Threshold
-            # of 5 leaves ~250x headroom; fallback firing on a busy site
-            # immediately pushes 401/s well above that.
-            #
-            # See `.claude/reference/authentik-state.md` for the upgrade
-            # validation checklist that exercises the same path.
-            expr: sum(rate(traefik_entrypoint_requests_total{code="401",entrypoint="websecure"}[5m])) > 5
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: "websecure 401 rate {{ $value | printf \"%.1f\" }}/s for 5m — Authentik forward-auth Emergency Access fallback likely firing. Check `kubectl -n authentik get endpoints ak-outpost-authentik-embedded-outpost`."
+          # AuthentikForwardAuthFallbackActive MOVED TO LOKI on 2026-09-19, see
+          # stacks/monitoring/modules/monitoring/loki.tf. The rule that stood
+          # here could not fire: it wanted a websecure 401 rate above 5/s
+          # sustained 5 minutes, while the 2026-09-13 outage peaked at 1.4/s in
+          # windows 3 to 4 minutes long, so it missed on BOTH the threshold and
+          # the duration while the whole estate sat behind a basic-auth prompt.
+          # Viktor found that outage himself. Bead code-c4b1.
+          #
+          # It also watched the wrong place. A 401 at the Traefik entrypoint
+          # conflates the fallback with every other 401 on the estate, whereas
+          # the auth-proxy's own access log distinguishes it exactly. See the
+          # Loki rule for the measured signature.
+          #
+          # ForwardAuthFallbackActive, further up this file, is a DIFFERENT and
+          # still-live rule. It watches deployment replica availability, which
+          # is a prediction that the fallback might engage rather than a
+          # detection that it did, and on 2026-09-13 it could not fire either
+          # because goauthentik-server was available throughout; the OUTPOST was
+          # the broken part.
           - alert: AuthentikServerReplicasMismatch
             # With 3 replicas + PDB minAvailable=2, a sustained drop to <3
             # means a node is unschedulable, image pull failing, or quota hit.
