@@ -140,13 +140,13 @@ locals {
     # sat there unseen from 2026-08-03 until 2026-08-15.
     "terminal-lobby-usage.json" = "Applications"
     "claude-usage.json"         = "Applications"
-    "uk-payslip.json"         = "Finance (Personal)"
-    "wealth.json"             = "Finance (Personal)"
-    "job-hunter.json"         = "Finance"
-    "fire-planner.json"       = "Finance"
-    "cost-of-living.json"     = "Finance"
+    "uk-payslip.json"           = "Finance (Personal)"
+    "wealth.json"               = "Finance (Personal)"
+    "job-hunter.json"           = "Finance"
+    "fire-planner.json"         = "Finance"
+    "cost-of-living.json"       = "Finance"
     # Security (owner-only — see admin_only_folders; proxy users' browsing)
-    "proxy_visits.json"       = "Security (Personal)"
+    "proxy_visits.json" = "Security (Personal)"
   }
 
   # Folders restricted to the Grafana admin user (anonymous Viewer + any future
