@@ -891,7 +891,14 @@ resource "kubernetes_cron_job_v1" "fidelity" {
     labels    = { app = "broker-sync", component = "fidelity" }
   }
   spec {
-    schedule                      = "0 5 20 * *"
+    # Twice monthly, not monthly. The login skips its SMS step only while
+    # the PingFederate device-trust cookies are alive, and those last 30
+    # days: seeded 2026-09-20 19:44, they would have expired barely 14 hours
+    # after a 20 Oct monthly run. Each successful login re-issues them, so
+    # running on the 1st and 15th (a 14 to 17 day gap) keeps the trust
+    # rolling well clear of expiry instead of racing it. It also halves how
+    # stale the pension value can get.
+    schedule                      = "0 5 1,15 * *"
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 5

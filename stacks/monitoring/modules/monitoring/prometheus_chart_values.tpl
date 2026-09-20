@@ -6563,6 +6563,40 @@ serverFiles:
             annotations:
               summary: "IMAP confirmation ingest has never reported to Pushgateway"
               description: "No imap_sync_last_success_timestamp_seconds series exists at all, so IMAPIngestStale and IMAPIngestFailures are both evaluating nothing and the confirmation-email path is entirely unwatched."
+          # Fidelity is watched differently from its siblings: it pushes
+          # nothing to Pushgateway, so these read kube-state-metrics'
+          # view of the CronJob instead. That is the signal that actually
+          # caught the outage, and it needed no code in the job at all.
+          #
+          # Why it exists: the broker-sync-fidelity CronJob ran from
+          # 2026-04-18 to 2026-09-20 without ever once succeeding, and
+          # nothing said so. Its .status.lastSuccessfulTime was simply never
+          # set, so this series did not exist, which is exactly what
+          # FidelitySyncNeverSucceeded now catches. Five months of a GBP 137k
+          # pension frozen at its April value went unnoticed until an audit
+          # went looking.
+          #
+          # 20 days: the job runs on the 1st and 15th, so the widest healthy
+          # gap is 17 days. This fires after one missed run plus a few days
+          # of grace rather than waiting for two, because the login's
+          # device-trust cookies expire 30 days after the last successful
+          # login and a silent miss eats that margin.
+          - alert: FidelitySyncStale
+            expr: (time() - kube_cronjob_status_last_successful_time{namespace="broker-sync", cronjob="broker-sync-fidelity"}) > 1728000
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Fidelity pension sync has not succeeded for {{ $value | humanizeDuration }}"
+              description: "The pension value in Wealthfolio is frozen at whatever the last successful scrape wrote. Most likely the PlanViewer login needs a human: check the job log for 'Fidelity asked for an SMS security code', which means the device trust has lapsed and the session must be re-seeded IN THE CLUSTER BROWSER (homelab browser run --shared-context), not on the devvm — trust is bound to the browser that earns it."
+          - alert: FidelitySyncNeverSucceeded
+            expr: absent(kube_cronjob_status_last_successful_time{namespace="broker-sync", cronjob="broker-sync-fidelity"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Fidelity pension sync has never recorded a successful run"
+              description: "Kubernetes sets .status.lastSuccessfulTime on a CronJob the first time it observes a successful Job and never clears it, so no series here means the job has never completed once. That was true for five months from 2026-04-18 and is the condition this rule exists to make impossible to miss again."
       - name: Payslip Freshness
         rules:
           # Payslips only reach Paperless because Viktor forwards or uploads the
