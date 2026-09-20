@@ -922,6 +922,18 @@ resource "kubernetes_cron_job_v1" "fidelity" {
             # wedges all broker-sync jobs in ContainerCreating (2026-07-01/02).
             # One node = volume attaches once and stays put.
             node_selector = { "kubernetes.io/hostname" = "k8s-node4" }
+            # Same fsGroup the trading212 and imap jobs carry, and for the
+            # same reason: the broker image is uid=10001 gid=999 while the
+            # shared data PVC's /data root is gid=10001, so without the
+            # supplemental group sqlite3 cannot create its journal next to
+            # sync.db and the run dies on "attempt to write a readonly
+            # database". This job never had the block, so measured
+            # 2026-09-20 it got all the way through the PlanViewer scrape
+            # and then failed recording dedup rows.
+            security_context {
+              fs_group        = 10001
+              run_as_non_root = false
+            }
             # Materialise the JSON storage_state from the projected Secret
             # onto the PVC where Playwright expects to read it. Init container
             # runs as root; the main broker-sync container runs as uid 10001,
