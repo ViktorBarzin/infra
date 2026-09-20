@@ -47,6 +47,11 @@ const (
 	OpDetachAll ControlOp = "detachAll"
 	// OpSuperseded says another stream took over this browserId.
 	OpSuperseded ControlOp = "superseded"
+	// OpRevoked says the enrolment behind this stream was revoked. The
+	// extension tears every attachment down and does NOT reconnect: its
+	// credential is dead, and a stream left open would go on driving the
+	// human's tabs after they pressed Revoke.
+	OpRevoked ControlOp = "revoked"
 	// OpReloadSettings asks the extension to re-read settings from the next
 	// settings frame.
 	OpReloadSettings ControlOp = "reloadSettings"
@@ -55,7 +60,7 @@ const (
 // Valid reports whether o is an op this protocol version defines.
 func (o ControlOp) Valid() bool {
 	switch o {
-	case OpStop, OpDetachAll, OpSuperseded, OpReloadSettings:
+	case OpStop, OpDetachAll, OpSuperseded, OpReloadSettings, OpRevoked:
 		return true
 	default:
 		return false
