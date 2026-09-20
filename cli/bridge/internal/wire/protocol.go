@@ -15,6 +15,13 @@ const Version = 1
 // RoutePrefix is the path prefix every versioned route lives under.
 const RoutePrefix = "/v1"
 
+// UIPrefix is the path prefix every route a signed-in human writes through
+// lives under. It is a deployment fact as much as a naming one: Traefik
+// routes by longest matching prefix, and only the forward-auth router carries
+// the prefixes listed here, so a mutation parked outside this prefix reaches
+// the server with no identity on it and is refused.
+const UIPrefix = RoutePrefix + "/ui"
+
 // Action timing. Durations are milliseconds, per the document's naming rule.
 const (
 	// DefaultActionTimeoutMs is the timeout an action gets when the caller
@@ -98,4 +105,8 @@ const (
 	// HeaderIdempotency makes a retried POST /v1/actions return the original
 	// actionId instead of creating a second action.
 	HeaderIdempotency = "X-BB-Idempotency-Key"
+	// HeaderExtensionVersion is optional on GET /v1/stream. It is how the
+	// enrolment record learns which build is running, which is what
+	// GET /v1/browsers reports as extensionVersion.
+	HeaderExtensionVersion = "X-BB-Extension-Version"
 )
