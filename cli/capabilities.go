@@ -228,7 +228,8 @@ func capabilities() []capability {
 			Use:     "homelab browser run <script.js> [--shared-context]",
 			Instead: "the headless Playwright MCP, when it is being blocked",
 			Synonyms: []string{"cloudflare", "bot", "captcha", "blocked", "403", "login",
-				"signed in", "browser", "scrape", "headful", "chrome"},
+				"signed in", "browser", "scrape", "headful", "headless", "chrome",
+				"automation", "submit", "silently fails", "anti-bot", "challenge"},
 			Detail: []string{
 				"Default to the headless Playwright MCP; escalate here only when a page loads",
 				"        but a gated action silently fails, or the site flags automation.",
@@ -236,6 +237,36 @@ func capabilities() []capability {
 				"        a manual noVNC login). One profile, no per-context auth, reachable by",
 				"        anyone who can drive it. It is not a ToS or safety improvement over a",
 				"        plain HTTP client.",
+				"Wrong tool when you need a PERSON'S own session or a tab already open on",
+				"        their screen: that is homelab browser bridge, tier 4 above this one.",
+			},
+		},
+		{
+			// Tier 4 of the browser tiering, above `browser run`. The two are
+			// siblings with opposite answers to "whose browser is this", so
+			// this row carries the words for a HUMAN'S session and leaves the
+			// anti-bot words to the row above.
+			Intent:  "act as me in my own browser, on a site I am already logged into",
+			Use:     "homelab browser bridge tabs | open <url> | click <sel> --tab <handle>",
+			Instead: "opening the url again in a fresh headless browser and losing the human's session",
+			Synonyms: []string{"my browser", "my chrome", "my session", "logged in",
+				"session", "tabs", "tab", "open tab", "already open", "on my screen",
+				"screen", "real browser", "extension", "connecting", "half filled form",
+				"form", "borrow", "drive", "cookies", "sign in"},
+			Detail: []string{
+				"Drives the Chrome a HUMAN is sitting at, through an extension, with their",
+				"        logins. EVERY open tab is reachable, not only tabs an agent opened:",
+				"        homelab browser bridge tabs lists them, --tab <handle> targets one.",
+				"Reach for it when the session is the point: a half-filled form, a page",
+				"        behind a POST, an ephemeral login, a tab already on their screen.",
+				"        None of those can be recreated by opening a url.",
+				"NOT for anti-bot walls and not for anything a clean browser can do. That is",
+				"        homelab browser run, which needs no human at all.",
+				"No approval gate: actions run as soon as they arrive. The human sees a live",
+				"        feed in the toolbar popup, Chrome's own debugging banner, and can",
+				"        pull homelab browser bridge stop at any time.",
+				"Setup: homelab browser bridge enrol prints the one command. Check it with",
+				"        homelab browser bridge status, which answers with Chrome closed.",
 			},
 		},
 		{

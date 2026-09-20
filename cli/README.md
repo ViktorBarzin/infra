@@ -207,6 +207,51 @@ runs on the devvm, `setInputFiles` streams local files to the remote browser ove
 CDP — no `chmod`/staging-dir workaround. See `docs/architecture/chrome-service.md`
 and `docs/adr/0013`.
 
+#### `browser bridge`, the human's OWN Chrome and every tab in it
+
+The sibling of `browser run`, in the same group and with the opposite answer to
+"whose browser is this". The command goes to a server in the cluster, which
+pushes it over SSE to an extension in the Chrome a person is sitting at, which
+runs it over CDP with that person's logins. Reach for it when the session is
+the point: a half-filled form, a page behind a POST, an ephemeral login, a tab
+already open on their screen. Anti-bot walls stay with `browser run`, which
+needs no human at all.
+
+30 commands from the protocol plus `enrol`, `pair` and `browsers`:
+
+| Group | Commands |
+|---|---|
+| navigation | `open` `back` `forward` `reload` `url` |
+| reading | `read-text` `read-html` `query` `eval` `screenshot` |
+| input | `click` `type` `fill` `select` `press` `hover` `scroll` `dialog` |
+| waiting | `wait-for` |
+| diagnostics | `console` `network` `emulate` |
+| tab access | `tabs` `attach` `detach` `activate` `close-tab` |
+| plumbing | `status` `ping` `stop` |
+| enrolment | `enrol` `pair` `browsers` |
+
+Every command takes `--tab <handle>`, and a handle may name **any** tab in that
+browser, not only one an agent opened. `tabs` lists them with owner `you` or
+`agent`. An unattached tab attaches itself on first use and Chrome raises its
+own debugging banner, which is never suppressed. Global flags: `--browser`,
+`--session`, `--timeout <ms>`, `--server`, `--json`.
+
+Exit codes are the protocol's, so a script can branch: 0 ok, 1 the action
+failed, 2 usage, 3 no browser connected, 4 the tab could not be resolved,
+5 stopped, 6 server unreachable. The 412 answer prints the enrolment one-liner
+and points at `homelab browser run` for callers that do not need the session.
+
+Credentials: `$BROWSER_BRIDGE_TOKEN`, else `~/.config/browser-bridge/token`,
+which must be mode 0600. This is a shared box and that token drives someone's
+logged-in Chrome. Server: `--server`, else `$BROWSER_BRIDGE_SERVER`, else
+`$BROWSER_BRIDGE_URL`, else `https://browser-bridge.viktorbarzin.me`.
+
+`bridge/` is a **temporary vendored copy** of the browser-bridge client and
+wire packages, because that module has no remote yet and none of the three
+builders of this CLI can fetch it. It answers to the module's real import path,
+so publishing the module deletes the directory and two lines of `go.mod`.
+Details and the removal recipe: `bridge/README.md`.
+
 ### v0.9 verbs — edges (east-west "who-talks-to-whom" trail)
 
 Read-only investigation helper over the `goldmane_edges` CNPG trail (ADR-0014):
