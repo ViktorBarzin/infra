@@ -440,8 +440,9 @@ resource "kubernetes_manifest" "crx_rate_limit" {
 # no session with a 302 to the login page, so the CLI's bearer token and the
 # extension's browser key would both be redirected into HTML. The split above
 # keeps forward-auth on every route that reads a human identity, and leaves the
-# routes whose credentials are already bearer-grade to the server. Two UI
-# operations still fall on the wrong side of it — see README, "One gap".
+# routes whose credentials are already bearer-grade to the server. The four
+# operations the web UI performs moved to /v1/ui to land on the right side of
+# it, which cost this stack nothing. See README, "The routes that moved".
 
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
