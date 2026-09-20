@@ -184,9 +184,23 @@
     # line naming any terminal account on the box.
     devvm_agent_api_tokens_file: /etc/terminal-lobby-tokens
     devvm_agent_api_vault_path: secret/terminal-lobby
-    devvm_agent_api_vault_field: agent_api_muse_token
-    # The name is what /whoami echoes and what the trace records as the actor.
-    devvm_agent_api_caller_name: muse
+    # Every external agent allowed to call agent-api, one entry each. This
+    # list IS the answer to "what can reach this box", so it lives in the repo
+    # where adding one is a diff somebody reviews, rather than in Vault where
+    # it would not be.
+    #
+    #   name    what /whoami echoes, what the trace records as the actor, and
+    #           what the lobby stamps as a session's origin so the agent's
+    #           conversations do not land in the owner's own list. It is also
+    #           the Vault field, as agent_api_<name>_token.
+    #   os_user the terminal account the agent acts as. Must be a right-hand
+    #           side of /etc/ttyd-user-map or authuser answers 403.
+    #
+    # Removing an entry revokes that agent at the next run. For an immediate
+    # revoke, scripts/agent-api-kill <name>.
+    devvm_external_agents:
+      - name: muse
+        os_user: wizard
 
   tasks:
     # ---- 1) the apt toolset -------------------------------------------------
@@ -1853,15 +1867,23 @@
     # These three sit after registration on purpose: TL_AGENT_BIND is read
     # from the running daemon, so the node has to hold an address first.
 
-    - name: Read agent-api's bearer token from Vault
+    # One read per agent. A missing field is NOT fatal: an agent listed here
+    # whose token was never minted, or was cleared by agent-api-kill, simply
+    # gets no line written below. Failing the whole play would mean one
+    # half-onboarded agent stops the box reconciling anything else.
+    - name: Read each external agent's bearer token from Vault
       ansible.builtin.command: >-
-        vault kv get -field={{ devvm_agent_api_vault_field }}
+        vault kv get -field=agent_api_{{ item.name }}_token
         {{ devvm_agent_api_vault_path }}
       delegate_to: localhost
       become: false
-      register: devvm_agent_api_token
+      loop: "{{ devvm_external_agents }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: devvm_agent_api_tokens
       changed_when: false
       check_mode: false
+      failed_when: false
       no_log: true
 
     # agent-api binds loopback plus this address and refuses to start on a
@@ -1919,10 +1941,14 @@
       no_log: true
       notify: restart lobby services
 
-    # One credential per line: <name> <token> <os-user>. Root-owned and
+    # One credential per line: <name> sha256:<digest> <os-user>. Root-owned and
     # group-readable by the account the services run as, which is the one
-    # ownership authuser accepts. Revoking a caller is deleting its line.
-    - name: Write agent-api's bearer credentials
+    # ownership authuser accepts. Revoking a caller is removing its line.
+    #
+    # The whole file is rewritten from the list every run, so the list is the
+    # truth: an agent deleted from devvm_external_agents loses access here
+    # without anybody remembering to clean up after it.
+    - name: Write the external agents' bearer credentials
       ansible.builtin.copy:
         dest: "{{ devvm_agent_api_tokens_file }}"
         owner: root
@@ -1932,7 +1958,11 @@
           # Managed by playbooks/devvm.yml. Local edits are overwritten.
           # The second field is the token's sha256 digest, never the token:
           # a reader of this file cannot then authenticate as its holder.
-          {{ devvm_agent_api_caller_name }} sha256:{{ devvm_agent_api_token.stdout | hash('sha256') }} {{ devvm_tailscale_user }}
+          {% for r in devvm_agent_api_tokens.results | default([]) %}
+          {% if r.rc | default(1) == 0 and (r.stdout | default('')) | length > 0 %}
+          {{ r.item.name }} sha256:{{ r.stdout | hash('sha256') }} {{ r.item.os_user }}
+          {% endif %}
+          {% endfor %}
       no_log: true
       notify: restart lobby services
 

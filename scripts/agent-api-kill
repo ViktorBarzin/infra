@@ -1,63 +1,110 @@
 #!/usr/bin/env bash
-# Revoke or restore agent-api's external callers, immediately.
+# Revoke or restore an external agent's access to agent-api, immediately.
 #
-# Two halves, and both are needed. Removing the line from the live
-# credentials file takes effect on the NEXT REQUEST (authuser reads the file
-# per request, measured: 200 -> 401 in under a second, no restart). Clearing
-# the Vault key is what stops the next devvm.yml run putting it straight back.
-# Doing only the first gives you a kill that silently undoes itself.
+# Two halves, and both are needed. Removing a line from the live credentials
+# file takes effect on the NEXT REQUEST (authuser reads the file per request,
+# measured: 200 -> 401 in under a second, no restart). Clearing the Vault field
+# is what stops the next devvm.yml run putting it straight back. Doing only the
+# first gives you a kill that silently undoes itself.
 #
-#   agent-api-kill            revoke every external credential
-#   agent-api-kill --restore  put them back from Vault
-#   agent-api-kill --status   who can call right now
+# The token is HELD rather than destroyed, so a pause is not a re-onboarding.
+#
+#   agent-api-kill                 revoke EVERY agent
+#   agent-api-kill muse            revoke one
+#   agent-api-kill --restore muse  put one back
+#   agent-api-kill --restore       put them all back
+#   agent-api-kill --status        who can call right now
 set -euo pipefail
 
 FILE=/etc/terminal-lobby-tokens
 VAULT_PATH=secret/terminal-lobby
-FIELD=agent_api_muse_token
-HELD=agent_api_muse_token_revoked
-BACKUP=/etc/terminal-lobby-tokens.revoked
+GROUP=wizard                       # the account the lobby services run as
+HEADER='# Managed by playbooks/devvm.yml. Local edits are overwritten.'
 
-probe() { curl -s -o /dev/null -w '%{http_code}' -m 5 \
-  -H "Authorization: Bearer ${1:-none}" http://127.0.0.1:8710/v1/conversations || echo 000; }
+field()  { printf 'agent_api_%s_token' "$1"; }
+held()   { printf 'agent_api_%s_token_revoked' "$1"; }
+vget()   { vault kv get -field="$1" "$VAULT_PATH" 2>/dev/null || true; }
+probe()  { curl -s -o /dev/null -w '%{http_code}' -m 5 \
+             -H "Authorization: Bearer ${1:-none}" \
+             http://127.0.0.1:8710/v1/conversations || echo 000; }
+
+# live names, read from the file rather than from the roster: this must work
+# even when the repo and the box disagree, which is exactly when it is reached for.
+live_names() { current_lines | awk '{print $1}'; }
+
+# current_lines SNAPSHOTS the credential lines. Every caller must take this
+# before writing, never pipe the file into its own rewrite: `grep "$FILE" |
+# ... | tee "$FILE"` has tee truncating the file while grep is still reading
+# it, and the race silently drops OTHER agents' lines. Measured: restoring one
+# agent removed another.
+current_lines() { sudo grep -vE '^\s*(#|$)' "$FILE" 2>/dev/null || true; }
+
+write_file() {                     # stdin: the credential lines to keep
+  { printf '%s\n' "$HEADER"; cat; } | sudo tee "$FILE" >/dev/null
+  sudo chown "root:$GROUP" "$FILE"; sudo chmod 0640 "$FILE"
+}
+
+revoke_one() {
+  local n="$1" tok
+  tok=$(vget "$(field "$n")")
+  [ -n "$tok" ] && vault kv patch "$VAULT_PATH" "$(held "$n")=$tok" >/dev/null 2>&1 || true
+  if ! vault kv patch "$VAULT_PATH" "$(field "$n")=" >/dev/null 2>&1; then
+    echo "WARNING: could not clear $(field "$n"); a playbook run WILL restore $n" >&2
+  fi
+  local keep; keep=$(current_lines | grep -v "^$n " || true)
+  printf '%s' "${keep:+$keep$'\n'}" | write_file
+  if [ -n "$tok" ]; then
+    echo "  $n: old token now gets HTTP $(probe "$tok")  (401 = revoked)"
+  else
+    echo "  $n: line removed (no token was held in Vault)"
+  fi
+}
+
+restore_one() {
+  local n="$1" tok d
+  tok=$(vget "$(field "$n")"); [ -z "$tok" ] && tok=$(vget "$(held "$n")")
+  if [ -z "$tok" ]; then
+    echo "  $n: no token, live or held. Mint one:" >&2
+    echo "      scripts/agent-onboard $n" >&2
+    return 1
+  fi
+  vault kv patch "$VAULT_PATH" "$(field "$n")=$tok" >/dev/null 2>&1 || true
+  d=$(printf %s "$tok" | sha256sum | awk '{print $1}')
+  local keep; keep=$(current_lines | grep -v "^$n " || true)
+  { [ -n "$keep" ] && printf '%s\n' "$keep"
+    printf '%s sha256:%s %s\n' "$n" "$d" "$GROUP"; } | write_file
+  echo "  $n: restored, probe with the live token: $(probe "$tok")  (200 = callable)"
+}
 
 case "${1:-revoke}" in
   --status)
     echo "credentials live in $FILE:"
-    sudo grep -vE '^\s*(#|$)' "$FILE" | awk '{print "  " $1 " -> " $3}' || echo "  (none)"
-    echo "vault $VAULT_PATH/$FIELD: $(vault kv get -field=$FIELD $VAULT_PATH 2>/dev/null | wc -c) bytes"
+    current_lines | awk '{print "  " $1 " -> " $3}' | grep . || echo "  (none)"
     ;;
   --restore)
-    TOK=$(vault kv get -field=$FIELD $VAULT_PATH 2>/dev/null || true)
-    [ -z "$TOK" ] && TOK=$(vault kv get -field=$HELD $VAULT_PATH 2>/dev/null || true)
-    if [ -z "$TOK" ]; then
-      echo "vault holds no token, live or held; mint one first:" >&2
-      echo "  vault kv patch $VAULT_PATH $FIELD=\$(openssl rand -base64 36 | tr '+/' '._')" >&2
-      exit 1
+    if [ -n "${2:-}" ]; then restore_one "$2"; else
+      for n in $(vault kv get -format=json "$VAULT_PATH" 2>/dev/null \
+                 | python3 -c 'import sys,json,re
+d=json.load(sys.stdin)["data"]["data"]
+seen=[]
+for k in d:
+    m=re.match(r"agent_api_(.+?)_token(_revoked)?$",k)
+    if m and m.group(1) not in seen: seen.append(m.group(1))
+print(" ".join(seen))' 2>/dev/null); do restore_one "$n" || true; done
     fi
-    vault kv patch "$VAULT_PATH" "$FIELD=$TOK" >/dev/null 2>&1 || true
-    D=$(printf %s "$TOK" | sha256sum | awk '{print $1}')
-    printf '# Managed by playbooks/devvm.yml. Local edits are overwritten.\nmuse sha256:%s wizard\n' "$D" \
-      | sudo tee "$FILE" >/dev/null
-    sudo chown root:wizard "$FILE"; sudo chmod 0640 "$FILE"
-    echo "restored. probe with the live token: $(probe "$TOK")  (200 = callable)"
     ;;
-  revoke)
-    TOK=$(vault kv get -field=$FIELD $VAULT_PATH 2>/dev/null || true)
-    sudo cp -f "$FILE" "$BACKUP" 2>/dev/null || true
-    printf '# Revoked by agent-api-kill. No external caller may authenticate.\n' | sudo tee "$FILE" >/dev/null
-    sudo chown root:wizard "$FILE"; sudo chmod 0640 "$FILE"
-    # The token is HELD, not destroyed: a kill you cannot undo without
-    # re-onboarding the caller is a kill nobody reaches for in time. Clearing
-    # the live field is what stops the next devvm.yml run restoring it.
-    if [ -n "$TOK" ]; then vault kv patch "$VAULT_PATH" "$HELD=$TOK" >/dev/null 2>&1 || true; fi
-    vault kv patch "$VAULT_PATH" "$FIELD=" >/dev/null 2>&1 \
-      && echo "vault key cleared (token held at $HELD), so a playbook run will not restore it" \
-      || echo "WARNING: could not clear the vault key; a playbook run WILL restore the credential" >&2
-    if [ -n "$TOK" ]; then
-      echo "verified: the old token now gets HTTP $(probe "$TOK")  (401 = revoked)"
+  -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; ;;
+  *)
+    if [ "${1:-}" = "revoke" ] || [ -z "${1:-}" ]; then
+      names=$(live_names)
+      [ -z "$names" ] && { echo "no agents to revoke"; exit 0; }
+      echo "revoking every agent: $(echo "$names" | tr '\n' ' ')"
+    else
+      names="$1"
     fi
-    echo "previous file kept at $BACKUP"
+    for n in $names; do revoke_one "$n"; done
+    # grep -c prints 0 AND exits 1 on no match, so a `|| echo 0` fallback
+    # prints a second zero. `|| true` keeps set -e happy and the count once.
+    echo "the file now holds: $(current_lines | grep -c . || true) credential(s)"
     ;;
-  *) echo "usage: agent-api-kill [--status|--restore]" >&2; exit 2 ;;
 esac
