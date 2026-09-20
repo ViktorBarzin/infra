@@ -108,6 +108,12 @@ class Account:
     repos: tuple[str, ...] = ()
     claude_auth: bool = True
     parked: bool = False
+    # The Authentik username, carried through because a per-user credential
+    # minted against a service has to name the identity that owns it, not the
+    # OS account. browser-bridge's CLI token is the first such credential;
+    # everything before it keyed on os_user alone. Defaulted so an older
+    # caller constructing Account positionally keeps working.
+    authentik_user: str = ""
 
 
 @dataclass(frozen=True)
@@ -380,6 +386,7 @@ def derive_desired_state(
             repos=u.repos,
             claude_auth=u.claude_auth and not u.parked,
             parked=u.parked,
+            authentik_user=u.authentik_user,
         )
         for u in roster.users.values()
     }
@@ -629,6 +636,7 @@ def _desired_state_to_dict(ds: DesiredState) -> dict:
                 "repos": list(a.repos),
                 "claude_auth": a.claude_auth,
                 "parked": a.parked,
+                "authentik_user": a.authentik_user,
             }
             for name, a in ds.accounts.items()
         },

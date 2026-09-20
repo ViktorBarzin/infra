@@ -884,3 +884,20 @@ def test_derive_ttyd_sudoers_says_it_is_generated():
     ds = eng.derive_desired_state(_roster(THREE), LIVE_PORTS)
     assert "DO NOT EDIT BY HAND" in ds.ttyd_sudoers
     assert "roster.yaml" in ds.ttyd_sudoers
+
+
+def test_derive_carries_the_authentik_username_per_account():
+    """The browser-bridge CLI token is minted per Authentik identity, not per
+    OS account, and the provisioner reads the pairing out of the derived
+    state. Before this the derived state dropped authentik_user, so the loop
+    that writes ~/.config/browser-bridge/token had no name to mint against."""
+    r = _roster(
+        "users: {wizard: {authentik_user: vbarzin, k8s_user: wizard, tier: admin}, "
+        "emo: {authentik_user: emil.barzin, k8s_user: emo, tier: power-user}}"
+    )
+    ds = eng.derive_desired_state(r, {})
+    assert ds.accounts["wizard"].authentik_user == "vbarzin"
+    assert ds.accounts["emo"].authentik_user == "emil.barzin"
+
+    d = eng._desired_state_to_dict(ds)
+    assert d["accounts"]["emo"]["authentik_user"] == "emil.barzin"

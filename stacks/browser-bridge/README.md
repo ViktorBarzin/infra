@@ -137,6 +137,16 @@ route in v1, so that one is worth fixing before the first non-admin enrols.
      extension_id="PLACEHOLDER_UNTIL_THE_CRX_IS_SIGNED"
    ```
 
+   **Done, 2026-09-20.** The path holds `crx_signing_key`,
+   `crx_public_key_spki_b64`, `extension_id` and, since a plan-time failure
+   found it missing, `ingress_secret`. Use `vault kv patch` rather than
+   `vault kv put` on it from here: a `put` replaces the whole secret and would
+   drop the signing key, which is the one value here that cannot be
+   regenerated without changing the extension id. The data source carries a
+   postcondition that names the field if it is ever absent again, instead of
+   failing with Terraform's "the given key does not identify an element"
+   message.
+
    `ingress_secret` must be at least 16 characters or the server refuses to
    start. `extension_id` is not a secret; it lives here because it is unknown
    until the extension is packed and its signing key derives the id, and this
@@ -182,7 +192,28 @@ route in v1, so that one is worth fixing before the first non-admin enrols.
    trip only, so a pod with an empty `/srv/crx` is Ready and answers 500 on the
    CRX paths.
 
-4. **Set the real extension id** once the CRX is signed:
+4. **Provision the CLI tokens.** `secret/browser-bridge` also holds
+   `provision_token`, written 2026-09-20, which is the one bearer
+   `POST /v1/provision/tokens` accepts. It reaches the pod as
+   `BB_PROVISION_TOKEN` through the same ExternalSecret as the ingress
+   secret, and the server refuses to start if it is present and shorter than
+   32 characters.
+
+   Nothing else needs doing by hand. `t3-provision-users.sh` step 5d-quater
+   runs hourly, and per roster user it reads
+   `secret/browser-bridge/tokens`, mints through that route if the user has
+   no token yet, writes the result back to Vault, and installs
+   `~/.config/browser-bridge/token` at mode 0600. It is install-if-absent and
+   best effort: while this stack is undeployed the mint fails, the reconcile
+   logs a warning and carries on, and the first run after the service is up
+   fills every user in.
+
+   The admin route `POST /v1/admin/tokens` stays for a human at the web UI.
+   It cannot serve the provisioner, because /v1/admin runs forward-auth and
+   the Authentik outpost answers a request with no SSO cookie with a 302 to a
+   login page.
+
+5. **Set the real extension id** once the CRX is signed:
    `vault kv patch secret/browser-bridge extension_id=<32 chars>`. External
    Secrets re-syncs within the hour, or immediately with
    `kubectl annotate es browser-bridge-secrets -n browser-bridge force-sync=$(date +%s) --overwrite`,
