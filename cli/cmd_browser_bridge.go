@@ -46,7 +46,7 @@ func browserBridgeCommands() []Command {
 	return []Command{
 		{Path: []string{"browser", "bridge"}, Tier: r,
 			Summary: "drive YOUR OWN Chrome with your logins, any open tab (run `browser bridge --help`)",
-			Run:     func([]string) error { fmt.Print(bridgeHelp()); return nil }},
+			Run:     bridgeGroupHelp},
 
 		// Navigation, 5.
 		{Path: []string{"browser", "bridge", "open"}, Tier: w,
@@ -130,6 +130,30 @@ func browserBridgeCommands() []Command {
 		{Path: []string{"browser", "bridge", "browsers"}, Tier: r,
 			Summary: "list your enrolled browsers with last-seen and which is default", Run: bridgeVerb("browsers")},
 	}
+}
+
+// bridgeGroupHelp answers a bare `homelab browser bridge`. A mistyped command
+// name reaches it too, because dispatch matches the longest prefix, and
+// answering a typo with the help text and exit 0 tells an agent its command
+// ran.
+func bridgeGroupHelp(args []string) error {
+	if bad := bridgeUnknownSubcommand(args); bad != "" {
+		return bridgeFail("bridge", bridgeUsage(
+			"unknown command `browser bridge %s` (try: homelab browser bridge --help)", bad))
+	}
+	fmt.Print(bridgeHelp())
+	return nil
+}
+
+// bridgeUnknownSubcommand returns the first token that is not a flag. Under
+// this group that can only be a command name no verb claimed.
+func bridgeUnknownSubcommand(args []string) string {
+	for _, a := range args {
+		if a != "" && !strings.HasPrefix(a, "-") {
+			return a
+		}
+	}
+	return ""
 }
 
 // bridgeVerb binds one command name to the shared parse, run and exit path.

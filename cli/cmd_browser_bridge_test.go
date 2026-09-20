@@ -159,6 +159,24 @@ func TestParseBridgeArgsRejects(t *testing.T) {
 // Returning a plain error instead of a UsageError exits 1, the code for an
 // action that failed inside the browser, and a script branches on the wrong
 // one. Caught by running the built binary, not by the table above.
+func TestBridgeUnknownSubcommand(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{nil, ""},
+		{[]string{"--help"}, ""},
+		{[]string{"-h"}, ""},
+		{[]string{"frobnicate"}, "frobnicate"},
+		{[]string{"--json", "tabss"}, "tabss"},
+	}
+	for _, c := range cases {
+		if got := bridgeUnknownSubcommand(c.args); got != c.want {
+			t.Errorf("bridgeUnknownSubcommand(%v) = %q, want %q", c.args, got, c.want)
+		}
+	}
+}
+
 func TestParseBridgeArgsErrorsExitTwo(t *testing.T) {
 	cases := [][]string{
 		{"--full-page"}, {"--button"}, {"--timeout", "10"}, {"--timeout", "lots"},
