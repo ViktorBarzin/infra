@@ -1018,6 +1018,31 @@ resource "kubernetes_cron_job_v1" "fidelity" {
                   }
                 }
               }
+              # A saved storage_state cannot carry a monthly run: PlanViewer's
+              # app session idles out in ~15 minutes and the PingFederate SSO
+              # session behind it lasts hours, so the job always arrives at the
+              # login form. These let it log itself back in; the 30-day
+              # device-trust cookies in the storage_state keep it off the SMS
+              # path. Both keys already existed in the secret and were simply
+              # never passed to the container.
+              env {
+                name = "FIDELITY_EMAIL"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "fidelity_email"
+                  }
+                }
+              }
+              env {
+                name = "FIDELITY_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "broker-sync-secrets"
+                    key  = "fidelity_password"
+                  }
+                }
+              }
               env {
                 name = "WF_BASE_URL"
                 value_from {
