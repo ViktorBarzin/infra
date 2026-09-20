@@ -944,9 +944,28 @@ resource "kubernetes_cron_job_v1" "fidelity" {
               command = ["/bin/sh", "-c", <<-EOT
               set -eu
               mkdir -p /data
-              cp /secrets/fidelity_storage_state /data/fidelity_storage_state.json
-              chown 10001:10001 /data/fidelity_storage_state.json
-              chmod 600 /data/fidelity_storage_state.json
+              LIVE=/data/fidelity_storage_state.json
+              SEED=/secrets/fidelity_storage_state
+              # Seed from Vault only when the PVC has no state, or when the
+              # Vault copy is NEWER (someone has just re-seeded by hand).
+              #
+              # This used to copy unconditionally, which quietly defeated the
+              # whole session mechanism: the scrape refreshes the state on the
+              # PVC at the end of every run, and the next run overwrote it
+              # with whatever Vault held. The cookies that matter are the
+              # 30-day device-trust pair PingFederate writes
+              # (TMXUpdateIDFAdpt.previous.subjects and
+              # WISOSCheckIDFAdptAP001556.previous.subjects), so never
+              # carrying the refreshed copy forward meant the trust aged out
+              # against a monthly schedule instead of rolling.
+              if [ ! -s "$LIVE" ] || [ "$SEED" -nt "$LIVE" ]; then
+                echo "seeding storage_state from Vault"
+                cp "$SEED" "$LIVE"
+              else
+                echo "keeping the refreshed storage_state already on the PVC"
+              fi
+              chown 10001:10001 "$LIVE"
+              chmod 600 "$LIVE"
               EOT
               ]
               volume_mount {
