@@ -506,6 +506,10 @@ locals {
   redis_client_namespaces = [
     "affine",
     "authentik",
+    # browser-bridge, added 2026-09-20. Every record it keeps lives in Redis
+    # under the bb: prefix, so without this entry the pod starts, answers
+    # /healthz, fails /readyz and every action returns store_unavailable.
+    "browser-bridge",
     "cyberchef",
     "dawarich",
     "f1-stream",
