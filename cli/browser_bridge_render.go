@@ -501,6 +501,18 @@ func bridgeTabNotes(t bb.TabInfo) []string {
 	return notes
 }
 
+// staleClientNote names the one thing a version mismatch here usually means.
+// cli/bridge is a hand-copied snapshot of the browser-bridge client package
+// and nothing refetches it, so the CLI can sit on an older release than the
+// server it is talking to long after that release was cut. An empty string
+// when they agree keeps the common case quiet.
+func staleClientNote(client, server string) string {
+	if server == "" || server == client {
+		return ""
+	}
+	return fmt.Sprintf(" (server is %s; refresh cli/bridge and rebuild homelab)", server)
+}
+
 func renderStatusResponse(s *bb.StatusResponse) string {
 	var b strings.Builder
 	store := "store ok"
@@ -508,6 +520,7 @@ func renderStatusResponse(s *bb.StatusResponse) string {
 		store = "STORE UNAVAILABLE, every action is failing"
 	}
 	fmt.Fprintf(&b, "server   %s, protocol %d, %s\n", s.Server.Version, s.Server.Protocol, store)
+	fmt.Fprintf(&b, "client   %s%s\n", bb.Version, staleClientNote(bb.Version, s.Server.Version))
 	fmt.Fprintf(&b, "user     %s\n", s.User)
 
 	if s.Browser == nil {

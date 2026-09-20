@@ -1,5 +1,5 @@
 // TEMPORARY VENDOR. This is a copy of the client and wire packages from
-// /home/wizard/code/browser-bridge at commit 75efb557, carried here because
+// /home/wizard/code/browser-bridge at commit 16bdcb0, carried here because
 // github.com/ViktorBarzin/browser-bridge has no remote yet and none of the
 // three builders of this CLI can fetch it: the hourly rebuild in
 // t3-provision-users.sh, scripts/workstation/setup-devvm.sh, and the GHA
