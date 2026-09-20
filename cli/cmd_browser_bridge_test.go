@@ -740,3 +740,31 @@ func TestBridgeCapabilityIsFindableByItsWords(t *testing.T) {
 		t.Error("the row names no built-in it has to beat")
 	}
 }
+
+// client/version.go says the verb reports the client's own version, so that a
+// stale vendored copy of that package is visible rather than mysterious. The
+// vendored copy is a real hazard: cli/bridge is a hand-copied snapshot that
+// nothing refetches, and it was already four commits behind once.
+func TestRenderStatusNamesTheClientVersion(t *testing.T) {
+	raw := `{"server":{"version":"0.1.0","protocol":1,"storeOk":true},"user":"wizard"}`
+	var s bb.StatusResponse
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	got := renderStatusResponse(&s)
+	if !strings.Contains(got, "client   "+bb.Version) {
+		t.Errorf("status output never names the client version %q:\n%s", bb.Version, got)
+	}
+}
+
+func TestRenderStatusFlagsAClientOlderThanTheServer(t *testing.T) {
+	raw := `{"server":{"version":"9.9.9","protocol":1,"storeOk":true},"user":"wizard"}`
+	var s bb.StatusResponse
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	got := renderStatusResponse(&s)
+	if !strings.Contains(got, "rebuild") {
+		t.Errorf("a client %s against a server 9.9.9 says nothing about the mismatch:\n%s", bb.Version, got)
+	}
+}
