@@ -962,6 +962,16 @@ resource "kubernetes_cron_job_v1" "fidelity" {
                 name  = "FIDELITY_STORAGE_STATE_PATH"
                 value = "/data/fidelity_storage_state.json"
               }
+              # PlanViewer sits behind Akamai, which serves a plain headless
+              # Chrome an "Access Denied" edge page before anything renders.
+              # Measured 2026-09-20: this job had never once succeeded since
+              # it was created on 2026-04-18, and the cluster's headful
+              # stealth Chrome reaches the same two hosts with a 200. Drive
+              # that over CDP instead of launching our own browser.
+              env {
+                name  = "BROKER_SYNC_CDP_URL"
+                value = "http://chrome-service.chrome-service.svc.cluster.local:9222"
+              }
               env {
                 name = "FIDELITY_PLAN_ID"
                 value_from {
