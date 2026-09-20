@@ -620,18 +620,50 @@ resource "kubernetes_deployment" "wealthfolio" {
           WHERE day_rank = 2 AND src_rn = 1;
           SQ
 
-          # Currently-held positions only, from the TOTAL aggregate snapshot (sums lots across accounts).
+          # Currently-held positions, summed across accounts from each account's
+          # OWN most recent snapshot.
+          #
+          # This used to read a single account_id='TOTAL' aggregate snapshot.
+          # Wealthfolio 3.6.x stopped writing that row: measured 2026-09-20,
+          # 0 of 239 holdings_snapshots rows carried it, so positions_latest
+          # had been empty since the upgrade and took three panels down with
+          # it — "Price freshness" and "Positions" showed No data and
+          # "Today (live)" read GBP 0. Aggregating per account needs no
+          # synthetic row and cannot silently empty itself again.
+          #
+          # Accounts snapshot on their own cadence, so latest_per_account
+          # picks each account's own newest date rather than one global date;
+          # an account that has not been recalculated recently contributes its
+          # last known quantity instead of dropping out of the total.
           sqlite3 -separator $'\t' /tmp/wf-sync/snapshot.db <<'SQ' > /tmp/wf-sync/positions_latest.tsv
-          SELECT je.key AS asset_id,
-                 snapshot_date,
-                 CAST(json_extract(je.value, '$.quantity') AS REAL) AS quantity,
-                 CAST(json_extract(je.value, '$.averageCost') AS REAL) AS average_cost,
-                 CAST(json_extract(je.value, '$.totalCostBasis') AS REAL) AS total_cost_basis,
-                 json_extract(je.value, '$.currency') AS currency
-          FROM holdings_snapshots, json_each(holdings_snapshots.positions) AS je
-          WHERE account_id = 'TOTAL'
-            AND snapshot_date = (SELECT MAX(snapshot_date) FROM holdings_snapshots WHERE account_id = 'TOTAL')
-            AND CAST(json_extract(je.value, '$.quantity') AS REAL) > 0.0001;
+          WITH latest_per_account AS (
+            SELECT account_id, MAX(snapshot_date) AS snapshot_date
+            FROM holdings_snapshots
+            GROUP BY account_id
+          ),
+          pos AS (
+            SELECT je.key AS asset_id,
+                   h.snapshot_date,
+                   CAST(json_extract(je.value, '$.quantity') AS REAL) AS quantity,
+                   CAST(json_extract(je.value, '$.totalCostBasis') AS REAL) AS total_cost_basis,
+                   json_extract(je.value, '$.currency') AS currency
+            FROM holdings_snapshots h
+            JOIN latest_per_account l
+              ON l.account_id = h.account_id
+             AND l.snapshot_date = h.snapshot_date
+            JOIN json_each(h.positions) AS je
+          )
+          SELECT asset_id,
+                 MAX(snapshot_date) AS snapshot_date,
+                 SUM(quantity) AS quantity,
+                 CASE WHEN SUM(quantity) > 0
+                      THEN SUM(total_cost_basis) / SUM(quantity)
+                      ELSE 0 END AS average_cost,
+                 SUM(total_cost_basis) AS total_cost_basis,
+                 MIN(currency) AS currency
+          FROM pos
+          GROUP BY asset_id
+          HAVING SUM(quantity) > 0.0001;
           SQ
 
           # Truncate-and-reload (small tables; simpler than upserts).
