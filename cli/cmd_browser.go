@@ -9,7 +9,7 @@ import "fmt"
 // only — the agent supplies the Playwright script. See docs/adr/0013.
 
 func browserCommands() []Command {
-	return []Command{
+	cmds := []Command{
 		{Path: []string{"browser"}, Tier: TierRead,
 			Summary: "headful cluster-Chrome automation for anti-bot sites (run `browser --help`)", Run: browserTopHelp},
 		{Path: []string{"browser", "run"}, Tier: TierWrite,
@@ -19,6 +19,10 @@ func browserCommands() []Command {
 		{Path: []string{"browser", "ls"}, Tier: TierRead,
 			Summary: "list live pool browser sessions (owner, purpose, current URL, age)", Run: browserLs},
 	}
+	// `bridge` is the sibling that drives the human's OWN Chrome, with their
+	// logins and their open tabs. Same group, opposite answer to "whose
+	// browser is this".
+	return append(cmds, browserBridgeCommands()...)
 }
 
 func browserLs(args []string) error {
@@ -74,6 +78,9 @@ USAGE
   homelab browser run <script.js> [--url URL] [--shared-context] [--no-seed] [--viewport WxH | --tall] [--keep-open] [--timeout S]
   homelab browser open <url> [--shared-context] [--timeout S]
   homelab browser ls        # list live pool sessions (owner, current URL, age)
+  homelab browser bridge <cmd>   # the OTHER browser: the human's own Chrome,
+                                 # their logins, their open tabs.
+                                 # run: homelab browser bridge --help
 
 WHEN TO USE THIS — escalation only; DEFAULT to the headless/MCP browser
   Default to the Playwright MCP / headless browser for ALL routine browsing and
@@ -85,6 +92,10 @@ WHEN TO USE THIS — escalation only; DEFAULT to the headless/MCP browser
   disable-devtool traps). It presents as a real Chrome and usually succeeds
   first try — but it's the shared cluster browser (slower startup, one batch
   run, no per-step feedback), so it's the escalation path, never the default.
+  Need the HUMAN'S logged-in session, or a tab already open on their screen?
+  Neither this nor the headless browser can reach it. That is
+  homelab browser bridge, which drives their own Chrome through an extension.
+  Anti-bot walls stay here, their session goes there.
 
 ERROR-CODE CHEAT-SHEET (diagnose BEFORE retrying)
   ERR_FILE_NOT_FOUND (-6)   request intercepted/resolved locally by the

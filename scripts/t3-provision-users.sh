@@ -877,8 +877,12 @@ build_homelab_cli() {
   # left the hash at 9c21f82614a1, so the browser fix for infra #98 would have
   # sat on master and never reached a single PATH. The rule is now the honest
   # one: if it goes into the binary, it goes into the hash.
+  #
+  # bridge/ is in the find for the same reason: it is a nested Go module the
+  # `browser bridge` verb is compiled against (cli/bridge/README.md says why it
+  # is vendored), and `cat "$src"/*.go` does not recurse into it.
   srchash="$( { cat "$src"/*.go "$src"/*.js "$src"/go.mod "$src"/go.sum 2>/dev/null
-                find "$src/ios_assets" -type f -print0 2>/dev/null | sort -z | xargs -0 cat 2>/dev/null
+                find "$src/ios_assets" "$src/bridge" -type f -print0 2>/dev/null | sort -z | xargs -0 cat 2>/dev/null
               } | sha256sum | cut -c1-12 )"
   [[ -n "$srchash" ]] || { log "WARN: cannot hash $src -> skip homelab CLI rebuild"; return 0; }
   want="${semver}+${srchash}"
