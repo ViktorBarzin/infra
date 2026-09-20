@@ -17,6 +17,11 @@ ENGINE="$WORKSTATION_DIR/roster_engine.py"
 ROSTER="$WORKSTATION_DIR/roster.yaml"
 ENVDIR=/etc/t3-serve
 MAP=/etc/ttyd-user-map
+# The browser-bridge server, for the per-user CLI token in 5d-quater. The
+# public host rather than the in-cluster Service: the devvm is outside the
+# cluster and the provisioning route carries a bearer, so it stays off the
+# forward-auth router and survives the edge.
+BB_BASE_URL="${BB_BASE_URL:-https://browser-bridge.viktorbarzin.me}"
 # Who administers this box, one OS user per line, derived from roster.yaml's
 # tier: admin. Read by terminal-lobby's act-as switch, which lets an admin work
 # as another mapped user. Authentik groups cannot answer this — every devvm user
@@ -606,6 +611,85 @@ PYEOF
   log "beads pointed at the shared Dolt server -> $user"
 }
 
+# Per-user browser-bridge CLI token -> ~/.config/browser-bridge/token, 0600.
+#
+# Every one of the 30 `homelab browser bridge` commands reads that file before
+# it touches the network, so without it the whole verb exits 2 with "no
+# browser-bridge token at ...". Nothing wrote it: the server's only minting
+# route was POST /v1/admin/tokens, which sits behind Authentik forward-auth,
+# and the outpost answers a request with no SSO cookie with a 302 to a login
+# page. A script on this box has no cookie and cannot get one, so the only way
+# to mint a token was a human hand-crafting a curl out of their own browser
+# session.
+#
+# POST /v1/provision/tokens is the machine half. One bearer, from Vault, on
+# the router that runs no forward-auth.
+#
+# The minted token is written BACK to Vault under
+# secret/browser-bridge/tokens, keyed by OS user, because the server returns
+# it once and never again: without that copy a rebuilt devvm would mint a
+# second token per user and leave the first live in Redis forever.
+#
+# Best-effort throughout. browser-bridge is one service among many and a
+# server that is down, unreachable or not yet deployed must not stop the
+# hourly reconcile.
+install_browser_bridge_token() {
+  local user="$1" home dir dst authentik_user
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  dir="$home/.config/browser-bridge"
+  dst="$dir/token"
+
+  # Already provisioned. The file is the contract; nothing re-mints over it.
+  [[ -s "$dst" ]] && return 0
+
+  authentik_user="$2"
+  [[ -n "$authentik_user" && "$authentik_user" != "-" ]] || {
+    log "WARN: no authentik_user for $user -> skip browser-bridge token"; return 0; }
+
+  if [[ "$DRY_RUN" == 1 ]]; then
+    echo "[dry-run] mint + install browser-bridge CLI token -> $dst"
+    return 0
+  fi
+
+  local token=""
+  # 1) A token this box (or its predecessor) already minted for this user.
+  token="$(vault kv get -field="$user" secret/browser-bridge/tokens 2>/dev/null || true)"
+
+  # 2) Otherwise mint one, and keep the copy.
+  if [[ -z "$token" ]]; then
+    local provision_token
+    provision_token="$(vault kv get -field=provision_token secret/browser-bridge 2>/dev/null || true)"
+    [[ -n "$provision_token" ]] || {
+      log "WARN: secret/browser-bridge has no provision_token -> no browser-bridge token for $user"; return 0; }
+
+    local body
+    body="$(curl -fsS --max-time 15 \
+      -H "Authorization: Bearer $provision_token" \
+      -H 'Content-Type: application/json' \
+      -X POST "$BB_BASE_URL/v1/provision/tokens" \
+      -d "$(jq -cn --arg o "$user" --arg a "$authentik_user" '{osUser:$o,authentikUser:$a}')" 2>/dev/null || true)"
+    token="$(printf '%s' "$body" | jq -r '.token // empty' 2>/dev/null || true)"
+    [[ -n "$token" ]] || {
+      log "WARN: browser-bridge did not mint a token for $user (server down, or not deployed yet) -- retries next reconcile"
+      return 0; }
+
+    # patch, never put: the path is one secret holding every user's token.
+    vault kv patch "secret/browser-bridge/tokens" "$user=$token" >/dev/null 2>&1 \
+      || vault kv put "secret/browser-bridge/tokens" "$user=$token" >/dev/null 2>&1 \
+      || log "WARN: minted a browser-bridge token for $user but could not store it in Vault"
+  fi
+
+  install -d -o "$user" -g "$user" -m 0700 "$dir"
+  # umask, not a chmod afterwards: the token must never exist world-readable,
+  # not even for the instant between the write and the mode change.
+  ( umask 077 && printf '%s\n' "$token" > "$dst" )
+  chown "$user":"$user" "$dst"
+  chmod 600 "$dst"
+  log "browser-bridge CLI token installed -> $user"
+  return 0  # best-effort tail must never return non-zero under set -euo pipefail
+}
+
 install_memory() {
   local user="$1" home
   home="$(getent passwd "$user" | cut -d: -f6)"
@@ -1054,6 +1138,14 @@ while IFS=$'\t' read -r os_user; do
   install_memory "$os_user"
   install_beads "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
+
+# 5d-quater) per-user browser-bridge CLI token (ALL users). Install-if-absent:
+#     the file is the contract and nothing re-mints over one that is there.
+#     Best effort per user, because the server may not be deployed yet.
+while IFS=$'\t' read -r os_user authentik_user; do
+  id "$os_user" >/dev/null 2>&1 || continue
+  install_browser_bridge_token "$os_user" "$authentik_user"
+done < <(jq -r '.accounts[] | [.os_user, (.authentik_user // "-")] | @tsv' "$desired_file")
 
 # 5d-bis) shared agent rules -> every user's ~/.claude/rules/ (all users, no allowlist:
 #     these are the rules, not an opt-in extra). Personal slot created once, never rewritten.

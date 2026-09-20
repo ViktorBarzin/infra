@@ -23,6 +23,25 @@ variable "tls_secret_name" {
 data "vault_kv_secret_v2" "browser_bridge" {
   mount = "secret"
   name  = "browser-bridge"
+
+  # Name the missing field instead of letting the index below blow up. A
+  # Terraform map indexed with a key it does not hold fails with "the given
+  # key does not identify an element in this collection value", which says
+  # nothing about which key, which path, or what to put there. The secret
+  # exists for the CRX signing key too, so "the path is missing" and "the
+  # field is missing" are different problems with the same symptom.
+  lifecycle {
+    postcondition {
+      condition     = length(try(self.data["ingress_secret"], "")) >= 16
+      error_message = <<-EOT
+        secret/browser-bridge has no usable ingress_secret. The server refuses
+        to start without it and Traefik's headers middleware takes a literal
+        string, so it is read at plan time. At least 16 characters:
+          vault kv patch secret/browser-bridge \
+            ingress_secret="$(head -c 32 /dev/urandom | base64 | tr -d '=+/' | cut -c1-43)"
+      EOT
+    }
+  }
 }
 
 locals {
@@ -107,6 +126,19 @@ resource "kubernetes_manifest" "external_secret" {
           remoteRef = {
             key      = "browser-bridge"
             property = "extension_id"
+          }
+        },
+        {
+          # The one bearer that mints a CLI token with no human at a
+          # keyboard. t3-provision-users.sh on the devvm reads the same value
+          # from Vault and calls POST /v1/provision/tokens with it, per OS
+          # user on the roster. The admin route cannot serve that: it sits
+          # behind forward-auth, and the Authentik outpost answers a request
+          # with no SSO cookie with a 302 to a login page.
+          secretKey = "BB_PROVISION_TOKEN"
+          remoteRef = {
+            key      = "browser-bridge"
+            property = "provision_token"
           }
         },
       ]
@@ -239,6 +271,18 @@ resource "kubernetes_deployment" "browser_bridge" {
               secret_key_ref {
                 name = "browser-bridge-secrets"
                 key  = "BB_EXTENSION_ID"
+              }
+            }
+          }
+          env {
+            # Turns POST /v1/provision/tokens on. Empty would turn it off
+            # rather than leave it open, and the server refuses a token
+            # shorter than 32 characters at boot.
+            name = "BB_PROVISION_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "browser-bridge-secrets"
+                key  = "BB_PROVISION_TOKEN"
               }
             }
           }
