@@ -97,30 +97,32 @@ username header and a matching secret before it treats a request as a signed-in
 human. The header is stamped only on routers that also run forward-auth: on a
 router without it, the pair would let a client supply their own identity.
 
-## One gap
+## The routes that moved to fit this split
 
-Two UI operations fall on the wrong side of the prefix split and will answer
-`401 no_credential` until the server moves them:
+Four operations the web UI performs used to sit on the `/v1` router, which
+stamps no identity header, so the settings page and the web Stop button
+answered `401 no_credential`. A longer Traefik prefix could not fix that.
+`/v1/control/stop` takes a CLI token and a UI identity on one path and method,
+and `/v1/browsers` is `GET` for the CLI and `PATCH`/`DELETE` for the UI on the
+same prefix, so splitting them by router would have meant hand-written
+IngressRoute objects in place of `ingress_factory`.
 
-| route | used by | lands on |
+The server moved them under `/v1/ui/` instead, which the forward-auth router
+already covers. This stack did not change:
+
+| operation | route | router |
 |---|---|---|
-| `POST /v1/control/stop` | the web UI Stop button | the `/v1` router, so no identity header |
-| `PATCH` and `DELETE /v1/browsers/{id}`, `POST /v1/browsers/{id}/default` | rename, revoke and set-default on the settings page | the `/v1` router, same reason |
+| Stop, from the web UI | `POST /v1/ui/control/stop` | forward-auth |
+| rename a browser | `PATCH /v1/ui/browsers/{id}` | forward-auth |
+| revoke a browser | `DELETE /v1/ui/browsers/{id}` | forward-auth |
+| mark a browser default | `POST /v1/ui/browsers/{id}/default` | forward-auth |
+| Stop, from the CLI or the toolbar popup | `POST /v1/control/stop` | `/v1`, bearer |
+| list your browsers, from the CLI | `GET /v1/browsers` | `/v1`, bearer |
 
-Neither can be fixed with a longer prefix. `POST /v1/control/stop` accepts both
-a CLI token and a UI identity on one path and method, and `/v1/browsers` is
-`GET` for the CLI and `PATCH`/`DELETE` for the UI on the same prefix. Method
-matching would need hand-written IngressRoute objects in place of
-`ingress_factory`.
-
-The smaller fix is server-side: serve those routes under `/v1/ui/` as well
-(`/v1/ui/control/stop`, `/v1/ui/browsers/{id}`), which the `/v1/ui` router
-already covers, and point the pages at the new paths. No change to this stack.
-
-The kill switch is not lost meanwhile. The toolbar popup's Stop button cuts the
-connection locally with no server round trip, and `homelab browser bridge stop`
-goes through the CLI credential on the `/v1` router. Revocation has no other
-route in v1, so that one is worth fixing before the first non-admin enrols.
+The kill switch has three routes onto it and none of them share a failure:
+the toolbar popup cuts the connection in the browser with no server round
+trip, `homelab browser bridge stop` goes through the CLI bearer, and the web
+button goes through forward-auth.
 
 ## First apply, in order
 
