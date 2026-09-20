@@ -489,7 +489,8 @@ resource "kubernetes_deployment" "wealthfolio" {
               SUM(CASE WHEN total_value > 0 THEN 1 ELSE 0 END)
                 OVER (PARTITION BY account_id ORDER BY valuation_date) AS tv_grp
             FROM base
-          )
+          ),
+          corrected AS (
           SELECT
             id, account_id, valuation_date, account_currency, base_currency,
             fx_rate_to_base,
@@ -506,7 +507,41 @@ resource "kubernetes_deployment" "wealthfolio" {
                   THEN MAX(nc_raw) OVER w ELSE nc_raw END) - synthetic_adjustment AS net_contribution,
             synthetic_adjustment
           FROM filled
-          WINDOW w AS (PARTITION BY account_id, tv_grp);
+          WINDOW w AS (PARTITION BY account_id, tv_grp)
+          )
+          -- Money columns are published in BASE currency (GBP).
+          --
+          -- Every consumer of this view sums across accounts, and Schwab is
+          -- denominated in USD. Publishing native amounts meant those sums
+          -- added dollars to pounds: measured 2026-09-20, the dashboard's
+          -- "Net worth (current)" read GBP 1,179,084.20 against a true
+          -- GBP 1,169,792.09, overstating by GBP 9,292.11, and growth and ROI
+          -- were out by the same amount. All 14 panels that read this view
+          -- summed without conversion; converting here fixes them together and
+          -- leaves no way for a new panel to get it wrong.
+          --
+          -- Native amounts stay available as *_native for anything that wants
+          -- what the broker actually reports. COALESCE guards a missing rate:
+          -- treating it as 1.0 keeps a GBP account whole rather than dropping
+          -- the row from a SUM as NULL.
+          SELECT
+            id, account_id, valuation_date, account_currency, base_currency,
+            fx_rate_to_base,
+            cash_balance            * COALESCE(fx_rate_to_base, 1) AS cash_balance,
+            investment_market_value * COALESCE(fx_rate_to_base, 1) AS investment_market_value,
+            total_value             * COALESCE(fx_rate_to_base, 1) AS total_value,
+            cost_basis              * COALESCE(fx_rate_to_base, 1) AS cost_basis,
+            net_contribution_raw    * COALESCE(fx_rate_to_base, 1) AS net_contribution_raw,
+            net_contribution        * COALESCE(fx_rate_to_base, 1) AS net_contribution,
+            synthetic_adjustment    * COALESCE(fx_rate_to_base, 1) AS synthetic_adjustment,
+            cash_balance            AS cash_balance_native,
+            investment_market_value AS investment_market_value_native,
+            total_value             AS total_value_native,
+            cost_basis              AS cost_basis_native,
+            net_contribution_raw    AS net_contribution_raw_native,
+            net_contribution        AS net_contribution_native,
+            synthetic_adjustment    AS synthetic_adjustment_native
+          FROM corrected;
           SQL
 
           # Snapshot SQLite (online backup — non-blocking).
