@@ -12,6 +12,11 @@
 
 locals {
   ghcr_private_namespaces = [
+    # browser-bridge: PRIVATE ghcr.io/viktorbarzin/browser-bridge, built by
+    # GHA and rolled by Woodpecker (ADR-0002). A private package cannot use
+    # the node-side pull-through cache, which cannot authenticate, so the
+    # Deployment references the cloned secret.
+    "browser-bridge",
     "tripit",
     # tuya-bridge runs a PUBLIC-decision image, but new ghcr packages default
     # PRIVATE until their visibility is flipped (UI) — safety net so pulls
