@@ -27,3 +27,29 @@ the force-installed uBlock Origin Lite + SponsorBlock extensions, is untouched):
 
 If a future neko bump changes the upstream policy, re-diff it against this file
 rather than assuming these are still the only three deltas.
+
+## browser-bridge is force-installed here (2026-09-21)
+
+`policies.json` carries a third forcelist entry,
+`hleocpbgnegeofflmfijfanenkmcndai` against
+`https://browser-bridge.viktorbarzin.me/crx/update.xml`, plus the matching
+allowlist entry because the blocklist is `*`.
+
+Two reasons, and the second is the one that earned it.
+
+**It gives every agent a bridge target that is always up.** Until now
+`homelab browser bridge` only reached a browser a human had personally
+enrolled, so an agent with no human at a keyboard had nothing to drive.
+
+**It closes the development loop.** An unpacked extension never
+auto-updates, so testing a fix meant asking Viktor to download a zip,
+remove the extension and load it again, for every single build. Four
+attempts at one bug took an afternoon that way, and three of them shipped
+against a browser still running the previous code. Chrome on Linux honours
+a forcelist against a self-hosted update URL, so this instance picks up
+each release on its own and can be driven end to end from here.
+
+Note for anyone debugging a conflict: Chrome allows one debugger client per
+tab. `homelab browser run` attaches Playwright over CDP, browser-bridge
+attaches `chrome.debugger`. They coexist because each works in tabs it
+created, but both pointed at the same tab will not.

@@ -14,14 +14,16 @@
   "EditBookmarksEnabled": false,
   "ExtensionInstallAllowlist": [
     "ddkjiahejlhfcafbddmgiahcphecmpfh",
-    "mnjggcdmjocbbbhaepdhchncahnbgone"
+    "mnjggcdmjocbbbhaepdhchncahnbgone",
+    "hleocpbgnegeofflmfijfanenkmcndai"
   ],
   "ExtensionInstallBlocklist": [
     "*"
   ],
   "ExtensionInstallForcelist": [
     "ddkjiahejlhfcafbddmgiahcphecmpfh;https://clients2.google.com/service/update2/crx",
-    "mnjggcdmjocbbbhaepdhchncahnbgone;https://clients2.google.com/service/update2/crx"
+    "mnjggcdmjocbbbhaepdhchncahnbgone;https://clients2.google.com/service/update2/crx",
+    "hleocpbgnegeofflmfijfanenkmcndai;https://browser-bridge.viktorbarzin.me/crx/update.xml"
   ],
   "FullscreenAllowed": true,
   "IncognitoModeAvailability": 0,
