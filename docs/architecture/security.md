@@ -411,6 +411,30 @@ field** (fine as a parameter or a package-level func; fatal in a field). Neither
 `go build` nor `go test` sees that, and the consequence would have been every
 Traefik plugin disabled at startup, `api-token-middleware` included.
 
+**All four plugins are vendored locally as of 2026-09-21**, and the fourth one
+took two outages to get there. `api-token-middleware` was the only remote
+plugin, fetched from plugins.traefik.io on every pod start. Traefik disables
+every plugin when any one fails to load, so a fetch timeout also removed the
+local `crowdsec`, `realip` and `sablier` plugins. That made
+`traefik-crowdsec@kubernetescrd` unresolvable, and because it is attached to
+the `websecure` **entrypoint** every router on that entrypoint became invalid
+and was dropped. The affected pod then answered a bare `404 page not found`
+for every host on the estate while `/ping` kept it Ready and in the Service
+endpoints. It happened on 2026-09-19T01:17:44Z (pod `traefik-7d8bc5c7f5-gsphv`,
+~8h) and again on 2026-09-21T02:30:24Z (pod `traefik-59fb954f47-lwx7t`, ~4h and
+~2,700 bare 404s), one replica in three each time, so roughly a third of
+requests failed and a browser retry usually succeeded.
+
+The `download-plugins` initContainer that guarded this between the two
+incidents did not work and has been removed. It staged the release zip under
+`/plugins-storage/archives/` and exited 0 after verifying 1,424,602 bytes;
+Traefik then cleaned that directory and fetched from plugins.traefik.io
+regardless. The evidence is that the failed pod's `archives/` was empty after
+its initContainer had logged a successful download, while a healthy pod's
+`state.json` was pretty-printed by Traefik rather than written by the
+initContainer's compact `printf`. Pre-seeding that path does not substitute for
+a download; vendoring removes the download.
+
 **Metabase** (disabled by default):
 - Dashboard for CrowdSec analytics
 - CPU-intensive, only enable when investigating incidents
