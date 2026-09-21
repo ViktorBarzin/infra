@@ -1321,13 +1321,23 @@ resource "kubernetes_deployment" "goodreads_sync" {
     # The DB password is a 7-day Vault static role, and the poller reads the DSN
     # from the environment, which is fixed for the life of the process. Without
     # this the ExternalSecret below updates the Secret on schedule and the pod
-    # carries on presenting the password it booted with, so every rotation ends
-    # in `password authentication failed for user "goodreads_sync"` until
-    # something else happens to restart the pod. Keel's image polling had been
-    # doing that by accident; on 2026-09-21 no image landed after the 02:33
-    # rotation and the poller stayed down. `search` pairs with the
-    # `reloader.stakater.com/match` annotation on the Secret, the same pairing
-    # calibre-web-automated above uses.
+    # carries on presenting the password it booted with, so a rotation leaves it
+    # unable to authenticate until something else restarts it. Keel's image
+    # polling had been doing that by accident.
+    #
+    # The delay between rotation and breakage is what makes this hard to read in
+    # the logs. backend/goodreads/store.py caches its psycopg connection, and an
+    # open connection keeps working after the role's password changes, so the
+    # pod looks healthy until that connection drops. On 2026-09-20 11:56 Vault
+    # rotated; nothing happened for 14 hours; the CNPG switchover at 02:31 on
+    # 09-21 moved the primary to pg-cluster-4 and closed the connection; the
+    # reconnect at 02:43 failed with `password authentication failed for user
+    # "goodreads_sync"` and every cycle after it did too. So the symptom appears
+    # at the time of an unrelated database event, not at the time of the
+    # rotation that actually caused it.
+    #
+    # `search` pairs with the `reloader.stakater.com/match` annotation on the
+    # Secret, the same pairing calibre-web-automated above uses.
     annotations = {
       "reloader.stakater.com/search" = "true"
     }
