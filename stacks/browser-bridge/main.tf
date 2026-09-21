@@ -553,6 +553,52 @@ module "ingress_crx" {
   ]
 }
 
+module "ingress_pair" {
+  source = "../../modules/kubernetes/ingress_factory"
+
+  # auth = "none", and this one needs saying out loud. /pair is where someone
+  # types a pair code, and the pair code exists for a browser that CANNOT
+  # reach Authentik: no SSO session, someone else's machine, or Authentik
+  # itself being what is broken. Leaving forward-auth in front of it gated the
+  # fallback behind the exact thing it falls back from, which is how the
+  # in-cluster Chrome ended up unenrollable: the extension installed, opened
+  # the enrolment page, and bounced to a login nobody was going to fill in.
+  #
+  # The page grants nothing on its own. It renders a form. The code is the
+  # credential, and POST /v1/pair/redeem, which already takes no other
+  # credential, is rate limited by IP on the server. A signed-in visitor is
+  # still named, via the server's OptionalUI middleware.
+  #
+  # More specific than the "/" prefix on module.ingress, so Traefik routes
+  # /pair here and everything else stays behind forward-auth.
+  auth = "none"
+
+  # One HTML form. An ai-bot-block forwardAuth hop in front of the page whose
+  # whole job is to work when auth is unavailable would defeat the point.
+  anti_ai_scraping = false
+
+  dns_type         = "none" # module.ingress owns the DNS record for this host
+  homepage_enabled = false  # path carve-out, not a second dashboard tile
+
+  namespace       = kubernetes_namespace.browser_bridge.metadata[0].name
+  name            = "browser-bridge-pair"
+  host            = local.host
+  service_name    = kubernetes_service.browser_bridge.metadata[0].name
+  port            = local.port
+  tls_secret_name = var.tls_secret_name
+  ingress_path    = ["/pair"]
+
+  # real-ip first so the limiter keys on an address the caller cannot choose,
+  # then strip any inbound X-authentik-* so a forged identity cannot reach the
+  # handler, then the same tight limiter the crx paths use.
+  skip_default_rate_limit = true
+  extra_middlewares = [
+    "traefik-real-ip@kubernetescrd",
+    "traefik-strip-auth-headers@kubernetescrd",
+    "browser-bridge-crx-rate-limit@kubernetescrd",
+  ]
+}
+
 # --- Cloudflare ---
 #
 # No cloudflare_ruleset here, and that is a decision rather than an omission.
