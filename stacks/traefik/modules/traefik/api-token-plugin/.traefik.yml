@@ -1,0 +1,21 @@
+﻿displayName: API Key & Token Middleware
+type: middleware
+iconPath: .assets/logo.png
+import: github.com/Aetherinox/traefik-api-token-middleware
+summary: "Integrate API tokens into the request header to allow restricted access. Supports IP whitelisting."
+
+testData:
+  authenticationHeader: true
+  authenticationHeaderName: X-API-TOKEN
+  authenticationErrorMsg: "Access Denied"
+  bearerHeader: true
+  bearerHeaderName: Authorization
+  removeHeadersOnSuccess: true
+  removeTokenNameOnFailure: false
+  timestampUnix: false
+  permissiveMode: false
+  tokens:
+    - 10854495-364f-4f73-aa6a-a71b317fc0b1
+  whitelistIPs:
+    - "66.85.101.2"
+    - "10.10.0.7/32"
