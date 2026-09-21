@@ -1318,6 +1318,19 @@ resource "kubernetes_deployment" "goodreads_sync" {
       app  = "goodreads-sync"
       tier = local.tiers.edge
     }
+    # The DB password is a 7-day Vault static role, and the poller reads the DSN
+    # from the environment, which is fixed for the life of the process. Without
+    # this the ExternalSecret below updates the Secret on schedule and the pod
+    # carries on presenting the password it booted with, so every rotation ends
+    # in `password authentication failed for user "goodreads_sync"` until
+    # something else happens to restart the pod. Keel's image polling had been
+    # doing that by accident; on 2026-09-21 no image landed after the 02:33
+    # rotation and the poller stayed down. `search` pairs with the
+    # `reloader.stakater.com/match` annotation on the Secret, the same pairing
+    # calibre-web-automated above uses.
+    annotations = {
+      "reloader.stakater.com/search" = "true"
+    }
   }
   spec {
     replicas = 1
