@@ -3,7 +3,10 @@
 **Date of incident:** 2026-07-03, ~09:15 UTC
 **Written:** 2026-09-02, from infra#45
 **Severity:** SEV2 — all Woodpecker-driven deploys and infra applies unavailable
-**Status of the class:** mitigated 2026-09-02; one verification outstanding
+**Status of the class:** mitigated 2026-09-02; one verification outstanding.
+A second case (`goodreads-sync`, 2026-09-21) turned out not to be covered by
+the rule or the audit method below — see the follow-up at the end before
+acting on either.
 
 ## What happened
 
@@ -158,3 +161,105 @@ wrong thing, which is worth knowing before the next audit reaches for it.
   Job sweeps 25 minutes rather than firing once.
 - `claude-memory` and `technitium` are candidates for the `match` annotation on
   the reasoning above, but nothing observed argues for it yet.
+
+## Follow-up, 2026-09-21: the general rule above needs one correction
+
+`goodreads-sync` in the `ebooks` namespace failed the same way this class
+describes, and it is a case the rule at the end of the fleet audit does not
+cover. Recording it here because that rule is the part of this document a
+future audit is most likely to act on.
+
+What happened: Vault rotated `pg-goodreads-sync` on 2026-09-20 at 11:56 UTC.
+Nothing happened for fourteen hours. The CNPG switchover at 02:31 on 09-21
+moved the primary from `pg-cluster-2` to `pg-cluster-4` and closed the
+poller's connection, the reconnect at 02:43 used the password the pod had
+booted with, and every poll cycle after it failed with `password
+authentication failed for user "goodreads_sync"`.
+
+### Where the rule needs adjusting
+
+The fleet audit concludes that an application holding a pooled connection
+"simply does not notice, and by the time it reconnects the poll has usually
+landed". The first half held here — the poller genuinely did not notice for
+fourteen hours. The second half is where the case diverges. The poll had
+landed nine hours before the reconnect, and the reconnect failed anyway,
+because `backend/goodreads/store.py` receives its DSN through `envFrom` and
+environment variables are fixed for the life of a process. The Secret being
+correct does not help a process that will never read it again.
+
+So the poll landing is what matters for an application that re-reads its
+credential per connection, and a **restart** is what matters for one that
+reads it once into memory. For the second kind, `match` on the Secret without
+`search` or `auto` on the workload leaves the rotation unhandled no matter how
+current the Secret is.
+
+Restating the rule to cover both kinds:
+
+| how the app gets its password | what a rotation needs |
+|---|---|
+| re-read per connection (or a real pooled re-auth) | the ESO poll to land |
+| read once at boot, fail fast | the poll, then a restart, promptly |
+| read once at boot, long-lived connection | a restart — the timing is set by whatever eventually drops the connection |
+
+The third row is the one this incident adds. It is the least visible of the
+three, because the gap between cause and symptom can be arbitrarily long and
+the event that finally exposes it is unrelated to credentials.
+
+### Where the audit method needs adjusting
+
+`goodreads-sync` was inside the "18 carry `match`" group and so was not looked
+at again. Carrying `match` on the Secret is only half the pairing: Reloader
+also needs `search` or `auto` on the workload, and that deployment had
+neither. An audit that checks the Secret side alone will keep passing a
+workload that cannot be reloaded.
+
+Two further things a re-audit should account for, both of which produced wrong
+answers during this one:
+
+- Reloader accepts its opt-in on **either** `metadata.annotations` or
+  `spec.template.metadata.annotations`, and both are in use here. A first
+  sweep read only the top level and reported `monitoring/grafana` and
+  `woodpecker/woodpecker-server` as exposed; both opt in on the pod template
+  and both carry `last-reloaded-from` showing Reloader reloading them. Counted
+  across the cluster on 2026-09-21: 82 workloads opt in at the top level (28
+  of them stamped) and 5 on the pod template (2 stamped), so top-level is the
+  usual placement and the pod-template one is easy to miss.
+- `last-reloaded-from` is good positive evidence, but its absence proves
+  nothing, because Terraform strips the stamp on the next apply of a workload
+  whose annotations it manages.
+
+Checked both sides on 2026-09-21 — every workload referencing a
+`match`-annotated Secret, against both annotation locations — `goodreads-sync`
+was the only genuinely exposed one. Of the pair left open above, `claude-memory`
+has since been wired (`reloader.stakater.com/auto` at the top level, with a
+`last-reloaded-from` stamp naming `claude-memory-db-creds`), so only
+`technitium` still has a rotated role and no Reloader wiring, and it has still
+logged no authentication failure.
+
+### What changed
+
+`reloader.stakater.com/search = "true"` on
+`kubernetes_deployment.goodreads_sync` in `stacks/ebooks/main.tf`, pairing with
+the `match` the Secret already carried (`7ee64ddd`, comment corrected in
+`cdd7cb63`).
+
+Verified rather than assumed, by forcing a rotation and watching the whole
+chain run unattended:
+
+| time (UTC) | event |
+|---|---|
+| 09:08:27 | `vault write -f database/rotate-role/pg-goodreads-sync` |
+| 09:22:28 | Reloader: `Changes detected in 'goodreads-sync-db-creds' of type 'SECRET' in namespace 'ebooks'; updated 'goodreads-sync' of type 'Deployment'` |
+| 09:23:02 | replacement pod up, authenticated, new session in `pg_stat_activity` |
+| 09:23:07 | previous pod gone |
+
+14m35s from rotation to healed, with no authentication failure logged, and the
+deployment now carries a `last-reloaded-from` stamp naming
+`goodreads-sync-db-creds`.
+
+That window is set by the `vault-database` `refreshInterval` of 15m, the same
+one this incident's CronJob was built to shorten for Woodpecker. The poller is
+deliberately left on the plain interval: it polls a feed every 120s and a book
+shelved during the gap is picked up on the next cycle, so the downtime costs
+nothing a user would see. A per-stack force-sync CronJob here would add moving
+parts to save time that does not matter.
