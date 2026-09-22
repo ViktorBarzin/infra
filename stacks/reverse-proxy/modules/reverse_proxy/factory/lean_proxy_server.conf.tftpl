@@ -7,6 +7,10 @@ server {
 
     # Streams bodies of any size; the device's own limits apply.
     client_max_body_size 0;
+    # Longer than Traefik's 90s idleConnTimeout (openresty's default is 65s),
+    # so Traefik always drops an idle connection first and never sends a POST
+    # down one nginx has just closed, which would surface as a stray 502.
+    keepalive_timeout 120s;
     # The lean format leaves the path out, because the router carries its
     # session token (;stok=) there. nginx warn/error lines still print the
     # request line, which is the same exposure as Traefik's JSON access log.
