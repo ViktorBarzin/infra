@@ -761,6 +761,16 @@ chain — a CrowdSec/LAPI outage cannot cause 503s; it only stops new bans.) Che
 
 **Fix**: `writeTimeout=0` (unlimited downloads), `readTimeout` ≥ longest expected upload (currently `3600s`). Not Cloudflare (Immich is non-proxied) and not the pfSense IPv6 bridge (its 1h timeouts are inactivity-based).
 
+### A LAN Host Cannot Reach One Specific Internet Address
+
+**Symptoms**: One device on 192.168.1.0/24 gets no answer at all from one public IP (no ICMP, no TCP on any port), while every other address, including its siblings in the same /24, works. Other hosts behind the same router reach that IP fine. Seen on infra #96 (2026-09-13 to 2026-09-22): ha-sofia could not reach `140.82.121.34`, one of the two ghcr.io addresses, so Home Assistant Core and add-on updates failed whenever DNS returned it.
+
+**Diagnosis**: The TP-Link Archer AX6000 at `192.168.1.1` runs **HomeCare → Antivirus**, and its Malicious Content Filter and Intrusion Prevention System can each hold a block on a single device/destination pair. These blocks do not appear in the Antivirus history, and cycling the IPS off and on does not clear one. Distinguish it from a host-side firewall by testing from a second address on the same NIC (`ip addr add`, then `curl --interface`): if the second address works and the first does not, the block is keyed on the source IP at the router.
+
+**Current state (since 2026-09-22)**: Malicious Content Filter **off** and Intrusion Prevention System **off**, deliberately; Infected Device Quarantine on. The router's own WAN DNS uses Quad9. LAN clients are unaffected by that DNS setting, since the TP-Link DHCP hands them `192.168.1.2, 94.140.14.14` (see the DHCP table above).
+
+**Fix**: Switch off the two toggles above. A router firmware update or factory reset can restore the HomeCare defaults, so check them first if this symptom returns.
+
 ## Related
 
 - **Runbooks**:
