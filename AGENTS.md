@@ -1,62 +1,67 @@
 # Infrastructure Repository — AI Agent Instructions
 
 ## Critical Rules (MUST FOLLOW)
-- **ALL changes through Terraform/Terragrunt** — NEVER `kubectl apply/edit/patch/delete` for persistent changes. Read-only kubectl is fine.
 - **NEVER put secrets in plaintext** — use `secrets.sops.json` (SOPS-encrypted) or `terraform.tfvars` (git-crypt, legacy)
 - **NEVER restart NFS on the Proxmox host** — causes cluster-wide mount failures across all pods
 - **NEVER commit secrets** — triple-check before every commit
 - **`[ci skip]` in commit messages** when changes were already applied locally
 - **Ask before `git push`** — always confirm with the user first
 
+## Critical Rule: Terraform Only
+
+**ALL infrastructure changes MUST go through Terraform/Terragrunt.** Never use `kubectl apply/edit/patch/set`, `helm install/upgrade`, or any manual cluster mutation as the final state.
+
+- **No exceptions for "quick fixes"** — even one-line changes must be in `.tf` files and applied via `scripts/tg apply`
+- **Apply locally OR let CI do it — but ALWAYS commit.** You don't have to wait for CI: with apply access you MAY run the apply yourself (`scripts/tg apply <stack>` / `homelab tf apply <stack>`), but **from the main checkout, never a worktree** (git-crypt'd `*.tfvars` come through as ciphertext under the worktree filter-bypass, so a worktree apply reads garbage). **Every applied change MUST be committed and pushed to `master` the same session** — the repo is the source of truth, so applied-but-uncommitted HCL is drift that the next CI apply / daily drift-detection will try to revert. Order either way: apply locally then commit + push (CI's changed-stack apply then no-ops), or commit + push and let CI apply. Never apply an uncommitted edit; never leave a committed change unapplied.
+- **kubectl is for read-only operations and temporary debugging only** (get, describe, logs, exec, port-forward)
+- **If a resource isn't in Terraform yet**, evaluate whether it can be added before making manual changes. If manual change is unavoidable (e.g., emergency), document it immediately and create the Terraform resource in the same session
+- **kubectl scale/patch during migrations is acceptable** as a transient step, but the final state must be in Terraform and applied via `scripts/tg apply`
+- **Helm values live in Terraform** (templatefile or inline) — never `helm upgrade` directly
+
+Violations cause state drift, which causes future applies to break or silently revert changes.
+
+## Critical Rule: the devvm goes through Ansible
+
+The cluster's counterpart. **Machine-wide changes to the devvm (10.0.10.10) are
+edits to `playbooks/devvm.yml`, not commands typed on the box** — packages,
+`/usr/local/bin` binaries, systemd units, `/etc` config, resource limits, apt
+sources.
+
+```sh
+ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml --check --diff  # always first
+ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml                 # apply
+```
+
+A `--check` run against the live box should be a no-op; anything else is drift,
+and it means either the box carries something undeclared or a committed change
+has not been applied. Validated end to end on 2026-08-29 against a VM cloned
+from Proxmox template 1000: playbook, then `apt install terminal-lobby`, then
+all six services up and all eight verification probes passing.
+
+Routed elsewhere by design: accounts, groups, clones and kubeconfigs come from
+`roster.yaml` via `t3-provision-users.sh` (hourly; infra#88 ports that half),
+and Terminal Lobby's own files ship in its Debian package.
+
 ## Execution
+- **Apply**: Authenticate via `vault login -method=oidc`, then **`homelab tf plan|validate|apply <stack>`** (always the full form — bare `homelab tf` prints `unknown command: "tf"`, which reads as "the verb does not exist"). It wraps `scripts/tg`, which handles state decrypt/encrypt. **Do not run bare `terragrunt`/`terraform`.** On a Tier-1 stack a bare terragrunt dies in "Initializing the backend" with `pq: password authentication failed for user "<your-os-user>"`, because `PG_CONN_STR` is set only by `scripts/tg`. **That error is not a permission-tier limit** — reading it as one led to abandoning local verification for CI and hand-rolling the offline check with plain `terraform init`, 15 times over a month. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies, and `-lock-timeout` (default `5m`, override via `TG_LOCK_TIMEOUT`) on every state-locking verb (`plan`/`apply`/`destroy`/`refresh`) so a contended state lock **waits** instead of failing instantly with `Error acquiring the state lock`.
 - **Apply a service**: `scripts/tg apply --non-interactive` (auto-decrypts SOPS secrets; passes `-lock-timeout`, default `5m` / `TG_LOCK_TIMEOUT`, so a contended state lock waits instead of failing with `Error acquiring the state lock`)
 - **Legacy apply**: `cd stacks/<service> && terragrunt apply --non-interactive` (uses terraform.tfvars)
 - **kubectl**: `kubectl --kubeconfig $(pwd)/config`
 - **Health check**: `bash scripts/cluster_healthcheck.sh --quiet`
 - **Plan all**: `cd stacks && terragrunt run --all --non-interactive -- plan`
 
-## Adopting Existing Resources — Use `import {}` Blocks, Not the CLI
+## Instructions
+- **"remember X"**: use the `homelab memory` CLI. The rule and the usage discipline live in `~/.claude/rules/10-homelab.md` + `20-execution.md` §M — not restated here, so the two cannot drift apart. Infra-specific addition: for knowledge that belongs to the repo rather than to a session, also update the relevant CLAUDE.md / `AGENTS.md`.
+- **New services need CI/CD** and **monitoring** (Prometheus/Uptime Kuma). CI = a GHA workflow on the repo's GitHub mirror (build + tests off-infra, ADR-0002); Woodpecker gets a deploy-only pipeline — never an in-cluster build.
+- **New service**: Use `setup-project` skill for full workflow
+- **Adopting existing resources**: use HCL `import {}` blocks (TF 1.5+), not `terraform import` CLI. Commit stanza → plan-to-zero → apply → delete stanza. Canonical reason: reviewable in PR, plan-safe, idempotent, tier-agnostic. Full rules + per-provider ID formats in `docs/agents/terraform.md` → "Adopting Existing Resources".
+- **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See `docs/agents/secrets.md` for full workflow.
+- **CRITICAL — Update docs with every change**: When modifying infrastructure (Terraform, Vault, networking, storage, CI/CD, monitoring), you MUST update all affected documentation in the same commit. Check and update: `docs/architecture/*.md`, `docs/runbooks/*.md`, `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/reference/service-catalog.md`. Stale docs cause incident response failures and onboarding confusion. If unsure which docs are affected, grep for the service/resource name across all doc files.
 
-When bringing a live cluster/Vault/Cloudflare resource under Terraform management, use an HCL `import {}` block (Terraform 1.5+). Do **NOT** use `terraform import` on the CLI for anything landing in this repo — the CLI path leaves no audit trail and makes multi-operator adoption fragile.
-
-**Canonical workflow:**
-
-1. Write the `resource` block that matches the live object.
-2. In the same stack, add an `import {}` stanza naming the target and the provider-specific ID:
-   ```hcl
-   import {
-     to = helm_release.kured
-     id = "kured/kured"  # Helm ID format: <namespace>/<release-name>
-   }
-
-   resource "helm_release" "kured" {
-     name       = "kured"
-     namespace  = "kured"
-     repository = "https://kubereboot.github.io/charts/"
-     chart      = "kured"
-     version    = "5.7.0"
-     # ... values matching the live release
-   }
-   ```
-3. `scripts/tg plan` — every change it proposes is real divergence between HCL and live state. Iterate on values until the plan is **0 changes**.
-4. `scripts/tg apply` — the import runs alongside whatever zero-change apply you have. If your plan is 0 changes, this commits only the state-ownership transfer.
-5. After the apply lands cleanly, **delete the `import {}` block** in a follow-up commit. The resource is now fully TF-owned and the stanza would be a no-op that clutters diffs.
-
-**Why `import {}` and not `terraform import`:**
-
-- Reviewable in PRs before any state mutation. The CLI path is an out-of-band action nobody sees.
-- Plan-safe: the `import` plan step shows the exact object being adopted. Mistyped IDs or the wrong resource address are caught before apply, not after.
-- Survives state backend changes (Tier 0 SOPS vs Tier 1 PG) transparently — both work identically from the operator's perspective because both use `scripts/tg`.
-- Re-runnable: if the apply fails partway through, the `import {}` block is idempotent. The CLI path's state mutation is not.
-
-**Finding the provider-specific ID:** each provider has its own convention.
-| Resource | ID format | Example |
-|---|---|---|
-| `helm_release` | `<namespace>/<release-name>` | `kured/kured` |
-| `kubernetes_manifest` | `{"apiVersion":"...","kind":"...","metadata":{"namespace":"...","name":"..."}}` | (pass as HCL object literal) |
-| `kubernetes_<kind>_v1` | `<namespace>/<name>` for namespaced, `<name>` for cluster-scoped | `kube-system/coredns` |
-| `authentik_provider_proxy` | provider UUID | `0eecac07-97c7-443c-...` |
-| `cloudflare_record` | `<zone-id>/<record-id>` | `abc123/def456` |
+## Secrets Management — Vault KV
+- **Vault is the sole source of truth** for secrets.
+- **`secret/viktor`** — go-to path for ALL personal secrets (135 keys). Contains every API key, token, password, SSH key, and config from the old terraform.tfvars. Check here first: `vault kv get -field=KEY secret/viktor`.
+- **Auth**: `vault login -method=oidc` (Authentik SSO) → `~/.vault-token` → read by Vault TF provider.
 
 ## Secrets Management (SOPS)
 - **`config.tfvars`** — plaintext config (hostnames, IPs, DNS records, public keys)
@@ -66,22 +71,6 @@ When bringing a live cluster/Vault/Cloudflare resource under Terraform managemen
 - **Edit secrets**: `sops secrets.sops.json` (opens $EDITOR, re-encrypts on save)
 - **Add a secret**: `sops set secrets.sops.json '["new_key"]' '"value"'`
 - **Operators** push PRs → Viktor reviews → CI decrypts and applies. No encryption keys needed for operators.
-
-## Sealed Secrets (User-Managed Secrets)
-For secrets that users manage themselves (no SOPS/git-crypt access needed):
-1. **Create**: `kubectl create secret generic <name> --from-literal=key=value -n <ns> --dry-run=client -o yaml | kubeseal --controller-name sealed-secrets --controller-namespace sealed-secrets -o yaml > sealed-<name>.yaml`
-2. **Commit**: Place `sealed-*.yaml` files in the stack directory (`stacks/<service>/`)
-3. **Terraform picks them up** automatically via `fileset` + `for_each`:
-   ```hcl
-   resource "kubernetes_manifest" "sealed_secrets" {
-     for_each = fileset(path.module, "sealed-*.yaml")
-     manifest = yamldecode(file("${path.module}/${each.value}"))
-   }
-   ```
-4. **Deploy**: Push → CI runs `terragrunt apply` → controller decrypts into real K8s Secrets
-- Only the in-cluster controller has the private key. `kubeseal` uses the public key — safe to distribute.
-- Naming convention: files MUST match `sealed-*.yaml` glob pattern.
-- The `kubernetes_manifest` block is safe to add even with zero sealed-*.yaml files (empty for_each).
 
 ## Architecture
 Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Proxmox VMs.
@@ -102,203 +91,17 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 - `terraform.tfvars` — legacy secrets file (git-crypt, kept for reference)
 - `scripts/cluster_healthcheck.sh` — 50-check cluster health script (nodes, workloads, monitoring, certs, backups, external reachability, Slack #alerts traffic)
 
-## Storage
-- **NFS** (`nfs-proxmox` StorageClass): For app data. Use the `nfs_volume` module, never inline `nfs {}` blocks.
-- **proxmox-lvm-encrypted** (`proxmox-lvm-encrypted` StorageClass): **Default for all sensitive data** — databases, auth, email, passwords, git repos, health data. LUKS2 encryption via Proxmox CSI. Passphrase in Vault, backup key on PVE host.
-- **proxmox-lvm** (`proxmox-lvm` StorageClass): For non-sensitive stateful apps (configs, caches, tools). Proxmox CSI driver.
-- **NFS server**: Proxmox host at 192.168.1.127 (sole NFS). HDD NFS at `/srv/nfs` (2TB ext4 LV `pve/nfs-data`), SSD NFS at `/srv/nfs-ssd` (100GB ext4 LV `ssd/nfs-ssd-data`). Exports use `async` mode (safe with UPS + databases on block storage). TrueNAS (VM 9000, 10.0.10.15) decommissioned 2026-04-13. Legacy `nfs-truenas` StorageClass name retained (48 PVs bind it; SC names are immutable on PVs) but now points to the Proxmox host, identical to `nfs-proxmox`.
-- **SQLite on NFS is unreliable** (fsync issues) — always use proxmox-lvm or local disk for databases.
-- **NFS mount options**: Always `soft,timeo=30,retrans=3` to prevent uninterruptible sleep (D state).
-- **NFS export directory must exist** on the Proxmox host before Terraform can create the PV.
-- **Backup (3-2-1)**: Copy 1 = live PVCs on sdc. Copy 2 = sda `/mnt/backup` (PVC file backups, auto SQLite backups, pfSense, PVE config, **VM images via `vzdump-vms`**). Copy 3 = Synology offsite (two-tier: sda→`pve-backup/`, NFS→`nfs/`+`nfs-ssd/` via inotify change tracking).
-- **vzdump-vms** (**Weekly Sun 01:00**): live `vzdump --mode snapshot` of hand-managed VMs (NOT in TF) → `/mnt/backup/vzdump/`, keep 3/VMID. `VZDUMP_VMIDS` default `102` (devvm) — the only VM imaged today; before this (2026-06-09) no VM was ever imaged. Nightly until 2026-08-16, when the full-disk re-read proved too expensive for sdc; it is now the bare-metal restore floor and `devvm-home-backup` does the daily work. NOT in the incremental offsite manifest; monthly full pass mirrors it. See `docs/architecture/backup-dr.md`.
-- **devvm-home-backup** (Daily 03:30): `rsync --link-dest` incremental of devvm `/home` → `/mnt/backup/devvm-home/`, keep 14 hardlinked generations (~29 GB each). PULL from the PVE host over an `rrsync -ro /home`-pinned key, so devvm cannot reach its own backups. Covers what nothing else does: unpushed commits, uncommitted work, `~/.claude` and `~/.t3`. Measured across all three users 2026-09-13: of 51 repos under wizard's `~/code` exactly **one** has no remote (`cloud`, 332 KB of docs), with 4 unpushed commits across three repos and 24 dirty files across six, plus emo's `infra` clone at 76 dirty files. **The monorepo root DOES have a remote** (`github.com/ViktorBarzin/monorepo`), clean and pushed, so the older "two repos with no remote" figure is retired. Deployed by `.woodpecker/pve-scripts-sync.yml`.
-- **daily-backup** (Daily 05:00): Auto-discovered BACKUP_DIRS (glob), auto SQLite backup (magic number + `?mode=ro`), pfSense, PVE config. No NFS mirror step (NFS syncs directly to Synology via inotify).
-- **offsite-sync-backup** (Daily 06:00): Step 1: sda→Synology `pve-backup/`. Step 2: NFS→Synology `nfs/`+`nfs-ssd/` via `rsync --files-from` (inotify change log). Monthly full `--delete`.
-- **nfs-change-tracker.service**: inotifywait on `/srv/nfs` + `/srv/nfs-ssd`, logs to `/mnt/backup/.nfs-changes.log`. Incremental syncs complete in seconds.
-- **Synology layout** (`/volume1/Backup/Viki/`): `pve-backup/` (from sda), `nfs/` (from `/srv/nfs`), `nfs-ssd/` (from `/srv/nfs-ssd`).
-
 ## Shared Variables (never hardcode)
 `var.nfs_server` (192.168.1.127), `var.redis_host`, `var.postgresql_host`, `var.mysql_host`, `var.ollama_host`, `var.mail_host`
 
-## Redis Service Naming (read before wiring a new consumer)
-
-The Redis stack (`stacks/redis/`) exposes three distinct entry points. Pick the one that matches the client's connection pattern — the wrong one causes READONLY errors or silent connection drops.
-
-| Endpoint | Port(s) | Use for | Backed by |
-|----------|---------|---------|-----------|
-| `redis-master.redis.svc.cluster.local` | 6379 (redis), 26379 (sentinel) | **Default for new services.** Write-safe — HAProxy health-checks nodes and routes only to the current master. Matches `var.redis_host`. | `kubernetes_service.redis_master` → HAProxy → Bitnami StatefulSet |
-| `redis-node-{0,1,2}.redis-headless.redis.svc.cluster.local` | 26379 | **Long-lived connections (PUBSUB, BLPOP, MONITOR, Sidekiq).** Use a sentinel-aware client with master name `mymaster`. Example: `stacks/nextcloud/chart_values.yaml:32-54`. | Bitnami-created headless service → pod DNS |
-| `redis.redis.svc.cluster.local` | 6379 | **Do NOT use.** Helm chart's default service — selector patched by `null_resource.patch_redis_service` to match `redis-haproxy`, so today it behaves like `redis-master`. This patch is load-bearing but temporary; consumers hard-coded on this name are tracked in a beads follow-up (T0). | Bitnami chart (patched) |
-
-**HAProxy's `timeout client 30s` closes idle raw Redis connections** — any client that holds a connection open for pub/sub, blocking commands, or replication streams MUST use the sentinel path. Uptime Kuma's Redis monitor hit this limit and had to be re-pointed at the sentinel endpoint (see memory id=748).
-
-**When onboarding a new service:** start from `redis-master.redis.svc.cluster.local:6379` via `var.redis_host`. Only reach for sentinel discovery if the client library supports it natively (ioredis, redis-py Sentinel, go-redis FailoverClient, Sidekiq `sentinels` array) AND the workload uses long-lived connections.
-
-## Kyverno Drift Suppression (`# KYVERNO_LIFECYCLE_V1`)
-
-Kyverno's admission webhook mutates every pod with a `dns_config { option { name = "ndots"; value = "2" } }` block (fixes NxDomain search-domain floods — see `k8s-ndots-search-domain-nxdomain-flood` skill). Terraform does not manage that field, so without suppression every pod-owning resource shows perpetual `spec[0].template[0].spec[0].dns_config` drift.
-
-**Rule**: every `kubernetes_deployment`, `kubernetes_stateful_set`, `kubernetes_daemon_set`, `kubernetes_cron_job_v1`, **and `kubernetes_job`** MUST include the following `lifecycle` block, tagged with the `# KYVERNO_LIFECYCLE_V1` marker so every site is greppable:
-
-```hcl
-# kubernetes_deployment / kubernetes_stateful_set / kubernetes_daemon_set / kubernetes_job
-lifecycle {
-  ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
-}
-
-# kubernetes_cron_job_v1 (extra job_template nesting)
-lifecycle {
-  ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
-}
-```
-
-**`kubernetes_job` matters more than the others, not less.** A Job's pod
-template is immutable, so Terraform cannot update the injected `ndots` option in
-place the way it does on a Deployment — it plans a **replace**, which deletes and
-re-runs the Job. For the one-shot `db_init` / `migrations` / `pg_db_init` Jobs
-this repo uses, that means database initialisation and Alembic migrations
-re-execute on **every apply** that touches the stack, and the stack never stops
-showing drift. Five Jobs were missing the line until **2026-08-14** (tts,
-technitium, claude-memory, trading-bot ×2); `kubernetes_job` had been absent from
-this rule's resource list, which is how they were overlooked.
-
-**Why not a shared module?** Terraform's `ignore_changes` meta-argument only accepts static attribute paths. It rejects module outputs, locals, variables, and any expression. A DRY module is therefore impossible — the canonical pattern IS the snippet + marker. When `kubernetes_manifest` resources get Kyverno `generate.kyverno.io/*` annotations mutated, a sibling convention `# KYVERNO_MANIFEST_V1` will be introduced (Phase B).
-
-**Audit**: `rg "KYVERNO_LIFECYCLE_V1" stacks/ | wc -l` — should grow (never shrink). Add the marker to every new pod-owning resource. The `_template/main.tf.example` stub shows the canonical form.
-
-### `# KYVERNO_LIFECYCLE_V2` — Keel auto-update annotations
-
-When a namespace is labeled `keel.sh/enrolled=true`, the `inject-keel-annotations` ClusterPolicy (`stacks/kyverno/modules/kyverno/keel-annotations.tf`) injects these annotations on every Deployment / StatefulSet / DaemonSet:
-
-```
-keel.sh/policy: patch
-keel.sh/trigger: poll
-keel.sh/pollSchedule: "@every 1h"
-```
-
-**`keel.sh/match-tag` is NO LONGER injected — it is actively STRIPPED.** It was the pre-2026-05-26 default (`force + match-tag`), proven unreliable: under `force` it let Keel rewrite tag strings and cross-assign images between containers in multi-image pods. The `blog` deployment was a casualty — its `nginx` ⇄ `nginx-exporter` images got swapped and the site was down 2026-05-26 → 2026-06-01. The policy now sets the annotation to `null` (strips on admission); the 194 pre-existing workloads still carrying it were swept once via `kubectl annotate … keel.sh/match-tag-` on 2026-06-01. The `ignore_changes` line for it (below) is retained as a harmless no-op. See `docs/post-mortems/2026-06-01-keel-match-tag-image-swap.md`.
-
-**Three stacks re-declare it deliberately, and need it** — `k8s-portal`, `interview-prep-app`, `pages-publish`. For a **single-container** workload tracking its own `:latest`, `match-tag` is what makes Keel poll the tag's DIGEST ("watch tag digest job") instead of scanning for new tags ("watch repository tags job", logged with `digest=` empty). A repo that only publishes `:latest` + a commit SHA never grows a new *tag*, so without it `force + poll` registers a watcher that can never fire and the app silently stops auto-deploying — `pages-publish` sat on a stale digest across ~3 poll windows on 2026-08-17 before anyone noticed. The 2026-06-01 swap hazard needs a multi-image pod sharing a floating tag; one container has no sibling image to swap with. A TF-declared value survives admission (checked with `kubectl annotate --dry-run=server`), because the strip lands on CREATE and Terraform owns the field afterwards. **Do not add `match-tag` to `ignore_changes` on these three** — if a recreate loses it, an apply must restore it and the nightly drift report must be able to see it gone, since silent loss means silent no-deploys.
-
-To suppress the resulting Terraform drift, **enrolled workloads** must carry the complete `ignore_changes` block below. This is the canonical form — it folds together every marker (see the legend after it):
-
-```hcl
-lifecycle {
-  ignore_changes = [
-    spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-    metadata[0].annotations["keel.sh/policy"],
-    metadata[0].annotations["keel.sh/trigger"],
-    metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-    metadata[0].annotations["keel.sh/match-tag"],
-    spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-    metadata[0].annotations["kubernetes.io/change-cause"],
-    metadata[0].annotations["deployment.kubernetes.io/revision"],
-    spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-    spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
-  ]
-}
-```
-
-**Marker legend** (the names are historical; grep each to audit coverage):
-
-| Marker | Ignores | Why |
-|---|---|---|
-| `# KYVERNO_LIFECYCLE_V1` | `dns_config` | Kyverno injects pod DNS `ndots` config |
-| `# KYVERNO_LIFECYCLE_V2` | `keel.sh/policy`, `/trigger`, `/pollSchedule` | Kyverno-injected Keel control annotations |
-| `# KEEL_IGNORE_IMAGE` | `container[N].image` (one line **per container index**, incl. `init_container[N]`) | Keel rewrites the image tag on `policy=patch`; without this, `apply` reverts the bump (a **downgrade**) |
-| `# KEEL_LIFECYCLE_V1` | `keel.sh/match-tag`, `keel.sh/update-time` (pod template), `kubernetes.io/change-cause`, `deployment.kubernetes.io/revision` | every Keel digest-update restamps these; without ignoring them `apply` strips them → forces a rollout → Keel re-stamps → fight loop |
-| `# METALLB_LIFECYCLE_V1` | `metallb.io/ip-allocated-from-pool` (on **LoadBalancer Services**) | MetalLB's controller writes this onto the live Service once it allocates an IP; without the ignore every apply strips it and MetalLB re-adds it |
-| `# RELOADER_LIFECYCLE_V1` | `reloader.stakater.com/last-reloaded-from` (pod template) | Stakater Reloader stamps this on the pod template when a watched Secret or ConfigMap rotates. Terraform manages a pod template's `annotations` map **even when the resource declares no `annotations` block** — it manages it as empty — so the stamp plans as a removal on **any** TF-managed workload Reloader watches, declared map or not, and Reloader re-adds it. Same provider behaviour as `metadata.labels` in the Kyverno row above. The declared-map test that `1fb7455d` asserts is disproved by its own contents: 4 of its 13 deployments declare no template annotations map and drifted anyway, as does `job-hunter`, the original precedent the convention is copied from |
-
-**LoadBalancer Services** are the one non-pod-owning resource class in this
-legend. Every `kubernetes_service` with `type = "LoadBalancer"` needs the
-`METALLB_LIFECYCLE_V1` line — all 15 live LB Services carry the annotation, so
-the rule is universal rather than per-service. Swept across the fleet on
-**2026-08-14** (previously only `dbaas`'s `postgresql_lb` had it; traefik's
-Service is Helm-owned and so out of Terraform's reach).
-
-**Reloader** needs the line on any workload Reloader *watches*, not only the
-ones it has already stamped, and **not only the ones whose pod template declares
-an `annotations` map.** Both narrowings are wrong, and the second one cost a
-second pass: the first sweep on **2026-09-16** covered 41 resources over 38
-files in 32 stacks using the declared-map test, then a follow-up added the
-remaining 38 resources over 36 files in 31 stacks once that test was disproved
-(see the legend row). Together they take `rg "RELOADER_LIFECYCLE_V1" stacks/`
-from 56 to **94**, which is the full TF-managed watched set.
-
-The reason to cover the watched set rather than the drifting set: the live
-cluster had 28 workloads carrying the annotation against 94 watched, and the
-stamp appears on the next secret rotation, which for the Vault static database
-roles is weekly. Fixing only what is drifting means coming back every week, and
-the history shows exactly that — the count was 13 on 2026-09-03 and 28 two weeks
-later. Audit against the watched set (any workload with a
-`reloader.stakater.com/*` annotation other than `last-reloaded-from`), never
-against today's drift report.
-
-**Multi-container caveat**: `container[0].image` only covers the first container. Add one `container[N].image` line for **every** container index, plus `init_container[N].image` for init containers — otherwise the un-ignored container's image still drifts/downgrades.
-
-The `KEEL_LIFECYCLE_V1` + per-container `KEEL_IGNORE_IMAGE` lines were swept across all enrolled workloads on **2026-05-28** (previously only `llama-cpp` had them; the rest fought on every apply). New enrolled workloads must include the full block. Workloads in un-enrolled namespaces don't receive the annotations and don't need the block.
-
-Per-workload opt-out: add the label `keel.sh/policy: never` on the Deployment metadata (not pod template); the policy's `exclude` clause respects it, no annotation gets injected, no `ignore_changes` needed.
-
-**Audit**: `rg "KYVERNO_LIFECYCLE_V2" stacks/` — count should equal the number of enrolled workloads. `rg "KEEL_LIFECYCLE_V1" stacks/` should match it (every enrolled workload also carries the V1 lines). `rg "METALLB_LIFECYCLE_V1" stacks/` should equal the number of TF-managed LoadBalancer Services (`kubectl get svc -A --field-selector spec.type=LoadBalancer` minus the Helm-owned traefik one). `rg "RELOADER_LIFECYCLE_V1" stacks/` should equal the number of TF-managed workloads Reloader watches — **94** as of 2026-09-16.
-
-### The invariant: nothing auto-upgraded is tracked by Terraform
-
-**If Keel may bump a workload's image, Terraform must not track that image.**
-(Viktor, 2026-08-15.) The two owners are mutually exclusive, and exactly one of
-these must hold for every pod-owning resource:
-
-- **Keel owns the version** — the workload carries `keel.sh/policy` set to
-  anything other than `never`, and **every** container index that Keel can reach
-  has a `KEEL_IGNORE_IMAGE` entry. Terraform still declares the image, but only
-  as the value used when the resource is first created.
-- **Terraform owns the version** — the workload is opted out with
-  `keel.sh/policy: never`, and Terraform tracks the image normally. Use this
-  where a pin is load-bearing (mysql-standalone, redis-v2, forgejo,
-  node-local-dns, chrome-service and the rest of the ~29 currently on `never`).
-
-Anything in between means the two fight on every apply. That is not only drift
-noise: on 2026-08-15 four workloads were found where Terraform was reverting a
-Keel upgrade to an **older** release each time it ran (hermes-agent and
-claude-agent-service curl 8.11.1→8.11.0, learn git-sync v4.7.1→v4.7.0,
-postiz/temporal auto-setup 1.28.4→1.28.1).
-
-Two traps when adding the ignore:
-
-- **The container index is not always 0.** Read it off the live pod
-  (`kubectl -n <ns> get <kind>/<name> -o json`), not off the HCL's first
-  container. hermes-agent and claude-agent-service drift on `container[1]`, the
-  curl `vault-token-refresher` sidecar; android-emulator's drifting image lives
-  in the `gate` Deployment, not the main one.
-- **`keel.sh/policy` can be a label as well as an annotation.** node-local-dns
-  carries it as a *label* valued `never`; ignoring only the annotation left
-  Terraform stripping the opt-out.
-
-**Audit the invariant** with `scripts/audit-keel-image-ownership.py`, which
-walks every pod-owning resource, resolves its live workload, and reports any
-Keel-enrolled workload whose image Terraform still tracks. It should print zero
-gaps; it did across all 160 TF-managed enrolled workloads on 2026-08-15. Note it
-skips commented-out `resource` blocks and is heredoc-aware — a naive brace match
-mis-parses the stacks that embed shell scripts.
-
-**Design context**: `docs/plans/2026-05-16-auto-upgrade-apps-{design,plan}.md`.
-
-## Tier System
-`0-core` | `1-cluster` | `2-gpu` | `3-edge` | `4-aux` — Kyverno auto-generates LimitRange + ResourceQuota per namespace based on tier label.
-- Containers without explicit `resources {}` get default limits (256Mi for edge/aux — causes OOMKill for heavy apps)
-- Always set explicit resources on containers that need more than defaults
-- Opt-out: labels `resource-governance/custom-quota=true` / `resource-governance/custom-limitrange=true`
-
-## Infrastructure
-- **Proxmox**: 192.168.1.127 (Dell R730, 22c/44t, 142GB RAM)
-- **Nodes**: k8s-master (10.0.20.100), node1 (GPU, Tesla T4), node2-4
-- **GPU**: `node_selector = { "nvidia.com/gpu.present" : "true" }` + toleration `nvidia.com/gpu`. The label is auto-applied by NFD/gpu-feature-discovery on any node with an NVIDIA PCI device — nothing is hostname-pinned, so the GPU card can move between nodes without Terraform edits.
-- **Pull-through cache**: 10.0.20.10 — docker.io (:5000), ghcr.io (:5010) only. Caches stale manifests for :latest tags — use versioned tags or pre-pull with `ctr --hosts-dir ''` to bypass.
-- **pfSense**: 10.0.20.1 (gateway, firewall, DNS forwarding)
-- **MySQL InnoDB Cluster**: 1 instance on proxmox-lvm (scaled from 3 — only Uptime Kuma + phpIPAM remain), PriorityClass `mysql-critical` + PDB, anti-affinity excludes any GPU node (`nvidia.com/gpu.present=true`) so MySQL moves off the GPU host automatically if the card is relocated
-- **SMTP**: `var.mail_host` port 587 STARTTLS (not internal svc address — cert mismatch)
+## Claude-Specific Resources
+- **Skills**: `.claude/skills/` (7 active). Archived runbooks: `.claude/skills/archived/`
+- **Agents**: All agents are global (`~/.claude/agents/`, shared via dotfiles). Install Viktor's dotfiles for the full set.
+  - **Infra specialists**: cluster-health-checker, dba, home-automation-engineer, network-engineer, observability-engineer, platform-engineer, security-engineer, sre
+  - **Incident pipeline**: post-mortem → sev-triage → sev-historian → sev-report-writer
+  - **DevOps**: devops-engineer, deploy-app, review-loop
+- **Reference**: `.claude/reference/` — patterns.md, service-catalog.md, proxmox-inventory.md, github-api.md, authentik-state.md
+- **GitHub API**: `curl` with tokens from tfvars (`gh` CLI blocked by sandbox)
 
 ## Contributor Onboarding
 1. Get Authentik account + Headscale VPN access (ask Viktor)
@@ -372,21 +175,39 @@ curl -X POST -H "Authorization: token $TOK" -H 'Content-Type: application/json' 
 ```
 
 ## Common Operations
-- **`homelab` CLI** (`/usr/local/bin/homelab`, source `cli/`): unified infra-ops verbs — run `homelab manifest` to discover the surface (each verb tagged read/write). Infra loop: `homelab tf plan|fmt|apply <stack>` (wraps `scripts/tg`; `apply` auto-claims presence + releases on exit, warns out-of-band), `homelab claim|release <kind>:<name>`, `homelab work start|land|clean <topic>` (worktree lifecycle; `land` gates on verification, `--verify-cmd`/`--no-verify`). Kubernetes (v0.2): `homelab k8s status|get|logs|describe|debug|pf|rollout-status <app>` (read; `<app>` defaults to the namespace, target to `deploy/<app>`), `homelab k8s db <app> [--mysql] -- "<SQL>"`, `k8s exec`, `k8s restart`, `k8s rm-pod` (pods/jobs only) — config-mutation kubectl verbs are intentionally absent (Terraform-only). Memory (v0.3): `homelab memory recall "<context>"` (semantic search), `memory list|categories|tags|stats|secret`, `memory store|update|delete` — a direct HTTP client to claude-memory that works even when the memory MCP is down. CI/deploy (v0.4): `homelab ci status|watch [commit]` (Woodpecker, repo resolved from cwd), `homelab deploy wait <ns>/<deploy> [--sha]` (image-sha + rollout) — `work land` now auto-watches CI to green. Net/obs (v0.5): `homelab net check <host> [path]` (external-CF vs internal-LB reachability), `dns lookup <name>` (Technitium vs public diff), `metrics query "<promql>"` / `metrics alerts` (Prometheus via LB), `logs query "<logql>" [--since]` (Loki via LB) — endpoint resolution baked in, no port-forward. Usage telemetry (v0.6): every dispatched verb fire-and-forgets a Loki line (`{user,verb}` + exit only, NO args/secrets; opt-out `HOMELAB_TELEMETRY=0`); `homelab usage top [--since][--user]` ranks verb usage across all users — evidence for what to build next, queryable without reading anyone's home. Home Assistant (v0.7): `homelab ha token [--instance sofia|london]` (prints the long-lived API token, resolved live from k8s Secret `openclaw/openclaw-secrets` — use as `curl -H "Authorization: Bearer $(homelab ha token)"`), `homelab ha ssh [--instance sofia|london] -- <cmd>` (run a command on the HA host; deterministic non-interactive ssh, the invoking user's `~/.ssh/id_ed25519`, sofia=`vbarzin@192.168.1.8` default) — entity state/control stays with the `ha` MCP, these cover only what an API-only MCP can't (token + host shell). Full docs: `cli/README.md`.
+- **`homelab` CLI** (`/usr/local/bin/homelab`, source `cli/`): unified infra-ops verbs — run `homelab manifest` to discover the surface (each verb tagged read/write). Infra loop: `homelab tf plan|fmt|apply <stack>` (wraps `scripts/tg`; `apply` auto-claims presence + releases on exit, warns out-of-band), `homelab claim|release <kind>:<name>`, `homelab work start|land|clean <topic>` (worktree lifecycle; `land` gates on verification, `--verify-cmd`/`--no-verify`). Full docs: `cli/README.md`.
 - **Deploy new service**: Use `stacks/<existing-service>/` as template. Create stack, add DNS in tfvars, apply platform then service.
 - **Fix crashed pods**: Run healthcheck first. Safe to delete evicted/failed pods and CrashLoopBackOff pods with >10 restarts.
 - **OOMKilled**: Check `kubectl describe limitrange tier-defaults -n <ns>`. Increase `resources.limits.memory` in the stack's main.tf.
 - **Add a secret**: `sops set secrets.sops.json '["key"]' '"value"'` then commit.
 - **NFS exports**: Create dir on Proxmox host (`ssh root@192.168.1.127 "mkdir -p /srv/nfs/<service>"`), add to `/etc/exports`, run `exportfs -ra`.
 
-## Automated Service Upgrades
-- **Pipeline**: DIUN (detect) → n8n webhook (filter + rate limit) → HTTP POST → `claude-agent-service` (K8s) → `claude -p` (upgrade agent)
-- **Agent**: `.claude/agents/service-upgrade.md` — analyzes changelogs, backs up DBs, bumps versions, verifies health, rolls back on failure
-- **Config**: `.claude/reference/upgrade-config.json` — GitHub repo mappings, DB-backed services, skip patterns
-- **Rate limit**: Max 5 upgrades per 6h DIUN scan cycle (configured in n8n workflow)
-- **Skipped**: databases, `:latest`, custom images (`viktorbarzin/*`), infrastructure images
-- **Risk**: SAFE (2min verify) vs CAUTION (10min, DB backup, step through versions) based on changelog analysis
-- **Docs**: `docs/architecture/automated-upgrades.md`
-
 ## Detailed Reference
 See `.claude/reference/patterns.md` for: NFS volume code examples, iSCSI details, Kyverno governance tables, anti-AI scraping layers, Terragrunt architecture, node rebuild procedure, archived troubleshooting runbooks index.
+
+Moved out of this file on 2026-09-22, verbatim (read the one your task touches):
+- `docs/agents/service-notes.md` — Service-Specific Notes (per-service operational knowledge)
+- `docs/agents/monitoring.md` — Monitoring & Alerting
+- `docs/agents/networking.md` — Networking & Resilience (CrowdSec enforcement, Traefik, HTTP/3, IPv6)
+- `docs/agents/security.md` — Security Posture
+- `docs/agents/storage-backup.md` — storage classes, NFS rules, PVC templates, 3-2-1 backups
+- `docs/agents/ci-cd.md` — CI/CD Architecture (GHA → ghcr, Woodpecker deploy)
+- `docs/agents/ingress.md` — `ingress_factory` auth and DNS tiers, Anubis, Sablier scale-to-zero
+- `docs/agents/kyverno-drift.md` — the `# KYVERNO_LIFECYCLE_V1` block every pod-owning resource needs, plus the Keel, MetalLB and Reloader markers
+- `docs/agents/terraform.md` — two-tier state backend, adopting resources with `import {}`
+- `docs/agents/secrets.md` — ESO, plan-time secrets, DB rotation, Sealed Secrets
+- `docs/agents/databases.md` — CNPG host and tuning, Redis endpoints
+- `docs/agents/resources.md` — resource requests and limits, tier LimitRanges
+- `docs/agents/images.md` — image builds, registries, pull-through caches
+- `docs/agents/nodes.md` — node kubelet and OS disk tuning
+- `docs/agents/infrastructure.md` — hosts, nodes, GPU scheduling, SMTP
+- `docs/agents/known-issues.md` — Known Issues
+- `docs/agents/homelab-cli.md` — the `homelab` verb catalogue
+- Repowise: `docs/architecture/repowise.md`. Automated service upgrades: `docs/architecture/automated-upgrades.md`
+
+## User Preferences
+- **Calendar**: Nextcloud at `nextcloud.viktorbarzin.me`
+- **Home Assistant**: ha-london (default), ha-sofia. "ha"/"HA" = ha-london
+- **Frontend**: Svelte for all new web apps
+- **Tools**: Docker containers only — never `brew install` locally
+- **Pod monitoring / waiting**: Never use `sleep` — and `kubectl get pods -w` is a watch-and-guess, not a check. Wait on the CONDITION: `homelab deploy wait <ns>/<deploy>` for a rollout, `homelab ci watch [commit] [--repo <owner/name>]` for a pipeline, `homelab k8s rollout-status <app>` for a resource, or the `Monitor` tool with an until-loop for anything else. Measured over 175 sessions: 1,789 bare `sleep N` calls against 2 uses of `deploy wait`. Full rule + why a fixed sleep is not a check: execution.md §4.
