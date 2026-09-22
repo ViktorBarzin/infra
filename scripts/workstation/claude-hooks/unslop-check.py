@@ -184,7 +184,7 @@ def main():
     print(json.dumps({
         "decision": "block",
         "reason": (
-            "Your reply breaks the writing-style rules in your AGENTS.md: "
+            "Your reply breaks the writing-style rules in your agent instructions: "
             + "; ".join(found)
             + ". Rewrite it and send the corrected version. Keep every fact and "
               "number. Do not mention this check or apologise, just say the thing "
