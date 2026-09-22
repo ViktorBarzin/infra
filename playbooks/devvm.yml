@@ -444,6 +444,15 @@
         dest: /etc/skel/
         mode: preserve
 
+    # setup-devvm.sh used to link these to the admin's own ~/.claude dirs, so a
+    # new account inherited his personal rules and the provisioner's
+    # `install -d -o <user>` would follow the link into his home (2026-09-22).
+    - name: No /etc/skel links into the admin's ~/.claude
+      ansible.builtin.file:
+        path: "/etc/skel/.claude/{{ item }}"
+        state: absent
+      loop: [skills, rules, agents, commands]
+
     # ---- 5b) the admin account ---------------------------------------------
     # ttyd.service runs as this user, so a machine without it cannot serve the
     # lobby at all -- found by installing the package on a blank VM, where ttyd
