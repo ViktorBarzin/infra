@@ -340,10 +340,32 @@ def release_worker(pod):
     # reused, so a heartbeat left behind by the last caller would make the
     # NEXT session look reclaimable the moment it is claimed, even one that
     # never heartbeats. null removes the key under a strategic merge patch.
-    kube("PATCH", f"/api/v1/namespaces/{NS}/pods/{pod['name']}", {
-        "metadata": {"labels": {"chrome-pool/session": ""},
-                     "annotations": {"chrome-pool/released": str(int(time.time())),
-                                     "chrome-pool/heartbeat": None}}})
+    #
+    # The PATCH is the last thing standing between a finished session and a
+    # worker the next caller can pick, so its failure is handled rather than
+    # allowed to leave do_POST. Seen live once on 2026-09-20: the API server
+    # answered 500, the exception propagated, and the pod kept its
+    # chrome-pool/session label, which makes pick_free_worker skip it until
+    # the heartbeat goes stale. One retry covers a transient 500; past that
+    # the pod is deleted, because a replacement costs the next caller a ~30s
+    # cold start and a stranded worker costs the pool a whole slot.
+    for attempt in (1, 2):
+        try:
+            kube("PATCH", f"/api/v1/namespaces/{NS}/pods/{pod['name']}", {
+                "metadata": {"labels": {"chrome-pool/session": ""},
+                             "annotations": {"chrome-pool/released": str(int(time.time())),
+                                             "chrome-pool/heartbeat": None}}})
+            return
+        except Exception as e:
+            print("[broker] %s: release patch attempt %d failed: %s"
+                  % (pod["name"], attempt, e), file=sys.stderr, flush=True)
+    print("[broker] %s: could not clear the session label — deleting the pod "
+          "so the Deployment replaces it" % pod["name"], file=sys.stderr, flush=True)
+    try:
+        kube("DELETE", f"/api/v1/namespaces/{NS}/pods/{pod['name']}")
+    except Exception as e:
+        print("[broker] %s: delete after a failed release also failed: %s"
+              % (pod["name"], e), file=sys.stderr, flush=True)
 
 
 def wait_ready(name, timeout=45):
