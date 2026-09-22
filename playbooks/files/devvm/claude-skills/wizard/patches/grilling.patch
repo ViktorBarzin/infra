@@ -1,0 +1,24 @@
+--- a/SKILL.md	2026-09-22 21:11:53.489771439 +0000
++++ b/SKILL.md	2026-09-22 21:11:53.532771822 +0000
+@@ -21,6 +21,21 @@
+ ➡️ <your recommended answer>
+ ```
+ 
++Deliver each round through the `AskUserQuestion` tool. The block above is what
++a round holds, and the tool carries it to the user, so the structure stays the
++same: the whole frontier at once, one recommendation per question.
++
++- The tool takes at most 4 questions per call, so a wider round goes out as
++  consecutive calls in the same turn, every question included.
++- The `➡️` recommendation becomes the first option, with `(Recommended)` at the
++  end of its label.
++- Each question takes 2 to 4 options. Where the answer is open rather than a
++  choice, offer the plausible answers anyway; the tool always adds a free-text
++  option, so an open question still fits.
++- Set `multiSelect: true` when the choices are not exclusive.
++- Use `preview` when the options are things to look at rather than read, such
++  as competing layouts, schemas, or code shapes.
++
+ Each round the user answers reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier and ask the next round. A question whose answer depends on another question still open in this round belongs to a _later_ round, not this one.
+ 
+ Finding _facts_ is your job, never the user's. When a frontier question needs a fact from the environment (filesystem, tools, etc.), dispatch a sub-agent to find it; don't ask the user for anything you could look up yourself. Don't block on it: a running exploration is an unsettled prerequisite, so only the questions downstream of it wait for the sub-agent to report; ask the rest of the frontier now. The _decisions_ are the user's: put each to them and wait.
