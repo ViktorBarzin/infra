@@ -1,11 +1,9 @@
 # Infrastructure Repository — AI Agent Instructions
 
 ## Critical Rules (MUST FOLLOW)
-- **NEVER put secrets in plaintext** — use `secrets.sops.json` (SOPS-encrypted) or `terraform.tfvars` (git-crypt, legacy)
 - **NEVER restart NFS on the Proxmox host** — causes cluster-wide mount failures across all pods
 - **NEVER commit secrets** — triple-check before every commit
-- **`[ci skip]` in commit messages** when changes were already applied locally
-- **Ask before `git push`** — always confirm with the user first
+- **`[ci skip]` in commit messages** when changes were already applied locally (admins only)
 
 ## Critical Rule: Terraform Only
 
@@ -44,36 +42,23 @@ and Terminal Lobby's own files ship in its Debian package.
 
 ## Execution
 - **Apply**: Authenticate via `vault login -method=oidc`, then **`homelab tf plan|validate|apply <stack>`** (always the full form — bare `homelab tf` prints `unknown command: "tf"`, which reads as "the verb does not exist"). It wraps `scripts/tg`, which handles state decrypt/encrypt. **Do not run bare `terragrunt`/`terraform`.** On a Tier-1 stack a bare terragrunt dies in "Initializing the backend" with `pq: password authentication failed for user "<your-os-user>"`, because `PG_CONN_STR` is set only by `scripts/tg`. **That error is not a permission-tier limit** — reading it as one led to abandoning local verification for CI and hand-rolling the offline check with plain `terraform init`, 15 times over a month. `scripts/tg` adds `-auto-approve` for `--non-interactive` applies, and `-lock-timeout` (default `5m`, override via `TG_LOCK_TIMEOUT`) on every state-locking verb (`plan`/`apply`/`destroy`/`refresh`) so a contended state lock **waits** instead of failing instantly with `Error acquiring the state lock`.
-- **Apply a service**: `scripts/tg apply --non-interactive` (auto-decrypts SOPS secrets; passes `-lock-timeout`, default `5m` / `TG_LOCK_TIMEOUT`, so a contended state lock waits instead of failing with `Error acquiring the state lock`)
-- **Legacy apply**: `cd stacks/<service> && terragrunt apply --non-interactive` (uses terraform.tfvars)
-- **kubectl**: `kubectl --kubeconfig $(pwd)/config`
 - **Health check**: `bash scripts/cluster_healthcheck.sh --quiet`
-- **Plan all**: `cd stacks && terragrunt run --all --non-interactive -- plan`
 
 ## Instructions
-- **"remember X"**: use the `homelab memory` CLI. The rule and the usage discipline live in `~/.claude/rules/10-homelab.md` + `20-execution.md` §M — not restated here, so the two cannot drift apart. Infra-specific addition: for knowledge that belongs to the repo rather than to a session, also update the relevant CLAUDE.md / `AGENTS.md`.
+- **"remember X"**: use the `homelab memory` CLI. The rule and the usage discipline live in your own AGENTS.md — not restated here, so the two cannot drift apart. Infra-specific addition: for knowledge that belongs to the repo rather than to a session, also update the relevant CLAUDE.md / `AGENTS.md`.
 - **New services need CI/CD** and **monitoring** (Prometheus/Uptime Kuma). CI = a GHA workflow on the repo's GitHub mirror (build + tests off-infra, ADR-0002); Woodpecker gets a deploy-only pipeline — never an in-cluster build.
 - **New service**: Use `setup-project` skill for full workflow
 - **Adopting existing resources**: use HCL `import {}` blocks (TF 1.5+), not `terraform import` CLI. Commit stanza → plan-to-zero → apply → delete stanza. Canonical reason: reviewable in PR, plan-safe, idempotent, tier-agnostic. Full rules + per-provider ID formats in `docs/agents/terraform.md` → "Adopting Existing Resources".
 - **Sealed Secrets**: User-managed secrets go in `sealed-*.yaml` files in the stack directory. Stacks pick them up via `kubernetes_manifest` + `fileset(path.module, "sealed-*.yaml")`. See `docs/agents/secrets.md` for full workflow.
-- **CRITICAL — Update docs with every change**: When modifying infrastructure (Terraform, Vault, networking, storage, CI/CD, monitoring), you MUST update all affected documentation in the same commit. Check and update: `docs/architecture/*.md`, `docs/runbooks/*.md`, `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/reference/service-catalog.md`. Stale docs cause incident response failures and onboarding confusion. If unsure which docs are affected, grep for the service/resource name across all doc files.
+- **CRITICAL — Update docs with every change**: When modifying infrastructure (Terraform, Vault, networking, storage, CI/CD, monitoring), you MUST update all affected documentation in the same commit. Check and update: `docs/architecture/*.md`, `docs/runbooks/*.md`, `docs/agents/*.md`, `AGENTS.md`, `.claude/reference/service-catalog.md`. Stale docs cause incident response failures and onboarding confusion. If unsure which docs are affected, grep for the service/resource name across all doc files.
 
 ## Secrets Management — Vault KV
 - **Vault is the sole source of truth** for secrets.
 - **`secret/viktor`** — go-to path for ALL personal secrets (135 keys). Contains every API key, token, password, SSH key, and config from the old terraform.tfvars. Check here first: `vault kv get -field=KEY secret/viktor`.
 - **Auth**: `vault login -method=oidc` (Authentik SSO) → `~/.vault-token` → read by Vault TF provider.
 
-## Secrets Management (SOPS)
-- **`config.tfvars`** — plaintext config (hostnames, IPs, DNS records, public keys)
-- **`secrets.sops.json`** — SOPS-encrypted secrets (passwords, tokens, SSH keys, API keys)
-- **`.sops.yaml`** — defines who can decrypt (age public keys: Viktor + CI)
-- **`scripts/tg`** — wrapper that auto-decrypts SOPS before running terragrunt
-- **Edit secrets**: `sops secrets.sops.json` (opens $EDITOR, re-encrypts on save)
-- **Add a secret**: `sops set secrets.sops.json '["new_key"]' '"value"'`
-- **Operators** push PRs → Viktor reviews → CI decrypts and applies. No encryption keys needed for operators.
-
 ## Architecture
-Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Proxmox VMs.
+Terragrunt-based homelab managing a Kubernetes cluster (6 nodes, v1.35) on Proxmox VMs.
 - **100+ stacks**, each in `stacks/<service>/` with its own Terraform state
 - **Core platform**: `stacks/platform/` is now an empty shell — all modules have been extracted to independent stacks under `stacks/`
 - **Public domain**: `viktorbarzin.me` (Cloudflare) | **Internal**: `viktorbarzin.lan` (Technitium DNS)
@@ -83,25 +68,20 @@ Terragrunt-based homelab managing a Kubernetes cluster (5 nodes, v1.34.2) on Pro
 
 ## Key Paths
 - `stacks/<service>/main.tf` — service definition
-- `stacks/platform/modules/<service>/` — core infra modules
 - `modules/kubernetes/ingress_factory/` — standardized ingress with auth, rate limiting, anti-AI, and auto Cloudflare DNS (`dns_type = "proxied"` — no per-name record, rides the zone-wide `*` wildcard CNAME per ADR-0021 (apex `"@"` carve-out excepted); `"non-proxied"` — explicit A/AAAA to the WAN IP, shadows the wildcard; `"internal"` — a public A record carrying the internal Traefik LB IP for household-only services, shadows the wildcard so the name stays dark; pair with the `home-lans-only` ipAllowList middleware, never with `"proxied"`. Since the wildcard, `dns_type = "none"` on a `.me` host is NOT private — recordless names resolve through the tunnel; internal-only ingresses must use `"internal"` or `.lan`)
 - `modules/kubernetes/nfs_volume/` — NFS volume module (CSI-backed, soft mount)
 - `config.tfvars` — non-secret configuration (plaintext)
-- `secrets.sops.json` — all secrets (SOPS-encrypted JSON)
-- `terraform.tfvars` — legacy secrets file (git-crypt, kept for reference)
 - `scripts/cluster_healthcheck.sh` — 50-check cluster health script (nodes, workloads, monitoring, certs, backups, external reachability, Slack #alerts traffic)
 
 ## Shared Variables (never hardcode)
 `var.nfs_server` (192.168.1.127), `var.redis_host`, `var.postgresql_host`, `var.mysql_host`, `var.ollama_host`, `var.mail_host`
 
 ## Claude-Specific Resources
-- **Skills**: `.claude/skills/` (7 active). Archived runbooks: `.claude/skills/archived/`
-- **Agents**: All agents are global (`~/.claude/agents/`, shared via dotfiles). Install Viktor's dotfiles for the full set.
-  - **Infra specialists**: cluster-health-checker, dba, home-automation-engineer, network-engineer, observability-engineer, platform-engineer, security-engineer, sre
+- **Skills**: `.claude/skills/` (11 active). Archived runbooks: `.claude/skills/archived/`
+- **Agents**: `.claude/agents/` (10 files; `k8s-version-upgrade` is deprecated).
   - **Incident pipeline**: post-mortem → sev-triage → sev-historian → sev-report-writer
-  - **DevOps**: devops-engineer, deploy-app, review-loop
+  - **Other**: service-upgrade, issue-responder, postmortem-todo-resolver, f1-source-fixer, payslip-extractor
 - **Reference**: `.claude/reference/` — patterns.md, service-catalog.md, proxmox-inventory.md, github-api.md, authentik-state.md
-- **GitHub API**: `curl` with tokens from tfvars (`gh` CLI blocked by sandbox)
 
 ## Contributor Onboarding
 1. Get Authentik account + Headscale VPN access (ask Viktor)
@@ -140,18 +120,17 @@ land by merging latest master into the branch and pushing it
 the audit-trail rules below apply to the branch's commit messages all the same.
 Locked (git-crypt) clones can use plain `git worktree add`. Trivial
 single-commit fixes may be committed directly on a clean `master`. Full
-lifecycle: `~/.claude/rules/execution.md` §3.
+lifecycle: your own AGENTS.md.
 
 To land a finished change from such a clone:
 
-1. Commit on `master`. **The commit message is the audit trail** — this matters
+1. **The commit message is the audit trail** — this matters
    more than the change itself:
    - subject: what changed, specific ("ha-sofia: lower fan curve bias to -5")
    - body: WHY, in plain words — paraphrase the user's actual request and any
      reasoning ("Emil asked for quieter fans in the evening; curve was
      overshooting after the 2026-06-08 redesign")
-2. `git push forgejo master`. If rejected non-fast-forward: `git pull --rebase
-   forgejo master` and push again.
+2. Land it per the worktree paragraph above.
 3. **Never use `[ci skip]`** as a non-admin — it hides the change from the
    Slack audit feed; a no-op CI apply on a docs-only commit is harmless.
 4. Leave the clone on clean `master` so auto-refresh keeps working.
@@ -176,11 +155,8 @@ curl -X POST -H "Authorization: token $TOK" -H 'Content-Type: application/json' 
 
 ## Common Operations
 - **`homelab` CLI** (`/usr/local/bin/homelab`, source `cli/`): unified infra-ops verbs — run `homelab manifest` to discover the surface (each verb tagged read/write). Infra loop: `homelab tf plan|fmt|apply <stack>` (wraps `scripts/tg`; `apply` auto-claims presence + releases on exit, warns out-of-band), `homelab claim|release <kind>:<name>`, `homelab work start|land|clean <topic>` (worktree lifecycle; `land` gates on verification, `--verify-cmd`/`--no-verify`). Full docs: `cli/README.md`.
-- **Deploy new service**: Use `stacks/<existing-service>/` as template. Create stack, add DNS in tfvars, apply platform then service.
 - **Fix crashed pods**: Run healthcheck first. Safe to delete evicted/failed pods and CrashLoopBackOff pods with >10 restarts.
 - **OOMKilled**: Check `kubectl describe limitrange tier-defaults -n <ns>`. Increase `resources.limits.memory` in the stack's main.tf.
-- **Add a secret**: `sops set secrets.sops.json '["key"]' '"value"'` then commit.
-- **NFS exports**: Create dir on Proxmox host (`ssh root@192.168.1.127 "mkdir -p /srv/nfs/<service>"`), add to `/etc/exports`, run `exportfs -ra`.
 
 ## Detailed Reference
 See `.claude/reference/patterns.md` for: NFS volume code examples, iSCSI details, Kyverno governance tables, anti-AI scraping layers, Terragrunt architecture, node rebuild procedure, archived troubleshooting runbooks index.
@@ -210,4 +186,3 @@ Moved out of this file on 2026-09-22, verbatim (read the one your task touches):
 - **Home Assistant**: ha-london (default), ha-sofia. "ha"/"HA" = ha-london
 - **Frontend**: Svelte for all new web apps
 - **Tools**: Docker containers only — never `brew install` locally
-- **Pod monitoring / waiting**: Never use `sleep` — and `kubectl get pods -w` is a watch-and-guess, not a check. Wait on the CONDITION: `homelab deploy wait <ns>/<deploy>` for a rollout, `homelab ci watch [commit] [--repo <owner/name>]` for a pipeline, `homelab k8s rollout-status <app>` for a resource, or the `Monitor` tool with an until-loop for anything else. Measured over 175 sessions: 1,789 bare `sleep N` calls against 2 uses of `deploy wait`. Full rule + why a fixed sleep is not a check: execution.md §4.
