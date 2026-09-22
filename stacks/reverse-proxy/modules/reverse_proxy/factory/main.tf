@@ -54,6 +54,38 @@ variable "strip_auth_headers" {
   type    = bool
   default = false
 }
+
+# Small-buffer devices: put the lean-proxy hop (../lean_proxy.tf) between
+# Traefik and the backend, so the device receives a fixed, short list of
+# request headers instead of whatever the browser, Cloudflare and Traefik add
+# on the way. lean_proxy.tf explains why the gw router needs this.
+variable "header_allowlist" {
+  type = object({
+    cookies       = list(string)
+    extra_headers = optional(list(string), [])
+  })
+  default     = null
+  description = "Small-buffer devices: send the backend only an allowlisted set of request headers, and only these cookies out of Cookie, via the lean-proxy hop. extra_headers adds device-specific request headers to the common list. null = Traefik talks to the backend directly."
+  validation {
+    # Both lists are written into nginx config and Lua string literals, so
+    # anything outside plain token characters is refused rather than escaped.
+    condition = var.header_allowlist == null ? true : alltrue(concat(
+      [for c in var.header_allowlist.cookies : can(regex("^[A-Za-z0-9._-]+$", c))],
+      [for h in var.header_allowlist.extra_headers : can(regex("^[A-Za-z0-9-]+$", h))],
+    ))
+    error_message = "header_allowlist: cookie names may use only A-Z a-z 0-9 . _ - and header names only A-Z a-z 0-9 -."
+  }
+}
+
+# The lean-proxy Deployment's pod selector, passed in by the parent as a
+# reference to that Deployment. The per-host "<name>-lean" Service selects on
+# it, and the Ingress points at that Service, so Terraform creates the Service
+# and switches the Ingress only after the Deployment has rolled out.
+variable "lean_proxy_selector" {
+  type        = map(string)
+  default     = null
+  description = "Pod selector of the lean-proxy Deployment. Required when header_allowlist is set."
+}
 variable "extra_middlewares" {
   type    = list(string)
   default = []
@@ -115,6 +147,22 @@ variable "internal_lb_ip" {
 locals {
   use_backend_ip = var.backend_ip != null
   port_name      = var.backend_protocol == "HTTPS" ? "https-${var.name}" : "${var.name}-web"
+
+  lean = var.header_allowlist != null
+  # Request headers the lean hop passes to the device when the client sent
+  # them. Host, Cookie (filtered), Connection and the body framing headers are
+  # set in the template itself. Accept-Encoding has to stay: the iDRAC answers
+  # 404 on /start.html without gzip (measured 2026-09-22). Referer and Origin
+  # stay because TP-Link clients send both on every call (tplinkrouterc6u).
+  lean_headers = concat([
+    "User-Agent", "Accept", "Accept-Encoding", "Accept-Language", "Content-Type",
+    "Origin", "Referer", "X-Requested-With", "Cache-Control", "Pragma",
+    "If-Modified-Since", "If-None-Match", "If-Match", "If-Unmodified-Since", "If-Range", "Range",
+    "Upgrade", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol", "Sec-WebSocket-Extensions",
+  ], local.lean ? var.header_allowlist.extra_headers : [])
+  upstream_url = "${lower(var.backend_protocol)}://${local.use_backend_ip ? var.backend_ip : var.external_name}:${var.port}"
+  # Traefik (Go) sends SNI for a DNS name and none for an IP literal; keep that.
+  upstream_sni = !local.use_backend_ip && var.backend_protocol == "HTTPS"
 }
 
 # ExternalName flavor — used when the backend is addressable by DNS.
@@ -193,6 +241,43 @@ resource "kubernetes_manifest" "ip_backend_endpointslice" {
   depends_on = [kubernetes_service.ip-backend-service]
 }
 
+# lean-proxy flavor: a per-host Service in front of the shared lean-proxy pods,
+# so Traefik's per-service metrics stay per device. The device Service above
+# stays in place either way; deleting header_allowlist points the Ingress back
+# at it, which is the whole rollback.
+resource "kubernetes_service" "lean" {
+  count = local.lean ? 1 : 0
+  metadata {
+    name      = "${var.name}-lean"
+    namespace = var.namespace
+    labels = {
+      "app" = var.name
+    }
+  }
+
+  spec {
+    selector = var.lean_proxy_selector
+    port {
+      name        = "http"
+      port        = 8080
+      protocol    = "TCP"
+      target_port = 8080
+    }
+  }
+
+  lifecycle {
+    # Orders the rollback. Without it Terraform deletes this Service and the
+    # Deployment first and repoints the Ingress last, leaving the host with no
+    # backend in between (checked on a terraform_data model of this graph).
+    # With it the Ingress goes back to the device Service first.
+    create_before_destroy = true
+    precondition {
+      condition     = var.lean_proxy_selector != null
+      error_message = "${var.name}: header_allowlist is set but lean_proxy_selector is not. Pass lean_proxy_selector = one(kubernetes_deployment.lean_proxy[*].spec[0].selector[0].match_labels), and check that this module's lean_proxy_server output is listed in local.lean_servers in lean_proxy.tf."
+    }
+  }
+}
+
 locals {
   # External monitor defaults: on when proxied, off otherwise. Explicit bool overrides.
   effective_external_monitor = var.external_monitor != null ? var.external_monitor : (var.dns_type == "proxied")
@@ -226,9 +311,11 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         var.strip_auth_headers ? "traefik-strip-auth-headers-keep-fallback@kubernetescrd" : null,
         var.custom_content_security_policy != null ? "${var.namespace}-custom-csp-${var.name}@kubernetescrd" : null,
       ], var.extra_middlewares)))
-      "traefik.ingress.kubernetes.io/router.entrypoints"       = "websecure"
-      "traefik.ingress.kubernetes.io/service.serversscheme"    = var.backend_protocol == "HTTPS" ? "https" : null
-      "traefik.ingress.kubernetes.io/service.serverstransport" = var.backend_protocol == "HTTPS" ? "traefik-insecure-skip-verify@kubernetescrd" : null
+      "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
+      # Through lean-proxy, Traefik speaks plain HTTP to the in-cluster hop and
+      # the hop does the device TLS, so these two apply to the direct route only.
+      "traefik.ingress.kubernetes.io/service.serversscheme"    = !local.lean && var.backend_protocol == "HTTPS" ? "https" : null
+      "traefik.ingress.kubernetes.io/service.serverstransport" = !local.lean && var.backend_protocol == "HTTPS" ? "traefik-insecure-skip-verify@kubernetescrd" : null
       }, var.extra_annotations,
       var.dns_type != "none" ? { "cloudflare.viktorbarzin.me/dns-type" = var.dns_type } : {},
       local.external_monitor_annotations,
@@ -251,10 +338,12 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
             path = path.value
             backend {
               service {
-
-                name = var.name
+                # Referencing the lean Service (not just its name) orders this
+                # switch after the Service, and through lean_proxy_selector
+                # after the Deployment's rollout.
+                name = local.lean ? kubernetes_service.lean[0].metadata[0].name : var.name
                 port {
-                  number = var.port
+                  number = local.lean ? kubernetes_service.lean[0].spec[0].port[0].port : var.port
                 }
               }
             }
@@ -327,4 +416,16 @@ resource "cloudflare_record" "internal_a" {
   type            = "A"
   zone_id         = var.cloudflare_zone_id
   allow_overwrite = true
+}
+
+# This host's server block for the shared lean-proxy config, or null when the
+# host goes to its backend directly. lean_proxy.tf joins the non-null ones.
+output "lean_proxy_server" {
+  value = local.lean ? templatefile("${path.module}/lean_proxy_server.conf.tftpl", {
+    host         = "${var.name}.viktorbarzin.me"
+    upstream_url = local.upstream_url
+    sni          = local.upstream_sni
+    cookies      = var.header_allowlist.cookies
+    headers      = local.lean_headers
+  }) : null
 }

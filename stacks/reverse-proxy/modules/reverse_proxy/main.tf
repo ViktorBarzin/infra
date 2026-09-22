@@ -97,6 +97,14 @@ module "nas-files" {
 }
 
 # https://idrac.viktorbarzin.me/
+# Stays on the direct route. The iDRAC8 takes up to 64 header fields and
+# 32,768 bytes (measured 2026-09-22). The Cloudflare path sends it 32 fields,
+# and a 33-field request with a 4,449-byte cookie jar (5,716 bytes in all) got
+# a 200. On overflow it closes the connection rather than answering 413. To
+# move it behind lean-proxy (lean_proxy.tf), add
+#   header_allowlist    = { cookies = ["-http-session-", "tokenvalue", "_appwebSessionId_"], extra_headers = ["ST1", "ST2", "X-SYSMGMT-OPTIMIZE"] }
+#   lean_proxy_selector = one(kubernetes_deployment.lean_proxy[*].spec[0].selector[0].match_labels)
+# Those names come from bmclib's iDRAC8 client, not from this unit.
 module "idrac" {
   source             = "./factory"
   dns_type           = "proxied"
@@ -128,7 +136,14 @@ module "tp-link-gateway" {
   depends_on         = [kubernetes_namespace.reverse-proxy]
   protected          = true
   strip_auth_headers = true
-  extra_annotations  = { "gethomepage.dev/enabled" = "false" }
+  # Through lean-proxy: the router refuses more than 32 header fields or a
+  # 4,096-byte header block, and the Cloudflare path already sends it 32
+  # (lean_proxy.tf). sysauth is the session cookie TP-Link's LuCI login sets
+  # according to the tplinkrouterc6u client; if this unit uses another name,
+  # lean-proxy logs it as a [warn] on the first login.
+  header_allowlist    = { cookies = ["sysauth"] }
+  lean_proxy_selector = one(kubernetes_deployment.lean_proxy[*].spec[0].selector[0].match_labels)
+  extra_annotations   = { "gethomepage.dev/enabled" = "false" }
 }
 
 # https://proxmox.viktorbarzin.me/
