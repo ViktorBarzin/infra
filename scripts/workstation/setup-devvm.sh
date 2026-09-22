@@ -8,9 +8,6 @@
 # clone) lives in t3-provision-users.sh — NOT here. Safe to re-run.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# The shared config base every user inherits from (live, chezmoi-versioned).
-# Coupled to the admin's home today; override to relocate to a neutral path.
-CONFIG_BASE="${WORKSTATION_CONFIG_BASE:-/home/wizard/.claude}"
 [[ $EUID -eq 0 ]] || { echo "setup-devvm.sh: must run as root" >&2; exit 1; }
 log() { echo "[setup-devvm] $*"; }
 
@@ -182,19 +179,22 @@ install -d -m 0755 /etc/claude-code
 install -m 0644 "$HERE/managed-settings.json" /etc/claude-code/managed-settings.json
 log "managed-settings.json -> /etc/claude-code/ (enforced org claudeMd)"
 
-# 5) /etc/skel for NEW accounts: launcher + tmux UX + live-inheritance symlinks.
-#    A symlink placed in /etc/skel is copied (as a symlink) into each new home by
-#    `useradd -m`, so new users' ~/.claude/{skills,rules,...} resolve to the shared
-#    base and pick up the admin's edits live. Secrets + hooks are per-user (written
-#    by the provisioner), NEVER symlinked here.
+# 5) /etc/skel for NEW accounts: launcher + tmux UX only.
+#    Until 2026-09-22 this also linked ~/.claude/{skills,rules,agents,commands} to
+#    the admin's own directories. useradd -m copies a skel symlink as a symlink, so
+#    every new user loaded the admin's personal rules, and the provisioner's
+#    `install -d -o <user>` followed the link and would have handed the admin's
+#    directory to the new user. Each user's instructions now come from the
+#    provisioner (docs/agents/users/README.md in the monorepo); skills from the
+#    lobby's Skills settings.
 install -d -m 0755 /etc/skel
 install -m 0755 "$HERE/skel/start-claude.sh" /etc/skel/start-claude.sh
 install -m 0644 "$HERE/skel/tmux.conf" /etc/skel/.tmux.conf
-install -d -m 0755 /etc/skel/.claude
 for d in skills rules agents commands; do
-  [[ -d "$CONFIG_BASE/$d" ]] && ln -sfn "$CONFIG_BASE/$d" "/etc/skel/.claude/$d"
+  [[ -L "/etc/skel/.claude/$d" ]] && rm -f "/etc/skel/.claude/$d"
 done
-log "skel: launcher + tmux + inheritance symlinks (base=$CONFIG_BASE)"
+rmdir /etc/skel/.claude 2>/dev/null || true
+log "skel: launcher + tmux"
 
 # 6) BOOTSTRAP-deploy the roster-driven provisioner to /usr/local/bin (run hourly
 #    by t3-provision-users.timer). This seeds the binary on a fresh box; ongoing
