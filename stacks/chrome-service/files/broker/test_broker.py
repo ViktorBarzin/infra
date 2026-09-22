@@ -4,6 +4,7 @@ Run: cd stacks/chrome-service/files/broker && python3 -m pytest test_broker.py -
 """
 import json
 import os
+import urllib.error
 
 import broker
 import cdp_cookies
@@ -185,6 +186,32 @@ def test_release_worker_resets_a_warm_pod_but_not_a_bare_one(monkeypatch):
     calls.clear()
     broker.release_worker({"name": "w", "bare": False, "ip": "10.10.1.5"})
     assert calls == ["reset:10.10.1.5", "PATCH"]
+
+
+def test_release_worker_recycles_a_pod_whose_label_patch_fails(monkeypatch):
+    """A failed release PATCH used to escape do_POST and strand the worker.
+
+    Seen live once on 2026-09-20: the API server answered the label-clearing
+    PATCH with a 500, the exception left release_worker, and the pod kept its
+    chrome-pool/session label, so pick_free_worker skipped it until the
+    heartbeat went stale. Deleting the pod instead hands the Deployment a
+    clean replacement, which is the same remedy the stuck-target path uses.
+    """
+    calls = []
+
+    def fake_kube(method, path, body=None):
+        calls.append(method)
+        if method == "PATCH":
+            raise urllib.error.HTTPError(path, 500, "Internal Server Error", {}, None)
+
+    monkeypatch.setattr(broker, "kube", fake_kube)
+    monkeypatch.setattr(broker, "reset_browser", lambda ip: (0, 0))
+
+    broker.release_worker({"name": "w", "bare": False, "ip": "10.10.1.5"})
+
+    # One PATCH attempt, one retry, then the pod is replaced rather than left
+    # holding its session label.
+    assert calls == ["PATCH", "PATCH", "DELETE"]
 
 
 def test_reset_browser_without_an_ip_does_nothing():

@@ -570,6 +570,18 @@ CDP client is **patchright-core** (playwright-core drop-in that closes the
   human does by hand. The cost is a ~30s cold start for the next
   caller, against a poisoned worker breaking every caller until someone
   notices.
+- **A failed release PATCH recycles the pod rather than escaping**
+  (since 2026-09-22) — clearing `chrome-pool/session` is the last step
+  between a finished session and a worker the next caller can pick, so
+  `release_worker` handles its failure instead of letting it leave
+  `do_POST`. Measured once in 30 days of Loki history, on
+  2026-09-20T04:09:06Z: the API server answered the label-clearing
+  PATCH with a 500, the traceback surfaced in the broker log, and the
+  pod kept its session label, which makes `pick_free_worker` skip it
+  until the heartbeat goes stale. One retry covers a transient 500;
+  past that the pod is deleted, on the same reasoning as the stuck
+  path above. A replacement costs the next caller a ~30s cold start,
+  a stranded worker costs the pool a whole slot.
 - **A caller killed without releasing strands its worker, and how long
   for depends on whether it heartbeats** (since 2026-09-19) — the pod
   keeps its `chrome-pool/session` label and `pick_free_worker` skips
