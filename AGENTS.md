@@ -93,9 +93,7 @@ Terragrunt-based homelab managing a Kubernetes cluster (6 nodes, v1.35) on Proxm
 ### Non-admin workstation users — the AGENT does the git work
 
 Non-admin devvm users (power-user / namespace-owner tiers) may not know git at
-all. Their agent handles every version-control step silently — never ask them
-to commit, push, pull, or open a PR, and never surface git jargon at them.
-Their infra clone arrives preconfigured: git identity, a `forgejo` remote
+all. Their infra clone arrives preconfigured: git identity, a `forgejo` remote
 authenticated via `~/.git-credentials`, and `master` tracking `forgejo/master`
 (auto-freshened hourly and at session launch, fast-forward only).
 
@@ -116,30 +114,15 @@ is append-only.
 isolated worktree (`.worktrees/<topic>`, branch `<os-user>/<topic>` off
 `forgejo/master`) so concurrent agent sessions never collide in the clone, then
 land by merging latest master into the branch and pushing it
-(`git push forgejo HEAD:master`, or the PR fallback below if not whitelisted) —
-the audit-trail rules below apply to the branch's commit messages all the same.
+(`git push forgejo HEAD:master`, or the PR fallback below if not whitelisted).
 Locked (git-crypt) clones can use plain `git worktree add`. Trivial
 single-commit fixes may be committed directly on a clean `master`. Full
 lifecycle: your own AGENTS.md.
 
 To land a finished change from such a clone:
 
-1. **The commit message is the audit trail** — this matters
-   more than the change itself:
-   - subject: what changed, specific ("ha-sofia: lower fan curve bias to -5")
-   - body: WHY, in plain words — paraphrase the user's actual request and any
-     reasoning ("Emil asked for quieter fans in the evening; curve was
-     overshooting after the 2026-06-08 redesign")
-2. Land it per the worktree paragraph above.
-3. **Never use `[ci skip]`** as a non-admin — it hides the change from the
-   Slack audit feed; a no-op CI apply on a docs-only commit is harmless.
-4. Leave the clone on clean `master` so auto-refresh keeps working.
-5. Tell the user in plain language what happened. Stack changes are
-   auto-applied by CI on push — or, with apply access, applied locally yourself
-   (`scripts/tg apply`, from the main checkout, not a worktree); either path is
-   fine, but the change must always be committed here, never applied
-   uncommitted. Verify the live result with the user's read-only kubectl before
-   saying "it's live".
+1. Land it per the worktree paragraph above.
+2. Leave the clone on clean `master` so auto-refresh keeps working.
 
 If a push to `master` is rejected by branch protection (user not on the
 whitelist — e.g. new users before Viktor grants it), fall back to a
