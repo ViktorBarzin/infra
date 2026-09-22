@@ -95,7 +95,7 @@ def main():
         "preceding comment line documenting what gates the app (for\n"
         "\"app\") or why the endpoint is intentionally public (for\n"
         "\"none\"). This guard prevents accidentally exposing private\n"
-        "services. See infra/.claude/CLAUDE.md Auth section.\n"
+        "services. See the Ingress Auth bullet in infra/docs/agents/ingress.md.\n"
         "\n"
         "Add a comment line directly above the auth line:\n"
         "\n"
