@@ -89,9 +89,18 @@ refresh_user_clone() {
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] refresh clone -> $user:$dir"; return 0; fi
   runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git -C "$dir" fetch --all --prune --quiet 2>/dev/null \
     || { log "WARN: fetch failed for $user:$sub (offline/credentials?) — skipped"; return 0; }
-  [[ "$(runuser -u "$user" -- git -C "$dir" symbolic-ref --short -q HEAD)" == master ]] || return 0
-  [[ -z "$(runuser -u "$user" -- git -C "$dir" status --porcelain)" ]] || return 0
-  runuser -u "$user" -- git -C "$dir" rev-parse --verify -q 'master@{upstream}' >/dev/null || return 0
+  [[ "$(runuser -u "$user" -- git -C "$dir" symbolic-ref --short -q HEAD)" == master ]] \
+    || { log "refresh skipped for $user:$sub (not on master)"; return 0; }
+  # Untracked files never block a fast-forward that doesn't touch them, and
+  # .beads/metadata.json is rewritten by install_beads (5d) on every run, so
+  # neither counts as a local change. Counting them froze emo's clone from
+  # 2026-06-13 (75 untracked screenshots and notes) until 2026-09-22, and nothing
+  # logged why. An ff that would overwrite either still refuses, below.
+  if [[ -n "$(runuser -u "$user" -- git -C "$dir" status --porcelain --untracked-files=no -- . ':(exclude).beads/metadata.json')" ]]; then
+    log "refresh skipped for $user:$sub (uncommitted changes to tracked files)"; return 0
+  fi
+  runuser -u "$user" -- git -C "$dir" rev-parse --verify -q 'master@{upstream}' >/dev/null \
+    || { log "refresh skipped for $user:$sub (no upstream)"; return 0; }
   runuser -u "$user" -- git -C "$dir" merge --ff-only 'master@{upstream}' >/dev/null 2>&1 \
     || log "WARN: $user:$sub master not fast-forwardable (local commits?) — left as-is"
 }
@@ -770,6 +779,11 @@ install_user_agents() {
   src="$AGENTS_SRC_DIR/$user.md"
   [[ -s "$src" ]] || return 0
   hub="$home/.agents/AGENTS.md"
+  for f in "$home/.agents" "$home/.claude" "$home/.claude/rules"; do
+    # A link here would aim every write below somewhere else (the /etc/skel
+    # links pointed .claude/rules into the admin's home). Refuse rather than follow.
+    [[ -L "$f" ]] && { log "WARN: $f is a symlink -> agent instructions for $user skipped"; return 0; }
+  done
   if [[ "$DRY_RUN" == 1 ]]; then
     cmp -s "$src" "$hub" 2>/dev/null || echo "[dry-run] agent instructions -> $user"
     return 0
@@ -778,7 +792,10 @@ install_user_agents() {
   if ! cmp -s "$src" "$hub" 2>/dev/null; then
     # root opens the source (its directory is 0700), the user writes the file,
     # and the rename makes a session starting mid-copy see the old or new text.
-    if runuser -u "$user" -- sh -c 'cat > "$1.tmp" && mv -f "$1.tmp" "$1"' _ "$hub" < "$src"; then
+    # Read-only for the user, so an agent editing it fails loudly instead of
+    # having its edit reverted within the hour; the first line points at
+    # 99-personal.md.
+    if runuser -u "$user" -- sh -c 'cat > "$1.tmp" && chmod 0444 "$1.tmp" && mv -f "$1.tmp" "$1"' _ "$hub" < "$src"; then
       log "agent instructions -> $user (source changed)"
     else
       log "WARN: could not write $hub"; return 0
@@ -799,8 +816,13 @@ PERSONAL
   fi
 
   # The shared rules (2026-08-15 to 2026-09-22) retire once this user's own
-  # file is in place, or the same rules load twice. (wizard's were retired by
-  # hand when his dotfiles took over; nothing re-creates them.)
+  # file is provably what Claude Code loads, or the same rules load twice.
+  # "Provably": ~/.claude/CLAUDE.md resolves to the hub and the hub matches the
+  # source. Retiring on the hub merely existing would leave a user with no rules
+  # at all if the link step had failed. (wizard's were retired by hand when his
+  # dotfiles took over; nothing re-creates them.)
+  [[ "$(readlink -f "$home/.claude/CLAUDE.md")" == "$(readlink -f "$hub")" ]] && cmp -s "$src" "$hub" || return 0
+  [[ ! -L "$home/.claude/rules" && "$(readlink -f "$home/.claude/rules")" == "$home/.claude/rules" ]] || return 0
   for f in 10-homelab 20-execution 30-planning 40-style; do
     [[ -f "$home/.claude/rules/$f.md" && ! -L "$home/.claude/rules/$f.md" ]] || continue
     runuser -u "$user" -- rm -f "$home/.claude/rules/$f.md" && log "retired shared rule $f.md -> $user"
@@ -980,7 +1002,9 @@ materialise_user_agents() {
   done
   return 0
 }
-if [[ -z "${T3_PROVISION_SELF_DEPLOYED:-}" ]]; then materialise_user_agents; fi
+# Not behind the self-deploy guard: the run that self-deploys re-execs with it
+# set, so a guarded call would skip the monorepo on the first run after a landing.
+materialise_user_agents
 
 # 0) self-deploy: the repo is the authoring surface (like sync_managed_config /
 #    deploy_user_launcher below). Historically nothing else redeployed
