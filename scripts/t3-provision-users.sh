@@ -232,8 +232,11 @@ PY
   then rm -f "$tmp"; log "WARN: codex requirements not generated from $MANAGED_SRC"; return 0; fi
   if cmp -s "$tmp" "$dst" 2>/dev/null; then rm -f "$tmp"; return 0; fi
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] codex org policy -> $dst"; rm -f "$tmp"; return 0; fi
-  install -d -m 0755 /etc/codex && install -m 0644 "$tmp" "$dst" && log "deployed codex org policy -> $dst"
-  rm -f "$tmp"
+  # A file Codex cannot parse makes it exit for every user, so the new copy is
+  # staged next to the old one and renamed into place in one step.
+  install -d -m 0755 /etc/codex && install -m 0644 "$tmp" "$dst.new" && mv -f "$dst.new" "$dst" \
+    && log "deployed codex org policy -> $dst"
+  rm -f "$tmp" "$dst.new"
   return 0
 }
 
@@ -751,65 +754,71 @@ install_memory() {
 # monorepo). Only users with a file there are touched; wizard's comes from his
 # dotfiles and is left alone.
 #
+# Every write into the home runs AS THE USER (runuser), never as root, so a
+# symlink the user planted cannot turn this into a root write elsewhere: the
+# /etc/skel case found 2026-09-22 was exactly that, `install -d -o <user>`
+# following a link into another user's home.
+#
 # 99-personal.md is created once and NEVER overwritten — it is the per-user slot
 # for what the person adds themselves. Claude Code reads it; Codex does not,
 # since Codex loads a single global file.
 # Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
 install_user_agents() {
-  local user="$1" home src d personal f
+  local user="$1" home src hub personal f
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n "$home" && -d "$home" ]] || return 0
   src="$AGENTS_SRC_DIR/$user.md"
-  if [[ -s "$src" ]]; then
-    for d in "$home/.agents" "$home/.claude" "$home/.codex"; do
-      # install -d follows a symlinked directory, and as root it would chown
-      # whatever that points at: another user's directory, in the /etc/skel
-      # case found 2026-09-22. Refuse instead of following.
-      [[ -L "$d" ]] && { log "WARN: $d is a symlink -> agent instructions for $user skipped"; return 0; }
-    done
-    run install -d -o "$user" -g "$user" -m 0755 "$home/.agents" "$home/.claude" || return 0
-    if ! cmp -s "$src" "$home/.agents/AGENTS.md" 2>/dev/null; then
-      if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] agent instructions -> $user"
-      else install -o "$user" -g "$user" -m 0644 "$src" "$home/.agents/AGENTS.md" \
-        && log "agent instructions -> $user (source changed)"; fi
+  [[ -s "$src" ]] || return 0
+  hub="$home/.agents/AGENTS.md"
+  if [[ "$DRY_RUN" == 1 ]]; then
+    cmp -s "$src" "$hub" 2>/dev/null || echo "[dry-run] agent instructions -> $user"
+    return 0
+  fi
+  runuser -u "$user" -- mkdir -p "$home/.agents" "$home/.claude/rules" || return 0
+  if ! cmp -s "$src" "$hub" 2>/dev/null; then
+    # root opens the source (its directory is 0700), the user writes the file,
+    # and the rename makes a session starting mid-copy see the old or new text.
+    if runuser -u "$user" -- sh -c 'cat > "$1.tmp" && mv -f "$1.tmp" "$1"' _ "$hub" < "$src"; then
+      log "agent instructions -> $user (source changed)"
+    else
+      log "WARN: could not write $hub"; return 0
     fi
-    link_agents_file "$user" "$home/.claude/CLAUDE.md"
-    [[ -d "$home/.codex" ]] && link_agents_file "$user" "$home/.codex/AGENTS.md"
+  fi
+  link_agents_file "$user" "$home/.claude/CLAUDE.md"
+  [[ -d "$home/.codex" ]] && link_agents_file "$user" "$home/.codex/AGENTS.md"
 
-    personal="$home/.claude/rules/99-personal.md"
-    if [[ ! -e "$personal" && "$DRY_RUN" != 1 ]]; then
-      install -d -o "$user" -g "$user" -m 0755 "$home/.claude/rules"
-      install -o "$user" -g "$user" -m 0644 /dev/stdin "$personal" <<'PERSONAL'
+  personal="$home/.claude/rules/99-personal.md"
+  if [[ ! -e "$personal" && ! -L "$personal" ]]; then
+    runuser -u "$user" -- sh -c 'cat > "$1"' _ "$personal" <<'PERSONAL' && log "created personal rules slot for $user"
 # Personal notes — yours alone
 
 The provisioner never writes this file, so anything here survives every
 reconcile. Your main instructions (~/.agents/AGENTS.md) are written for you
 and WILL be overwritten, so put what you want to keep here.
 PERSONAL
-      log "created personal rules slot for $user"
-    fi
   fi
 
-  # The shared rules (2026-08-15 to 2026-09-22) retire once this home has its
-  # own file, whoever installed it, or the same rules load twice.
-  if [[ -e "$home/.agents/AGENTS.md" ]]; then
-    for f in 10-homelab 20-execution 30-planning 40-style; do
-      [[ -f "$home/.claude/rules/$f.md" && ! -L "$home/.claude/rules/$f.md" ]] \
-        && run rm -f "$home/.claude/rules/$f.md" && log "retired shared rule $f.md -> $user"
-    done
-  fi
+  # The shared rules (2026-08-15 to 2026-09-22) retire once this user's own
+  # file is in place, or the same rules load twice. (wizard's were retired by
+  # hand when his dotfiles took over; nothing re-creates them.)
+  for f in 10-homelab 20-execution 30-planning 40-style; do
+    [[ -f "$home/.claude/rules/$f.md" && ! -L "$home/.claude/rules/$f.md" ]] || continue
+    runuser -u "$user" -- rm -f "$home/.claude/rules/$f.md" && log "retired shared rule $f.md -> $user"
+  done
   return 0
 }
 
-# link_agents_file <user> <path>: make <path> a symlink to ../.agents/AGENTS.md.
-# A regular file there is the old hand-edited CLAUDE.md or the old Codex mirror;
-# its content now lives in the monorepo, and it is kept beside the link.
+# link_agents_file <user> <path>: make <path> a symlink to ../.agents/AGENTS.md,
+# as the user. A regular file there is the old hand-edited CLAUDE.md or the old
+# Codex mirror; its content now lives in the monorepo, and it is kept beside the
+# link as <path>.pre-agents-md.
 link_agents_file() {
   local user="$1" path="$2" want="../.agents/AGENTS.md"
   [[ -L "$path" && "$(readlink "$path")" == "$want" ]] && return 0
-  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] link $path -> $want"; return 0; fi
-  [[ -e "$path" && ! -L "$path" ]] && mv -f "$path" "$path.pre-agents-md"
-  if ln -sfn "$want" "$path" && chown -h "$user:$user" "$path"; then log "linked $path -> $want"
+  if [[ -e "$path" && ! -L "$path" ]]; then
+    runuser -u "$user" -- mv -f "$path" "$path.pre-agents-md" || { log "WARN: could not move $path aside"; return 0; }
+  fi
+  if runuser -u "$user" -- ln -sfn "$want" "$path"; then log "linked $path -> $want"
   else log "WARN: could not link $path for $user"; fi
   return 0
 }
@@ -951,10 +960,13 @@ materialise_user_agents() {
     || { log "WARN: no $AGENTS_USERS_PATH on $AGENTS_REPO origin/master -> per-user agent files unchanged"; return 0; }
   dest="$AGENTS_SRC_DIR"
   if [[ "$DRY_RUN" == 1 ]]; then dest="$(mktemp -d)"; AGENTS_SRC_DIR="$dest"; fi
-  install -d -m 0755 "$dest"
+  install -d -m 0700 "$dest"   # root only: one user's file is not another's to read
   for u in $names; do
-    if runuser -u "$owner" -- git -C "$AGENTS_REPO" show "origin/master:$AGENTS_USERS_PATH/$u/AGENTS.md" \
-         > "$dest/$u.md.tmp" 2>/dev/null && [[ -s "$dest/$u.md.tmp" ]]; then
+    # The first line tells that user's agent this file is managed, so it puts
+    # the user's own notes in 99-personal.md instead of editing the hub.
+    if { printf '<!-- Installed by the devvm provisioner from %s/%s/AGENTS.md in Viktor'"'"'s monorepo and overwritten within the hour. Keep your own notes in ~/.claude/rules/99-personal.md. -->\n\n' "$AGENTS_USERS_PATH" "$u"
+         runuser -u "$owner" -- git -C "$AGENTS_REPO" show "origin/master:$AGENTS_USERS_PATH/$u/AGENTS.md" 2>/dev/null
+       } > "$dest/$u.md.tmp" && [[ "$(wc -l < "$dest/$u.md.tmp")" -gt 2 ]]; then
       mv "$dest/$u.md.tmp" "$dest/$u.md"
     else
       rm -f "$dest/$u.md.tmp"
