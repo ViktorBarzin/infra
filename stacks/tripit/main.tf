@@ -446,6 +446,20 @@ locals {
     # actually uses, so the filter has to see it.
     IMAP_SEARCH = "OR TO \"plans@viktorbarzin.me\" CC \"plans@viktorbarzin.me\""
   }
+
+  # In-cluster route to Dawarich for Travel year Country days (tripit ADR-0060).
+  # Shared by the Deployment (the backfill that runs when a user saves their
+  # Location history link, and the live city lookup in the day sheet) and the
+  # sync-country-days CronJob, so the two paths cannot drift. When a link's
+  # base_url host equals DAWARICH_INTERNAL_HOST, the app sends the request to
+  # DAWARICH_INTERNAL_URL with that Host header instead; any other base_url is
+  # called as written. The reasons are on the CronJob below. Deliberately not in
+  # app_env: no other worker reads it, and the nudges keep their own
+  # DAWARICH_BASE_URL.
+  dawarich_internal_env = {
+    DAWARICH_INTERNAL_URL  = "http://dawarich.dawarich.svc.cluster.local"
+    DAWARICH_INTERNAL_HOST = "dawarich.viktorbarzin.me"
+  }
 }
 
 resource "kubernetes_deployment" "tripit" {
@@ -540,8 +554,10 @@ resource "kubernetes_deployment" "tripit" {
             secret_ref { name = "tripit-db-creds" }
           }
 
+          # dawarich_internal_env: saving a Location history link backfills
+          # Country days from this pod, and the day sheet reads cities live.
           dynamic "env" {
-            for_each = local.app_env
+            for_each = merge(local.app_env, local.dawarich_internal_env)
             content {
               name  = env.key
               value = env.value
@@ -859,6 +875,37 @@ locals {
         LOCATION_PROVIDER = "dawarich"
         DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
       }
+    }
+    # Travel year Country days (tripit ADR-0060): copy each user's own Location
+    # history into country_days, which the Travel year page reads (it never calls
+    # Dawarich on page load). Nightly this re-syncs the current year, plus the
+    # previous one within 90 days of 1 January; a link whose backfill never
+    # completed gets every year from 2022. Saving a link also starts a backfill
+    # in the API pod, which is why the Deployment carries the same env.
+    #
+    # Per-user links, not the global DAWARICH_API_KEY the nudges above use: that
+    # key covers the whole Dawarich instance, and reading country days through it
+    # would show every TripIt user Viktor's movements. Each LocationLink row holds
+    # the user's own base_url and a key sealed with DOCUMENT_ENCRYPTION_KEY,
+    # which reaches this job through env_from tripit-secrets.
+    #
+    # In-cluster with a Host header, unlike the nudges: one year of
+    # /api/v1/residency took 19-39s (measured 2026-09-21), and the public host
+    # 504s at Traefik's 30s responseHeaderTimeout. The bare svc URL is refused
+    # 403 by Rails host authorization (APPLICATION_HOSTS=dawarich.viktorbarzin.me);
+    # the same request with Host: dawarich.viktorbarzin.me passes. See
+    # local.dawarich_internal_env.
+    #
+    # A backfill is one residency call per year since 2022, up to ~40s each, so
+    # 30 minutes leaves room for every linked user while still bounding a hung
+    # run under concurrency_policy=Forbid.
+    sync-country-days = {
+      schedule                = "40 3 * * *"
+      timezone                = "Europe/London"
+      command                 = ["python", "-m", "tripit_api", "sync-country-days"]
+      suspend                 = false
+      active_deadline_seconds = 1800
+      extra_env               = local.dawarich_internal_env
     }
     # Tour-guide overnight audio fill (tripit#30, ADR-0011): synthesizes the
     # narration audio queue against Chatterbox, which the tts stack scales up
