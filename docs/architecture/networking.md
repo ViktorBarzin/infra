@@ -359,6 +359,68 @@ Additional middleware:
 > entrypoint. Verify any change here by rendering the Service with `helm template`
 > first and confirming `websecure/TCP:443` is still in the output.
 
+### Small-buffer devices behind the reverse proxy (lean-proxy)
+
+Some devices behind `stacks/reverse-proxy` have request-header limits that
+cannot be raised. The TP-Link Archer AX6000 behind `gw.viktorbarzin.me` answers
+`413 Request Entity Too Large` above 32 header fields, and separately at a
+4,096-byte header block (measured 2026-09-22). A signed-in XHR POST that
+arrives through Cloudflare already carries 32 fields when Traefik forwards it:
+18 from the browser, 6 from Cloudflare and cloudflared, 2 from the
+outage-failover Worker and 6 from Traefik. The auth-header strip removes the
+five `X-authentik-*` lines, but any further field from the browser or the path
+tips the request over.
+
+For such hosts the reverse-proxy factory's `header_allowlist` variable points
+the Ingress at **lean-proxy**, an openresty Deployment (2 replicas) in the
+`reverse-proxy` namespace. Forward-auth and the strip still run in Traefik
+first. lean-proxy then sends the device a fixed list of request headers and
+only the cookies named in the allowlist, so growth upstream (domain cookies,
+Cloudflare, the Worker, Traefik, browser headers) does not reach the device.
+
+```mermaid
+flowchart LR
+  B[Browser] --> CF[Cloudflare edge + Worker] --> T[Traefik: forward-auth, strip]
+  T -->|gw-lean:8080, plain HTTP| L[lean-proxy: allowlisted headers, device cookies only]
+  L -->|HTTPS| R[TP-Link router 192.168.1.1]
+  T -.->|every other host, unchanged| D[device Services]
+```
+
+Measured on 2026-09-22 with the Cloudflare-path POST plus one extra field:
+
+| Where | Fields | Header bytes | Router answer |
+|---|---|---|---|
+| straight to the router, as the direct route sends it | 33 | 2,080 | 413 |
+| through lean-proxy | 12 | 629 | 200 |
+| through lean-proxy, 4,449-byte cookie jar | 12 | 628 | 200 |
+| through lean-proxy, every allowlisted header present (capture upstream) | 25 | 1,062 | not sent |
+
+How it fits together (`stacks/reverse-proxy/modules/reverse_proxy/lean_proxy.tf`
+and `factory/`):
+
+- A host opts in with `header_allowlist = { cookies = [...], extra_headers = [...] }`
+  and `lean_proxy_selector` on its factory call. Its Ingress then points at a
+  per-host `<name>-lean` Service, which keeps Traefik's per-service metrics per
+  device. gw is on it with cookie `sysauth`. idrac stays direct (its limits are
+  64 fields and 32,768 bytes), and the value to move it over is in a comment on
+  its module.
+- The per-host Service takes its selector from the Deployment, so an Ingress
+  switches only after a lean-proxy rollout has succeeded. `create_before_destroy`
+  on that Service makes a rollback (deleting `header_allowlist`) repoint the
+  Ingress at the device Service before the lean Service and Deployment go away.
+- A config change rolls the pods through a `checksum/config` annotation inside
+  the apply, since openresty reads its config only at start.
+- Each pod logs one `[warn]` line the first time it drops an unknown request
+  header or cookie, or sees the device set a cookie outside the allowlist. A
+  name the device needs shows up there after first use:
+  `{namespace="reverse-proxy", container="nginx"} |= "lean-proxy" |= "[warn]"`.
+  nginx writes the level in lower case, so a `"WARN"` filter matches nothing.
+  Cookies scoped to `.viktorbarzin.me` (authentik, Anubis, Cloudflare) appear
+  there once per pod as expected drops.
+- The access log leaves the path out, because the router carries its session
+  token (`;stok=`) in it. Warn and error lines still print the request line, as
+  Traefik's access log does.
+
 ### HTTP/3 depends on a node sysctl (`net.core.rmem_max`)
 
 Traefik terminates HTTP/3 on **one shared UDP socket per pod** (`:8443`), not a

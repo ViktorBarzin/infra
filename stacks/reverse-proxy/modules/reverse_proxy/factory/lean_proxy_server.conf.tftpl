@@ -1,0 +1,105 @@
+# ${host}: lean-proxy server block, rendered by the reverse_proxy factory
+# (output lean_proxy_server) and joined into lean-proxy-config by
+# ../lean_proxy.tf, which explains why this hop exists.
+server {
+    listen 8080;
+    server_name ${host};
+
+    # Streams bodies of any size; the device's own limits apply.
+    client_max_body_size 0;
+    # The lean format leaves the path out, because the router carries its
+    # session token (;stok=) there. nginx warn/error lines still print the
+    # request line, which is the same exposure as Traefik's JSON access log.
+    access_log /dev/stdout lean;
+
+    # Filled in by access_by_lua_block below: only the device's own cookies,
+    # picked by name out of the browser's Cookie header. Empty = no Cookie
+    # header at all.
+    set $device_cookie '';
+
+    access_by_lua_block {
+        local seen = ngx.shared.lean_seen
+        local host = ngx.var.host
+        local allow = { %{ for c in cookies }['${c}'] = true, %{ endfor } }
+
+        local raw = ngx.var.http_cookie
+        if raw then
+            local kept = {}
+            for pair in raw:gmatch('[^;]+') do
+                pair = pair:match('^%s*(.-)%s*$')
+                local name = pair:match('^([^=]+)')
+                if name and allow[name] then
+                    kept[#kept + 1] = pair
+                elseif name and seen:add(host .. ' c ' .. name, true) then
+                    -- Everything scoped to .viktorbarzin.me lands here once per
+                    -- pod (authentik, Anubis, Cloudflare). A cookie the device
+                    -- sets from its own JavaScript would too, and only here.
+                    ngx.log(ngx.WARN, 'lean-proxy ', host, ': dropped cookie ', name:sub(1, 64), ', not on the allowlist')
+                end
+            end
+            ngx.var.device_cookie = table.concat(kept, '; ')
+        end
+
+        -- Safety net for the header allowlist: one warn line per pod for each
+        -- request header it drops that is not known noise. A header the
+        -- device turns out to need shows up here on first use.
+        local pass = { host = true, cookie = true, connection = true, ['content-length'] = true, ['transfer-encoding'] = true, %{ for h in headers }['${lower(h)}'] = true, %{ endfor } }
+        local noise = { ['cdn-loop'] = true, ['x-real-ip'] = true, priority = true, ['x-auth-fallback'] = true, ['set-cookie'] = true, authorization = true, dnt = true, ['upgrade-insecure-requests'] = true, ['sec-gpc'] = true, te = true }
+        for k in pairs(ngx.req.get_headers(100)) do
+            if not pass[k] and not noise[k]
+               and not k:find('^cf%-') and not k:find('^x%-forwarded%-') and not k:find('^sec%-ch%-')
+               and not k:find('^sec%-fetch%-') and not k:find('^x%-authentik%-')
+               and seen:add(host .. ' h ' .. k, true) then
+                ngx.log(ngx.WARN, 'lean-proxy ', host, ': dropped request header ', k:sub(1, 64))
+            end
+        end
+    }
+
+    # Cookies the device sets over HTTP reach the browser untouched. A name
+    # missing from the allowlist would be stripped on the way back in, so say
+    # so the first time it appears.
+    header_filter_by_lua_block {
+        local sc = ngx.header['Set-Cookie']
+        if sc == nil then return end
+        if type(sc) == 'string' then sc = { sc } end
+        local allow = { %{ for c in cookies }['${c}'] = true, %{ endfor } }
+        for _, v in ipairs(sc) do
+            local name = v:match('^%s*([^=;]+)')
+            if name and not allow[name] and ngx.shared.lean_seen:add(ngx.var.host .. ' s ' .. name, true) then
+                ngx.log(ngx.WARN, 'lean-proxy ', ngx.var.host, ': device set cookie ', name:sub(1, 64), ', which is not on its allowlist')
+            end
+        end
+    }
+
+    location / {
+        # A variable with no URI part: nginx resolves the name per request and
+        # passes the client's URI unchanged, ;stok=<token> included.
+        set $upstream '${upstream_url}';
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        # Location headers pass through untouched, as they do through Traefik.
+        proxy_redirect off;
+        # Same as traefik-insecure-skip-verify on the direct route.
+        proxy_ssl_verify off;
+        proxy_ssl_server_name ${sni ? "on" : "off"};
+        # These devices ship old TLS stacks; OpenSSL 3 refuses them without
+        # SECLEVEL=0. The same settings were what the probes that worked used.
+        proxy_ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+        proxy_ssl_ciphers DEFAULT:@SECLEVEL=0;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+
+        # Only the headers below reach the device. nginx still adds
+        # Content-Length or Transfer-Encoding when there is a body, and a header
+        # whose variable is empty is not sent at all.
+        proxy_pass_request_headers off;
+        proxy_set_header Host $host;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Cookie $device_cookie;
+%{ for h in headers ~}
+        proxy_set_header ${h} $http_${replace(lower(h), "-", "_")};
+%{ endfor ~}
+    }
+}
