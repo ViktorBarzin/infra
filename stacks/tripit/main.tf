@@ -765,6 +765,17 @@ resource "kubernetes_deployment" "mail_listener" {
 # Worker CronJobs share the app image + secret/env wiring. Defined via a map so
 # the jobs stay identical except for schedule, subcommand, and the suspend flag.
 locals {
+  # Worker Jobs and their pods carry their own label because service/tripit
+  # selects app=tripit. A worker has no readiness probe and nothing listening on
+  # :8080, so with that label its pod was a Ready endpoint of the Service for as
+  # long as it ran, and Traefik sent it real requests that failed with 502. Of
+  # the 69 tripit 502s Traefik logged in the 7 days to 2026-09-22, 58 came within
+  # 60s after a quarter hour, when the */15 workers start. Same reason as the
+  # mail listener's distinct labels above.
+  worker_labels = {
+    app = "tripit-worker"
+  }
+
   cronjobs = {
     # Hourly, which is the fastest tier flight_poller.py will actually spend a
     # call on. The sweep decides per flight: hourly inside 24h of departure,
@@ -950,7 +961,7 @@ resource "kubernetes_cron_job_v1" "tripit_worker" {
 
     job_template {
       metadata {
-        labels = local.labels
+        labels = local.worker_labels
       }
       spec {
         # 1 gave only 2 pod attempts ~10s apart, so a sub-minute cluster-DNS /
@@ -961,7 +972,7 @@ resource "kubernetes_cron_job_v1" "tripit_worker" {
         ttl_seconds_after_finished = 86400
         template {
           metadata {
-            labels = local.labels
+            labels = local.worker_labels
           }
           spec {
             restart_policy = "OnFailure"
