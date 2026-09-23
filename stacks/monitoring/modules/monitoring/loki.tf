@@ -224,33 +224,60 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # nothing to test. A 404 line not containing the string
               # RouterName is precisely the case wanted.
               #
-              # THRESHOLD, measured by running this exact expression rather
-              # than counting sampled lines, which kept hitting the query limit
-              # and reading a flat 1000. Steady state is 3 per 15m: a handful of
-              # internal probes to names with no router, such as
-              # traefik-dashboard.traefik.svc.cluster.local. During the incident
-              # the same expression read 5348, and it decayed cleanly back to 3
-              # as the 15m window slid past the fix.
+              # PER POD, AS A SHARE OF THAT POD'S TRAFFIC (reworked 2026-09-23).
+              # The first version summed routerless 404s across the cluster and
+              # fired above 50 in 15m. It assumed the catchall IngressRoute
+              # absorbs all scanner traffic, and it does for every hostname
+              # under our domain. It does not for a request whose Host is our
+              # bare WAN IP (176.12.22.76), which matches no router at all. One
+              # scanner, 94.154.46.0/24 on a Turkish hosting ASN with a fake
+              # Googlebot user-agent, sends exactly that: 300 requests for
+              # /secrets.json, /database.yml and the like, about once a day. It
+              # tripped this critical alert on 2026-09-21 21:14, 2026-09-22
+              # 00:44 and 2026-09-23 15:06. Its keep-alive connection pins it to
+              # one pod, so it even looks like a one-pod fault by volume.
               #
-              # It stays this low because the catchall IngressRoute matches every
-              # hostname under our domain, so typos and scanner traffic get the
-              # catchall and carry its RouterName. Only a request that matches no
-              # router at all lands here.
+              # The difference that does hold is proportion. A pod that has lost
+              # its router table 404s everything it is sent; a scanner is a
+              # sliver of a busy pod's traffic. Backtested against Loki with
+              # this exact expression:
               #
-              # 50 therefore sits about 17x above the real baseline and 100x
-              # below the real event.
+              #   window                       worst pod's routerless share
+              #   2026-09-19 incident (gsphv)  100%  (siblings 0%)
+              #   2026-09-21 incident (lwx7t)  100%  (siblings 0%)
+              #   the three scanner bursts     7%, 9%, 8%
+              #   a quiet hour                 0%
+              #
+              # 0.5 sits in the middle of that gap. The floor of 50 routerless
+              # 404s keeps a near-idle pod, such as one just starting, from
+              # reading 100% off a handful of internal probes; steady state is
+              # 3 per 15m (probes to names with no router, such as
+              # traefik-dashboard.traefik.svc.cluster.local). What it would
+              # still catch from outside: a flood of bare-IP requests larger
+              # than a pod's own real traffic, which is worth hearing about.
+              #
+              # Grouping by pod also means the alert names the pod to delete,
+              # which is the whole remedy.
               #
               # The 15m window exceeds the gap between these lines during an
               # incident, so a continuing fault reads as one alert instead of
               # flapping, and clears 15m after the last one.
               alert = "TraefikNoRouterMatch404s"
-              expr  = "sum(count_over_time({namespace=\"traefik\", pod=~\"traefik-.*\"} |= \"\\\"DownstreamStatus\\\":404\" != \"RouterName\" [15m])) > 50"
-              for   = "5m"
+              expr = join(" ", [
+                "(",
+                "  sum by (pod) (count_over_time({namespace=\"traefik\", pod=~\"traefik-.*\"} |= \"\\\"DownstreamStatus\\\":404\" != \"RouterName\" [15m]))",
+                "  /",
+                "  sum by (pod) (count_over_time({namespace=\"traefik\", pod=~\"traefik-.*\"} |= \"\\\"DownstreamStatus\\\"\" [15m]))",
+                ") > 0.5",
+                "and",
+                "sum by (pod) (count_over_time({namespace=\"traefik\", pod=~\"traefik-.*\"} |= \"\\\"DownstreamStatus\\\":404\" != \"RouterName\" [15m])) > 50",
+              ])
+              for = "5m"
               labels = {
                 severity = "critical"
               }
               annotations = {
-                summary = "Traefik served {{ $value | printf \"%.0f\" }} 404s in 15m with no router matched (baseline 3 per 15m). A pod has lost its router table and is 404ing every host. Check `kubectl get pods -n traefik` alongside TraefikRouterTableMissing."
+                summary = "{{ $labels.pod }} answered {{ $value | humanizePercentage }} of its requests in 15m with a 404 that matched no router. It has lost its router table and is 404ing every host sent to it. Remedy: kubectl -n traefik delete pod {{ $labels.pod }}. Cross-check TraefikRouterTableMissing."
               }
             },
             {
