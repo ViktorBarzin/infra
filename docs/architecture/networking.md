@@ -604,6 +604,7 @@ the LAN to be reachable from Home Assistant.
 | Prefix | `fdfe:e989:d3ce::/48`, an RFC 4193 ULA with a global ID generated 2026-09-23. Subnet `1` is the home LAN. |
 | Advertised by | pfSense radvd on WAN (`vtnet0`, static `fdfe:e989:d3ce:1::1/64`), from link-local `fe80::be24:11ff:fed7:3fba` (MAC `bc:24:11:d7:3f:ba`) |
 | RA contents | prefix on-link and autonomous (SLAAC), valid 86400 s, preferred 14400 s; router lifetime 0; M and O flags off; no RDNSS or DNSSL; `route ::/0` at low preference (see below); MTU 1500 |
+| RA interval | 10 to 30 s. At pfSense's default of 200 to 600 s the lock slept through the first RAs; it configured its address within 80 ms of the first RA that reached it awake. |
 | Declared in | `scripts/pfsense-sofia-lan-ula-ra.php`, idempotent; its header lists the GUI equivalent |
 
 The LAN still has no IPv6 internet, and hosts keep using IPv4 for anything off the LAN.
@@ -644,7 +645,7 @@ before it uses the ULA.
 **Checking it**:
 - pfSense: `grep -A25 'interface vtnet0' /var/etc/radvd.conf`.
 - PVE host: `tcpdump -i vmbr0 -nn -vv 'icmp6 and ip6[40]==134 and ether src bc:24:11:d7:3f:ba'`
-  shows the RA; after the first few it comes every 200 to 600 s.
+  shows the RA every 10 to 30 s.
 - ha-sofia: `ip -6 addr show dev enp0s19` lists an `fdfe:e989:d3ce:1:` address, and
   `ping -6 fdfe:e989:d3ce:1:b244:9cff:fe14:de5` reaches the lock when its radio is awake.
   The lock is battery-powered and sleeps between beacons, so expect loss and up to about
