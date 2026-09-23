@@ -85,7 +85,7 @@ The **bypass list** (leg 2) is just `/srv/nfs/immich/` — too big for sda (1.5 
   - `Synology/Backup/Viki/nfs/` — immich only (post-2026-05-26)
   - `Synology/Backup/Viki/nfs-ssd/` — **immich-ML only (2026-06-01)**; ollama/llamacpp dropped (re-pullable models, live-only on the SSD)
 
-**VM image backups (added 2026-06-09)**: the hand-managed Linux VMs (those NOT in Terraform — see `compute.md`) were historically **not imaged at all** — only their *contents* reached backup if they happened to host a PVC/NFS path. `vzdump-vms` takes a weekly (Sunday 01:00) live `vzdump --mode snapshot` of each configured VMID → `/mnt/backup/vzdump/` (Copy 2), carried offsite by the monthly offsite-sync full pass (Copy 3). It was nightly until 2026-08-16; day-to-day cover for devvm is now `devvm-home-backup` (daily 03:30), and the image is the bare-metal restore floor. **Currently enabled for VMID 102 (devvm)** — the shared workstation, whose per-user home dirs + local-only git repos are otherwise irreplaceable. Extend via `VZDUMP_VMIDS` in the unit. See "VM Image Backups (vzdump)" under How It Works.
+**VM image backups (added 2026-06-09, RETIRED 2026-09-15)**: no VM is imaged any more. The timer is disabled on purpose and `scripts/ci/pve-scripts-sync.sh` keeps it disabled (`DISABLED_TIMERS`), because each weekly run read all 228 GiB of devvm's disk and took sdc read latency from 0.23 ms to 107.26 ms. The devvm restore path is now the devvm playbook plus `devvm-home-backup`. The three images already on `/mnt/backup/vzdump/` (newest 2026-09-13) are a floor that no longer advances. The rest of this paragraph describes it as it ran. The hand-managed Linux VMs (those NOT in Terraform — see `compute.md`) were historically **not imaged at all** — only their *contents* reached backup if they happened to host a PVC/NFS path. `vzdump-vms` takes a weekly (Sunday 01:00) live `vzdump --mode snapshot` of each configured VMID → `/mnt/backup/vzdump/` (Copy 2), carried offsite by the monthly offsite-sync full pass (Copy 3). It was nightly until 2026-08-16; day-to-day cover for devvm is now `devvm-home-backup` (daily 03:30), and the image is the bare-metal restore floor. **Currently enabled for VMID 102 (devvm)** — the shared workstation, whose per-user home dirs + local-only git repos are otherwise irreplaceable. Extend via `VZDUMP_VMIDS` in the unit. See "VM Image Backups (vzdump)" under How It Works.
 
 ## Architecture Diagram
 
@@ -218,7 +218,7 @@ graph LR
         T0000["00:00 LVM thin snapshots<br/>(lvm-pvc-snapshot)<br/>sdc PVCs CoW"]
         T0015["00:15 PostgreSQL per-DB dumps<br/>(CronJob)"]
         T0045["00:45 MySQL per-DB dumps<br/>(CronJob)"]
-        T0100["Sun 01:00 vzdump-vms (WEEKLY)<br/>live image of hand-managed VMs<br/>(devvm) → sda /mnt/backup/vzdump/<br/>bare-metal restore floor"]
+        T0100["Sun 01:00 vzdump-vms (RETIRED 2026-09-15)<br/>timer disabled on purpose<br/>last image 2026-09-13<br/>floor no longer advances"]
         T0200["02:00 nfs-mirror (daily)<br/>sdc /srv/nfs/* → sda /mnt/backup/<svc>/<br/>~10-20 min steady state"]
         T0330["03:30 devvm-home-backup<br/>rsync --link-dest incremental<br/>devvm /home → sda /mnt/backup/devvm-home/"]
         T0500["05:00 daily-backup<br/>mount LVM snapshots ro<br/>rsync PVC files → /mnt/backup/pvc-data/<br/>+ sqlite + pfsense + pve-config"]
@@ -334,7 +334,7 @@ graph LR
 | NFS Change Tracker | Continuous (inotifywait) | PVE host: `nfs-change-tracker.service` | Logs changed NFS file paths to `/mnt/backup/.nfs-changes.log` |
 | pfSense Backup | Daily 05:00 + daily-backup | PVE host: SSH + API | config.xml + full filesystem tar |
 | Offsite Sync | Daily 06:00 (after daily-backup) | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
-| VM Image Backup (vzdump) | **Weekly Sun 01:00**, keep 3 | PVE host: `vzdump-vms` | Live `vzdump` of hand-managed VMs (devvm) → `/mnt/backup/vzdump/`. Bare-metal restore floor; daily protection is `devvm-home-backup` |
+| VM Image Backup (vzdump) | **Retired 2026-09-15** (timer disabled) | PVE host: `vzdump-vms` | Was a weekly live `vzdump` of devvm → `/mnt/backup/vzdump/`. The last three images (newest 2026-09-13) stay as a floor that no longer advances; daily protection is `devvm-home-backup` |
 | devvm /home (incremental) | Daily 03:30, keep 14 | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
 | PostgreSQL Backup (full) | Daily 00:00, 14d retention | CronJob in `dbaas` namespace | pg_dumpall for all databases |
 | PostgreSQL Backup (per-db) | Daily 00:15, 14d retention | CronJob in `dbaas` namespace | pg_dump -Fc per database → `/backup/per-db/<db>/` |
@@ -368,6 +368,8 @@ Native LVM thin snapshots provide crash-consistent point-in-time recovery for 62
 
 ### VM Image Backups (vzdump)
 
+> **Retired 2026-09-15 (`d05be720`), alerts removed 2026-09-23.** The timer is disabled and `scripts/ci/pve-scripts-sync.sh` keeps it that way. Each run read all 228 GiB of devvm's disk; measured during the 2026-09-13 run, sdc read latency went from 0.23 ms to 107.26 ms and etcd write latency from 1.36 ms to 22.07 ms, and `--ionice 7` did nothing because sdc runs mq-deadline, which ignores ionice classes. Recovering a devvm now means the devvm playbook plus `devvm-home-backup`. The three images on `/mnt/backup/vzdump/` (newest 2026-09-13) are a frozen floor. Reviving it: enable the timer, drop it from `DISABLED_TIMERS`, and restore the three `Vzdump*` rules from git history. The rest of this section describes the job as it ran.
+
 The hand-managed Linux VMs are **intentionally not in Terraform** (telmate/bpg provider bugs — see `compute.md`) and were historically **not imaged at all**: nothing took a whole-disk backup of the VM itself. For most that is acceptable — k8s nodes are reprovisioned from cloud-init and their data lives in PVCs covered above. But **devvm** (the shared multi-user Claude Code workstation, VMID 102) holds irreplaceable state that lives nowhere else: per-user home dirs (`~/.claude`, `~/.t3`, shell history), manually-installed tooling, and **local-only git repos** — the monorepo root at `/home/wizard/code` has no git remote. A lost devvm disk = unrecoverable.
 
 **Script**: `/usr/local/bin/vzdump-vms` on PVE host (source: `infra/scripts/vzdump-vms.sh`). Deploy: push to master — `.woodpecker/pve-scripts-sync.yml` copies the script and its units to the host (see "Deploying the PVE host scripts" below). It was `scp` by hand until 2026-09-03.
@@ -379,7 +381,7 @@ The hand-managed Linux VMs are **intentionally not in Terraform** (telmate/bpg p
 
 **It happened again.** `devvm-home-backup` landed 2026-08-16 without a matching exclude, so `nfs-mirror` reaped its generations nightly for the next 19 days. Measured 2026-09-04: generations `2026-08-31` through `2026-09-03` held **0 entries under `wizard/`** against 87 in `2026-09-04`, and their mtimes (02:05-02:11) sat just after this job's 02:00 slot. Only the current night's generation ever survived, so retention was **1 day, not 14**. Fixed the same day by adding `/devvm-home/`. **Anything new written under `/mnt/backup/` needs its own exclude line here on the same commit** — that is the whole lesson from both incidents.
 **Offsite**: deliberately **NOT** appended to the incremental offsite manifest — it never deletes, so daily multi-GB images would accumulate unbounded on Synology. Instead the **monthly offsite-sync full pass (days 1-7)** mirrors all of `/mnt/backup` (including `vzdump/`) to Synology with `--delete`, bounded to local retention. So Copy 2 (sda) refreshes **weekly**; Copy 3 (Synology) refreshes **monthly**.
-**Monitoring**: pushes `vzdump_last_run_timestamp` / `vzdump_last_status` / `vzdump_last_success_timestamp` to Pushgateway job `vzdump-backup`. Alerts `VzdumpBackupStale` (>~50h since last success), `VzdumpBackupNeverRun`, `VzdumpBackupFailing` (status≠0) are defined in `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` (the 3-2-1 group) — **effective on the next `monitoring` stack apply** (metrics already flow, so the alerts arm immediately once applied).
+**Monitoring**: pushes `vzdump_last_run_timestamp` / `vzdump_last_status` / `vzdump_last_success_timestamp` to Pushgateway job `vzdump-backup`. The alerts `VzdumpBackupStale`, `VzdumpBackupNeverRun` and `VzdumpBackupFailing` were **removed on 2026-09-23**: with the job retired they could only report the retirement, and `VzdumpBackupStale` had started firing once the last image passed 8 days old.
 **Restore**: on the PVE host, `qmrestore /mnt/backup/vzdump/vzdump-qemu-<vmid>-<ts>.vma.zst <vmid>` — restore to a spare VMID first if the original still exists, then swap disks; or use the PVE UI (add `/mnt/backup` as a dir storage with content=backup → Restore).
 
 ### Layer 2: Weekly File-Level Backup (sda Backup Disk)
@@ -653,7 +655,7 @@ Nothing in this set is deployed by hand any more.
 | `/usr/local/bin/lvm-pvc-snapshot` | PVE host: LVM snapshot creation + restore |
 | `/usr/local/bin/daily-backup` | PVE host: PVC file copy + auto SQLite backup + pfSense |
 | `/usr/local/bin/offsite-sync-backup` | PVE host: two-step rsync to Synology (sda + NFS via inotify) |
-| `/usr/local/bin/vzdump-vms` | PVE host: **weekly** live `vzdump` image of hand-managed VMs (devvm) → `/mnt/backup/vzdump/` |
+| `/usr/local/bin/vzdump-vms` | PVE host: live `vzdump` image of devvm → `/mnt/backup/vzdump/`. **Retired 2026-09-15**, still deployed so reviving it is one `systemctl enable` |
 | `/usr/local/bin/devvm-home-backup` | PVE host: daily incremental `rsync --link-dest` of devvm `/home` → `/mnt/backup/devvm-home/`. ~29 GB per generation after the 2026-09-03 exclude fix (was 37 GB — virtualenvs and four SDK caches were slipping through) |
 | `/mnt/backup/` | PVE host: sda mount point (1.1TB backup disk) |
 | `/mnt/backup/vzdump/` | PVE host: vzdump VM images (keep 3 per VMID), mirrored offsite monthly |
@@ -664,7 +666,7 @@ Nothing in this set is deployed by hand any more.
 | `/etc/systemd/system/daily-backup.timer` | Daily 05:00 (file backup) |
 | `/etc/systemd/system/offsite-sync-backup.timer` | Daily 06:00 (offsite sync) |
 | `/etc/systemd/system/devvm-home-backup.timer` | Daily 03:30 (devvm /home incremental) |
-| `/etc/systemd/system/vzdump-vms.timer` | **Weekly Sun 01:00** (VM image backup) |
+| `/etc/systemd/system/vzdump-vms.timer` | **Disabled since 2026-09-15** on purpose (`DISABLED_TIMERS` in `scripts/ci/pve-scripts-sync.sh`) |
 | `/etc/systemd/system/vzdump-vms.service` | oneshot: `vzdump-vms` (source `infra/scripts/vzdump-vms.{sh,service,timer}`) |
 | `/usr/local/bin/nfs-mirror` | PVE host: daily 02:00 mirror of /srv/nfs/* → sda /mnt/backup/<svc>/ (Layer 3a) |
 | `/etc/systemd/system/nfs-mirror.timer` | Daily 02:00 (NFS local mirror to sda) |
@@ -1060,7 +1062,7 @@ the 2026-04-22 backup_offsite_sync FAIL (node3 kubelet hiccup at
 
 **Note**: All proxmox-lvm and proxmox-lvm-encrypted PVCs get LVM snapshots (except `dbaas` and `monitoring` namespaces, excluded for write-amplification reasons) + file-level backup. NFS-backed media syncs directly to Synology `nfs/` and `nfs-ssd/` via inotify change tracking.
 
-² **Hand-managed VMs** — only **devvm (102)** is imaged today (`vzdump-vms`, `VZDUMP_VMIDS=102`). The k8s nodes are deliberately uncovered (reprovisioned from cloud-init; their data lives in the PVCs already backed up above). **home-assistant (103) and docker-registry (220) are a documented gap** — add their VMIDs to `VZDUMP_VMIDS` to image them (registry content is also re-pullable from upstreams; HA has its own add-on backups). pfSense (101) is covered separately by `daily-backup` (config.xml + weekly tar).
+² **Hand-managed VMs** — **no VM is imaged since 2026-09-15**, when `vzdump-vms` was retired; devvm (102) was the only one, and its protection is now the devvm playbook plus `devvm-home-backup`. The k8s nodes are deliberately uncovered (reprovisioned from cloud-init; their data lives in the PVCs already backed up above). **home-assistant (103) and docker-registry (220) are a documented gap** — add their VMIDs to `VZDUMP_VMIDS` to image them (registry content is also re-pullable from upstreams; HA has its own add-on backups). pfSense (101) is covered separately by `daily-backup` (config.xml + weekly tar).
 
 ¹ **"Other apps not enumerated above"** — the table only enumerates services worth calling out. The default backup posture for any service using `proxmox-lvm` or `proxmox-lvm-encrypted` (outside `dbaas`/`monitoring`) is **automatic** Layer 1 (LVM thin snapshots, 7d retention) + Layer 2 (file backup, 4 weekly versions on sda) + Layer 3 (offsite to Synology). Auto-discovery is by LV name pattern (`vm-*-pvc-*`), so adding a new service to the cluster gets it covered without any explicit registration. Run `ssh root@192.168.1.127 lvs --noheadings -o lv_name pve | grep '^vm-.*-pvc-' | grep -v _snap_ | wc -l` to see the live count.
 
