@@ -2,11 +2,10 @@
 #
 # Runs on the stock Playwright/python image (same as the snapshot sidecars) with
 # broker.py + templates + the static FleetView mounted via ConfigMap — NO custom
-# image, NO GHA build (the gate.py pattern). broker.py and the seed path are pure
-# stdlib; only the FleetView thumbnail SUBPROCESS (screenshot.py) needs
-# patchright, so the entrypoint pip-installs it at startup (the MS image ships
-# browsers but not the pip package). connect_over_cdp needs no local browser, so
-# PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1.
+# image, NO GHA build (the gate.py pattern). Everything it runs is pure stdlib,
+# the FleetView thumbnail SUBPROCESS (screenshot.py) included: since 2026-09-23 it
+# speaks raw CDP through cdp_cookies.py's websocket client, so nothing is
+# pip-installed at startup.
 #
 # See docs/plans/2026-07-13-chrome-service-pool-{design,plan}.md and files/broker/.
 
@@ -70,23 +69,7 @@ resource "kubernetes_deployment" "broker" {
           name              = "broker"
           image             = local.python_image # mcr.microsoft.com/playwright/python:v1.48.0-noble
           image_pull_policy = "IfNotPresent"
-          # pip-install patchright for the screenshot subprocess (browsers already
-          # in the image; skip the download), then run the stdlib broker.
-          # Non-root (uid 1000): pip --user into a writable base ($PYTHONUSERBASE),
-          # which python3 auto-adds to sys.path for that subprocess.
-          command = ["bash", "-c"]
-          args = [
-            <<-EOT
-            set -e
-            export HOME=/tmp PYTHONUSERBASE=/tmp/py PIP_CACHE_DIR=/tmp/pipcache PIP_DISABLE_PIP_VERSION_CHECK=1
-            # patchright (playwright drop-in) for the screenshot subprocess —
-            # avoids the Runtime.enable CDP leak on the caller's page. The seed
-            # no longer needs it: cdp_cookies.py is stdlib.
-            python3 -c 'import patchright' 2>/dev/null \
-              || pip install --user --quiet --no-warn-script-location patchright==1.61.1
-            exec python3 /broker/broker.py
-            EOT
-          ]
+          command           = ["python3", "/broker/broker.py"]
           env {
             name  = "NAMESPACE"
             value = local.namespace
@@ -106,10 +89,6 @@ resource "kubernetes_deployment" "broker" {
           env {
             name  = "PORT"
             value = "8080"
-          }
-          env {
-            name  = "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"
-            value = "1"
           }
           env {
             name  = "PYTHONUNBUFFERED"
