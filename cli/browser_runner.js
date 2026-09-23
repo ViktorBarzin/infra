@@ -21,6 +21,14 @@ const preflightTimeoutMS = 5000;
 // restarts (infra issue #98, where an embed.st service worker held the single
 // warm worker down for everyone).
 //
+// This sweep is best-effort only and CANNOT be the whole fix: Target.closeTarget
+// reports success while some orphans (the embed.st service worker) survive, so a
+// stray target can still be replayed on connect. The definitive fix lives in the
+// installer (browser.go patchPatchrightContextlessAssert, infra #103): it
+// neutralises patchright's fatal contextless-target assert so such a target is
+// detached and ignored on attach instead of killing the run. The sweep stays as
+// defence-in-depth — it still clears the ordinary orphans that DO close.
+//
 // Targets that DO carry a context id are left alone. That is what keeps the
 // worker's own Chrome extension service workers running: measured on a live
 // pool worker, both of them sit in the default context with a real id, so a

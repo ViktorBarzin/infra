@@ -270,19 +270,66 @@ func ensureBrowserClient(dir string) error {
 			return err
 		}
 	}
-	if installedPlaywrightVersion(dir) == clientVersion {
-		return nil
+	if installedPlaywrightVersion(dir) != clientVersion {
+		fmt.Fprintf(os.Stderr, "homelab browser: installing pinned %s@%s (one-time, ~a few seconds)…\n", clientPackage, clientVersion)
+		cmd := exec.Command("npm", "install", "--no-audit", "--no-fund", "--silent")
+		cmd.Dir = dir
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("npm install %s@%s in %s: %w (is node/npm installed?)", clientPackage, clientVersion, dir, err)
+		}
+		if got := installedPlaywrightVersion(dir); got != clientVersion {
+			return fmt.Errorf("%s install mismatch in %s: want %s, got %q", clientPackage, dir, clientVersion, got)
+		}
 	}
-	fmt.Fprintf(os.Stderr, "homelab browser: installing pinned %s@%s (one-time, ~a few seconds)…\n", clientPackage, clientVersion)
-	cmd := exec.Command("npm", "install", "--no-audit", "--no-fund", "--silent")
-	cmd.Dir = dir
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("npm install %s@%s in %s: %w (is node/npm installed?)", clientPackage, clientVersion, dir, err)
+	// Neutralise the fatal contextless-target assert in the patchright bundle so a
+	// stray service-worker/extension target attaching on connect can no longer
+	// abort the whole run (infra #103). Applied every time and idempotently — an
+	// install skipped by the version check above must still get an already-present
+	// but unpatched bundle repaired.
+	if err := patchPatchrightContextlessAssert(dir); err != nil {
+		return err
 	}
-	if got := installedPlaywrightVersion(dir); got != clientVersion {
-		return fmt.Errorf("%s install mismatch in %s: want %s, got %q", clientPackage, dir, clientVersion, got)
+	return nil
+}
+
+// patchPatchrightContextlessAssert edits the installed patchright-core bundle so
+// that _CRBrowser._onAttachedToTarget no longer asserts on a target with no
+// browserContextId. connectOverCDP attaches browser-wide and replays one attach
+// event per existing target; an orphaned service worker (one that outlived the
+// context that made it — e.g. an embed.st sw.js from an F1 extraction) carries no
+// browserContextId and trips the assert, which throws out of an EventEmitter and
+// kills node before the user's script runs. Closing such orphans first does NOT
+// work — Target.closeTarget reports success while this class survives (infra #98)
+// — so the only reliable fix is to stop the client dying on them: detach and
+// ignore the orphan, exactly as the bundle's own next branch does for an unknown
+// context, and as upstream Playwright now handles contextless targets.
+//
+// Idempotent and version-pinned: the exact assert string occurs once in the
+// pinned coreBundle.js. On a clientVersion bump, re-verify the string still
+// matches (a missed match returns an explicit error rather than silently leaving
+// the crash in place).
+func patchPatchrightContextlessAssert(dir string) error {
+	const marker = "/* homelab infra#103: ignore contextless orphan targets */"
+	const target = `assert(targetInfo.browserContextId, "targetInfo: " + JSON.stringify(targetInfo, null, 2));`
+	const replacement = `if (!targetInfo.browserContextId) { session2.detach().catch(() => {}); return; } ` + marker
+
+	bundlePath := filepath.Join(dir, "node_modules", clientPackage, "lib", "coreBundle.js")
+	b, err := os.ReadFile(bundlePath)
+	if err != nil {
+		return fmt.Errorf("read patchright bundle %s: %w", bundlePath, err)
+	}
+	src := string(b)
+	if strings.Contains(src, marker) {
+		return nil // already patched
+	}
+	if !strings.Contains(src, target) {
+		return fmt.Errorf("patchright bundle %s: contextless-target assert not found — patchright layout changed at %s@%s, re-verify the infra#103 patch", bundlePath, clientPackage, clientVersion)
+	}
+	patched := strings.Replace(src, target, replacement, 1)
+	if err := os.WriteFile(bundlePath, []byte(patched), 0o644); err != nil {
+		return fmt.Errorf("write patched patchright bundle %s: %w", bundlePath, err)
 	}
 	return nil
 }
