@@ -228,9 +228,23 @@ deschedulerPolicy:
             nodeFit: true
         - name: LowNodeUtilization
           args:
+            # Same list PodLifeTime protects in the default profile. It used to
+            # be dbaas alone, which was enough while this plugin read actual
+            # usage and almost never evicted. Its first run on requests
+            # (2026-09-23 15:41) spent one of its ten evictions on
+            # metallb-controller, which requests no memory and so freed
+            # nothing, and wireguard was just as reachable. Balancing is
+            # housekeeping and should not restart the data path.
             evictableNamespaces:
               exclude:
                 - "dbaas" # let's not meddle with the dbs
+                - "kube-system"
+                - "calico-system"
+                - "calico-apiserver"
+                - "metallb-system"
+                - "monitoring"
+                - "authentik"
+                - "wireguard" # evicting it drops every VPN tunnel and resets peer state
             thresholds:
               memory: 70
             targetThresholds:
