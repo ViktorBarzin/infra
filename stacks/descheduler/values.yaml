@@ -133,21 +133,6 @@ deschedulerPolicy:
         - name: RemovePodsViolatingNodeTaints
         - name: RemovePodsViolatingInterPodAntiAffinity
         - name: RemovePodsViolatingTopologySpreadConstraint
-        - name: LowNodeUtilization
-          args:
-            evictableNamespaces:
-              exclude:
-                - "dbaas" # let's not meddle with the dbs
-            thresholds:
-              cpu: 50
-              memory: 50
-              # pods: 20
-            targetThresholds:
-              cpu: 80
-              memory: 80
-              # pods: 30
-            metricsUtilization:
-              metricsServer: true
         - name: PodLifeTime
           args:
             maxPodLifeTimeSeconds: 604800
@@ -177,7 +162,9 @@ deschedulerPolicy:
           enabled:
             - RemoveDuplicates
             - RemovePodsViolatingTopologySpreadConstraint
-            - LowNodeUtilization
+            # LowNodeUtilization lives in its own profile below, so that
+            # its nodeFit evictor does not change how this profile's
+            # crash-loop and failed-pod cleanups treat node-pinned pods.
         deschedule:
           enabled:
             - RemovePodsHavingTooManyRestarts
@@ -186,6 +173,72 @@ deschedulerPolicy:
             - RemovePodsViolatingInterPodAntiAffinity
             - PodLifeTime
             - RemoveFailedPods
+    # Balances on memory REQUESTS since 2026-09-23 (was actual usage via
+    # metricsUtilization.metricsServer: true, which had no recorded reason).
+    #
+    # Why: the scheduler places pods by requests, so balancing by usage
+    # left a request imbalance nothing ever corrected. On 2026-09-23 kured
+    # rebooted k8s-node2, its pods spread onto node3/4/5, and node2 came
+    # back at 49.9% of memory requests while the others sat at 98.2-99.0%.
+    # By actual memory the fullest node was 63%, under the old 80% target,
+    # so every hourly run found nothing overutilized and moved nothing. The
+    # vaultwarden backup CronJob (pod affinity to vaultwarden, 128Mi) then
+    # could not fit beside vaultwarden on node5 (69 MiB free) and backups
+    # stopped for ~15h. Any node drain reproduced it.
+    #
+    # Memory only, because memory requests are what fills these nodes; CPU
+    # requests are small since CPU limits were removed cluster-wide. Under
+    # 70% makes a node a destination, over 90% a source. 90 matches
+    # NodeMemoryRequestsHigh, which fires above 90% of allocatable, so this
+    # holds nodes just under the line that alert draws.
+    #
+    # Guard rails: pods with PVCs never move (ignorePvcPods), dbaas is
+    # excluded, PDBs are honoured by the eviction API, nodeFit refuses a pod
+    # with no other home, and maxNoOfPodsToEvictTotal caps a run at 10.
+    # docs/plans/2026-09-06-memory-headroom.md deferred this switch as its
+    # own decision because of those evictions; Viktor took it 2026-09-23.
+    #
+    # KNOWN LIMIT, measured the same day: the tainted nodes (k8s-node1
+    # nvidia.com/gpu, k8s-master control-plane) sit well under 70% and count
+    # as destinations, so the plugin always believes there is room. That is
+    # harmless while the four untainted workers hold 86.4% of their memory
+    # in requests in total (110,540 of 127,973 MiB), since balancing lands
+    # them all under 90%. Past 90% in total every worker becomes a source
+    # and this would move up to 10 pods an hour between nodes that are all
+    # full. If that ever happens the fix is smaller requests (krr), not
+    # this plugin.
+    #
+    # A profile of its own because nodeFit is a DefaultEvictor setting and
+    # applies to every plugin in a profile. In the default profile it would
+    # also stop RemoveFailedPods and RemovePodsHavingTooManyRestarts from
+    # recycling a pod pinned to one node, and in immich-ml-restart it would
+    # block the restart outright, since immich-ml has no other node to go
+    # to. Here it only gates the balancing evictions, which is where a pod
+    # with no other home must not be evicted. maxNoOfPodsToEvictTotal is
+    # global, so this profile shares the one 10-per-run budget.
+    - name: balance-by-requests
+      pluginConfig:
+        - name: DefaultEvictor
+          args:
+            ignorePvcPods: true
+            evictLocalStoragePods: true
+            # Only evict a pod that fits on another node: node selectors,
+            # tolerations, requests and pod anti-affinity are all checked.
+            # It defaults to false.
+            nodeFit: true
+        - name: LowNodeUtilization
+          args:
+            evictableNamespaces:
+              exclude:
+                - "dbaas" # let's not meddle with the dbs
+            thresholds:
+              memory: 70
+            targetThresholds:
+              memory: 90
+      plugins:
+        balance:
+          enabled:
+            - LowNodeUtilization
     # Bounds immich-machine-learning's onnxruntime VRAM ratchet by capping the
     # pod's lifetime at 24h (investigated 2026-09-01, see
     # docs/plans/2026-08-31-gpu-vram-admission-and-oom-observability.md).
