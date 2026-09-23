@@ -5783,6 +5783,28 @@ serverFiles:
             annotations:
               summary: "Cluster VPN egress gateway (UK) has no available replica — proxy consumers and geo-browser sessions are failing closed"
               description: "No gluetun pod is Ready behind proxy-gw-1 / proxy-egress-uk, so every service pointed at proxy-egress-uk:8888/:1080 and every geo-browser session has lost its tunnel (fail closed, no plaintext fallback). Check `kubectl -n proxy describe deploy proxy-gw-1` and the gluetun container logs; a NordVPN over-limit refusal carries a ~10-min cooldown before a reconnect can succeed."
+          # infra#97: the exit country silently drifted to Brazil while the
+          # tunnel stayed healthy, so VPNEgressGatewayDown above cannot catch it.
+          # Metrics come from the egress-country-probe CronJob in stacks/proxy
+          # (pushed to Pushgateway every 15m). WrongCountry only evaluates when a
+          # geo lookup succeeded (probe_up == 1) so a geo-source outage cannot
+          # page; for: 30m needs two consecutive non-GB reads.
+          - alert: ProxyEgressWrongCountry
+            expr: proxy_egress_probe_up == 1 and proxy_egress_exit_is_expected_country == 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cluster VPN egress (proxy-egress-uk) is exiting OUTSIDE the UK"
+              description: "proxy-egress-uk is the documented UK-exit path (org policy), but the egress-country probe reports a non-GB exit for 30m. Traffic routed through it believing it gets a UK address is silently landing in the wrong country. Root cause is usually gluetun (digest-pinned, so its NordVPN server list is frozen) connecting to a relocated server the frozen list still tags UK — a pod restart re-rolls the pick: `kubectl -n proxy rollout restart deploy/proxy-gw-1`. Verify: `kubectl -n proxy port-forward svc/proxy-egress-uk 18888:8888 & curl -s -x http://127.0.0.1:18888 https://ipinfo.io/country` should print GB. UPDATER_PERIOD=24h on the gluetun container is meant to prevent recurrence."
+          - alert: ProxyEgressCountryProbeStale
+            expr: time() - proxy_egress_probe_last_run_timestamp > 5400
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "egress-country-probe has not reported in >90m — UK-exit drift is no longer being watched"
+              description: "The egress-country-probe CronJob in namespace proxy pushes to Pushgateway every 15m; its last-run timestamp is stale, so a silent exit-country drift (infra#97) would now go undetected. Check `kubectl -n proxy get cronjob egress-country-probe` and its recent Jobs."
       - name: "External Access"
         rules:
           - alert: ExternalAccessDivergence
