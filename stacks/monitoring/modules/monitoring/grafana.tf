@@ -237,6 +237,7 @@ resource "helm_release" "grafana" {
   name             = "grafana"
   atomic           = true
   timeout          = 600
+  max_history      = 10 # see helm_release.prometheus for why history is capped
 
   repository = "https://grafana.github.io/helm-charts"
   chart      = "grafana"

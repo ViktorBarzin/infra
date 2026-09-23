@@ -71,6 +71,16 @@ resource "helm_release" "prometheus" {
   # Re-enable temporarily only when a StatefulSet volumeClaimTemplate change needs --force.
   force_update = false
 
+  # Keep at most 10 release records (Helm's own CLI default). Every alert-rule
+  # edit is a values change and so a new revision, and with no cap this release
+  # had grown to 105 records by 2026-09-23, most of the namespace's 160. The
+  # helm-unstick CronJob lists every release record here and its kubectl peak
+  # grows about 1 MiB per record, which OOM-killed it twice (96Mi, then 256Mi).
+  # Helm prunes on the next upgrade and never deletes the deployed revision,
+  # which is the fallback helm-unstick needs. grafana, alloy and loki carry the
+  # same cap for the same reason.
+  max_history = 10
+
   values = [templatefile("${path.module}/prometheus_chart_values.tpl", { alertmanager_mail_pass = var.alertmanager_account_password, alertmanager_slack_api_url = var.alertmanager_slack_api_url, tuya_api_key = var.tiny_tuya_service_secret, authentik_walloff_targets = local.authentik_walloff_targets, dawarich_metrics_username = var.dawarich_metrics_username, dawarich_metrics_password = var.dawarich_metrics_password })]
 
   # The haos scrape job now reads its credential from this Secret's mount, so

@@ -20,8 +20,9 @@ resource "helm_release" "loki" {
   # deliberately, with values migration.
   version = "7.0.0"
 
-  values  = [templatefile("${path.module}/loki.yaml", {})]
-  timeout = 600
+  values      = [templatefile("${path.module}/loki.yaml", {})]
+  timeout     = 600
+  max_history = 10 # see helm_release.prometheus for why history is capped
 
   depends_on = [kubernetes_config_map.loki_alert_rules]
 }
@@ -34,9 +35,10 @@ resource "helm_release" "alloy" {
   repository = "https://grafana.github.io/helm-charts"
   chart      = "alloy"
 
-  values  = [file("${path.module}/alloy.yaml")]
-  atomic  = true
-  timeout = 900 # 5-pod DS rolling update + occasional runc-stuck-Terminating on k8s-master needs >300s default
+  values      = [file("${path.module}/alloy.yaml")]
+  atomic      = true
+  timeout     = 900 # 5-pod DS rolling update + occasional runc-stuck-Terminating on k8s-master needs >300s default
+  max_history = 10  # see helm_release.prometheus for why history is capped
 
   depends_on = [helm_release.loki]
 }
