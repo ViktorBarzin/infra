@@ -52,7 +52,15 @@ namespaceOverride: ""
 commonLabels: {}
 
 cronJobApiVersion: "batch/v1"
-schedule: "0 * * * *"  # hourly (was */5; 2026-06-12 etcd-load-reduction — fewer list/evict cycles, rebalancing isn't time-critical)
+# Hourly at :55, not :00 (moved 2026-09-23). 38 hourly CronJobs start at :00
+# and request 3,664 MiB between them, the busiest minute of the hour, and a
+# run at :00 counted all of their short-lived pods. That pushed k8s-node2 from
+# 64% of memory requests (measured off-peak) to 72%, over the 70% line that
+# makes a node a LowNodeUtilization destination, so every run from 17:00 to
+# 21:00 that day found node4 at 94-97% and moved nothing. The five minutes
+# before :55 hold 160 MiB of CronJob starts, 24 times less.
+# (Was */5 until 2026-06-12, when etcd-load-reduction made it hourly.)
+schedule: "55 * * * *"
 suspend: false
 # startingDeadlineSeconds: 200
 successfulJobsHistoryLimit: 10
@@ -198,15 +206,15 @@ deschedulerPolicy:
     # docs/plans/2026-09-06-memory-headroom.md deferred this switch as its
     # own decision because of those evictions; Viktor took it 2026-09-23.
     #
-    # KNOWN LIMIT, measured the same day: the tainted nodes (k8s-node1
-    # nvidia.com/gpu, k8s-master control-plane) sit well under 70% and count
-    # as destinations, so the plugin always believes there is room. That is
-    # harmless while the four untainted workers hold 86.4% of their memory
-    # in requests in total (110,540 of 127,973 MiB), since balancing lands
-    # them all under 90%. Past 90% in total every worker becomes a source
-    # and this would move up to 10 pods an hour between nodes that are all
-    # full. If that ever happens the fix is smaller requests (krr), not
-    # this plugin.
+    # The tainted nodes (k8s-node1 nvidia.com/gpu, k8s-master control-plane)
+    # sit well under 70% and are classified as destinations, but nodeFit keeps
+    # them from mattering: when they were the only destinations left, runs
+    # from 17:00 to 21:00 on 2026-09-23 evicted nothing, rather than shuffling
+    # pods between full nodes as an earlier version of this comment predicted.
+    # The real ceiling is capacity: if the four untainted workers ever hold
+    # more than about 90% of their memory in requests in total (83.2%
+    # off-peak on 2026-09-23), there is no node to balance into, and the fix
+    # is smaller requests (krr), not this plugin.
     #
     # A profile of its own because nodeFit is a DefaultEvictor setting and
     # applies to every plugin in a profile. In the default profile it would
