@@ -3867,39 +3867,22 @@ serverFiles:
               severity: warning
             annotations:
               summary: "NFS local mirror last run failed (status={{ $value }})"
-          # Threshold raised 180000s (50h) -> 691200s (8d) on 2026-09-01.
-          # vzdump-vms.timer is WEEKLY, not daily: measured on the PVE host,
-          # LastTrigger Sun 2026-08-30 01:00:43 and NextElapse Sun 2026-09-06
-          # 01:01:08. A 50h threshold described as "2 daily cycles" therefore
-          # fired roughly 5 days out of every 7 while the backup was perfectly
-          # healthy — the run it was complaining about had finished with
-          # "=== vzdump-vms complete (status=0, 81G) ===". 8 days allows one
-          # weekly run to be missed entirely plus margin, so a fire now means a
-          # genuinely skipped or failed backup. The other four backup timers on
-          # that host (daily-backup, offsite-sync-backup, devvm-home-backup,
-          # dpkg-db-backup) really are daily and are covered by their own rules.
-          - alert: VzdumpBackupStale
-            expr: (time() - vzdump_last_success_timestamp{job="vzdump-backup"}) > 691200
-            for: 30m
-            labels:
-              severity: warning
-            annotations:
-              summary: "vzdump VM image backup is {{ $value | humanizeDuration }} old (threshold: 8d — the timer is weekly)"
-              description: "vzdump-vms.timer on 192.168.1.127 hasn't produced a fresh devvm image. Check: ssh root@192.168.1.127 systemctl status vzdump-vms. Runbook: docs/architecture/backup-dr.md (VM Image Backups)."
-          - alert: VzdumpBackupNeverRun
-            expr: absent(vzdump_last_run_timestamp{job="vzdump-backup"})
-            for: 48h
-            labels:
-              severity: warning
-            annotations:
-              summary: "vzdump VM image backup job has never reported metrics to Pushgateway"
-          - alert: VzdumpBackupFailing
-            expr: vzdump_last_status{job="vzdump-backup"} != 0
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: "vzdump VM image backup last run failed (status={{ $value }})"
+          # The three vzdump rules (VzdumpBackupStale, VzdumpBackupNeverRun,
+          # VzdumpBackupFailing) were removed on 2026-09-23. The backup they
+          # watched was retired on 2026-09-15 (d05be720): vzdump-vms.timer is
+          # disabled on the PVE host on purpose, and scripts/ci/pve-scripts-sync.sh
+          # keeps it disabled, because each weekly run read all 228 GiB of the
+          # devvm's disk and took sdc read latency from 0.23 ms to 107 ms. The
+          # restore path is now the devvm playbook plus devvm-home-backup.
+          #
+          # Left in place, the rules could only ever report the retirement.
+          # VzdumpBackupStale started firing once the last image (2026-09-13)
+          # passed 8 days old and would have fired forever. VzdumpBackupNeverRun
+          # would have joined it the first time the Pushgateway lost the
+          # series. The last three images stay on /mnt/backup/vzdump as a floor
+          # that no longer advances; reviving the backup means re-enabling the
+          # timer, dropping it from DISABLED_TIMERS, and restoring these rules
+          # from git history.
           - alert: BackupDiskFull
             expr: (1 - node_filesystem_avail_bytes{job="proxmox-host", mountpoint="/mnt/backup"} / node_filesystem_size_bytes{job="proxmox-host", mountpoint="/mnt/backup"}) > 0.85
             for: 15m
@@ -6537,8 +6520,8 @@ serverFiles:
           # A feed that has NEVER pushed leaves an absent series, not a stale
           # one, so the staleness rules above have nothing to age and stay
           # silent about a feed that was broken from its first run. `for: 48h`
-          # matches the LVM-snapshot and vzdump pairs above: long enough to
-          # ride out a Pushgateway restart reloading its persistence file.
+          # matches the LVM-snapshot pair above: long enough to ride out a
+          # Pushgateway restart reloading its persistence file.
           - alert: T212SyncNeverReported
             expr: absent(t212_sync_last_success_timestamp_seconds{job="broker-sync-trading212"})
             for: 48h
