@@ -150,11 +150,15 @@ collects localStorage per origin by evaluating in a page, and a freshly
 connected CDP client only knows the origins of pages open at that moment
 (`chrome://newtab`), so `storage_state()` returned an empty list here too.
 
-`files/broker/screenshot.py` still uses patchright `connect_over_cdp` and
-carries the same exposure against POOL workers, which is where orphaned service
-workers were first documented (`f1-stream/backend/cdp.py`). It is left as-is
-deliberately: it is the FleetView thumbnail, best-effort with no alert, and a
-failure costs a blank tile rather than a run's logins.
+`files/broker/screenshot.py`, the FleetView thumbnail, moved to raw CDP on
+2026-09-23. It had the same exposure against POOL workers, which is where
+orphaned service workers were first documented (`f1-stream/backend/cdp.py`).
+It lists targets, skips any without a `browserContextId`, attaches to one page
+and calls `Page.captureScreenshot`, which needs no domain enabled on the
+caller's page. It prefers a page in a context the caller created over the
+worker's `about:blank` launch tab, which the patchright version often captured
+instead, and it reuses the websocket client in `cdp_cookies.py`, so the broker
+no longer pip-installs anything at startup.
 
 ## Browser binary — real Google Chrome (for proprietary codecs)
 
@@ -460,9 +464,10 @@ separate stateless workers.
 **Broker** (`stacks/chrome-service/broker.tf`, `files/broker/broker.py`): a
 stdlib-Python service on the stock `playwright/python` image (broker.py +
 `worker_pod.json` + `cdp_cookies.py` + `screenshot.py` + FleetView `index.html`
-via ConfigMap; pip-installs patchright at startup for the screenshot
-**subprocess** — no custom image, the `gate.py` pattern). The seed needs no pip
-install: it reads the master over raw CDP, in-process, in about 0.1s. Stateless: session
+via ConfigMap, no custom image, the `gate.py` pattern). Nothing is
+pip-installed: the seed reads the master over raw CDP, in-process, in about
+0.1s, and the thumbnail **subprocess** uses the same stdlib client against the
+worker. Stateless: session
 state is reconstructed from pod labels each request (no Redis). k8s via the in-pod
 SA token/CA. API: `POST /acquire` {owner,purpose} → {pod,cdpPort,podIP,session};
 `POST /release` {session}; `GET /sessions`; `GET /seed` (fresh cached
