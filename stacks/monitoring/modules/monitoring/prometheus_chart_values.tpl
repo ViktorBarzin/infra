@@ -3228,10 +3228,20 @@ serverFiles:
                 / on(node) group_left() kube_node_status_allocatable{resource="memory",unit="byte"}
               ) > 90
             for: 30m
-            # Same reasoning as the N-1 alert above: pod churn tips this back and
-            # forth across the line, so fold an episode into one alert rather than
-            # a fire/resolve pair per CronJob.
-            keep_firing_for: 6h
+            # Pod churn tips this back and forth across the line, so fold an
+            # episode into one alert rather than a fire/resolve pair per CronJob.
+            #
+            # 1h, not the 6h this started with (changed 2026-09-23, Viktor wanted
+            # it to clear sooner). Replaying this exact rule over 7 days of
+            # 5-minute samples, node2-node5: 6h gave 14 notification episodes,
+            # 1h gives 16, 30m 17, 15m 18, none 20. The gaps below 90 between two
+            # stretches above it have a median of 338 minutes, so most of what
+            # 6h folded were real recoveries, and it held the alert up for six
+            # hours after each one. 1h also matches the descheduler, which runs
+            # hourly at :55 with a 90% target of its own: a node it pulls just
+            # under the line and that creeps back within the hour stays one
+            # episode.
+            keep_firing_for: 1h
             labels:
               severity: warning
             annotations:
