@@ -288,6 +288,24 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
             name  = "SERVER_COUNTRIES"
             value = local.egress_country
           }
+          # Refresh gluetun's server list from NordVPN's API daily. ROOT-CAUSE
+          # mitigation for infra#97: gluetun is digest-pinned (2026-08-07), so
+          # without this it filters SERVER_COUNTRIES against the server list
+          # BAKED INTO that image, frozen at build. NordVPN continuously
+          # relocates/re-tags servers, so a host the frozen list still labels
+          # "United Kingdom" can be moved elsewhere (observed: Rio de Janeiro,
+          # AS7738 "V tal") — gluetun then connects to it believing it is UK and
+          # exits in Brazil, with the tunnel fully healthy so nothing alerts.
+          # UPDATER_PERIOD makes gluetun re-fetch the list every 24h and drop
+          # stale/relocated servers. Runtime-only: it does NOT touch the pinned
+          # binary, and a failed fetch keeps the existing list (no tunnel drop).
+          # The egress-country probe + ProxyEgressWrongCountry alert
+          # (stacks/proxy/egress-country-probe.tf) are the standing detector for
+          # the residual case where a fresh list is momentarily wrong.
+          env {
+            name  = "UPDATER_PERIOD"
+            value = "24h"
+          }
           env {
             name  = "DOT"
             value = "on"

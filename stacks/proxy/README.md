@@ -219,13 +219,30 @@ Two details are what make a failure visible rather than silent:
   There is deliberately **no liveness probe** on the same check: gluetun already
   restarts the VPN itself, and killing the container mid-recovery risks
   NordVPN's ~10-minute over-limit cooldown (memory #10182).
-- **One alert.** `VPNEgressGatewayDown` — the `proxy-gw-1` Deployment has no
-  available replica for 10m, `severity: warning` → `#alerts`. It lives inline in
+- **Three alerts.** All inline in
   `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` (this repo
-  has no `alerting_rules.yml`). Endpoint-level metrics are dropped by that
-  file's `metric_relabel_configs`, so deployment availability is how "the
-  Service has no endpoints" is expressed. Both Services select the same single
-  pod, so one signal covers both halves.
+  has no `alerting_rules.yml`), all `severity: warning` → `#alerts`.
+  - `VPNEgressGatewayDown` — the `proxy-gw-1` Deployment has no available
+    replica for 10m. Endpoint-level metrics are dropped by that file's
+    `metric_relabel_configs`, so deployment availability is how "the Service has
+    no endpoints" is expressed. Both Services select the same single pod, so one
+    signal covers both halves.
+  - `ProxyEgressWrongCountry` — the exit lands OUTSIDE the UK (infra#97). The
+    tunnel is healthy and `VPNEgressGatewayDown` stays quiet during this, because
+    only the exit *country* is wrong: gluetun is digest-pinned, so it filters
+    `SERVER_COUNTRIES` against the server list baked into that image, and a
+    server NordVPN has relocated (observed: Rio de Janeiro, AS7738 "V tal") is
+    still labelled United Kingdom in the frozen list. `UPDATER_PERIOD=24h` on the
+    gluetun container (egress.tf) refreshes that list daily to prevent it; this
+    alert is the standing detector. Fed by the `egress-country-probe` CronJob
+    (`egress-country-probe.tf`), which curls two geo sources through
+    `proxy-egress-uk` every 15m and pushes `proxy_egress_*` to Pushgateway. Only
+    fires when a geo lookup succeeded (`proxy_egress_probe_up == 1`) and needs
+    30m (two consecutive non-GB reads) so a single stale geo DB can't page.
+    Recover: `kubectl -n proxy rollout restart deploy/proxy-gw-1` re-rolls the
+    server pick.
+  - `ProxyEgressCountryProbeStale` — the probe stopped reporting for >90m, so
+    exit-country drift is no longer being watched.
 
 Readiness is per-**pod**, so an unready gluetun removes the pod from *both*
 Services at once. That is the intended fail-closed behaviour, and it is a change
