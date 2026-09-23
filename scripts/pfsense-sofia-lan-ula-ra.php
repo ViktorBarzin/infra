@@ -6,6 +6,7 @@
 //   pfSense vtnet0 (WAN, 192.168.1.2) radvd → RA on the home LAN:
 //     prefix fdfe:e989:d3ce:1::/64, on-link + autonomous (SLAAC)
 //     router lifetime 0, M and O flags off, no RDNSS, no DNSSL
+//     one RA every 10-30 s
 //
 // WHY: Matter is IPv6-only, and the lock (ASSA ABLOY/Yale, 192.168.1.61,
 // MAC b0:44:9c:14:0d:e5) never answers on its link-local address, so it needs
@@ -84,6 +85,11 @@ $RA = [
     'rapriority'           => 'low',        // the forced route ::/0 loses to a real router
     'raadvdefaultlifetime' => '0',          // not a default router
     'radvd-dns'            => 'disabled',   // no RDNSS, no DNSSL
+    // Battery Wi-Fi devices such as the lock sleep through most multicast
+    // frames, so pfSense's default of one RA every 200-600 s can take a long
+    // time to reach them. The AX6000 and the garage AP send one every ~7 s.
+    'raminrtradvinterval'  => '10',
+    'ramaxrtradvinterval'  => '30',
 ];
 
 if (!isset($config['interfaces'][$IFACE]) || !is_array($config['interfaces'][$IFACE])) {
