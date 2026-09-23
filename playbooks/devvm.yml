@@ -598,7 +598,9 @@
     # agent-conductor has no other copy in existence.
     #
     # Stopped and disabled rather than deleted, so reversing this is one
-    # command. Deleting the files is a separate, later step.
+    # command. Deleting the files is a separate, later step. Orca took that
+    # step on 2026-09-23, in the two tasks below this one; agent-conductor's
+    # files are still in place.
     #
     # NOT masked, and that is deliberate. Masking works by putting a symlink to
     # /dev/null at a higher-priority path than the unit file, and these unit
@@ -618,8 +620,29 @@
       loop:
         - acd-demux.service
         - ac-spa.service
+
+    # Orca's AppImage is re-downloadable and nothing on the box uses it. Its
+    # units have been stopped since 2026-09-13, so the stop is a no-op here,
+    # and failed_when keeps it quiet once the unit files are gone.
+    - name: Stop the retired Orca services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop:
         - orca-serve.service
         - orca-xvfb.service
+      failed_when: false
+
+    - name: Remove the retired Orca files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /opt/orca
+        - /etc/systemd/system/orca-serve.service
+        - /etc/systemd/system/orca-xvfb.service
+      notify: reload systemd
 
     # The relay is a template, so the INSTANCE carries the enablement:
     # /etc/systemd/system/sockets.target.wants/ac-relay@wizard.socket is what
