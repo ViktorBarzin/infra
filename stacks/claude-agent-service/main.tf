@@ -1114,7 +1114,16 @@ resource "kubernetes_cron_job_v1" "fixer_tick" {
         ttl_seconds_after_finished = 600
         template {
           metadata {
-            labels = local.labels
+            # NOT local.labels. Those are the Service's selector, and a tick pod
+            # has no readiness probe, so while it runs it is a Ready endpoint of
+            # the very Service it calls: about half its requests went to itself,
+            # where nothing listens on 8080, and came back "Connection refused"
+            # (309 of 713 watch ticks read turn=unknown over 2026-09-22/23).
+            # Anything else calling the Service in those seconds could be
+            # refused the same way.
+            labels = {
+              app = "fixer-tick"
+            }
           }
           spec {
             restart_policy       = "Never"
