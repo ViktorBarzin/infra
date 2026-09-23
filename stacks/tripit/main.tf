@@ -206,6 +206,21 @@ locals {
     # fake and hand-added places (and any backfill) would store placeholder
     # PNGs instead of real photos.
     PLACE_PHOTO_PROVIDER = "wikipedia"
+    # Location history (tripit's DAWARICH_URL ADR). DAWARICH_URL turns it on for
+    # this install and is the default Dawarich a user sees when linking their
+    # own account; a user may link a different Dawarich instead. One setting
+    # serves the Travel year Country days (ADR-0060) and the transport nudge, so
+    # it lives here and reaches the Deployment and every worker. Requests to
+    # DAWARICH_URL's origin are trusted: they go to DAWARICH_INTERNAL_URL with
+    # Host: dawarich.viktorbarzin.me (the reasons are on the sync-country-days
+    # CronJob). The app uses that route for no other origin, and a Dawarich a
+    # user links themselves must still pass the public-address guard.
+    # Rollout order: these land BEFORE the image that reads them. The image
+    # deployed until then still reads DAWARICH_BASE_URL (nudge extra_env) and
+    # local.dawarich_internal_env, so both stay as they are until that image is
+    # live; DAWARICH_INTERNAL_URL appears there too, with the same value.
+    DAWARICH_URL          = "https://dawarich.viktorbarzin.me"
+    DAWARICH_INTERNAL_URL = "http://dawarich.dawarich.svc.cluster.local"
   }
 }
 
