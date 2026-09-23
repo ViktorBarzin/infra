@@ -3215,8 +3215,7 @@ serverFiles:
           # kills in the 30 days to 2026-09-06, 313 were cgroup-level against a
           # container's own limit and none were node-level. Alerting on limit
           # overcommit would report a condition that has never caused an outage,
-          # while ContainerOOMKilled and ContainerNearOOM already cover the kills
-          # that do happen.
+          # while ContainerOOMKilled already reports the kills that do happen.
           - alert: NodeMemoryRequestsHigh
             expr: |
               100 * (
@@ -3286,54 +3285,20 @@ serverFiles:
                 Check what grew: `homelab metrics query 'topk(10,
                 container_memory_working_set_bytes{node="{{ $labels.node }}"})'`.
                 Kubelet starts evicting at memory.available<100Mi.
-          # ContainerNearOOM — defined 2026-09-06. Several docs referred to this
-          # alert for months (docs/architecture/monitoring.md and .claude/CLAUDE.md
-          # both recorded that it did NOT exist), and the gap it leaves is that
-          # nothing warns before a container is killed: ContainerOOMKilled and
-          # KernelOOMKiller are both post-mortem signals.
+          # ContainerNearOOM (working set / memory limit) was removed on
+          # 2026-09-23, at Viktor's request, to cut alert noise. In its last 7
+          # days it warned for 10 containers; one of them, prometheus-server,
+          # was later OOM-killed, and ContainerOOMKilled reported that kill
+          # anyway, while 3 of the week's 4 kills came with no warning at all.
+          # After the threshold went from 0.85 to 0.95 on 2026-09-19 it fired 4
+          # times in 4 days, every time for the CNPG primary, which peaked at
+          # 99.3% of its limit and was never killed.
           #
-          # severity: info is deliberate. It routes to slack-info, whose
-          # repeat_interval is 8760h, so a container that lives permanently near
-          # its limit posts once rather than re-pinging.
-          #
-          # Threshold raised 0.85 -> 0.95 on 2026-09-19 at Viktor's request. At
-          # 85% the alert had five containers firing continuously and none was
-          # close to a kill: pg-cluster-2 read 85.2% because a Postgres
-          # replica's shared_buffers are working set by design, and
-          # immich-frame and wg-peer-sync had held their band for days.
-          #
-          # Know what this buys and what it costs. The whole cluster's top
-          # reading on 2026-09-19 was 93.2% (changedetection/sockpuppetbrowser
-          # and ebooks/annas-archive-stacks), so at 0.95 the alert is silent
-          # today and the warning window before a kill is now 5 points of a
-          # limit wide. That is the intended trade: the 85% band was reporting
-          # workloads sized snugly on purpose, and ContainerOOMKilled still
-          # catches the kill itself. Revisit if a container is OOMKilled
-          # without this having fired first.
-          #
-          # working_set is the same signal kubelet's own OOM accounting uses, so
-          # this ratio is the one that predicts a kill. It cannot see a spike
-          # shorter than the 5-minute scrape; container_memory_max_usage_bytes,
-          # re-enabled in the same change as this rule, is the companion that can.
-          - alert: ContainerNearOOM
-            expr: |
-              container_memory_working_set_bytes{container!="",container!="POD"}
-              / on(namespace,pod,container) group_left()
-              kube_pod_container_resource_limits{resource="memory",unit="byte"}
-              > 0.95
-            for: 15m
-            labels:
-              severity: info
-            annotations:
-              summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) is at {{ $value | humanizePercentage }} of its memory limit"
-              description: |
-                The container has held above 95% of its memory limit for 15 minutes.
-                It has not been killed, which is why nothing else reports it.
-                Either the limit is too tight for what the workload legitimately
-                needs, or the workload is leaking. Check the high-water mark
-                (`container_memory_max_usage_bytes`) and the 30-day shape before
-                changing anything — a 7-day window has under-read a periodic job by
-                more than 70x here.
+          # Working set counts active page cache, which the kernel reclaims
+          # before it kills anything, and Postgres fills its cgroup with page
+          # cache by design. A pre-kill signal that works would need anon memory
+          # instead. container_memory_rss is not in the cadvisor keep list above,
+          # so a replacement starts by adding it there.
       # Goldmane edge-aggregator (ADR-0014 / infra #58, #61): the durable
       # who-talks-to-whom trail. The aggregator pod has NO /metrics endpoint,
       # so its health is inferred from kube-state-metrics signals — the trail
@@ -5855,8 +5820,8 @@ serverFiles:
         # What covers this now, at the symptom rather than the cause:
         #   AuthentikOutpostForwardAuth400Spike (below) is the documented way an
         #     shm ENOSPC surfaces, and its series is live.
-        #   ContainerOOMKilled and ContainerNearOOM cover memory generically,
-        #     against kube_pod_container_resource_limits, which is not dropped.
+        #   ContainerOOMKilled covers memory generically, from kube-state-metrics'
+        #     last_terminated_reason, which is not dropped.
         #   AuthentikOutpostRestarts (below) catches an OOM restart loop.
         rules:
           - alert: AuthentikOutpostRestarts
