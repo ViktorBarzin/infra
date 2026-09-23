@@ -536,7 +536,7 @@ PodDisruptionBudgets ensure at least 2 replicas remain during node maintenance o
 
 ### IPv6 Ingress (HE Tunnel + HAProxy Bridge)
 
-Public IPv6 reaches the cluster over a **Hurricane Electric 6in4 tunnel** terminated on pfSense (`gif0`; tunnel endpoint `2001:470:6e:43d::2`, LAN prefix `2001:470:6f:43d::/64`). The apex `viktorbarzin.me AAAA` → `2001:470:6e:43d::2`.
+Public IPv6 reaches the cluster over a **Hurricane Electric 6in4 tunnel** terminated on pfSense (`gif0`; tunnel endpoint `2001:470:6e:43d::2`, LAN prefix `2001:470:6f:43d::/64`). Non-proxied hostnames (for example `ha-sofia`, `immich`) carry an AAAA record → `2001:470:6e:43d::2`. The apex is Cloudflare-proxied, so its AAAA records are Cloudflare's addresses and Cloudflare reaches the origin over IPv4.
 
 pfSense cannot NAT IPv6→IPv4, so ingress is bridged by a **standalone HAProxy** on pfSense (a separate config/service — *not* the pfSense HAProxy package) that listens on the tunnel IPv6 and forwards to the IPv4 cluster LBs with **PROXY protocol v2 (`send-proxy-v2`)**, so real client IPv6 addresses propagate to CrowdSec instead of being masked as `10.0.20.1`:
 
