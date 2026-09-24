@@ -102,6 +102,27 @@
         path: /var/log/journal
         state: absent
 
+    # ---- xfs_scrub_all -------------------------------------------------------
+    # xfsprogs enables a weekly xfs_scrub_all.timer, and on this host the run
+    # can never finish. The script reads `lsblk -J` through a pipe and waits
+    # for lsblk to exit before draining it (Popen then wait() in
+    # /usr/sbin/xfs_scrub_all, xfsprogs 6.13.0-2+deb13u1). With the CSI disks
+    # attached here lsblk writes about 239 KB, far past the 64 KiB pipe
+    # buffer, so both processes block forever. The run started at the
+    # 2026-07-18 boot was still stuck on 2026-09-24, and while it hangs
+    # systemd reports the host as "starting" instead of "degraded", which
+    # hides failed units. The host has no XFS filesystems, so there is nothing
+    # to scrub. Masking both units stops the timer and keeps anything else
+    # from starting the service.
+    - name: Stop and mask xfs_scrub_all
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+        masked: true
+      loop:
+        - xfs_scrub_all.timer
+        - xfs_scrub_all.service
+
   handlers:
     - name: restart journald
       ansible.builtin.systemd_service:
