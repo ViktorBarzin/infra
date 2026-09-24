@@ -123,7 +123,11 @@ read_fan_rpm() {  # mean RPM across all 6 chassis fans (Fan1..Fan6). All fans ru
 ha_command_pct() {
   [[ -z "$HA_TOKEN" ]] && return 0
   local resp state lu lu_epoch now
-  resp="$(curl -fsS --max-time 5 -H "Authorization: Bearer $HA_TOKEN" \
+  # The header reaches curl through a file descriptor, never argv: snoopy logs
+  # every command line on this host and ships it to Loki, where the token sat
+  # in plain text on every poll until 2026-09-24. printf is a builtin, so no
+  # execve carries it either.
+  resp="$(curl -fsS --max-time 5 -H @<(printf 'Authorization: Bearer %s' "$HA_TOKEN") \
             "$HA_URL/api/states/$COMMAND_ENTITY" 2>/dev/null)" || return 0
   state="$(fc_json_str_field "$resp" state)"
   [[ "$state" =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 0

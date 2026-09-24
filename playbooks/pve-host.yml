@@ -123,6 +123,70 @@
         - xfs_scrub_all.timer
         - xfs_scrub_all.service
 
+    # ---- fan control ---------------------------------------------------------
+    # The IPMI fan actuator applies the setpoint Home Assistant computes
+    # (docs/runbooks/fan-control.md). Until 2026-09-24 it reached the host by
+    # scp, so a commit changed nothing until someone copied it across.
+    # /etc/fan-control.env holds the ha-sofia token and stays out of git and
+    # out of this playbook; the unit reads it as an EnvironmentFile.
+    - name: Install the fan actuator
+      ansible.builtin.copy:
+        src: ../scripts/fan-control.sh
+        dest: /usr/local/bin/fan-control
+        mode: "0755"
+        owner: root
+        group: root
+      notify: restart fan-control
+
+    - name: Install the fan actuator unit
+      ansible.builtin.copy:
+        src: ../scripts/fan-control.service
+        dest: /etc/systemd/system/fan-control.service
+        mode: "0644"
+        owner: root
+        group: root
+      notify:
+        - reload systemd
+        - restart fan-control
+
+    - name: Keep the fan actuator running
+      ansible.builtin.systemd_service:
+        name: fan-control
+        enabled: true
+        state: started
+
+    # ---- log shipping --------------------------------------------------------
+    # promtail ships this host's journal to Loki, and its config redacts
+    # secret-shaped values first (the reasoning lives in the file). Validating
+    # before the copy means a broken config never replaces a working one.
+    - name: Configure the journal shipper
+      ansible.builtin.copy:
+        src: ../scripts/pve-promtail.yaml
+        dest: /etc/promtail/config.yml
+        mode: "0644"
+        owner: root
+        group: root
+        validate: /usr/local/bin/promtail -check-syntax -config.file=%s
+      notify: restart promtail
+
+    # ---- LVM metadata archive ------------------------------------------------
+    # LVM archives a volume group's metadata before every change, and the CSI
+    # driver changes the pve group all day. At the default 30-day retention
+    # /etc/lvm/archive held 9,810 files and 1.9 GB on 2026-09-24, about 63 MB a
+    # day, all of it for pve. The archives only serve vgcfgrestore after a bad
+    # metadata change, so a week is enough. LVM prunes the rest the next time
+    # it archives, and retain_min (10) still keeps the newest copies of the
+    # quiet groups. lvmlocal.conf overrides lvm.conf, so lvm.conf stays as the
+    # package ships it.
+    - name: Keep a week of LVM metadata archives
+      ansible.builtin.blockinfile:
+        path: /etc/lvm/lvmlocal.conf
+        marker: "# {mark} pve-host.yml: metadata archive retention"
+        block: |
+          backup {
+              retain_days = 7
+          }
+
   handlers:
     - name: restart journald
       ansible.builtin.systemd_service:
@@ -132,3 +196,13 @@
     - name: reload systemd
       ansible.builtin.systemd_service:
         daemon_reload: true
+
+    - name: restart fan-control
+      ansible.builtin.systemd_service:
+        name: fan-control
+        state: restarted
+
+    - name: restart promtail
+      ansible.builtin.systemd_service:
+        name: promtail
+        state: restarted
