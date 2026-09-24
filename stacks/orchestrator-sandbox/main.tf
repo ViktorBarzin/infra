@@ -165,6 +165,24 @@ resource "kubernetes_role_binding_v1" "scion_broker" {
   }
 }
 
+# --- Agent pod image pulls ---
+
+# Scion's agent images are private ghcr.io/viktorbarzin/scion-* packages, and
+# Scion's pod spec sets no imagePullSecrets, so agent pods (which run as the
+# namespace's default ServiceAccount) get the pull secret from this account.
+# Kyverno clones ghcr-credentials into the namespace (the allowlist in
+# stacks/kyverno/modules/kyverno/ghcr-credentials.tf). Agents never call the
+# Kubernetes API, so no token is mounted.
+resource "kubernetes_default_service_account_v1" "sandbox" {
+  metadata {
+    namespace = kubernetes_namespace_v1.sandbox.metadata[0].name
+  }
+  image_pull_secret {
+    name = "ghcr-credentials"
+  }
+  automount_service_account_token = false
+}
+
 # --- Claude token for agent pods ---
 
 # Vault secret/orchestrator-sandbox:claude_code_oauth_token holds wizard's own
