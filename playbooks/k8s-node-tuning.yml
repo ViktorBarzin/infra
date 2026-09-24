@@ -1258,6 +1258,21 @@
       changed_when: true
       tags: fstab
 
+    # ---- no dnsmasq on the nodes -------------------------------------------
+    # Port 53 on a node belongs to node-cache (NodeLocal DNSCache, on
+    # 169.254.20.10 and the kube-dns ClusterIP) and to systemd-resolved (on
+    # 127.0.0.53/54), so dnsmasq can never start here. It had been installed
+    # by hand on k8s-master and node1-3, carrying nothing but `no-negcache`.
+    # The three workers had it disabled; on master it was still enabled and
+    # failed at every boot with "Address already in use", which kept the node
+    # reporting "degraded" (found 2026-09-24). Removing the package keeps its
+    # config files; dnsmasq-base, which other tools use, stays installed.
+    - name: dnsmasq is not installed
+      ansible.builtin.apt:
+        name: dnsmasq
+        state: absent
+      tags: dnsmasq
+
     # ---- what the operator still has to do --------------------------------
     - name: Say plainly that nothing is live yet
       ansible.builtin.debug:
