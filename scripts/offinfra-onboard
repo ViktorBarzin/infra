@@ -190,22 +190,24 @@ os.makedirs(os.path.dirname(dst), exist_ok=True)
 open(dst, 'w').write(s)
 PYEOF
 }
-log "rendering build.yml$([ "$NO_DEPLOY" = 1 ] && echo ' (no deploy job)' || echo ' + deploy.yml')"
+log "rendering build.yml$([ "$NO_DEPLOY" = 1 ] && echo ' (no deploy step)' || echo ' + deploy.yml')"
 if [ "$DRY_RUN" = 0 ]; then
   render "$TEMPLATES/build.yml.tmpl"  "$CLONE/.github/workflows/build.yml"
-  if [ "$NO_DEPLOY" = 1 ]; then
-    # CronJob-only: drop the deploy job (everything from "  deploy:" to the
-    # notify job) — :latest+Always CronJobs pick up new builds on next run.
-    python3 - "$CLONE/.github/workflows/build.yml" <<'PYDEL'
+  # The deploy trigger is the last step of the build job, fenced by marker
+  # comments. CronJob-only (--no-deploy) drops the fenced block, since
+  # :latest+Always CronJobs pick up new builds on their next run; otherwise
+  # only the two marker lines go.
+  python3 - "$CLONE/.github/workflows/build.yml" "$([ "$NO_DEPLOY" = 1 ] && echo drop || echo keep)" <<'PYDEL'
 import sys
-p=sys.argv[1]; lines=open(p).read().split("\n")
-out=[]; skip=False
-for l in lines:
-    if l.rstrip() == "  deploy:": skip=True
-    if l.rstrip() == "  notify-failure:": skip=False
+p, mode = sys.argv[1], sys.argv[2]
+out = []; skip = False
+for l in open(p).read().split("\n"):
+    if l.strip().startswith("# >>> deploy trigger"): skip = mode == "drop"; continue
+    if l.strip().startswith("# <<< deploy trigger"): skip = False; continue
     if not skip: out.append(l)
-open(p,"w").write("\n".join(out).replace("needs: [lint-and-test, build, deploy]","needs: [lint-and-test, build]"))
+open(p, "w").write("\n".join(out))
 PYDEL
+  if [ "$NO_DEPLOY" = 1 ]; then
     rm -f "$CLONE/.woodpecker/deploy.yml"
   else
     render "$TEMPLATES/deploy.yml.tmpl" "$CLONE/.woodpecker/deploy.yml"
