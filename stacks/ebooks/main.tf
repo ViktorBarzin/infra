@@ -949,6 +949,14 @@ resource "kubernetes_deployment" "book_search" {
         app = "book-search"
       }
     }
+    # One writer only. The rescue table, the Kindle send guard and the job
+    # journal live on /stacks-config, and during a rolling update two pods
+    # would both act on them: the new pod restarts a retry the old one is
+    # still running, and each overwrites the other's rescues.json. The cost
+    # is the new pod's start, 7 s with the image cached (2026-09-24).
+    strategy {
+      type = "Recreate"
+    }
     template {
       metadata {
         labels = {
