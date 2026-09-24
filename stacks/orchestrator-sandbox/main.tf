@@ -37,9 +37,13 @@ resource "kubernetes_namespace_v1" "sandbox" {
 
 # --- Budget ---
 
-# The sprint's cluster budget: 24 GiB of memory and 12 CPU, for requests and
-# limits alike. Scion gives each agent container 250m/512Mi requests and 2/4Gi
-# limits by default, so the limits cap the sandbox at six default agents.
+# The sprint's cluster budget: 24 GiB of memory on requests and limits, and 12
+# CPU on requests. There is deliberately no limits.cpu entry: the Kyverno
+# strip-cpu-limits policy removes every container's CPU limit at admission,
+# cluster-wide and with no opt-out, so a limits.cpu quota rejects every pod
+# ("must specify limits.cpu"). Scion gives each agent container 250m/512Mi
+# requests and a 4Gi memory limit by default, so limits.memory caps the
+# sandbox at six default agents.
 resource "kubernetes_resource_quota_v1" "sandbox" {
   metadata {
     name      = "sandbox-quota"
@@ -48,7 +52,6 @@ resource "kubernetes_resource_quota_v1" "sandbox" {
   spec {
     hard = {
       "requests.cpu"    = "12"
-      "limits.cpu"      = "12"
       "requests.memory" = "24Gi"
       "limits.memory"   = "24Gi"
     }
@@ -57,7 +60,8 @@ resource "kubernetes_resource_quota_v1" "sandbox" {
 
 # Defaults for containers that declare no resources (Scion's optional
 # workspace-provision init container, for one), so the quota above does not
-# reject them. The values match Scion's own per-agent defaults.
+# reject them. The values match Scion's own per-agent defaults, minus the CPU
+# limit that Kyverno would strip anyway.
 resource "kubernetes_limit_range_v1" "sandbox" {
   metadata {
     name      = "sandbox-defaults"
@@ -67,7 +71,6 @@ resource "kubernetes_limit_range_v1" "sandbox" {
     limit {
       type = "Container"
       default = {
-        cpu    = "2"
         memory = "4Gi"
       }
       default_request = {
