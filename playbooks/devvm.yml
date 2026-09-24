@@ -669,6 +669,35 @@
         - multipathd.service
         - multipathd.socket
 
+    # nvidia-container-toolkit is installed because dockerd's daemon.json
+    # carries the nvidia runtime (section 9), but this VM has no GPU, so the
+    # toolkit's CDI refresh failed at every boot and kept the box reporting
+    # "degraded" (found 2026-09-24). The package puts these unit files
+    # straight into /etc/systemd/system, where a mask cannot land (see the
+    # note above the evaluation services), so they are disabled instead. The
+    # toolkit itself stays for the daemon.json runtime.
+    - name: Stop the NVIDIA CDI refresh, which has no GPU to describe here
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop:
+        - nvidia-cdi-refresh.path
+        - nvidia-cdi-refresh.service
+      tags: vm-hardware
+
+    # openipmi came in on 2026-06-10 as a recommendation of ipmitool, which
+    # stays. Its service loads the local IPMI drivers, and a VM has no BMC, so
+    # it failed at every boot too. The unit is generated from
+    # /etc/init.d/openipmi, so a mask in /etc/systemd/system does take
+    # precedence here.
+    - name: No local IPMI on a VM
+      ansible.builtin.systemd_service:
+        name: openipmi.service
+        masked: true
+        state: stopped
+      tags: vm-hardware
+
     # Claude Code leaves one scratch directory per session under /tmp and never
     # reaps them. /tmp is a RAM-backed tmpfs here, so that is a slow memory leak:
     # it reached 8.0G of 8.0G on 2026-09-06 and background commands began failing
