@@ -80,11 +80,18 @@ actuator plumbing + safety knobs (`COMMAND_ENTITY`, `STALE_SECS`, `HA_GRACE_SECS
 `MIN_STEP`, `CEILING`); edit it then `systemctl restart fan-control`.
 
 ## Deploy / update (daemon source)
+`playbooks/pve-host.yml` installs `scripts/fan-control.sh` as
+`/usr/local/bin/fan-control` and `scripts/fan-control.service` as the unit, and
+restarts the daemon when either changes (since 2026-09-24; it was copied by hand
+before that). Dry-run first:
 ```bash
-scp -i ~/.ssh/pve_root scripts/fan-control.sh root@192.168.1.127:/tmp/fan-control.new
-ssh -i ~/.ssh/pve_root root@192.168.1.127 'install -m0755 /tmp/fan-control.new /usr/local/bin/fan-control && systemctl restart fan-control'
+ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml --check --diff
+ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
 ```
-(`fan-control.service` only on a unit change → also `systemctl daemon-reload`.)
+`/etc/fan-control.env` holds the ha-sofia token, stays out of git, and the
+playbook leaves it alone. The script hands the token to curl through a file
+descriptor (`-H @<(printf ...)`) rather than the command line, because snoopy
+records every command line on this host and ships it to Loki.
 
 ## Symptoms & checks
 | Symptom | Check |

@@ -111,6 +111,9 @@ ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
 | Per-VM disk I/O caps (`apply-mbps-caps` script, service and timer) | Keeps one VM's reads out of the queue that etcd's fsyncs wait in on sdc |
 | journald in RAM (`Storage=volatile`) | The on-disk journal wrote about 4.5 GB/day to sdc |
 | `xfs_scrub_all.timer` and `xfs_scrub_all.service` masked | The host has no XFS filesystems, and the scrub deadlocks here on its own `lsblk` output, which kept systemd reporting "starting" from 2026-07-18 to 2026-09-24 |
+| Fan actuator (`scripts/fan-control.sh` and its unit) | Replaces the old scp deploy. The script passes the Home Assistant token through a file descriptor, so it no longer appears in the host's command audit |
+| promtail config (`scripts/pve-promtail.yaml`) | Redacts secret-shaped values before the journal reaches Loki |
+| LVM metadata archive kept 7 days (`/etc/lvm/lvmlocal.conf`) | The default 30 days held 9,810 files and 1.9 GB for the `pve` volume group |
 
 The measurements and reasoning for each item sit next to its task in
 the playbook.
