@@ -16,9 +16,15 @@ permissions:
   contents: read
   packages: write
 
+# Private repos spend a 2,000-minute monthly allowance shared by the whole
+# account, and GitHub bills every job rounded up to a whole minute. So there
+# are as few jobs as the gates need, and each has a timeout: without one a
+# hung step runs to GitHub's six-hour default, as an f1-stream test run did on
+# 2026-09-12, billing 360 minutes.
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 {{TEST_STEPS}}
@@ -26,8 +32,7 @@ jobs:
   build:
     needs: lint-and-test
     runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.meta.outputs.sha }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
@@ -74,19 +79,9 @@ jobs:
             ghcr.io/viktorbarzin/{{IMAGE}}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      # Keep the newest ~10 versions on ghcr (latest rides the newest one).
-      - name: ghcr retention (keep 10)
-        uses: actions/delete-package-versions@v5
-        continue-on-error: true
-        with:
-          package-name: {{IMAGE}}
-          package-type: container
-          min-versions-to-keep: 10
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
+      # >>> deploy trigger: offinfra-onboard removes this line and the <<< one, or with --no-deploy the whole block
+      # The deploy trigger is a step here rather than a job of its own, which
+      # billed a whole minute for a two-second curl.
       # Signal Woodpecker (repo {{WP_REPO_ID}} = ViktorBarzin/{{NAME}} mirror) to run
       # .woodpecker/deploy.yml — kubectl set image in-cluster (agent SA is cluster-admin).
       - name: Trigger Woodpecker deploy
@@ -96,18 +91,28 @@ jobs:
               "https://ci.viktorbarzin.me/api/repos/{{WP_REPO_ID}}/pipelines" \
               -H "Authorization: Bearer ${{ secrets.WOODPECKER_TOKEN }}" \
               -H "Content-Type: application/json" \
-              -d "{\"branch\":\"master\",\"variables\":{\"IMAGE_TAG\":\"${{ needs.build.outputs.image_tag }}\",\"IMAGE_NAME\":\"ghcr.io/viktorbarzin/{{IMAGE}}\"}}")
+              -d "{\"branch\":\"master\",\"variables\":{\"IMAGE_TAG\":\"${{ steps.meta.outputs.sha }}\",\"IMAGE_NAME\":\"ghcr.io/viktorbarzin/{{IMAGE}}\"}}")
             if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 300 ]; then
               echo "Woodpecker deploy triggered (HTTP $STATUS)"; exit 0
             fi
             echo "Attempt $attempt failed (HTTP $STATUS), retrying in 30s..."; sleep 30
           done
           echo "Failed to trigger Woodpecker deploy after 3 attempts"; exit 1
+      # <<< deploy trigger
+      # Keep the newest ~10 versions on ghcr (latest rides the newest one).
+      - name: ghcr retention (keep 10)
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          package-name: {{IMAGE}}
+          package-type: container
+          min-versions-to-keep: 10
 
   notify-failure:
-    needs: [lint-and-test, build, deploy]
+    needs: [lint-and-test, build]
     if: failure()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Slack notify
         run: |
