@@ -53,6 +53,15 @@ variable "goodreads_kindle_email" {
   description = "Kindle address for books sourced from Anca's Goodreads to-read shelf. Empty = shelve only."
 }
 
+# The `smoke` recipient name in book-search's KINDLE_RECIPIENTS. Test shares
+# and the Kindle send-guard check go here rather than to Anca's Kindle. spam@
+# is one of Viktor's own mailboxes, so a test send can be read back.
+variable "kindle_smoke_email" {
+  type        = string
+  default     = "spam@viktorbarzin.me"
+  description = "Address book-search's `smoke` Kindle recipient maps to, for test shares."
+}
+
 variable "goodreads_downloads_enabled" {
   type = string
   # ON since 2026-08-16. The gate is passed: the matcher was replayed over 50 of
@@ -118,6 +127,43 @@ resource "kubernetes_manifest" "calibre_external_secret" {
       dataFrom = [{
         extract = {
           key = "calibre"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.ebooks]
+}
+
+# book-search hands a share its own code cannot fetch to a rescue agent on
+# claude-agent-service. One property only: the claude-agent-service key also
+# holds that service's OAuth and Forgejo tokens, which book-search has no use
+# for. A new ExternalSecret syncs on creation, unlike a key added to the hourly
+# calibre-secrets extract.
+resource "kubernetes_manifest" "book_search_agent_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "book-search-agent"
+      namespace = "ebooks"
+    }
+    spec = {
+      refreshInterval = "1h"
+      secretStoreRef = {
+        name = "vault-kv"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "book-search-agent"
+      }
+      data = [{
+        secretKey = "CLAUDE_AGENT_TOKEN"
+        remoteRef = {
+          key      = "claude-agent-service"
+          property = "api_bearer_token"
         }
       }]
     }
@@ -942,7 +988,28 @@ resource "kubernetes_deployment" "book_search" {
           # authentication, and lets one change without a reinstall.
           env {
             name  = "KINDLE_RECIPIENTS"
-            value = "anca:${var.goodreads_kindle_email}"
+            value = "anca:${var.goodreads_kindle_email},smoke:${var.kindle_smoke_email}"
+          }
+          # Rescue agent for a share the automatic retries cannot fix: at most
+          # RESCUE_DAILY_CAP runs a day, one at a time, each capped at $5 in the
+          # request. No token means no rescues, so that one is optional too.
+          env {
+            name  = "CLAUDE_AGENT_URL"
+            value = "http://claude-agent-service.claude-agent.svc.cluster.local:8080"
+          }
+          env {
+            name = "CLAUDE_AGENT_TOKEN"
+            value_from {
+              secret_key_ref {
+                name     = "book-search-agent"
+                key      = "CLAUDE_AGENT_TOKEN"
+                optional = true
+              }
+            }
+          }
+          env {
+            name  = "RESCUE_DAILY_CAP"
+            value = "2"
           }
           env {
             name = "QBITTORRENT_PASS"
