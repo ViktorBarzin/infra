@@ -1899,13 +1899,41 @@ serverFiles:
             # crossing costs a firing and a resolved message; 15m merges those
             # into one episode and lands close to the old volume while still
             # reacting in about four minutes instead of twenty.
-            expr: rate(node_pressure_io_stalled_seconds_total{job="devvm"}[2m]) > 0.60
+            #
+            # GATED ON A STARVED BYSTANDER since 2026-09-24. Box-wide io full
+            # only counts tasks that want to run, so one user's heavy IO job
+            # drives it to 70-80% while every idle shell on the box, that user's
+            # included, answers a keystroke normally. Viktor was told "every
+            # session on the box is frozen" at 07:34 that day while his terminal
+            # worked fine. Replaying the 7 days to 2026-09-24: all 4 episodes
+            # (09-18, 09-19, 09-20, 09-24) had wizard as the ONLY stalled user
+            # and no starved bystander, so all 4 were one user's own IO stalling
+            # his own slice; emo's slice read 0.00-0.10 during the 09-24 one.
+            # With the gate, 0 episodes in those 7 days.
+            #
+            # The gate is DevvmUserIOStarved's condition: some user stalled over
+            # 0.60 while issuing under 50 reads/s over 15m, i.e. waiting on disk
+            # without being the one using it. It keeps the case this rule was
+            # written for. The per-user exporter only started on 2026-09-13 so
+            # the 09-12 incident cannot be replayed, but between 09-13 and 09-16
+            # emo was a starved bystander in 8 two-minute samples, 5 of them
+            # while the box read over 0.60, which this rule now fires on. The
+            # [15m] window is required, not a choice: devvm_slice_io_rios_total
+            # only moves every few minutes, so a short rate reads zero.
+            expr: |
+              rate(node_pressure_io_stalled_seconds_total{job="devvm"}[2m]) > 0.60
+              and on()
+              count(
+                (devvm_slice_pressure_ratio{resource="io", user!=""} > 0.60)
+                and on(user)
+                (rate(devvm_slice_io_rios_total{user!=""}[15m]) < 50)
+              ) > 0
             for: 2m
             keep_firing_for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "devvm is stalled on disk {{ $value | humanizePercentage }} of the time — every session on the box is frozen"
+              summary: "devvm is stalled on disk {{ $value | humanizePercentage }} of the time, and it is starving a user who is not causing it"
               description: "This is what users report as the machine being unusable, and it is not a CPU problem: on 2026-09-12 the affected user's slice read cpu.pressure 0.00 against io.pressure 73.93. Find who is generating it: homelab metrics query 'devvm_slice_pressure_ratio{resource=\"io\"}' shows it per user slice. Check whether the cap or the device is the limit, and expect the device: the guest has hit 100% utilisation at only 201 reads/s against a 400 cap it reaches in 0.8% of 5-minute samples, so the old advice of raising the cap usually will not apply. Compare the two sides: guest node_disk_io_time_seconds_total{job=\"devvm\",device=\"dm-0\"} against the host dm-217 for the same window. Guest saturated while the host is not means the cap; both saturated means the spindle, and etcd shares it. Compare the two sides: guest read latency in node_disk_read_time_seconds_total{job=\"devvm\"} against the host's own sdc. If the guest is far slower than the host, the cap is the constraint rather than the spindle."
           # DevvmIOSchedulerNotBFQ WAS HERE, and is deleted rather than
           # inverted. BFQ went on sda on 2026-09-12 to make the cgroup IOWeight
