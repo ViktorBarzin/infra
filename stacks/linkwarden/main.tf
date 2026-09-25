@@ -121,7 +121,7 @@ resource "random_string" "secret" {
 # kept re-generating them.
 # Encrypted class: saved bookmarks + their full page contents are personal
 # browsing history (sensitive data -> proxmox-lvm-encrypted per the storage
-# decision rule in .claude/CLAUDE.md).
+# decision rule in docs/agents/storage-backup.md).
 # NO backup CronJob deliberately: archives are DERIVED data, regenerable from
 # the URLs in Postgres (which the nightly per-db pg_dump already covers). Same
 # rationale as the regenerable stores excluded from nfs-mirror.

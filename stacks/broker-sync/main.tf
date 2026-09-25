@@ -777,7 +777,7 @@ resource "kubernetes_cron_job_v1" "fx_reconcile" {
 }
 
 # Backup: snapshot sync.db / fx.db / csv-archive into NFS daily, keep 30 days.
-# Convention from infra/.claude/CLAUDE.md: every proxmox-lvm app needs a backup
+# Convention from docs/agents/storage-backup.md: every proxmox-lvm app needs a backup
 # CronJob writing to /mnt/main/<app>-backup/ on the PVE host (served over NFS).
 resource "kubernetes_cron_job_v1" "backup" {
   metadata {

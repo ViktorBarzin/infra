@@ -367,7 +367,7 @@ resource "kubernetes_cron_job_v1" "stray_workload_detect" {
             # for the state projection, stdlib python for the reconciliation.
             # Adding a Postgres driver to the python image would mean a runtime
             # pip install, which is the status-page-pusher anti-pattern
-            # (.claude/CLAUDE.md); shipping the query to psql keeps both halves
+            # (docs/agents/monitoring.md); shipping the query to psql keeps both halves
             # on stock images with nothing installed at runtime.
             init_container {
               name              = "extract-declared"

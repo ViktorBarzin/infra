@@ -61,7 +61,7 @@ module "tls_secret" {
 # DuckDB database + cached DJI decryption keys + uploaded originals.
 # Embedded DB -> block storage, not NFS (same rationale as freshrss data).
 # Encrypted class: flight logs are GPS traces of home/travel (sensitive data
-# -> proxmox-lvm-encrypted per the storage decision rule in .claude/CLAUDE.md).
+# -> proxmox-lvm-encrypted per the storage decision rule in docs/agents/storage-backup.md).
 resource "kubernetes_persistent_volume_claim" "data" {
   wait_until_bound = false
   metadata {
