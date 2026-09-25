@@ -1,0 +1,14 @@
+[Unit]
+Description=Keep the pi CLI at the latest published version
+Documentation=https://www.npmjs.com/package/@earendil-works/pi-coding-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pi-update
+StandardOutput=journal
+StandardError=journal
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=20min
