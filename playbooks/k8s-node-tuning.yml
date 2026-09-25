@@ -23,7 +23,7 @@
 # `allowedUnsafeSysctls`, and a remote browser spent four days reconnecting to a
 # Service with no endpoints.
 #
-# `.claude/CLAUDE.md` (the "A Kubernetes upgrade erases the kubelet post-join
+# `docs/agents/known-issues.md` (the "A Kubernetes upgrade erases the kubelet post-join
 # tune on every node" entry) records the durable fix as one of two things:
 # putting these keys into the `kubelet-config` ConfigMap that kubeadm writes node
 # config from, or re-running the tune from the `k8s-version-upgrade` pipeline

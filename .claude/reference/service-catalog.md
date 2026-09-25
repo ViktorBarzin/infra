@@ -1,6 +1,6 @@
 # Service Catalog
 
-> Auto-maintained reference. See `.claude/CLAUDE.md` for operational guidance.
+> Auto-maintained reference. See `AGENTS.md` for operational guidance.
 
 ## Critical - Network & Auth (Tier: core)
 | Service | Description | Stack |

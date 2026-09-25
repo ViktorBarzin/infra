@@ -431,7 +431,8 @@ Because the SA is the user's DEFAULT kubectl credential, other per-namespace
 port-forward grants hang off the same identity: `stacks/excalidraw/rbac.tf`
 grants `emo-browser` `pods/portforward` in `excalidraw` (2026-07-02) so emo's
 agent can upload drawings via the port-forward + `X-Authentik-Username` recipe
-in his `~/.claude/CLAUDE.md`. Revoking the SA revokes those too.
+in his AGENTS.md (monorepo `docs/agents/users/emo/AGENTS.md`, which his
+`~/.claude/CLAUDE.md` links to). Revoking the SA revokes those too.
 
 ## Browser pool (broker + FleetView) — since 2026-07-14
 

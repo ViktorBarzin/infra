@@ -1,6 +1,6 @@
 # Codex Harness Parity — making the devvm "Codex-ready"
 
-- **Status:** Draft — for review
+- **Status:** Superseded on 2026-09-22 by monorepo `docs/agents/2026-09-22-per-user-agent-instructions.md`. Codex now gets the org policy from `/etc/codex/requirements.toml` and each user's own `AGENTS.md` through `~/.codex/AGENTS.md`; the canonical shared rule set and `refresh_codex_mirror` described below were retired. Kept as a record.
 - **Owner:** Viktor / wizard
 - **Date:** 2026-07-14
 - **Owning repo:** `infra` (`scripts/workstation/`, `scripts/t3-provision-users.sh`)
