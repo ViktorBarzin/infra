@@ -438,11 +438,24 @@
         group: root
 
     # ---- 5) /etc/skel for new accounts --------------------------------------
+    # File by file, not the whole skel/ directory: the repo keeps the tmux
+    # config as skel/tmux.conf so it shows in a listing, but a new account needs
+    # it as ~/.tmux.conf. Copying the directory verbatim put a second, unused
+    # /etc/skel/tmux.conf beside the real one (found 2026-09-25), which every new
+    # home then inherited as a stray ~/tmux.conf. setup-devvm.sh installs the
+    # same two files the same way.
     - name: Seed /etc/skel
       ansible.builtin.copy:
-        src: "{{ workstation_dir }}/skel/"
-        dest: /etc/skel/
-        mode: preserve
+        src: "{{ workstation_dir }}/skel/{{ item.src }}"
+        dest: "/etc/skel/{{ item.dest }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: start-claude.sh, dest: start-claude.sh, mode: "0755" }
+        - { src: tmux.conf, dest: .tmux.conf, mode: "0644" }
+    - name: No stray /etc/skel/tmux.conf
+      ansible.builtin.file:
+        path: /etc/skel/tmux.conf
+        state: absent
 
     # setup-devvm.sh used to link these to the admin's own ~/.claude dirs, so a
     # new account inherited his personal rules and the provisioner's
