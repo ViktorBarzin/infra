@@ -249,6 +249,33 @@ PY
   return 0
 }
 
+# The org policy for pi, machine-wide, from the same committed claudeMd. Pi has
+# no managed layer of its own: terminal-lobby's pi extension (PI_EXTENSION)
+# reads this file and appends it to pi's system prompt on every turn. The file
+# is the policy text and nothing else, since every byte in it reaches the model;
+# the provenance note that Codex's copy carries in a TOML comment lives here
+# instead. Rewritten only when the text changes, and renamed into place so a
+# turn starting mid-write reads the old text or the new.
+sync_pi_org_policy() {
+  local dst=/etc/pi/org-policy.md tmp
+  tmp="$(mktemp)"
+  if ! python3 - "$MANAGED_SRC" > "$tmp" 2>/dev/null <<'PY'
+import json, sys
+text = json.load(open(sys.argv[1], encoding="utf-8"))["claudeMd"].rstrip("\n")
+if not text.strip():
+    sys.exit(1)  # an empty policy means a broken source; keep the deployed file
+sys.stdout.buffer.write((text + "\n").encode("utf-8"))
+PY
+  then rm -f "$tmp"; log "WARN: pi org policy not generated from $MANAGED_SRC"; return 0; fi
+  if cmp -s "$tmp" "$dst" 2>/dev/null; then rm -f "$tmp"; return 0; fi
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] pi org policy -> $dst"; rm -f "$tmp"; return 0; fi
+  install -d -m 0755 -o root -g root /etc/pi \
+    && install -m 0644 -o root -g root "$tmp" "$dst.new" && mv -f "$dst.new" "$dst" \
+    && log "deployed pi org policy -> $dst"
+  rm -f "$tmp" "$dst.new"
+  return 0
+}
+
 # Per-user OIDC kubeconfig (kubelogin/PKCE — the `kubernetes` Authentik client is
 # public, no secret). Identical for all users: identity comes from each user's own
 # interactive OIDC login, which the apiserver maps (email claim) to their RBAC.
@@ -1147,9 +1174,10 @@ desired_file="$(mktemp)"
 python3 "$ENGINE" derive --roster "$ROSTER" --ports-json "$ports_file" --playwright-ports-json "$pw_ports_file" > "$desired_file"
 jq -e . "$desired_file" >/dev/null || { echo "[t3-provision] derive produced invalid JSON" >&2; exit 1; }
 
-# 3b) machine-wide org policy (repo -> /etc), for Claude Code and for Codex
+# 3b) machine-wide org policy (repo -> /etc), for Claude Code, Codex and pi
 sync_managed_config
 sync_codex_requirements
+sync_pi_org_policy
 # 3c) machine-wide tmux-persist binary (repo -> /usr/local/bin; units enabled in step 5b)
 sync_tmux_persist
 
