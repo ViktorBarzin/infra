@@ -1,6 +1,7 @@
 # Claude Code ⇄ Codex — one shared skill set on the devvm
 
-> Status: done · grilled + executed 2026-07-24 · Owner: wizard
+> Status: superseded on 2026-09-25. Every skill wizard has now lives in `~/.agents/skills`, which Codex reads directly, and `~/.claude/skills` holds only links into it, so the `~/.codex/skills/claude` bridge described below was removed. See the config-inheritance section of `docs/architecture/multi-tenancy.md`. Kept as a record.
+> Was: done · grilled + executed 2026-07-24 · Owner: wizard
 > Scope: `wizard@devvm` — `~/.claude`, `~/.codex`, and the chezmoi `dot_files` repo.
 > Goal: Claude Code and Codex sessions read the **same** skills, with **no
 > duplication**, and stay in sync **automatically** — porting the architecture
