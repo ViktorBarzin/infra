@@ -13,4 +13,4 @@ Steps:
    - Ingress with TLS and standard annotations
 3. Use existing patterns from similar services
 4. Add module reference in main.tf
-5. Update .claude/CLAUDE.md with new service version
+5. Add the service to `.claude/reference/service-catalog.md`, and its operational notes to `docs/agents/service-notes.md`

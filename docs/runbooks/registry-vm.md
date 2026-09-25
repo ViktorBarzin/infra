@@ -322,8 +322,8 @@ ssh root@10.0.20.10 '
 ## Related docs
 
 - `docs/architecture/dns.md` — resolver IP assignments per subnet.
-- `.claude/CLAUDE.md` (at repo root) — notes on the private registry
-  and `containerd` `hosts.toml` redirects.
+- `docs/agents/images.md` — notes on the registries, the pull-through
+  caches and the `containerd` redirects.
 - `docs/runbooks/registry-rebuild-image.md` — rebuild an image after an
   orphan OCI-index incident (different class of problem than DNS).
 - `docs/post-mortems/2026-04-19-registry-orphan-index.md` — root cause

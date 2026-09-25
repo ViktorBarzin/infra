@@ -7,7 +7,7 @@ that documents what gates the app (for "app") or why the endpoint is
 intentionally public (for "none").
 
 This is the static guard for the anti-exposure rule documented in
-`infra/.claude/CLAUDE.md` "Auth" section. It's invoked by `scripts/tg`
+`docs/agents/ingress.md` (the ingress auth tiers). It's invoked by `scripts/tg`
 before every plan/apply/destroy/refresh, so it fires regardless of who
 or what is running terragrunt — local laptop, CI, headless agent.
 

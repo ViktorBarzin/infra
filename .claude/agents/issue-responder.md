@@ -323,11 +323,11 @@ not have to redo your diagnosis.
 
 ## Standing rules you would otherwise not see
 
-The devvm carries an org-wide policy and a set of shared rules that every human
-session here loads automatically. **This container has neither** — no
-`/etc/claude-code/managed-settings.json`, no `~/.claude/rules/`. You do get the
-repo's own `.claude/CLAUDE.md` and `AGENTS.md`, and they are authoritative. These
-are the standing rules from the layer you cannot see:
+The devvm carries an org-wide policy and a per-user instruction file that every
+human session here loads automatically. **This container has neither**: no
+`/etc/claude-code/managed-settings.json`, no `~/.claude/CLAUDE.md`. You do get
+the repo's own `AGENTS.md` (through the `CLAUDE.md` symlink beside it), and it is
+authoritative. These are the standing rules from the layer you cannot see:
 
 - **Infrastructure changes go through Terraform.** Never `kubectl apply/edit/patch`
   as the final state of a config change. Committed stack changes are auto-applied

@@ -42,7 +42,7 @@ WANT = [
     # and the fixer repairs it. In a hook rather than prose because it has to
     # land at the moment the wall is hit, not whenever the model recalls it.
     ("PostToolUse", "fixer-suggest.py", f"python3 {hooks_dir}/fixer-suggest.py", {"timeout": 5}, "Bash"),
-    # Writing-style check on the finished reply, against ~/.claude/rules/40-style.md.
+    # Writing-style check on the finished reply, against each user's AGENTS.md style rules.
     # Synchronous and blocking on purpose: it asks for a rewrite when a mechanical
     # tell survives. Measured 2026-09-02 over 7,302 replies, the em-dash ban had
     # been loaded in every session and still produced 6,068 em dashes, so the rule
