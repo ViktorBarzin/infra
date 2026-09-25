@@ -59,6 +59,25 @@ PI_EXTENSION="${PI_EXTENSION:-/usr/share/terminal-lobby/pi-extension.js}"
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
 
+# ---- writing inside a user's home -------------------------------------------
+# Root never creates, writes, chowns or chmods a path inside a user's home. The
+# user controls every name in it, so a directory or file they swapped for a
+# symlink would make root act on whatever the link points at: root running
+# `install -d -o <user> ~/.kube` would hand a linked /etc/sudoers.d to the user.
+# The /etc/skel links found on 2026-09-22 were one case of this pattern. These
+# helpers run the operation AS the user, so a planted link reaches only what that
+# user could reach anyway, and it fails as a permission error, not an escalation.
+mkdir_as() {  # mkdir_as USER MODE DIR...
+  local user="$1" mode="$2"; shift 2
+  runuser -u "$user" -- install -d -m "$mode" "$@"
+}
+write_as() {  # write_as USER MODE DEST < content: atomic, never world-readable
+  local user="$1" mode="$2" dst="$3"
+  runuser -u "$user" -- sh -c 'umask 077; t="$1.tmp.$$"
+    if cat > "$t" && chmod "$2" "$t" && mv -f "$t" "$1"; then exit 0; fi
+    rm -f "$t"; exit 1' _ "$dst" "$mode"
+}
+
 # Per-non-admin writable, git-crypt-LOCKED infra clone at ~/<subpath>. Keyless +
 # filter=cat ⇒ code/docs are plaintext, git-crypt'd secret files stay ciphertext.
 # Writable + ungated (push != apply; applies are admin-only). NEVER touches an
@@ -145,12 +164,13 @@ ensure_workspace_layout() {
     if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] migrate $user:~/code (single clone) -> ~/code/infra"; return 0; fi
     log "migrate $user: ~/code (single infra clone) -> ~/code/infra"
     tmp="$home/.code-workspace-migrate.$$"
-    mv "$home/code" "$tmp"
-    install -d -o "$user" -g "$user" -m 0755 "$home/code"
-    mv "$tmp" "$home/code/infra"
+    runuser -u "$user" -- mv "$home/code" "$tmp" \
+      && mkdir_as "$user" 0755 "$home/code" \
+      && runuser -u "$user" -- mv "$tmp" "$home/code/infra" \
+      || log "WARN: workspace migration for $user stopped part way; check ~/code and $tmp"
   elif [[ ! -e "$home/code" ]]; then
     if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] create workspace dir $user:~/code"; return 0; fi
-    install -d -o "$user" -g "$user" -m 0755 "$home/code"
+    mkdir_as "$user" 0755 "$home/code" || log "WARN: could not create $user:~/code"
   fi
 }
 
@@ -294,8 +314,8 @@ install_user_kubeconfig() {
   server="$(KUBECONFIG="$ADMIN_KUBECONFIG" kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')"
   ca="$(KUBECONFIG="$ADMIN_KUBECONFIG" kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
   [[ -n "$server" && -n "$ca" ]] || { log "WARN: could not read cluster server/CA -> skip kubeconfig for $user"; return 0; }
-  install -d -o "$user" -g "$user" -m 0700 "$home/.kube"
-  cat > "$kc" <<EOF
+  mkdir_as "$user" 0700 "$home/.kube" || { log "WARN: could not create $user:~/.kube"; return 0; }
+  write_as "$user" 0600 "$kc" <<EOF || { log "WARN: could not write $user:~/.kube/config"; return 0; }
 apiVersion: v1
 kind: Config
 clusters:
@@ -325,7 +345,6 @@ users:
       - --oidc-extra-scope=groups
       interactiveMode: IfAvailable
 EOF
-  chown "$user:$user" "$kc"; chmod 0600 "$kc"
   log "wrote OIDC kubeconfig -> $user:~/.kube/config"
 }
 
@@ -395,8 +414,8 @@ users:
 EOF
   if cmp -s "$tmp" "$kc" 2>/dev/null; then rm -f "$tmp"; return 0; fi   # already current -> no churn
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] dual-context (SA default + OIDC) browser kubeconfig -> $user:$kc"; rm -f "$tmp"; return 0; fi
-  install -d -o "$user" -g "$user" -m 0700 "$home/.kube"
-  install -o "$user" -g "$user" -m 0600 "$tmp" "$kc" || { log "WARN: failed to write browser kubeconfig for $user"; rm -f "$tmp"; return 0; }
+  { mkdir_as "$user" 0700 "$home/.kube" && write_as "$user" 0600 "$kc" < "$tmp"; } \
+    || { log "WARN: failed to write browser kubeconfig for $user"; rm -f "$tmp"; return 0; }
   rm -f "$tmp"
   log "wrote dual-context browser kubeconfig (SA default + OIDC) -> $user:~/.kube/config"
   return 0
@@ -459,7 +478,8 @@ install_claude_auth_sync() {
   if [[ "$DRY_RUN" == 1 ]]; then
     echo "[dry-run] ensure Claude-auth state dirs -> $user"
   else
-    install -d -o "$user" -g "$user" -m 0700 "$cfg" "$home/.local/state/claude-auth-sync"
+    mkdir_as "$user" 0700 "$cfg" "$home/.local/state/claude-auth-sync" \
+      || log "WARN: could not create the Claude-auth state dirs for $user"
   fi
 
   if [[ ! -s "$token_file" ]]; then
@@ -468,9 +488,11 @@ install_claude_auth_sync() {
     elif vault token lookup >/dev/null 2>&1 && \
       token="$(vault token create -orphan -period=768h -policy="$policy" \
         -display-name="devvm-claude-auth-$user" -field=token 2>/dev/null)"; then
-      install -d -o "$user" -g "$user" -m 0700 "$cfg"
-      install -o "$user" -g "$user" -m 0600 /dev/stdin "$token_file" <<<"$token"
-      log "minted isolated Claude-auth Vault token -> $user"
+      if mkdir_as "$user" 0700 "$cfg" && write_as "$user" 0600 "$token_file" <<<"$token"; then
+        log "minted isolated Claude-auth Vault token -> $user"
+      else
+        log "WARN: minted a Claude-auth Vault token for $user but could not write $token_file"
+      fi
     else
       log "WARN: scoped Claude-auth Vault token missing for $user (run provisioner with admin VAULT_TOKEN after vault stack apply)"
     fi
@@ -491,8 +513,7 @@ deploy_user_launcher() {
   dst="$home/start-claude.sh"
   cmp -s "$src" "$dst" 2>/dev/null && return 0          # already current -> no churn
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] deploy launcher -> $dst"; return 0; fi
-  install -m 0755 "$src" "$dst"
-  chown "$user:$user" "$dst"
+  write_as "$user" 0755 "$dst" < "$src" || { log "WARN: could not deploy start-claude.sh -> $user"; return 0; }
   log "deployed start-claude.sh -> $user"
 }
 
@@ -536,9 +557,12 @@ install_playwright() {
   # (1) chrome-service snapshot token, if-absent (0600, owned by the user)
   if [[ ! -f "$home/.config/playwright/token" && -r "$token_staged" ]]; then
     if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] seed playwright token -> $user"; else
-      install -d -o "$user" -g "$user" -m 0700 "$home/.config/playwright"
-      install -o "$user" -g "$user" -m 0600 "$token_staged" "$home/.config/playwright/token"
-      log "seeded playwright snapshot token -> $user"
+      if mkdir_as "$user" 0700 "$home/.config/playwright" \
+         && write_as "$user" 0600 "$home/.config/playwright/token" < "$token_staged"; then
+        log "seeded playwright snapshot token -> $user"
+      else
+        log "WARN: could not seed the playwright token for $user"
+      fi
     fi
   fi
 
@@ -641,10 +665,14 @@ install_beads() {
 
   # Rewrite only the server + identity keys; everything else in their metadata
   # is theirs to keep. Idempotent: a correct file is left byte-identical.
-  python3 - "$admin_meta" "$user_meta" <<'PYEOF' || { log "WARN: beads metadata rewrite failed for $user"; return 0; }
-import json, sys
-admin, target = sys.argv[1], sys.argv[2]
-a = json.load(open(admin))
+  # Root reads the admin's copy (under a home the user cannot enter) and hands its
+  # JSON over in the environment; the rewrite itself runs AS the user.
+  local admin_json
+  admin_json="$(cat "$admin_meta")" || { log "WARN: cannot read $admin_meta"; return 0; }
+  runuser -u "$user" -- env ADMIN_META="$admin_json" python3 - "$user_meta" <<'PYEOF' || { log "WARN: beads metadata rewrite failed for $user"; return 0; }
+import json, os, sys
+target = sys.argv[1]
+a = json.loads(os.environ["ADMIN_META"])
 t = json.load(open(target))
 keys = ("dolt_mode", "dolt_server_host", "dolt_server_port",
         "dolt_server_user", "dolt_database", "project_id")
@@ -656,8 +684,7 @@ if {k: t.get(k) for k in keys} != before:
     json.dump(t, open(target, "w"), indent=2)
     print("changed")
 PYEOF
-  chown "$user":"$user" "$user_meta" 2>/dev/null || true
-  chmod 700 "$home/code/.beads" 2>/dev/null || true
+  runuser -u "$user" -- chmod 700 "$home/code/.beads" 2>/dev/null || true
   # bd refuses to write without a role. contributor, not maintainer: a
   # non-admin should not be closing other people's issues by default.
   runuser -u "$user" -- bash -lc 'cd ~/code 2>/dev/null && git config beads.role >/dev/null 2>&1 || git config beads.role contributor' 2>/dev/null || true
@@ -733,13 +760,13 @@ install_browser_bridge_token() {
       || log "WARN: minted a browser-bridge token for $user but could not store it in Vault"
   fi
 
-  install -d -o "$user" -g "$user" -m 0700 "$dir"
-  # umask, not a chmod afterwards: the token must never exist world-readable,
-  # not even for the instant between the write and the mode change.
-  ( umask 077 && printf '%s\n' "$token" > "$dst" )
-  chown "$user":"$user" "$dst"
-  chmod 600 "$dst"
-  log "browser-bridge CLI token installed -> $user"
+  # write_as holds umask 077 for the whole write: the token must never exist
+  # world-readable, not even for the instant before its mode is set.
+  if mkdir_as "$user" 0700 "$dir" && printf '%s\n' "$token" | write_as "$user" 0600 "$dst"; then
+    log "browser-bridge CLI token installed -> $user"
+  else
+    log "WARN: could not write the browser-bridge CLI token for $user"
+  fi
   return 0  # best-effort tail must never return non-zero under set -euo pipefail
 }
 
@@ -753,23 +780,22 @@ install_memory() {
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] memory: hooks + settings wire + claude_memory MCP removal -> $user"; return 0; fi
 
   # (1) (re)install the hook scripts, owned by the user (refreshed each reconcile so fixes land)
-  install -d -o "$user" -g "$user" -m 0755 "$hooks_dst"
+  mkdir_as "$user" 0755 "$hooks_dst" || { log "WARN: could not create $user:~/.claude/hooks"; return 0; }
   local h
   for h in homelab-memory-recall.py auto-learn.py pre-compact-backup.sh post-compact-recovery.sh zsh-guard.py fixer-suggest.py unslop-check.py; do
-    install -o "$user" -g "$user" -m 0755 "$src/$h" "$hooks_dst/$h"
+    write_as "$user" 0755 "$hooks_dst/$h" < "$src/$h" || log "WARN: could not install hook $h -> $user"
   done
 
-  # (2) wire the hooks in settings.json, if-absent + additive. Run the helper as ROOT:
-  #     it must read $src under the admin's hardened home (mode 700), which a
-  #     runuser-as-$user CANNOT traverse — so chown the result back to the user and
-  #     enforce 0600 (it holds the per-user MEMORY_API_KEY).
-  if python3 "$src/wire-memory-hooks.py" "$home" >/dev/null 2>&1; then
-    [[ -f "$settings" ]] && chown "$user:$user" "$settings" 2>/dev/null || true
+  # (2) wire the hooks in settings.json, if-absent + additive. The helper sits under
+  #     the admin's hardened home (mode 700), which the user cannot enter, so root
+  #     opens it and feeds it on stdin to a python running AS the user. umask 077
+  #     keeps settings.json 0600 (it holds the per-user MEMORY_API_KEY).
+  if runuser -u "$user" -- sh -c 'umask 077 && exec python3 - "$1"' _ "$home" < "$src/wire-memory-hooks.py" >/dev/null 2>&1; then
     log "memory hooks wired -> $user"
   else
     log "WARN: memory hook wiring failed for $user (retries next reconcile)"
   fi
-  [[ -f "$settings" ]] && chmod 600 "$settings" || true
+  [[ -f "$settings" ]] && runuser -u "$user" -- chmod 600 "$settings" || true
 
   # (2b) reuse the user's existing key; warn (do NOT mint — needs an admin vault write) if absent.
   if [[ -f "$settings" ]] && ! grep -q 'MEMORY_API_KEY' "$settings"; then
@@ -781,7 +807,7 @@ install_memory() {
     runuser -u "$user" -- bash -lc 'claude mcp remove claude_memory >/dev/null 2>&1' && log "removed claude_memory MCP -> $user" || true
   fi
   if [[ -d "$home/.claude/plugins/claude-memory" ]]; then
-    rm -rf "$home/.claude/plugins/claude-memory" && log "removed claude-memory plugin dir -> $user"
+    runuser -u "$user" -- rm -rf "$home/.claude/plugins/claude-memory" && log "removed claude-memory plugin dir -> $user"
   fi
   return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the whole reconcile
 }
@@ -965,9 +991,9 @@ install_claude_defaults() {
   settings="$home/.claude/settings.json"
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] claude defaults (fastMode) -> $user"; return 0; fi
 
-  # Runs as ROOT, like the memory wiring, then hands the file back: it holds the
-  # per-user MEMORY_API_KEY and must stay 0600 and user-owned.
-  added="$(python3 - "$settings" <<'PYEOF'
+  # Runs AS the user, like the memory wiring, so root never writes a file the user
+  # controls; umask 077 keeps it 0600 (it holds the per-user MEMORY_API_KEY).
+  added="$(runuser -u "$user" -- sh -c 'umask 077 && exec python3 - "$1"' _ "$settings" <<'PYEOF'
 import json, os, sys
 
 path = sys.argv[1]
@@ -995,8 +1021,7 @@ if missing:
 PYEOF
   )" || { log "WARN: claude defaults failed for $user (retries next reconcile)"; return 0; }
 
-  chown "$user:$user" "$settings" 2>/dev/null || true
-  chmod 600 "$settings" 2>/dev/null || true
+  runuser -u "$user" -- chmod 600 "$settings" 2>/dev/null || true
   [[ -n "$added" ]] && log "claude default set -> $user ($added)"
   return 0
 }
