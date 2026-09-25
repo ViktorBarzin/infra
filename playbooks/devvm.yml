@@ -750,6 +750,32 @@
         owner: root
         group: root
 
+    # ---- 7a2b) the pi CLI, and keeping it current ---------------------------
+    # Added 2026-09-25, when terminal-lobby gained pi as a third harness beside
+    # Claude Code and Codex, for every user on the box. Each person signs pi in
+    # with their own /login; nothing here holds a credential.
+    #
+    # The package moved: @mariozechner/pi-coding-agent is deprecated on npm in
+    # favour of @earendil-works/pi-coding-agent, which is what this installs.
+    # Latest rather than a pin, for the same reason as codex above.
+    #
+    # ignore_scripts because pi's own README says it needs no dependency
+    # lifecycle scripts, and a global install runs them as root.
+    - name: Install the pi CLI at the latest published version
+      community.general.npm:
+        name: "@earendil-works/pi-coding-agent"
+        global: true
+        state: latest
+        ignore_scripts: true
+
+    - name: Install the pi updater
+      ansible.builtin.copy:
+        src: files/devvm/pi-update
+        dest: /usr/local/bin/pi-update
+        mode: "0755"
+        owner: root
+        group: root
+
     # ---- 7a3) keeping Claude Code current, for everyone ---------------------
     # Added 2026-09-06, same reason as the codex block above: Viktor wants these
     # agent binaries always at latest.
@@ -824,6 +850,7 @@
         - agent-update.timer
         - claude-update.service
         - codex-update.service
+        - pi-update.service
       notify: reload systemd
 
     - name: Enable the agent updater timer

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Keep the pi CLI at the latest published version.
+#
+# Added 2026-09-25 with pi itself, which terminal-lobby offers as a third
+# harness beside Claude Code and Codex. Same policy as codex-update: Viktor
+# wants the agent binaries always at latest, and pi ships about every three
+# days, so a box updated only by playbook runs falls behind within a week.
+#
+# The package is @earendil-works/pi-coding-agent. The older
+# @mariozechner/pi-coding-agent is deprecated on npm and must not be what this
+# installs.
+#
+# --ignore-scripts because pi's README says it needs no dependency lifecycle
+# scripts, and this runs as root.
+set -euo pipefail
+
+PKG="${PI_PKG:-@earendil-works/pi-coding-agent}"
+TAG="${PI_TAG:-latest}"
+
+log() { printf '%s pi-update: %s\n' "$(date -Is)" "$*"; }
+
+# The INSTALLED version, read from npm's own metadata rather than by running
+# `pi --version`, for the reason codex-update gives: a systemd system service
+# has no HOME, and a CLI that reads one is not a reliable version oracle there.
+installed_version() {
+    local root pkg
+    root="$(npm root -g 2>/dev/null)" || return 0
+    pkg="$root/${PKG}/package.json"
+    [ -r "$pkg" ] || return 0
+    node -p "require('$pkg').version" 2>/dev/null
+}
+
+before="$(installed_version)"
+before="${before:-not installed}"
+
+if ! npm install -g --no-fund --no-audit --ignore-scripts "${PKG}@${TAG}"; then
+    log "npm install failed; leaving ${before} in place"
+    exit 1
+fi
+
+after="$(installed_version)"
+after="${after:-not installed}"
+
+if [[ "$before" == "$after" ]]; then
+    log "already at ${after}; nothing to do"
+else
+    log "updated ${before} -> ${after}"
+fi

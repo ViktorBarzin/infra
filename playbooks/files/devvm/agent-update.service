@@ -6,20 +6,21 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 
-# One job, three updaters, in this order on purpose: the cheap per-user ones
-# first, and t3 last because it is the only one that restarts running services.
+# One job, four updaters, in this order on purpose: the cheap ones first, and
+# t3 last because it is the only one that restarts running services.
 #
 # Each line is prefixed with `-`, so systemd records the failure and carries on
 # to the next. Without it, codex being unreachable on npm would silently cost
-# the box its Claude Code and t3 updates for the day, which is the failure mode
-# a single job most easily introduces.
+# the box its pi and t3 updates for the day, which is the failure mode a single
+# job most easily introduces.
 #
 # The scripts stay separate and individually runnable. `sudo claude-update`,
-# `sudo codex-update` and `sudo t3-autoupdate` each still work by hand, which is
-# what the t3 runbook tells a person to do; this unit is the schedule, not a
-# replacement for them.
+# `sudo codex-update`, `sudo pi-update` and `sudo t3-autoupdate` each still work
+# by hand, which is what the t3 runbook tells a person to do; this unit is the
+# schedule, not a replacement for them.
 ExecStart=-/usr/local/bin/claude-update
 ExecStart=-/usr/local/bin/codex-update
+ExecStart=-/usr/local/bin/pi-update
 ExecStart=-/usr/local/bin/t3-autoupdate
 
 StandardOutput=journal
