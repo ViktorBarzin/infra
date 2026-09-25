@@ -266,19 +266,41 @@ func workClean(args []string) error {
 	return nil
 }
 
-// ensureWorktreesIgnored appends .worktrees/ to .gitignore if not already ignored.
+// ensureWorktreesIgnored makes sure git ignores .worktrees/ before a worktree is
+// created under it. The rule goes into the repository's shared info/exclude,
+// which git honours like .gitignore but never reports as a change. Appending to
+// .gitignore used to leave the main checkout dirty, so the next pull --ff-only
+// and every "is the checkout clean?" check tripped over it.
 func ensureWorktreesIgnored(repoRoot string) {
-	if _, err := gitOutput(repoRoot, "check-ignore", ".worktrees"); err == nil {
+	// With the trailing slash: a ".worktrees/" rule matches directories only, and
+	// before the first worktree exists git cannot know the bare name is one, so
+	// asking about ".worktrees" reported "not ignored" and appended the rule again.
+	if _, err := gitOutput(repoRoot, "check-ignore", ".worktrees/"); err == nil {
 		return
 	}
-	gi := filepath.Join(repoRoot, ".gitignore")
-	f, err := os.OpenFile(gi, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	common, err := gitOutput(repoRoot, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return
+	}
+	common = strings.TrimSpace(common)
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(repoRoot, common)
+	}
+	exclude := filepath.Join(common, "info", "exclude")
+	if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil {
+		return
+	}
+	lead := ""
+	if b, err := os.ReadFile(exclude); err == nil && len(b) > 0 && b[len(b)-1] != '\n' {
+		lead = "\n"
+	}
+	f, err := os.OpenFile(exclude, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	if _, err := f.WriteString("\n.worktrees/\n"); err == nil {
-		fmt.Fprintln(os.Stderr, "homelab: added .worktrees/ to .gitignore")
+	if _, err := f.WriteString(lead + ".worktrees/\n"); err == nil {
+		fmt.Fprintln(os.Stderr, "homelab: added .worktrees/ to .git/info/exclude")
 	}
 }
 
