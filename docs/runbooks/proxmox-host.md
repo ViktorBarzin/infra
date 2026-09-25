@@ -1,6 +1,6 @@
 # Runbook: Proxmox host (pve, 192.168.1.127)
 
-Last updated: 2026-04-19
+Last updated: 2026-09-24
 
 The Proxmox host is a baremetal hypervisor on the storage LAN
 (192.168.1.0/24) with a single IP `192.168.1.127`. It hosts every
@@ -94,6 +94,29 @@ ssh root@192.168.1.127 '
 
 No service restart is needed — glibc re-reads `/etc/resolv.conf` per
 lookup.
+
+## Host configuration managed by Ansible
+
+`playbooks/pve-host.yml` declares the host state that is not VM
+lifecycle. A `--check` run against the live host should be a no-op, so
+run it first:
+
+```sh
+ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml --check --diff
+ansible-playbook -i playbooks/inventory.ini playbooks/pve-host.yml
+```
+
+| Declared | Why |
+|---|---|
+| Per-VM disk I/O caps (`apply-mbps-caps` script, service and timer) | Keeps one VM's reads out of the queue that etcd's fsyncs wait in on sdc |
+| journald in RAM (`Storage=volatile`) | The on-disk journal wrote about 4.5 GB/day to sdc |
+| `xfs_scrub_all.timer` and `xfs_scrub_all.service` masked | The host has no XFS filesystems, and the scrub deadlocks here on its own `lsblk` output, which kept systemd reporting "starting" from 2026-07-18 to 2026-09-24 |
+| Fan actuator (`scripts/fan-control.sh` and its unit) | Replaces the old scp deploy. The script passes the Home Assistant token through a file descriptor, so it no longer appears in the host's command audit |
+| promtail config (`scripts/pve-promtail.yaml`) | Redacts secret-shaped values before the journal reaches Loki |
+| LVM metadata archive kept 7 days (`/etc/lvm/lvmlocal.conf`) | The default 30 days held 9,810 files and 1.9 GB for the `pve` volume group |
+
+The measurements and reasoning for each item sit next to its task in
+the playbook.
 
 ## Related docs
 

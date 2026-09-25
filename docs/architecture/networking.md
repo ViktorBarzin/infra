@@ -536,7 +536,7 @@ PodDisruptionBudgets ensure at least 2 replicas remain during node maintenance o
 
 ### IPv6 Ingress (HE Tunnel + HAProxy Bridge)
 
-Public IPv6 reaches the cluster over a **Hurricane Electric 6in4 tunnel** terminated on pfSense (`gif0`; tunnel endpoint `2001:470:6e:43d::2`, LAN prefix `2001:470:6f:43d::/64`). The apex `viktorbarzin.me AAAA` → `2001:470:6e:43d::2`.
+Public IPv6 reaches the cluster over a **Hurricane Electric 6in4 tunnel** terminated on pfSense (`gif0`; tunnel endpoint `2001:470:6e:43d::2`, LAN prefix `2001:470:6f:43d::/64`). Non-proxied hostnames (for example `ha-sofia`, `immich`) carry an AAAA record → `2001:470:6e:43d::2`. The apex is Cloudflare-proxied, so its AAAA records are Cloudflare's addresses and Cloudflare reaches the origin over IPv4.
 
 pfSense cannot NAT IPv6→IPv4, so ingress is bridged by a **standalone HAProxy** on pfSense (a separate config/service — *not* the pfSense HAProxy package) that listens on the tunnel IPv6 and forwards to the IPv4 cluster LBs with **PROXY protocol v2 (`send-proxy-v2`)**, so real client IPv6 addresses propagate to CrowdSec instead of being masked as `10.0.20.1`:
 
@@ -590,6 +590,66 @@ valid response. `ping6` to the tunnel address still succeeds throughout (pfSense
 ICMP), so reachability checks look healthy. Verify a repair with
 `service ipv6proxy status` and a forced request:
 `curl --resolve <host>:443:2001:470:6e:43d::2 https://<host>/`.
+
+### IPv6 on the Sofia home LAN (ULA for Matter)
+
+The home LAN (192.168.1.0/24) carries a private IPv6 prefix, `fdfe:e989:d3ce:1::/64`,
+so that Matter devices have an address to talk on (infra #102, 2026-09-23). Matter is
+IPv6-only, and the front-door lock (ASSA ABLOY/Yale, `192.168.1.61`, the only Matter node
+on ha-sofia) does not answer on its link-local address, so it needs a routable prefix on
+the LAN to be reachable from Home Assistant.
+
+| | |
+|---|---|
+| Prefix | `fdfe:e989:d3ce::/48`, an RFC 4193 ULA with a global ID generated 2026-09-23. Subnet `1` is the home LAN. |
+| Advertised by | pfSense radvd on WAN (`vtnet0`, static `fdfe:e989:d3ce:1::1/64`), from link-local `fe80::be24:11ff:fed7:3fba` (MAC `bc:24:11:d7:3f:ba`) |
+| RA contents | prefix on-link and autonomous (SLAAC), valid 86400 s, preferred 14400 s; router lifetime 0; M and O flags off; no RDNSS or DNSSL; `route ::/0` at low preference (see below); MTU 1500 |
+| RA interval | 10 to 30 s. At pfSense's default of 200 to 600 s the lock slept through the first RAs; it configured its address within 80 ms of the first RA that reached it awake. |
+| Declared in | `scripts/pfsense-sofia-lan-ula-ra.php`, idempotent; its header lists the GUI equivalent |
+
+The LAN still has no IPv6 internet, and hosts keep using IPv4 for anything off the LAN.
+A host whose only IPv6 source address is a ULA sorts IPv4 first for any name that has an
+A record (RFC 6724 rule 5), and Android does not count a ULA as IPv6 connectivity at all.
+Public IPv6 for the cluster still arrives over the HE tunnel described above.
+
+**The `route ::/0` option.** pfSense's RA generator (`services_radvd_configure()` in
+`/etc/inc/services.inc`) adds a default route information option (RFC 4191) to every RA
+and has no setting that leaves it out. Hosts that honour RFC 4191, including Linux
+kernels, Windows and NetworkManager (so ha-sofia), therefore install a low-preference IPv6
+default route via pfSense despite router lifetime 0. radvd logs
+`route 0::/0 lifetime (1800) conflicts with AdvDefaultLifetime (0), default routes will flap!`
+for it. Traffic that follows the route is dropped at pfSense's WAN, and the low preference
+means any real IPv6 router that appears on the LAN later wins over it.
+
+**Saving the WAN tab of Services > Router Advertisement in the GUI changes the router
+lifetime.** Its Router lifetime input has `min=1`, so the browser refuses the configured 0,
+and clearing the field instead gives 1800 s, which makes pfSense a default router for the
+LAN. Re-run the script rather than saving that page.
+
+**The AX6000 advertises a second prefix.** Its IPv6 switch has been off since 2026-06-26,
+yet on 2026-09-23 it was still advertising `2002::/64` (a 6to4 prefix with an embedded
+`0.0.0.0`, router lifetime 1800) from a static address left in its IPv6 LAN settings. Until
+a network reload on 2026-09-22 that RA went out on the wired side as well; after it, only
+on the 2.4 GHz radio. The AX6000's LAN prefix field accepts only prefixes that start with 2
+or 3, so it cannot advertise the ULA itself.
+
+**If native IPv6 from A1 returns**, keep the ULA. The Matter Server prefers a ULA over a
+global address, and the ULA stays the same when the ISP prefix changes. The router
+lifetime and the low route preference above leave the default route to the real router.
+
+**Matter address order.** The Home Assistant Matter Server (matter.js 0.17.x) tries a
+node's link-local address first, then ULA, then global, and waits 45 s before starting the
+next attempt. For this lock a reconnect can spend about 45 s on the link-local address
+before it uses the ULA.
+
+**Checking it**:
+- pfSense: `grep -A25 'interface vtnet0' /var/etc/radvd.conf`.
+- PVE host: `tcpdump -i vmbr0 -nn -vv 'icmp6 and ip6[40]==134 and ether src bc:24:11:d7:3f:ba'`
+  shows the RA every 10 to 30 s.
+- ha-sofia: `ip -6 addr show dev enp0s19` lists an `fdfe:e989:d3ce:1:` address, and
+  `ping -6 fdfe:e989:d3ce:1:b244:9cff:fe14:de5` reaches the lock when its radio is awake.
+  The lock is battery-powered and sleeps between beacons, so expect loss and up to about
+  1 s of latency.
 
 ### Container Registry Pull-Through Cache
 

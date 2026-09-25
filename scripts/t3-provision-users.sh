@@ -45,11 +45,13 @@ REPO_REMOTE_BASE="${REPO_REMOTE_BASE:-https://forgejo.viktorbarzin.me/viktor}"
 # Per-user OIDC kubeconfig (kubelogin/PKCE; cluster server+CA copied from the admin kubeconfig).
 OIDC_ISSUER="${OIDC_ISSUER:-https://authentik.viktorbarzin.me/application/o/kubernetes/}"
 ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
-# Shared agent rules (docs/agents/shared/*.md) copied into EVERY user's
-# ~/.claude/rules/. Lives in wizard's PRIVATE monorepo, not in this repo: the
-# homelab rules carry internal topology (IPs, hostnames) and this repo's GitHub
-# mirror is public. Same reason ADMIN_KUBECONFIG points outside the repo.
-SHARED_RULES_DIR="${SHARED_RULES_DIR:-/home/wizard/code/docs/agents/shared}"
+# Per-user agent instructions (docs/agents/users/<user>/AGENTS.md), one file per
+# person since 2026-09-22. They live in wizard's PRIVATE monorepo, not in this
+# repo: a user's file may carry internal detail and this repo's GitHub mirror is
+# public. Same reason ADMIN_KUBECONFIG points outside the repo. Step 0a reads
+# them from the monorepo's origin/master, never from a working tree.
+AGENTS_REPO="${AGENTS_REPO:-/home/wizard/code}"
+AGENTS_USERS_PATH="docs/agents/users"
 
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
@@ -87,9 +89,18 @@ refresh_user_clone() {
   if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] refresh clone -> $user:$dir"; return 0; fi
   runuser -u "$user" -- env GIT_TERMINAL_PROMPT=0 git -C "$dir" fetch --all --prune --quiet 2>/dev/null \
     || { log "WARN: fetch failed for $user:$sub (offline/credentials?) — skipped"; return 0; }
-  [[ "$(runuser -u "$user" -- git -C "$dir" symbolic-ref --short -q HEAD)" == master ]] || return 0
-  [[ -z "$(runuser -u "$user" -- git -C "$dir" status --porcelain)" ]] || return 0
-  runuser -u "$user" -- git -C "$dir" rev-parse --verify -q 'master@{upstream}' >/dev/null || return 0
+  [[ "$(runuser -u "$user" -- git -C "$dir" symbolic-ref --short -q HEAD)" == master ]] \
+    || { log "refresh skipped for $user:$sub (not on master)"; return 0; }
+  # Untracked files never block a fast-forward that doesn't touch them, and
+  # .beads/metadata.json is rewritten by install_beads (5d) on every run, so
+  # neither counts as a local change. Counting them froze emo's clone from
+  # 2026-06-13 (75 untracked screenshots and notes) until 2026-09-22, and nothing
+  # logged why. An ff that would overwrite either still refuses, below.
+  if [[ -n "$(runuser -u "$user" -- git -C "$dir" status --porcelain --untracked-files=no -- . ':(exclude).beads/metadata.json')" ]]; then
+    log "refresh skipped for $user:$sub (uncommitted changes to tracked files)"; return 0
+  fi
+  runuser -u "$user" -- git -C "$dir" rev-parse --verify -q 'master@{upstream}' >/dev/null \
+    || { log "refresh skipped for $user:$sub (no upstream)"; return 0; }
   runuser -u "$user" -- git -C "$dir" merge --ff-only 'master@{upstream}' >/dev/null 2>&1 \
     || log "WARN: $user:$sub master not fast-forwardable (local commits?) — left as-is"
 }
@@ -206,24 +217,36 @@ sync_tmux_persist() {
   log "deployed tmux-persist -> /usr/local/bin (repo copy changed)"
 }
 
-# ~/.codex/AGENTS.md is a STATIC mirror of the managed claudeMd (codex has no
-# machine-wide managed layer). Regenerate stale mirrors so codex sessions inherit
-# claudeMd edits the same way Claude sessions do. Never clobbers a user-customized
-# file: only touches files carrying the mirror header (or creates absent ones).
-refresh_codex_mirror() {
-  local user="$1" home dst tmp
-  home="$(getent passwd "$user" | cut -d: -f6)"
-  dst="$home/.codex/AGENTS.md"
-  [[ -n "$home" && -d "$home/.codex" ]] || return 0
-  if [[ -f "$dst" ]] && ! head -1 "$dst" | grep -q '^# Codex global instructions (devvm)'; then return 0; fi
+# The org policy for Codex, machine-wide. Codex has no managed CLAUDE.md, but its
+# root-owned requirements.toml (the enforced layer) takes
+# additional_developer_instructions, so the same committed claudeMd text reaches
+# both harnesses. Replaced refresh_codex_mirror on 2026-09-22: that copied the
+# policy into every user's ~/.codex/AGENTS.md, the file each user's own
+# instructions occupy now. Rewritten only when the text changes.
+sync_codex_requirements() {
+  local dst=/etc/codex/requirements.toml tmp
   tmp="$(mktemp)"
-  { printf '# Codex global instructions (devvm)\n\n_Mirrors the machine-wide Claude managed policy._\n\n---\n\n'
-    python3 -c 'import json; print(json.load(open("/etc/claude-code/managed-settings.json"))["claudeMd"])'
-  } > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+  if ! python3 - "$MANAGED_SRC" > "$tmp" 2>/dev/null <<'PY'
+import json, sys, tomllib
+text = json.load(open(sys.argv[1]))["claudeMd"].rstrip("\n")
+if "'''" in text:
+    sys.exit(1)  # cannot be a TOML literal string; keep the deployed file
+out = ("# Deployed by t3-provision-users from infra scripts/workstation/managed-settings.json\n"
+       "# (claudeMd), so Codex reads the same org policy as Claude Code. Edits here are\n"
+       "# overwritten within the hour; change the repo copy instead.\n"
+       "additional_developer_instructions = '''\n" + text + "\n'''\n")
+tomllib.loads(out)  # never install a file Codex would fail to parse
+sys.stdout.write(out)
+PY
+  then rm -f "$tmp"; log "WARN: codex requirements not generated from $MANAGED_SRC"; return 0; fi
   if cmp -s "$tmp" "$dst" 2>/dev/null; then rm -f "$tmp"; return 0; fi
-  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] codex AGENTS.md mirror -> $user"; rm -f "$tmp"; return 0; fi
-  install -o "$user" -g "$user" -m 0644 "$tmp" "$dst"; rm -f "$tmp"
-  log "refreshed codex AGENTS.md mirror -> $user"
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] codex org policy -> $dst"; rm -f "$tmp"; return 0; fi
+  # A file Codex cannot parse makes it exit for every user, so the new copy is
+  # staged next to the old one and renamed into place in one step.
+  install -d -m 0755 /etc/codex && install -m 0644 "$tmp" "$dst.new" && mv -f "$dst.new" "$dst" \
+    && log "deployed codex org policy -> $dst"
+  rm -f "$tmp" "$dst.new"
+  return 0
 }
 
 # Per-user OIDC kubeconfig (kubelogin/PKCE — the `kubernetes` Authentik client is
@@ -733,55 +756,92 @@ install_memory() {
   return 0  # best-effort tail must never return non-zero, else set -euo pipefail aborts the whole reconcile
 }
 
-# Shared agent rules -> every user's ~/.claude/rules/, re-copied when the source
-# changes. Before this, only the org claudeMd reached everyone: homelab.md was a
-# symlink in wizard's home (emo never had it) and execution.md/planning.md were
-# loose per-user files under no version control, so emo's had drifted months
-# behind. Adding a user now inherits the whole set with no hand-copy to go stale.
+# Each user's own agent instructions -> ~/.agents/AGENTS.md, linked from both
+# harnesses: ~/.claude/CLAUDE.md (Claude Code) and ~/.codex/AGENTS.md (Codex).
+# Replaced install_shared_rules on 2026-09-22, when one shared set copied into
+# every home gave way to one file per person (docs/agents/users/README.md in the
+# monorepo). Only users with a file there are touched; wizard's comes from his
+# dotfiles and is left alone.
+#
+# Every write into the home runs AS THE USER (runuser), never as root, so a
+# symlink the user planted cannot turn this into a root write elsewhere: the
+# /etc/skel case found 2026-09-22 was exactly that, `install -d -o <user>`
+# following a link into another user's home.
 #
 # 99-personal.md is created once and NEVER overwritten — it is the per-user slot
-# that keeps "mine" separable from "everyone's".
+# for what the person adds themselves. Claude Code reads it; Codex does not,
+# since Codex loads a single global file.
 # Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
-install_shared_rules() {
-  local user="$1" home rules src dst base personal
+install_user_agents() {
+  local user="$1" home src hub personal f
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n "$home" && -d "$home" ]] || return 0
-  [[ -d "$SHARED_RULES_DIR" ]] || { log "WARN: $SHARED_RULES_DIR missing -> skip shared rules for $user"; return 0; }
-  rules="$home/.claude/rules"
-  run install -d -o "$user" -g "$user" -m 0755 "$rules" || return 0
-
-  for src in "$SHARED_RULES_DIR"/*.md; do
-    [[ -r "$src" ]] || continue
-    base="$(basename "$src")"
-    [[ "$base" == "README.md" ]] && continue   # explains the layout; not a rule
-    dst="$rules/$base"
-    cmp -s "$src" "$dst" 2>/dev/null && continue
-    if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] shared rule $base -> $user"; continue; fi
-    install -o "$user" -g "$user" -m 0644 "$src" "$dst" \
-      && log "shared rule $base -> $user (source changed)"
+  src="$AGENTS_SRC_DIR/$user.md"
+  [[ -s "$src" ]] || return 0
+  hub="$home/.agents/AGENTS.md"
+  for f in "$home/.agents" "$home/.claude" "$home/.claude/rules"; do
+    # A link here would aim every write below somewhere else (the /etc/skel
+    # links pointed .claude/rules into the admin's home). Refuse rather than follow.
+    [[ -L "$f" ]] && { log "WARN: $f is a symlink -> agent instructions for $user skipped"; return 0; }
   done
+  if [[ "$DRY_RUN" == 1 ]]; then
+    cmp -s "$src" "$hub" 2>/dev/null || echo "[dry-run] agent instructions -> $user"
+    return 0
+  fi
+  runuser -u "$user" -- mkdir -p "$home/.agents" "$home/.claude/rules" || return 0
+  if ! cmp -s "$src" "$hub" 2>/dev/null; then
+    # root opens the source (its directory is 0700), the user writes the file,
+    # and the rename makes a session starting mid-copy see the old or new text.
+    # Read-only for the user, so an agent editing it fails loudly instead of
+    # having its edit reverted within the hour; the first line points at
+    # 99-personal.md.
+    if runuser -u "$user" -- sh -c 'cat > "$1.tmp" && chmod 0444 "$1.tmp" && mv -f "$1.tmp" "$1"' _ "$hub" < "$src"; then
+      log "agent instructions -> $user (source changed)"
+    else
+      log "WARN: could not write $hub"; return 0
+    fi
+  fi
+  link_agents_file "$user" "$home/.claude/CLAUDE.md"
+  [[ -d "$home/.codex" ]] && link_agents_file "$user" "$home/.codex/AGENTS.md"
 
-  # Retire the pre-2026-08-15 layout once its replacement is in place, or the
-  # same rules load twice — and for emo the stale copy would load alongside the
-  # current one.
-  [[ -e "$rules/10-homelab.md" && -L "$rules/homelab.md" ]] && run rm -f "$rules/homelab.md"
-  [[ -e "$rules/20-execution.md" && -f "$rules/execution.md" ]] && run rm -f "$rules/execution.md"
-  [[ -e "$rules/30-planning.md"  && -f "$rules/planning.md"  ]] && run rm -f "$rules/planning.md"
-
-  personal="$rules/99-personal.md"
-  if [[ ! -e "$personal" && "$DRY_RUN" != 1 ]]; then
-    install -o "$user" -g "$user" -m 0644 /dev/stdin "$personal" <<'PERSONAL'
-# Personal rules — yours alone
+  personal="$home/.claude/rules/99-personal.md"
+  if [[ ! -e "$personal" && ! -L "$personal" ]]; then
+    runuser -u "$user" -- sh -c 'cat > "$1"' _ "$personal" <<'PERSONAL' && log "created personal rules slot for $user"
+# Personal notes — yours alone
 
 The provisioner never writes this file, so anything here survives every
-reconcile. Everything else in this directory is shared and WILL be overwritten
-from `docs/agents/shared/` — edit it there if the change should reach everyone.
-
-Use this for preferences that are genuinely yours: how you like output framed,
-tools you prefer, shortcuts that would not make sense for someone else.
+reconcile. Your main instructions (~/.agents/AGENTS.md) are written for you
+and WILL be overwritten, so put what you want to keep here.
 PERSONAL
-    log "created personal rules slot for $user"
   fi
+
+  # The shared rules (2026-08-15 to 2026-09-22) retire once this user's own
+  # file is provably what Claude Code loads, or the same rules load twice.
+  # "Provably": ~/.claude/CLAUDE.md resolves to the hub and the hub matches the
+  # source. Retiring on the hub merely existing would leave a user with no rules
+  # at all if the link step had failed. (wizard's were retired by hand when his
+  # dotfiles took over; nothing re-creates them.)
+  [[ "$(readlink -f "$home/.claude/CLAUDE.md")" == "$(readlink -f "$hub")" ]] && cmp -s "$src" "$hub" || return 0
+  [[ ! -L "$home/.claude/rules" && "$(readlink -f "$home/.claude/rules")" == "$home/.claude/rules" ]] || return 0
+  for f in 10-homelab 20-execution 30-planning 40-style; do
+    [[ -f "$home/.claude/rules/$f.md" && ! -L "$home/.claude/rules/$f.md" ]] || continue
+    runuser -u "$user" -- rm -f "$home/.claude/rules/$f.md" && log "retired shared rule $f.md -> $user"
+  done
+  return 0
+}
+
+# link_agents_file <user> <path>: make <path> a symlink to ../.agents/AGENTS.md,
+# as the user. A regular file there is the old hand-edited CLAUDE.md or the old
+# Codex mirror; its content now lives in the monorepo, and it is kept beside the
+# link as <path>.pre-agents-md.
+link_agents_file() {
+  local user="$1" path="$2" want="../.agents/AGENTS.md"
+  [[ -L "$path" && "$(readlink "$path")" == "$want" ]] && return 0
+  if [[ -e "$path" && ! -L "$path" ]]; then
+    runuser -u "$user" -- mv -f "$path" "$path.pre-agents-md" || { log "WARN: could not move $path aside"; return 0; }
+  fi
+  if runuser -u "$user" -- ln -sfn "$want" "$path"; then log "linked $path -> $want"
+  else log "WARN: could not link $path for $user"; fi
   return 0
 }
 
@@ -902,6 +962,49 @@ fi
 # step 0 closes for this script itself.
 MANAGED_SRC="$WORKSTATION_DIR/managed-settings.json"
 [[ -s "$STATEDIR/managed-settings.committed.json" ]] && MANAGED_SRC="$STATEDIR/managed-settings.committed.json"
+
+# Each user's agent instructions are an input too, read from the private
+# monorepo's origin/master (docs/agents/users/<user>/AGENTS.md) as that clone's
+# owner. The shared rules this replaced were copied from a working tree, so a
+# landed change sat undeployed until someone pulled. On any failure the last
+# good copies in $STATEDIR/agents stay in use, so a network blip leaves everyone
+# on the instructions they already have rather than none.
+AGENTS_SRC_DIR="$STATEDIR/agents"
+materialise_user_agents() {
+  local owner names dest u f
+  [[ -d "$AGENTS_REPO/.git" ]] || { log "WARN: $AGENTS_REPO is not a git clone -> per-user agent files unchanged"; return 0; }
+  owner="$(stat -c %U "$AGENTS_REPO")"
+  if ! runuser -u "$owner" -- env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
+       git -C "$AGENTS_REPO" fetch --quiet origin master 2>/dev/null; then
+    log "WARN: fetch of $AGENTS_REPO failed -> per-user agent files unchanged"; return 0
+  fi
+  names="$(runuser -u "$owner" -- git -C "$AGENTS_REPO" ls-tree -d --name-only "origin/master:$AGENTS_USERS_PATH" 2>/dev/null)" \
+    || { log "WARN: no $AGENTS_USERS_PATH on $AGENTS_REPO origin/master -> per-user agent files unchanged"; return 0; }
+  dest="$AGENTS_SRC_DIR"
+  if [[ "$DRY_RUN" == 1 ]]; then dest="$(mktemp -d)"; AGENTS_SRC_DIR="$dest"; fi
+  install -d -m 0700 "$dest"   # root only: one user's file is not another's to read
+  for u in $names; do
+    # The first line tells that user's agent this file is managed, so it puts
+    # the user's own notes in 99-personal.md instead of editing the hub.
+    if { printf '<!-- Installed by the devvm provisioner from %s/%s/AGENTS.md in Viktor'"'"'s monorepo and overwritten within the hour. Keep your own notes in ~/.claude/rules/99-personal.md. -->\n\n' "$AGENTS_USERS_PATH" "$u"
+         runuser -u "$owner" -- git -C "$AGENTS_REPO" show "origin/master:$AGENTS_USERS_PATH/$u/AGENTS.md" 2>/dev/null
+       } > "$dest/$u.md.tmp" && [[ "$(wc -l < "$dest/$u.md.tmp")" -gt 2 ]]; then
+      mv "$dest/$u.md.tmp" "$dest/$u.md"
+    else
+      rm -f "$dest/$u.md.tmp"
+    fi
+  done
+  # A user whose directory was removed stops being managed: their home keeps
+  # the last file it received, and nothing overwrites it afterwards.
+  for f in "$dest"/*.md; do
+    [[ -e "$f" ]] || continue
+    grep -qxF "$(basename "$f" .md)" <<<"$names" || rm -f "$f"
+  done
+  return 0
+}
+# Not behind the self-deploy guard: the run that self-deploys re-execs with it
+# set, so a guarded call would skip the monorepo on the first run after a landing.
+materialise_user_agents
 
 # 0) self-deploy: the repo is the authoring surface (like sync_managed_config /
 #    deploy_user_launcher below). Historically nothing else redeployed
@@ -1044,8 +1147,9 @@ desired_file="$(mktemp)"
 python3 "$ENGINE" derive --roster "$ROSTER" --ports-json "$ports_file" --playwright-ports-json "$pw_ports_file" > "$desired_file"
 jq -e . "$desired_file" >/dev/null || { echo "[t3-provision] derive produced invalid JSON" >&2; exit 1; }
 
-# 3b) machine-wide Claude managed config (repo -> /etc; per-user codex mirrors in the loop below)
+# 3b) machine-wide org policy (repo -> /etc), for Claude Code and for Codex
 sync_managed_config
+sync_codex_requirements
 # 3c) machine-wide tmux-persist binary (repo -> /usr/local/bin; units enabled in step 5b)
 sync_tmux_persist
 
@@ -1092,7 +1196,6 @@ while IFS=$'\t' read -r os_user tier shell groups_csv code_layout repos_csv clau
     install_browser_kubeconfig "$os_user"    # hands-off chrome-service CLI cred (no-op unless the user has a browser SA)
     deploy_user_launcher "$os_user"          # keep ~/start-claude.sh current (skel only seeds new accounts)
   fi
-  refresh_codex_mirror "$os_user"            # all tiers — mirror of the managed claudeMd
   install_user_claude_native "$os_user"      # all tiers — per-user native claude (terminal + t3); no npm/npx
   install_claude_auth_sync "$os_user" "$claude_auth"   # all tiers unless roster claude_auth: false
 done < <(jq -r '.accounts[] | [.os_user, .tier, .shell, (if (.groups|length)==0 then "-" else (.groups|join(",")) end), .code_layout, (if (.repos|length)==0 then "-" else (.repos|join(",")) end), (.claude_auth|tostring)] | @tsv' "$desired_file")
@@ -1147,11 +1250,12 @@ while IFS=$'\t' read -r os_user authentik_user; do
   install_browser_bridge_token "$os_user" "$authentik_user"
 done < <(jq -r '.accounts[] | [.os_user, (.authentik_user // "-")] | @tsv' "$desired_file")
 
-# 5d-bis) shared agent rules -> every user's ~/.claude/rules/ (all users, no allowlist:
-#     these are the rules, not an opt-in extra). Personal slot created once, never rewritten.
+# 5d-bis) each user's own agent instructions -> ~/.agents/AGENTS.md + the two
+#     harness links, for users with a file in the monorepo. Retires the old shared
+#     rules in every home that has its own file. Personal slot created once, never rewritten.
 while IFS=$'\t' read -r os_user; do
   id "$os_user" >/dev/null 2>&1 || continue
-  install_shared_rules "$os_user"
+  install_user_agents "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
 
 # 5d-ter) per-user Claude defaults (ALL users): settings.json keys everyone should

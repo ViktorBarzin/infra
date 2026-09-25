@@ -4,9 +4,10 @@ Stop hook: enforce the unslop style on the reply Claude just produced.
 
 Installed for every devvm user by t3-provision-users.sh, which also wires it
 into ~/.claude/settings.json through wire-memory-hooks.py. The rules it enforces
-are ~/.claude/rules/40-style.md.
+are the writing-style section of each user's own AGENTS.md (until 2026-09-22 the
+shared ~/.claude/rules/40-style.md).
 
-~/.claude/rules/40-style.md carries the full rule set, but text in context does not
+That section carries the full rule set, but text in context does not
 stop a generation reflex. Measured 2026-09-02 over 7,302 replies from the
 preceding week: 6,068 em dashes, while the em-dash ban was already loaded in
 every session. The vocabulary rules held (14 hits), the punctuation one did
@@ -183,7 +184,7 @@ def main():
     print(json.dumps({
         "decision": "block",
         "reason": (
-            "Your reply breaks the style rules in ~/.claude/rules/40-style.md: "
+            "Your reply breaks the writing-style rules in your agent instructions: "
             + "; ".join(found)
             + ". Rewrite it and send the corrected version. Keep every fact and "
               "number. Do not mention this check or apologise, just say the thing "

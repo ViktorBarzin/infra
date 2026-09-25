@@ -444,6 +444,15 @@
         dest: /etc/skel/
         mode: preserve
 
+    # setup-devvm.sh used to link these to the admin's own ~/.claude dirs, so a
+    # new account inherited his personal rules and the provisioner's
+    # `install -d -o <user>` would follow the link into his home (2026-09-22).
+    - name: No /etc/skel links into the admin's ~/.claude
+      ansible.builtin.file:
+        path: "/etc/skel/.claude/{{ item }}"
+        state: absent
+      loop: [skills, rules, agents, commands]
+
     # ---- 5b) the admin account ---------------------------------------------
     # ttyd.service runs as this user, so a machine without it cannot serve the
     # lobby at all -- found by installing the package on a blank VM, where ttyd
@@ -589,7 +598,9 @@
     # agent-conductor has no other copy in existence.
     #
     # Stopped and disabled rather than deleted, so reversing this is one
-    # command. Deleting the files is a separate, later step.
+    # command. Deleting the files is a separate, later step. Orca took that
+    # step on 2026-09-23, in the two tasks below this one; agent-conductor's
+    # files are still in place.
     #
     # NOT masked, and that is deliberate. Masking works by putting a symlink to
     # /dev/null at a higher-priority path than the unit file, and these unit
@@ -609,8 +620,29 @@
       loop:
         - acd-demux.service
         - ac-spa.service
+
+    # Orca's AppImage is re-downloadable and nothing on the box uses it. Its
+    # units have been stopped since 2026-09-13, so the stop is a no-op here,
+    # and failed_when keeps it quiet once the unit files are gone.
+    - name: Stop the retired Orca services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop:
         - orca-serve.service
         - orca-xvfb.service
+      failed_when: false
+
+    - name: Remove the retired Orca files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /opt/orca
+        - /etc/systemd/system/orca-serve.service
+        - /etc/systemd/system/orca-xvfb.service
+      notify: reload systemd
 
     # The relay is a template, so the INSTANCE carries the enablement:
     # /etc/systemd/system/sockets.target.wants/ac-relay@wizard.socket is what
@@ -636,6 +668,35 @@
       loop:
         - multipathd.service
         - multipathd.socket
+
+    # nvidia-container-toolkit is installed because dockerd's daemon.json
+    # carries the nvidia runtime (section 9), but this VM has no GPU, so the
+    # toolkit's CDI refresh failed at every boot and kept the box reporting
+    # "degraded" (found 2026-09-24). The package puts these unit files
+    # straight into /etc/systemd/system, where a mask cannot land (see the
+    # note above the evaluation services), so they are disabled instead. The
+    # toolkit itself stays for the daemon.json runtime.
+    - name: Stop the NVIDIA CDI refresh, which has no GPU to describe here
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop:
+        - nvidia-cdi-refresh.path
+        - nvidia-cdi-refresh.service
+      tags: vm-hardware
+
+    # openipmi came in on 2026-06-10 as a recommendation of ipmitool, which
+    # stays. Its service loads the local IPMI drivers, and a VM has no BMC, so
+    # it failed at every boot too. The unit is generated from
+    # /etc/init.d/openipmi, so a mask in /etc/systemd/system does take
+    # precedence here.
+    - name: No local IPMI on a VM
+      ansible.builtin.systemd_service:
+        name: openipmi.service
+        masked: true
+        state: stopped
+      tags: vm-hardware
 
     # Claude Code leaves one scratch directory per session under /tmp and never
     # reaps them. /tmp is a RAM-backed tmpfs here, so that is a slow memory leak:

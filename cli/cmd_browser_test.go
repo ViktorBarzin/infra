@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -151,6 +152,64 @@ func TestBrowserClientPackageJSONPinsVersion(t *testing.T) {
 	pj := browserClientPackageJSON()
 	if !strings.Contains(pj, `"`+clientPackage+`": "`+clientVersion+`"`) {
 		t.Fatalf("package.json must pin %s to %s; got:\n%s", clientPackage, clientVersion, pj)
+	}
+}
+
+func TestPatchPatchrightContextlessAssert(t *testing.T) {
+	// A stray service-worker/extension target with no browserContextId attaching on
+	// connectOverCDP must not abort the run (infra #103). The patch neutralises the
+	// single fatal assert in the pinned patchright bundle.
+	dir := t.TempDir()
+	libDir := filepath.Join(dir, "node_modules", clientPackage, "lib")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bundlePath := filepath.Join(libDir, "coreBundle.js")
+	const assertLine = `assert(targetInfo.browserContextId, "targetInfo: " + JSON.stringify(targetInfo, null, 2));`
+	orig := "before();\n" + assertLine + "\nafter();\n"
+	if err := os.WriteFile(bundlePath, []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := patchPatchrightContextlessAssert(dir); err != nil {
+		t.Fatalf("first patch: %v", err)
+	}
+	got, err := os.ReadFile(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), assertLine) {
+		t.Fatalf("fatal assert still present after patch:\n%s", got)
+	}
+	for _, want := range []string{
+		"infra#103",
+		"if (!targetInfo.browserContextId)",
+		"session2.detach().catch(() => {}); return;",
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("patched bundle missing %q:\n%s", want, got)
+		}
+	}
+
+	// Idempotent: a second run must leave the file byte-for-byte identical.
+	if err := patchPatchrightContextlessAssert(dir); err != nil {
+		t.Fatalf("second patch: %v", err)
+	}
+	got2, err := os.ReadFile(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got2) != string(got) {
+		t.Fatalf("patch not idempotent:\nfirst:\n%s\nsecond:\n%s", got, got2)
+	}
+
+	// A bundle lacking the expected assert (layout changed on a version bump) must
+	// fail loudly rather than silently leaving the crash in place.
+	if err := os.WriteFile(bundlePath, []byte("no assert here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := patchPatchrightContextlessAssert(dir); err == nil {
+		t.Fatal("expected error when the contextless-target assert is absent, got nil")
 	}
 }
 

@@ -97,6 +97,12 @@ locals {
     # a derived image of an AGPL-3.0 work would be distribution and carry a
     # source-offer obligation. Keel also needs this secret to poll the tag list.
     "repowise",
+    # orchestrator-sandbox: TEMPORARY, for the orchestrator bake-off. Scion's
+    # agent pods pull the PRIVATE ghcr.io/viktorbarzin/scion-* images, and
+    # Scion's pod spec has no imagePullSecrets, so the namespace's default
+    # ServiceAccount references the cloned secret (stacks/orchestrator-sandbox).
+    # Remove with that stack after the sprint.
+    "orchestrator-sandbox",
   ]
 }
 

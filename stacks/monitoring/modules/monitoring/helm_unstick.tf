@@ -154,11 +154,16 @@ resource "kubernetes_cron_job_v1" "helm_unstick" {
               # Job marked Failed with an empty log. Each one raised a JobFailed
               # AND a CronJobFailingRepeatedly, 13 of the 31 job alerts a day.
               #
-              # 512Mi is 2x the new measured peak, on the same rule as before,
-              # which bought about a year last time. --chunk-size does NOT help
+              # 512Mi is 2x the new measured peak, on the same rule as before.
+              # That rule bought 42 days last time (61 -> 152 records at about
+              # 1 MiB each), and records grew about 2 a day (160 on 2026-09-23).
+              # Since 2026-09-23 the four monitoring releases cap their history
+              # at 10 (max_history, see helm_release.prometheus), which holds
+              # the namespace near 40 records, so this ceiling has room to
+              # spare. --chunk-size does NOT help
               # (20-item pages measured 208 MiB against 219 unpaged) because
-              # -o jsonpath accumulates the whole list regardless of paging. The
-              # durable fix is to stop fetching the secret BODIES at all, since
+              # -o jsonpath accumulates the whole list regardless of paging. A
+              # further fix is to stop fetching the secret BODIES at all, since
               # the script reads only labels and creationTimestamp: a
               # PartialObjectMetadataList request, as stray_workload_detect
               # already does in this same namespace, holds metadata only.

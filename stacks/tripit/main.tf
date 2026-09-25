@@ -206,6 +206,18 @@ locals {
     # fake and hand-added places (and any backfill) would store placeholder
     # PNGs instead of real photos.
     PLACE_PHOTO_PROVIDER = "wikipedia"
+    # Location history (tripit's DAWARICH_URL ADR). DAWARICH_URL turns it on for
+    # this install and is the default Dawarich a user sees when linking their
+    # own account; a user may link a different Dawarich instead. One setting
+    # serves the Travel year Country days (ADR-0060) and the transport nudge, so
+    # it lives here and reaches the Deployment and every worker. Requests to
+    # DAWARICH_URL's origin are trusted: they go to DAWARICH_INTERNAL_URL with
+    # DAWARICH_URL's host as the Host header, dawarich.viktorbarzin.me here (the
+    # reasons are on the sync-country-days CronJob). The app uses that route for
+    # no other origin, and a Dawarich a user links themselves must still pass
+    # the public-address guard.
+    DAWARICH_URL          = "https://dawarich.viktorbarzin.me"
+    DAWARICH_INTERNAL_URL = "http://dawarich.dawarich.svc.cluster.local"
   }
 }
 
@@ -446,20 +458,6 @@ locals {
     # actually uses, so the filter has to see it.
     IMAP_SEARCH = "OR TO \"plans@viktorbarzin.me\" CC \"plans@viktorbarzin.me\""
   }
-
-  # In-cluster route to Dawarich for Travel year Country days (tripit ADR-0060).
-  # Shared by the Deployment (the backfill that runs when a user saves their
-  # Location history link, and the live city lookup in the day sheet) and the
-  # sync-country-days CronJob, so the two paths cannot drift. When a link's
-  # base_url host equals DAWARICH_INTERNAL_HOST, the app sends the request to
-  # DAWARICH_INTERNAL_URL with that Host header instead; any other base_url is
-  # called as written. The reasons are on the CronJob below. Deliberately not in
-  # app_env: no other worker reads it, and the nudges keep their own
-  # DAWARICH_BASE_URL.
-  dawarich_internal_env = {
-    DAWARICH_INTERNAL_URL  = "http://dawarich.dawarich.svc.cluster.local"
-    DAWARICH_INTERNAL_HOST = "dawarich.viktorbarzin.me"
-  }
 }
 
 resource "kubernetes_deployment" "tripit" {
@@ -554,10 +552,8 @@ resource "kubernetes_deployment" "tripit" {
             secret_ref { name = "tripit-db-creds" }
           }
 
-          # dawarich_internal_env: saving a Location history link backfills
-          # Country days from this pod, and the day sheet reads cities live.
           dynamic "env" {
-            for_each = merge(local.app_env, local.dawarich_internal_env)
+            for_each = local.app_env
             content {
               name  = env.key
               value = env.value
@@ -849,11 +845,11 @@ locals {
     # retired once PWA notifications covered the same ground, so SLACK_PROVIDER is
     # left at its `fake` default here (the SLACK_BOT_TOKEN in tripit-secrets still
     # backs the inbound planner Slack webhook, not nudges). The app_env base
-    # already sets WEATHER_PROVIDER=openmeteo + PUSH_PROVIDER=webpush;
-    # DAWARICH_API_KEY arrives via env_from tripit-secrets. DAWARICH_BASE_URL uses
-    # the PUBLIC host deliberately: Dawarich is a Rails app whose host
-    # authorization 403s the in-cluster *.svc Host header, so we reach it through
-    # the ingress (auth=none, api_key-gated) instead.
+    # already sets WEATHER_PROVIDER=openmeteo + PUSH_PROVIDER=webpush, and the
+    # current-location lookup reads the same DAWARICH_URL as the Travel year
+    # (see app_env), reaching it in-cluster through DAWARICH_INTERNAL_URL.
+    # LOCATION_PROVIDER=dawarich switches that lookup on; its own instance-wide
+    # DAWARICH_API_KEY arrives via env_from tripit-secrets.
     transport-nudge = {
       schedule = "0 8 * * *"
       timezone = "Europe/London"
@@ -862,7 +858,6 @@ locals {
       extra_env = {
         NUDGES_ENABLED    = "true"
         LOCATION_PROVIDER = "dawarich"
-        DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
       }
     }
     weather-brief = {
@@ -873,7 +868,6 @@ locals {
       extra_env = {
         NUDGES_ENABLED    = "true"
         LOCATION_PROVIDER = "dawarich"
-        DAWARICH_BASE_URL = "https://dawarich.viktorbarzin.me"
       }
     }
     # Travel year Country days (tripit ADR-0060): copy each user's own Location
@@ -886,15 +880,16 @@ locals {
     # Per-user links, not the global DAWARICH_API_KEY the nudges above use: that
     # key covers the whole Dawarich instance, and reading country days through it
     # would show every TripIt user Viktor's movements. Each LocationLink row holds
-    # the user's own base_url and a key sealed with DOCUMENT_ENCRYPTION_KEY,
-    # which reaches this job through env_from tripit-secrets.
+    # the user's own key sealed with DOCUMENT_ENCRYPTION_KEY, which reaches this
+    # job through env_from tripit-secrets, and a base_url only when the user
+    # linked a Dawarich other than DAWARICH_URL (see app_env).
     #
-    # In-cluster with a Host header, unlike the nudges: one year of
-    # /api/v1/residency took 19-39s (measured 2026-09-21), and the public host
-    # 504s at Traefik's 30s responseHeaderTimeout. The bare svc URL is refused
-    # 403 by Rails host authorization (APPLICATION_HOSTS=dawarich.viktorbarzin.me);
-    # the same request with Host: dawarich.viktorbarzin.me passes. See
-    # local.dawarich_internal_env.
+    # In-cluster with a Host header: one year of /api/v1/residency took 19-39s
+    # (measured 2026-09-21), and the public host 504s at Traefik's 30s
+    # responseHeaderTimeout. The bare svc URL is refused 403 by Rails host
+    # authorization (APPLICATION_HOSTS=dawarich.viktorbarzin.me); the same
+    # request with Host: dawarich.viktorbarzin.me passes. The app does this for
+    # DAWARICH_URL's origin only, through DAWARICH_INTERNAL_URL (both in app_env).
     #
     # A backfill is one residency call per year since 2022, up to ~40s each, so
     # 30 minutes leaves room for every linked user while still bounding a hung
@@ -905,7 +900,7 @@ locals {
       command                 = ["python", "-m", "tripit_api", "sync-country-days"]
       suspend                 = false
       active_deadline_seconds = 1800
-      extra_env               = local.dawarich_internal_env
+      extra_env               = {}
     }
     # Tour-guide overnight audio fill (tripit#30, ADR-0011): synthesizes the
     # narration audio queue against Chatterbox, which the tts stack scales up
