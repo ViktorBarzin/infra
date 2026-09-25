@@ -52,6 +52,9 @@ ADMIN_KUBECONFIG="${ADMIN_KUBECONFIG:-/home/wizard/.kube/config}"
 # them from the monorepo's origin/master, never from a working tree.
 AGENTS_REPO="${AGENTS_REPO:-/home/wizard/code}"
 AGENTS_USERS_PATH="docs/agents/users"
+# terminal-lobby's extension for pi, which the terminal-lobby package installs.
+# Step 5d-quinquies links it into every roster user's ~/.pi/agent/extensions.
+PI_EXTENSION="${PI_EXTENSION:-/usr/share/terminal-lobby/pi-extension.js}"
 
 log() { echo "[t3-provision] $*"; }
 run() { if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] $*"; else "$@"; fi; }
@@ -857,18 +860,85 @@ PERSONAL
   return 0
 }
 
-# link_agents_file <user> <path>: make <path> a symlink to ../.agents/AGENTS.md,
-# as the user. A regular file there is the old hand-edited CLAUDE.md or the old
-# Codex mirror; its content now lives in the monorepo, and it is kept beside the
-# link as <path>.pre-agents-md.
+# link_agents_file <user> <path> [target]: make <path> a symlink to <target>, as
+# the user. The default, ../.agents/AGENTS.md, suits a file one directory below
+# the home (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md); pi's ~/.pi/agent/AGENTS.md
+# sits one deeper and passes ../../.agents/AGENTS.md. A regular file there is
+# the old hand-edited CLAUDE.md or the old Codex mirror, whose content now lives
+# in the monorepo, or one the user wrote for pi before the link existed. Either
+# way it is kept beside the link as <path>.pre-agents-md.
 link_agents_file() {
-  local user="$1" path="$2" want="../.agents/AGENTS.md"
+  local user="$1" path="$2" want="${3:-../.agents/AGENTS.md}"
   [[ -L "$path" && "$(readlink "$path")" == "$want" ]] && return 0
   if [[ -e "$path" && ! -L "$path" ]]; then
     runuser -u "$user" -- mv -f "$path" "$path.pre-agents-md" || { log "WARN: could not move $path aside"; return 0; }
   fi
   if runuser -u "$user" -- ln -sfn "$want" "$path"; then log "linked $path -> $want"
   else log "WARN: could not link $path for $user"; fi
+  return 0
+}
+
+# Pi, the third harness in terminal-lobby since 2026-09-25, reads each user's
+# files from ~/.pi/agent. Two links go there, both made as the user:
+#
+#   extensions/terminal-lobby.js -> $PI_EXTENSION, for every roster user. It
+#     reports pi's state to the lobby and appends /etc/pi/org-policy.md to
+#     pi's system prompt. Pi skips a dangling link without a word, so the link
+#     is made even before the terminal-lobby package has installed the file.
+#   AGENTS.md -> ../../.agents/AGENTS.md, for users whose instructions
+#     install_user_agents manages, decided by the same test it uses. wizard's
+#     comes from his dotfiles instead.
+#
+# A file a user put in the extension's place is theirs, and so is a link
+# pointing outside the terminal-lobby package directory, such as one into a
+# checkout they are working on. The one link this replaces is ours: a link into
+# that directory that points somewhere other than the current file. The
+# AGENTS.md link goes through link_agents_file, like the Claude Code and Codex
+# links.
+#
+# Directories this creates are 0700, because pi keeps its sign-in and session
+# transcripts under ~/.pi and would otherwise create it with the umask of
+# whatever runs first. Existing directories keep their mode.
+# Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
+install_pi_links() {
+  local user="$1" home pi ext cur action f
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || return 0
+  pi="$home/.pi/agent"; ext="$pi/extensions/terminal-lobby.js"
+  for f in "$home/.pi" "$pi" "$pi/extensions"; do
+    # Same refusal as install_user_agents: a link here would aim the writes
+    # below somewhere else.
+    [[ -L "$f" ]] && { log "WARN: $f is a symlink -> pi links for $user skipped"; return 0; }
+  done
+  if [[ -L "$ext" ]]; then
+    cur="$(readlink "$ext")"
+    if [[ "$cur" == "$PI_EXTENSION" ]]; then action=current
+    elif [[ "$cur" == "${PI_EXTENSION%/*}/"* ]]; then action=repoint
+    else action=theirs; fi
+  elif [[ -e "$ext" ]]; then action=theirs
+  else action=create; fi
+  if [[ "$DRY_RUN" == 1 ]]; then
+    case "$action" in
+      create|repoint) echo "[dry-run] pi extension link ($action) -> $user:$ext" ;;
+      theirs) echo "[dry-run] pi extension: $user:$ext is theirs, left alone" ;;
+    esac
+    if [[ -s "$AGENTS_SRC_DIR/$user.md" ]] \
+       && ! [[ -L "$pi/AGENTS.md" && "$(readlink "$pi/AGENTS.md")" == ../../.agents/AGENTS.md ]]; then
+      echo "[dry-run] pi AGENTS.md link -> $user:$pi/AGENTS.md"
+    fi
+    return 0
+  fi
+  runuser -u "$user" -- sh -c 'umask 077 && mkdir -p "$1"' _ "$pi/extensions" \
+    || { log "WARN: could not create $pi/extensions for $user"; return 0; }
+  case "$action" in
+    create|repoint)
+      if runuser -u "$user" -- ln -sfn "$PI_EXTENSION" "$ext"; then log "linked $ext -> $PI_EXTENSION"
+      else log "WARN: could not link $ext for $user"; fi ;;
+    theirs) log "pi extension: $ext is $user's own, left alone" ;;
+  esac
+  if [[ -s "$AGENTS_SRC_DIR/$user.md" ]]; then
+    link_agents_file "$user" "$pi/AGENTS.md" ../../.agents/AGENTS.md
+  fi
   return 0
 }
 
@@ -1284,6 +1354,14 @@ done < <(jq -r '.accounts[] | [.os_user, (.authentik_user // "-")] | @tsv' "$des
 while IFS=$'\t' read -r os_user; do
   id "$os_user" >/dev/null 2>&1 || continue
   install_user_agents "$os_user"
+done < <(jq -r '.accounts[].os_user' "$desired_file")
+
+# 5d-quinquies) pi's per-user links (ALL users): terminal-lobby's extension in
+#     ~/.pi/agent/extensions, and ~/.pi/agent/AGENTS.md for the users 5d-bis
+#     manages. Runs after 5d-bis so the file that link points at is in place.
+while IFS=$'\t' read -r os_user; do
+  id "$os_user" >/dev/null 2>&1 || continue
+  install_pi_links "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
 
 # 5d-ter) per-user Claude defaults (ALL users): settings.json keys everyone should
