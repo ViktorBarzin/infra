@@ -1,0 +1,6 @@
+# Harnesses wizard's upstream skills are installed for. With more than one,
+# the skills CLI keeps the real copy in ~/.agents/skills (which Codex reads
+# directly) and links ~/.claude/skills/<name> to it, so ~/.agents holds every
+# skill wizard has. A user without this file gets claude-code alone.
+claude-code
+codex

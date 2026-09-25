@@ -883,9 +883,10 @@
           SKILLS_CLI="{{ devvm_skills_cli }}"
       notify: reload systemd
 
-    # Per-user policy: which promoted skills to hold back, and the local edits
-    # to put back on top after each update. Without these a rebuilt machine
-    # loses both, silently.
+    # Per-user policy: which promoted skills to hold back, the local edits to
+    # put back on top after each update, and which harnesses to install for
+    # (wizard's list puts the real copies in ~/.agents/skills). Without these a
+    # rebuilt machine loses all three, silently.
     - name: Ship the per-user skill policy
       ansible.builtin.copy:
         src: files/devvm/claude-skills/
