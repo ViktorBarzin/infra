@@ -213,7 +213,7 @@ resource "kubernetes_manifest" "benchmark_db_external_secret" {
 # Persistent state: SQLite + image cache. Sensitive (API tokens may end up
 # in cached images / debug logs), but the proxmox-lvm-encrypted SC is for
 # user-data DBs; this is a small app cache so plain proxmox-lvm fits the
-# infra/.claude/CLAUDE.md decision rule.
+# decision rule in docs/agents/storage-backup.md.
 resource "kubernetes_persistent_volume_claim" "data" {
   wait_until_bound = false
   metadata {

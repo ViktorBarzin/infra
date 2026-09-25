@@ -43,7 +43,7 @@ resource "kubernetes_persistent_volume_claim" "data" {
   # so `learning` was the single persistent drift_error_count=1 in the nightly
   # drift run, and the stack could be neither planned nor applied. Compare
   # stacks/trek, which has always had it in the right place, and the PVC
-  # template in .claude/CLAUDE.md.
+  # template in docs/agents/storage-backup.md.
   wait_until_bound = false # WaitForFirstConsumer SC binds on pod schedule; blocking here deadlocks the apply (orphan PVC cleared, re-applied 2026-07-27)
   metadata {
     name      = "learning-data"

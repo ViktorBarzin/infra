@@ -63,7 +63,7 @@ Refusing to cry wolf
   role cannot SELECT aborts the extraction instead of shortening it.
 
 Pure stdlib on purpose (no pip/apk at runtime — see the status-page-pusher
-anti-pattern in .claude/CLAUDE.md).
+anti-pattern in docs/agents/monitoring.md).
 """
 
 import json

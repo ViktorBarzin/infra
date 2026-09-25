@@ -348,7 +348,7 @@ resource "kubectl_manifest" "policy_inject_keel_annotations" {
           #   - monitoring/prometheus-server  alpine:3.21 <-> 3.21.7 hourly,
           #     11 ReplicaSets in 14h, which reset every alert `for:` timer and
           #     made DriftStacksMany re-fire all day (see the Monitoring
-          #     section of .claude/CLAUDE.md).
+          #     notes in docs/agents/monitoring.md).
           #   - proxy/proxy-gw-1              gluetun :latest <-> pinned tag,
           #     6 pod replacements in ~30 min, each dropping the VPN tunnel.
           #   - authentik/ak-outpost-public   proxy:2026.2.6 <-> 2026.2.4 every

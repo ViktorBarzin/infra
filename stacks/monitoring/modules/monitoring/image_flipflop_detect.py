@@ -20,7 +20,7 @@ fight from ordinary deploy churn — a normal upgrade history only ever moves
 forward.
 
 Pure stdlib on purpose (no pip/apk at runtime — see the status-page-pusher
-anti-pattern in .claude/CLAUDE.md).
+anti-pattern in docs/agents/monitoring.md).
 """
 
 import json
