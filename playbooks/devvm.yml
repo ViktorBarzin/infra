@@ -776,6 +776,81 @@
         owner: root
         group: root
 
+    # jiti's cache directory, /tmp/jiti. pi compiles extensions through jiti,
+    # which trusts cached code by a source hash in the file name, so a user who
+    # can write to that directory can plant code another user's pi runs. The
+    # tmpfiles rule makes it root's at every boot; the tasks below apply it now
+    # and clear out whatever non-root users left in it. jiti.conf has the rest.
+    - name: Keep /tmp/jiti a root-owned directory
+      ansible.builtin.copy:
+        src: files/devvm/jiti.conf
+        dest: /etc/tmpfiles.d/jiti.conf
+        mode: "0644"
+        owner: root
+        group: root
+
+    - name: Check /tmp/jiti without following a link
+      ansible.builtin.stat:
+        path: /tmp/jiti
+        follow: false
+      register: devvm_jiti_dir
+
+    # systemd-tmpfiles rather than the file module, because it is built to fix
+    # up paths in a world-writable directory without following a link someone
+    # left there. With a link in the way, systemd 255 prints "already exists and
+    # is not a directory" and still exits 0, which is why the result is checked
+    # again below.
+    - name: Apply the /tmp/jiti rule now rather than at the next boot
+      ansible.builtin.command:
+        cmd: systemd-tmpfiles --create /etc/tmpfiles.d/jiti.conf
+      when: >-
+        not (devvm_jiti_dir.stat.isdir | default(false))
+        or devvm_jiti_dir.stat.uid != 0
+        or devvm_jiti_dir.stat.gid != 0
+        or devvm_jiti_dir.stat.mode != '0755'
+      changed_when: true
+
+    - name: Re-check /tmp/jiti
+      ansible.builtin.stat:
+        path: /tmp/jiti
+        follow: false
+      register: devvm_jiti_now
+
+    - name: Fail if /tmp/jiti is not a root-owned directory
+      ansible.builtin.assert:
+        that:
+          - devvm_jiti_now.stat.isdir | default(false)
+          - devvm_jiti_now.stat.uid == 0
+          - devvm_jiti_now.stat.gid == 0
+          - devvm_jiti_now.stat.mode == '0755'
+        fail_msg: >-
+          /tmp/jiti is not a root-owned 0755 directory after systemd-tmpfiles
+          ran. A link or a file in its place is the likely cause; remove it and
+          run the playbook again.
+      when: not ansible_check_mode
+
+    # Only once the directory is root's: before that, its owner could swap it
+    # for a link between the check and the listing. Entries root owns are kept,
+    # since no other user can have written them.
+    - name: List what non-root users left in /tmp/jiti
+      ansible.builtin.find:
+        paths: /tmp/jiti
+        file_type: any
+        hidden: true
+      register: devvm_jiti_entries
+      when:
+        - devvm_jiti_now.stat.isdir | default(false)
+        - devvm_jiti_now.stat.uid == 0
+      check_mode: false
+
+    - name: Remove the cache entries non-root users left in /tmp/jiti
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ devvm_jiti_entries.files | default([]) | rejectattr('uid', 'equalto', 0) | list }}"
+      loop_control:
+        label: "{{ item.path }}"
+
     # ---- 7a3) keeping Claude Code current, for everyone ---------------------
     # Added 2026-09-06, same reason as the codex block above: Viktor wants these
     # agent binaries always at latest.
