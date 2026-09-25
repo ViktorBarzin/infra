@@ -12,6 +12,7 @@ Moved verbatim from the repo's agent instruction files (`AGENTS.md`, `.claude/CL
 - **NVIDIA GPU operator resources**: dcgm-exporter and cuda-validator resources configurable via `dcgmExporter.resources` and `validator.resources` in nvidia values.yaml.
 - **Pin database versions**: Disable Diun (image update monitoring) for MySQL, PostgreSQL, Redis.
 - **Quarterly right-sizing**: Run `krr` (Dockerized, against Prometheus) for recommendations; compare to current requests and adjust in TF. (Goldilocks dashboard removed 2026-06-12.)
+- **The descheduler balances on memory REQUESTS since 2026-09-23** (`stacks/descheduler/values.yaml`, its own `balance-by-requests` profile: under 70% is a destination, over 90% a source, `nodeFit: true`, PVC pods never moved, at most 10 evictions per hourly run). It used to read actual usage, which never corrected the request imbalance a kured drain leaves behind: node2 came back at 49.9% of requests beside three nodes at 98-99%, and the Vaultwarden backup (pod affinity to Vaultwarden) could not schedule for ~15h. It balances placement only. The untainted workers hold 83-86% of their memory in requests overall, so N-1 headroom still needs `krr`. **It runs at :55, not :00**: 38 hourly CronJobs start at :00 (3,664 MiB of requests), and a run in that minute saw node2 inflated from 64% to 72%, over its 70% destination line, so it stalled for five runs.
 
 ## Tier System
 `0-core` | `1-cluster` | `2-gpu` | `3-edge` | `4-aux` — Kyverno auto-generates LimitRange + ResourceQuota per namespace based on tier label.

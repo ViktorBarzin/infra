@@ -24,7 +24,8 @@ safety valve). The `build` job: lint/test → `svu` cuts the next `vX.Y.Z` tag t
 CANONICAL Forgejo (GHA secret `FORGEJO_GIT_TOKEN` = write:repository PAT) + bakes
 `VERSION` → `buildx` `linux/amd64` `provenance:false` (single-manifest, dodges
 the orphaned-index-children class) → push `ghcr.io/viktorbarzin/<name>:<sha8>` +
-`:latest` → `delete-package-versions` keep-10. The `deploy` job POSTs
+`:latest` → `delete-package-versions` keep-10. The deploy trigger (the build
+job's last step since 2026-09-24; a separate `deploy` job in older repos) POSTs
 `ci.viktorbarzin.me/api/repos/<id>/pipelines` (the GitHub-mirror's Woodpecker
 registration, github-forge; GHA secret `WOODPECKER_TOKEN`) with `IMAGE_TAG` +
 `IMAGE_NAME` → `.woodpecker/deploy.yml` (event:**manual** ONLY, so the raw
