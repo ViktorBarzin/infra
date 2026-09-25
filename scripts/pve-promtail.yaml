@@ -1,10 +1,11 @@
 # Promtail config for the PVE host (192.168.1.127) — ships the systemd journal to cluster Loki.
 #
-# NOT Terraform-managed (the PVE host is the hypervisor, outside k8s). Deployed by hand,
-# same pattern as scripts/fan-control.* and the rpi-sofia promtail. This file is source-of-truth.
+# NOT Terraform-managed (the PVE host is the hypervisor, outside k8s). This file is
+# source-of-truth, and since 2026-09-24 playbooks/pve-host.yml deploys it to
+# /etc/promtail/config.yml, validating it with `promtail -check-syntax` first and
+# restarting promtail when it changes.
 #
-# Deploy:
-#   scp scripts/pve-promtail.yaml    root@192.168.1.127:/etc/promtail/config.yml
+# First install (unit and binary, still by hand):
 #   scp scripts/pve-promtail.service root@192.168.1.127:/etc/systemd/system/promtail.service
 #   ssh root@192.168.1.127 'mkdir -p /var/lib/promtail && systemctl daemon-reload && systemctl enable --now promtail'
 #   # Binary: grafana/loki v3.5.1 promtail-linux-amd64 -> /usr/local/bin/promtail (chmod 0755).
@@ -67,3 +68,24 @@ scrape_configs:
         regex: 'sshd.*'
         target_label: job
         replacement: 'sshd-pve'
+    # Redact secret-shaped values before a line leaves the host. snoopy logs
+    # every command line here, and Loki keeps it for 30 days, so any credential
+    # passed as an argument became readable by everyone with Loki access. The
+    # fan-control loop did exactly that with a Home Assistant bearer token on
+    # every poll until 2026-09-24. The local journal (RAM only, root only) keeps
+    # the full line; Loki gets the masked one. Each expression captures only the
+    # secret itself, which is the part the replace stage rewrites. sshd key
+    # fingerprints match none of them, so the S1 rule's attribution survives.
+    pipeline_stages:
+      - replace:
+          expression: '(?i)authorization:\s*(?:bearer|basic|token)\s+([^\s"'']+)'
+          replace: '[REDACTED]'
+      - replace:
+          expression: '(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})'
+          replace: '[REDACTED-JWT]'
+      - replace:
+          expression: '(?i)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)=([^\s&"'']+)'
+          replace: '[REDACTED]'
+      - replace:
+          expression: '(?i)--(?:password|passwd|token|secret|api-key|access-key)[= ]([^\s"'']+)'
+          replace: '[REDACTED]'

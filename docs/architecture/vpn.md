@@ -324,7 +324,7 @@ dns_config:
 
 **Peer: London Flint 2**:
 - WireGuard IP: `10.3.2.6`
-- Remote endpoint: `vpn.viktorbarzin.me:51821` (dual-stack: A=176.12.22.76, AAAA=2001:470:6e:43d::2)
+- Remote endpoint: `vpn.viktorbarzin.me:51821` (A=176.12.22.76 only; its AAAA was removed on 2026-07-09 in `5da30b90`, so the peer connects over IPv4)
 - Allowed IPs: `192.168.8.0/24, 192.168.9.0/24, 192.168.10.0/24, 10.3.2.6/32`
 - Keepalive: 25 seconds (configured on London side)
 
@@ -346,7 +346,7 @@ dns_config:
 
 - Interface: `wgclient1` (proto `wgclient`, config `peer_855`)
 - Local IP: `10.3.2.6/32`
-- Remote endpoint: `vpn.viktorbarzin.me:51821` (dual-stack — resolves to IPv4 or IPv6)
+- Remote endpoint: `vpn.viktorbarzin.me:51821` (IPv4 only since 2026-07-09, A=176.12.22.76)
 - Allowed IPs: `10.0.0.0/8, 192.168.1.0/24, 192.168.0.0/24`
 - Keepalive: 25 seconds
 - Policy routing: GL-iNet marks traffic via iptables mangle → routing table 1001 (ipset `dst_net10`)
@@ -508,7 +508,7 @@ dns_config:
 
 **Common causes**:
 1. **AllowedIPs parse error on GL-iNet**: If `wg show wgclient1` shows no peers and interface is DOWN with `qdisc noop`, check `/etc/config/wireguard` peer config. AllowedIPs must be a single comma-separated entry, not multiple `list` entries (see London section above).
-2. **IPv6 endpoint resolution**: If IPv4 is down, DNS resolves to IPv6 (AAAA record). Ensure the pfSense `HE_IPv6` (gif0) interface has a `pass in` rule for UDP 51821.
+2. **IPv6 endpoint resolution** (does not apply today): `vpn.viktorbarzin.me` has had no AAAA record since 2026-07-09, so peers resolve IPv4 only. If an AAAA is added back, the pfSense `HE_IPv6` (gif0) interface needs a `pass in` rule for UDP 51821.
 3. **Keepalive packets dropped**: Firewall or ISP blocking UDP 51821.
 4. **Public IP changed**: Dynamic IP on remote site changed, config still has old IP.
 5. **GL-iNet policy routing lost**: After firewall reload, check if `TUNNEL10_ROUTE_POLICY` and `LOCAL_POLICY` mangle rules exist. If not, run `/etc/init.d/firewall restart` and check `/etc/firewall.user` execution.

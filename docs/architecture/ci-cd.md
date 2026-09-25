@@ -67,9 +67,11 @@ graph LR
      avoids the orphaned-index-children failure class), push
      `ghcr.io/viktorbarzin/<name>:<sha8>` + `:latest`
    - `delete-package-versions` keeps the newest ~10 ghcr versions
-3. **GHA `deploy` job** POSTs `ci.viktorbarzin.me/api/repos/<id>/pipelines`
+3. **The GHA deploy trigger** POSTs `ci.viktorbarzin.me/api/repos/<id>/pipelines`
    (the Woodpecker registration for the **GitHub mirror**, github-forge; GHA
-   secret `WOODPECKER_TOKEN`) with `IMAGE_TAG` + `IMAGE_NAME`.
+   secret `WOODPECKER_TOKEN`) with `IMAGE_TAG` + `IMAGE_NAME`. Since 2026-09-24
+   the template makes this the last step of the build job; repos onboarded
+   earlier still run it as a separate `deploy` job.
 4. **`.woodpecker/deploy.yml`** (event: **manual** only, so the raw
    Forgejo→GitHub mirror pushes don't fire a tag-less deploy) runs `kubectl set
    image deployment/<app> <container>=<image>` in-cluster. The `woodpecker-agent`
@@ -427,6 +429,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # never GitHub's six-hour default, see "GitHub Actions minutes"
     permissions:
       contents: write   # svu tag push
       packages: write    # ghcr push
@@ -447,16 +450,38 @@ jobs:
           tags: |
             ghcr.io/viktorbarzin/<name>:${{ github.sha }}
             ghcr.io/viktorbarzin/<name>:latest
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
+      # A step, not a job: GitHub bills every job at least a whole minute.
       - name: Trigger Woodpecker deploy
         run: |
           curl -X POST https://ci.viktorbarzin.me/api/repos/<DEPLOY_REPO_ID>/pipelines \
             -H "Authorization: Bearer ${{ secrets.WOODPECKER_TOKEN }}" \
             -d '{"branch":"master","variables":{"IMAGE_TAG":"...","IMAGE_NAME":"..."}}'
 ```
+
+### GitHub Actions minutes (private repos)
+
+Public repos build free. Private repos share one allowance of 2,000 minutes a
+month on the account's GitHub Free plan, reset on the 1st. GitHub rounds every
+job up to a whole minute, so a six-second job costs a full minute, and macOS
+minutes count ten times.
+
+September 2026 reached 90% of the allowance by the 24th. f1-stream used 1,289
+minutes: 360 from one test job that hung until GitHub's six-hour default
+timeout, and about 330 from one-minute jobs doing a few seconds of work.
+tripit used about 340. The template changed in response on 2026-09-24: every
+job carries a `timeout-minutes`, and the deploy trigger is a step of the build
+job rather than a job of its own. tripit also runs its backend test suite only
+in the local `homelab work land` gate, not in CI.
+
+To see where the minutes go:
+
+```sh
+gh api "/users/ViktorBarzin/settings/billing/usage?year=2026&month=9"  # per repo, per day
+gh repo list ViktorBarzin --limit 300 --json name,visibility          # which rows count
+```
+
+The usage listing includes public repos as well, fully discounted, so filter
+to the private ones before comparing against 2,000.
 
 ### Woodpecker deploy pipeline (per-app `.woodpecker/deploy.yml`)
 
@@ -515,7 +540,7 @@ needs no credentials.
 
 The Forgejo→GitHub push-mirror sends raw, tag-less pushes to the GitHub mirror.
 If `deploy.yml` fired on `push`, every mirror sync would trigger a deploy with no
-image tag. `manual` means only the GHA `deploy` job's explicit API POST (with
+image tag. `manual` means only the GHA deploy trigger's explicit API POST (with
 `IMAGE_TAG`) deploys.
 
 ### Why linux/amd64 only?
@@ -549,7 +574,8 @@ Forgejo path), see the CoreDNS `viktorbarzin.me` carve-out in
 ### Deploy didn't happen after a push
 
 Confirm the push was to **master** (feature branches build/deploy nothing).
-Check the GHA run completed the `deploy` job, then check Woodpecker received the
+Check the GHA run reached its deploy trigger (the last step of `build`, or the
+`deploy` job in repos onboarded before 2026-09-24), then check Woodpecker received the
 manual pipeline (`ci.viktorbarzin.me`, the GitHub-mirror deploy repo). Verify
 live with `kubectl rollout status` — not the CI checkmark.
 

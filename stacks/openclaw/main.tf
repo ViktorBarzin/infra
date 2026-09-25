@@ -1994,7 +1994,13 @@ resource "kubernetes_cron_job_v1" "memory_sync" {
     }
   }
   spec {
-    schedule                      = "0 3 * * *"
+    schedule = "0 3 * * *"
+    # Suspended 2026-09-24 because it can only fail while OpenClaw is parked.
+    # Its body execs into the OpenClaw pod, and e4ebbc04 scaled that to 0
+    # replicas on 2026-09-04; the last successful run was that same morning,
+    # and every nightly run since has failed. It surfaced as
+    # CronJobFailingRepeatedly. Remove this line when OpenClaw comes back.
+    suspend                       = true
     concurrency_policy            = "Forbid"
     failed_jobs_history_limit     = 3
     successful_jobs_history_limit = 3

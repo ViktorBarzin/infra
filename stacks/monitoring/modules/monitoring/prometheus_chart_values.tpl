@@ -1899,13 +1899,41 @@ serverFiles:
             # crossing costs a firing and a resolved message; 15m merges those
             # into one episode and lands close to the old volume while still
             # reacting in about four minutes instead of twenty.
-            expr: rate(node_pressure_io_stalled_seconds_total{job="devvm"}[2m]) > 0.60
+            #
+            # GATED ON A STARVED BYSTANDER since 2026-09-24. Box-wide io full
+            # only counts tasks that want to run, so one user's heavy IO job
+            # drives it to 70-80% while every idle shell on the box, that user's
+            # included, answers a keystroke normally. Viktor was told "every
+            # session on the box is frozen" at 07:34 that day while his terminal
+            # worked fine. Replaying the 7 days to 2026-09-24: all 4 episodes
+            # (09-18, 09-19, 09-20, 09-24) had wizard as the ONLY stalled user
+            # and no starved bystander, so all 4 were one user's own IO stalling
+            # his own slice; emo's slice read 0.00-0.10 during the 09-24 one.
+            # With the gate, 0 episodes in those 7 days.
+            #
+            # The gate is DevvmUserIOStarved's condition: some user stalled over
+            # 0.60 while issuing under 50 reads/s over 15m, i.e. waiting on disk
+            # without being the one using it. It keeps the case this rule was
+            # written for. The per-user exporter only started on 2026-09-13 so
+            # the 09-12 incident cannot be replayed, but between 09-13 and 09-16
+            # emo was a starved bystander in 8 two-minute samples, 5 of them
+            # while the box read over 0.60, which this rule now fires on. The
+            # [15m] window is required, not a choice: devvm_slice_io_rios_total
+            # only moves every few minutes, so a short rate reads zero.
+            expr: |
+              rate(node_pressure_io_stalled_seconds_total{job="devvm"}[2m]) > 0.60
+              and on()
+              count(
+                (devvm_slice_pressure_ratio{resource="io", user!=""} > 0.60)
+                and on(user)
+                (rate(devvm_slice_io_rios_total{user!=""}[15m]) < 50)
+              ) > 0
             for: 2m
             keep_firing_for: 15m
             labels:
               severity: warning
             annotations:
-              summary: "devvm is stalled on disk {{ $value | humanizePercentage }} of the time — every session on the box is frozen"
+              summary: "devvm is stalled on disk {{ $value | humanizePercentage }} of the time, and it is starving a user who is not causing it"
               description: "This is what users report as the machine being unusable, and it is not a CPU problem: on 2026-09-12 the affected user's slice read cpu.pressure 0.00 against io.pressure 73.93. Find who is generating it: homelab metrics query 'devvm_slice_pressure_ratio{resource=\"io\"}' shows it per user slice. Check whether the cap or the device is the limit, and expect the device: the guest has hit 100% utilisation at only 201 reads/s against a 400 cap it reaches in 0.8% of 5-minute samples, so the old advice of raising the cap usually will not apply. Compare the two sides: guest node_disk_io_time_seconds_total{job=\"devvm\",device=\"dm-0\"} against the host dm-217 for the same window. Guest saturated while the host is not means the cap; both saturated means the spindle, and etcd shares it. Compare the two sides: guest read latency in node_disk_read_time_seconds_total{job=\"devvm\"} against the host's own sdc. If the guest is far slower than the host, the cap is the constraint rather than the spindle."
           # DevvmIOSchedulerNotBFQ WAS HERE, and is deleted rather than
           # inverted. BFQ went on sda on 2026-09-12 to make the cgroup IOWeight
@@ -3215,8 +3243,7 @@ serverFiles:
           # kills in the 30 days to 2026-09-06, 313 were cgroup-level against a
           # container's own limit and none were node-level. Alerting on limit
           # overcommit would report a condition that has never caused an outage,
-          # while ContainerOOMKilled and ContainerNearOOM already cover the kills
-          # that do happen.
+          # while ContainerOOMKilled already reports the kills that do happen.
           - alert: NodeMemoryRequestsHigh
             expr: |
               100 * (
@@ -3229,10 +3256,20 @@ serverFiles:
                 / on(node) group_left() kube_node_status_allocatable{resource="memory",unit="byte"}
               ) > 90
             for: 30m
-            # Same reasoning as the N-1 alert above: pod churn tips this back and
-            # forth across the line, so fold an episode into one alert rather than
-            # a fire/resolve pair per CronJob.
-            keep_firing_for: 6h
+            # Pod churn tips this back and forth across the line, so fold an
+            # episode into one alert rather than a fire/resolve pair per CronJob.
+            #
+            # 1h, not the 6h this started with (changed 2026-09-23, Viktor wanted
+            # it to clear sooner). Replaying this exact rule over 7 days of
+            # 5-minute samples, node2-node5: 6h gave 14 notification episodes,
+            # 1h gives 16, 30m 17, 15m 18, none 20. The gaps below 90 between two
+            # stretches above it have a median of 338 minutes, so most of what
+            # 6h folded were real recoveries, and it held the alert up for six
+            # hours after each one. 1h also matches the descheduler, which runs
+            # hourly at :55 with a 90% target of its own: a node it pulls just
+            # under the line and that creeps back within the hour stays one
+            # episode.
+            keep_firing_for: 1h
             labels:
               severity: warning
             annotations:
@@ -3286,54 +3323,20 @@ serverFiles:
                 Check what grew: `homelab metrics query 'topk(10,
                 container_memory_working_set_bytes{node="{{ $labels.node }}"})'`.
                 Kubelet starts evicting at memory.available<100Mi.
-          # ContainerNearOOM — defined 2026-09-06. Several docs referred to this
-          # alert for months (docs/architecture/monitoring.md and .claude/CLAUDE.md
-          # both recorded that it did NOT exist), and the gap it leaves is that
-          # nothing warns before a container is killed: ContainerOOMKilled and
-          # KernelOOMKiller are both post-mortem signals.
+          # ContainerNearOOM (working set / memory limit) was removed on
+          # 2026-09-23, at Viktor's request, to cut alert noise. In its last 7
+          # days it warned for 10 containers; one of them, prometheus-server,
+          # was later OOM-killed, and ContainerOOMKilled reported that kill
+          # anyway, while 3 of the week's 4 kills came with no warning at all.
+          # After the threshold went from 0.85 to 0.95 on 2026-09-19 it fired 4
+          # times in 4 days, every time for the CNPG primary, which peaked at
+          # 99.3% of its limit and was never killed.
           #
-          # severity: info is deliberate. It routes to slack-info, whose
-          # repeat_interval is 8760h, so a container that lives permanently near
-          # its limit posts once rather than re-pinging.
-          #
-          # Threshold raised 0.85 -> 0.95 on 2026-09-19 at Viktor's request. At
-          # 85% the alert had five containers firing continuously and none was
-          # close to a kill: pg-cluster-2 read 85.2% because a Postgres
-          # replica's shared_buffers are working set by design, and
-          # immich-frame and wg-peer-sync had held their band for days.
-          #
-          # Know what this buys and what it costs. The whole cluster's top
-          # reading on 2026-09-19 was 93.2% (changedetection/sockpuppetbrowser
-          # and ebooks/annas-archive-stacks), so at 0.95 the alert is silent
-          # today and the warning window before a kill is now 5 points of a
-          # limit wide. That is the intended trade: the 85% band was reporting
-          # workloads sized snugly on purpose, and ContainerOOMKilled still
-          # catches the kill itself. Revisit if a container is OOMKilled
-          # without this having fired first.
-          #
-          # working_set is the same signal kubelet's own OOM accounting uses, so
-          # this ratio is the one that predicts a kill. It cannot see a spike
-          # shorter than the 5-minute scrape; container_memory_max_usage_bytes,
-          # re-enabled in the same change as this rule, is the companion that can.
-          - alert: ContainerNearOOM
-            expr: |
-              container_memory_working_set_bytes{container!="",container!="POD"}
-              / on(namespace,pod,container) group_left()
-              kube_pod_container_resource_limits{resource="memory",unit="byte"}
-              > 0.95
-            for: 15m
-            labels:
-              severity: info
-            annotations:
-              summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) is at {{ $value | humanizePercentage }} of its memory limit"
-              description: |
-                The container has held above 95% of its memory limit for 15 minutes.
-                It has not been killed, which is why nothing else reports it.
-                Either the limit is too tight for what the workload legitimately
-                needs, or the workload is leaking. Check the high-water mark
-                (`container_memory_max_usage_bytes`) and the 30-day shape before
-                changing anything — a 7-day window has under-read a periodic job by
-                more than 70x here.
+          # Working set counts active page cache, which the kernel reclaims
+          # before it kills anything, and Postgres fills its cgroup with page
+          # cache by design. A pre-kill signal that works would need anon memory
+          # instead. container_memory_rss is not in the cadvisor keep list above,
+          # so a replacement starts by adding it there.
       # Goldmane edge-aggregator (ADR-0014 / infra #58, #61): the durable
       # who-talks-to-whom trail. The aggregator pod has NO /metrics endpoint,
       # so its health is inferred from kube-state-metrics signals — the trail
@@ -3867,39 +3870,22 @@ serverFiles:
               severity: warning
             annotations:
               summary: "NFS local mirror last run failed (status={{ $value }})"
-          # Threshold raised 180000s (50h) -> 691200s (8d) on 2026-09-01.
-          # vzdump-vms.timer is WEEKLY, not daily: measured on the PVE host,
-          # LastTrigger Sun 2026-08-30 01:00:43 and NextElapse Sun 2026-09-06
-          # 01:01:08. A 50h threshold described as "2 daily cycles" therefore
-          # fired roughly 5 days out of every 7 while the backup was perfectly
-          # healthy — the run it was complaining about had finished with
-          # "=== vzdump-vms complete (status=0, 81G) ===". 8 days allows one
-          # weekly run to be missed entirely plus margin, so a fire now means a
-          # genuinely skipped or failed backup. The other four backup timers on
-          # that host (daily-backup, offsite-sync-backup, devvm-home-backup,
-          # dpkg-db-backup) really are daily and are covered by their own rules.
-          - alert: VzdumpBackupStale
-            expr: (time() - vzdump_last_success_timestamp{job="vzdump-backup"}) > 691200
-            for: 30m
-            labels:
-              severity: warning
-            annotations:
-              summary: "vzdump VM image backup is {{ $value | humanizeDuration }} old (threshold: 8d — the timer is weekly)"
-              description: "vzdump-vms.timer on 192.168.1.127 hasn't produced a fresh devvm image. Check: ssh root@192.168.1.127 systemctl status vzdump-vms. Runbook: docs/architecture/backup-dr.md (VM Image Backups)."
-          - alert: VzdumpBackupNeverRun
-            expr: absent(vzdump_last_run_timestamp{job="vzdump-backup"})
-            for: 48h
-            labels:
-              severity: warning
-            annotations:
-              summary: "vzdump VM image backup job has never reported metrics to Pushgateway"
-          - alert: VzdumpBackupFailing
-            expr: vzdump_last_status{job="vzdump-backup"} != 0
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: "vzdump VM image backup last run failed (status={{ $value }})"
+          # The three vzdump rules (VzdumpBackupStale, VzdumpBackupNeverRun,
+          # VzdumpBackupFailing) were removed on 2026-09-23. The backup they
+          # watched was retired on 2026-09-15 (d05be720): vzdump-vms.timer is
+          # disabled on the PVE host on purpose, and scripts/ci/pve-scripts-sync.sh
+          # keeps it disabled, because each weekly run read all 228 GiB of the
+          # devvm's disk and took sdc read latency from 0.23 ms to 107 ms. The
+          # restore path is now the devvm playbook plus devvm-home-backup.
+          #
+          # Left in place, the rules could only ever report the retirement.
+          # VzdumpBackupStale started firing once the last image (2026-09-13)
+          # passed 8 days old and would have fired forever. VzdumpBackupNeverRun
+          # would have joined it the first time the Pushgateway lost the
+          # series. The last three images stay on /mnt/backup/vzdump as a floor
+          # that no longer advances; reviving the backup means re-enabling the
+          # timer, dropping it from DISABLED_TIMERS, and restoring these rules
+          # from git history.
           - alert: BackupDiskFull
             expr: (1 - node_filesystem_avail_bytes{job="proxmox-host", mountpoint="/mnt/backup"} / node_filesystem_size_bytes{job="proxmox-host", mountpoint="/mnt/backup"}) > 0.85
             for: 15m
@@ -5825,6 +5811,28 @@ serverFiles:
             annotations:
               summary: "Cluster VPN egress gateway (UK) has no available replica — proxy consumers and geo-browser sessions are failing closed"
               description: "No gluetun pod is Ready behind proxy-gw-1 / proxy-egress-uk, so every service pointed at proxy-egress-uk:8888/:1080 and every geo-browser session has lost its tunnel (fail closed, no plaintext fallback). Check `kubectl -n proxy describe deploy proxy-gw-1` and the gluetun container logs; a NordVPN over-limit refusal carries a ~10-min cooldown before a reconnect can succeed."
+          # infra#97: the exit country silently drifted to Brazil while the
+          # tunnel stayed healthy, so VPNEgressGatewayDown above cannot catch it.
+          # Metrics come from the egress-country-probe CronJob in stacks/proxy
+          # (pushed to Pushgateway every 15m). WrongCountry only evaluates when a
+          # geo lookup succeeded (probe_up == 1) so a geo-source outage cannot
+          # page; for: 30m needs two consecutive non-GB reads.
+          - alert: ProxyEgressWrongCountry
+            expr: proxy_egress_probe_up == 1 and proxy_egress_exit_is_expected_country == 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cluster VPN egress (proxy-egress-uk) is exiting OUTSIDE the UK"
+              description: "proxy-egress-uk is the documented UK-exit path (org policy), but the egress-country probe reports a non-GB exit for 30m. Traffic routed through it believing it gets a UK address is silently landing in the wrong country. Root cause is usually gluetun (digest-pinned, so its NordVPN server list is frozen) connecting to a relocated server the frozen list still tags UK — a pod restart re-rolls the pick: `kubectl -n proxy rollout restart deploy/proxy-gw-1`. Verify: `kubectl -n proxy port-forward svc/proxy-egress-uk 18888:8888 & curl -s -x http://127.0.0.1:18888 https://ipinfo.io/country` should print GB. UPDATER_PERIOD=24h on the gluetun container is meant to prevent recurrence."
+          - alert: ProxyEgressCountryProbeStale
+            expr: time() - proxy_egress_probe_last_run_timestamp > 5400
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "egress-country-probe has not reported in >90m — UK-exit drift is no longer being watched"
+              description: "The egress-country-probe CronJob in namespace proxy pushes to Pushgateway every 15m; its last-run timestamp is stale, so a silent exit-country drift (infra#97) would now go undetected. Check `kubectl -n proxy get cronjob egress-country-probe` and its recent Jobs."
       - name: "External Access"
         rules:
           - alert: ExternalAccessDivergence
@@ -5872,8 +5880,8 @@ serverFiles:
         # What covers this now, at the symptom rather than the cause:
         #   AuthentikOutpostForwardAuth400Spike (below) is the documented way an
         #     shm ENOSPC surfaces, and its series is live.
-        #   ContainerOOMKilled and ContainerNearOOM cover memory generically,
-        #     against kube_pod_container_resource_limits, which is not dropped.
+        #   ContainerOOMKilled covers memory generically, from kube-state-metrics'
+        #     last_terminated_reason, which is not dropped.
         #   AuthentikOutpostRestarts (below) catches an OOM restart loop.
         rules:
           - alert: AuthentikOutpostRestarts
@@ -6537,8 +6545,8 @@ serverFiles:
           # A feed that has NEVER pushed leaves an absent series, not a stale
           # one, so the staleness rules above have nothing to age and stay
           # silent about a feed that was broken from its first run. `for: 48h`
-          # matches the LVM-snapshot and vzdump pairs above: long enough to
-          # ride out a Pushgateway restart reloading its persistence file.
+          # matches the LVM-snapshot pair above: long enough to ride out a
+          # Pushgateway restart reloading its persistence file.
           - alert: T212SyncNeverReported
             expr: absent(t212_sync_last_success_timestamp_seconds{job="broker-sync-trading212"})
             for: 48h
