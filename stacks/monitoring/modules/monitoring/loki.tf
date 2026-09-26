@@ -950,10 +950,13 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             },
             {
               # The pre-warning, and the only signal that arrives while the
-              # conversation can still be saved. Gated on claude being the largest
-              # process in the pane, which is the same ranking the kernel uses at
-              # the cap: when a build or a test run is the largest, the cap eating
-              # it is the mechanism working correctly and not worth a message.
+              # conversation can still be saved. The watcher warns at 5 GiB in any
+              # pane holding a claude and ends the episode only below 4.5 GiB
+              # (terminal-lobby 2026-09-26). The earlier gate, 3 GiB with claude as
+              # the pane's largest process, logged 212 warnings in 26 days against
+              # 5 claude kills: claude is ~0.4 GB and the largest process in nearly
+              # every pane it sits in, so the pane fills with its dev servers, test
+              # workers and /tmp files, and the gate filtered nothing.
               #
               # The watcher compares UNRECLAIMABLE memory (anon + shmem), not
               # memory.current. current rides up to the cap in any pane doing file
@@ -971,8 +974,8 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               for    = "0m"
               labels = { severity = "warning" }
               annotations = {
-                summary     = "{{ $labels.user }} has a pane approaching its 6G cap with claude as the largest process"
-                description = "The next cap kill in this pane takes the conversation, not a build. Normal claude is ~0.5 GB and the busiest pane measured is 1.5 GB, so 3 GB is already ~6x. WHICH SESSION: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |= \"event=pane_near_cap\"' --since 30m. CHECK WHAT KIND OF MEMORY IT IS FIRST: cat /sys/fs/cgroup/<scope>/memory.stat. If shmem dominates, the pane is holding RAM-backed /tmp files (8G tmpfs, 7.0G of it /tmp/claude-1000 on 2026-09-01) and closing the session will NOT help — the kernel would kill the ~0.5 GB claude and leave the tmpfs behind. Delete the scratch files instead. If anon dominates, closing a session does help (~659 MB each). Panes can also SHARE a cgroup — four of emo's claudes sat in one run-r*.scope — so several sessions may cross together and all are genuinely at risk."
+                summary     = "{{ $labels.user }} has a pane holding a claude within 1G of its 6G cap"
+                description = "Unreclaimable memory (anon + shmem) in this pane passed 5 GiB. Claude itself is ~0.4 GB; the rest is what it started (dev servers, tsc, test workers) and files it wrote to /tmp. The cap kills the largest processes first and reaches the claude after them. WHICH SESSION: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |= \"event=pane_near_cap\"' --since 30m. CHECK WHAT KIND OF MEMORY IT IS FIRST: cat /sys/fs/cgroup/<scope>/memory.stat. If shmem dominates, the pane is holding RAM-backed /tmp files (8G tmpfs, 7.0G of it /tmp/claude-1000 on 2026-09-01) and closing the session will NOT help — the kernel would kill the ~0.5 GB claude and leave the tmpfs behind. Delete the scratch files instead. If anon dominates, closing a session does help (~659 MB each). Panes can also SHARE a cgroup — four of emo's claudes sat in one run-r*.scope — so several sessions may cross together and all are genuinely at risk."
               }
             },
             {
