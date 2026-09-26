@@ -50,6 +50,11 @@ argv="$(last_argv 2>/dev/null)"
 assert_contains "$argv" "--resume
 $uuid" "claude is resumed on the saved conversation"
 assert_eq "$(tail -1 <<<"$argv")" "$msg" "the message is the last argument, byte for byte"
+# Every lobby surface reads an unstamped session as a system session: hidden in
+# the System group, no push, suspended after 4h, skipped by the death watcher
+# and by the next snapshot. Only user sessions are ever snapshotted, so a
+# restored one is a user session.
+assert_eq "$(tt show-options -t "=gone:" -v @tl_origin 2>&1)" "user" "the restored session is stamped as a user session"
 
 echo "== without a message, the argv is unchanged =="
 
