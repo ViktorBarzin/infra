@@ -968,6 +968,67 @@ install_pi_links() {
   return 0
 }
 
+# Pi's starting model, the same one Claude Code starts every user on: Opus 5.5
+# at high effort (Viktor, 2026-09-25), which pi calls anthropic/claude-opus-5-5
+# at thinking level high. Pi's own default for Anthropic is claude-opus-4-8 at
+# medium. Asked for 2026-09-26.
+#
+# Pi has no machine-wide settings file, only ~/.pi/agent/settings.json and a
+# project's .pi/settings.json, so this writes the user's file. IF-ABSENT, as
+# install_claude_defaults is: pi writes these keys itself when someone saves a
+# choice (a /model pick it persists, a thinking level they set), and that choice
+# is theirs. The model and its provider are one choice, written together or not
+# at all, so a user's own defaultModel is never paired with our provider.
+#
+# Runs after install_pi_links, which creates ~/.pi/agent at 0700.
+# Best-effort tail: must return 0 or set -euo pipefail aborts the whole reconcile.
+install_pi_defaults() {
+  local user="$1" home pi added
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  pi="$home/.pi/agent"
+  [[ -n "$home" && -d "$pi" && ! -L "$home/.pi" && ! -L "$pi" ]] || return 0
+  if [[ "$DRY_RUN" == 1 ]]; then echo "[dry-run] pi defaults (opus 5.5, high) -> $user"; return 0; fi
+
+  added="$(runuser -u "$user" -- sh -c 'umask 077 && exec python3 - "$1"' _ "$pi/settings.json" <<'PYEOF'
+import json, os, sys
+
+path = sys.argv[1]
+if os.path.islink(path):
+    sys.exit(0)
+if os.path.exists(path) and os.path.getsize(path) > 0:
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"ERROR: cannot read {path}: {e}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(data, dict):
+        sys.exit(0)
+else:
+    data = {}
+
+added = []
+if "defaultModel" not in data and "defaultProvider" not in data:
+    data["defaultProvider"] = "anthropic"
+    data["defaultModel"] = "claude-opus-5-5"
+    added.append("defaultModel")
+if "defaultThinkingLevel" not in data:
+    data["defaultThinkingLevel"] = "high"
+    added.append("defaultThinkingLevel")
+if added:
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+    print(" ".join(added))
+PYEOF
+  )" || { log "WARN: pi defaults failed for $user (retries next reconcile)"; return 0; }
+
+  [[ -n "$added" ]] && log "pi default set -> $user ($added)"
+  return 0
+}
+
 # Claude settings every user should START on, written ONCE per key.
 #
 # Today that is one key: fastMode. Fast mode runs Opus 5 / Opus 4.8 at up to
@@ -1384,9 +1445,11 @@ done < <(jq -r '.accounts[].os_user' "$desired_file")
 # 5d-quinquies) pi's per-user links (ALL users): terminal-lobby's extension in
 #     ~/.pi/agent/extensions, and ~/.pi/agent/AGENTS.md for the users 5d-bis
 #     manages. Runs after 5d-bis so the file that link points at is in place.
+#     Then pi's starting model and thinking level, written once per key.
 while IFS=$'\t' read -r os_user; do
   id "$os_user" >/dev/null 2>&1 || continue
   install_pi_links "$os_user"
+  install_pi_defaults "$os_user"
 done < <(jq -r '.accounts[].os_user' "$desired_file")
 
 # 5d-ter) per-user Claude defaults (ALL users): settings.json keys everyone should
