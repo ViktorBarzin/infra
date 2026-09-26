@@ -1,0 +1,38 @@
+# agentmd for one devvm user, reached through stacks/agentmd (Traefik +
+# Authentik). It runs as that user and trusts the Authentik identity header
+# only with the proxy secret Traefik stamps. Managed by playbooks/devvm.yml.
+[Unit]
+Description=agentmd for %i
+Documentation=https://github.com/ViktorBarzin/agentmd
+Requires=agentmd@%i.socket
+After=agentmd@%i.socket network.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+# claude and codex live in ~/.local/bin, which a system unit does not see.
+Environment=HOME=/home/%i
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/%i/.local/bin
+EnvironmentFile=/etc/agentmd/%i.env
+# Same optional long-lived Claude token t3-serve@ uses, for analysis runs.
+EnvironmentFile=-/home/%i/.config/claude-auth-sync/claude-oauth.env
+WorkingDirectory=/home/%i
+# Readable only by this service, never written into the user's home.
+LoadCredential=proxy-secret:/etc/agentmd/credentials/%i
+ExecStart=/usr/local/bin/agentmd serve --proxy-secret-file ${CREDENTIALS_DIRECTORY}/proxy-secret --identity-header X-Authentik-Username --allow-identity ${AGENTMD_IDENTITY}
+Restart=on-failure
+RestartSec=5
+# Probes and analysis start claude and codex children. Cap them like
+# t3-serve@: straight to OOM at the cap, no swap, and a killed child does not
+# take the server down with it.
+MemoryHigh=infinity
+MemoryMax=4G
+MemorySwapMax=0
+OOMPolicy=continue
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

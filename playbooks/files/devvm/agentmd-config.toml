@@ -1,0 +1,23 @@
+# agentmd settings shared by every devvm user. Each user can add their own in
+# ~/.config/agentmd/config.toml. Managed by playbooks/devvm.yml.
+
+# Folders of other users' instruction files in the monorepo: no session starts
+# there, so agentmd builds no runtime context for them.
+skip_contexts = ["~/code/docs/agents/users/*"]
+
+# The org policy reaches Claude and Codex as root-owned copies. Their origin is
+# the claudeMd field of managed-settings.json in the user's infra clone, which
+# sits at ~/code/infra or, in the single layout, at ~/code.
+[[origin]]
+path = "/etc/claude-code/managed-settings.json"
+field = "claudeMd"
+source = ["~/code/infra/scripts/workstation/managed-settings.json", "~/code/scripts/workstation/managed-settings.json"]
+note = "The org policy. The provisioner installs it for every devvm user within the hour after it lands on master."
+
+[[origin]]
+path = "/etc/codex/requirements.toml"
+field = "additional_developer_instructions"
+source_field = "claudeMd"
+source = ["~/code/infra/scripts/workstation/managed-settings.json", "~/code/scripts/workstation/managed-settings.json"]
+note = "Codex's copy of the org policy, generated from the claudeMd field of managed-settings.json."
+
