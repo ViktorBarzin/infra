@@ -346,6 +346,22 @@ func capabilities() []capability {
 			},
 		},
 		{
+			Intent:  "see, check or clean up the AGENTS.md, CLAUDE.md, skills and other files agents read",
+			Use:     "agentmd.viktorbarzin.me (your own instance)  /  agentmd check [--probe] [--json]",
+			Instead: "reading and diffing instruction files by hand, or a one-off duplicate script",
+			Synonyms: []string{"agents.md", "claude.md", "instruction files", "agent instructions", "skills",
+				"duplicate instructions", "contradiction", "dedupe", "org policy", "managed settings",
+				"what loads", "runtime context", "instruction budget", "agentmd"},
+			Detail: []string{
+				"ui:     https://agentmd.viktorbarzin.me — file browser, graph, findings, editor",
+				"        (one instance per devvm user, behind Authentik; wizard first)",
+				"cli:    agentmd check [--probe] [--json]  /  agentmd probe --harness claude|codex --dir <dir>",
+				"probe:  runs claude or codex against a stand-in API to record what loads;",
+				"        no model is called and nothing is written to your Claude state",
+				"NOT:    another user's files: each instance acts as its own OS user",
+			},
+		},
+		{
 			Intent:   "see everything we self-host",
 			Use:      "homelab services [--search X]",
 			Synonyms: []string{"what do we run", "inventory", "services", "catalog", "self-hosted"},

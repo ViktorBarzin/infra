@@ -1,0 +1,13 @@
+# agentmd for one devvm user: systemd holds the port, so no other account can
+# take it while the service restarts. The port comes from the per-user drop-in
+# agentmd@<user>.socket.d/listen.conf. Managed by playbooks/devvm.yml.
+[Unit]
+Description=agentmd socket for %i
+Documentation=https://github.com/ViktorBarzin/agentmd
+
+[Socket]
+Accept=no
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target

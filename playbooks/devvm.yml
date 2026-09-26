@@ -202,6 +202,22 @@
       - name: muse
         os_user: wizard
 
+    # agentmd (github.com/ViktorBarzin/agentmd): one instance per user, each
+    # reached through stacks/agentmd on its own hostname. Keep the users in
+    # step with local.users there.
+    #
+    #   name      the OS user the instance runs as
+    #   port      where its socket listens (the stack's Endpoints point here)
+    #   identity  the Authentik username allowed in (differs from the OS user)
+    #
+    # Its proxy secret is Vault secret/agentmd -> proxy_secret_<name>.
+    devvm_agentmd_version: v0.1.0
+    devvm_agentmd_sha256: SET_AFTER_RELEASE
+    devvm_agentmd_users:
+      - name: wizard
+        port: 7390
+        identity: vbarzin
+
   tasks:
     # ---- 1) the apt toolset -------------------------------------------------
     # packages.txt stays the single source of truth. Reading it here rather than
@@ -2216,6 +2232,154 @@
       ansible.builtin.command: logrotate --debug /etc/logrotate.d/agent-api
       changed_when: false
 
+    # ---- agentmd ---------------------------------------------------------------
+    # One instance per devvm_agentmd_users entry, as that user. systemd holds
+    # the port (agentmd@.socket) so no other account can bind it during a
+    # restart, and the proxy secret is loaded as a credential, readable only by
+    # the service and never written into the user's home.
+    #
+    # ORDER: stacks/agentmd must be applied first. It stamps the secret these
+    # instances demand; run this the other way round and every request answers
+    # 401 until the apply lands.
+
+    - name: Read each agentmd proxy secret
+      ansible.builtin.command: "vault kv get -field=proxy_secret_{{ item.name }} secret/agentmd"
+      delegate_to: localhost
+      become: false
+      loop: "{{ devvm_agentmd_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: devvm_agentmd_secrets
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Create the agentmd directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/agentmd, mode: "0755" }
+        - { path: /etc/agentmd/credentials, mode: "0700" }
+        - { path: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}", mode: "0755" }
+
+    # check_mode: false because get_url probes with HEAD during a dry run and
+    # would report a change it cannot verify. The checksum pins the release.
+    - name: Download agentmd
+      ansible.builtin.get_url:
+        url: "https://github.com/ViktorBarzin/agentmd/releases/download/{{ devvm_agentmd_version }}/agentmd_{{ devvm_agentmd_version | regex_replace('^v', '') }}_linux_amd64.tar.gz"
+        dest: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}/agentmd.tar.gz"
+        checksum: "sha256:{{ devvm_agentmd_sha256 }}"
+        mode: "0644"
+      check_mode: false
+
+    - name: Unpack agentmd
+      ansible.builtin.unarchive:
+        src: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}/agentmd.tar.gz"
+        dest: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}"
+        remote_src: true
+        creates: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}/agentmd"
+
+    - name: Point agentmd at the pinned version
+      ansible.builtin.file:
+        src: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}/agentmd"
+        dest: /usr/local/bin/agentmd
+        state: link
+        force: true
+      notify: restart agentmd
+
+    - name: Declare the machine-wide agentmd config
+      ansible.builtin.copy:
+        src: files/devvm/agentmd-config.toml
+        dest: /etc/agentmd/config.toml
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart agentmd
+
+    - name: Name each agentmd user's Authentik identity
+      ansible.builtin.copy:
+        dest: "/etc/agentmd/{{ item.name }}.env"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          AGENTMD_IDENTITY={{ item.identity }}
+      loop: "{{ devvm_agentmd_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      notify: restart agentmd
+
+    - name: Write each agentmd proxy secret
+      ansible.builtin.copy:
+        dest: "/etc/agentmd/credentials/{{ item.item.name }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ item.stdout }}\n"
+      loop: "{{ devvm_agentmd_secrets.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      no_log: true
+      notify: restart agentmd
+
+    - name: Install the agentmd units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - agentmd@.socket
+        - agentmd@.service
+      notify:
+        - reload systemd
+        - restart agentmd
+
+    - name: Make room for each agentmd socket's port
+      ansible.builtin.file:
+        path: "/etc/systemd/system/agentmd@{{ item.name }}.socket.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: "{{ devvm_agentmd_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Give each agentmd socket its port
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/agentmd@{{ item.name }}.socket.d/listen.conf"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml. Local edits are overwritten.
+          [Socket]
+          ListenStream={{ item.port }}
+      loop: "{{ devvm_agentmd_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      notify: reload systemd
+
+    # Skipped under --check: on a machine that has never had this applied the
+    # units do not exist yet, and systemd cannot be asked about them.
+    - name: Enable each agentmd socket and service
+      ansible.builtin.systemd_service:
+        name: "agentmd@{{ item.0.name }}.{{ item.1 }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop: "{{ devvm_agentmd_users | product(['socket', 'service']) | list }}"
+      loop_control:
+        label: "agentmd@{{ item.0.name }}.{{ item.1 }}"
+      when: not ansible_check_mode
+
   handlers:
     # DefaultIOAccounting is a manager-level setting, so a reload is not
     # enough: systemd has to re-execute to pick it up. It is a re-exec of PID 1
@@ -2294,3 +2458,15 @@
       ansible.builtin.systemd_service:
         name: tailscaled-agent.service
         state: restarted
+
+    # The socket stays up, so the port is never released while the service
+    # restarts.
+    - name: restart agentmd
+      ansible.builtin.systemd_service:
+        name: "agentmd@{{ item.name }}.service"
+        state: restarted
+        daemon_reload: true
+      loop: "{{ devvm_agentmd_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: not ansible_check_mode
