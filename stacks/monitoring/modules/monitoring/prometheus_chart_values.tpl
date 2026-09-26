@@ -149,7 +149,7 @@ alertmanager:
       - source_matchers:
           - alertname = HomeAssistantDown
         target_matchers:
-          - alertname =~ "HomeAssistantCriticalSensorsUnavailable|HomeAssistantMassUnavailable|HomeAssistantMetricsMissing"
+          - alertname =~ "HomeAssistantCriticalSensorsUnavailable|HomeAssistantMassUnavailable|HomeAssistantMetricsMissing|HydrawiseControllerOffline"
       # PVFillingUp (95% used) is the immediate critical; PVPredictedFull
       # (linear projection over 6h) is the leading indicator. When the disk
       # is actually full, the prediction is redundant.
@@ -3472,10 +3472,25 @@ serverFiles:
           # events, so it is not a close call in either direction. It is a
           # WARNING rather than critical because a mass drop is usually an AP or
           # an upstream cloud, not something on fire here.
+          #
+          # HYDRAWISE IS EXCLUDED since 2026-09-26, and it turns out it was the
+          # whole signal. Both calibration events above were the Hydrawise
+          # irrigation controller at the Vermont house losing its cloud link
+          # (its outages began 09-16 20:45 and 09-17 22:50): one device that
+          # takes 249 entities with it, 245 zone_* plus four controller ones.
+          # Over the 14 days to 2026-09-26 this rule fired 15 times and 14 were
+          # that controller; with it excluded, 1 remains (09-19 01:35), so the
+          # rule still catches a real group drop. The controller now has its own
+          # alert, HydrawiseControllerOffline, which names the cause.
+          #
+          # Every .zone_ entity on ha-sofia is Hydrawise and Hydrawise has no
+          # others besides the four named below, checked against
+          # integration_entities("hydrawise") on 2026-09-26. Do NOT widen this
+          # to vermont_*: the house's cameras and gateway share that prefix.
           - alert: HomeAssistantMassUnavailable
             expr: |
-              count by (instance) (haos_entity_available == 0)
-              - count by (instance) (haos_entity_available offset 1h == 0)
+              count by (instance) (haos_entity_available{entity!~".+\\.zone_.+|binary_sensor\\.vermont_(connectivity|rain_sensor|motor_protection)|sensor\\.vermont_daily_active_watering_time"} == 0)
+              - count by (instance) (haos_entity_available{entity!~".+\\.zone_.+|binary_sensor\\.vermont_(connectivity|rain_sensor|motor_protection)|sensor\\.vermont_daily_active_watering_time"} offset 1h == 0)
               > 50
             for: 15m
             # The delta returns to zero an hour after the drop even when
@@ -3487,6 +3502,33 @@ serverFiles:
             annotations:
               summary: "{{ $value | printf \"%.0f\" }} more HA entities unavailable on {{ $labels.instance }} than an hour ago"
               description: "A group of devices dropped together rather than the usual trickle. Find the group with `homelab metrics query 'count by (domain) (haos_entity_available{instance=\"{{ $labels.instance }}\"} == 0)'` and compare against an hour ago. Tuya is the usual suspect and the split that matters is direct-WiFi versus gateway-attached: if only the direct-WiFi devices are gone it is the device VLAN or its AP, not the Tuya cloud or the integration, which reports state=loaded either way."
+          # The Hydrawise irrigation controller at the Vermont house (emo's
+          # Hunter account). binary_sensor.vermont_connectivity is Hunter's cloud
+          # reporting whether the physical controller is online, so 0 means the
+          # device has lost its link, not that HA or the integration failed (the
+          # integration stays state=loaded). When it drops, its 245 zone
+          # entities all go unavailable, which is why it used to surface as
+          # HomeAssistantMassUnavailable with a count and no name.
+          #
+          # Over the 14 days to 2026-09-26, 15 episodes at for 15m / keep 15m,
+          # the same outages the mass rule caught, and getting worse: daily
+          # downtime went 0.5h (09-21), 1.5h, 2.0h, 8.8h, 11.8h (09-25). The
+          # first four drops from 09-23 17:42 were exactly 8h40m apart, which
+          # points at something on a timer on the device or its network rather
+          # than random signal loss.
+          #
+          # for 15m skips the short reconnects (two 6-minute drops on 09-23).
+          # The series is absent rather than 0 when HA itself is down, so this
+          # cannot fire on an HA outage.
+          - alert: HydrawiseControllerOffline
+            expr: haos_binary_sensor_state{entity="binary_sensor.vermont_connectivity"} == 0
+            for: 15m
+            keep_firing_for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Hydrawise irrigation controller at the Vermont house is offline; its 245 zone entities are unavailable"
+              description: "Hunter's cloud reports the physical controller offline (binary_sensor.vermont_connectivity off). HA and the hydrawise integration are fine. Watering schedules held on the controller may still run, but nothing can be seen or changed from HA. Check the controller's power and WiFi at the house; the Hydrawise app shows the same status. History: homelab metrics query 'haos_binary_sensor_state{entity=\"binary_sensor.vermont_connectivity\"}'."
           - alert: CoreDNSErrors
             expr: rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m]) > 1 and on() (time() - process_start_time_seconds{job="prometheus"}) > 900
             for: 10m
