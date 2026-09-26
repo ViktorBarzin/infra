@@ -410,6 +410,20 @@ resource "kubernetes_deployment" "f1-stream" {
               }
             }
           }
+          # Wanted sessions (app repo ADR-0015) post "ready" to #f1 through this
+          # incoming webhook. It comes from the Vault "f1-stream" key through the
+          # dataFrom.extract ExternalSecret above; optional=true so the pod
+          # starts before the key exists, and the app skips the message.
+          env {
+            name = "SLACK_F1_WEBHOOK_URL"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "slack_f1_webhook_url"
+                optional = true
+              }
+            }
+          }
           # Replays feature (app repo ADR-0002). optional=true so the pod still
           # starts before the Reddit app credentials exist; the app treats missing
           # creds as "replays off" (logs "Replays pipeline disabled"). The
