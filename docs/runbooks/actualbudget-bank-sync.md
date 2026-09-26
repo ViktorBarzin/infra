@@ -164,6 +164,37 @@ records a success. Viktor has four such accounts (dormant manual ledgers), which
 is why `bank_sync_success{job="bank-sync-viktor"}` is pinned at 1. Check
 `account_sync_source` before concluding an account is syncing.
 
+## Failure mode: the institution disappears from the picker (2026-09-17)
+
+On 2026-09-17 American Express was missing from Actual's bank-link menu, which
+reads like Actual having dropped support for the bank. The change was on the
+GoCardless side. Their status page opened an incident at 11:03 UTC, "American
+Express temporarily disabled", covering `AMERICAN_EXPRESS_AESUGB21` and
+`AMERICAN_EXPRESS_AESUDEF1`, and resolved it on 2026-09-18 at 16:39 UTC.
+
+While an institution is disabled it is absent from `/institutions/?country=gb`
+altogether, `GET /institutions/{id}/` returns 404, and the data endpoints return
+503 `Institution ... is not operational`. Actual renders whatever the list
+returns, so the bank is simply not offered. The existing GoCardless account
+objects survive, so nothing needs recreating once it comes back.
+
+Check the API and the status page before looking at Actual:
+
+```sh
+# 404 here while other institutions return 200 means this one is disabled
+curl -H "Authorization: Bearer $TOKEN" \
+  https://bankaccountdata.gocardless.com/api/v2/institutions/AMERICAN_EXPRESS_AESUGB21/
+# then https://status.accountdata.gocardless.com
+```
+
+Viktor's instance met this on top of an unrelated consent expiry, and the two
+are worth telling apart because only one of them is actionable. His Amex consent
+had lapsed on 2026-09-12, five days before the outage, so the re-link he went
+looking for was needed either way. The error distinguishes them: 503 `not
+operational` while the institution was disabled, then 401 `EUA ... has expired`
+once it returned. He re-linked on 2026-09-24 and that night's run backfilled the
+gap, 8 transactions across 09-13 to 09-23.
+
 ## Consent expiry, and the alert that watches it
 
 A GoCardless end-user agreement lasts `access_valid_for_days`, 90 days for every
@@ -205,6 +236,30 @@ Reading it by hand:
 homelab metrics query 'bank_sync_consent_expiry_timestamp'
 homelab metrics query '(bank_sync_consent_expiry_timestamp - time()) / 86400'   # days left
 ```
+
+One caveat on that value once `BankSyncConsentExpired` is firing: it stops being
+meaningful. At expiry the newest requisition flips to status `EX`, so the
+newest-in-use rule falls back to an older `LN` one and the timestamp can move
+backwards. Viktor's Amex read 2026-09-12 up to that date and 2025-10-22 from
+2026-09-13. The alert itself stayed correct, firing `BankSyncConsentExpiring`
+2026-09-08 to 09-12 and `BankSyncConsentExpired` from 09-13, matching the first
+failed nightly run to the day. For the real date read the newest requisition's
+agreement rather than the metric.
+
+The 90 days is Actual's ceiling rather than the banks'. Amex, Monzo and Revolut
+each advertise `max_access_valid_for_days_reconfirmation: 730` and list
+`reconfirmation_of_consent` in `supported_features`, and GoCardless accepted a
+730-day agreement for all three when the request carried `reconfirmation: true`
+(tested 2026-09-24; the same request without that field is rejected with
+`access_valid_for_days must be > 0 and <= 90`). Actual requests
+`institution.max_access_valid_for_days` and has no reconfirmation support, so it
+always gets 90. Raised upstream as actualbudget/actual#9006. The open question
+there is who collects the 90-day consent reconfirmation, GoCardless's hosted
+flow or the client, which decides how large the change is.
+
+Note that `GET /institutions/?country=gb` returns a trimmed record with no
+`supported_features` key, so a capability check against the list reports nothing
+for every bank. Only `GET /institutions/{id}/` carries it.
 
 The GoCardless API credential lives in each Actual server's own
 `account.sqlite` `secrets` table (`gocardless_secretId`, `gocardless_secretKey`),
