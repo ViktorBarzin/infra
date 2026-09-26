@@ -849,7 +849,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           # the label is what these selectors match, and without it they match
           # nothing and say nothing about it.
           #
-          # All four group by USER over a wide window, so a burst reads as one
+          # All three group by USER over a wide window, so a burst reads as one
           # continuous alert rather than one Slack post per kill. Replaying the
           # 2026-08-16 event (~21 kills in two minutes) gives one message per
           # affected user. severity=warning means notify once, no re-ping while
@@ -948,36 +948,13 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                 description = "A session disappeared without being deliberately killed, or its claude died inside a pane that survived. WHICH ONES: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |~ \"event=(session_died|claude_died)\"' --since 2h. Correlate with ClaudeOOMKilled for the memory cause; a death with no OOM line beside it was something else. A CLI `tmux kill-session` that skipped tmux-persist-forget also lands here."
               }
             },
-            {
-              # The pre-warning, and the only signal that arrives while the
-              # conversation can still be saved. The watcher warns at 5 GiB in any
-              # pane holding a claude and ends the episode only below 4.5 GiB
-              # (terminal-lobby 2026-09-26). The earlier gate, 3 GiB with claude as
-              # the pane's largest process, logged 212 warnings in 26 days against
-              # 5 claude kills: claude is ~0.4 GB and the largest process in nearly
-              # every pane it sits in, so the pane fills with its dev servers, test
-              # workers and /tmp files, and the gate filtered nothing.
-              #
-              # The watcher compares UNRECLAIMABLE memory (anon + shmem), not
-              # memory.current. current rides up to the cap in any pane doing file
-              # I/O because the cap reclaims cache instead of killing: one pane
-              # measured 6143 MB of a 6144 MB cap with memory.events max=45450 and
-              # oom_kill=0, while holding only 628 MB that could not be reclaimed.
-              #
-              # 30s detection, deliberately not a Prometheus rule. The devvm is
-              # scraped every 2 minutes and the house floor for `for:` is 3, so a
-              # metric rule cannot react to a pane that crosses and dies inside one
-              # interval. tl_pane_memory_bytes exists for history and threshold
-              # tuning, not for this.
-              alert  = "PaneNearMemoryCap"
-              expr   = "sum by (user) (count_over_time({job=\"devvm-journal\", identifier=\"tl-session-watch\"} |= \"event=pane_near_cap\" | logfmt [30m])) > 0"
-              for    = "0m"
-              labels = { severity = "warning" }
-              annotations = {
-                summary     = "{{ $labels.user }} has a pane holding a claude within 1G of its 6G cap"
-                description = "Unreclaimable memory (anon + shmem) in this pane passed 5 GiB. Claude itself is ~0.4 GB; the rest is what it started (dev servers, tsc, test workers) and files it wrote to /tmp. The cap kills the largest processes first and reaches the claude after them. WHICH SESSION: homelab logs query '{job=\"devvm-journal\", identifier=\"tl-session-watch\"} |= \"event=pane_near_cap\"' --since 30m. CHECK WHAT KIND OF MEMORY IT IS FIRST: cat /sys/fs/cgroup/<scope>/memory.stat. If shmem dominates, the pane is holding RAM-backed /tmp files (8G tmpfs, 7.0G of it /tmp/claude-1000 on 2026-09-01) and closing the session will NOT help — the kernel would kill the ~0.5 GB claude and leave the tmpfs behind. Delete the scratch files instead. If anon dominates, closing a session does help (~659 MB each). Panes can also SHARE a cgroup — four of emo's claudes sat in one run-r*.scope — so several sessions may cross together and all are genuinely at risk."
-              }
-            },
+            # PaneNearMemoryCap, a pre-warning at a pane's memory level, was here
+            # from 2026-09-01 to 2026-09-26 and was removed on purpose. It posted
+            # about 51 times in 26 days, and all 5 claude kills in that time went
+            # ahead despite a 26-54 minute warning, so it prevented none. A killed
+            # conversation resumes from its transcript (claude --resume), so the
+            # alerts that fire after a kill are enough. tl_pane_memory_bytes and
+            # tl_pane_unreclaimable_bytes still export pane memory for history.
             {
               # DEAD-MAN switch for the watcher, mirroring DevvmJournalSilent one
               # level down: that one catches the pipeline dying, this one catches
@@ -996,7 +973,7 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               labels = { severity = "warning" }
               annotations = {
                 summary     = "tl-session-watch has gone quiet — nothing is reporting lost Claude sessions"
-                description = "No heartbeat for >40m, so ClaudeSessionDied and PaneNearMemoryCap are blind. On the devvm: systemctl status tl-session-watch; curl -s 127.0.0.1:7689/health; journalctl -u tl-session-watch -n 50. If the journal pipeline is the problem instead, DevvmJournalSilent fires alongside this."
+                description = "No heartbeat for >40m, so ClaudeSessionDied is blind. On the devvm: systemctl status tl-session-watch; curl -s 127.0.0.1:7689/health; journalctl -u tl-session-watch -n 50. If the journal pipeline is the problem instead, DevvmJournalSilent fires alongside this."
               }
             },
           ]
