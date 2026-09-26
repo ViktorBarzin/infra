@@ -56,7 +56,7 @@
 | owntracks | Location tracking | owntracks |
 | nextcloud | File sync/share | nextcloud |
 | calibre | E-book management (may be merged into ebooks stack) | calibre |
-| f1-stream | F1 streaming (uses chrome-service for hmembeds verifier); canonical source in own repo `viktor/f1-stream` (Forgejo, extracted 2026-06-05); GHA-built → `ghcr.io/viktorbarzin/f1-stream` (private), Woodpecker deploy-only (ADR-0002) | f1-stream |
+| f1-stream | F1 streaming (uses chrome-service for hmembeds verifier); canonical source in own repo `viktor/f1-stream` (Forgejo, extracted 2026-06-05); GHA-built → `ghcr.io/viktorbarzin/f1-stream` (private), Woodpecker deploy-only (ADR-0002). CNPG `f1_stream` db (Vault static role `pg-f1-stream`, rotated Tuesdays 10:00 UTC; password mounted as a file with `reloader.stakater.com/ignore` so rotation never restarts the pod) holds the visitor, viewing and delivery record behind the site's `/admin/viewing` page (app ADR-0014) | f1-stream |
 | chrome-service | Headed Chromium over CDP (`http://chrome-service.chrome-service.svc:9222`, `connect_over_cdp`; legacy `:3000/<token>` WS pool removed 2026-06-04) for sibling services driving anti-bot pages — snapshot-harvester CronJob + tripit fare scrape | chrome-service |
 | rybbit | Analytics | rybbit |
 | isponsorblocktv | SponsorBlock for TV | isponsorblocktv |

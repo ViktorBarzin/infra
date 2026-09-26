@@ -3,6 +3,7 @@ variable "tls_secret_name" {
   sensitive = true
 }
 variable "nfs_server" { type = string }
+variable "postgresql_host" { type = string }
 variable "discord_f1_guild_id" { type = string }
 variable "discord_f1_channel_ids" { type = string }
 
@@ -87,6 +88,60 @@ resource "kubernetes_manifest" "chrome_service_client_secret" {
       dataFrom = [{
         extract = {
           key = "chrome-service"
+        }
+      }]
+    }
+  }
+  depends_on = [kubernetes_namespace.f1-stream]
+}
+
+# The visitor and viewing record's database password (f1-stream ADR-0014), from
+# the Vault database engine's static role `pg-f1-stream`.
+#
+# MOUNTED AS A FILE, NOT AN ENV VAR, and marked for Reloader to ignore. The
+# Deployment below carries reloader.stakater.com/auto, so any Secret it
+# references by env would restart the pod on every rotation, at whatever time
+# the rotation lands, and a restart during a session takes the stream away from
+# everyone watching. Instead the app hands asyncpg a password callable that
+# re-reads this file for each new connection, so a rotation reaches it through
+# the kubelet's refresh of the mounted file and nothing restarts. The rotation
+# itself is pinned to Tuesday in stacks/vault for the gap that remains before
+# ESO's next refresh.
+resource "kubernetes_manifest" "viewing_db_external_secret" {
+  field_manager {
+    force_conflicts = true
+  }
+  manifest = {
+    apiVersion = "external-secrets.io/v1"
+    kind       = "ExternalSecret"
+    metadata = {
+      name      = "f1-stream-viewing-db"
+      namespace = "f1-stream"
+    }
+    spec = {
+      refreshInterval = "15m"
+      secretStoreRef = {
+        name = "vault-database"
+        kind = "ClusterSecretStore"
+      }
+      target = {
+        name = "f1-stream-viewing-db"
+        template = {
+          metadata = {
+            annotations = {
+              "reloader.stakater.com/ignore" = "true"
+            }
+          }
+          data = {
+            password = "{{ .password }}"
+          }
+        }
+      }
+      data = [{
+        secretKey = "password"
+        remoteRef = {
+          key      = "static-creds/pg-f1-stream"
+          property = "password"
         }
       }]
     }
@@ -556,6 +611,31 @@ resource "kubernetes_deployment" "f1-stream" {
             name  = "P2P_LIVE"
             value = "0"
           }
+          # The visitor and viewing record (app repo ADR-0014). The URL carries
+          # no password: the app reads it from the mounted file below on every
+          # new connection, which is what lets a rotation land without a
+          # restart (see the ExternalSecret above). Unset or unreachable, the
+          # app records nothing and serves exactly as before.
+          env {
+            name  = "VIEWING_DATABASE_URL"
+            value = "postgresql://f1_stream@${var.postgresql_host}:5432/f1_stream"
+          }
+          env {
+            name  = "VIEWING_DATABASE_PASSWORD_FILE"
+            value = "/secrets/viewing-db/password"
+          }
+          # Where the daily job asks which other homelab hosts and Authentik
+          # usernames a viewer's address used that week. One batched query a
+          # day, never during a session.
+          env {
+            name  = "LOKI_URL"
+            value = "http://loki.monitoring.svc.cluster.local:3100"
+          }
+          volume_mount {
+            name       = "viewing-db"
+            mount_path = "/secrets/viewing-db"
+            read_only  = true
+          }
           volume_mount {
             name       = "data"
             mount_path = "/data"
@@ -593,6 +673,15 @@ resource "kubernetes_deployment" "f1-stream" {
           name = "data"
           persistent_volume_claim {
             claim_name = module.nfs_data_host.claim_name
+          }
+        }
+        # optional so the pod starts before the ExternalSecret has synced; the
+        # app treats a missing password file as "record nothing".
+        volume {
+          name = "viewing-db"
+          secret {
+            secret_name = "f1-stream-viewing-db"
+            optional    = true
           }
         }
         volume {

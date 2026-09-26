@@ -1751,6 +1751,35 @@ resource "null_resource" "pg_tasks_db" {
   }
 }
 
+# Create f1_stream database for the f1-stream site's visitor and viewing record:
+# which browser or TV watched which stream, how well it played, and the media
+# bytes each client was sent (f1-stream ADR-0014). The app applies its own
+# idempotent schema at startup.
+# Role password is managed by Vault Database Secrets Engine (static role
+# `pg-f1-stream`, rotated Tuesdays 10:00 UTC, away from race weekends).
+resource "null_resource" "pg_f1_stream_db" {
+  depends_on = [null_resource.pg_cluster]
+
+  triggers = {
+    db_name  = "f1_stream"
+    username = "f1_stream"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      PRIMARY=$(kubectl --kubeconfig ${var.kube_config_path} get cluster -n dbaas pg-cluster -o jsonpath='{.status.currentPrimary}')
+      kubectl --kubeconfig ${var.kube_config_path} exec -n dbaas $PRIMARY -c postgres -- \
+        bash -c '
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '"'"'f1_stream'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE ROLE f1_stream WITH LOGIN PASSWORD '"'"'changeme-vault-will-rotate'"'"'"
+          psql -U postgres -tc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = '"'"'f1_stream'"'"'" | grep -q 1 || \
+            psql -U postgres -c "CREATE DATABASE f1_stream OWNER f1_stream"
+          psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE f1_stream TO f1_stream"
+        '
+    EOT
+  }
+}
+
 # Old PostgreSQL deployment — kept commented for rollback reference
 # resource "kubernetes_deployment" "postgres" {
 #   metadata {
