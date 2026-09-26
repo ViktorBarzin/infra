@@ -4152,7 +4152,27 @@ serverFiles:
       - name: Cluster
         rules:
           - alert: NodeDown
-            expr: (up{job="kubernetes-nodes"} or on() vector(0)) == 0
+            # The kubernetes-nodes job reaches each kubelet THROUGH the
+            # apiserver (/api/v1/nodes/<node>/proxy/metrics), so on its own it
+            # reads an apiserver restart as every node going down at once, and
+            # whichever node stays failed past 3m pages. On 2026-09-26 at 15:58
+            # etcd stalled on the shared HDD, the apiserver was killed by its
+            # liveness probe, and k8s-node4 paged as down while it stayed Ready
+            # and its node-exporter answered throughout.
+            #
+            # So a node counts as down only while its node-exporter, which is
+            # scraped directly at the node IP, is not answering either.
+            # `unless ... == 1` rather than `and ... == 0` on purpose: a dead
+            # node's node-exporter endpoint goes NotReady and the target drops
+            # out of discovery entirely, and a missing series must still let
+            # NodeDown fire. A dead kubelet on a live VM is NodeNotReady's job;
+            # the apiserver restart itself is ControlPlaneStaticPodRestarted's.
+            # Backtest over the 30 days to 2026-09-26: 38 episodes before, 11
+            # after, and every dropped one had the node's node-exporter up.
+            expr: |
+              (up{job="kubernetes-nodes"} or on() vector(0)) == 0
+              unless on(instance)
+              label_replace(max by (node) (up{job="kubernetes-service-endpoints", service="prometheus-prometheus-node-exporter"}), "instance", "$1", "node", "(.+)") == 1
             for: 3m
             labels:
               severity: critical

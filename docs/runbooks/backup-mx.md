@@ -136,6 +136,27 @@ No firewall rule needed — `opt2` (tun_wg0) already has an any→any allow. Ver
   Peers, or re-run `scripts/pfsense-backup-mx-wg.sh` — then `sudo postqueue -f` on
   mx2. As a package peer it is regenerated into the conf on every boot, so this
   should not recur.
+- **VM hung, ports accept TCP but nothing answers** (seen 2026-09-26, 15:34 to
+  16:29 UTC). SSH times out during the banner exchange, the status page never
+  responds, and node-exporter and the Oracle Cloud Agent stop reporting in the
+  same minute, while OCI still shows the instance `RUNNING`. The previous boot's
+  journal had journald reporting memory pressure and no OOM kill, which fits the
+  1 GB box thrashing without swap; the trigger was not identified. `BackupMxDown`
+  stays green through this because it is a TCP connect to :25, which the kernel
+  completes on its own. `StatusPageDown` and `up{job="backup-mx-node"}` are the
+  signals that catch it. Recover by rebooting through the OCI API with the `oci`
+  CLI already configured on the devvm (`~/.oci/config`, eu-frankfurt-1; the
+  instance lives in the root compartment):
+  ```sh
+  TEN=$(awk -F= '/^tenancy/{print $2}' ~/.oci/config)
+  ID=$(oci compute instance list --compartment-id "$TEN" --display-name mx2 --query 'data[0].id' --raw-output)
+  oci compute instance action --action RESET --instance-id "$ID"
+  ```
+  `SOFTRESET` sends an ACPI shutdown first and waits up to 15 minutes before
+  forcing the restart, and a hung guest uses all of it; `RESET` restarts at once.
+  On 2026-09-26 SSH and the status page answered within a minute of OCI
+  reporting `RUNNING`. Journald is persistent, so `sudo journalctl -b -1` shows
+  the hung boot afterwards.
 
 ## Primary-side drain exemption
 
