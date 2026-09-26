@@ -31,9 +31,15 @@
 # crashes. On a multi-replica control plane the trade would be less clearly worth
 # taking.
 #
-# Like etcd-tuning.tf, this patches kubeadm-managed manifests, so a kubeadm
-# upgrade resets it and it must be re-applied afterwards. The pre-change manifest
-# of each is kept in /root/manifest-backups/.
+# This patches the kubeadm-managed manifests AND records the same three flags in
+# the kubeadm-config ClusterConfiguration (controllerManager.extraArgs and
+# scheduler.extraArgs), because the manifests alone do not survive an upgrade.
+# Measured 2026-09-26: the v1.35.8 control-plane upgrade on 2026-09-16
+# regenerated both manifests with a bare --leader-elect=true, nothing re-ran
+# this resource, and kube-controller-manager went back to restarting 1 to 13
+# times a day, against 0 to 1 a day while the tuning held (09-09 to 09-15).
+# etcd-tuning.tf lost --listen-metrics-urls to the same upgrade for the same
+# reason. The pre-change manifest of each is kept in /root/manifest-backups/.
 #
 # The backup directory sits OUTSIDE staticPodPath on purpose. The kubelet parses
 # every file in /etc/kubernetes/manifests as a pod manifest whatever its
@@ -123,8 +129,83 @@ for name in ('kube-controller-manager', 'kube-scheduler'):
     print('%s: updated %s' % (name, ' '.join(sorted(FLAGS))))
 "
       SCRIPT
+      ,
+      # Record the same flags in kubeadm-config so the NEXT `kubeadm upgrade`
+      # regenerates both manifests with them. Same shape as the etcd reconcile
+      # in etcd-tuning.tf: wait for the apiserver first, change nothing when the
+      # flags are already there, and warn rather than fail, because a failure
+      # here loses durability across the next upgrade, not the fix applied
+      # above. The file names differ from etcd-tuning.tf's so the two steps
+      # never share a scratch file.
+      <<-SCRIPT
+      set -u
+      KC="sudo kubectl --kubeconfig /etc/kubernetes/admin.conf"
+
+      for i in $(seq 1 60); do
+        if curl -sk https://localhost:6443/livez 2>/dev/null | grep -q '^ok'; then break; fi
+        sleep 2
+      done
+
+      CC=$($KC -n kube-system get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}' 2>/dev/null || true)
+      if [ -z "$CC" ]; then
+        echo "WARN: RECONCILE DID NOT RUN. Could not read kubeadm-config after waiting 120s for the apiserver."
+        echo "WARN: the leader-election tuning will NOT survive the next kubeadm upgrade. Re-apply the rbac stack once the control plane is healthy."
+      else
+        printf '%s' "$CC" > /tmp/kubeadm-cc-leader.yaml
+        sudo python3 -c "
+import sys
+import yaml
+
+FLAGS = {
+    'leader-elect-lease-duration': '60s',
+    'leader-elect-renew-deadline': '45s',
+    'leader-elect-retry-period': '15s',
+}
+
+cc = yaml.safe_load(open('/tmp/kubeadm-cc-leader.yaml'))
+changed = False
+for component in ('controllerManager', 'scheduler'):
+    section = cc.get(component) or {}
+    args = section.get('extraArgs') or []
+    have = dict((a['name'], a['value']) for a in args)
+    if all(have.get(k) == v for k, v in FLAGS.items()):
+        continue
+    changed = True
+    section['extraArgs'] = [a for a in args if a['name'] not in FLAGS] + [
+        {'name': k, 'value': v} for k, v in sorted(FLAGS.items())]
+    cc[component] = section
+
+# Exit 10 means nothing to do, so the shell below can tell it from a failure.
+if not changed:
+    print('kubeadm-config already carries the leader-election flags (no drift)')
+    sys.exit(10)
+with open('/tmp/kubeadm-cc-leader-new.yaml', 'w') as f:
+    yaml.safe_dump(cc, f, default_flow_style=False, sort_keys=False)
+print('kubeadm-config rewritten with the leader-election flags')
+"
+        RC=$?
+        if [ "$RC" -eq 10 ]; then
+          :
+        elif [ "$RC" -eq 0 ] && sudo kubeadm init phase upload-config kubeadm --config /tmp/kubeadm-cc-leader-new.yaml; then
+          echo "kubeadm-config reconciled: the leader-election tuning survives the next control-plane upgrade"
+        else
+          echo "WARN: kubeadm-config reconcile failed; re-apply this stack after the next kubeadm upgrade"
+        fi
+        sudo rm -f /tmp/kubeadm-cc-leader.yaml /tmp/kubeadm-cc-leader-new.yaml
+      fi
+      SCRIPT
     ]
   }
 
-  triggers = local.leader_election_flags
+  # Both this and etcd_tuning read, modify and re-upload the same kubeadm-config
+  # ConfigMap. Run concurrently, the second upload would silently drop the
+  # first one's change.
+  depends_on = [null_resource.etcd_tuning]
+
+  # kubeadm_config_reconcile was added with the kubeadm-config step on
+  # 2026-09-26. Changing it re-runs both steps once: the manifests get back the
+  # flags the 09-16 upgrade dropped, and kubeadm-config learns them.
+  triggers = merge(local.leader_election_flags, {
+    kubeadm_config_reconcile = "v1"
+  })
 }
