@@ -915,6 +915,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-tasks",
     "pg-goodreads-sync",
     "pg-paperless-ngx",
+    "pg-f1-stream",
   ]
 
   postgresql {
@@ -1180,6 +1181,26 @@ resource "vault_database_secret_backend_static_role" "pg_tasks" {
   name            = "pg-tasks"
   username        = "tasks"
   rotation_period = 604800
+}
+
+# The f1-stream site's visitor and viewing record (f1-stream ADR-0014).
+# Consumed by stacks/f1-stream through a vault-database ExternalSecret whose
+# Secret is MOUNTED AS A FILE and marked reloader.stakater.com/ignore, and the
+# app reads the password from that file on every new connection. So a rotation
+# never restarts the pod, which matters because the Deployment carries
+# reloader.stakater.com/auto and a restart mid-race drops every viewer.
+#
+# Pinned to Tuesday for the gap that remains: new connections fail from the
+# rotation until ESO's next 15m refresh reaches the file, while connections
+# the pool already holds keep working. Tuesday is never a race day, so that
+# window cannot land in a session.
+resource "vault_database_secret_backend_static_role" "pg_f1_stream" {
+  backend           = vault_mount.database.path
+  db_name           = vault_database_secret_backend_connection.postgresql.name
+  name              = "pg-f1-stream"
+  username          = "f1_stream"
+  rotation_schedule = "0 10 * * TUE"
+  rotation_window   = 3600
 }
 
 # =============================================================================
