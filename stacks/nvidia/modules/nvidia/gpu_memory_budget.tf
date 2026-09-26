@@ -21,9 +21,13 @@ variable "gpumem_resource" {
   description = "Custom node extended-resource name advertised for GPU memory budgeting (integer MiB)."
 }
 
+# 14000 -> 14200 on 2026-09-26 so f1-stream can declare 2048: a 4K HDR replay
+# ladder measured 1707 MiB against its 1200, and the watchdog recycled the pod
+# mid-build. Viktor chose this over CPU decode for HDR, knowing it narrows the
+# unallocated slack the watchdog's 1536 MiB free floor leans on.
 variable "gpumem_total_mib" {
   type        = number
-  default     = 14000
+  default     = 14200
   description = "Schedulable GPU-memory budget advertised on the GPU node = ~15360 MiB physical minus ~1.4 GiB driver/CUDA-context/exporter slack. Sum of all tenants' declared gpumem must stay <= this."
 }
 
