@@ -1718,8 +1718,8 @@ serverFiles:
             # standing.
             #
             # It does NOT predict a per-pane cap kill, which is the more common
-            # loss and is independent of box memory — PaneNearMemoryCap in the Loki
-            # ruler covers that one.
+            # loss and is independent of box memory. ClaudeOOMKilled in the Loki
+            # ruler reports that one after the fact.
             #
             # for: 10m is 5 samples at the global 2m scrape interval.
             expr: (node_memory_MemAvailable_bytes{instance="devvm"} / node_memory_MemTotal_bytes{instance="devvm"}) < 0.08
