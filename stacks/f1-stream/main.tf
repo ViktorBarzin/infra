@@ -315,7 +315,16 @@ resource "kubernetes_deployment" "f1-stream" {
               # sit in FRONT of Anubis, so that floor alone would hold the group
               # awake permanently. Parking it needs the bot floor addressed
               # first.
-              "viktorbarzin.me/gpumem" = "1200"
+              #
+              # RAISED to 2048 on 2026-09-26. Wanted sessions (app ADR-0015)
+              # prefer the highest quality, so 4K HLG sources now reach the
+              # ladder: NVDEC decoding 2160p 10-bit plus the encoders measured
+              # 1707 MiB, and the watchdog recycled this pod at 18:03 in a
+              # contention event. The node budget went 14000 -> 14200 first
+              # (stacks/nvidia) so this fits. A 4K ladder plus two live
+              # transcodes (1707 + 2 x 291 = 2289) can still exceed it; Viktor
+              # accepted that over CPU decoding for HDR sources.
+              "viktorbarzin.me/gpumem" = "2048"
               memory                   = "2Gi"
             }
             requests = {
