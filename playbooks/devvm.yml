@@ -212,7 +212,7 @@
     #
     # Its proxy secret is Vault secret/agentmd -> proxy_secret_<name>.
     devvm_agentmd_version: v0.1.0
-    devvm_agentmd_sha256: SET_AFTER_RELEASE
+    devvm_agentmd_sha256: 424e61ecd9bf542d6b833c2946963b03e58dd920135b15fcbd44607252b55782
     devvm_agentmd_users:
       - name: wizard
         port: 7390
