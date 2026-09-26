@@ -206,17 +206,18 @@
     # reached through stacks/agentmd on its own hostname. Keep the users in
     # step with local.users there.
     #
-    #   name      the OS user the instance runs as
-    #   port      where its socket listens (the stack's Endpoints point here)
-    #   identity  the Authentik username allowed in (differs from the OS user)
+    #   name  the OS user the instance runs as; the Authentik identity allowed
+    #         in is that user's authentik_user in roster.yaml, the one place the
+    #         identity map lives (agentmd also accepts its @domain form, which
+    #         is what Authentik sends)
+    #   port  where its socket listens (the stack's Endpoints point here)
     #
     # Its proxy secret is Vault secret/agentmd -> proxy_secret_<name>.
-    devvm_agentmd_version: v0.1.1
-    devvm_agentmd_sha256: 714d3c2f0f5019360ca570a924d90fc1b3f50fb1950fdc83c0ae7c28a93a56a0
+    devvm_agentmd_version: v0.1.2
+    devvm_agentmd_sha256: c7dd55be02e8fc70407954ee5a3bfce2f12195183f20a1c70f7cbdae56483942
     devvm_agentmd_users:
       - name: wizard
         port: 7390
-        identity: vbarzin
 
   tasks:
     # ---- 1) the apt toolset -------------------------------------------------
@@ -2318,8 +2319,8 @@
         group: root
         mode: "0644"
         content: |
-          # Managed by playbooks/devvm.yml. Local edits are overwritten.
-          AGENTMD_IDENTITY={{ item.identity }}
+          # Managed by playbooks/devvm.yml from roster.yaml. Local edits are overwritten.
+          AGENTMD_IDENTITY={{ (lookup('file', workstation_dir ~ '/roster.yaml') | from_yaml).users[item.name].authentik_user }}
       loop: "{{ devvm_agentmd_users }}"
       loop_control:
         label: "{{ item.name }}"
