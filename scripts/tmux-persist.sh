@@ -41,8 +41,10 @@
 #                 everything the lobby's restore picker needs to open.
 #   restore-selection <user> <ts> <name>... — restore chosen rows of one
 #                 snapshot. Backs the lobby picker.
-#   restore-one <user> <name|uuid> — recreate ONE session found in any
-#                 snapshot, newest first.
+#   restore-one <user> <name|uuid> [first-message] — recreate ONE session found
+#                 in any snapshot, newest first, or resume it in place when it
+#                 survived as a bare shell. The optional message becomes the
+#                 resumed claude's first prompt.
 #   history     — list a user's session history, derived by merging snapshots.
 #   forget      — tombstone a deliberate kill so a restore doesn't undo it.
 #
@@ -725,19 +727,27 @@ picker() {
 # after ~2s so a host without scope support just carries on uncapped.
 CGROUP_SETTLE='i=0; while [ $i -lt 40 ]; do read -r _cg < /proc/self/cgroup 2>/dev/null; case ${_cg:-} in *tmux-spawn-*) break ;; esac; i=$((i+1)); sleep 0.05; done; '
 
-restore_cmd() {   # $1 sess, $2 uuid ("" -> plain shell)
+# One POSIX-sh word, for text that goes through a shell unexamined: the pane
+# command string and a line typed into a surviving shell. Single quotes, with
+# each embedded ' closed, escaped and reopened.
+sh_word() { local esc="'\\''"; printf "'%s'" "${1//\'/$esc}"; }
+
+# The optional first message, as a trailing argv word to claude, or nothing.
+prompt_word() { [[ -n "${1:-}" ]] && printf ' %s' "$(sh_word "$1")"; return 0; }
+
+restore_cmd() {   # $1 sess, $2 uuid ("" -> plain shell), $3 optional first message
   if [[ -n "$2" ]]; then
-    printf '%s%s --dangerously-skip-permissions --resume %s --name "%s"; echo; echo "  claude exited — shell preserved"; exec bash -l' \
-      "$CGROUP_SETTLE" "$CLAUDE_BIN" "$2" "$1"
+    printf '%s%s --dangerously-skip-permissions --resume %s --name "%s"%s; echo; echo "  claude exited — shell preserved"; exec bash -l' \
+      "$CGROUP_SETTLE" "$CLAUDE_BIN" "$2" "$1" "$(prompt_word "${3:-}")"
   else
     printf 'exec bash -l'
   fi
 }
 
-spawn_session() {   # $1 user, $2 target name, $3 cwd, $4 uuid
+spawn_session() {   # $1 user, $2 target name, $3 cwd, $4 uuid, $5 optional first message
   local u="$1" target="$2" cwd="$3" uuid="$4"
   [[ -d "$cwd" ]] || { home_of "$u"; cwd="$HOME_OF"; }
-  tmux_as "$u" new-session -d -s "$target" -c "$cwd" "$(restore_cmd "$target" "$uuid")"
+  tmux_as "$u" new-session -d -s "$target" -c "$cwd" "$(restore_cmd "$target" "$uuid" "${5:-}")"
 }
 
 # Type the resume into a live session whose claude died but whose shell survived.
@@ -747,9 +757,9 @@ spawn_session() {   # $1 user, $2 target name, $3 cwd, $4 uuid
 # it for a session or window — the trailing `:` makes it a session-qualified
 # pane target, which resolves to that session's active pane while keeping `=`
 # exact (a plain `<sess>` would prefix-match a longer name).
-resume_in_place() {   # $1 user, $2 sess, $3 uuid
+resume_in_place() {   # $1 user, $2 sess, $3 uuid, $4 optional first message
   tmux_as "$1" send-keys -t "=$2:" \
-    "$CLAUDE_BIN --dangerously-skip-permissions --resume $3 --name \"$2\"" C-m
+    "$CLAUDE_BIN --dangerously-skip-permissions --resume $3 --name \"$2\"$(prompt_word "${4:-}")" C-m
 }
 
 apply_row() {   # a resolved row on stdin args: user + the 8 fields
@@ -862,8 +872,11 @@ history_list() {
 # `$1""==s""` is load-bearing: awk compares two numeric-looking strings as
 # NUMBERS, so a bare `$1==s` matched session "007" when asked for "7", and "1e2"
 # when asked for "100". Passing the name via -v stops injection but not this.
+# $3, optional, is a first message for the resumed claude. tl-session-watch
+# passes one when the pane memory cap killed the conversation, so it comes back
+# told what happened rather than sitting at a prompt mid-task.
 restore_one() {
-  local u="$1" sel="$2" f line sess cwd uuid ts
+  local u="$1" sel="$2" prompt="${3:-}" f line sess cwd uuid ts pane_pid pane_cmd
   is_user "$u" || { echo "[tmux-persist] restore-one: '$u' is not a known terminal user" >&2; return 2; }
   migrate_manifest "$u"
   while read -r f; do
@@ -875,8 +888,21 @@ restore_one() {
   [[ -n "$line" ]] || { echo "[tmux-persist] no session matching '$sel' for $u" >&2; return 1; }
   IFS=$'\t' read -r sess cwd uuid <<<"$line"
   [[ "$uuid" == "-" ]] && uuid=""
-  if tmux_as "$u" has-session -t "=$sess" 2>/dev/null; then log "$u:$sess already live"; return 0; fi
-  spawn_session "$u" "$sess" "$cwd" "$uuid" \
+  if tmux_as "$u" has-session -t "=$sess" 2>/dev/null; then
+    # A session an earlier restore made ends in `exec bash -l`, so when its
+    # claude dies the session survives as a bare shell. Resume into that shell;
+    # anything else in the pane is someone's live work and is left alone.
+    IFS=$'\t' read -r pane_pid pane_cmd < <(tmux_as "$u" list-panes -t "=$sess:" \
+      -F $'#{pane_pid}\t#{pane_current_command}' 2>/dev/null | head -1)
+    if [[ -n "$uuid" ]] && is_shell "${pane_cmd:-}" && ! claude_pid_under "${pane_pid:-0}"; then
+      resume_in_place "$u" "$sess" "$uuid" "$prompt" \
+        && log "resumed $u:$sess in place (${uuid:0:8}) (from $ts)" \
+        || { log "WARN: failed to resume $u:$sess in place"; return 1; }
+      return 0
+    fi
+    log "$u:$sess already live"; return 0
+  fi
+  spawn_session "$u" "$sess" "$cwd" "$uuid" "$prompt" \
     && log "restored $u:$sess${uuid:+ (resume ${uuid:0:8})} (from $ts)" \
     || { log "WARN: failed to restore $u:$sess"; return 1; }
 }
@@ -889,7 +915,7 @@ usage: tmux-persist save
        tmux-persist snapshot <user> <ts>
        tmux-persist picker <user>
        tmux-persist restore-selection <user> <ts> <name>...
-       tmux-persist restore-one <user> <name|uuid>
+       tmux-persist restore-one <user> <name|uuid> [first-message]
        tmux-persist history [user]
        tmux-persist forget <user> <session>
 EOF
@@ -906,7 +932,7 @@ case "$MODE" in
             u="${2:?usage: restore-selection <user> <ts> <name>...}"
             ts="${3:?usage: restore-selection <user> <ts> <name>...}"
             shift 3; restore_selection "$u" "$ts" "$@" ;;
-  restore-one) restore_one "${2:?usage: restore-one <user> <name|uuid>}" "${3:?usage: restore-one <user> <name|uuid>}" ;;
+  restore-one) restore_one "${2:?usage: restore-one <user> <name|uuid> [first-message]}" "${3:?usage: restore-one <user> <name|uuid> [first-message]}" "${4:-}" ;;
   history)  history_list "${2:-}" ;;
   forget)   forget "${2:?usage: forget <user> <session>}" "${3:?usage: forget <user> <session>}" ;;
   *)        usage ;;
