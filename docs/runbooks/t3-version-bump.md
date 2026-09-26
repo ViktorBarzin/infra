@@ -2,8 +2,9 @@
 
 t3 on the devvm **auto-tracks the `latest` npm dist-tag** (Viktor, 2026-09-06;
 it tracked `nightly` from 2026-06-16, and was pinned before that), via the daily
-`agent-update` timer, which runs the Claude Code, codex and t3 updaters in
-sequence at 03:30 (t3 had its own timer until 2026-09-06; the script and
+`agent-update` timer, which runs the Claude Code, codex, pi and t3 updaters in
+sequence at 03:30 (pi-update also refreshes each user's pi packages, as that
+user, since 2026-09-26; t3 had its own timer until 2026-09-06; the script and
 `t3-autoupdate.service` are unchanged and still runnable by hand). Every bump is
 GATED so a bad build self-heals instead of
 repeating 2026-06-09. This reverses
