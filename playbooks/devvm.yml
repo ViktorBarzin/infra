@@ -2266,22 +2266,23 @@
         - { path: /etc/agentmd/credentials, mode: "0700" }
         - { path: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}", mode: "0755" }
 
-    # check_mode: false because get_url probes with HEAD during a dry run and
-    # would report a change it cannot verify. The checksum pins the release.
+    # The checksum pins the release. GitHub answers get_url's dry-run HEAD
+    # probe, so this runs in check mode like any other task.
     - name: Download agentmd
       ansible.builtin.get_url:
         url: "https://github.com/ViktorBarzin/agentmd/releases/download/{{ devvm_agentmd_version }}/agentmd_{{ devvm_agentmd_version | regex_replace('^v', '') }}_linux_amd64.tar.gz"
         dest: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}/agentmd.tar.gz"
         checksum: "sha256:{{ devvm_agentmd_sha256 }}"
         mode: "0644"
-      check_mode: false
 
+    # Skipped under --check: the tarball is only there after a real run.
     - name: Unpack agentmd
       ansible.builtin.unarchive:
         src: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}/agentmd.tar.gz"
         dest: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}"
         remote_src: true
         creates: "/usr/local/lib/agentmd/{{ devvm_agentmd_version }}/agentmd"
+      when: not ansible_check_mode
 
     - name: Point agentmd at the pinned version
       ansible.builtin.file:
