@@ -12,6 +12,12 @@
 #
 # --ignore-scripts because pi's README says it needs no dependency lifecycle
 # scripts, and this runs as root.
+#
+# Then it brings each user's pi packages to latest. Pi installs packages
+# (`pi install npm:...`) into ~/.pi/agent/npm and never updates them on its
+# own; only `pi update --extensions` does. That runs as each user who has
+# packages listed in ~/.pi/agent/settings.json, because the files are theirs.
+# Added 2026-09-26 when wizard installed pi-fabric and the question tool.
 set -euo pipefail
 
 PKG="${PI_PKG:-@earendil-works/pi-coding-agent}"
@@ -33,16 +39,44 @@ installed_version() {
 before="$(installed_version)"
 before="${before:-not installed}"
 
-if ! npm install -g --no-fund --no-audit --ignore-scripts "${PKG}@${TAG}"; then
-    log "npm install failed; leaving ${before} in place"
-    exit 1
-fi
+status=0
 
-after="$(installed_version)"
-after="${after:-not installed}"
-
-if [[ "$before" == "$after" ]]; then
-    log "already at ${after}; nothing to do"
+if npm install -g --no-fund --no-audit --ignore-scripts "${PKG}@${TAG}"; then
+    after="$(installed_version)"
+    after="${after:-not installed}"
+    if [[ "$before" == "$after" ]]; then
+        log "already at ${after}; nothing to do"
+    else
+        log "updated ${before} -> ${after}"
+    fi
 else
-    log "updated ${before} -> ${after}"
+    log "npm install failed; leaving ${before} in place"
+    status=1
 fi
+
+# True when the settings file lists at least one package.
+has_packages() {
+    node -e 'process.exit((JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).packages || []).length ? 0 : 1)' "$1" 2>/dev/null
+}
+
+# Every login account's home, uid 1000 and up. A user without pi packages is
+# skipped, so this costs nothing for people who never touched pi.
+while IFS=: read -r user _ uid _ _ home _; do
+    [[ "$uid" -ge 1000 && "$uid" -lt 65534 ]] || continue
+    settings="$home/.pi/agent/settings.json"
+    [[ -f "$settings" && ! -L "$settings" ]] || continue
+    has_packages "$settings" || continue
+
+    # From the user's home with --no-approve, so no project's .pi/settings.json
+    # gets trusted on their behalf. A clean env, because root's is not theirs.
+    if (cd "$home" && runuser -u "$user" -- env -i HOME="$home" USER="$user" \
+            PATH=/usr/local/bin:/usr/bin:/bin PI_TELEMETRY=0 \
+            timeout 15m pi update --extensions --no-approve); then
+        log "${user}: packages up to date"
+    else
+        log "${user}: package update failed"
+        status=1
+    fi
+done < <(getent passwd)
+
+exit "$status"
