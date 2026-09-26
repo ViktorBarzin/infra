@@ -953,8 +953,9 @@ resource "kubernetes_config_map" "loki_alert_rules" {
             # about 51 times in 26 days, and all 5 claude kills in that time went
             # ahead despite a 26-54 minute warning, so it prevented none. A killed
             # conversation resumes from its transcript (claude --resume), so the
-            # alerts that fire after a kill are enough. tl_pane_memory_bytes and
-            # tl_pane_unreclaimable_bytes still export pane memory for history.
+            # alerts that fire after a kill are enough. tl-session-watch stopped
+            # emitting pane_near_cap in terminal-lobby 0.74.0; tl_pane_memory_bytes
+            # and tl_pane_unreclaimable_bytes still export pane memory for history.
             {
               # DEAD-MAN switch for the watcher, mirroring DevvmJournalSilent one
               # level down: that one catches the pipeline dying, this one catches
