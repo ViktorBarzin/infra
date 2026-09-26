@@ -744,10 +744,16 @@ restore_cmd() {   # $1 sess, $2 uuid ("" -> plain shell), $3 optional first mess
   fi
 }
 
+# A restored session is stamped `@tl_origin user` in the same tmux call that
+# creates it. Only user sessions are ever snapshotted, and every lobby surface
+# reads an unstamped session as a system session: moved to the System group, no
+# push, suspended after 4h, ignored by tl-session-watch, and left out of the
+# next snapshot. Until 2026-09-26 every restore came back unstamped.
 spawn_session() {   # $1 user, $2 target name, $3 cwd, $4 uuid, $5 optional first message
   local u="$1" target="$2" cwd="$3" uuid="$4"
   [[ -d "$cwd" ]] || { home_of "$u"; cwd="$HOME_OF"; }
-  tmux_as "$u" new-session -d -s "$target" -c "$cwd" "$(restore_cmd "$target" "$uuid" "${5:-}")"
+  tmux_as "$u" new-session -d -s "$target" -c "$cwd" "$(restore_cmd "$target" "$uuid" "${5:-}")" \; \
+    set-option -t "=$target:" @tl_origin "$ORIGIN_USER"
 }
 
 # Type the resume into a live session whose claude died but whose shell survived.
