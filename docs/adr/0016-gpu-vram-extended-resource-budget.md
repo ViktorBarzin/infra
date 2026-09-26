@@ -156,3 +156,11 @@ disproportionate risk for this hardware.
   `kubectl patch node --subresource=status` to remove the capacity key. Nothing
   structural; no driver/operator state to unwind.
 - The `gpumem` numbers are first estimates; tune from `gpu_pod_memory_used_bytes`.
+
+## Amendment, 2026-09-26
+
+The advertised budget on the GPU node went from 14000 to 14200 MiB so
+f1-stream could declare 2048 MiB (was 1200): a 4K HDR replay ladder measured
+1707 MiB and the watchdog recycled the pod during a contention event. The
+declared total on node1 is now 14148 of 14200, which leaves less unallocated
+room above the watchdog's 1536 MiB free floor than before.
