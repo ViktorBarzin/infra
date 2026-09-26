@@ -1,6 +1,6 @@
 # Telling Viktor when a devvm Claude session dies
 
-**Status:** done (swap follow-up 2026-09-02; pane threshold revised 2026-09-26)
+**Status:** done (swap follow-up 2026-09-02; `PaneNearMemoryCap` removed 2026-09-26)
 **Date:** 2026-09-01
 **Owner:** wizard
 **Predecessor:** [2026-08-16-devvm-pane-memory-cap.md](2026-08-16-devvm-pane-memory-cap.md)
@@ -236,11 +236,11 @@ threshold once there is a week of it.
 |---|---|---|---|
 | `ClaudeOOMKilled` | `oom-kill:` with `task=claude` | kernel, via Loki | after the fact |
 | `ClaudeSessionDied` | gone from tmux with its manifest row intact, or a live session holding a stamp with no claude alive | `tl-session-watch`, via Loki | 30s |
-| `PaneNearMemoryCap` | pane holding a claude has unreclaimable memory (`anon + shmem`) at or above 5G; the episode ends below 4.5G (3G with claude the fattest process until 2026-09-26) | `tl-session-watch`, via Loki | 30s |
+| `PaneNearMemoryCap` (removed 2026-09-26) | pane's unreclaimable memory (`anon + shmem`) above 3G **and** claude is the fattest process in it | `tl-session-watch`, via Loki | 30s |
 | `DevvmMemoryPressure` | `MemAvailable < 8%` for 10m | node_exporter, via Prometheus | ~5 min |
 | `SessionWatchSilent` | no watcher heartbeat for 30m | `tl-session-watch`, via Loki | 30m |
 
-All five carry `severity: warning` and group `by (user)` over a 2-hour window.
+All five carried `severity: warning` (four since 2026-09-26) and group `by (user)` over a 2-hour window.
 Warning routing notifies once and does not re-ping while an alert stays firing,
 with the daily digest carrying standing state. Replaying the 2026-08-16 event
 (~21 kills in two minutes) against this shape gives one message per affected
@@ -286,30 +286,25 @@ keeps the alert quiet when the cap eats a test run, which is the mechanism
 working correctly — 1 of the 3 kills in the 7 days before this was `node
 (vitest)`.
 
-**Revised 2026-09-26: 5G to warn, 4.5G to clear, any pane holding a claude.**
-The 3G gate logged 212 warnings in the 26 days to 2026-09-26, about 51 Slack
-posts across 32 sessions, against 5 claude kills. Each of those 5 kills had a
-warning 26 to 54 minutes ahead, so the alert caught every one, and roughly 1
-post in 10 preceded a kill.
+**Removed 2026-09-26.** In the 26 days to 2026-09-26 the pre-warning logged
+212 warnings, about 51 Slack posts across 32 sessions, against 5 claude kills.
+Each of those 5 kills had a warning 26 to 54 minutes ahead, and all 5 went ahead
+anyway, so in practice the warning did not lead to anyone saving a conversation.
+A killed conversation also loses less than this design assumed: its transcript
+is on disk and `claude --resume` brings it back, the same path terminal-lobby's
+idle suspend uses. So the alerts that fire after a kill (`ClaudeOOMKilled`,
+`ClaudeSessionDied`) are the ones kept. The watcher no longer emits
+`pane_near_cap`; the pane memory metrics below are still exported for history.
 
-The claude-is-fattest gate did not separate panes at risk from ordinary ones. Every killed claude held
-367 to 527 MB `anon-rss`, and claude is the largest single process in nearly
-every pane it runs in. What fills a pane is what claude starts and writes: one
-live pane on 2026-09-26 held `tsc` at 793 MB, claude at 447 MB, two vite dev
-servers at 178 MB each, MCP servers at about 170 MB, and 871 MB of `shmem` from
-scratch git worktrees under `/tmp/claude-1000`. When a build is the fattest
-process the cap takes it and then the claude: on 2026-09-24 it killed about 30
-vitest workers and then the conversation. So the gate is now "a claude is in the
-pane", and the threshold moved up to 5G, below the 6G cap where the kills
-happened.
-
-The watcher had one level, so a pane hovering at the line cleared and warned
-again on every dip. It now warns at 5G and ends the episode only below 4.5G.
-
-Two facts above have also changed since this was written. Panes can swap since
-2026-09-02, within 4G per user, so `anon + shmem` is now an upper bound on what
-the cap cannot reclaim. And the 4424 MB row in the table sits under today's
-threshold; that pane was not killed.
+What the 26 days showed about pane memory, for whoever looks at this next. Claude
+itself stays small: every killed claude held 367 to 527 MB `anon-rss`. What fills
+a pane is what claude starts and writes: one live pane on 2026-09-26 held `tsc`
+at 793 MB, claude at 447 MB, two vite dev servers at 178 MB each, MCP servers at
+about 170 MB, and 871 MB of `shmem` from scratch git worktrees under
+`/tmp/claude-1000`. When a build is the fattest process the cap takes it and then
+the claude: on 2026-09-24 it killed about 30 vitest workers and then the
+conversation. Panes can also swap since 2026-09-02, within 4G per user, so
+`anon + shmem` is now an upper bound on what the cap cannot reclaim.
 
 Both numbers are exported and both ride in the journal line, because the split is
 what says which action helps: delete scratch files when `shmem` dominates, close
@@ -493,8 +488,7 @@ memory pressure.
 - How fast does a pane actually grow when claude is the one growing? Today's
   kill logged `Bun Pool 6 invoked oom-killer`, which suggests an allocation
   burst rather than slow drift, but there is no per-pane history to confirm it.
-  The 3G threshold was a starting point; 26 days of the exported metric and the
-  kill log moved it to 5G on 2026-09-26 (see "Thresholds and why they sit
-  there").
+  The alert this question was about was removed on 2026-09-26 (see "Thresholds
+  and why they sit there").
 - Whether the false-positive rate from CLI kills is low enough to leave alone,
   or whether the scripts that kill sessions should call the forget wrapper.
