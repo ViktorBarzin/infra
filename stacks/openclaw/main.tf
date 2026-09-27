@@ -417,6 +417,10 @@ resource "kubernetes_deployment" "openclaw" {
     # tuya-bridge/saksii_poller, monitoring's dashboard + walloff probe +
     # scrape), and unpicking those is the real work. If nothing misses it in a
     # week, that removal gets its own change. Reverting is this one line.
+    #
+    # Uptime Kuma: the "OpenClaw" monitor (id 302) was paused on 2026-09-27 so
+    # the parked app stops reading as down in the health check. Resume it in
+    # Uptime Kuma when this goes back to 1.
     replicas = 0
     selector {
       match_labels = {
