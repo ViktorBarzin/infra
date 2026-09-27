@@ -1,0 +1,36 @@
+#!/bin/sh
+# claude-command-scope: Claude Code's CLAUDE_CODE_SHELL_PREFIX on the devvm.
+#
+# Every tmux pane has a 6G memory cap. Claude used to share it with everything
+# it started: dev servers, tsc, test workers, and the /tmp files they wrote. When
+# the pane filled, the kernel killed its largest process, and when a pool of
+# test workers each sat under claude's ~0.5 GB, the largest was claude: seven
+# conversations between 2026-08-30 and 2026-09-25.
+#
+# So each command Claude runs gets its own systemd scope. The user scope drop-in
+# (/etc/systemd/user/scope.d/50-devvm-pane-cap.conf) gives it its own 6G cap,
+# memory the command allocates or writes to tmpfs is charged there, and a
+# command that fills its scope loses its own processes, not the conversation.
+#
+# Claude Code passes one argument, the command string, for Bash tool calls,
+# hooks, the status line and stdio MCP server startups alike. Only a Bash tool
+# call starts by sourcing a shell snapshot, and only those are scoped. The rest
+# are frequent (hooks fire on every tool call, the status line on every render)
+# and small, so they skip the systemd round trip and run under bash, as the
+# Claude Code docs specify for a prefix. A Bash tool call runs under the user's
+# own shell, which is what Claude runs it with when no prefix is set.
+#
+# Installed by playbooks/devvm.yml and set org-wide in
+# scripts/workstation/managed-settings.json.
+
+case "$1" in
+  *"/.claude/shell-snapshots/snapshot-"*)
+    # No user bus (a session started outside the user manager) means no scope,
+    # but the command still runs.
+    if [ -e "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ] && command -v systemd-run >/dev/null 2>&1; then
+      exec systemd-run --user --scope --quiet --collect -- "${SHELL:-/bin/bash}" -c "$1"
+    fi
+    exec "${SHELL:-/bin/bash}" -c "$1"
+    ;;
+esac
+exec bash -c "$1"
