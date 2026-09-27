@@ -4931,9 +4931,22 @@ serverFiles:
             # — its entire purpose is to return 404 for unmatched hostnames
             # (typos + scanner traffic), so its 4xx rate is permanently ~100%.
             # Without this exclusion the alert is a perpetual false positive.
+            #
+            # Forgejo's 401s are left out of the numerator (other 4xx codes on
+            # it still count). Nearly all of them are Woodpecker calling
+            # /api/v1/version without credentials (47 of the 50 401s in the
+            # hour to 13:00 on 2026-09-27), plus git's normal ask-then-send-
+            # credentials handshake. They are 20-30% of Forgejo's traffic
+            # overnight, so the ratio sat on the 30% threshold and fired at
+            # 02:00 on 2026-09-27; excluding them, the 7-day backtest fires 0
+            # times for Forgejo and unchanged for every other service.
             expr: |
               (
-                sum(rate(traefik_service_requests_total{code=~"4..", service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*|.*catchall-error-pages.*"}[5m])) by (service)
+                (
+                  sum(rate(traefik_service_requests_total{code=~"4..", service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*|.*catchall-error-pages.*|.*forgejo.*"}[5m])) by (service)
+                  or
+                  sum(rate(traefik_service_requests_total{code=~"4..", code!="401", service=~".*forgejo.*"}[5m])) by (service)
+                )
                 / sum(rate(traefik_service_requests_total{service!~".*nextcloud.*|.*grafana.*|.*linkwarden.*|.*claude-memory.*|.*catchall-error-pages.*"}[5m])) by (service)
                 * 100
               ) > 30
