@@ -7,6 +7,7 @@ SYSTEM → Advanced Settings), not from this repo. This page lists the intended
 settings and why, so the live router can be compared against it.
 
 Design and decisions: `docs/plans/2026-09-27-london-flint-main-router.md`.
+Cutover day: `docs/runbooks/london-cutover.md`.
 
 ## Topology
 
@@ -61,7 +62,7 @@ make, so the result is visible in one of the two UIs.
 | node exporter | package `prometheus-node-exporter-lua` (+ `-wifi_stations`, `-netstat`, `-openwrt`), `listen_interface '*'` | Prometheus job `flint-london` scrapes `10.3.2.6:9100`. The WAN zone drops 9100; the tunnel zone accepts it. The `wifi` collector is left out because the MediaTek iwinfo backend lacks noise/quality/bitrate. `wifi_stations` packet counters read 0 on this driver; signal and rates are real. |
 | tunnel ping | blackbox job `london-flint-icmp`, 30 s | `LondonTunnelDown` after 10 minutes |
 | drop probe | package `london-drop-probe` (built by `scripts/london-flint/build-ipk.py`, installed from LuCI → System → Software → Upload), run by LuCI → System → Scheduled Tasks every minute | Detects internet drops, snapshots routing/kmwan/DPI-queue state, and pushes one event per drop to Loki (`{job="london-drops", source="flint"}`) after the path returns. Queue survives reboots in `/root/drop-probe.queue`. |
-| Mac probe | launchd agent on mbp-london, source in `dot_files` | Reports drops of the Mac's own Wi-Fi and DNS (`source="mac"`). |
+| Mac probe | launchd agent `me.viktorbarzin.london-probe` on mbp-london (Viktor's M4 MacBook), source in the `dot_files` repo under `mac/london-probe` | Reports drops of the Mac's own Wi-Fi and DNS (`source="mac"`). The Mac has no git access to Forgejo, so deploy by copying `mac/london-probe` over SSH and running its `install.sh` (runs the tests, then bootstraps the agent). Log: `~/Library/Logs/london-probe.log`. |
 | alerts | Loki rules `LondonInternetDrop`, `LondonFirmwareReset`; Prometheus rule `LondonTunnelDown` | Event alerts go to the `slack-event` receiver: one post per drop, no RESOLVED. |
 
 The probe and the Mac push to `https://loki.viktorbarzin.lan/loki/api/v1/push`
