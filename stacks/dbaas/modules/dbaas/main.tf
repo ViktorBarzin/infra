@@ -1480,12 +1480,15 @@ resource "null_resource" "pg_payslip_ingest_db" {
 # hyphenated MySQL name, to match every other role on this cluster.
 # Role password is managed by Vault Database Secrets Engine (static role `pg-paperless-ngx`, 7d rotation).
 #
-# This resource and pg_f1_stream_db sat unapplied from their pushes (09-08
-# and 09-26) until 2026-09-27, while CI reported both pipelines green. This
-# stack can only be applied by CI, so a CI run that leaves it out leaves the
-# change out, and nightly drift detection is what caught it. The database and
-# role already existed by then, and the existence checks below made that first
-# apply record them in state without creating anything.
+# This resource and pg_f1_stream_db kept planning as "to add" after their
+# pushes (09-08 and 09-26), which nightly drift detection flagged. CI did
+# apply the stack (runs on 09-26 and 09-27 both log "[dbaas] OK"), but this
+# stack keeps its state in git (state/stacks/dbaas) and CI's state commit
+# never reached master: the push step exited on "nothing staged" after
+# scripts/tg had already committed the state itself, so every plan read the
+# 09-16 state. Fixed in .woodpecker/default.yml on 2026-09-27. The database
+# and role existed all along, and the existence checks below make re-running
+# this a no-op beyond recording it in state.
 resource "null_resource" "pg_paperless_ngx_db" {
   depends_on = [null_resource.pg_cluster]
 

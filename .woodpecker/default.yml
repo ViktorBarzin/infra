@@ -427,9 +427,21 @@ steps:
       # forgejo_push_token — the latter is the container-package token and has
       # no permissions on viktor/infra (403). The token never enters the remote
       # URL, so it cannot land in a log line.
+      #
+      # "Nothing staged" does NOT mean "nothing to push". scripts/tg commits a
+      # git-stored (Tier-0) state itself during the apply, as
+      # `state(<stack>): update encrypted state`, so by the time this step runs
+      # the new state is already a local commit and `git add` stages nothing.
+      # This step used to exit on "No changes to commit" at that point, so
+      # those commits reached master only when something else happened to be
+      # staged with them. Found 2026-09-27: dbaas, cnpg, external-secrets and
+      # platform had no state commit on master after 09-16, although CI applied
+      # dbaas on 09-26 and 09-27 (both runs log "[dbaas] OK" and tg's commit),
+      # so every plan read stale state and dbaas showed as drifting. The step
+      # now commits only if something is staged, and pushes whenever HEAD has
+      # commits that origin/master lacks.
       - |
         git add stacks/ state/ .woodpecker/ 2>/dev/null || true
-        git diff --cached --quiet && echo "No changes to commit" && exit 0
         CIG=$(curl -s -H "X-Vault-Token: $(cat "$HOME/.vault-token")" \
           "$VAULT_ADDR/v1/secret/data/ci/global")
         FJ_USER=$(echo "$CIG" | jq -r .data.data.forgejo_user)
@@ -442,9 +454,18 @@ steps:
         printf 'https://%s:%s@forgejo.viktorbarzin.me\n' "$FJ_USER" "$FJ_TOKEN" > /tmp/.gitcreds
         git config credential.helper 'store --file=/tmp/.gitcreds'
         git remote set-url origin https://forgejo.viktorbarzin.me/viktor/infra.git
-        git -c user.email=ci@viktorbarzin.me -c user.name='Woodpecker CI' \
-          commit -m "Woodpecker CI deploy [CI SKIP]"
+        if ! git diff --cached --quiet; then
+          git -c user.email=ci@viktorbarzin.me -c user.name='Woodpecker CI' \
+            commit -m "Woodpecker CI deploy [CI SKIP]"
+        fi
         git fetch origin master
+        if [ -z "$(git rev-list origin/master..HEAD)" ]; then
+          echo "No changes to push"
+          rm -f /tmp/.gitcreds
+          exit 0
+        fi
+        echo "Pushing $(git rev-list --count origin/master..HEAD) commit(s):"
+        git log --oneline origin/master..HEAD
         if ! git rebase origin/master; then
           echo "ERROR: Git rebase failed — state commits could not be pushed"
           echo "Manual intervention required: pull, resolve conflicts, push"
