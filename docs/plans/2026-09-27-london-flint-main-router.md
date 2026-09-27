@@ -51,7 +51,7 @@ separates them.
 
 | # | decision | where it shows in the UI |
 |---|---|---|
-| 1 | Set country to GB on both radios, reboot once, confirm TX power afterwards (DE-only power table goes away; chosen knowingly) | LuCI → Network → Wireless |
+| 1 | Set country to GB on both radios, reboot once, confirm TX power afterwards (the DE-only power table stops applying; Viktor's call, 2026-09-27) | LuCI → Network → Wireless |
 | 2 | 2.4 GHz to 20 MHz on the quietest of channels 1/6/11 from a scan, pinned | GL → Wireless → 2.4 GHz settings |
 | 3 | Pin 5 GHz to channel 44 at 80 MHz, off DFS | GL → Wireless → 5 GHz settings |
 | 4 | Remove the Monday 04:00 reboot | GL → System → Scheduled Tasks |
@@ -64,7 +64,7 @@ separates them.
 | 11 | People on the Hyperoptic Wi-Fi join `5G-Tower` (the guest network) themselves | n/a |
 | 12 | ha-london and rpi-london repairs are out of scope, tracked separately | n/a |
 | 13 | Guest network keeps its path to Sofia | unchanged |
-| 14 | SSH and the admin page stay open on the WAN, password login stays on (chosen knowingly; after cutover they face the internet over IPv6) | unchanged |
+| 14 | SSH and the admin page stay open on the WAN, password login stays on (Viktor's call, 2026-09-27; after cutover they are reachable from the internet over IPv6) | unchanged |
 
 All router changes go in at once, before the cutover (decision taken 2026-09-27:
 fix now rather than monitor first).
@@ -72,7 +72,7 @@ fix now rather than monitor first).
 ## Monitoring
 
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph London
     Mac["mbp-london<br/>launchd probe"]
     Flint["Flint 2<br/>node-exporter<br/>probe (LuCI cron)<br/>remote syslog"]
