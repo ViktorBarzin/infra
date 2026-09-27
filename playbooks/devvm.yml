@@ -565,9 +565,10 @@
 
     # tmux-persist saves and restores lobby sessions, and tl-session-watch calls
     # its restore-one to bring back a conversation the pane memory cap killed.
-    # Until 2026-09-26 only setup-devvm.sh installed it, by hand, so a committed
-    # change could sit undeployed. Its save/restore units are still installed by
-    # setup-devvm.sh.
+    # The hourly t3-provision-users reconcile also syncs it (sync_tmux_persist);
+    # this task declares it for a box built from the playbook before that first
+    # runs. Both install the same repo file. Its save/restore units are still
+    # installed by setup-devvm.sh.
     - name: Install tmux-persist
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../scripts/tmux-persist.sh"
