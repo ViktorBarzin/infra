@@ -58,6 +58,18 @@ resource "kubectl_manifest" "inject_dependency_init_containers" {
                         name    = "wait-for-{{ element | split(@, ':') | [0] | replace_all(@, '.', '-') }}"
                         image   = "busybox:1.37"
                         command = ["sh", "-c", "until nc -z {{ element | split(@, ':') | [0] }} {{ element | split(@, ':') | [1] }}; do echo waiting for {{ element }}; sleep 2; done"]
+                        # Without its own resources this container took the
+                        # namespace LimitRange default, 1Gi in immich. A pod's
+                        # scheduling request is the larger of its biggest init
+                        # container and the sum of its containers, so the three
+                        # immich-frame pods each reserved 1Gi for an nc loop:
+                        # 2.63 GiB of the scheduler's view on 2026-09-27. No
+                        # LimitRange here sets a min or a limit/request ratio,
+                        # so these values are admissible in every namespace.
+                        resources = {
+                          requests = { cpu = "5m", memory = "16Mi" }
+                          limits   = { memory = "32Mi" }
+                        }
                       }
                     ]
                   }
