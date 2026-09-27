@@ -136,6 +136,18 @@
         ]
       }
     ],
+    "PermissionRequest": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/claude-se-hook question",
+            "timeout": 86400
+          }
+        ]
+      }
+    ],
     "TeammateIdle": [
       {
         "hooks": [
