@@ -872,22 +872,31 @@ check_ingresses() {
     fi
 }
 
-# --- 13. Prometheus Alerts ---
+# --- 13. Firing Alerts ---
 check_alerts() {
-    section 13 "Prometheus Alerts"
-    local alerts firing_count
+    section 13 "Firing Alerts"
+    local alerts firing_count note=""
 
-    # Try alertmanager first, then prometheus server
-    alerts=$($KUBECTL exec -n monitoring deploy/prometheus-alertmanager -- \
+    # Alertmanager is the one place that sees both rule engines: Prometheus
+    # rules and the Loki ruler (DevvmJournalSilent, TraefikNoRouterMatch404s,
+    # ...). It runs as a StatefulSet. Until 2026-09-27 this exec named a
+    # Deployment that does not exist, so it failed every time and the check fell
+    # back to Prometheus without saying so. Prometheus never lists Loki-ruler
+    # alerts, and a critical DevvmJournalSilent fired for 14 hours without
+    # appearing here.
+    alerts=$($KUBECTL exec -n monitoring sts/prometheus-alertmanager -c alertmanager -- \
         wget -q -O- http://localhost:9093/api/v2/alerts 2>/dev/null || true)
 
     if [[ -z "$alerts" ]]; then
+        # Still worth reporting from Prometheus, but flag it, since this view
+        # cannot see any Loki-ruler alert.
+        note=" (Alertmanager unreachable; Prometheus only, Loki-ruler alerts not counted)"
         alerts=$($KUBECTL exec -n monitoring deploy/prometheus-server -- \
             wget -q -O- http://localhost:9090/api/v1/alerts 2>/dev/null || true)
     fi
 
     if [[ -z "$alerts" ]]; then
-        [[ "$QUIET" == true ]] && section_always 13 "Prometheus Alerts"
+        [[ "$QUIET" == true ]] && section_always 13 "Firing Alerts"
         warn "Could not query Prometheus/Alertmanager"
         json_add "prometheus_alerts" "WARN" "Cannot query"
         return 0
@@ -926,20 +935,26 @@ except:
     names=$(echo "$firing_count" | cut -d: -f2-)
 
     if [[ "$count" == "-1" ]]; then
-        [[ "$QUIET" == true ]] && section_always 13 "Prometheus Alerts"
-        warn "Failed to parse alert data"
-        json_add "prometheus_alerts" "WARN" "Parse error"
+        [[ "$QUIET" == true ]] && section_always 13 "Firing Alerts"
+        warn "Failed to parse alert data${note}"
+        json_add "prometheus_alerts" "WARN" "Parse error${note}"
+    elif [[ "$count" -eq 0 && -n "$note" ]]; then
+        # Zero from the fallback is not a clean bill of health: the Loki-ruler
+        # half was never checked.
+        [[ "$QUIET" == true ]] && section_always 13 "Firing Alerts"
+        warn "No firing alerts${note}"
+        json_add "prometheus_alerts" "WARN" "0 firing${note}"
     elif [[ "$count" -eq 0 ]]; then
         pass "No firing alerts"
         json_add "prometheus_alerts" "PASS" "0 firing"
     elif [[ "$count" -le 3 ]]; then
-        [[ "$QUIET" == true ]] && section_always 13 "Prometheus Alerts"
-        warn "$count firing alert(s): $names"
-        json_add "prometheus_alerts" "WARN" "$count firing: $names"
+        [[ "$QUIET" == true ]] && section_always 13 "Firing Alerts"
+        warn "$count firing alert(s): $names${note}"
+        json_add "prometheus_alerts" "WARN" "$count firing: $names${note}"
     else
-        [[ "$QUIET" == true ]] && section_always 13 "Prometheus Alerts"
-        fail "$count firing alerts: $names"
-        json_add "prometheus_alerts" "FAIL" "$count firing: $names"
+        [[ "$QUIET" == true ]] && section_always 13 "Firing Alerts"
+        fail "$count firing alerts: $names${note}"
+        json_add "prometheus_alerts" "FAIL" "$count firing: $names${note}"
     fi
 }
 

@@ -85,7 +85,7 @@ bash infra/scripts/cluster_healthcheck.sh --kubeconfig /path/to/config
 | 10 | CronJob Failures | job conditions `Failed=True` in last 24h |
 | 11 | CrowdSec Agents | all pods Running |
 | 12 | Ingress Routes | every ingress has an LB IP + Traefik LB |
-| 13 | Prometheus Alerts | count of firing alerts |
+| 13 | Firing Alerts | active warning + critical alerts from Alertmanager, which covers both Prometheus rules and the Loki ruler (silenced, inhibited and info alerts excluded). JSON key stays `prometheus_alerts`. If Alertmanager cannot be reached it falls back to Prometheus and says so in the detail, since that view misses every Loki-ruler alert. Until 2026-09-27 the Alertmanager call named a Deployment that does not exist (it is a StatefulSet), so the check always used the fallback, and a critical `DevvmJournalSilent` fired for 14 hours without appearing here |
 | 14 | Uptime Kuma Monitors | internal + external monitors up |
 | 15 | ResourceQuota Pressure | any quota >80% used |
 | 16 | StatefulSets | ready == desired |
