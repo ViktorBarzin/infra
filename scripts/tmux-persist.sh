@@ -289,21 +289,31 @@ claude_pid_under() {
 #     only so a nameless one-off session still restores something. Being the least
 #     certain answer, it is also the first one capture_live drops on a collision.
 # Always returns 0; empty output means "no conversation" (restored as a shell).
-uuid_of_claude() {
-  local uuid slug dir start f sess="${4:-}" stamp="${5:-}" p t root
+# Source 0 on its own: the conversation a @claude_transcript stamp names, or
+# nothing. The stamp is written by the session's own user, so it is untrusted
+# input: only an existing <uuid>.jsonl inside that user's own projects root is
+# accepted, and a path with a `..` component is refused rather than normalised,
+# since there is nothing legitimate above the root to reach for.
+uuid_of_stamp() {   # $1 user, $2 stamp -> UUID_ANSWER ("0<TAB>uuid" or "")
+  local stamp="$2" f root
   UUID_ANSWER=""
-  home_of "$2"; root="$HOME_OF/.claude/projects"
-  # 0. the stamp. Written by the session's own user, so it is untrusted input:
-  #    only an existing <uuid>.jsonl inside that user's own projects root is
-  #    accepted, and a path with a `..` component is refused rather than
-  #    normalised — there is nothing legitimate above the root to reach for.
+  home_of "$1"; root="$HOME_OF/.claude/projects"
   if [[ -n "$stamp" && "$stamp" != *"/../"* && "$stamp" != */.. \
         && "$stamp" == "$root"/*/*.jsonl && -f "$stamp" ]]; then
     f="${stamp##*/}"; f="${f%.jsonl}"
     if [[ "$f" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-      UUID_ANSWER="0"$'\t'"$f"; return 0
+      UUID_ANSWER="0"$'\t'"$f"
     fi
   fi
+  return 0
+}
+
+uuid_of_claude() {
+  local uuid slug dir start f sess="${4:-}" stamp="${5:-}" p t root
+  # 0. the stamp (uuid_of_stamp).
+  uuid_of_stamp "$2" "$stamp"
+  [[ -n "$UUID_ANSWER" ]] && return 0
+  home_of "$2"; root="$HOME_OF/.claude/projects"
   uuid="$(tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null \
           | grep -A1 -xE -- '--session-id|--resume' | tail -1 \
           | grep -oE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || true)"
@@ -395,8 +405,14 @@ capture_live() {   # $1 user -> TSV rows on stdout
   # whatever the application inside the pane last wrote over OSC 2, so an origin
   # placed after it could be forged by anything running in a session.
   mapfile -t panes < <(tmux_as "$u" list-panes -a \
-             -F $'#{session_name}\t#{pane_pid}\t#{?@tl_origin,#{@tl_origin},-}\t#{pane_current_path}\t#{@claude_transcript}' 2>/dev/null \
+             -F $'#{session_name}\t#{pane_pid}\t#{?@tl_origin,#{@tl_origin},-}\t#{?pane_current_path,#{pane_current_path},#{?pane_start_path,#{pane_start_path},-}}\t#{pane_dead}\t#{@claude_transcript}' 2>/dev/null \
            | sort -u -t$'\t' -k1,1)
+  # The cwd column gets the same treatment, and for the same reason. tmux reports
+  # an empty #{pane_current_path} for a DEAD pane, which is what terminal-lobby's
+  # suspend leaves behind (remain-on-exit, claude stopped), so the stamp slid into
+  # the cwd column and a suspended session restored into the user's home after a
+  # reboot. #{pane_start_path} survives the pane's death, so it is the fallback,
+  # and "-" (read back as empty below) is the placeholder when both are empty.
 
   # Does this box stamp origins at all yet? Every session alive before
   # terminal-lobby's grandfather pass runs is unstamped, and an unstamped session
@@ -414,8 +430,9 @@ capture_live() {   # $1 user -> TSV rows on stdout
 
   # Pass 1: ask every pane which conversation it is running, and how sure it is.
   for line in "${panes[@]:-}"; do
-    IFS=$'\t' read -r sess pane_pid origin pane_cwd stamp <<<"$line"
+    IFS=$'\t' read -r sess pane_pid origin pane_cwd pane_dead stamp <<<"$line"
     [[ -n "$sess" ]] || continue
+    [[ "$pane_cwd" == "-" ]] && pane_cwd=""
     # Skipped here rather than at restore, so an unaddressable session never
     # enters a snapshot in the first place and no later reader has to know. A
     # system session is dropped in the same place and for the same reason.
@@ -425,6 +442,13 @@ capture_live() {   # $1 user -> TSV rows on stdout
     answer=""
     if claude_pid_under "$pane_pid"; then
       uuid_of_claude "$CLAUDE_PID" "$u" "$pane_cwd" "$sess" "$stamp"
+      answer="$UUID_ANSWER"
+    elif [[ "$pane_dead" == 1 ]]; then
+      # A dead pane is what terminal-lobby's suspend leaves: claude stopped, the
+      # conversation named by the stamp, which is also what the lobby resumes it
+      # from. Only the stamp is trusted here, never the mtime guess. A LIVE shell
+      # with no claude (someone exited it) still saves no conversation.
+      uuid_of_stamp "$u" "$stamp"
       answer="$UUID_ANSWER"
     fi
     order+=("$sess"); cwd_of["$sess"]="$pane_cwd"
