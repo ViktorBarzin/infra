@@ -1799,7 +1799,20 @@ serverFiles:
             # scope, so this is "the cap is absent", not "the cap is small".
             # for: 30m clears a pane created between the drop-in landing and the
             # user manager reloading.
-            expr: min(tl_pane_memory_max_bytes{instance="devvm"}) == 0
+            #
+            # Only panes that are using memory count. A dead pane (its process
+            # exited and tmux kept the pane) has no process and no cgroup, so
+            # the exporter reports its cap as 0 too, and on 2026-09-27 one dead
+            # pane had kept this firing for 156 hours. A live pane always uses
+            # some memory, so a cap that really went missing still trips it:
+            # the 21-day backtest keeps all six 09-06 to 09-12 regression
+            # episodes and drops only the two dead-pane ones since 09-19.
+            expr: |
+              count(
+                (tl_pane_memory_max_bytes{instance="devvm"} == 0)
+                and on(user, session)
+                (tl_pane_memory_bytes{instance="devvm"} > 0)
+              ) > 0
             for: 30m
             labels:
               severity: warning
