@@ -1479,6 +1479,13 @@ resource "null_resource" "pg_payslip_ingest_db" {
 # Postgres TOASTs the 319MB content column out of line. Underscores, not the
 # hyphenated MySQL name, to match every other role on this cluster.
 # Role password is managed by Vault Database Secrets Engine (static role `pg-paperless-ngx`, 7d rotation).
+#
+# This resource and pg_f1_stream_db sat unapplied from their pushes (09-08
+# and 09-26) until 2026-09-27, while CI reported both pipelines green. This
+# stack can only be applied by CI, so a CI run that leaves it out leaves the
+# change out, and nightly drift detection is what caught it. The database and
+# role already existed by then, and the existence checks below made that first
+# apply record them in state without creating anything.
 resource "null_resource" "pg_paperless_ngx_db" {
   depends_on = [null_resource.pg_cluster]
 
