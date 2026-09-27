@@ -325,11 +325,16 @@ resource "kubernetes_deployment" "f1-stream" {
               # transcodes (1707 + 2 x 291 = 2289) can still exceed it; Viktor
               # accepted that over CPU decoding for HDR sources.
               "viktorbarzin.me/gpumem" = "2048"
-              memory                   = "2Gi"
+              # 2Gi -> 4Gi on 2026-09-27: a 4K HDR replay ladder build was
+              # OOM-killed at 99% after ~4.5 h. Measured on a 2-minute excerpt,
+              # the HDR ladder's ffmpeg alone peaks at 1405 MiB RSS, and it shares
+              # this container with the app (7-day working-set peak 1532 MiB).
+              memory = "4Gi"
             }
             requests = {
-              cpu    = "100m"
-              memory = "384Mi"
+              cpu = "100m"
+              # 384Mi -> 1Gi, closer to the measured 1.3-1.5 GiB working set.
+              memory = "1Gi"
             }
           }
           port {
