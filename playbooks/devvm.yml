@@ -1478,6 +1478,39 @@
         daemon_reload: true
       when: not ansible_check_mode
 
+    # ---- 8a-pre) internal DNS routing ----------------------------------------
+    # ens18 gets its resolvers from DHCP: 10.0.10.1 PLUS public fallbacks
+    # (94.140.14.14 and a HE IPv6). systemd-resolved may pick any of them as the
+    # link's *current* server, and a public resolver answers our internal zones
+    # with a VALID NXDOMAIN rather than an error -- so once it rotates onto one
+    # (after any transient timeout on 10.0.10.1) it never rotates back, and every
+    # *.viktorbarzin.lan lookup on the box silently fails. That is exactly what
+    # killed devvm->Loki journal shipping on 2026-09-26 22:42 UTC (infra#104):
+    # promtail could no longer resolve loki.viktorbarzin.lan while .me names,
+    # already pinned below, kept working.
+    #
+    # Fix: pin BOTH internal zones to Technitium (10.0.20.201 -- authoritative
+    # for the split-horizon .me AND the internal .lan) via a routing-only domain,
+    # so internal names never fall through to a public resolver. This drop-in
+    # existed by hand for ~viktorbarzin.me only and was in no playbook; this task
+    # adopts it (byte-identical but for the added ~viktorbarzin.lan) so a
+    # committed change now reaches the box.
+    - name: Route internal zones to Technitium (never the public DHCP fallback)
+      ansible.builtin.copy:
+        dest: /etc/systemd/resolved.conf.d/viktorbarzin.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by playbooks/devvm.yml. Route the internal zones to
+          # Technitium (10.0.20.201 -> Traefik LB .203) so the devvm never
+          # traverses the public NAT-hairpin for .me, and never lets a public
+          # DHCP-provided resolver answer .lan with NXDOMAIN (infra#104).
+          [Resolve]
+          DNS=10.0.20.201
+          Domains=~viktorbarzin.me ~viktorbarzin.lan
+      notify: restart systemd-resolved
+
     # ---- 8a-bis) the log shipper ---------------------------------------------
     # scripts/devvm-promtail.yaml has described itself as the source of truth
     # since it was written, but nothing applied it: /etc/promtail/config.yml was
@@ -2478,6 +2511,13 @@
     - name: restart promtail
       ansible.builtin.systemd_service:
         name: promtail
+        state: restarted
+
+    # Re-reads /etc/systemd/resolved.conf.d and drops the pinned-to-public
+    # current-server state, so internal .lan/.me routing takes effect at once.
+    - name: restart systemd-resolved
+      ansible.builtin.systemd_service:
+        name: systemd-resolved
         state: restarted
 
     # Restarting dockerd interrupts running containers, so it is a handler that
