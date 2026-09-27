@@ -291,6 +291,10 @@ resource "kubernetes_deployment" "repowise" {
     # the way phpipam does. The wiring lives in each user's own ~/.claude.json,
     # which is per-user mutable state and not managed here, so it is removed by
     # hand or left to fail visibly.
+    #
+    # Uptime Kuma: the "Repowise API" (id 1207) and "Repowise Corpus Sync" (id
+    # 1205) monitors were paused on 2026-09-27 so the parked app stops reading
+    # as down in the health check. Resume both when this goes back to 1.
     replicas = 0
     strategy {
       # RWO volume with a single SQLite writer: the old pod must release the
