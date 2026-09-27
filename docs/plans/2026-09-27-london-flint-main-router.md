@@ -1,6 +1,6 @@
 # London Flint as the main router
 
-Status: approved 2026-09-27. Owner: Viktor. Cutover before 6 Oct 2026.
+Status: executing 2026-09-27. Owner: Viktor. Cutover before 6 Oct 2026.
 
 The Hyperoptic router in the London flat goes back to Hyperoptic when the plan
 changes to Broadband Only on 6 Oct. The GL.iNet Flint 2 then plugs straight into
@@ -126,8 +126,11 @@ Installed from the GL plug-ins page and configured in LuCI:
   resolving a name. During a drop it records `ip route show default`,
   `ip route get 8.8.8.8`, the kmwan state from `/proc/gl-kmwan`, and the DPI
   queue counters from `/proc/net/netfilter/nfnetlink_queue`. When the path
-  returns it POSTs the drop event to Loki and retries until accepted. Its source
-  lives in this repo; the crontab entry is what LuCI shows.
+  returns it POSTs the drop event to Loki and retries until accepted. The API
+  does not allow writing arbitrary files, so the probe ships as a small package
+  (`london-drop-probe`, built from this repo) uploaded through LuCI → System →
+  Software, where it is listed and can be removed; the crontab entry is what
+  Scheduled Tasks shows.
 
 ### Event format
 
@@ -141,14 +144,13 @@ alert). Labels: `job="london-drops"`, `source` (flint or mac), `drop_id`,
 - A one-replica Alloy release (chart pinned at 1.12.1, no CRDs, no cluster RBAC)
   running `loki.source.syslog` on UDP/TCP 514 with `syslog_format = "rfc3164"`,
   exposed on MetalLB IP `10.0.20.208`, labels `{job="syslog", host="flint-london"}`.
-- A Loki push ingress limited to `/loki/api/v1/push`, reachable from the London
-  addresses as Traefik sees them. The tunnel masquerades London traffic to
-  10.3.2.6, which the existing `local-only` list already covers; the exact source
-  is checked in the Traefik log before the allowlist is written. The main Loki
-  ingress stays as it is.
+- No ingress change for pushes. London traffic reaches Sofia masqueraded as
+  10.3.2.6, which the Loki ingress's `local-only` allowlist already admits
+  (checked 2026-09-27: the Flint's push returned 204). Both probes post to
+  `https://loki.viktorbarzin.lan/loki/api/v1/push` pinned to Traefik's
+  10.0.20.203.
 - A `flint-london` scrape job for `10.3.2.6:9100`, and a blackbox ICMP job for
-  10.3.2.6 on a 30 s interval (the `wan-gateway-icmp` pattern). The stale
-  `openwrt` job for 192.168.2.1 is removed.
+  10.3.2.6 on a 30 s interval (the `wan-gateway-icmp` pattern).
 - Alerting:
   - `LondonInternetDrop` (Loki rule): one alert per `drop_id`, `for: 0s`, routed
     to a dedicated `slack-event` receiver with `send_resolved: false` and

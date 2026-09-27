@@ -43,6 +43,25 @@ resource "helm_release" "alloy" {
   depends_on = [helm_release.loki]
 }
 
+# Syslog from devices outside the cluster (London Flint 2) on 10.0.20.208:514.
+# Separate one-replica release so the log-shipping DaemonSet's rolling updates
+# never interrupt it. Chart pinned to the version the DaemonSet runs today.
+resource "helm_release" "alloy_syslog" {
+  namespace = kubernetes_namespace.monitoring.metadata[0].name
+  name      = "alloy-syslog"
+
+  repository = "https://grafana.github.io/helm-charts"
+  chart      = "alloy"
+  version    = "1.12.1"
+
+  values      = [file("${path.module}/alloy-syslog.yaml")]
+  atomic      = true
+  timeout     = 300
+  max_history = 10
+
+  depends_on = [helm_release.loki]
+}
+
 # inotify limits raised for Alloy pod log tailing (one watch per container).
 resource "kubernetes_daemon_set_v1" "sysctl-inotify" {
   metadata {
@@ -569,6 +588,48 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               annotations = {
                 summary     = "No kubelet/containerd journal lines in Loki for >1h — NodeImageGCThresholdCrossed and its two siblings are blind"
                 description = "Check the alloy DaemonSet: kubectl get ds -n monitoring alloy; kubectl logs -n monitoring ds/alloy | grep -i journal. The two loki.source.journal blocks named kubelet_journal and containerd_journal in stacks/monitoring/modules/monitoring/alloy.yaml are the source of truth. Also check Loki-side stream limits: a 429 means the global 5000 active-stream cap is saturated. Expected steady state is ~23,674 lines/hr cluster-wide as measured 2026-09-02."
+              }
+            },
+          ]
+        },
+        {
+          # London site (2026-09-27). Drop events are pushed by the Flint's
+          # probe and the Mac's probe AFTER the path returns, each line stamped
+          # with its push time, so a 10m window catches every one exactly once.
+          # One alert per drop_id on the event lane: Alertmanager posts it once
+          # and never sends RESOLVED. The Flint reports upstream drops; the Mac
+          # reports only the layers the router cannot see (its Wi-Fi, its DNS).
+          # Design: docs/plans/2026-09-27-london-flint-main-router.md.
+          name = "London site"
+          rules = [
+            {
+              alert  = "LondonInternetDrop"
+              expr   = "sum by (source, drop_id, layer, duration_s) (count_over_time({job=\"london-drops\", source=\"flint\"} | json duration_s=\"duration_s\" [10m])) > 0"
+              for    = "0s"
+              labels = { severity = "warning", subsystem = "london", lane = "event" }
+              annotations = {
+                summary = "London internet drop: {{ $labels.layer }} for {{ $labels.duration_s }}s, seen by the {{ $labels.source }} ({{ $labels.drop_id }})"
+              }
+            },
+            {
+              alert  = "LondonInternetDrop"
+              expr   = "sum by (source, drop_id, layer, duration_s) (count_over_time({job=\"london-drops\", source=\"mac\", layer=~\"wifi|client-dns\"} | json duration_s=\"duration_s\" [10m])) > 0"
+              for    = "0s"
+              labels = { severity = "warning", subsystem = "london", lane = "event" }
+              annotations = {
+                summary = "London internet drop: {{ $labels.layer }} for {{ $labels.duration_s }}s, seen by the {{ $labels.source }} ({{ $labels.drop_id }})"
+              }
+            },
+            {
+              # MediaTek Wi-Fi firmware self-recovery (SER): clients stay
+              # associated but traffic pauses. Signature from the 2026-09-23
+              # events: mt7986_dump_ser_stat followed by warp_woctrl RESET.
+              alert  = "LondonFirmwareReset"
+              expr   = "sum by (host) (count_over_time({job=\"syslog\", host=\"flint-london\"} |= \"mt7986_dump_ser_stat\" [10m])) > 0"
+              for    = "0s"
+              labels = { severity = "warning", subsystem = "london", lane = "event", drop_id = "ser" }
+              annotations = {
+                summary = "London Flint Wi-Fi firmware reset (SER): clients paused while staying associated. If these line up with internet drops, send the kernel log to GL.iNet support."
               }
             },
           ]

@@ -59,6 +59,18 @@ alertmanager:
       repeat_interval: 8760h
       receiver: slack-warning
       routes:
+        # Event lane (2026-09-27, London Flint design): alerts that describe one
+        # finished event, such as a London internet drop reported after the
+        # path came back. One post per event: grouped by drop_id, never
+        # re-sent, no RESOLVED follow-up. Rules set `lane = "event"`.
+        - receiver: slack-event
+          group_by: ["alertname", "drop_id"]
+          group_wait: 10s
+          group_interval: 1m
+          repeat_interval: 8760h
+          matchers:
+            - lane = event
+          continue: false
         # Wave 1 security lane — matches alerts that set `lane = "security"`
         # (K2-K9, V1-V7, S1 from Loki ruler). Posts via the slack-security
         # receiver (distinct [SECURITY] styling) to #alerts; the dedicated
@@ -304,6 +316,20 @@ alertmanager:
       # devvm down: the generic scrape alert says the same thing 27 minutes
       # later and more quietly. equal: [job] keeps this surgical — every OTHER
       # target's ScrapeTargetDown still notifies while devvm is unreachable.
+      # London tunnel (2026-09-27): the Flint is only reachable through the
+      # tunnel, so a down tunnel also fails its scrape. Keep one alert. Sofia's
+      # own egress going down looks the same from here, so it hides the tunnel
+      # alert. LondonInternetDrop is never an inhibit target: it arrives after
+      # recovery and must post.
+      - source_matchers:
+          - alertname = LondonTunnelDown
+        target_matchers:
+          - alertname = ScrapeTargetDown
+          - job = flint-london
+      - source_matchers:
+          - alertname =~ "WANGatewayUnreachable|InternetEgressDown|PfSenseVMDown"
+        target_matchers:
+          - alertname = LondonTunnelDown
       - source_matchers:
           - alertname = DevvmDown
         target_matchers:
@@ -318,6 +344,14 @@ alertmanager:
         target_matchers:
           - alertname =~ "DevvmJournalSilent|SessionWatchSilent"
     receivers:
+      - name: slack-event
+        slack_configs:
+          - send_resolved: false
+            channel: "#alerts"
+            color: "warning"
+            fallback: '{{ .GroupLabels.alertname }}'
+            title: '[EVENT] {{ .GroupLabels.alertname }}'
+            text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ "\n" }}{{ end }}'
       - name: slack-critical
         slack_configs:
           - send_resolved: true
@@ -6393,6 +6427,21 @@ serverFiles:
             annotations:
               summary: "Loki is discarding log samples ({{ $value | printf \"%.2f\" }}/s)"
               description: "loki_discarded_samples_total is increasing, so log lines are being dropped and will never be queryable. Check the `reason` label: stream_limit means the global stream cap (see LokiStreamLimitNear); rate_limit means ingestion throughput; per_stream_rate_limit means one very chatty stream. Runbook: docs/architecture/monitoring.md."
+      - name: London site
+        rules:
+          - alert: LondonTunnelDown
+            # ICMP from the cluster to the Flint's tunnel address. Every London
+            # internet drop also takes the tunnel down, so short outages are
+            # reported afterwards by the drop event (Loki rule
+            # LondonInternetDrop); this only posts live for long ones.
+            expr: probe_success{job="london-flint-icmp"} == 0
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: london
+            annotations:
+              summary: "London Flint unreachable over the site-to-site tunnel (>10m)"
+              description: "Blackbox ICMP from the cluster to 10.3.2.6 has failed for >10m. Either London's internet is down (the Flint's probe reports the drop once it returns), the WireGuard tunnel is stuck (toggle GL -> VPN -> WireGuard Client), or the Flint is off. Design: docs/plans/2026-09-27-london-flint-main-router.md; settings: docs/architecture/london-site.md."
       - name: Egress / pfSense
         rules:
           - alert: WANGatewayUnreachable
@@ -7518,6 +7567,35 @@ extraScrapeConfigs: |
       - source_labels: [__address__]
         target_label: instance
         replacement: 'rpi-sofia' # Giving it a friendly name
+  # London Flint 2 router (2026-09-27): prometheus-node-exporter-lua installed
+  # from the GL plug-ins feed, scraped over the site-to-site tunnel. Collectors:
+  # node basics, netstat, openwrt, wifi_stations (per-client signal/rates).
+  # Settings reference: docs/architecture/london-site.md.
+  - job_name: 'flint-london'
+    static_configs:
+      - targets: ["10.3.2.6:9100"]
+        labels:
+          node: 'flint-london'
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'flint-london'
+  - job_name: 'london-flint-icmp'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    params:
+      module: [icmp_egress]
+    static_configs:
+      - targets: ["10.3.2.6"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
   - job_name: 'istiod'
     kubernetes_sd_configs:
     - role: endpoints
