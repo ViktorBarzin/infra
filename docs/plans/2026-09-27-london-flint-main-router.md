@@ -73,26 +73,14 @@ fix now rather than monitor first).
 
 ```mermaid
 flowchart TD
-  subgraph London
-    Mac["mbp-london<br/>launchd probe"]
-    Flint["Flint 2<br/>node-exporter<br/>probe (LuCI cron)<br/>remote syslog"]
-  end
-  subgraph Sofia cluster
-    Push["Loki push ingress<br/>(London-only allowlist)"]
-    Loki
-    Prom[Prometheus]
-    Syslog["alloy-syslog<br/>10.0.20.208:514"]
-    AM[Alertmanager]
-  end
-  Slack["Slack #alerts"]
-  Mac -- "drop event, sent after recovery" --> Push --> Loki
-  Flint -- "drop event, sent after recovery" --> Push
-  Flint -- "kernel, kmwan, SER lines" --> Syslog --> Loki
-  Prom -- "scrape 10.3.2.6:9100" --> Flint
-  Prom -- "ICMP 10.3.2.6" --> Flint
-  Loki -- "ruler: one alert per drop_id" --> AM
-  Prom -- "LondonTunnelDown (10m)" --> AM
-  AM --> Slack
+  mac[Mac probe] --> push[Loki push]
+  flint[Flint probe] --> push
+  flint --> sys[Syslog listener]
+  push --> loki[Loki]
+  sys --> loki
+  loki --> am[Alertmanager]
+  prom[Prometheus] --> am
+  am --> slack[Slack alerts]
 ```
 
 ### Two vantage points, one report per drop
