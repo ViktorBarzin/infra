@@ -190,6 +190,23 @@ If the tunnel never comes up, I can't see the router. A one-page checklist cover
 that for Viktor: steps 3 and 4 in the GL UI, then how to put the Hyperoptic
 router back as a fallback.
 
+## Progress
+
+Done and checked live on 2026-09-27:
+
+| item | evidence |
+|---|---|
+| Router settings 1–7 applied through the LuCI/GL APIs, one reboot | after the reboot: country GB, 2.4 GHz ch 11 HE20, 5 GHz ch 44 HE80, rule 9950 present, DNS cache 10000, weekly reboot off, all 12 clients back |
+| Router's own 10.x traffic uses the tunnel | ping 10.0.20.1 from the Flint: 0% loss at 38 ms (100% loss before) |
+| node-exporter scraped | `up{job="flint-london"} = 1`, 14 `wifi_station_signal_dbm` series |
+| tunnel ICMP | `probe_success{job="london-flint-icmp"} = 1` |
+| remote syslog | Flint lines in Loki under `{job="syslog", host="flint-london"}` |
+| drop probe, end to end | a rehearsal drop (`REHEARSAL=1`, fake targets) reached Loki, fired `LondonInternetDrop`, and posted once to #alerts at 22:47 UTC; no RESOLVED followed |
+| Mac probe | launchd agent running on mbp-london; a labelled test event reached Loki with the Mac's Wi-Fi block (ch 44, GB, WPA2, -56/-93 dBm) |
+
+Still to do: the cutover itself (`docs/runbooks/london-cutover.md`), with
+IPv6 native (decision 9).
+
 ## Records
 
 The router stays UI-managed. `docs/architecture/london-site.md` lists every
