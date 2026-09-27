@@ -419,6 +419,16 @@ resource "kubernetes_deployment" "f1-stream" {
               }
             }
           }
+          # GPU tone mapping for 4K HDR replays (app repo ADR-0016, plan step 2)
+          # runs libplacebo on Vulkan. The GPU operator grants compute,utility
+          # by default and the Vulkan driver then refuses to create an instance
+          # (VK_ERROR_INCOMPATIBLE_DRIVER, measured 2026-09-27), so graphics is
+          # added. NVIDIA_VISIBLE_DEVICES stays with the device plugin, which
+          # keeps the time-slice isolation.
+          env {
+            name  = "NVIDIA_DRIVER_CAPABILITIES"
+            value = "compute,utility,video,graphics"
+          }
           # Wanted sessions (app repo ADR-0015) post "ready" to #f1 through this
           # incoming webhook. It comes from the Vault "f1-stream" key through the
           # dataFrom.extract ExternalSecret above; optional=true so the pod
