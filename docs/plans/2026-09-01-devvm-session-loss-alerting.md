@@ -295,6 +295,10 @@ is on disk and `claude --resume` brings it back, the same path terminal-lobby's
 idle suspend uses. So the alerts that fire after a kill (`ClaudeOOMKilled`,
 `ClaudeSessionDied`) are the ones kept. The watcher no longer emits
 `pane_near_cap`; the pane memory metrics below are still exported for history.
+The same day, tl-session-watch started resuming a conversation the pane cap
+kills, at most once per session per hour, logging `session_resumed` or
+`resume_skipped` (terminal-lobby ADR-0033). The alerts above still fire for
+those kills.
 
 What the 26 days showed about pane memory, for whoever looks at this next. Claude
 itself stays small: every killed claude held 367 to 527 MB `anon-rss`. What fills
