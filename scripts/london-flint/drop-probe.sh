@@ -25,6 +25,9 @@ PUBLIC1=${PUBLIC1:-1.1.1.1}
 PUBLIC2=${PUBLIC2:-9.9.9.9}
 DNS_SERVER=${DNS_SERVER:-94.140.14.14}
 DNS_NAME=${DNS_NAME:-example.com}
+# REHEARSAL=1 prefixes the layer with "rehearsal-" so a test drop is labelled
+# as one in Loki and Slack.
+REHEARSAL=${REHEARSAL:-0}
 DROP_AFTER=5
 DNS_DROP_AFTER=2
 # Traefik redirects HTTP to HTTPS and the wildcard cert does not cover .lan, so
@@ -126,6 +129,7 @@ tick() {
 		if [ $((now - first_fail + 1)) -ge "$DROP_AFTER" ] && [ "$start" = 0 ]; then
 			start=$first_fail
 			if [ "$gw_down" = 1 ]; then layer=gateway; else layer=internet; fi
+			[ "$REHEARSAL" = 1 ] && layer="rehearsal-$layer"
 			snapshot
 		fi
 		save_state
