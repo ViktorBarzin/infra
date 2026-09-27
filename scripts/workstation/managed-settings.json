@@ -16,6 +16,8 @@
   },
   "env": {
     "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+    "CLAUDE_CODE_SHELL_PREFIX": "/usr/local/bin/claude-command-scope",
+    "CLAUDE_CODE_TMPDIR": "/var/tmp",
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_LOGS_EXPORTER": "otlp",
     "OTEL_METRICS_EXPORTER": "otlp",

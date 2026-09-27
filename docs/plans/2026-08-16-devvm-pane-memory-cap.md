@@ -1,6 +1,6 @@
 # devvm per-pane memory cap — kill the spawned hog, not the conversation
 
-**Status:** implemented 2026-08-16
+**Status:** implemented 2026-08-16; commands moved to their own scopes 2026-09-27 (see the addendum)
 **Scope:** `scripts/workstation/setup-devvm.sh` §10, `scripts/tmux-persist.sh`
 **Related:** `../post-mortems/2026-06-22-devvm-mem-io-overload-containment.md` (addendum 4 records the same findings)
 
@@ -205,6 +205,31 @@ us — `claude` 116,910 pages, `python3` 1,429,056 pages, `tail` 448 pages, and
   live in `system-t3-serve.slice`, plus docker and stray scripts. Those still
   depend on earlyoom, which is why its ranking was worth correcting.
 - **It does not address the `adj=200` skew** between wizard and emo.
+
+## Addendum 2026-09-27: each command gets its own scope
+
+The cap protects the conversation when one spawned process is larger than
+claude. It did not when many smaller ones filled the pane together: between
+2026-08-30 and 2026-09-25 the kernel killed a claude seven times, each holding
+367 to 527 MB, after pools of test workers under that size had filled its pane.
+On 2026-09-24, for example, about 30 vitest workers were killed first and then
+the conversation.
+
+Since 2026-09-27, `managed-settings.json` sets two variables for every user:
+
+- `CLAUDE_CODE_SHELL_PREFIX=/usr/local/bin/claude-command-scope`
+  (`playbooks/files/devvm/claude-command-scope`). Each Bash tool command runs in
+  its own `run-*.scope`, which the scope drop-in above caps at 6 G like a pane.
+  A command's memory and its tmpfs writes are charged there, so a command that
+  fills its scope loses its own processes. Hooks, the status line and MCP
+  server startups are not scoped.
+- `CLAUDE_CODE_TMPDIR=/var/tmp`. New sessions keep their scratch on disk rather
+  than in the RAM-backed `/tmp`, cleaned after 24 h by the same tmpfiles rule.
+
+What this changes about the limits above: a session is no longer bounded at 6 G
+in total, since each command has its own cap. The per-user slice (24 G) and
+earlyoom still bound the aggregate. When the pane cap does kill a claude,
+tl-session-watch now resumes it (terminal-lobby ADR-0033).
 
 ## Diagnosing a kill
 
