@@ -185,11 +185,23 @@ resource "kubernetes_config_map" "grafana_dashboards" {
 resource "null_resource" "grafana_admin_only_folder_acl" {
   for_each = toset(local.admin_only_folders)
 
-  # Re-runs on tg apply (cheap, idempotent API call). Catches drift if anyone
-  # edits permissions via the UI or the folder is rebuilt.
+  # Re-runs when a dashboard in this folder is added, removed or edited. That
+  # is when the dashboard sidecar can rebuild the folder and drop its ACL.
+  # Grafana keeps folders and ACLs in MySQL, so a pod restart does not.
+  #
+  # This used to be `always = timestamp()`, which made every plan of the
+  # monitoring stack non-empty, so nightly drift detection counted monitoring
+  # as drifting forever (120h when found on 2026-09-27). The technitium
+  # readiness gate dropped the same pattern for the same reason (bead
+  # code-yizt). What that trade gives up: a permission edited by hand in the
+  # UI is no longer put back by the next unrelated monitoring apply.
   triggers = {
     folder = each.value
-    always = timestamp()
+    dashboards = sha1(join(",", [
+      for f in sort(tolist(fileset("${path.module}/dashboards", "*.json"))) :
+      "${f}:${filesha1("${path.module}/dashboards/${f}")}"
+      if lookup(local.dashboard_folders, f, "General") == each.value
+    ]))
   }
 
   provisioner "local-exec" {
