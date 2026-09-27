@@ -270,7 +270,149 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
   }
 }
 
-# Whitelist for trusted IPs that should never be blocked
+# Whitelist for trusted IPs that should never be blocked. Held in a local
+# rather than inline so helm_release can hash it: hashing the configmap's
+# data attribute fails at plan time with templatefile "returned an
+# inconsistent result", because that attribute is unknown while it changes.
+locals {
+  crowdsec_whitelist_yaml = <<-YAML
+    name: crowdsecurity/whitelist-trusted-ips
+    description: "Whitelist for trusted IPs that should never be blocked"
+    whitelist:
+      reason: "Trusted IP - never block"
+      ip:
+        - "176.12.22.76" # home / Sofia egress (origin)
+        # London flat egress. Pinned 2026-09-02 alongside removing the
+        # captcha divert, which turned four FP-prone HTTP scenarios into real
+        # bans. This exact address was hand-banned for 363 days on 2026-08-16
+        # when a Nextcloud client retry loop was mistaken for an external
+        # attacker; it is dynamic in principle, so re-check it with
+        # `homelab ha ssh --instance london -- curl -s ifconfig.me` if someone
+        # in London reports being blocked.
+        - "137.220.71.46"
+      cidr:
+        # Meta CORPORATE egress, Viktor's work VPN. Added 2026-09-07 after
+        # finding he was blocked from his own sites twice over whenever it was
+        # on: this /44 was inside the static Meta-ASN blocklist (removed from
+        # it in the same commit), AND viktor/forgejo-crawl-slow had separately
+        # banned 2620:10d:c092:400::4:2f8a, a single address inside it, which
+        # was him browsing.
+        #
+        # This is NOT the crawler. The crawl runs from 2a03:2880::/32; corp
+        # egress is a different prefix, so exempting it costs nothing against
+        # the swarm. The occupants are employees on a managed network.
+        #
+        # NOTE the two halves are both needed and do different jobs: a
+        # whitelist is PARSER-STAGE, so it stops scenarios from CREATING
+        # decisions but does nothing about an already-imported one. Removing
+        # the range from the static list is what lifts the existing block.
+        - "2620:10d:c090::/44"
+        # The IPv4 halves of the same corporate egress, added 2026-09-11 after
+        # it happened a SECOND time. The 2026-09-07 fix above covered only the
+        # v6 prefix, so connecting over Meta corp IPv4 was still blocked
+        # zone-wide: 129 refusals in 24 h across seven hosts, worst on terminal
+        # (56), then ha-london (23), ha-sofia (20), f1 (12). Both ranges were
+        # removed from the static list in the same commit, and AS54115 was
+        # dropped from the regeneration sweep so it cannot return.
+        #
+        # Measured the same day: all 23 AS54115 prefixes are disjoint from
+        # everything AS32934 and AS63293 announce, so this exempts no crawler.
+        - "163.114.128.0/20"  # Meta corp egress, v4
+        - "199.201.64.0/22"   # Meta corp egress, v4
+        # Never ban internal/cluster/LAN/tailnet sources. Enforcement (edge
+        # Worker + firewall-bouncer) drops on real source IP, so an internal
+        # range slipping into a decision could blackhole legit traffic — this
+        # makes that structurally impossible at the decision layer.
+        - "10.0.0.0/8"        # k8s nodes/pods/services + VLAN 10/20
+        - "172.16.0.0/12"     # RFC1918
+        - "192.168.0.0/16"    # LAN (192.168.1.0/24) + Sofia
+        - "100.64.0.0/10"     # Headscale tailnet (CGNAT)
+    ---
+    name: viktor/immich-asset-paths-whitelist
+    description: "Don't penalise legit Immich timeline bursts (mobile scrub, web grid)"
+    # WAS INERT FROM THE DAY IT WAS WRITTEN UNTIL 2026-09-09. It read
+    # evt.Parsed.target_fqdn, which no traefik parser path creates — the JSON
+    # node writes evt.Meta.target_fqdn, a different map, and CLF writes
+    # neither. `cscli explain` on an Immich 404 reported "unchanged" in both
+    # log formats, so it never suppressed anything and Immich has had no
+    # false-positive protection at all.
+    #
+    # Fixed here to evt.Parsed.traefik_router_name, the field
+    # viktor/nextcloud-webdav-whitelist below already uses and which is
+    # verified working at 4,397 suppressions. The router name is the FULL one
+    # (immich-immich-immich-viktorbarzin-me@kubernetes, confirmed in the live
+    # access log 2026-09-09) rather than a shorter substring, because
+    # "immich-viktorbarzin-me" alone would also match the three
+    # highlights-immich* routers, which are public share pages and are NOT
+    # what this exemption is for.
+    #
+    # This does START suppressing detections, which is why it lands BEFORE the
+    # new range-grouped scenario rather than after: tightening detection while
+    # Immich's own exemption is dead is how the earlier self-blocking
+    # happened.
+    whitelist:
+      reason: "Immich asset endpoints are auth-gated; mobile scrub legitimately bursts"
+      expression:
+        - >
+          evt.Parsed.traefik_router_name contains "immich-immich-immich-viktorbarzin-me" &&
+          (evt.Parsed.request startsWith "/api/assets/" ||
+           evt.Parsed.request startsWith "/api/timeline/" ||
+           evt.Parsed.request startsWith "/api/asset/" ||
+           evt.Parsed.request startsWith "/api/search/" ||
+           evt.Parsed.request startsWith "/api/memories" ||
+           evt.Parsed.request startsWith "/api/albums" ||
+           evt.Parsed.request startsWith "/api/activities")
+    ---
+    name: viktor/nextcloud-webdav-whitelist
+    description: "Nextcloud WebDAV paths carry the account name 'admin' — not admin-panel probing"
+    whitelist:
+      reason: "Nextcloud-iOS/desktop PROPFIND 404s on /remote.php/dav/files/admin/... are legit sync misses; crowdsecurity/http-admin-interface-probing matches 'admin' in the path and banned the client's shared egress IP (Viktor's London Hyperoptic line, 2026-07-19). Scoped by traefik_router_name (no traefik parser path populates evt.Parsed.target_fqdn — the JSON node sets it as evt.Meta.target_fqdn instead, re-verified 2026-09-01) plus the Nextcloud-exclusive /remote.php/ prefix. Also /index.php/core/preview, whose thumbnail 404 bursts tripped http-probing (2026-09-27). Nextcloud's own auth (401/403) still gates it."
+      expression:
+        - >
+          evt.Parsed.traefik_router_name contains "nextcloud-viktorbarzin-me" &&
+          evt.Parsed.request startsWith "/remote.php/"
+        # Thumbnails. Nextcloud-iOS asks for ~100 previews at once when a
+        # photo folder opens, and every file without a preview answers 404.
+        # That is 10 distinct 404 paths within seconds, so
+        # crowdsecurity/http-probing banned Viktor's phone on 2026-09-27
+        # (82.77.92.194, Digi Romania, 100 preview 404s in one minute at
+        # 02:19 UTC). The endpoint needs a logged-in session, so Nextcloud's
+        # own auth still gates it.
+        - >
+          evt.Parsed.traefik_router_name contains "nextcloud-viktorbarzin-me" &&
+          evt.Parsed.request startsWith "/index.php/core/preview"
+    ---
+    name: viktor/bouncer-refusals-whitelist
+    description: "Don't score the 403s our own Traefik bouncer returns"
+    # A request the bouncer refuses is logged by Traefik like any other 403,
+    # with OriginStatus 0 because it never reached a backend. Scoring those
+    # meant a banned client's retries re-fired http-probing and http-403-abuse
+    # every ~30 minutes, each firing adding a fresh 4h decision, so a false
+    # positive never expired while the client kept retrying. On 2026-09-27
+    # that stacked 24 decisions on Viktor's own IP over five hours, from
+    # Calendar, Nextcloud and Bitwarden retrying in the background.
+    #
+    # What else returns a 403 without a backend, measured over 24h the same
+    # day: 33,286 such 403s against 32,999 bouncer blocks, and the per-router
+    # difference was ~290 on paperless-mcp, all from an in-cluster 10.10.x
+    # address the trusted-ips whitelist already exempts. So this exempts the
+    # bouncer's refusals and nothing else today. An attacker loses nothing
+    # either: while banned there is nothing left to judge, and once the
+    # decision expires, real backend responses are scored again.
+    #
+    # OriginStatus is only in evt.Unmarshaled.traefik (the JSON node of
+    # crowdsecurity/traefik-logs keeps the raw map there; it is not copied
+    # into evt.Parsed), verified with `cscli explain` on a live block line.
+    # The ?. keeps a line without that map from erroring.
+    whitelist:
+      reason: "403 returned by the crowdsec bouncer itself (no backend), not client behaviour"
+      expression:
+        - >
+          evt.Parsed.status == '403' &&
+          evt.Unmarshaled.traefik?.OriginStatus == 0
+  YAML
+}
+
 resource "kubernetes_config_map" "crowdsec_whitelist" {
   metadata {
     name      = "crowdsec-whitelist"
@@ -281,142 +423,7 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
   }
 
   data = {
-    "whitelist.yaml" = <<-YAML
-      name: crowdsecurity/whitelist-trusted-ips
-      description: "Whitelist for trusted IPs that should never be blocked"
-      whitelist:
-        reason: "Trusted IP - never block"
-        ip:
-          - "176.12.22.76" # home / Sofia egress (origin)
-          # London flat egress. Pinned 2026-09-02 alongside removing the
-          # captcha divert, which turned four FP-prone HTTP scenarios into real
-          # bans. This exact address was hand-banned for 363 days on 2026-08-16
-          # when a Nextcloud client retry loop was mistaken for an external
-          # attacker; it is dynamic in principle, so re-check it with
-          # `homelab ha ssh --instance london -- curl -s ifconfig.me` if someone
-          # in London reports being blocked.
-          - "137.220.71.46"
-        cidr:
-          # Meta CORPORATE egress, Viktor's work VPN. Added 2026-09-07 after
-          # finding he was blocked from his own sites twice over whenever it was
-          # on: this /44 was inside the static Meta-ASN blocklist (removed from
-          # it in the same commit), AND viktor/forgejo-crawl-slow had separately
-          # banned 2620:10d:c092:400::4:2f8a, a single address inside it, which
-          # was him browsing.
-          #
-          # This is NOT the crawler. The crawl runs from 2a03:2880::/32; corp
-          # egress is a different prefix, so exempting it costs nothing against
-          # the swarm. The occupants are employees on a managed network.
-          #
-          # NOTE the two halves are both needed and do different jobs: a
-          # whitelist is PARSER-STAGE, so it stops scenarios from CREATING
-          # decisions but does nothing about an already-imported one. Removing
-          # the range from the static list is what lifts the existing block.
-          - "2620:10d:c090::/44"
-          # The IPv4 halves of the same corporate egress, added 2026-09-11 after
-          # it happened a SECOND time. The 2026-09-07 fix above covered only the
-          # v6 prefix, so connecting over Meta corp IPv4 was still blocked
-          # zone-wide: 129 refusals in 24 h across seven hosts, worst on terminal
-          # (56), then ha-london (23), ha-sofia (20), f1 (12). Both ranges were
-          # removed from the static list in the same commit, and AS54115 was
-          # dropped from the regeneration sweep so it cannot return.
-          #
-          # Measured the same day: all 23 AS54115 prefixes are disjoint from
-          # everything AS32934 and AS63293 announce, so this exempts no crawler.
-          - "163.114.128.0/20"  # Meta corp egress, v4
-          - "199.201.64.0/22"   # Meta corp egress, v4
-          # Never ban internal/cluster/LAN/tailnet sources. Enforcement (edge
-          # Worker + firewall-bouncer) drops on real source IP, so an internal
-          # range slipping into a decision could blackhole legit traffic — this
-          # makes that structurally impossible at the decision layer.
-          - "10.0.0.0/8"        # k8s nodes/pods/services + VLAN 10/20
-          - "172.16.0.0/12"     # RFC1918
-          - "192.168.0.0/16"    # LAN (192.168.1.0/24) + Sofia
-          - "100.64.0.0/10"     # Headscale tailnet (CGNAT)
-      ---
-      name: viktor/immich-asset-paths-whitelist
-      description: "Don't penalise legit Immich timeline bursts (mobile scrub, web grid)"
-      # WAS INERT FROM THE DAY IT WAS WRITTEN UNTIL 2026-09-09. It read
-      # evt.Parsed.target_fqdn, which no traefik parser path creates — the JSON
-      # node writes evt.Meta.target_fqdn, a different map, and CLF writes
-      # neither. `cscli explain` on an Immich 404 reported "unchanged" in both
-      # log formats, so it never suppressed anything and Immich has had no
-      # false-positive protection at all.
-      #
-      # Fixed here to evt.Parsed.traefik_router_name, the field
-      # viktor/nextcloud-webdav-whitelist below already uses and which is
-      # verified working at 4,397 suppressions. The router name is the FULL one
-      # (immich-immich-immich-viktorbarzin-me@kubernetes, confirmed in the live
-      # access log 2026-09-09) rather than a shorter substring, because
-      # "immich-viktorbarzin-me" alone would also match the three
-      # highlights-immich* routers, which are public share pages and are NOT
-      # what this exemption is for.
-      #
-      # This does START suppressing detections, which is why it lands BEFORE the
-      # new range-grouped scenario rather than after: tightening detection while
-      # Immich's own exemption is dead is how the earlier self-blocking
-      # happened.
-      whitelist:
-        reason: "Immich asset endpoints are auth-gated; mobile scrub legitimately bursts"
-        expression:
-          - >
-            evt.Parsed.traefik_router_name contains "immich-immich-immich-viktorbarzin-me" &&
-            (evt.Parsed.request startsWith "/api/assets/" ||
-             evt.Parsed.request startsWith "/api/timeline/" ||
-             evt.Parsed.request startsWith "/api/asset/" ||
-             evt.Parsed.request startsWith "/api/search/" ||
-             evt.Parsed.request startsWith "/api/memories" ||
-             evt.Parsed.request startsWith "/api/albums" ||
-             evt.Parsed.request startsWith "/api/activities")
-      ---
-      name: viktor/nextcloud-webdav-whitelist
-      description: "Nextcloud WebDAV paths carry the account name 'admin' — not admin-panel probing"
-      whitelist:
-        reason: "Nextcloud-iOS/desktop PROPFIND 404s on /remote.php/dav/files/admin/... are legit sync misses; crowdsecurity/http-admin-interface-probing matches 'admin' in the path and banned the client's shared egress IP (Viktor's London Hyperoptic line, 2026-07-19). Scoped by traefik_router_name (no traefik parser path populates evt.Parsed.target_fqdn — the JSON node sets it as evt.Meta.target_fqdn instead, re-verified 2026-09-01) plus the Nextcloud-exclusive /remote.php/ prefix. Also /index.php/core/preview, whose thumbnail 404 bursts tripped http-probing (2026-09-27). Nextcloud's own auth (401/403) still gates it."
-        expression:
-          - >
-            evt.Parsed.traefik_router_name contains "nextcloud-viktorbarzin-me" &&
-            evt.Parsed.request startsWith "/remote.php/"
-          # Thumbnails. Nextcloud-iOS asks for ~100 previews at once when a
-          # photo folder opens, and every file without a preview answers 404.
-          # That is 10 distinct 404 paths within seconds, so
-          # crowdsecurity/http-probing banned Viktor's phone on 2026-09-27
-          # (82.77.92.194, Digi Romania, 100 preview 404s in one minute at
-          # 02:19 UTC). The endpoint needs a logged-in session, so Nextcloud's
-          # own auth still gates it.
-          - >
-            evt.Parsed.traefik_router_name contains "nextcloud-viktorbarzin-me" &&
-            evt.Parsed.request startsWith "/index.php/core/preview"
-      ---
-      name: viktor/bouncer-refusals-whitelist
-      description: "Don't score the 403s our own Traefik bouncer returns"
-      # A request the bouncer refuses is logged by Traefik like any other 403,
-      # with OriginStatus 0 because it never reached a backend. Scoring those
-      # meant a banned client's retries re-fired http-probing and http-403-abuse
-      # every ~30 minutes, each firing adding a fresh 4h decision, so a false
-      # positive never expired while the client kept retrying. On 2026-09-27
-      # that stacked 24 decisions on Viktor's own IP over five hours, from
-      # Calendar, Nextcloud and Bitwarden retrying in the background.
-      #
-      # What else returns a 403 without a backend, measured over 24h the same
-      # day: 33,286 such 403s against 32,999 bouncer blocks, and the per-router
-      # difference was ~290 on paperless-mcp, all from an in-cluster 10.10.x
-      # address the trusted-ips whitelist already exempts. So this exempts the
-      # bouncer's refusals and nothing else today. An attacker loses nothing
-      # either: while banned there is nothing left to judge, and once the
-      # decision expires, real backend responses are scored again.
-      #
-      # OriginStatus is only in evt.Unmarshaled.traefik (the JSON node of
-      # crowdsecurity/traefik-logs keeps the raw map there; it is not copied
-      # into evt.Parsed), verified with `cscli explain` on a live block line.
-      # The ?. keeps a line without that map from erroring.
-      whitelist:
-        reason: "403 returned by the crowdsec bouncer itself (no backend), not client behaviour"
-        expression:
-          - >
-            evt.Parsed.status == '403' &&
-            evt.Unmarshaled.traefik?.OriginStatus == 0
-    YAML
+    "whitelist.yaml" = local.crowdsec_whitelist_yaml
   }
 }
 
@@ -505,7 +512,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key, whitelist_checksum = sha256(kubernetes_config_map.crowdsec_whitelist.data["whitelist.yaml"]) })]
+  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key, whitelist_checksum = sha256(local.crowdsec_whitelist_yaml) })]
   timeout       = 1200
   wait          = true
   wait_for_jobs = true
