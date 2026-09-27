@@ -544,6 +544,8 @@ The plan half catches zero marginal incidents. Four of its eight claims are in-p
 
 The destroy-or-replace blocking half blocks every push to `stacks/monitoring`, forever. `null_resource.grafana_admin_only_folder_acl` sets `triggers = { always = timestamp() }` by design, so both instances report "must be replaced" on every plan, and they are drifting in the live nightly run right now. `stacks/monitoring` is the repo's busiest stack at 194 commits in 90 days and holds all 375 alert definitions, so the gate would block exactly the pushes that add the detection coverage this study ranks first. `stacks/infra` is the same shape. The wider surface is 27 `null_resource` declarations across 8 stacks and 12 `kubernetes_job` resources across 11, so 17 stacks in total.
 
+> Note (2026-09-27): `grafana_admin_only_folder_acl` no longer uses `always = timestamp()`. Its trigger is now a hash of the folder's dashboard files, so `stacks/monitoring` plans clean when nothing has changed, and this particular blocker no longer applies. The rest of this paragraph is unchanged.
+
 Cost was also understated. Plan and apply both do a full init, refresh and graph walk, so the gate roughly doubles Terraform work per stack: 20-60 s per changed stack against real applies of 21-133 s, times ~39 stack-plans a day, which is 6 to 20 hours of CI a month. And it doubles the PG advisory-lock exposure window on 146 of 152 stacks, on a file whose own header calls contended state locks the number-one cause of infra CI failures.
 
 **Survives:** the static half, moved to `scripts/tg`. That is rank 3 above.
