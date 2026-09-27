@@ -185,6 +185,24 @@ _Avoid_: equating "service identity" with a workload's **ServiceAccount** (that'
 Calico 3.30's OSS flow-observability pair — **Goldmane** aggregates identity-stamped flows (namespace/pod/workload/labels + allow-deny + policy trace) streamed from Felix over gRPC into an in-memory ~60-min ring buffer (no etcd/API writes); **Whisker** is its live web UI. The east-west "who-talks-to-whom" data plane, succeeding raw iptables-`LOG`→journald lines (which carry no identity). The in-memory buffer alone is not an audit trail — durable history is the **`goldmane-edge-aggregator`** (the implemented trail; ADR-0014 originally framed this as a Loki emitter), which streams Goldmane's gRPC `Flows.Stream` over mTLS and upserts the namespace-pair **edge set** into CNPG DB `goldmane_edges` + a daily `#alerts` digest (the `#security` channel was abandoned 2026-06-25). As-built: `docs/runbooks/goldmane-flow-trail.md`.
 _Avoid_: assuming Goldmane persists (it's a ring buffer — lost on restart); expecting a ServiceAccount field in its schema (it carries labels, not SA); confusing it with Cilium **Hubble** (needs the Cilium datapath, unusable on Calico) or **Kiali** (needs an Istio mesh).
 
+### London site
+
+**London site**:
+The network in Viktor's London flat: one GL.iNet Flint 2 router serving a main LAN and an isolated guest network, reaching Sofia over a site-to-site WireGuard tunnel to pfSense. The router is configured through its own web UIs (GL admin UI, LuCI), not from this repo.
+_Avoid_: "London LAN" for the whole site (the guest network is part of it too); "the Hyperoptic network" (that was the ISP router upstream of the Flint, returned in Oct 2026).
+
+**Internet drop**:
+A period of 5 seconds or more in which a London client cannot reach the public internet while the Flint itself still answers it. The unit the London monitoring detects and reports, one Slack message per drop.
+_Avoid_: "stall" (suggests one slow connection, not the whole path); "outage" (implies the router or the tunnel is down).
+
+**Wi-Fi drop**:
+A client losing its association with the Flint and rejoining. Recorded, not alerted one by one; distinct from an **Internet drop**, where the client stays associated.
+_Avoid_: "disconnect" without saying which layer.
+
+**Firmware reset**:
+The Flint's Wi-Fi chip resetting itself (MediaTek "SER") while clients stay associated, pausing their traffic. A closed-driver fault that settings cannot fix; tracked, and escalated to GL.iNet with evidence if it recurs.
+_Avoid_: "reboot" (the router stays up).
+
 ### Storage
 
 **proxmox-lvm-encrypted**:
