@@ -550,6 +550,19 @@
         - { src: devvm-cleanup, dest: /usr/local/bin/devvm-cleanup }
         - { src: networkd-dhcp-watchdog.sh, dest: /usr/local/sbin/networkd-dhcp-watchdog.sh }
 
+    # The CLAUDE_CODE_SHELL_PREFIX that managed-settings.json sets for every
+    # user: each Bash command Claude runs gets its own systemd scope and 6G cap,
+    # so a test run that fills memory loses its own processes, not the
+    # conversation. It must be on the box before the setting that names it, or
+    # every Bash command would fail to start.
+    - name: Install claude-command-scope
+      ansible.builtin.copy:
+        src: files/devvm/claude-command-scope
+        dest: /usr/local/bin/claude-command-scope
+        mode: "0755"
+        owner: root
+        group: root
+
     # tmux-persist saves and restores lobby sessions, and tl-session-watch calls
     # its restore-one to bring back a conversation the pane memory cap killed.
     # Until 2026-09-26 only setup-devvm.sh installed it, by hand, so a committed
