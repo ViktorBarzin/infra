@@ -42,6 +42,11 @@ days and holds all 375 alert definitions. `stacks/infra` has the same shape. The
 wider surface is 27 `null_resource` declarations across 8 stacks and 12
 `kubernetes_job` resources across 11.
 
+> Note (2026-09-27): `grafana_admin_only_folder_acl` no longer uses
+> `always = timestamp()`. Its trigger is now a hash of the folder's dashboard
+> files, so `stacks/monitoring` plans clean when nothing has changed, and this
+> particular blocker no longer applies.
+
 Cost also matters. Plan and apply both do a full init, refresh and graph walk, so
 a plan pass roughly doubles Terraform work per stack: 20 to 60 s per changed
 stack against real apply durations of 21 to 133 s, at roughly 39 stack-plans a

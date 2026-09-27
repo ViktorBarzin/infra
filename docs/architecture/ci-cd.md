@@ -224,7 +224,7 @@ Woodpecker is **deploy + cluster-touching steps only**:
 | Pipeline | File | Purpose |
 |----------|------|---------|
 | per-app deploy | `.woodpecker/deploy.yml` (each repo) | `kubectl set image` + Slack notify (event: **manual**) |
-| terragrunt apply | `.woodpecker/default.yml` | Changed-stacks apply on push to master (runs in `infra-ci`). **Skips Tier-0 `vault`** — it's human-applied via OIDC; the CI `ci` role lacks Vault-admin perms (`sys/mounts`, `sys/policies/acl`) so a CI apply 403s. **Since 2026-09-02 (infra#84) the skip is loud**: the run records the stack, posts to Slack naming the commit and the remediation (`cd stacks/vault && ../../scripts/tg apply`), and pushes the `ci_stack_pending_human_apply` gauge, which `CIStackPendingHumanApply` alerts on after 2h. The run still exits **0** — a deliberate skip is not a failure, and turning ~4 of 32 runs red for correct behaviour trains people to ignore red |
+| terragrunt apply | `.woodpecker/default.yml` | Changed-stacks apply on push to master (runs in `infra-ci`). **Skips Tier-0 `vault`** — it's human-applied via OIDC; the CI `ci` role lacks Vault-admin perms (`sys/mounts`, `sys/policies/acl`) so a CI apply 403s. **Since 2026-09-02 (infra#84) the skip is loud**: the run records the stack, posts to Slack naming the commit and the remediation (`cd stacks/vault && ../../scripts/tg apply`), and pushes the `ci_stack_pending_human_apply` gauge, which `CIStackPendingHumanApply` alerts on after 2h. The run still exits **0** — a deliberate skip is not a failure, and turning ~4 of 32 runs red for correct behaviour trains people to ignore red. For git-stored (Tier-0) states, `scripts/tg` commits the new state itself during the apply, and the final step pushes whatever commits `origin/master` lacks, even when nothing else is staged. Before 2026-09-27 that step exited on "No changes to commit" and the state commit was lost with the workspace, so dbaas, cnpg, external-secrets and platform had no state commit on master after 09-16 and dbaas planned as drifted after being applied |
 | certbot | `.woodpecker/renew-tls.yml` | TLS renewal cron. Schedule `@weekly` (Sunday 00:00) |
 | drift-detection | `.woodpecker/drift-detection.yml` | Terraform drift, **`0 4 * * *`** (was `@daily`/00:00 until 2026-08-16, which collided with `renew-tls`). Runs in `infra-ci`. **Skips Tier-0 `vault`** (its `plan` 403s under the `ci` role and would fail the whole run). Re-plans drifted stacks against current master before reporting, and lists the changed **resources** per stack via `scripts/drift-report.py` — see "Reading a drift report" below. Known gap: drift-detection remains **blind to vault**, so a hand-applied vault change is neither verified nor reported by the nightly run |
 | provision-user | `.woodpecker/provision-user.yml` | Add namespace-owner user from Vault spec |
@@ -257,10 +257,12 @@ Three things the report tells you that the old count could not:
 - **Symbols** are `+` created, `-` destroyed, `~` updated in-place, `±` replaced.
   A stack showing only `±` on `null_resource` is almost always a
   `triggers = { always = timestamp() }` resource, which can never plan clean by
-  construction. As of 2026-09-03 there is exactly ONE left, `monitoring`, and it
-  is deliberate: `null_resource.grafana_admin_only_folder_acl` re-asserts the
-  folder ACL on every apply so that a permission edited in the Grafana UI is put
-  back, and nothing else enforces that. Treat a `±` there as expected.
+  construction. As of 2026-09-27 there are none left. The last one was
+  `monitoring`'s `null_resource.grafana_admin_only_folder_acl`, which re-asserted
+  the folder ACL on every apply. Its trigger is now a hash of the dashboard files
+  in that folder, the case where the sidecar can rebuild the folder, so a `±`
+  there means those dashboards changed. The trade-off: a permission edited by
+  hand in the Grafana UI is no longer put back by the next unrelated apply.
 
   `infra`, `technitium` and `dbaas` used to be listed here too. As of 2026-09-03
   none of them contains a `timestamp()` or `uuid()` trigger any more, checked by
