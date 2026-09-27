@@ -11,6 +11,12 @@ image:
   tag: "v1.7.8"
 
 agent:
+  # The whitelist is a subPath mount, which never hot-updates, so a whitelist
+  # edit did nothing until someone restarted the agents by hand. Hashing its
+  # content into the pod template makes Terraform roll the agents whenever the
+  # whitelist changes.
+  podAnnotations:
+    checksum/whitelist: "${whitelist_checksum}"
   # reboot-self-heal Phase 2: tolerate the GPU taint so the log-parsing agent
   # keeps a pod on k8s-node1 when nvidia.com/gpu flips to NoSchedule.
   tolerations:

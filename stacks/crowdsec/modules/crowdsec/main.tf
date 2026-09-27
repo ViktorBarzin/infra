@@ -372,11 +372,50 @@ resource "kubernetes_config_map" "crowdsec_whitelist" {
       name: viktor/nextcloud-webdav-whitelist
       description: "Nextcloud WebDAV paths carry the account name 'admin' — not admin-panel probing"
       whitelist:
-        reason: "Nextcloud-iOS/desktop PROPFIND 404s on /remote.php/dav/files/admin/... are legit sync misses; crowdsecurity/http-admin-interface-probing matches 'admin' in the path and banned the client's shared egress IP (Viktor's London Hyperoptic line, 2026-07-19). Scoped by traefik_router_name (no traefik parser path populates evt.Parsed.target_fqdn — the JSON node sets it as evt.Meta.target_fqdn instead, re-verified 2026-09-01) plus the Nextcloud-exclusive /remote.php/ prefix. Nextcloud's own auth (401/403) still gates it."
+        reason: "Nextcloud-iOS/desktop PROPFIND 404s on /remote.php/dav/files/admin/... are legit sync misses; crowdsecurity/http-admin-interface-probing matches 'admin' in the path and banned the client's shared egress IP (Viktor's London Hyperoptic line, 2026-07-19). Scoped by traefik_router_name (no traefik parser path populates evt.Parsed.target_fqdn — the JSON node sets it as evt.Meta.target_fqdn instead, re-verified 2026-09-01) plus the Nextcloud-exclusive /remote.php/ prefix. Also /index.php/core/preview, whose thumbnail 404 bursts tripped http-probing (2026-09-27). Nextcloud's own auth (401/403) still gates it."
         expression:
           - >
             evt.Parsed.traefik_router_name contains "nextcloud-viktorbarzin-me" &&
             evt.Parsed.request startsWith "/remote.php/"
+          # Thumbnails. Nextcloud-iOS asks for ~100 previews at once when a
+          # photo folder opens, and every file without a preview answers 404.
+          # That is 10 distinct 404 paths within seconds, so
+          # crowdsecurity/http-probing banned Viktor's phone on 2026-09-27
+          # (82.77.92.194, Digi Romania, 100 preview 404s in one minute at
+          # 02:19 UTC). The endpoint needs a logged-in session, so Nextcloud's
+          # own auth still gates it.
+          - >
+            evt.Parsed.traefik_router_name contains "nextcloud-viktorbarzin-me" &&
+            evt.Parsed.request startsWith "/index.php/core/preview"
+      ---
+      name: viktor/bouncer-refusals-whitelist
+      description: "Don't score the 403s our own Traefik bouncer returns"
+      # A request the bouncer refuses is logged by Traefik like any other 403,
+      # with OriginStatus 0 because it never reached a backend. Scoring those
+      # meant a banned client's retries re-fired http-probing and http-403-abuse
+      # every ~30 minutes, each firing adding a fresh 4h decision, so a false
+      # positive never expired while the client kept retrying. On 2026-09-27
+      # that stacked 24 decisions on Viktor's own IP over five hours, from
+      # Calendar, Nextcloud and Bitwarden retrying in the background.
+      #
+      # What else returns a 403 without a backend, measured over 24h the same
+      # day: 33,286 such 403s against 32,999 bouncer blocks, and the per-router
+      # difference was ~290 on paperless-mcp, all from an in-cluster 10.10.x
+      # address the trusted-ips whitelist already exempts. So this exempts the
+      # bouncer's refusals and nothing else today. An attacker loses nothing
+      # either: while banned there is nothing left to judge, and once the
+      # decision expires, real backend responses are scored again.
+      #
+      # OriginStatus is only in evt.Unmarshaled.traefik (the JSON node of
+      # crowdsecurity/traefik-logs keeps the raw map there; it is not copied
+      # into evt.Parsed), verified with `cscli explain` on a live block line.
+      # The ?. keeps a line without that map from erroring.
+      whitelist:
+        reason: "403 returned by the crowdsec bouncer itself (no backend), not client behaviour"
+        expression:
+          - >
+            evt.Parsed.status == '403' &&
+            evt.Unmarshaled.traefik?.OriginStatus == 0
     YAML
   }
 }
@@ -466,7 +505,7 @@ resource "helm_release" "crowdsec" {
   repository = "https://crowdsecurity.github.io/helm-charts"
   chart      = "crowdsec"
 
-  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key })]
+  values        = [templatefile("${path.module}/values.yaml", { homepage_username = var.homepage_username, homepage_password = var.homepage_password, DB_PASSWORD = var.db_password, ENROLL_KEY = var.enroll_key, SLACK_WEBHOOK_URL = var.slack_webhook_url, mysql_host = var.mysql_host, postgresql_host = var.postgresql_host, FIREWALL_CROWDSEC_API_KEY = var.firewall_bouncer_key, TRAEFIK_CROWDSEC_API_KEY = var.traefik_bouncer_key, whitelist_checksum = sha256(kubernetes_config_map.crowdsec_whitelist.data["whitelist.yaml"]) })]
   timeout       = 1200
   wait          = true
   wait_for_jobs = true

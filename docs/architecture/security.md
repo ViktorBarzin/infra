@@ -377,9 +377,14 @@ timeline bursts) and `viktor/nextcloud-webdav-whitelist`
 (`nextcloud.viktorbarzin.me` `/remote.php/` — Nextcloud-iOS PROPFIND 404s carry
 the account name `admin` in the path and otherwise trip
 `crowdsecurity/http-admin-interface-probing`, banning the client's shared egress
-IP; 2026-07-19). Note: the whitelist file is a `subPath` mount, so editing the
-configmap requires **restarting the `crowdsec-agent` DaemonSet** to pick it up
-(subPath mounts don't hot-update).
+IP; 2026-07-19; plus `/index.php/core/preview`, where a thumbnail burst of 404s
+tripped `crowdsecurity/http-probing` on 2026-09-27).
+`viktor/bouncer-refusals-whitelist` drops the 403s the Traefik bouncer returns
+itself (`OriginStatus` 0 in the access log), so a banned client's retries
+cannot renew its own ban; before it, one false positive stacked 24 decisions
+over five hours. The whitelist file is a `subPath` mount, which doesn't
+hot-update, so the agent pods carry a `checksum/whitelist` annotation and
+Terraform rolls the `crowdsec-agent` DaemonSet whenever the whitelist changes.
 
 #### The earlier Traefik bouncer plugin, and why this one is not a repeat
 
