@@ -7,9 +7,10 @@ including the PreToolUse zsh-guard.)
 Part of the claude-memory MCP -> homelab CLI migration (all-users rollout).
 Two passes, idempotent, never touching `env` (the per-user MEMORY_API_KEY) or any
 other setting:
-  (0) PRUNE any hook command still pointing at the retired claude-memory plugin
-      (`plugins/claude-memory/hooks/`). install_memory() rm -rf's that dir, so
-      those entries are dangling — and a missing UserPromptSubmit hook exits 2,
+  (0) PRUNE any hook command still pointing at a retired hook: the claude-memory
+      plugin (`plugins/claude-memory/hooks/`), or the unslop-check.py style hook
+      (removed 2026-09-28 because each block made the user read the reply twice).
+      install_memory() deletes both, so those entries are dangling — and a missing UserPromptSubmit hook exits 2,
       a BLOCKING error that erases the prompt and freezes the session (devvm emo
       incident 2026-06-22). Must run BEFORE the additive pass: the plugin shares
       basenames with the homelab hooks, so without pruning, the "already present"
@@ -42,13 +43,6 @@ WANT = [
     # and the fixer repairs it. In a hook rather than prose because it has to
     # land at the moment the wall is hit, not whenever the model recalls it.
     ("PostToolUse", "fixer-suggest.py", f"python3 {hooks_dir}/fixer-suggest.py", {"timeout": 5}, "Bash"),
-    # Writing-style check on the finished reply, against each user's AGENTS.md style rules.
-    # Synchronous and blocking on purpose: it asks for a rewrite when a mechanical
-    # tell survives. Measured 2026-09-02 over 7,302 replies, the em-dash ban had
-    # been loaded in every session and still produced 6,068 em dashes, so the rule
-    # text alone does not reach a generation reflex. stop_hook_active bounds it to
-    # one retry per turn.
-    ("Stop", "unslop-check.py", f"python3 {hooks_dir}/unslop-check.py", {"timeout": 10}, None),
 ]
 
 try:
@@ -64,15 +58,16 @@ except (json.JSONDecodeError, OSError) as e:
 hooks = data.setdefault("hooks", {})
 changed = False
 
-# (0) Prune dead claude-memory plugin hooks (see module docstring). Must precede
-# the additive pass so shared basenames don't mask a needed install.
-DEAD_REF = "plugins/claude-memory/hooks/"
+# (0) Prune retired hooks (see module docstring). Must precede the additive pass
+# so shared basenames don't mask a needed install.
+DEAD_REFS = ("plugins/claude-memory/hooks/", "hooks/unslop-check.py")
 for event in list(hooks.keys()):
     new_groups = []
     removed_any = False
     for g in (hooks.get(event) or []):
         original = g.get("hooks") or []
-        kept = [h for h in original if DEAD_REF not in (h.get("command", "") or "")]
+        kept = [h for h in original
+                if not any(ref in (h.get("command", "") or "") for ref in DEAD_REFS)]
         if len(kept) != len(original):
             removed_any = True
         if kept:

@@ -782,9 +782,11 @@ install_memory() {
   # (1) (re)install the hook scripts, owned by the user (refreshed each reconcile so fixes land)
   mkdir_as "$user" 0755 "$hooks_dst" || { log "WARN: could not create $user:~/.claude/hooks"; return 0; }
   local h
-  for h in homelab-memory-recall.py auto-learn.py pre-compact-backup.sh post-compact-recovery.sh zsh-guard.py fixer-suggest.py unslop-check.py; do
+  for h in homelab-memory-recall.py auto-learn.py pre-compact-backup.sh post-compact-recovery.sh zsh-guard.py fixer-suggest.py; do
     write_as "$user" 0755 "$hooks_dst/$h" < "$src/$h" || log "WARN: could not install hook $h -> $user"
   done
+  # Retired hooks: unslop-check.py (2026-09-28). wire-memory-hooks.py unwires it below.
+  runuser -u "$user" -- rm -f "$hooks_dst/unslop-check.py" || true
 
   # (2) wire the hooks in settings.json, if-absent + additive. The helper sits under
   #     the admin's hardened home (mode 700), which the user cannot enter, so root
