@@ -77,7 +77,9 @@ flowchart TD
   denies the rest. (Egress has to be Calico-native: in tier 3-edge/4-aux namespaces the
   `wave1-egress-observe-tier34` policy allows all egress after Kubernetes policies are
   evaluated, so a Kubernetes egress policy alone restricts nothing. Found during rollout.) If sshd ever had a pre-auth vulnerability, a
-  compromised pod could reach three sshd prompts and nothing else.
+  compromised pod could reach three sshd prompts and nothing else. **Revised 2026-09-28:** egress
+  was opened when `muse` got `PermitOpen any` (see Decisions), so this containment no longer holds;
+  sshd `PermitOpen` is now the only per-account limit.
 
 ### Client configuration
 
@@ -122,6 +124,7 @@ event, no resolve follow-up).
 | Targets | devvm, pfSense, Proxmox | The hosts needed remotely today |
 | Login notifications | Slack on every login | Requested by Viktor |
 | Day-one client | `muse` (key supplied by Viktor) | Further clients are added as Vault entries |
+| `muse` forwarding (revised 2026-09-28, after rollout) | `PermitOpen any` for `muse` only; pod egress opened | Viktor's choice so Muse can reach services such as `agent-api` through the bastion. Trade-off, raised at the time: the containment below no longer holds for anyone holding Muse's key |
 
 ## Alternatives considered
 
