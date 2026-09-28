@@ -1,0 +1,16 @@
+[Unit]
+Description=Keep yt-dlp at the latest release
+Documentation=https://github.com/yt-dlp/yt-dlp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The release binary updates itself in place. Sites change their players often
+# enough that a yt-dlp a few weeks old stops downloading from them.
+ExecStart=/usr/local/bin/yt-dlp -U
+StandardOutput=journal
+StandardError=journal
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=10min
