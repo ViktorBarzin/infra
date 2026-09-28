@@ -17,6 +17,11 @@ PermitRootLogin no
 AuthorizedKeysFile /run/bastion/authorized_keys/%u
 
 MaxAuthTries 2
+# Every client reaches sshd from Traefik's pod IP, so OpenSSH's per-source
+# penalties would let one client's failed attempts lock out all clients.
+# Per-client-IP limiting happens in Traefik (MiddlewareTCP bastion-inflight),
+# which still sees the real address.
+PerSourcePenalties no
 LoginGraceTime 20
 MaxStartups 10:30:30
 MaxSessions 4

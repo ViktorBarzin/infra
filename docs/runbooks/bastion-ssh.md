@@ -23,7 +23,7 @@ flowchart TD
   B --> G["10.0.10.10:22, 10.0.20.1:22, 192.168.1.127:22"]
 ```
 
-Other hostnames on 443 go to the HTTP routers as before. IPv6 arrives through the pfSense
+Other hostnames on 443 go to the HTTP routers as before. Public DNS answers the WAN address; internal DNS (Technitium) answers Traefik's LB `10.0.20.203` from `static_records.tf` in the technitium stack, because the ingress-to-DNS sync only sees Ingress objects. IPv6 arrives through the pfSense
 HAProxy bridge (`2001:470:6e:43d::2:443`) and joins the same Traefik entrypoint.
 
 ## Client setup
@@ -116,6 +116,8 @@ Three places, which must agree:
 
 - Traefik caps each client IP at 4 concurrent connections (`MiddlewareTCP bastion-inflight`).
   Traefik's TCP layer has no per-minute limiter.
+- sshd `PerSourcePenalties no`: every client arrives from Traefik's pod IP, so OpenSSH's per-source
+  penalties would let one client's failures lock out the rest.
 - sshd: public keys only, `MaxAuthTries 2`, `LoginGraceTime 20`, no TTY, no shell
   (`ForceCommand /sbin/nologin`), forwarding only to the `PermitOpen` targets.
 - NetworkPolicy: ingress only from the `traefik` namespace on 22; egress only to the three
