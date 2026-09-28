@@ -89,16 +89,10 @@ class CyrillicKeepsItsDashes(unittest.TestCase):
 
 
 class Length(unittest.TestCase):
-    def test_long_prose_is_flagged(self):
-        found = tells("The pod restarted after the node came back. " * 60)
-        self.assertTrue(any(t.startswith("too long") for t in found))
+    """Length is a judgement call, so the hook no longer counts words."""
 
-    def test_table_rows_do_not_count_as_prose(self):
-        table = "| a | b |\n|---|---|\n" + "| the node came back and the pod restarted | yes |\n" * 60
-        self.assertEqual(tells("Here it is.\n\n" + table), [])
-
-    def test_code_does_not_count_as_prose(self):
-        self.assertEqual(tells("Here:\n\n```\n" + "x = 1  # a line of code\n" * 200 + "```\n"), [])
+    def test_long_clean_prose_passes(self):
+        self.assertEqual(tells("The pod restarted after the node came back. " * 60), [])
 
 
 class BlockContract(unittest.TestCase):

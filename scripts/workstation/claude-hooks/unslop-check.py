@@ -15,7 +15,10 @@ not.
 
 So this checks the mechanical tells only, the ones a regex can judge without
 reading for meaning, and blocks the turn so Claude rewrites. Judgement calls
-(opinion, rhythm, naming the mechanism) stay in CLAUDE.md where they belong.
+(opinion, rhythm, naming the mechanism, length) stay in CLAUDE.md where they
+belong. A 300-word prose ceiling lived here until 2026-09-28 and was dropped:
+whether a reply is too long depends on what it has to say, and a rewrite
+forced by a word count cost a turn without making the answer better.
 
 The reply comes from the payload's `last_assistant_message`, not the
 transcript. Measured while building this: at Stop time the assistant record is
@@ -41,7 +44,6 @@ import re
 import sys
 
 TAIL_BYTES = 2_000_000        # fallback transcript read, last few records only
-PROSE_WORD_MAX = 300          # prose only; tables and code blocks do not count
 
 BANNED = (
     "additionally|crucial|delve|enduring|enhance|fostering|garner|interplay|"
@@ -114,13 +116,6 @@ def strip_quoted(text):
     return text
 
 
-def prose_words(text):
-    """Word count outside code fences and markdown tables."""
-    text = re.sub(r"```.*?```", " ", text, flags=re.S)
-    text = re.sub(r"^\s*\|.*$", " ", text, flags=re.M)
-    return len(text.split())
-
-
 CYRILLIC = re.compile(r"[\u0400-\u04FF]")
 LATIN = re.compile(r"[A-Za-z]")
 
@@ -147,9 +142,6 @@ def tells(reply):
         if hits:
             sample = " ".join(hits[0].group(0).split())[:48]
             found.append(f"{name} x{len(hits)}" + (f' ("{sample}")' if sample else ""))
-    words = prose_words(reply)
-    if words > PROSE_WORD_MAX:
-        found.append(f"too long: {words} prose words, ceiling {PROSE_WORD_MAX}")
     return found
 
 
@@ -171,7 +163,6 @@ def main():
             with open(os.path.expanduser("~/.claude/tmp/unslop-debug.log"), "a") as fh:
                 fh.write(json.dumps({
                     "active": payload.get("stop_hook_active"),
-                    "words": prose_words(reply),
                     "found": found,
                     "saw": " ".join(reply.split())[:120],
                 }) + "\n")
