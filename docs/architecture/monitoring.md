@@ -235,6 +235,32 @@ They now take a **p95 over 30m** from
 purpose, ~1.3k series). `keep_firing_for` dropped 1h → 15m at the same time,
 since it existed to damp the mean's fire/resolve churn.
 
+A second pass on **2026-09-28** dealt with what a p95 of *total response time*
+still picks up that is not slowness. Traefik's histogram times each response
+from start to finish, so it also counts:
+
+- **Failed requests.** `reverse-proxy-ha-london` returned only 502/499/504 for
+  nine days while ha-london was off its LAN. Those requests waited out connect
+  timeouts and paged as "slow", 11 critical episodes in 14 days. The p95 now
+  ignores 5xx (`code!~"5.."`), and the new **`IngressUpstreamDown`** reports the
+  outage itself: at least 5 failures (5xx or 499) and not one success, over 30m
+  or, to hold through quiet hours, 12h. The first success clears it.
+  `HighServiceErrorRate` and `IngressErrorRate5xxHigh` never fired for
+  ha-london, because their traffic floors sit above its ~900 requests a day. An
+  Alertmanager inhibit rule stops the same service also paging as slow while it
+  is down.
+- **Streams.** `terminal-session-events` (SSE, 220-260s per response),
+  `woodpecker` (`/api/stream/events`) and `paperless-mcp` (`GET /mcp`, up to
+  1,001s) keep one response open by design, and are excluded.
+- **Work that is long by nature.** `loki` (log queries), `f1-stream` (replay
+  chunks; `F1IngressStalled` is its latency signal) and the error-pages
+  service, whose latency is other upstreams' timeouts, are excluded.
+
+Backtested over 14 days, the warning went from 46 episodes to 16 and the
+critical from 22 to 6. What remains is on services with genuinely slow requests:
+authentik (mostly at night), claude-memory recall, tripit `/api/trips` and
+homepage widgets.
+
 Two things generalise from it. A **mean is not a latency signal on a
 low-traffic service** — any new latency alert here wants a quantile, and a
 minimum-volume guard is not a substitute. And per the kured caveat below, an
