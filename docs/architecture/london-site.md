@@ -77,6 +77,18 @@ pinned to Traefik's `10.0.20.203`. London traffic reaches Sofia masqueraded as
 wifi_station_signal_dbm{instance="flint-london"}  # per-client signal
 ```
 
+Client disconnects, on demand (MediaTek driver lines, one per event):
+
+```
+{job="syslog", host="flint-london"} |= "Del Sta:"                       # a client left (station removed)
+{job="syslog", host="flint-london"} |= "New Sta:"                       # a client joined
+{job="syslog", host="flint-london"} |~ "ReasonCode|4Way-MSG1 timeout"   # AP-side deauths, failed handshakes
+sum by (mac) (count_over_time({job="syslog", host="flint-london"} |= "Del Sta:" | regexp "Del Sta:(?P<mac>[0-9a-f:]+)" [24h]))  # leaves per client
+```
+
+Remote syslog has been complete only since 2026-09-28 10:43 BST (the switch to
+TCP); earlier router lines in Loki are a sample.
+
 ## Rebuilding the probe package
 
 ```sh
