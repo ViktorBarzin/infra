@@ -416,6 +416,49 @@
         dest: /usr/local/bin/terragrunt
         mode: "0755"
 
+    # yt-dlp for `homelab video get`, added 2026-09-28. The release binary, not
+    # the apt package: Ubuntu's is 2024.04.09, and YouTube stops working with a
+    # yt-dlp that is a few weeks old (memory #12269). The standalone build
+    # bundles its optional dependencies, so no pip install is needed.
+    #
+    # get_url only fills the gap on a fresh box (force is off, so an existing
+    # file is left alone). The timer below keeps it current with `yt-dlp -U`,
+    # and the two never fight over the file.
+    - name: Remove the apt yt-dlp, which is too old for YouTube
+      ansible.builtin.apt:
+        name: yt-dlp
+        state: absent
+
+    - name: Install yt-dlp
+      ansible.builtin.get_url:
+        url: https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux
+        dest: /usr/local/bin/yt-dlp
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Install the yt-dlp updater units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - yt-dlp-update.service
+        - yt-dlp-update.timer
+      notify: reload systemd
+
+    # Skipped in check mode: on a box without the unit yet, the copy above only
+    # pretends to write it, so there is nothing for systemd to find.
+    - name: Enable the yt-dlp updater timer
+      ansible.builtin.systemd_service:
+        name: yt-dlp-update.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
     # Ansible's copy and template do NOT create parent directories, and every one
     # of these already existed on the live box -- so a check run there could never
     # have caught this. A blank machine has none of them.

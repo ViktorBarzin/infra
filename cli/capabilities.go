@@ -322,6 +322,18 @@ func capabilities() []capability {
 			Synonyms: []string{"paste", "share", "send file", "link", "pastebin", "upload"},
 		},
 		{
+			Intent:  "download a video from X / YouTube / any site to watch on my phone",
+			Use:     "homelab video get <url>...",
+			Instead: "yt-dlp by hand plus a manual Nextcloud upload",
+			Synonyms: []string{"download video", "save video", "youtube", "twitter", "x.com",
+				"tiktok", "offline", "phone", "yt-dlp", "watch later"},
+			Detail: []string{
+				"Lands in Videos/ in your own Nextcloud as an H.264 MP4 and prints a",
+				"        30-day public link. YouTube cookies come from the cluster Chrome",
+				"        automatically, but YouTube still refuses some videos at random.",
+			},
+		},
+		{
 			Intent:   "publish a finished design doc, plan, or report",
 			Use:      "homelab pages publish <doc.md>",
 			Synonyms: []string{"publish", "page", "plan", "design doc", "report", "pages"},

@@ -106,3 +106,8 @@ libhyphen0
 libmanette-0.2-0
 libsecret-1-0
 libwoff1
+
+# Muxing for `homelab video get`: yt-dlp merges separate video and audio into
+# one MP4 with ffmpeg, and the verb checks the result for an audio stream with
+# ffprobe. Already on the box before it was declared here.
+ffmpeg

@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily refresh of yt-dlp
+
+[Timer]
+# 04:30, an hour after the agent updaters start at 03:30, so the two do not
+# share a network window.
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=20min
+
+[Install]
+WantedBy=timers.target

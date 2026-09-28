@@ -365,6 +365,17 @@ a read-only `browser run` script if a verb breaks after a web update.
 
 Overrides: `HOMELAB_MESSAGE_ALLOWLIST`, `HOMELAB_MESSAGE_AUDIT`.
 
+### v0.25 verbs — video (download to your Nextcloud for the phone)
+
+| Command | tier | notes |
+|---|---|---|
+| `video get <url>... [--quality 1080\|720\|480\|best] [--expire DAYS] [--no-link]` | write | yt-dlp downloads an H.264 MP4 that plays in a phone's own player, uploads it to `Videos/` in the caller's Nextcloud (`secret/<user>/nextcloud`, the same credential as `share`) with chunked upload v2 in 100 MB pieces, confirms the size with PROPFIND, and prints `path:` plus a public `link:` (30 days by default). YouTube links first fetch visitor cookies through `browser run`. Several URLs run in turn; a failed one does not stop the rest. |
+
+yt-dlp and ffmpeg come from `playbooks/devvm.yml`, which also runs `yt-dlp -U`
+daily through the `yt-dlp-update` timer. YouTube still refuses some videos from
+our address at random (memory #13410), so a YouTube failure is reported with
+that hint rather than retried.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
