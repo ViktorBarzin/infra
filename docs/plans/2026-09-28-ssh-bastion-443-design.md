@@ -1,6 +1,6 @@
 # SSH on port 443 through a bastion
 
-**Status:** approved, 2026-09-28
+**Status:** done, 2026-09-28 (live; the first client key, `muse`, is added when Viktor shares it)
 **Date:** 2026-09-28
 **Author:** Viktor Barzin (design worked out with Claude in a grilling session)
 **Component:** new `bastion` stack, Traefik `websecure` entrypoint, Cloudflare DNS, Loki ruler
