@@ -3,8 +3,12 @@
 #
 # Runs on the GL.iNet Flint 2 (busybox ash), installed as /usr/bin/london-drop-probe
 # by the london-drop-probe package (build-ipk.py; LuCI -> System -> Software ->
-# Upload Package). LuCI -> System -> Scheduled Tasks starts it every minute:
-#   * * * * * /usr/bin/flock -n /tmp/drop-probe.lock /usr/bin/timeout 58 /usr/bin/london-drop-probe
+# Upload Package), which also installs /etc/init.d/london-drop-probe. procd keeps
+# it running; LuCI -> System -> Startup starts, stops or disables it.
+#
+# Not cron: busybox crond skipped every other minute's run of a long-running
+# line (seen 2026-09-28), which left 60-second blind spots and produced two
+# false 68 s drops on the first night.
 #
 # Every CHECK_EVERY seconds it makes an HTTP request to two public IPs from
 # different providers, and every DNS_EVERY seconds it asks an AdGuard upstream
@@ -120,6 +124,8 @@ queue_event() {
 	json_close_array
 	json_dump >>"$QUEUE"
 	logger -t drop-probe "internet drop flint-$start layer=$layer duration=$((end - start))s"
+	# Push now; anything that fails is retried at the start of the next run.
+	flush_queue
 }
 
 flush_queue() {
@@ -194,11 +200,9 @@ interval() {
 
 load_state
 flush_queue
-end_at=$(( $(date +%s) + 57 ))
-while [ "$(date +%s)" -lt "$end_at" ]; do
+while :; do
 	t0=$(date +%s)
 	tick
 	next=$((t0 + $(interval)))
-	while [ "$(date +%s)" -lt "$next" ] && [ "$(date +%s)" -lt "$end_at" ]; do sleep 1; done
+	while [ "$(date +%s)" -lt "$next" ]; do sleep 1; done
 done
-flush_queue
