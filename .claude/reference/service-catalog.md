@@ -105,6 +105,7 @@
 | n8n | Workflow automation | n8n |
 | real-estate-crawler | Property crawler | real-estate-crawler |
 | tor-proxy | Tor proxy | tor-proxy |
+| bastion | Jump-only SSH on 443: `ssh.viktorbarzin.me` (SSH inside TLS, Traefik `IngressRouteTCP` on `websecure`) → ProxyJump to devvm / pfSense / Proxmox. Keys only, accounts from Vault `secret/bastion`, Slack post per login. Runbook `docs/runbooks/bastion-ssh.md` | bastion |
 | forgejo | Git forge. Open native self-signup (Turnstile captcha + email confirm) + Authentik & GitHub OAuth sign-in; see `docs/runbooks/forgejo-open-signups.md` | forgejo |
 | freshrss | RSS reader | freshrss |
 | drone-logbook | DJI flight-log analyzer (Open DroneLog, upstream image) — dronelog.viktorbarzin.me | drone-logbook |

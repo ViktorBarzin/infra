@@ -4,7 +4,7 @@ Last updated: 2026-07-03 (dCCTV as-built after the single-switch swap — camera
 
 ## Overview
 
-The homelab network is built on three isolated segments behind pfSense (management VLAN 10, Kubernetes VLAN 20, and the physically-legged dCCTV camera segment — see ADR-0017) with pfSense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik serves as the Kubernetes ingress controller with a middleware chain of anti-AI bot-blocking, Authentik forward-auth, rate limiting, and retry. CrowdSec IP-reputation enforcement is **out-of-band** (not a Traefik hop): banned IPs are dropped in-kernel via nftables on direct hosts and blocked at the Cloudflare edge on proxied hosts (see `docs/architecture/security.md`). All HTTP traffic flows through Cloudflared tunnels, avoiding the need for port forwarding or exposing public IPs.
+The homelab network is built on three isolated segments behind pfSense (management VLAN 10, Kubernetes VLAN 20, and the physically-legged dCCTV camera segment — see ADR-0017) with pfSense providing gateway services, Technitium for internal DNS, and Cloudflare for external DNS. Traefik serves as the Kubernetes ingress controller with a middleware chain of anti-AI bot-blocking, Authentik forward-auth, rate limiting, and retry. CrowdSec IP-reputation enforcement is **out-of-band** (not a Traefik hop): banned IPs are dropped in-kernel via nftables on direct hosts and blocked at the Cloudflare edge on proxied hosts (see `docs/architecture/security.md`). Public traffic arrives two ways: proxied hostnames through the Cloudflared tunnel, and non-proxied hostnames (A 176.12.22.76 / AAAA `2001:470:6e:43d::2`) directly, via the TP-Link and pfSense port forwards on 80/443 to Traefik (IPv6 through the pfSense HAProxy bridge). The same direct path carries SSH on 443 to the bastion (see below).
 
 ## Architecture Diagram
 
@@ -592,6 +592,12 @@ ICMP), so reachability checks look healthy. Verify a repair with
 `service ipv6proxy status` and a forced request:
 `curl --resolve <host>:443:2001:470:6e:43d::2 https://<host>/`.
 
+### SSH on 443 (Bastion)
+
+`ssh.viktorbarzin.me` (non-proxied A/AAAA) is a jump-only sshd reachable on port 443 with SSH carried inside TLS, for networks that only allow outbound HTTPS. An `IngressRouteTCP` on the `websecure` entrypoint matches ``HostSNI(`ssh.viktorbarzin.me`)``, terminates TLS with the default wildcard certificate and forwards plain TCP to the `bastion` pod. Traefik tries TCP routers before HTTP routers on a shared entrypoint, and a specific `HostSNI` claims only that hostname, so every other request on 443 continues to the HTTP routers. No pfSense change was needed: the existing 443 `rdr` (IPv4) and HAProxy bridge (IPv6) already deliver to Traefik.
+
+From the bastion, clients `ProxyJump` to devvm (10.0.10.10), pfSense (10.0.20.1) or the Proxmox host (192.168.1.127) on 22 only, enforced by sshd `PermitOpen` and a NetworkPolicy. Keys only, no shell, one account per client from Vault `secret/bastion`, a Traefik `inFlightConn` cap of 4 per client IP, and a Slack post per login. sshd sees Traefik's pod IP rather than the client's. The entrypoint's `readTimeout` does not cut long sessions: Traefik clears that read deadline once a connection is routed, and `writeTimeout` is 0. Runbook: [bastion-ssh.md](../runbooks/bastion-ssh.md); design: [2026-09-28-ssh-bastion-443-design.md](../plans/2026-09-28-ssh-bastion-443-design.md).
+
 ### IPv6 on the Sofia home LAN (ULA for Matter)
 
 The home LAN (192.168.1.0/24) carries a private IPv6 prefix, `fdfe:e989:d3ce:1::/64`,
@@ -678,6 +684,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 | MetalLB | `stacks/platform/` (sub-module) | Helm release, IPAddressPool |
 | Cloudflared | `stacks/cloudflared/` | Deployment (3 replicas), tunnel config; runs `--no-autoupdate` (in-place self-updates exited the pods and severed all tunnel WebSockets, 2026-06-09/10) |
 | ingress_factory | `modules/ingress_factory/` | IngressRoute + middleware chain |
+| Bastion | `stacks/bastion/` | sshd Deployment, IngressRouteTCP + MiddlewareTCP on `websecure`, NetworkPolicy, ExternalSecret, Cloudflare A/AAAA `ssh` |
 
 ### Key Configuration Files
 

@@ -183,7 +183,9 @@ Forwarding. The break-glass rule:
 - **External port must equal internal port.** The firmware rejects any remap
   (e.g. `22 → 52222`) with *"External Port: This item conflicts with existed
   ones."* Hence ext==int 52222.
-- **Port 22 is reserved** — even `22 → 22` is refused. Break-glass cannot use 22.
+- **Port 22:** on 2026-06-11 the firmware refused `22 → 22`. As of 2026-09-28 a working `22 → 22` forward
+  to pfSense exists (pfSense sends it to Forgejo git SSH on 10.0.20.200), so the refusal no longer holds;
+  how that rule was added is not recorded. Break-glass stays on 52222.
 - **Row delete is immediate** (no confirm dialog) — clicking the trash icon
   removes the rule and toasts "Operation succeeded".
 - Automation: `~/wizard/tools/insecure-browse/add-forward.{sh,js}` (dockerized
