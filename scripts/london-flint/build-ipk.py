@@ -43,11 +43,13 @@ def targz(build) -> bytes:
 
 def main(version: str, out_dir: str) -> Path:
     script = (HERE / "drop-probe.sh").read_bytes()
+    init = (HERE / "london-drop-probe.init").read_bytes()
 
     def data(tar):
-        for d in ("./usr", "./usr/bin"):
+        for d in ("./usr", "./usr/bin", "./etc", "./etc/init.d"):
             add_dir(tar, d)
         add_bytes(tar, "./usr/bin/london-drop-probe", script, 0o755)
+        add_bytes(tar, f"./etc/init.d/{NAME}", init, 0o755)
 
     control_text = (
         f"Package: {NAME}\n"
@@ -56,11 +58,26 @@ def main(version: str, out_dir: str) -> Path:
         "Maintainer: infra repo (scripts/london-flint)\n"
         "Section: utils\n"
         "Depends: curl\n"
-        "Description: London internet-drop probe, run from LuCI Scheduled Tasks.\n"
+        "Description: London internet-drop probe, a procd service (LuCI System -> Startup).\n"
+    ).encode()
+
+    # Enable and start on install, stop and disable on removal, the same
+    # effect as the buttons in LuCI -> System -> Startup.
+    postinst = (
+        "#!/bin/sh\n"
+        f'[ -n "$IPKG_INSTROOT" ] || {{ /etc/init.d/{NAME} enable; /etc/init.d/{NAME} restart; }}\n'
+        "exit 0\n"
+    ).encode()
+    prerm = (
+        "#!/bin/sh\n"
+        f'[ -n "$IPKG_INSTROOT" ] || {{ /etc/init.d/{NAME} stop; /etc/init.d/{NAME} disable; }}\n'
+        "exit 0\n"
     ).encode()
 
     def control(tar):
         add_bytes(tar, "./control", control_text, 0o644)
+        add_bytes(tar, "./postinst", postinst, 0o755)
+        add_bytes(tar, "./prerm", prerm, 0o755)
 
     data_gz = targz(data)
     control_gz = targz(control)

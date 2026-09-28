@@ -123,8 +123,9 @@ Installed from the GL plug-ins page and configured in LuCI:
 - Remote syslog to the new Loki listener, carrying kernel Wi-Fi lines and
   firmware resets. The system log is also written to a 512 KB file under
   `/overlay` so the lines survive a tunnel outage.
-- A probe started every minute from LuCI → Scheduled Tasks, wrapped in `flock`
-  and `timeout 58`, making HTTP requests to http://1.1.1.1 and https://8.8.8.8
+- A probe running as a procd service (LuCI → System → Startup; revised
+  2026-09-28 from a LuCI Scheduled Tasks entry, because busybox crond skipped
+  every other minute's run), making HTTP requests to http://1.1.1.1 and https://8.8.8.8
   every 10 seconds (every 2 seconds after a failure) and resolving a name every
   30 seconds; a drop is 30 seconds or more. At the start of a drop it pings the
   current default gateway (read from the route, since it changes at cutover) to
@@ -134,8 +135,8 @@ Installed from the GL plug-ins page and configured in LuCI:
   returns it POSTs the drop event to Loki and retries until accepted. The API
   does not allow writing arbitrary files, so the probe ships as a small package
   (`london-drop-probe`, built from this repo) uploaded through LuCI → System →
-  Software, where it is listed and can be removed; the crontab entry is what
-  Scheduled Tasks shows.
+  Software, where it is listed and can be removed; its init script is what
+  Startup shows.
 
 ### Event format
 

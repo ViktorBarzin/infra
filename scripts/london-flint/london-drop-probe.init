@@ -1,0 +1,13 @@
+#!/bin/sh /etc/rc.common
+# London internet-drop probe (infra/scripts/london-flint). Shown in
+# LuCI -> System -> Startup.
+
+START=99
+USE_PROCD=1
+
+start_service() {
+	procd_open_instance
+	procd_set_param command /usr/bin/london-drop-probe
+	procd_set_param respawn 3600 5 0
+	procd_close_instance
+}
