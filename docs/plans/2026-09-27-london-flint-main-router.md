@@ -120,9 +120,10 @@ Installed from the GL plug-ins page and configured in LuCI:
   iwinfo backend lacks noise, quality and bitrate, and the collector errors on
   them. `wifi_stations` gives per-client signal and rates; its packet counters
   read 0 on this driver.
-- Remote syslog to the new Loki listener, carrying kernel Wi-Fi lines and
-  firmware resets. The system log is also written to a 512 KB file under
-  `/overlay` so the lines survive a tunnel outage.
+- Remote syslog to the new Loki listener over TCP, carrying kernel Wi-Fi lines
+  and firmware resets. (Revised 2026-09-28: UDP lost most lines, and the
+  512 KB flash copy of the log was dropped to keep eMMC writes down; the RAM
+  ring covers a few hours of tunnel outage.)
 - A probe running as a procd service (LuCI → System → Startup; revised
   2026-09-28 from a LuCI Scheduled Tasks entry, because busybox crond skipped
   every other minute's run), making HTTP requests to http://1.1.1.1 and https://8.8.8.8
