@@ -126,15 +126,17 @@ resource "kubernetes_deployment" "bastion" {
               add = ["CHOWN", "SETUID", "SETGID", "SYS_CHROOT", "NET_BIND_SERVICE", "KILL"]
             }
           }
+          # Exec probes, not tcp_socket: a TCP probe is an unauthenticated
+          # connection that sshd logs three lines for, every period.
           readiness_probe {
-            tcp_socket {
-              port = 22
+            exec {
+              command = ["sh", "-c", "kill -0 $(cat /run/bastion/sshd.pid)"]
             }
             period_seconds = 10
           }
           liveness_probe {
-            tcp_socket {
-              port = 22
+            exec {
+              command = ["sh", "-c", "kill -0 $(cat /run/bastion/sshd.pid)"]
             }
             initial_delay_seconds = 10
             period_seconds        = 30
