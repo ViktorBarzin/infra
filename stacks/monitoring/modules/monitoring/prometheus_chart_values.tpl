@@ -216,6 +216,15 @@ alertmanager:
         target_matchers:
           - alertname = ImmichHTTP4xxElevated
         equal: [service]
+      # An upstream that answers nothing but failures is down, not slow. Its
+      # requests still take seconds (clients wait out connect timeouts and give
+      # up as 499), so without this the same outage also pages as slow ingress:
+      # ha-london did, 11 critical episodes in 14 days (2026-09-28).
+      - source_matchers:
+          - alertname = IngressUpstreamDown
+        target_matchers:
+          - alertname =~ "IngressTTFBHigh|IngressTTFBCritical"
+        equal: [service]
       # Power outage makes on-battery alert redundant
       - source_matchers:
           - alertname = PowerOutage
@@ -5109,11 +5118,33 @@ serverFiles:
             # ha-sofia-internal and ha-sofia-direct on /manifest.json, and
             # [External] ha-sofia) plus healthcheck checks 26-29 and 45. Those
             # are availability, not latency, which is the signal given up here.
+            #
+            # 2026-09-28: 5xx responses left out, and five more services excluded,
+            # after Viktor asked why slow-ingress alerts never stopped. Traefik's
+            # duration histogram times the whole response, so three things that
+            # are not slowness dominated the p95 (evidence from the access log,
+            # 24-48h to 09-28):
+            # - Failures. reverse-proxy-ha-london answered nothing but 502/499/504
+            #   for nine days because ha-london was off its LAN; those requests
+            #   waited out connect timeouts (median 6.4s) and paged as "slow".
+            #   A failed request is an availability problem, and
+            #   IngressUpstreamDown below now says so, while code!~"5.." keeps
+            #   failures out of the latency figure.
+            # - Streams. terminal-session-events (SSE /events/*, 220-260s each),
+            #   woodpecker (/api/stream/events, 97s) and paperless-mcp (GET /mcp,
+            #   up to 1,001s) hold one response open by design.
+            # - Work that is long by nature: loki (log queries), f1-stream (6 MB
+            #   replay chunks, see IngressTTFBCritical; F1IngressStalled covers
+            #   its real stalls) and the error-pages service, whose latency is
+            #   other upstreams' timeouts.
+            # 14-day backtest: 46 episodes -> 16, all left on services with
+            # genuinely slow requests (authentik at night, claude-memory recall,
+            # tripit /api/trips, homepage widgets).
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service, le)
               ) > 1
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 10m
             # Was 1h, to damp the mean's fire/resolve churn. The p95 doesn't
@@ -5145,18 +5176,24 @@ serverFiles:
             # second while the tail shipped video, exactly what payload transfer
             # looks like. In one, 2026-08-27 08:35 UTC, the peak p50 was 8.4 s.
             # That one was real, and F1IngressStalled below is scoped to catch
-            # it. IngressTTFBHigh still covers f1 at warning severity, so the
-            # p95 signal is not lost, only demoted out of the 6-hourly re-page.
+            # it. (IngressTTFBHigh covered f1 at warning severity until
+            # 2026-09-28, when it excluded f1 too; F1IngressStalled is the f1
+            # latency signal now.)
             #
             # NOTE the exclusion is the whole service, because
             # traefik_service_request_duration_seconds_bucket carries no path
             # label (code, instance, job, method, protocol, service), so the
             # chunk routes cannot be dropped on their own.
+            #
+            # 2026-09-28: same 5xx and stream/long-work exclusions as
+            # IngressTTFBHigh above, for the reasons given there. 14-day
+            # backtest: 22 episodes -> 6. ha-london had been the biggest
+            # source, at 11 critical episodes re-paging every 6h for an outage.
             expr: |
               histogram_quantile(0.95,
-                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*",protocol!="websocket"}[30m])) by (service, le)
+                sum(rate(traefik_service_request_duration_seconds_bucket{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service, le)
               ) > 3
-              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*",protocol!="websocket"}[30m])) by (service) > 0.05
+              and sum(rate(traefik_service_request_duration_seconds_count{service!~".*idrac.*|.*headscale.*|.*nextcloud.*|.*immich.*|.*ha-sofia.*|.*f1-stream.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*|.*loki.*|.*error-pages.*",protocol!="websocket",code!~"5.."}[30m])) by (service) > 0.05
               and on() (time() - process_start_time_seconds{job="prometheus"}) > 1800
             for: 5m
             keep_firing_for: 15m
@@ -5164,6 +5201,40 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Critically slow ingress on {{ $labels.service }}: p95 latency {{ $value | printf \"%.2f\" }}s (threshold: 3s for 5m)"
+          - alert: IngressUpstreamDown
+            # Every request to a service is failing: 5xx from Traefik (502 bad
+            # gateway, 504 timeout) or the client giving up (499), with no
+            # success at all. Added 2026-09-28 because nothing said this
+            # plainly: ha-london had been off its LAN since 2026-09-19 ~14:00
+            # UTC, and the only alerts were "slow ingress". HighServiceErrorRate
+            # and IngressErrorRate5xxHigh never fired, because their traffic
+            # floors sit above ha-london's ~900 requests a day.
+            #
+            # Two windows. The 30m arm catches an outage fast. The 12h arm keeps
+            # it firing across quiet hours with no requests, which would
+            # otherwise split one outage into many (35 episodes in 14 days with
+            # a 30m window alone, 2 with both). The first successful response
+            # clears both arms. Streaming services are excluded because a
+            # stream a client closes ends as 499, and error-pages because its
+            # job is to answer failures.
+            expr: |
+              (
+                sum by (service) (increase(traefik_service_requests_total{code=~"5..|499", service!~".*error-pages.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*"}[30m])) >= 5
+                unless on(service)
+                sum by (service) (increase(traefik_service_requests_total{code=~"2..|3.."}[30m])) > 0
+              )
+              or
+              (
+                sum by (service) (increase(traefik_service_requests_total{code=~"5..|499", service!~".*error-pages.*|.*terminal-session-events.*|.*paperless-mcp.*|.*woodpecker.*"}[12h])) >= 5
+                unless on(service)
+                sum by (service) (increase(traefik_service_requests_total{code=~"2..|3.."}[12h])) > 0
+              )
+            for: 15m
+            keep_firing_for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.service }} answers nothing but failures (5xx or clients giving up) and no request has succeeded: the upstream looks down, not slow"
           - alert: F1IngressStalled
             # The f1-only replacement for the exclusion above, added the same
             # day and deliberately built on a DIFFERENT statistic. Two things
