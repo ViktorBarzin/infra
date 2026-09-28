@@ -100,7 +100,7 @@ restart, open connections from that client are closed.
 Three places, which must agree:
 
 1. `PermitOpen` in `stacks/bastion/files/sshd_config`
-2. `local.targets` in `stacks/bastion/main.tf` (NetworkPolicy egress)
+2. `local.targets` in `stacks/bastion/main.tf` (Calico egress policy `bastion-egress`)
 3. The client config table in this runbook
 
 ## What gets logged
@@ -120,8 +120,9 @@ Three places, which must agree:
   penalties would let one client's failures lock out the rest.
 - sshd: public keys only, `MaxAuthTries 2`, `LoginGraceTime 20`, no TTY, no shell
   (`ForceCommand /sbin/nologin`), forwarding only to the `PermitOpen` targets.
-- NetworkPolicy: ingress only from the `traefik` namespace on 22; egress only to the three
-  targets on 22.
+- Ingress only from the `traefik` namespace on 22 (Kubernetes NetworkPolicy). Egress only to the
+  three targets on 22, then an explicit Deny (Calico NetworkPolicy `bastion-egress`, order 100).
+  A Kubernetes egress policy alone has no effect in this namespace, see `docs/agents/known-issues.md`.
 - CrowdSec's Traefik plugin is HTTP middleware and does not apply to TCP routes.
 
 ## Troubleshooting
@@ -132,4 +133,4 @@ Three places, which must agree:
 | TLS works, SSH hangs with no banner | `kubectl -n traefik logs deploy/traefik \| grep -i bastion`, and `kubectl get ingressroutetcp -n bastion` |
 | `Permission denied (publickey)` | The client's key is not in Vault, or the pod has not restarted since. Check the pod log for the `ready` line |
 | `administratively prohibited: open failed` | The target is not in `PermitOpen` |
-| Hop opens but the target never answers | The NetworkPolicy egress list is missing the target |
+| Hop opens but the target never answers | The Calico `bastion-egress` policy is missing the target |
