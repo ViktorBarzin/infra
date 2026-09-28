@@ -72,8 +72,11 @@ flowchart TD
 - sshd settings: public keys only, `PermitOpen` limited to the three targets, `ForceCommand`
   to `nologin`, no TTY, no agent/X11/stream-local forwarding, no tunnels, `MaxAuthTries 2`,
   `LoginGraceTime 20`, `LogLevel VERBOSE` so the key fingerprint is logged with each login.
-- **Containment.** A NetworkPolicy lets the pod receive traffic only from Traefik on 22 and
-  send traffic only to the three targets on 22. If sshd ever had a pre-auth vulnerability, a
+- **Containment.** A Kubernetes NetworkPolicy lets the pod receive traffic only from Traefik on
+  22, and a Calico NetworkPolicy lets it send traffic only to the three targets on 22, then
+  denies the rest. (Egress has to be Calico-native: in tier 3-edge/4-aux namespaces the
+  `wave1-egress-observe-tier34` policy allows all egress after Kubernetes policies are
+  evaluated, so a Kubernetes egress policy alone restricts nothing. Found during rollout.) If sshd ever had a pre-auth vulnerability, a
   compromised pod could reach three sshd prompts and nothing else.
 
 ### Client configuration
