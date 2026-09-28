@@ -100,10 +100,13 @@ in the data for comparison; it just doesn't post twice.
 
 ### Mac probe
 
-A launchd agent kept in `dot_files`. Every second it pings the Flint, two public
-IPv4 addresses and (after cutover) one IPv6 address, and resolves a name through
-the Flint. Every 5 seconds it records SSID, BSSID, channel, RSSI and rate. A drop
-is 5 or more consecutive failed public checks while the Flint still answers. When
+A launchd agent kept in `dot_files`. Every 10 seconds (every 2 seconds after a
+failure) it opens TCP connections to the Flint and two public IPs, and every 30
+seconds it resolves a name through the Flint. A drop is 30 seconds or more of
+failed public checks. Revised 2026-09-28: the first version pinged once a
+second with a 5-second threshold, which produced false drops (one-shot pings
+through the Hyperoptic router fail about half the time) and more traffic than a
+30-second outage threshold needs. When
 the path returns, it POSTs one event to Loki and retries until Loki accepts it.
 It buffers while offline or on a network without a route to Sofia.
 
@@ -121,9 +124,11 @@ Installed from the GL plug-ins page and configured in LuCI:
   firmware resets. The system log is also written to a 512 KB file under
   `/overlay` so the lines survive a tunnel outage.
 - A probe started every minute from LuCI → Scheduled Tasks, wrapped in `flock`
-  and `timeout 58`, pinging the current default gateway (read from the route, not
-  hardcoded, since it changes at cutover) and public IPs once a second, and
-  resolving a name. During a drop it records `ip route show default`,
+  and `timeout 58`, making HTTP requests to http://1.1.1.1 and https://8.8.8.8
+  every 10 seconds (every 2 seconds after a failure) and resolving a name every
+  30 seconds; a drop is 30 seconds or more. At the start of a drop it pings the
+  current default gateway (read from the route, since it changes at cutover) to
+  pick the layer. During a drop it records `ip route show default`,
   `ip route get 8.8.8.8`, the kmwan state from `/proc/gl-kmwan`, and the DPI
   queue counters from `/proc/net/netfilter/nfnetlink_queue`. When the path
   returns it POSTs the drop event to Loki and retries until accepted. The API

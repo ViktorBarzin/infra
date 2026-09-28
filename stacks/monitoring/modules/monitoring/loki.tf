@@ -599,12 +599,14 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           # One alert per drop_id on the event lane: Alertmanager posts it once
           # and never sends RESOLVED. The Flint reports upstream drops; the Mac
           # reports only the layers the router cannot see (its Wi-Fi, its DNS).
+          # Drops tagged layer="rehearsal-*" (probe run with REHEARSAL=1) are
+          # stored but never alert.
           # Design: docs/plans/2026-09-27-london-flint-main-router.md.
           name = "London site"
           rules = [
             {
               alert  = "LondonInternetDrop"
-              expr   = "sum by (source, drop_id, layer, duration_s) (count_over_time({job=\"london-drops\", source=\"flint\"} | json duration_s=\"duration_s\" [10m])) > 0"
+              expr   = "sum by (source, drop_id, layer, duration_s) (count_over_time({job=\"london-drops\", source=\"flint\", layer!~\"rehearsal-.*\"} | json duration_s=\"duration_s\" [10m])) > 0"
               for    = "0s"
               labels = { severity = "warning", subsystem = "london", lane = "event" }
               annotations = {

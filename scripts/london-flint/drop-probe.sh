@@ -6,11 +6,15 @@
 # Upload Package). LuCI -> System -> Scheduled Tasks starts it every minute:
 #   * * * * * /usr/bin/flock -n /tmp/drop-probe.lock /usr/bin/timeout 58 /usr/bin/london-drop-probe
 #
-# Once a second it makes an HTTP request to two public IPs from different
-# providers; every 5 seconds it asks an AdGuard upstream for a name directly. An
-# internet drop is DROP_AFTER consecutive seconds with both requests failing
-# (or, for a DNS-only drop, DNS_DROP_AFTER consecutive failed lookups while HTTP
-# works). Any HTTP answer counts as working.
+# Every CHECK_EVERY seconds it makes an HTTP request to two public IPs from
+# different providers, and every DNS_EVERY seconds it asks an AdGuard upstream
+# for a name directly. After a failure it rechecks every RECHECK_EVERY seconds
+# until the path returns, so a drop is timed to within a couple of seconds while
+# the healthy-state traffic stays low. An internet drop is DROP_AFTER seconds or
+# more with both requests failing; a DNS-only drop is DNS_DROP_AFTER seconds or
+# more of failed lookups while HTTP works. Shorter blips are not reported: the
+# outages that matter here last longer than 30 seconds (Viktor, 2026-09-28).
+# Any HTTP answer counts as working.
 #
 # Not ping: behind the Hyperoptic router, a fresh one-shot ping out of the WAN
 # failed about half the time (1.1.1.1 4/8, the gateway 6/8) while a continuous
@@ -37,8 +41,11 @@ DNS_NAME=${DNS_NAME:-example.com}
 # REHEARSAL=1 prefixes the layer with "rehearsal-" so a test drop is labelled
 # as one in Loki and Slack.
 REHEARSAL=${REHEARSAL:-0}
-DROP_AFTER=5
-DNS_DROP_AFTER=2
+CHECK_EVERY=10
+DNS_EVERY=30
+RECHECK_EVERY=2
+DROP_AFTER=30
+DNS_DROP_AFTER=30
 # Traefik redirects HTTP to HTTPS and the wildcard cert does not cover .lan, so
 # pin the name to the internal Traefik IP and skip verification (the path is
 # inside the WireGuard tunnel).
@@ -61,13 +68,13 @@ gateway_alive() {
 gateway() { ip -4 route show default table main | awk '/default/ {print $3; exit}'; }
 
 load_state() {
-	first_fail=0; dns_fail=0; start=0; layer=""; last_dns=0
+	first_fail=0; dns_first_fail=0; start=0; layer=""; last_dns=0
 	[ -f "$STATE" ] && . "$STATE"
 }
 
 save_state() {
-	printf 'first_fail=%s\ndns_fail=%s\nstart=%s\nlayer=%s\nlast_dns=%s\n' \
-		"$first_fail" "$dns_fail" "$start" "$layer" "$last_dns" >"$STATE"
+	printf 'first_fail=%s\ndns_first_fail=%s\nstart=%s\nlayer=%s\nlast_dns=%s\n' \
+		"$first_fail" "$dns_first_fail" "$start" "$layer" "$last_dns" >"$STATE"
 }
 
 snapshot() {
@@ -138,7 +145,7 @@ tick() {
 
 	if [ "$r1" != 0 ] && [ "$r2" != 0 ]; then
 		[ "$first_fail" = 0 ] && first_fail=$now
-		if [ $((now - first_fail + 1)) -ge "$DROP_AFTER" ] && [ "$start" = 0 ]; then
+		if [ $((now - first_fail)) -ge "$DROP_AFTER" ] && [ "$start" = 0 ]; then
 			start=$first_fail
 			if gateway_alive "$(gateway)"; then layer=internet; else layer=gateway; fi
 			[ "$REHEARSAL" = 1 ] && layer="rehearsal-$layer"
@@ -154,18 +161,20 @@ tick() {
 	fi
 	first_fail=0
 
-	if [ $((now - last_dns)) -ge 5 ]; then
+	local dns_every=$DNS_EVERY
+	[ "$dns_first_fail" != 0 ] && dns_every=$RECHECK_EVERY
+	if [ $((now - last_dns)) -ge "$dns_every" ]; then
 		last_dns=$now
 		if nslookup "$DNS_NAME" "$DNS_SERVER" >/dev/null 2>&1; then
 			if [ "$start" != 0 ] && [ "$layer" = dns ]; then
 				queue_event "$now"
 				start=0; layer=""
 			fi
-			dns_fail=0
+			dns_first_fail=0
 		else
-			dns_fail=$((dns_fail + 1))
-			if [ "$dns_fail" -ge "$DNS_DROP_AFTER" ] && [ "$start" = 0 ]; then
-				start=$((now - 5 * (DNS_DROP_AFTER - 1)))
+			[ "$dns_first_fail" = 0 ] && dns_first_fail=$now
+			if [ $((now - dns_first_fail)) -ge "$DNS_DROP_AFTER" ] && [ "$start" = 0 ]; then
+				start=$dns_first_fail
 				layer=dns
 				snapshot
 			fi
@@ -174,12 +183,22 @@ tick() {
 	save_state
 }
 
+# Seconds to wait before the next HTTP check.
+interval() {
+	if [ "$first_fail" != 0 ] || [ "$dns_first_fail" != 0 ]; then
+		echo "$RECHECK_EVERY"
+	else
+		echo "$CHECK_EVERY"
+	fi
+}
+
 load_state
 flush_queue
 end_at=$(( $(date +%s) + 57 ))
 while [ "$(date +%s)" -lt "$end_at" ]; do
 	t0=$(date +%s)
 	tick
-	[ "$(date +%s)" = "$t0" ] && sleep 1
+	next=$((t0 + $(interval)))
+	while [ "$(date +%s)" -lt "$next" ] && [ "$(date +%s)" -lt "$end_at" ]; do sleep 1; done
 done
 flush_queue

@@ -192,7 +192,7 @@ The network in Viktor's London flat: one GL.iNet Flint 2 router serving a main L
 _Avoid_: "London LAN" for the whole site (the guest network is part of it too); "the Hyperoptic network" (that was the ISP router upstream of the Flint, returned in Oct 2026).
 
 **Internet drop**:
-A period of 5 seconds or more in which a London client cannot reach the public internet while the Flint itself still answers it. The unit the London monitoring detects and reports, one Slack message per drop.
+A period of 30 seconds or more in which a London client cannot reach the public internet while the Flint itself still answers it. Shorter blips are not reported. The unit the London monitoring detects and reports, one Slack message per drop.
 _Avoid_: "stall" (suggests one slow connection, not the whole path); "outage" (implies the router or the tunnel is down).
 
 **Wi-Fi drop**:
