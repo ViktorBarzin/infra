@@ -1,0 +1,39 @@
+# Bastion sshd: jump-only. Clients authenticate with their own key, then
+# ProxyJump (`ssh -W` / direct-tcpip) to one of the PermitOpen targets.
+# No shell, no TTY, no other forwarding. Design:
+# docs/plans/2026-09-28-ssh-bastion-443-design.md
+
+Port 22
+HostKey /run/bastion/ssh_host_ed25519_key
+PidFile /run/bastion/sshd.pid
+
+# The image's sshd is the PAM build; accounts are created by entrypoint.sh
+# with an unlockable '*' password field, so PAM adds nothing here.
+UsePAM no
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AuthorizedKeysFile /run/bastion/authorized_keys/%u
+
+MaxAuthTries 2
+LoginGraceTime 20
+MaxStartups 10:30:30
+MaxSessions 4
+ClientAliveInterval 30
+ClientAliveCountMax 4
+
+AllowTcpForwarding local
+PermitOpen 10.0.10.10:22 10.0.20.1:22 192.168.1.127:22
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+X11Forwarding no
+PermitTunnel no
+GatewayPorts no
+PermitTTY no
+PermitUserRC no
+ForceCommand /sbin/nologin
+
+# VERBOSE logs the key fingerprint with each "Accepted publickey" line; the
+# Loki rule BastionLogin in stacks/monitoring keys off that line.
+LogLevel VERBOSE

@@ -134,7 +134,7 @@ _Avoid_: reading "see the infra" as access to secrets or apply rights; citing th
 ### Networking
 
 **Public domain**:
-`viktorbarzin.me`, served through Cloudflare. DNS records are either **proxied** (Cloudflare CDN/WAF in front) or **non-proxied** (direct A/AAAA reachable via Cloudflared Tunnel).
+`viktorbarzin.me`, served through Cloudflare. DNS records are either **proxied** (Cloudflare CDN/WAF in front) or **non-proxied** (A/AAAA pointing straight at the home public address, reaching Traefik through the edge-router and pfSense port forwards, with no Cloudflare hop).
 _Avoid_: "external", "outside".
 
 **Internal domain**:
@@ -162,8 +162,12 @@ A standalone Authentik deployment that terminates the proxy/auth flow for a spec
 _Avoid_: conflating outpost with Authentik core; "Authentik instance".
 
 **Cloudflared Tunnel**:
-The channel by which non-proxied **public domain** traffic reaches the cluster, terminating at Traefik. Backs every `dns_type = "non-proxied"` record and is the fallback path for the wildcard `*.viktorbarzin.me`.
-_Avoid_: "the tunnel" without "Cloudflared" (could mean Headscale).
+The outbound channel from the cluster to Cloudflare that carries **proxied** **public domain** traffic, terminating at Traefik. It backs the wildcard `*.viktorbarzin.me` and any record without an explicit entry of its own. It does not carry **non-proxied** records; those arrive directly on the home public address.
+_Avoid_: "the tunnel" without "Cloudflared" (could mean Headscale or the HE IPv6 tunnel).
+
+**Bastion**:
+The jump-only SSH entry point reachable from the internet on port 443 at `ssh.viktorbarzin.me`, with SSH carried inside TLS so it passes networks that only allow HTTPS. It gives no shell: a client authenticates with its own key and then hops (ProxyJump) to one of an allowlisted set of internal sshd targets. It runs in the cluster, so it is unavailable when the cluster is; the **break-glass** paths are the ones that do not depend on the cluster.
+_Avoid_: "sslh" (a protocol multiplexer we chose not to use), "jump box", "SSH gateway"; calling it a break-glass path.
 
 **Ingress chain**:
 The opinionated stack of Traefik middlewares that `ingress_factory` layers onto every Ingress. Slots, in order: forward-auth (per **Ingress auth**) → anti-AI scraping (default-on when no Authentik is in the path) → retry (2× / 100ms) → rate-limit (429, not 503). Adding or removing a middleware is a Stack-level choice, but the chain order is convention.

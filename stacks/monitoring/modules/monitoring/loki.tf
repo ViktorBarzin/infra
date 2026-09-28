@@ -593,6 +593,27 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Bastion (2026-09-28): one Slack post per successful login to the
+          # SSH-on-443 jump pod (stacks/bastion), at Viktor's request. sshd
+          # sees Traefik's pod IP, not the client's, so the post names the
+          # client account and key fingerprint. drop_id is the per-connection
+          # source port, which gives each login its own alert on the event
+          # lane (posted once, never RESOLVED).
+          # Design: docs/plans/2026-09-28-ssh-bastion-443-design.md.
+          name = "Bastion"
+          rules = [
+            {
+              alert  = "BastionLogin"
+              expr   = "sum by (client, fingerprint, drop_id) (count_over_time({namespace=\"bastion\"} |= \"Accepted publickey\" | regexp \"Accepted publickey for (?P<client>\\\\S+) from \\\\S+ port (?P<port>\\\\d+) ssh2: \\\\S+ (?P<fingerprint>\\\\S+)\" | label_format drop_id=`bastion-{{.port}}` [2m])) > 0"
+              for    = "0s"
+              labels = { severity = "warning", subsystem = "bastion", lane = "event" }
+              annotations = {
+                summary = "Bastion login: client {{ $labels.client }} ({{ $labels.fingerprint }}) via ssh.viktorbarzin.me:443"
+              }
+            },
+          ]
+        },
+        {
           # London site (2026-09-27). Drop events are pushed by the Flint's
           # probe and the Mac's probe AFTER the path returns, each line stamped
           # with its push time, so a 10m window catches every one exactly once.
