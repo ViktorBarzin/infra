@@ -504,7 +504,7 @@ resource "kubernetes_endpoints" "session_events" {
 # public ingress.
 #
 # /browser was added on 2026-10-01 for the session browser (terminal-lobby
-# ADR-0029). Each Claude session now drives its own headless Chrome, and the
+# ADR-0035). Each Claude session now drives its own headless Chrome, and the
 # lobby shows it live and lets the person take control. GET /browser/{session}
 # reports whether the session has one; GET /browser/{session}/stream is a
 # WebSocket carrying the page frames one way and the person's clicks, keys and
