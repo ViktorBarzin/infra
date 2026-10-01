@@ -503,6 +503,14 @@ resource "kubernetes_endpoints" "session_events" {
 # /hooks/* is deliberately absent: it is loopback-only and must stay off the
 # public ingress.
 #
+# /browser was added on 2026-10-01 for the session browser (terminal-lobby
+# ADR-0029). Each Claude session now drives its own headless Chrome, and the
+# lobby shows it live and lets the person take control. GET /browser/{session}
+# reports whether the session has one; GET /browser/{session}/stream is a
+# WebSocket carrying the page frames one way and the person's clicks, keys and
+# navigation the other. Without the route the lobby's browser card and panel
+# 404 and the person cannot see what the agent is doing in the browser.
+#
 # /model was added on 2026-09-05: which model a session answers on, and how hard
 # it thinks. Neither is a launch flag — the terminal attach carries a command
 # KEY rather than a command line, and the pre-warm pool warms the bare `claude`
@@ -560,7 +568,7 @@ resource "kubernetes_manifest" "session_events_ingressroute" {
     spec = {
       entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`) || PathPrefix(`/answer/`) || PathPrefix(`/model/`))"
+        match = "Host(`terminal.viktorbarzin.me`) && (PathPrefix(`/events/`) || PathPrefix(`/prompt/`) || PathPrefix(`/cancel/`) || PathPrefix(`/earlier/`) || PathPrefix(`/result/`) || PathPrefix(`/pane/`) || PathPrefix(`/keys/`) || PathPrefix(`/commands/`) || PathPrefix(`/search/`) || PathPrefix(`/answer-text/`) || PathPrefix(`/answer/`) || PathPrefix(`/model/`) || PathPrefix(`/browser/`))"
         kind  = "Rule"
         middlewares = [
           {

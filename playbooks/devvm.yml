@@ -1461,10 +1461,21 @@
     # its own reasoning, including how the reaper is kept away from a browser
     # a person started themselves.
     #
-    # Note for a rebuild: playwright-mcp@.service and its snapshot-refresh
-    # timer are NOT declared by this playbook. They were hand-installed in
-    # /etc/systemd/system on 2026-06-20 and no repository holds them, so a
-    # fresh machine gets this cap and this reaper with nothing to act on.
+    # Where the browsers come from. playwright-mcp@.service and the
+    # playwright-snapshot-refresh@ service and timer are not declared by this
+    # playbook: they live in git under scripts/workstation/playwright/ (since
+    # commit 0a6ed4b2), setup-devvm.sh section 9e installs them, and
+    # t3-provision-users.sh enables one instance per user. They were first
+    # hand-installed in /etc/systemd/system on 2026-06-20, before that commit.
+    #
+    # Since 2026-10-01 there is a second kind of browser. terminal-lobby's
+    # tl-browser starts one headless Chrome per Claude session, in a scope
+    # inside that user's own tl-browser.slice (user@<uid>.service/tl.slice/
+    # tl-browser.slice), capped per scope by the launcher itself. The cap below
+    # does not cover those, because they are not in the system slice, but the
+    # reaper does: it accepts a gpu-process from either place. As each user's
+    # Claude entry moves to tl-browser, t3-provision-users.sh stops that user's
+    # playwright-mcp@ instance once no Claude session still uses it.
     - name: Cap the playwright-mcp browser slice
       ansible.builtin.copy:
         src: files/devvm/50-devvm-playwright-cpu.conf
@@ -1906,8 +1917,7 @@
     # declared in no repository. It predates any playbook entry for Tailscale,
     # and this section deliberately leaves it where it is — adopting it is a
     # separate change, and the ports here are chosen so the two never collide.
-    # A rebuilt machine therefore gets this leg and not emo's, the same gap
-    # section 8a records for playwright-mcp@.service.
+    # A rebuilt machine therefore gets this leg and not emo's.
     #
     # UNTAGGED, on purpose. Tagging the node needs tagOwners and an acls entry
     # in stacks/headscale/acl.hujson, which is git-crypt encrypted and edited
