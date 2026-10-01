@@ -552,7 +552,7 @@ install_user_claude_native() {
 # /usr/local/bin/tl-browser, step (2) points the entry at it instead: a stdio
 # launcher that gives each Claude session its own browser, which the person can
 # watch and take over from the lobby, and which is shut when the agent is done
-# (terminal-lobby ADR-0029). The shared playwright-mcp@ server then stays up
+# (terminal-lobby ADR-0035). The shared playwright-mcp@ server then stays up
 # only while a Claude process that read the old http entry is still running,
 # see playwright_stdio_settled.
 install_playwright() {
