@@ -147,9 +147,11 @@ resource "kubernetes_deployment" "authfix" {
     }
     annotations = {
       # Opt out of Keel, and say so here rather than letting Kyverno decide.
-      # inject-keel-annotations EXCLUDES a workload that already carries
-      # policy=never, so declaring it also stops the trigger/pollSchedule pair
-      # being added and then removed on every apply.
+      # policy=never is what keeps Keel from acting on this pod. It does NOT
+      # stop Kyverno's background pass from adding the trigger/pollSchedule
+      # pair (they were back by 2026-10-01, days after an apply removed them),
+      # so the lifecycle block below ignores those two and leaves this one
+      # enforced.
       #
       # never, not patch: this pod answers the 400 on the forward-auth callback
       # for the whole estate, and it runs a stock upstream python image. An
@@ -196,7 +198,16 @@ resource "kubernetes_deployment" "authfix" {
     }
   }
   lifecycle {
-    ignore_changes = [spec[0].template[0].spec[0].dns_config] # KYVERNO_LIFECYCLE_V1
+    ignore_changes = [
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # policy=never above does not stop Kyverno's background pass from
+      # adding the trigger/pollSchedule pair (seen again 2026-10-01 after the
+      # 09-27 apply removed them). keel.sh/policy is deliberately NOT ignored,
+      # so Terraform keeps enforcing never, which is what keeps Keel off it.
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+    ]
   }
 }
 

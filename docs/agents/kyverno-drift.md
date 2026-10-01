@@ -36,7 +36,7 @@ this rule's resource list, which is how they were overlooked.
 
 ### `# KYVERNO_LIFECYCLE_V2` — Keel auto-update annotations
 
-When a namespace is labeled `keel.sh/enrolled=true`, the `inject-keel-annotations` ClusterPolicy (`stacks/kyverno/modules/kyverno/keel-annotations.tf`) injects these annotations on every Deployment / StatefulSet / DaemonSet:
+When a namespace is labeled `keel.sh/enrolled=true` (and, through the policy's background rule, in practice on almost every namespace; see the note after the block), the `inject-keel-annotations` ClusterPolicy (`stacks/kyverno/modules/kyverno/keel-annotations.tf`) injects these annotations on every Deployment / StatefulSet / DaemonSet:
 
 ```
 keel.sh/policy: patch
@@ -105,7 +105,7 @@ against today's drift report.
 
 **Multi-container caveat**: `container[0].image` only covers the first container. Add one `container[N].image` line for **every** container index, plus `init_container[N].image` for init containers — otherwise the un-ignored container's image still drifts/downgrades.
 
-The `KEEL_LIFECYCLE_V1` + per-container `KEEL_IGNORE_IMAGE` lines were swept across all enrolled workloads on **2026-05-28** (previously only `llama-cpp` had them; the rest fought on every apply). New enrolled workloads must include the full block. Workloads in un-enrolled namespaces don't receive the annotations and don't need the block.
+The `KEEL_LIFECYCLE_V1` + per-container `KEEL_IGNORE_IMAGE` lines were swept across all enrolled workloads on **2026-05-28** (previously only `llama-cpp` had them; the rest fought on every apply). New enrolled workloads must include the full block. Workloads in un-enrolled namespaces need the keel lines too, even though nothing enrolled them: the policy's background rule (`mutateExistingOnPolicyUpdate`) patches whatever its `targets` name, and `targets` is not scoped by the namespace label, so it reaches every Deployment, StatefulSet and DaemonSet except those in `authentik`. That reach was measured on 2026-09-19 (42 workloads in un-enrolled namespaces) and accepted rather than narrowed (bead code-q9iy). The cost of missing the lines is drift that comes back after every apply: on 2026-10-01 `learn`, `browser-bridge`, `bastion` and traefik's `authfix` had the annotations re-added within days of the 09-27 apply that removed them. A workload that opts out with `keel.sh/policy = "never"` (as `authfix` does) still gets `trigger` and `pollSchedule`, so it ignores those two and keeps `keel.sh/policy` enforced.
 
 Per-workload opt-out: add the label `keel.sh/policy: never` on the Deployment metadata (not pod template); the policy's `exclude` clause respects it, no annotation gets injected, no `ignore_changes` needed.
 
