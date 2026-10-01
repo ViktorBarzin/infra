@@ -27,7 +27,9 @@
 # tune on every node" entry) records the durable fix as one of two things:
 # putting these keys into the `kubelet-config` ConfigMap that kubeadm writes node
 # config from, or re-running the tune from the `k8s-version-upgrade` pipeline
-# after each node upgrade. Neither is built. A playbook that reconciles on every
+# after each node upgrade. The ConfigMap one is built as of 2026-10-01
+# (stacks/rbac/modules/rbac/kubelet-config-tuning.tf), after the v1.35.9 upgrade
+# erased the tune a second time. Before that, neither was. A playbook that reconciles on every
 # run is a third option, and it is the one taken here — chosen because it is the
 # only one of the three that also catches a node rebuilt rather than upgraded,
 # and because it needs nothing from the upgrade pipeline.
@@ -396,6 +398,9 @@
     # The keys merged over whatever kubeadm last wrote. Shallow merge: each key
     # here replaces the node's value wholesale, which is what we want for all of
     # them. allowedUnsafeSysctls is unioned separately, below.
+    # Mirrored in stacks/rbac/modules/rbac/kubelet-config-tuning.tf, which puts
+    # the same keys into kubeadm's kubelet-config ConfigMap so upgrades keep them.
+    # Change both together.
     kubelet_declared:
       # Pins the value all six nodes already run, so the file matches reality and
       # future drift shows up as a diff instead of as silence. This deliberately
