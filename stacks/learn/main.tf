@@ -614,6 +614,14 @@ resource "kubernetes_deployment" "prep_sync" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].labels["tier"],             # stamped by Kyverno sync-tier-label-from-namespace
+      # Kyverno's inject-keel-annotations background rule patches every
+      # Deployment, enrolled namespace or not (accepted 2026-09-19, bead
+      # code-q9iy), so removing these only lasts until its next pass.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }

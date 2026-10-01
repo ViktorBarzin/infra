@@ -339,6 +339,14 @@ resource "kubernetes_deployment" "browser_bridge" {
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
+      # Kyverno's inject-keel-annotations background rule patches every
+      # Deployment, enrolled namespace or not (accepted 2026-09-19, bead
+      # code-q9iy); they came back within days of the 09-27 apply.
+      metadata[0].annotations["keel.sh/policy"],
+      metadata[0].annotations["keel.sh/trigger"],
+      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
     ]
   }
 }
