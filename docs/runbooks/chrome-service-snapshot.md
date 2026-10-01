@@ -13,6 +13,7 @@ external Claude Code sessions on the dev box. Architecture in
 | snapshot-harvester CronJob | `chrome-service` ns | `23 * * * *` | reads the master's cookies over raw CDP → `/profile/snapshots/storage-state.json` |
 | dev-box refresh timer | each dev box, per OS user | hourly (`*:28`) | `playwright-snapshot-refresh@<user>.timer` curls `chrome.viktorbarzin.me/api/snapshot` → `~/.cache/playwright-shared-storage-state.json` |
 | dev-box `playwright-mcp@<user>.service` | each dev box, per OS user | always-on | pinned `@playwright/mcp@<ver> --isolated --storage-state=…` on the user's `PLAYWRIGHT_PORT`; per-MCP-connection (per-session) contexts |
+| dev-box `tl-browser` (terminal-lobby) | each dev box, per Claude session | while the agent browses | since 2026-10-01: stdio launcher started by Claude itself; one headless Chrome per session in the user's `tl-browser.slice`, context seeded from the same `~/.cache/playwright-shared-storage-state.json`. Replaces `playwright-mcp@<user>` once `t3-provision-users.sh` switches the user (see `docs/architecture/multi-tenancy.md`) |
 
 ## Provisioning (reproducible from git)
 

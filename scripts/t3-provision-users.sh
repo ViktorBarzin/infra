@@ -547,8 +547,18 @@ install_user_claude_native() {
 # template instances (idempotent — does NOT restart an already-running server).
 # Needs PLAYWRIGHT_PORT already in the per-user playwright env (written by the
 # section-5c loop) + the token staged by setup-devvm.sh (section 8c).
+#
+# Since 2026-10-01, once terminal-lobby's package has installed
+# /usr/local/bin/tl-browser, step (2) points the entry at it instead: a stdio
+# launcher that gives each Claude session its own browser, which the person can
+# watch and take over from the lobby, and which is shut when the agent is done
+# (terminal-lobby ADR-0029). The shared playwright-mcp@ server then stays up
+# only while a Claude process that read the old http entry is still running,
+# see playwright_stdio_settled.
 install_playwright() {
   local user="$1" home port token_staged=/etc/t3-serve/chrome-service-token
+  local tl_browser="${TL_BROWSER_BIN:-/usr/local/bin/tl-browser}"
+  local since_file="$STATEDIR/playwright-stdio-$user.since" entry
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n "$home" && -d "$home" ]] || return 0
   port="$(grep -oE 'PLAYWRIGHT_PORT=[0-9]+' "$ENVDIR/playwright-$user.env" 2>/dev/null | cut -d= -f2 || true)"
@@ -567,11 +577,36 @@ install_playwright() {
   fi
 
   # (2) wire user-scope ~/.claude.json (AS the user, login shell so the native
-  #     ~/.local/bin/claude is on PATH; clobber-proof + if-absent via `mcp get`)
+  #     ~/.local/bin/claude is on PATH; clobber-proof + if-absent via `mcp get`).
+  #     With tl-browser installed the entry is the stdio launcher. An entry this
+  #     script wrote earlier (http to a localhost /mcp URL) is replaced, and the
+  #     moment of the switch is recorded once in a root-owned file. Any other
+  #     `playwright` entry is the user's own choice and is left alone.
   if [[ "$DRY_RUN" == 1 ]]; then
-    echo "[dry-run] wire playwright MCP (:$port) if-absent -> $user"
+    if [[ -x "$tl_browser" ]]; then
+      echo "[dry-run] wire playwright MCP (stdio $tl_browser, replacing the http entry) -> $user"
+    else
+      echo "[dry-run] wire playwright MCP (:$port) if-absent -> $user"
+    fi
   elif runuser -u "$user" -- bash -lc 'command -v claude >/dev/null 2>&1'; then
-    if ! runuser -u "$user" -- bash -lc 'claude mcp get playwright >/dev/null 2>&1'; then
+    entry="$(runuser -u "$user" -- bash -lc 'claude mcp get playwright 2>/dev/null')" || entry=""
+    if [[ -x "$tl_browser" ]]; then
+      if grep -qE 'URL: http://localhost:[0-9]+/mcp' <<<"$entry"; then
+        runuser -u "$user" -- bash -lc 'claude mcp remove --scope user playwright >/dev/null 2>&1' \
+          || log "WARN: claude mcp remove playwright failed for $user"
+        entry=""
+      fi
+      if [[ -z "$entry" ]]; then
+        runuser -u "$user" -- bash -lc "claude mcp add --scope user playwright -- '$tl_browser' >/dev/null 2>&1" \
+          && entry="$tl_browser" \
+          && log "wired playwright MCP (user scope, stdio $tl_browser) -> $user" \
+          || log "WARN: claude mcp add playwright (stdio) failed for $user (retries next run)"
+      fi
+      if [[ "$entry" == *"$tl_browser"* && ! -s "$since_file" ]]; then
+        date +%s > "$since_file.tmp" && mv -f "$since_file.tmp" "$since_file" \
+          && log "recorded the playwright stdio switch for $user"
+      fi
+    elif [[ -z "$entry" ]]; then
       runuser -u "$user" -- bash -lc "claude mcp add --scope user --transport http playwright 'http://localhost:$port/mcp' >/dev/null 2>&1" \
         && log "wired playwright MCP (user scope, :$port) -> $user" \
         || log "WARN: claude mcp add playwright failed for $user (retries next run)"
@@ -603,8 +638,35 @@ install_playwright() {
     log "playwright MCP DISABLED for $user (roster parked: true)"
     return 0
   fi
-  run systemctl enable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
+  # The snapshot-refresh timer keeps the shared storage state fresh, and
+  #     tl-browser's host reads that same file, so it stays on either way.
   run systemctl enable --now "playwright-snapshot-refresh@$user.timer" >/dev/null 2>&1 || true
+  if [[ -x "$tl_browser" ]] && playwright_stdio_settled "$user" "$since_file"; then
+    if systemctl is-enabled --quiet "playwright-mcp@$user.service" 2>/dev/null; then
+      run systemctl disable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
+      log "playwright-mcp@$user retired: every Claude session of $user uses tl-browser now"
+    fi
+    return 0
+  fi
+  run systemctl enable --now "playwright-mcp@$user.service" >/dev/null 2>&1 || true
+}
+
+# True once USER's playwright entry has been switched to tl-browser (SINCE_FILE
+# holds the epoch second it happened) AND every claude process USER has running
+# started after that second. Claude reads ~/.claude.json at launch, so a session
+# started before the switch still talks to the shared http server; stopping that
+# server under it would break its browser tools mid-task.
+playwright_stdio_settled() {
+  local user="$1" since_file="$2" since now etimes comm
+  [[ -s "$since_file" ]] || return 1
+  since="$(cat "$since_file")"
+  [[ "$since" =~ ^[0-9]+$ ]] || return 1
+  now="$(date +%s)"
+  while read -r etimes comm; do
+    [[ "$comm" == claude && "$etimes" =~ ^[0-9]+$ ]] || continue
+    (( now - etimes > since )) || return 1
+  done < <(ps -u "$user" -o etimes=,comm= 2>/dev/null)
+  return 0
 }
 
 # Stop + disable + rename the pre-template per-user playwright units, if present.

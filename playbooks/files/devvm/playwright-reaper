@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kill a playwright-mcp Chrome GPU process that has wedged at high CPU.
+"""Kill a playwright Chrome GPU process that has wedged at high CPU.
 
 Background (infra bead code-r725). On 2026-06-12 a headless Chrome from the
 playwright-shared MCP pinned its swiftshader-webgl gpu-process at about 10.5
@@ -17,12 +17,25 @@ A process has to satisfy all three of these before it is even considered:
   1. its argv contains --type=gpu-process
   2. its argv contains --user-data-dir=/tmp/playwright_chromiumdev_profile...
      (playwright appends a random suffix per launch, so this is a prefix test)
-  3. its cgroup is inside system-playwright\x2dmcp.slice
+  3. its cgroup is inside one of the two slices that hold automation browsers:
+     - system-playwright\x2dmcp.slice, the shared playwright-mcp@ units
+     - a user's tl-browser.slice, where terminal-lobby's tl-browser starts the
+       per-session browser each Claude session drives (added 2026-10-01).
+       tl-browser runs it as `systemd-run --user --scope
+       --slice=tl-browser.slice`, and systemd reads the dash in a slice name
+       as nesting, so the measured path is
+       user@<uid>.service/tl.slice/tl-browser.slice/tl-browser-<id>.scope.
+       A slice spelled tl\x2dbrowser.slice is accepted as well.
 
 Check 3 is the one that actually guarantees safety. A browser a person started
-lives in their own user-<uid>.slice and can never appear inside the MCP's
-system slice, whatever its arguments look like. Checks 1 and 2 are there so
-that a healthy renderer or network process in the same slice is left alone.
+lives in their session scope or their own app slice and can never appear
+inside either of those, whatever its arguments look like: the system slice
+belongs to the MCP units, and only tl-browser places anything in
+tl-browser.slice. Checks 1 and 2 are there so that a healthy renderer or
+network process in the same slice is left alone.
+
+A tl-browser host freezes an idle browser with SIGSTOP. A stopped process uses
+no CPU and so earns no strikes; the reaper only acts on one that is running.
 
 HOW "SUSTAINED" IS MEASURED.
 Instantaneous CPU is noise: a normal GPU process spikes hard while a page
@@ -54,7 +67,13 @@ import time
 STATE_DIR = os.environ.get("PLAYWRIGHT_REAPER_STATE_DIR", "/run/playwright-reaper")
 PROFILE_PREFIX = "--user-data-dir=/tmp/playwright_chromiumdev_profile"
 GPU_ARG = "--type=gpu-process"
-SLICE_MARKER = "system-playwright\\x2dmcp.slice"
+# Matched against /proc/<pid>/cgroup. Each ends in "/" so a unit whose name
+# merely begins with the same words does not match.
+SLICE_MARKERS = (
+    "/system-playwright\\x2dmcp.slice/",
+    "/tl.slice/tl-browser.slice/",
+    "/tl\\x2dbrowser.slice/",
+)
 
 CLK_TCK = os.sysconf("SC_CLK_TCK")
 
@@ -91,6 +110,13 @@ def read(path):
         return fh.read()
 
 
+def eligible(cmdline, cgroup):
+    """True when a process passes all three checks in the docstring above."""
+    if GPU_ARG not in cmdline or PROFILE_PREFIX not in cmdline:
+        return False
+    return any(marker in cgroup for marker in SLICE_MARKERS)
+
+
 def candidates():
     """Yield (pid, starttime, cpu_ticks) for every process safe to consider."""
     for entry in os.listdir("/proc"):
@@ -101,10 +127,8 @@ def candidates():
             cmdline = read("/proc/%d/cmdline" % pid).decode("utf-8", "replace")
             if GPU_ARG not in cmdline:
                 continue
-            if PROFILE_PREFIX not in cmdline:
-                continue
             cgroup = read("/proc/%d/cgroup" % pid).decode("utf-8", "replace")
-            if SLICE_MARKER not in cgroup:
+            if not eligible(cmdline, cgroup):
                 continue
             stat = read("/proc/%d/stat" % pid).decode("utf-8", "replace")
         except (OSError, IOError):
