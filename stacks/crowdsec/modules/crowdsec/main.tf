@@ -558,6 +558,30 @@ resource "kubernetes_pod_disruption_budget_v1" "crowdsec_appsec" {
   }
 }
 
+# The core-rule-set AppSec listener (:7423). The chart's crowdsec-appsec-service
+# only exposes the default listener (:7422), so the second one gets its own
+# Service; the Traefik bouncer's appsecCrsUrl points here.
+resource "kubernetes_service" "crowdsec_appsec_crs" {
+  metadata {
+    name      = "crowdsec-appsec-crs"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+    labels = {
+      app = "crowdsec-appsec-crs"
+    }
+  }
+  spec {
+    selector = {
+      "k8s-app" = "crowdsec"
+      type      = "appsec"
+    }
+    port {
+      name        = "appsec-crs"
+      port        = 7423
+      target_port = 7423
+    }
+  }
+}
+
 # NodePort service for pfSense syslog → CrowdSec agent
 # pfSense sends firewall logs to 10.0.20.202:30514 (any k8s node IP works)
 resource "kubernetes_service" "crowdsec_syslog" {
