@@ -374,6 +374,20 @@ func capabilities() []capability {
 			},
 		},
 		{
+			Intent:  "hand Muse a task only it can do (reach Viktor on WhatsApp, its own connectors, a multi-day errand)",
+			Use:     "homelab delegate muse \"<task>\" [--wait] [--expires 24h]",
+			Instead: "telling the user to ask Muse themselves, or a hand-typed homelab message send",
+			Synonyms: []string{"muse", "delegate", "delegation", "ask muse", "hand off", "meta ai",
+				"errand", "personal agent", "caller"},
+			Detail: []string{
+				"Records the delegation in agent-api, sends Muse the task and its callback",
+				"        address on WhatsApp, and --wait prints Muse's result. Capped at 20 an",
+				"        hour and 100 a day. Needs WhatsApp Web linked in the shared browser",
+				"        and the Muse chat in delegate-contacts + the message allowlist.",
+				"runbook: docs/runbooks/delegations.md",
+			},
+		},
+		{
 			Intent:   "see everything we self-host",
 			Use:      "homelab services [--search X]",
 			Synonyms: []string{"what do we run", "inventory", "services", "catalog", "self-hosted"},

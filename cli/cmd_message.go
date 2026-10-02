@@ -4,6 +4,7 @@ import (
 	"bufio"
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -115,19 +116,28 @@ func messageSend(args []string) error {
 		}
 	}
 
-	runErr := runMessageAutomation(o, "send", to)
+	if err := sendMessageAs(o.via, to, o.text, "send", nil); err != nil {
+		return fmt.Errorf("send failed: %w", err)
+	}
+	fmt.Printf("✓ sent to %s (logged to %s)\n", to, auditPath())
+	return nil
+}
+
+// sendMessageAs runs the send automation to an already-resolved recipient and
+// audits the attempt. Every send goes through here: `message send` after its
+// confirm gate, and `delegate` (action "delegate") after its two-file pin.
+// stderrTee, when set, also receives the automation's stderr so a caller can
+// say why a send failed.
+func sendMessageAs(via, to, text, action string, stderrTee io.Writer) error {
+	runErr := runMessageAutomation(messageOpts{via: via, text: text, stderrTee: stderrTee}, "send", to)
 	result := "sent"
 	if runErr != nil {
 		result = "error: " + runErr.Error()
 	}
-	if aerr := appendAudit(auditPath(), buildAuditRecord(nowRFC3339(), o.via, "send", to, o.text, result)); aerr != nil {
+	if aerr := appendAudit(auditPath(), buildAuditRecord(nowRFC3339(), via, action, to, text, result)); aerr != nil {
 		fmt.Fprintf(os.Stderr, "homelab message: audit-log write failed: %v\n", aerr)
 	}
-	if runErr != nil {
-		return fmt.Errorf("send failed: %w", runErr)
-	}
-	fmt.Printf("✓ sent to %s (logged to %s)\n", to, auditPath())
-	return nil
+	return runErr
 }
 
 func messageRead(args []string) error {
@@ -204,7 +214,7 @@ func runMessageAutomation(o messageOpts, action, to string) error {
 	os.Setenv("HOMELAB_MSG_SEARCH", o.search)
 	os.Setenv("HOMELAB_MSG_LIMIT", strconv.Itoa(o.limit))
 
-	return runBrowser(browserOpts{mode: "run", script: tmp.Name(), sharedCtx: true, timeout: 150})
+	return runBrowser(browserOpts{mode: "run", script: tmp.Name(), sharedCtx: true, timeout: 150, stderrTee: o.stderrTee})
 }
 
 func messageHelp() string {

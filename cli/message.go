@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,6 +37,9 @@ type messageOpts struct {
 	dryRun bool
 	yes    bool
 	help   bool
+	// stderrTee also receives the automation's stderr (delegate uses it to
+	// name a failure); nil leaves stderr going only to the terminal.
+	stderrTee io.Writer
 }
 
 // parseMessageArgs parses args after `message <verb>`. Positionals join into the
@@ -206,7 +210,7 @@ func resolveRecipient(to string, allow []string) (match string, candidates []str
 type auditRecord struct {
 	Time    string `json:"time"`
 	Via     string `json:"via"`
-	Action  string `json:"action"` // send | dry-run
+	Action  string `json:"action"` // send | dry-run | delegate
 	To      string `json:"to"`
 	Chars   int    `json:"chars"`
 	SHA8    string `json:"sha8"`    // sha256(text)[:8] — correlate without storing full text everywhere

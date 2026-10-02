@@ -24,9 +24,13 @@ const cssTitle = (t) => `span[title=${JSON.stringify(t)}]`;
 // punctuation boundaries, with rare "thinking" pauses. Defends against
 // client-side input-cadence fingerprinting (design safety-model §7). Real
 // keyboard events are required anyway — the composer is a Lexical editor.
+//
+// A newline goes in as Shift+Enter: Enter alone sends, so typing a multi-line
+// text (a delegation is one) would otherwise post every line as its own message.
 async function typeHuman(s) {
   for (const ch of s) {
-    await page.keyboard.type(ch);
+    if (ch === '\n') await page.keyboard.press('Shift+Enter');
+    else await page.keyboard.type(ch);
     let d = rnd(55, 150);
     if (ch === ' ') d += rnd(40, 160);
     else if ('.,!?;:'.includes(ch)) d += rnd(120, 380);
