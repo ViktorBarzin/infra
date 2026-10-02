@@ -173,6 +173,12 @@ else
   bad "the tailscale package task is gone; emo's userspace daemon needs the binary"
 fi
 
+# The node's credentials are retired too (2026-10-02): Headscale pre-auth key
+# 19 was expired and Vault secret/devvm-tailscale deleted. Nothing in the
+# playbook or its scripts may mint a new key or read that path again.
+notok grep -qE 'preauthkeys? +create' <<<"$cmds"
+notok grep -rqs 'devvm-tailscale' "$PLAYBOOK" "$HERE/playbooks/files/devvm" "$HERE/scripts"
+
 # The handler for the retired unit is gone, and no notify dangles.
 notok grep -q 'restart tailscaled-agent' "$PLAYBOOK"
 ok test -z "$(walk dangling-notify)"
