@@ -84,7 +84,7 @@ flowchart TD
 | Coraza as a Traefik WASM plugin | The same rule engine, as a second system with its own state. Reported memory and latency problems inside Traefik |
 | Cloudflare managed rules | Only see proxied traffic; the direct :443 path skips them |
 | Per-ingress middleware through `ingress_factory` | Fans out across about 128 stacks, and lock-contended stacks are skipped during apply. The entrypoint attachment plus a host list covers the catchall and hand-rolled ingresses too |
-| A 7-day log-only phase | Offered and declined. A replay of 30 days of real request lines runs before blocking instead |
+| A 7-day log-only phase | Offered and declined. A replay of the last 7 days of unique real request lines runs before blocking instead. 30 days was tried: the September crawl left 845k lines a day and two days alone held 470k unique requests, too many to replay in useful time |
 
 ## Consequences
 
@@ -94,7 +94,12 @@ flowchart TD
 - Every non-skipped request makes one in-cluster HTTP call before reaching its
   backend. The `Overhead` field of the Traefik access log (total time minus
   backend time) measures it; it was about 4-5 ms before this change.
-- The pre-launch replay covers method, path and query only. The access log keeps
+- The pre-launch replay (2026-10-02) sent the 782,025 unique method, host and
+  URI combinations from 2026-09-25 to 2026-10-02 to AppSec; 407,413 were on
+  inspected hosts. It blocked 20,461, and every block was a probe or an exploit
+  attempt (`.env`, `.git`, `.svn`, WordPress webshells, PHP-CGI, ProxyShell,
+  Jira); 933 of them were on real services. No false positive was found.
+- The replay covers method, path and query only. The access log keeps
   no bodies, cookies or authorisation headers, so false positives in JSON or form
   bodies can first appear in production.
 - Forgejo's ingress carries an `ingress_factory` Buffering middleware
