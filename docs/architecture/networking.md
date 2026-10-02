@@ -688,7 +688,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 | MetalLB | `stacks/platform/` (sub-module) | Helm release, IPAddressPool |
 | Cloudflared | `stacks/cloudflared/` | Deployment (3 replicas), tunnel config; runs `--no-autoupdate` (in-place self-updates exited the pods and severed all tunnel WebSockets, 2026-06-09/10) |
 | ingress_factory | `modules/ingress_factory/` | IngressRoute + middleware chain |
-| terminal-api | `stacks/terminal/terminal_api.tf` | IngressRoute + middlewares (allowlist, header strip, rate limit, in-flight cap), agent-api Service/Endpoints, AdminNetworkPolicies `devvm-lobby-ports*`, Cloudflare A/AAAA `terminal-api` |
+| terminal-api | `stacks/terminal/terminal_api.tf`, `stacks/terminal/devvm_lobby_anp.tf` | IngressRoute + middlewares (allowlist, header strip, rate limit, in-flight cap), agent-api Service/Endpoints, AdminNetworkPolicies `devvm-lobby-ports*`, Cloudflare A/AAAA `terminal-api` |
 | Bastion | `stacks/bastion/` | sshd Deployment, IngressRouteTCP + MiddlewareTCP on `websecure`, NetworkPolicy, ExternalSecret, Cloudflare A/AAAA `ssh` |
 
 ### Key Configuration Files

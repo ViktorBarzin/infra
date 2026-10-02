@@ -306,80 +306,22 @@ resource "cloudflare_record" "terminal_api_aaaa" {
 }
 
 # --- in-cluster reach to the devvm Lobby ports ---
-# The devvm's nftables admits the Traefik NODE addresses, and Calico SNATs
-# every pod's egress to its node address, so without this any pod on those
-# nodes could reach ttyd (7681, header-trust auth) or skip Traefik's
-# allowlist and limits on 8710. AdminNetworkPolicy is evaluated before
-# namespace NetworkPolicies and Calico's default tier, and traffic it does not
-# match continues to them unchanged.
-locals {
-  devvm_lobby_ports = [
-    { portNumber = { protocol = "TCP", port = 7681 } },
-    { portRange = { protocol = "TCP", start = 7683, end = 7688 } },
-    { portNumber = { protocol = "TCP", port = 8710 } },
-  ]
-}
-
+# Policy data and the reasoning are in devvm_lobby_anp.tf. Who reaches which
+# port: traefik all of them, headscale only 7681, monitoring only 7684, every
+# other namespace none (pinned by tests/devvm-lobby-anp.test.sh).
 resource "kubernetes_manifest" "devvm_lobby_anp" {
+  for_each = local.devvm_lobby_anps
   manifest = {
     apiVersion = "policy.networking.k8s.io/v1alpha1"
     kind       = "AdminNetworkPolicy"
     metadata = {
-      name = "devvm-lobby-ports"
+      name = each.key
     }
-    spec = {
-      priority = 10
-      subject = {
-        namespaces = {
-          matchExpressions = [{
-            key      = "kubernetes.io/metadata.name"
-            operator = "NotIn"
-            # traefik: the proxy itself. monitoring: scrapes tmux-api :7684
-            # (prometheus_chart_values.tpl). headscale: the subnet-router probe
-            # checks ttyd :7681 (subnet-router-probe.tf). The second policy
-            # below narrows those two to the one port each needs.
-            values = ["traefik", "monitoring", "headscale"]
-          }]
-        }
-      }
-      egress = [{
-        name   = "deny-devvm-lobby"
-        action = "Deny"
-        to     = [{ networks = ["10.0.10.10/32"] }]
-        ports  = local.devvm_lobby_ports
-      }]
-    }
+    spec = each.value
   }
 }
 
-resource "kubernetes_manifest" "devvm_lobby_anp_observers" {
-  manifest = {
-    apiVersion = "policy.networking.k8s.io/v1alpha1"
-    kind       = "AdminNetworkPolicy"
-    metadata = {
-      name = "devvm-lobby-ports-observers"
-    }
-    spec = {
-      priority = 11
-      subject = {
-        namespaces = {
-          matchExpressions = [{
-            key      = "kubernetes.io/metadata.name"
-            operator = "In"
-            values   = ["monitoring", "headscale"]
-          }]
-        }
-      }
-      egress = [{
-        name   = "deny-devvm-lobby-except-probes"
-        action = "Deny"
-        to     = [{ networks = ["10.0.10.10/32"] }]
-        ports = [
-          { portNumber = { protocol = "TCP", port = 7683 } },
-          { portRange = { protocol = "TCP", start = 7685, end = 7688 } },
-          { portNumber = { protocol = "TCP", port = 8710 } },
-        ]
-      }]
-    }
-  }
+moved {
+  from = kubernetes_manifest.devvm_lobby_anp
+  to   = kubernetes_manifest.devvm_lobby_anp["devvm-lobby-ports"]
 }
