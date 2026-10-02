@@ -6,7 +6,7 @@ Meta's cloud. The browser host `terminal.viktorbarzin.me` is separate and unchan
 
 - Config: `stacks/terminal/terminal_api.tf`, plus `playbooks/devvm.yml` (agent-api bind, nftables)
 - Ban scenario: `viktor/terminal-api-auth-bf` in `stacks/crowdsec`
-- Alerts: `TerminalApiAuthFailure`, `TerminalApiBlockedSurge` (Slack #alerts, security lane)
+- Alerts: `TerminalApiAuthFailure`, `TerminalApiBlockedSurge` (Slack #alerts, security lane); `AgentApiDelegationUndelivered` (event lane, see [delegations.md](delegations.md))
 
 ## How a request is checked
 
@@ -32,7 +32,7 @@ cluster-admin kubeconfig and a Vault token on the devvm (Viktor's decision, 2026
 
 | Path | Backend | Notes |
 |---|---|---|
-| `/v1/*` | agent-api `10.0.10.10:8710` | conversations, messages, transcripts, tasks |
+| `/v1/*` | agent-api `10.0.10.10:8710` | conversations, messages, transcripts, tasks, delegation results |
 | `/api/sessions/*` | tmux-api `:7684` (prefix stripped) | except `/metrics`, `/health`, `/push*`, `/internal/*`, which need no login |
 | `/events/` `/prompt/` `/cancel/` `/earlier/` `/result/` `/pane/` `/keys/` `/commands/` `/search/` `/answer-text/` `/answer/` `/model/` | session-events `:7685` | `/keys/` and `/pane/` type into tmux panes |
 | `/files/*` | file-api `:7686` | |
@@ -83,6 +83,21 @@ Callers are `devvm_external_agents` in `playbooks/devvm.yml`; each token is Vaul
 - Revoke now: remove the entry (or `scripts/agent-api-kill <name>`) and run the playbook.
 - If the token may have leaked: revoke first, then check `homelab logs query '{namespace="traefik"} |= "terminal-api"' --since 24h`
   and the agent-api trace in Loki for what it was used for.
+
+Two optional keys on an entry: `delegation_creator: true` lets that Caller create Delegations
+(it feeds `TL_DELEGATION_CREATORS`), and `token_file` installs the plaintext token for `os_user`
+at 0600, for a Caller that runs on the devvm itself. The `homelab` entry uses both: it is the
+homelab CLI's own credential for `homelab delegate`, used over loopback rather than through this
+endpoint.
+
+## Delegations
+
+Muse also receives work from the homelab: `homelab delegate muse "<task>"` sends it a WhatsApp
+message carrying the task and a callback address on this endpoint,
+`POST /v1/delegations/{id}/result`, which Muse calls with its usual token.
+`TL_AGENT_PUBLIC_URL` in `/etc/terminal-lobby.local.conf` sets the base URL written into that
+message. Setup, caps, expiry and the `AgentApiDelegationUndelivered` alert:
+[delegations.md](delegations.md).
 
 ## When the alerts fire
 
