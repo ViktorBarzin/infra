@@ -1919,19 +1919,24 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # outlast a ruler evaluation; the line leaves it afterwards and
               # cannot post again.
               #
-              # The verb matches both shapes agent-api can trace the event as:
-              # the route entry for POST /v1/delegations/{id}/undelivered, and
-              # a separate `delegation.undelivered` event entry. If both are
-              # written they carry the same id and reason, so the sum folds
-              # them into one series. delegation_id != "" drops refusals (a
-              # 409 answers {"error": ...}, which projects no id). The id and
-              # reason reach Loki through the keep-set in
-              # scripts/devvm-promtail.yaml.
+              # The rule keys on `event`, which agent-api writes only when it
+              # accepted the change: the creator moved a pending delegation to
+              # undelivered (a 200). A refused request (400, 403 not the
+              # creator, 404 no such id, 409 already closed) carries the URL's
+              # delegation_id and the caller's request body, but no event and
+              # no top-level reason, so it cannot post here. Until the fix on
+              # 2026-10-02 this rule matched the route verb plus a non-empty
+              # id, and the remote muse token posted its own text to #alerts
+              # with a 404 against an id that does not exist. http_status="200"
+              # is a second guard on the same fact. The keep-set in
+              # scripts/devvm-promtail.yaml ships event, http_status, the id
+              # and the accepted reason; scripts/agent_api_trace_observability_test.py
+              # runs these filters over what promtail ships.
               #
-              # Parses against live Loki (homelab logs query, 2026-10-02,
-              # empty result); a broken copy of it returns a 400 parse error.
+              # Parses against live Loki (homelab logs query, 2026-10-02); a
+              # broken copy of it returns a 400 parse error.
               alert  = "AgentApiDelegationUndelivered"
-              expr   = "sum by (drop_id, reason) (count_over_time({job=\"agent-api-trace\"} | json | verb=~`delegation[.]undelivered|POST /v1/delegations/[{]id[}]/undelivered` | delegation_id!=\"\" | label_format drop_id=`{{.delegation_id}}` [10m])) > 0"
+              expr   = "sum by (drop_id, reason) (count_over_time({job=\"agent-api-trace\"} | json | event=\"delegation.undelivered\" | http_status=\"200\" | delegation_id!=\"\" | label_format drop_id=`{{.delegation_id}}` [10m])) > 0"
               for    = "0s"
               labels = { severity = "warning", subsystem = "agent-api", lane = "event" }
               annotations = {

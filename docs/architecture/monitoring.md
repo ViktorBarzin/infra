@@ -627,10 +627,13 @@ unauthenticated client on those ranges can read.
 
 So the pipeline rebuilds the line from an enumerated keep-set — `ts`,
 `trace_id`, `task_id`, `conversation_id`, `actor`, `verb`, `response.status`,
-`duration_ms`, the tool *names*, and for delegations `delegation_id` and the
-undelivered `reason` — and ships that. The delegation fields were added
-2026-10-02 for `AgentApiDelegationUndelivered`; both are written by this box's
-own `homelab` CLI, while a delegation's task, WhatsApp text and result stay out. The projection is an
+`duration_ms`, the tool *names*, the route's HTTP status as `http_status`, and
+for delegations `event`, `delegation_id` and the accepted `reason` — and ships
+that. The delegation fields were added 2026-10-02 for
+`AgentApiDelegationUndelivered`. agent-api writes `event` and the top-level
+`reason` only for a change it accepted, so `reason` is the delegation creator's
+own words; the request body is not read, because a refused request carries
+whatever the caller sent. A delegation's task, WhatsApp text and result stay out. The projection is an
 allowlist, which fails safe: a field added to the trace later is absent from
 Loki until someone adds it to the pipeline, rather than silently published. It
 is deliberately not a regex hunt for secret-shaped substrings, because a
@@ -679,7 +682,7 @@ is in Loki: an entry whose Loki timestamp is far from its own `ts` field.
 | Alert | Expr | For | Severity |
 |---|---|---|---|
 | `AgentApiTraceSilent` | `((sum(count_over_time({job="agent-api-trace"}[7d])) or vector(0)) < 1) and (sum(count_over_time({job="agent-api-trace"}[7d] offset 7d)) > 0) and (sum(count_over_time({job="agent-api-trace"}[7d] offset 14d)) > 0)` | 2h | warning |
-| `AgentApiDelegationUndelivered` | `` sum by (drop_id, reason) (count_over_time({job="agent-api-trace"} \| json \| verb=~`delegation[.]undelivered\|POST /v1/delegations/[{]id[}]/undelivered` \| delegation_id!="" \| label_format drop_id=`{{.delegation_id}}` [10m])) > 0 `` | 0s | warning, `lane = "event"` |
+| `AgentApiDelegationUndelivered` | `` sum by (drop_id, reason) (count_over_time({job="agent-api-trace"} \| json \| event="delegation.undelivered" \| http_status="200" \| delegation_id!="" \| label_format drop_id=`{{.delegation_id}}` [10m])) > 0 `` | 0s | warning, `lane = "event"` |
 
 Group `agent-api` in `loki.tf`.
 

@@ -144,17 +144,25 @@ scrape_configs:
             status: response.status
             duration_ms: duration_ms
             tools: 'tool_calls[].name'
-            # Delegations (2026-10-02). The id and the undelivered reason are
-            # what the AgentApiDelegationUndelivered rule in loki.tf posts to
-            # #alerts. Both are written by this box's own homelab CLI, not by
-            # a remote caller: only a delegation creator can mark one
-            # undelivered, and the reason is the CLI's one-line summary of a
-            # failed WhatsApp send. The task text and the result stay out.
-            # The `||` fallbacks cover both shapes the line can take: a route
-            # entry, where the id and reason sit in the response (a Delegation)
-            # or the request body, and a top-level event entry.
+            # HTTP status of the route, read straight off the top-level
+            # `status`. Kept apart from `status` above, which is the
+            # response body's status (a delegation's or a task's).
+            http_status: status
+            # Delegations (2026-10-02). The AgentApiDelegationUndelivered rule
+            # in loki.tf posts the id and the reason to #alerts, keyed on
+            # `event`. agent-api writes `event` and the top-level `reason`
+            # only when it ACCEPTED the change (server.go: a refused write has
+            # no event), so an undelivered event can only come from the
+            # delegation's creator moving a pending delegation. The URL's
+            # delegation_id, and the request body, are on refused lines too:
+            # live on 2026-10-02 the remote muse token sent a 404 against an
+            # id that does not exist and its chosen text reached #alerts
+            # through the old `request.reason` fallback. So `reason` reads
+            # only the accepted top-level field, never the request or the
+            # response. The task text and the result stay out.
+            event: event
             delegation_id: 'delegation_id || response.delegation_id'
-            reason: 'reason || response.reason || request.reason'
+            reason: reason
       - timestamp:
           source: ts
           format: RFC3339Nano
@@ -183,6 +191,6 @@ scrape_configs:
       # than vanishing, so a malformed trace still shows up as traffic.
       - template:
           source: projected
-          template: '{{ dict "ts" .ts "trace_id" .trace_id "task_id" .task_id "conversation_id" .conversation_id "actor" .actor "verb" .verb "status" .status "duration_ms" .duration_ms "tools" .tools "delegation_id" .delegation_id "reason" .reason | toJson }}'
+          template: '{{ dict "ts" .ts "trace_id" .trace_id "task_id" .task_id "conversation_id" .conversation_id "actor" .actor "verb" .verb "status" .status "duration_ms" .duration_ms "tools" .tools "http_status" .http_status "event" .event "delegation_id" .delegation_id "reason" .reason | toJson }}'
       - output:
           source: projected
