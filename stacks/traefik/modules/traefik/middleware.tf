@@ -791,7 +791,13 @@ resource "kubectl_manifest" "middleware_crowdsec" {
           appsecBodyLimit = 65536
           # Hosts that skip the AppSec check but keep ban enforcement. The
           # Authentik hosts are already out via skipHosts above.
-          appsecSkipHosts = []
+          #
+          # immich: Viktor asked for it to be skipped (2026-10-02), after an
+          # earlier AppSec setup held its uploads at the ingress. The body
+          # policy alone already keeps uploads untouched (a 1 GB upload through
+          # the inspected path streamed with 2.7ms of Traefik overhead), so
+          # this also takes its JSON API out of the generic rules' reach.
+          appsecSkipHosts = ["immich.viktorbarzin.me"]
         }
       }
     }
