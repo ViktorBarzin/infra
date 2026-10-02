@@ -68,6 +68,16 @@ resource "helm_release" "traefik" {
       podAnnotations = {
         "diun.enable"       = "true"
         "diun.include_tags" = "^v\\d+(?:\\.\\d+)?(?:\\.\\d+)?.*$"
+        # Traefik reads localPlugins ONLY at startup, and a source change only
+        # rewrites the plugin ConfigMap, so without this a plugin edit sat
+        # unloaded until some unrelated restart picked it up, on whichever pod
+        # restarted first. Hashing the shipped sources rolls the Deployment
+        # (maxUnavailable 0, maxSurge 1) as part of the apply that changes them.
+        # Tests are not shipped, so they do not count.
+        "checksum/local-plugins" = sha1(join(",", [
+          for f in sort(fileset(path.module, "*-plugin/**")) : filesha1("${path.module}/${f}")
+          if !endswith(f, "_test.go")
+        ]))
       }
       # QUIC socket telemetry. Traefik terminates HTTP/3 on ONE shared UDP
       # socket per pod, and when that socket's receive buffer overflows the
