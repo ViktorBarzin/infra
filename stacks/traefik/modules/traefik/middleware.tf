@@ -131,6 +131,11 @@ resource "kubernetes_manifest" "middleware_authentik_forward_auth" {
       forwardAuth = {
         address            = "http://auth-proxy.traefik.svc.cluster.local:9000/outpost.goauthentik.io/auth/traefik"
         trustForwardHeader = true
+        # Bounds the auth server's own response, which Traefik buffers and
+        # returns on a non-2xx (a login redirect or block page). Unset, Traefik
+        # warned on every request that it was unlimited. Largest seen over 24h
+        # on 2026-10-02: 458 bytes, so 1 MiB is wide headroom.
+        maxResponseBodySize = 1048576
         authResponseHeaders = [
           "X-authentik-username",
           "X-authentik-uid",
@@ -178,8 +183,9 @@ resource "kubernetes_manifest" "middleware_authentik_forward_auth_public" {
     }
     spec = {
       forwardAuth = {
-        address            = "http://ak-outpost-public.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/traefik"
-        trustForwardHeader = true
+        address             = "http://ak-outpost-public.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/traefik"
+        trustForwardHeader  = true
+        maxResponseBodySize = 1048576 # see authentik-forward-auth
         authResponseHeaders = [
           "X-authentik-username",
           "X-authentik-uid",
@@ -648,8 +654,9 @@ resource "kubernetes_manifest" "middleware_ai_bot_block" {
     }
     spec = {
       forwardAuth = {
-        address            = "http://bot-block-proxy.traefik.svc.cluster.local:8080/auth"
-        trustForwardHeader = true
+        address             = "http://bot-block-proxy.traefik.svc.cluster.local:8080/auth"
+        trustForwardHeader  = true
+        maxResponseBodySize = 1048576 # see authentik-forward-auth
       }
     }
   }
@@ -673,8 +680,9 @@ resource "kubernetes_manifest" "middleware_x402" {
     }
     spec = {
       forwardAuth = {
-        address            = "http://x402-gateway.traefik.svc.cluster.local:8080/auth"
-        trustForwardHeader = true
+        address             = "http://x402-gateway.traefik.svc.cluster.local:8080/auth"
+        trustForwardHeader  = true
+        maxResponseBodySize = 1048576 # see authentik-forward-auth
       }
     }
   }
