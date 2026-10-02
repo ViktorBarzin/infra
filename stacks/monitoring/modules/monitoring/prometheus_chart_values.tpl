@@ -4109,6 +4109,70 @@ serverFiles:
                 `[crowdsec-bouncer] action=refresh-failed`, and that the plugin
                 loaded at all: one broken Traefik plugin disables ALL of them, so
                 confirm `Plugins loaded.` lists crowdsec.
+          # CrowdSec AppSec (ADR-0027): the Traefik bouncer asks these pods about
+          # each request before it reaches the backend. The plugin fails open
+          # when they are down, so an outage here means inspection is OFF, not
+          # that traffic stops. The plugin's own signals (breaker trips, blocks,
+          # added latency) are Loki rules in loki.tf.
+          - alert: CrowdSecAppsecDown
+            expr: (count(up{job="crowdsec-appsec"} == 1) or on() vector(0)) < 2
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $value }} of 2 CrowdSec AppSec pods are up — request inspection is reduced or off"
+              description: >-
+                The Traefik bouncer fails open, so requests keep flowing, but
+                with no AppSec pod nothing is inspected and the bouncer's
+                breaker will be tripping (see CrowdSecAppsecBreakerOpen).
+                `kubectl -n crowdsec get pods -l type=appsec` and the pod logs;
+                a pod that answers 401 to everything has lost LAPI.
+          - alert: CrowdSecAppsecMemoryHigh
+            expr: max by (pod) (container_memory_working_set_bytes{namespace="crowdsec",container="crowdsec-appsec"}) / on(pod) group_left max by (pod) (kube_pod_container_resource_limits{namespace="crowdsec",container="crowdsec-appsec",resource="memory"}) > 0.85
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "AppSec pod {{ $labels.pod }} is at {{ $value | humanizePercentage }} of its memory limit"
+              description: >-
+                An OOMKill restarts the pod; the other replica and the bouncer's
+                fail-open cover it, but a pod that keeps climbing is a load or
+                rule problem. Check request volume (cs_appsec_reqs_total).
+          # Traefik regressions to watch since the AppSec check went in. The
+          # check adds an outbound call per request inside the Traefik process.
+          # ContainerOOMKilled and PodCrashLooping already cover hard failures
+          # fleet-wide; these catch the slower ones.
+          - alert: TraefikMemoryHigh
+            expr: max by (pod) (container_memory_working_set_bytes{namespace="traefik",container="traefik"}) / on(pod) group_left max by (pod) (kube_pod_container_resource_limits{namespace="traefik",container="traefik",resource="memory"}) > 0.8
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Traefik pod {{ $labels.pod }} is at {{ $value | humanizePercentage }} of its 2560Mi memory limit"
+              description: >-
+                The 7-day peak before the AppSec check (2026-10-02) was 306 MiB.
+                If this follows an AppSec change, suspect the bouncer's body
+                handling first: the plugin should never hold more than 64 KiB per
+                request. Flip appsecEnabled to false in
+                stacks/traefik/modules/traefik/middleware.tf to rule it out; that
+                is a dynamic reload, no restart.
+          - alert: TraefikRestarting
+            # `and ... offset 30m` limits this to pods that already existed 30m
+            # ago. A brand-new pod sometimes fails its first liveness probe
+            # before it prints anything and comes up on the second start (seen
+            # 2026-09-28 and on the 2026-10-02 rollout), which would otherwise
+            # fire this on every rollout.
+            expr: increase(kube_pod_container_status_restarts_total{namespace="traefik",container="traefik"}[30m]) > 0 and on(pod) kube_pod_container_status_restarts_total{namespace="traefik",container="traefik"} offset 30m
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Established Traefik pod {{ $labels.pod }} restarted in the last 30m"
+              description: >-
+                Check `kubectl -n traefik logs <pod> --previous` and
+                last_terminated_reason. If it follows an AppSec change, flip
+                appsecEnabled to false in stacks/traefik/modules/traefik/middleware.tf
+                to rule the AppSec check out.
           - alert: KyvernoDown
             expr: (kube_deployment_status_replicas_available{namespace="kyverno", deployment="kyverno-admission-controller"} or on() vector(0)) < 1
             for: 10m
