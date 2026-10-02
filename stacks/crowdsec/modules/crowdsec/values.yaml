@@ -464,10 +464,21 @@ config:
       flush:
         max_items: 10000
         max_age: "7d"
+        # 2d (was 30d, which let 28 dead traefik@<podIP> bouncer rows and 44
+        # dead agent rows pile up; pruned 2026-10-02). Live bouncers pull every
+        # 30s and live agents heartbeat continuously, so only dead pods age out.
+        # Selection is by last_pull, and a row that never pulled is never
+        # deleted. That protects the 'traefik' PARENT bouncer, which never
+        # pulls itself (each Traefik pod pulls as an auto-created
+        # traefik@<podIP> child) and which must exist: auto-created rows
+        # cannot be deleted without it, and it is what new pods authenticate
+        # against if every child row is gone. It went missing once and was
+        # re-added by hand on 2026-10-02; LAPI also re-creates it from
+        # BOUNCER_KEY_traefik on restart.
         bouncers_autodelete:
-          api_key: "30d"
+          api_key: "2d"
         agents_autodelete:
-          login_password: "30d"
+          login_password: "2d"
       decision_bulk_size: 2000
     api:
       server:
