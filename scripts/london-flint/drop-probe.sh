@@ -79,6 +79,8 @@ web_ok() {
 	[ "$(curl -sk --connect-timeout 1 -m 2 -o /dev/null -w '%{http_code}' "$1")" != 000 ]
 }
 
+is_dns() { [ "$1" = dns ] || [ "$1" = rehearsal-dns ]; }
+
 # busybox nslookup exits 0 on NXDOMAIN too, so require an address line after
 # the answer's Name: (the server header line is "Address:", no number).
 dns_ok() {
@@ -238,7 +240,7 @@ tick() {
 		return
 	fi
 
-	if [ "$start" != 0 ] && [ "$layer" != dns ]; then
+	if [ "$start" != 0 ] && ! is_dns "$layer"; then
 		queue_event "$start" "$layer" "$now"
 		start=0; layer=""
 	fi
@@ -255,7 +257,7 @@ tick() {
 	if [ $((now - last_dns)) -ge "$dns_every" ]; then
 		last_dns=$now
 		if dns_ok "$now"; then
-			if [ "$start" != 0 ] && [ "$layer" = dns ]; then
+			if [ "$start" != 0 ] && is_dns "$layer"; then
 				queue_event "$start" "$layer" "$now"
 				start=0; layer=""
 			fi
@@ -265,6 +267,7 @@ tick() {
 			if [ $((now - dns_first_fail)) -ge "$DNS_DROP_AFTER" ] && [ "$start" = 0 ]; then
 				start=$dns_first_fail
 				layer=dns
+				[ "$REHEARSAL" = 1 ] && layer=rehearsal-dns
 				snapshot
 			fi
 		fi
