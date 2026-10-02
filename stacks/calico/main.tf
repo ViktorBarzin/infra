@@ -61,6 +61,9 @@ resource "kubernetes_namespace" "tigera_operator" {
     name = "tigera-operator"
     labels = {
       name = "tigera-operator"
+      # Cluster networking's operator. Without a tier label Kyverno injects no
+      # priority class, so the operator ran preemptible (found 2026-10-02).
+      tier = local.tiers.core
     }
   }
   lifecycle {
