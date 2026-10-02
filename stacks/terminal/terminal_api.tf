@@ -14,10 +14,11 @@
 #      X-Authentik-Username cannot authenticate. A bearer token is the only
 #      way in. Do not add tl-proxy-secret to these routes.
 #
-# Exposed: agent-api /v1/*, tmux-api (minus /metrics, /health, /push*,
-# /internal/*), session-events, file-api /files/*, skills-api. NOT exposed:
-# ttyd (/, /ws, /token — an interactive shell), clipboard-upload (reads the
-# body before checking auth), assets and build stamps.
+# Exposed: agent-api /v1/* and /openapi.json, tmux-api (minus /metrics,
+# /health, /push*, /internal/*), session-events, file-api /files/*,
+# skills-api. NOT exposed: ttyd (/, /ws, /token — an interactive shell),
+# clipboard-upload (reads the body before checking auth), assets and build
+# stamps.
 #
 # A valid token acts as the OS user it maps to (muse -> wizard, Viktor's
 # decision 2026-10-02), which on this box means sudo, cluster-admin and Vault.
@@ -223,6 +224,19 @@ resource "kubernetes_manifest" "terminal_api_ingressroute" {
             name             = kubernetes_service.agent_api.metadata[0].name
             port             = 80
             serversTransport = kubernetes_manifest.terminal_api_longpoll_transport.manifest.metadata.name
+          }]
+        },
+        {
+          # agent-api's API description. Callers build and refresh their
+          # connector from the live contract. agent-api serves it without a
+          # token (a caller has to read it before it can call anything) and it
+          # holds routes, not data. Exact Path, so /health stays unrouted.
+          match       = "Host(`${local.api_host}`) && Path(`/openapi.json`)"
+          kind        = "Rule"
+          middlewares = local.api_middlewares
+          services = [{
+            name = kubernetes_service.agent_api.metadata[0].name
+            port = 80
           }]
         },
         {
