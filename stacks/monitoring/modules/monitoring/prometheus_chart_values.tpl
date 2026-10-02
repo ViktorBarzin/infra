@@ -7906,6 +7906,29 @@ extraScrapeConfigs: |
       target_label: node
     metrics_path: '/metrics'
 
+  - job_name: 'crowdsec-appsec'
+    # The AppSec pods behind the Traefik bouncer's AppSec check (ADR-0027),
+    # added 2026-10-02. Own job name for the same reason as crowdsec-agent:
+    # alerts key on up{job="crowdsec"}. CrowdSecAppsecDown reads up{} here, and
+    # cs_appsec_* gives per-pod request and block counts.
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - crowdsec
+    relabel_configs:
+    - action: keep
+      regex: crowdsec;appsec
+      source_labels: [__meta_kubernetes_pod_label_k8s_app, __meta_kubernetes_pod_label_type]
+    - source_labels: [__meta_kubernetes_pod_ip]
+      target_label: __address__
+      replacement: '$1:6060'
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+    - source_labels: [__meta_kubernetes_pod_node_name]
+      target_label: node
+    metrics_path: '/metrics'
+
   - job_name: 'snmp-idrac'
     # 30s (was 1m) so the HA dashboard iDRAC metrics (temps / fan RPM / power /
     # voltage, read by ha-sofia's prometheus-query.lan REST sensors) refresh
