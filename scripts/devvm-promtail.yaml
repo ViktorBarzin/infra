@@ -144,6 +144,17 @@ scrape_configs:
             status: response.status
             duration_ms: duration_ms
             tools: 'tool_calls[].name'
+            # Delegations (2026-10-02). The id and the undelivered reason are
+            # what the AgentApiDelegationUndelivered rule in loki.tf posts to
+            # #alerts. Both are written by this box's own homelab CLI, not by
+            # a remote caller: only a delegation creator can mark one
+            # undelivered, and the reason is the CLI's one-line summary of a
+            # failed WhatsApp send. The task text and the result stay out.
+            # The `||` fallbacks cover both shapes the line can take: a route
+            # entry, where the id and reason sit in the response (a Delegation)
+            # or the request body, and a top-level event entry.
+            delegation_id: 'delegation_id || response.delegation_id'
+            reason: 'reason || response.reason || request.reason'
       - timestamp:
           source: ts
           format: RFC3339Nano
@@ -172,6 +183,6 @@ scrape_configs:
       # than vanishing, so a malformed trace still shows up as traffic.
       - template:
           source: projected
-          template: '{{ dict "ts" .ts "trace_id" .trace_id "task_id" .task_id "conversation_id" .conversation_id "actor" .actor "verb" .verb "status" .status "duration_ms" .duration_ms "tools" .tools | toJson }}'
+          template: '{{ dict "ts" .ts "trace_id" .trace_id "task_id" .task_id "conversation_id" .conversation_id "actor" .actor "verb" .verb "status" .status "duration_ms" .duration_ms "tools" .tools "delegation_id" .delegation_id "reason" .reason | toJson }}'
       - output:
           source: projected

@@ -42,6 +42,11 @@ GOOD_TS = "2026-09-14T11:02:31.442Z"
 # Neither may reach Loki. Strings are distinctive so a partial leak is caught.
 SECRET_REQUEST = "SENTINEL-REQUEST-vault-kv-get-field-token"
 SECRET_TOOL_INPUT = "SENTINEL-TOOLINPUT-Authorization-Bearer-abcdef"
+# A delegation's task, WhatsApp text and result are content too; only its id
+# and the undelivered reason (the homelab CLI's own one-liner) may ship.
+SECRET_TASK = "SENTINEL-TASK-check-my-passport-number"
+DELEGATION_TS = "2026-09-14T11:09:00.000Z"
+DELEGATION_REASON = "WhatsApp Web is logged out; re-link at chrome.viktorbarzin.me"
 
 FIXTURE = "\n".join([
     json.dumps({
@@ -61,6 +66,21 @@ FIXTURE = "\n".join([
     json.dumps({"ts": "14/09/2026 11:06:00", "trace_id": "01JBDDMM"}),
     # Not JSON at all, carrying content that must not leak either.
     "not json at all " + SECRET_REQUEST,
+    # Delegations (2026-10-02): the route entry for marking one undelivered,
+    # whose response is the whole Delegation, task and WhatsApp text included.
+    json.dumps({
+        "ts": DELEGATION_TS, "trace_id": "01JBDELEG", "actor": "homelab",
+        "verb": "POST /v1/delegations/{id}/undelivered",
+        "request": {"reason": DELEGATION_REASON},
+        "response": {"delegation_id": "d_01JBROUTE", "status": "undelivered",
+                     "reason": DELEGATION_REASON, "task": SECRET_TASK,
+                     "message": SECRET_TASK, "result": SECRET_TASK},
+        "status": 200, "duration_ms": 3,
+    }),
+    # ... and a standalone event entry, the other shape agent-api may use.
+    json.dumps({"ts": DELEGATION_TS, "trace_id": "01JBEVENT", "actor": "homelab",
+                "verb": "delegation.undelivered", "delegation_id": "d_01JBEVENT",
+                "reason": "chat not found"}),
 ]) + "\n"
 
 
@@ -206,7 +226,7 @@ class TimestampFailureHandling(unittest.TestCase):
 
     def test_no_line_is_dropped_when_its_timestamp_fails(self):
         entries, raw = run_pipeline()
-        self.assertEqual(len(entries), 5,
+        self.assertEqual(len(entries), FIXTURE.strip().count("\n") + 1,
                          "skip must keep every line, not drop it:\n" + raw)
 
 
@@ -310,6 +330,57 @@ class VerbatimContentNeverReachesLoki(unittest.TestCase):
         self.assertTrue(nulls,
                         "a line that is not JSON should project to all-nulls, "
                         "so a broken trace still counts as traffic")
+
+
+
+def loki_tf_rule_expr(alert):
+    src = _read(LOKI_TF)
+    block = src[src.index('alert  = "%s"' % alert):]
+    m = re.search(r'expr\s+=\s+"((?:[^"\\]|\\.)*)"', block)
+    assert m, alert + " has no expr"
+    return m.group(1).replace('\\"', '"'), block[:1500]
+
+
+@unittest.skipUnless(promtail_available(), "promtail binary not present")
+class DelegationsReachTheUndeliveredAlert(unittest.TestCase):
+    """The undelivered rule needs the id and reason in Loki, and nothing else."""
+
+    def test_delegation_id_and_reason_ship_from_both_shapes(self):
+        entries, raw = run_pipeline()
+        shipped = [json.loads(l) for _, l in entries if "01JBDELEG" in l or "01JBEVENT" in l]
+        self.assertEqual(len(shipped), 2, raw[-2000:])
+        by_trace = {e["trace_id"]: e for e in shipped}
+        self.assertEqual(by_trace["01JBDELEG"]["delegation_id"], "d_01JBROUTE")
+        self.assertEqual(by_trace["01JBDELEG"]["reason"], DELEGATION_REASON)
+        self.assertEqual(by_trace["01JBEVENT"]["delegation_id"], "d_01JBEVENT")
+        self.assertEqual(by_trace["01JBEVENT"]["reason"], "chat not found")
+
+    def test_task_message_and_result_stay_on_the_box(self):
+        entries, raw = run_pipeline()
+        shipped = "\n".join(line for _, line in entries)
+        self.assertNotIn(SECRET_TASK, shipped)
+
+
+class UndeliveredRuleShape(unittest.TestCase):
+    def test_one_post_per_delegation_on_the_event_lane(self):
+        expr, block = loki_tf_rule_expr("AgentApiDelegationUndelivered")
+        self.assertIn('lane = "event"', block)
+        self.assertIn("drop_id=`{{.delegation_id}}`", expr,
+                      "the event lane groups by drop_id; without the delegation "
+                      "id in it, every delegation shares one group")
+        self.assertIn("sum by (drop_id, reason)", expr)
+
+    def test_refusals_do_not_alert(self):
+        expr, _ = loki_tf_rule_expr("AgentApiDelegationUndelivered")
+        self.assertIn('delegation_id!=""', expr,
+                      "a 409 on /undelivered projects no id and must not post")
+
+    def test_matches_both_trace_shapes(self):
+        expr, _ = loki_tf_rule_expr("AgentApiDelegationUndelivered")
+        verb = re.search(r"verb=~`([^`]*)`", expr).group(1)
+        for v in ("delegation.undelivered", "POST /v1/delegations/{id}/undelivered"):
+            self.assertRegex(v, "^(?:%s)$" % verb)
+        self.assertNotRegex("POST /v1/delegations/{id}/sent", "^(?:%s)$" % verb)
 
 
 if __name__ == "__main__":
