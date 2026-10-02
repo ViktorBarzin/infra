@@ -1,0 +1,11 @@
+[Unit]
+Description=Restart the MeshCentral agent to release leaked memory
+# meshagent.service comes from the MeshCentral installer, not this repo.
+# Measured 2026-10-02: it held 10.4 GB RSS plus 8 GB of swap after 19d19h of
+# uptime (about 0.5 GB a day), left the devvm with 2.1 GB available of 32 GB,
+# and Claude Code began reaping background shells. A restart took it to 46 MB.
+ConditionPathExists=/usr/local/mesh_services/meshagent/meshagent
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart meshagent.service

@@ -1,0 +1,14 @@
+[Unit]
+Description=Nightly restart of the MeshCentral agent, which leaks memory
+
+[Timer]
+# 04:45: after the 03:30 agent updaters and the 04:30 yt-dlp refresh, and a
+# quiet hour for remote sessions. A restart drops a live MeshCentral session for
+# a few seconds.
+OnCalendar=*-*-* 04:45:00
+# No catch-up after downtime: a box that was off at 04:45 has just booted, so
+# meshagent is already fresh.
+Persistent=false
+
+[Install]
+WantedBy=timers.target
