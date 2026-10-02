@@ -122,6 +122,12 @@ resource "kubernetes_cluster_role" "post_boot_reconcile" {
     resources  = ["namespaces"]
     verbs      = ["list"]
   }
+  # Guard: never recycle a pod into a namespace with a quota but no LimitRange.
+  rule {
+    api_groups = [""]
+    resources  = ["resourcequotas", "limitranges"]
+    verbs      = ["list"]
+  }
 }
 
 # Loop guard for the priority-class check: owners already recycled in the last
@@ -344,6 +350,18 @@ def missed_priority(pod, tiered):
     return not (pod.get("spec", {}) or {}).get("priorityClassName")
 
 
+def quota_without_limitrange(quotas, limitranges):
+    """Namespaces with a ResourceQuota but no LimitRange. A replacement pod
+    there is rejected unless every container declares its own requests and
+    limits, so recycling a pod can take its workload down. Happened
+    2026-10-02: newly tier-labelled local-path-storage and tigera-operator got
+    their quota ~25 minutes before their LimitRange, and the recycled
+    provisioner and Calico operator could not be recreated in between."""
+    q = {((x.get("metadata") or {}).get("namespace", "")) for x in quotas}
+    lr = {((x.get("metadata") or {}).get("namespace", "")) for x in limitranges}
+    return q - lr
+
+
 def owner_uid(pod):
     refs = (pod.get("metadata", {}) or {}).get("ownerReferences") or []
     return refs[0].get("uid", "") if refs else ""
@@ -491,10 +509,11 @@ def main():
                  prio_stuck=prio_stuck)
 
 
-def select_priority_candidates(pods, tiered, state, now):
+def select_priority_candidates(pods, tiered, state, now, unsafe_namespaces=frozenset()):
     """Split missed-priority pods into (delete candidates, stuck, found count).
     A pod whose owner was already recycled within STATE_TTL_SECONDS is stuck:
-    Kyverno failed it twice, so deleting again would only loop."""
+    Kyverno failed it twice, so deleting again would only loop. Pods in
+    unsafe_namespaces (quota but no LimitRange) are left alone."""
     candidates, stuck, found = [], [], 0
     for pod in pods:
         if not missed_priority(pod, tiered):
@@ -502,6 +521,10 @@ def select_priority_candidates(pods, tiered, state, now):
         found += 1
         md = pod.get("metadata", {}) or {}
         ns, name = md.get("namespace", ""), md.get("name", "")
+        if ns in unsafe_namespaces:
+            print("SKIP %s/%s: namespace has a ResourceQuota but no LimitRange, a "
+                  "replacement pod could be rejected" % (ns, name), flush=True)
+            continue
         ok, reason = is_safe(pod)
         if not ok:
             print("SKIP %s/%s: %s" % (ns, name, reason), flush=True)
@@ -519,7 +542,11 @@ def priority_pass(pods, budget):
     now = time.time()
     state, exists = load_state()
     state = prune_state(state, now)
-    candidates, stuck, found = select_priority_candidates(pods, tiered, state, now)
+    unsafe = quota_without_limitrange(
+        (api("GET", "/api/v1/resourcequotas") or {}).get("items", []),
+        (api("GET", "/api/v1/limitranges") or {}).get("items", []))
+    candidates, stuck, found = select_priority_candidates(
+        pods, tiered, state, now, unsafe_namespaces=unsafe)
     for ns, name in stuck:
         print("STUCK %s/%s: still no priority class after a recycle in the last %ds; "
               "not deleting again" % (ns, name, STATE_TTL_SECONDS), flush=True)
