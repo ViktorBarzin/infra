@@ -369,6 +369,12 @@ appsec:
     # WebDAV. CRS only sets the default when nothing set it first, and this
     # phase-1 SecAction runs before CRS's own setup rules.
     #
+    # The same applies to tx.allowed_http_versions (rule 920430): the bundled
+    # CRS leaves HTTP/3 out, and the bouncer reports an HTTP/3 request as "30",
+    # which AppSec turns into HTTP/3.0. On go-live every HTTP/3 request to a CRS
+    # host got a 403, whatever it carried (Home Assistant's iOS app and
+    # Shortcuts, 2026-10-02).
+    #
     # Path exclusions from the same replay, kept narrow:
     #  - /icons/ (Vaultwarden's icon lookups for saved logins): 930130
     #    restricted-file names ("docker" in a domain) and 931100-931130 remote
@@ -380,6 +386,7 @@ appsec:
       name: viktor/crs-setup
       seclang_rules:
         - SecAction "id:900200,phase:1,pass,nolog,t:none,setvar:'tx.allowed_methods=GET HEAD POST OPTIONS PUT PATCH DELETE PROPFIND PROPPATCH MKCOL COPY MOVE LOCK UNLOCK REPORT SEARCH'"
+        - SecAction "id:900230,phase:1,pass,nolog,t:none,setvar:'tx.allowed_http_versions=HTTP/1.0 HTTP/1.1 HTTP/2 HTTP/2.0 HTTP/3 HTTP/3.0'"
         - SecRule REQUEST_FILENAME "@beginsWith /icons/" "id:1000101,phase:1,pass,nolog,t:none,ctl:ruleRemoveById=930130,ctl:ruleRemoveById=931100-931130"
         - SecRule REQUEST_FILENAME "@beginsWith /api/camera_proxy" "id:1000102,phase:1,pass,nolog,t:none,ctl:ruleEngine=Off"
   env:
