@@ -298,7 +298,76 @@ lapi:
     enabled: true
   strategy:
     type: RollingUpdate
-  
+
+# AppSec: the request-inspection engine behind the Traefik bouncer plugin's
+# AppSec check (ADR-0027). The plugin calls crowdsec-appsec-service:7422 for
+# each request before it reaches the backend; only a 403 from here blocks, and
+# any error fails open in the plugin, so these pods are never a hard
+# dependency of a request.
+appsec:
+  enabled: true
+  # Two pods on different nodes. The chart defaults to ONE replica and a
+  # Recreate strategy, which would stop inspection on every upgrade; the
+  # plugin's breaker would cover it, but there is no reason to take the gap.
+  # The PodDisruptionBudget lives in main.tf because the chart has no template.
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              k8s-app: crowdsec
+              type: appsec
+          topologyKey: kubernetes.io/hostname
+  acquisitions:
+    - source: appsec
+      listen_addr: "0.0.0.0:7422"
+      path: /
+      # appsec-default loads base-config plus every vpatch-* and generic-*
+      # rule in-band. The OWASP core rule set is deliberately not loaded.
+      appsec_config: crowdsecurity/appsec-default
+      # One worker per pod by default, which serialises checks; at the
+      # 197 req/s 30-day peak that queues behind the plugin's 200 ms deadline.
+      routines: 4
+      labels:
+        type: appsec
+  env:
+    # appsec-virtual-patching also brings the appsec-vpatch scenario, which
+    # bans an address for 4h (default_ip_remediation) once two DISTINCT rules
+    # match it within 60s. A single rule hit is a single 403.
+    - name: COLLECTIONS
+      value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-generic-rules"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: null
+      memory: 512Mi
+  # The trusted-IP whitelist, so the appsec-vpatch scenario running in these
+  # pods can never ban home, London, Meta corp or an internal range. It does
+  # NOT stop a per-request 403: in-band blocks ignore whitelists.
+  podAnnotations:
+    checksum/whitelist: "${whitelist_checksum}"
+  extraVolumes:
+    - name: whitelist
+      configMap:
+        name: crowdsec-whitelist
+  extraVolumeMounts:
+    - name: whitelist
+      mountPath: /etc/crowdsec/parsers/s02-enrich/whitelist.yaml
+      subPath: "whitelist.yaml"
+      readOnly: true
+  # Scraped by the crowdsec-appsec job in the monitoring stack; this cluster
+  # has no Prometheus Operator, so the chart's PodMonitor stays off.
+  metrics:
+    enabled: true
+
 config:
   # Custom profiles: every remediating alert becomes a real ban.
   #

@@ -51,6 +51,12 @@ curl -H "Authorization: Bearer $TOKEN" https://terminal-api.viktorbarzin.me/api/
 
 Muse's token: `vault kv get -field=agent_api_muse_token secret/terminal-lobby`.
 
+Long waits: agent-api's `?wait=N` (send-and-wait on messages, long-poll on tasks, N up to 300 s)
+holds the request open. The `/v1/` route therefore uses the ServersTransport
+`terminal-api-longpoll` (response-header timeout 330 s); the cluster-wide default is 30 s and
+would turn every longer wait into a 504. Held requests count against the in-flight cap (10 per
+client address).
+
 ## Source addresses
 
 `local.api_allowed_sources` in `stacks/terminal/terminal_api.tf` lists who reaches the token check
