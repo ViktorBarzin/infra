@@ -126,6 +126,12 @@ duration. To lift a ban on a legitimate caller:
 
 - devvm nftables: `7681` and `8710` accept only the Traefik node addresses and loopback; the
   Lobby ports are dropped on IPv6.
+- devvm nftables, forward hook: a port published with `docker run -p` is reachable only from the
+  devvm itself. A connection DNATed into `docker0` or a `br-*` bridge from anywhere else is
+  dropped. Added on 2026-10-02 after a month-old test container (`tl-live`) was found publishing
+  an unauthenticated ttyd on `0.0.0.0:18099`, which every pod could open. IPv6 published ports go
+  through docker-proxy on the input path and are not covered by this rule. Tests:
+  `sudo bash scripts/test-devvm-lobby-nftables.sh`.
 - AdminNetworkPolicy `devvm-lobby-ports` (priority 10): no namespace except `traefik` may reach
   `10.0.10.10` on 7681, 7683-7688 or 8710. `devvm-lobby-ports-headscale` (priority 11) lets
   `headscale` reach only 7681 (subnet-router probe), and `devvm-lobby-ports-monitoring`

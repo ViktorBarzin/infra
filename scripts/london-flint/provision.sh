@@ -31,6 +31,9 @@ ipk=$(python3 "$HERE/build-ipk.py" "$PROBE_VERSION" "$tmp")
 # shellcheck disable=SC2086 # SSH_OPTS is a list of options
 ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'cat > /tmp/london-drop-probe.ipk' <"$ipk"
 
+# shellcheck disable=SC2086
+ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'cat > /tmp/60-mtk-debug-off' <"$HERE/mtk-debug-off.hotplug"
+
 # ssh joins its arguments into one remote command line, so the package list
 # needs its own quotes to arrive as a single argument.
 # shellcheck disable=SC2086
@@ -70,6 +73,32 @@ uci set prometheus-node-exporter-lua.main.listen_port='9100'
 uci commit prometheus-node-exporter-lua
 /etc/init.d/prometheus-node-exporter-lua enable
 /etc/init.d/prometheus-node-exporter-lua restart
+
+# Silence the Wi-Fi driver's debug logging, now and on every interface add.
+hook=/etc/hotplug.d/net/60-mtk-debug-off
+if ! cmp -s /tmp/60-mtk-debug-off "$hook"; then
+	mv /tmp/60-mtk-debug-off "$hook"
+	echo "installed $hook"
+else
+	rm -f /tmp/60-mtk-debug-off
+fi
+chmod 755 "$hook"
+grep -qxF "$hook" /etc/sysupgrade.conf || echo "$hook" >>/etc/sysupgrade.conf
+for i in ra0 rax0; do iwpriv "$i" set Debug=0; done
+
+# DNS: log every lookup (--log-queries=extra puts a serial and the client on
+# each line; the lines leave over the TCP syslog to Loki and nothing goes to
+# flash), and raise the concurrent-query limit from 150, which was being hit.
+changed=0
+[ "$(uci -q get dhcp.@dnsmasq[0].logqueries)" = 1 ] || { uci set dhcp.@dnsmasq[0].logqueries='1'; changed=1; }
+[ "$(uci -q get dhcp.@dnsmasq[0].dnsforwardmax)" = 1000 ] || { uci set dhcp.@dnsmasq[0].dnsforwardmax='1000'; changed=1; }
+if [ "$changed" = 1 ]; then
+	uci commit dhcp
+	/etc/init.d/dnsmasq restart
+	echo "dnsmasq: query log on, forward-max 1000"
+else
+	echo "dnsmasq settings present"
+fi
 EOF
 
 # Verify from this side of the tunnel, the same path Prometheus uses.
