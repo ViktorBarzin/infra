@@ -195,12 +195,24 @@
     #           the Vault field, as agent_api_<name>_token.
     #   os_user the terminal account the agent acts as. Must be a right-hand
     #           side of /etc/ttyd-user-map or authuser answers 403.
+    #   delegation_creator  optional; true lets this Caller create Delegations
+    #           (POST /v1/delegations), via TL_DELEGATION_CREATORS below.
+    #   token_file  optional; where to install the plaintext token for os_user,
+    #           0600. Only for a Caller that runs ON this box, such as the
+    #           homelab CLI; a remote Caller keeps its token on its own side.
     #
     # Removing an entry revokes that agent at the next run. For an immediate
     # revoke, scripts/agent-api-kill <name>.
     devvm_external_agents:
       - name: muse
         os_user: wizard
+      # The homelab CLI's own credential for `homelab delegate`, used over
+      # loopback. A separate Caller from muse so it can be revoked on its own
+      # and the trace tells the two apart (design 2026-10-02, phase 5).
+      - name: homelab
+        os_user: wizard
+        delegation_creator: true
+        token_file: /home/wizard/.config/homelab/agent-api-token
 
     # agentmd (github.com/ViktorBarzin/agentmd): one instance per user, each
     # reached through stacks/agentmd on its own hostname. Keep the users in
@@ -2262,6 +2274,16 @@
           # Per-caller bearer credentials for agent-api. See the task that
           # writes this file for why root owns it.
           TL_BEARER_TOKENS={{ devvm_agent_api_tokens_file }}
+
+          # Callers allowed to create Delegations (work handed to another
+          # Caller, Muse first). Derived from delegation_creator in
+          # devvm_external_agents, so the list of who may delegate sits next
+          # to the list of who may call at all.
+          TL_DELEGATION_CREATORS={{ devvm_external_agents | selectattr('delegation_creator', 'defined') | selectattr('delegation_creator') | map(attribute='name') | join(',') }}
+
+          # The base URL a Delegation message tells its target to post the
+          # result to. Muse reaches this box only through terminal-api.
+          TL_AGENT_PUBLIC_URL=https://terminal-api.viktorbarzin.me
       no_log: true
       notify: restart lobby services
 
@@ -2289,6 +2311,40 @@
           {% endfor %}
       no_log: true
       notify: restart lobby services
+
+    # A Caller that runs on this box (token_file set) needs the token itself,
+    # not the digest. Written only from a successful Vault read, so an
+    # unminted token leaves any existing file alone rather than blanking it,
+    # and 0600 to os_user: the token acts as that account through agent-api.
+    - name: Create the directory for each local Caller's token
+      ansible.builtin.file:
+        path: "{{ item.item.token_file | dirname }}"
+        state: directory
+        owner: "{{ item.item.os_user }}"
+        group: "{{ item.item.os_user }}"
+      loop: "{{ devvm_agent_api_tokens.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - item.item.token_file is defined
+        - item.rc | default(1) == 0
+        - (item.stdout | default('')) | length > 0
+
+    - name: Install each local Caller's agent-api token
+      ansible.builtin.copy:
+        dest: "{{ item.item.token_file }}"
+        owner: "{{ item.item.os_user }}"
+        group: "{{ item.item.os_user }}"
+        mode: "0600"
+        content: "{{ item.stdout | trim }}\n"
+      loop: "{{ devvm_agent_api_tokens.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - item.item.token_file is defined
+        - item.rc | default(1) == 0
+        - (item.stdout | default('')) | length > 0
+      no_log: true
 
     # ttyd is the exception the config file itself calls out: it takes one
     # identity header and has nowhere to check a second, so the secret above
