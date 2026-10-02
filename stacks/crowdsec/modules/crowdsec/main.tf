@@ -539,6 +539,25 @@ resource "helm_release" "crowdsec" {
   wait_for_jobs = true
 }
 
+# Keeps one of the two AppSec pods up through node drains. The chart has no
+# PDB template for AppSec. The Traefik bouncer fails open when AppSec is down,
+# so this protects inspection coverage, not availability.
+resource "kubernetes_pod_disruption_budget_v1" "crowdsec_appsec" {
+  metadata {
+    name      = "crowdsec-appsec"
+    namespace = kubernetes_namespace.crowdsec.metadata[0].name
+  }
+  spec {
+    min_available = "1"
+    selector {
+      match_labels = {
+        "k8s-app" = "crowdsec"
+        type      = "appsec"
+      }
+    }
+  }
+}
+
 # NodePort service for pfSense syslog → CrowdSec agent
 # pfSense sends firewall logs to 10.0.20.202:30514 (any k8s node IP works)
 resource "kubernetes_service" "crowdsec_syslog" {
