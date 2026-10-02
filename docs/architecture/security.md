@@ -178,8 +178,9 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   than no rule, because the scenario metrics look like coverage. All four now
   fall through to `default_ip_remediation` and ban for 4h. They are genuinely
   false-positive-prone, which is why the divert existed — the mitigation is the
-  trusted-ips whitelist, which now pins the London egress (`137.220.71.46`)
-  alongside the origin. **If a legitimate source starts getting banned,
+  trusted-ips whitelist, which pins the origin. London's egress is not listed
+  since 2026-10-02: `137.220.71.46` became a carrier-grade NAT address shared
+  with other Hyperoptic customers, so London is treated like any public IP. **If a legitimate source starts getting banned,
   whitelist it; do not reintroduce a remediation that goes nowhere.**
 - **CAPI is excluded** (`origins` config: `crowdsec`, `cscli`, `cscli-import`,
   `lists`, `console`). Those 22.7k community bans have never been enforced on

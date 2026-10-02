@@ -303,14 +303,17 @@ locals {
       reason: "Trusted IP - never block"
       ip:
         - "176.12.22.76" # home / Sofia egress (origin)
-        # London flat egress. Pinned 2026-09-02 alongside removing the
-        # captcha divert, which turned four FP-prone HTTP scenarios into real
-        # bans. This exact address was hand-banned for 363 days on 2026-08-16
-        # when a Nextcloud client retry loop was mistaken for an external
-        # attacker; it is dynamic in principle, so re-check it with
-        # `homelab ha ssh --instance london -- curl -s ifconfig.me` if someone
-        # in London reports being blocked.
-        - "137.220.71.46"
+        # London is deliberately NOT listed (Viktor, 2026-10-02): its addresses
+        # are treated like any public IP. Since the Flint took the Hyperoptic
+        # line directly, the London IPv4 137.220.71.46 is a carrier-grade NAT
+        # address very likely shared with other Hyperoptic customers, and the
+        # IPv6 /56 2a01:4b00:ab23:1200::/56 is left unlisted too. Accepted
+        # risk: a ban on the IPv4 cuts off every device in the flat for its
+        # duration. If London reports being blocked, `cscli decisions list`
+        # and `cscli decisions delete --id` lift it in about 33 s. The path
+        # whitelists below (Nextcloud WebDAV, Immich assets, bouncer refusals)
+        # still cover the scenarios that caused the earlier false bans.
+        # Plan: docs/plans/2026-10-02-london-dns-block-monitoring.md.
       cidr:
         # Meta CORPORATE egress, Viktor's work VPN. Added 2026-09-07 after
         # finding he was blocked from his own sites twice over whenever it was

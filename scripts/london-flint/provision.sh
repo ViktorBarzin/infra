@@ -19,7 +19,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROUTER=${ROUTER:-root@10.3.2.6}
 SSH_OPTS=${SSH_OPTS:-}
-PROBE_VERSION=0.4.0
+PROBE_VERSION=0.5.0
 # The wifi collector is left out on purpose: the MediaTek iwinfo backend has
 # no noise, quality or bitrate, so it exports nothing useful.
 EXPORTER_PKGS="prometheus-node-exporter-lua prometheus-node-exporter-lua-wifi_stations prometheus-node-exporter-lua-netstat prometheus-node-exporter-lua-openwrt"
