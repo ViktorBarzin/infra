@@ -3,8 +3,8 @@
 # Clients wrap SSH in TLS and connect to ssh.viktorbarzin.me:443. Traefik's
 # websecure entrypoint matches that SNI with an IngressRouteTCP, terminates TLS
 # with the default wildcard cert, and forwards plain TCP to this sshd. From here
-# a client can only ProxyJump to the PermitOpen targets in files/sshd_config
-# (muse is the exception: PermitOpen any, so pod egress is open; see below).
+# a client can only ProxyJump to the PermitOpen targets in files/sshd_config;
+# the Calico egress policy below enforces the same list at the network layer.
 #
 # Client accounts come from Vault secret/bastion: every authorized_key_<client>
 # field becomes a nologin account named <client>. Adding or removing a client
@@ -22,6 +22,12 @@ locals {
   hostname  = "ssh"
   labels = {
     app = "bastion"
+  }
+  # Keep in sync with PermitOpen in files/sshd_config (egress allowlist).
+  targets = {
+    devvm   = "10.0.10.10/32"
+    pfsense = "10.0.20.1/32"
+    pve     = "192.168.1.127/32"
   }
 }
 
@@ -231,18 +237,15 @@ resource "kubernetes_network_policy_v1" "bastion" {
   }
 }
 
-# Egress: open. sshd's PermitOpen is the per-account limit: most accounts can
-# only reach the three targets on 22, but muse has PermitOpen any (Viktor's
-# decision, 2026-09-28), and a network policy cannot tell accounts apart, so
-# the pod may connect anywhere.
+# Containment, egress: the pod may only connect out to the three targets on
+# 22. Nothing else, not even DNS (targets are IPs).
 #
-# To tighten again, put back the Allow-targets + Deny pair (git history of
-# this resource, 2026-09-28). It must stay a Calico policy with an explicit
-# Deny: a Kubernetes egress NetworkPolicy has no effect in this namespace,
-# because the Calico GNP wave1-egress-observe-tier34 (stacks/calico, order
-# 2000) allows all egress for tier 3-edge/4-aux namespaces and Kubernetes
-# policies (order 1000) only add allows. Kept as an explicit Allow so the
-# decision is visible here rather than implied by that GNP.
+# This has to be a Calico policy with an explicit Deny. A Kubernetes egress
+# NetworkPolicy has no effect in this namespace: the Calico GNP
+# wave1-egress-observe-tier34 (stacks/calico, order 2000) allows all egress
+# for tier 3-edge/4-aux namespaces, and Kubernetes policies (order 1000) only
+# add allows, so unmatched traffic falls through to that allow-all. Verified
+# 2026-09-28: with only the Kubernetes policy, the pod reached 1.1.1.1:443.
 resource "kubectl_manifest" "egress" {
   yaml_body = yamlencode({
     apiVersion = "projectcalico.org/v3"
@@ -255,7 +258,17 @@ resource "kubectl_manifest" "egress" {
       order    = 100
       selector = "app == 'bastion'"
       types    = ["Egress"]
-      egress   = [{ action = "Allow" }]
+      egress = [
+        {
+          action   = "Allow"
+          protocol = "TCP"
+          destination = {
+            nets  = values(local.targets)
+            ports = [22]
+          }
+        },
+        { action = "Deny" },
+      ]
     }
   })
   depends_on = [kubernetes_namespace.bastion]

@@ -1370,6 +1370,30 @@ serverFiles:
       # magnitude between hosts.
       - name: Scrape and traffic anomalies
         rules:
+          - alert: TerminalApiAuthFailure
+            # terminal-api.viktorbarzin.me (stacks/terminal/terminal_api.tf) only
+            # admits allowlisted source addresses, so a 401 there means an
+            # allowed address presented a wrong or stale bearer token. A
+            # legitimate caller never does that; one is worth a look. CrowdSec
+            # (viktor/terminal-api-auth-bf) bans after 5 in about a minute.
+            expr: |
+              sum(increase(traefik_router_requests_total{router=~"terminal-terminal-api-.*", code="401"}[10m])) > 0
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "terminal-api returned {{ $value | printf \"%.0f\" }} 401(s) in 10m: a wrong or stale bearer token from an allowlisted address. Check `homelab logs query '{namespace=\"traefik\"} |= \"terminal-api\" |= \"401\"'` for the source and path."
+          - alert: TerminalApiBlockedSurge
+            # Requests refused before auth (allowlist or CrowdSec, 403) at a
+            # sustained rate: someone found the hostname and is hammering it.
+            expr: |
+              sum(rate(traefik_router_requests_total{router=~"terminal-terminal-api-.*", code="403"}[5m])) > 1
+            for: 10m
+            labels:
+              severity: warning
+              lane: security
+            annotations:
+              summary: "terminal-api is refusing {{ $value | printf \"%.1f\" }} req/s (403) for 10m. The allowlist is holding; check the sources in the traefik access log and whether CrowdSec is banning them."
           - alert: ScrapeVolumeAnomaly
             # Whole-edge request rate against its own 6h average. The 2026-09-02
             # Meta crawl ran 9,300-11,000 req/hour on top of a ~10 req/s

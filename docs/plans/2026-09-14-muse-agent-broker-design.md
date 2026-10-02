@@ -123,6 +123,7 @@ serving this and the design moved inside that repo.
 | Placement (**revised**) | Seventh service in the `terminal-lobby` repo, its own binary and systemd unit | Adding it to `packaging/build-deb.sh:33` is one word on an existing list. It ships in the Debian package with the other six, so no second CI or deploy path |
 | Session creation (**revised**) | `sessionio.NewSession` in-process | Supersedes adding `POST /sessions` to tmux-api. Nothing upstream has to change, because the caller is now inside the repo |
 | Transport | Headscale tailnet only | We own the coordination server, so we own the policy and the revocation |
+| Transport (**revised 2026-10-02**) | Public HTTPS at `terminal-api.viktorbarzin.me`, allowlisted to Muse's egress addresses, Lobby bearer token as the credential | Muse's tailnet node `koda` went offline on 2026-09-28 and never returned, so the tailnet spike did not hold. Viktor chose the public endpoint; layers and runbook in `docs/runbooks/terminal-api.md` |
 | Kill switch | Revoke the `tag:muse` node in Headscale | Removes network reachability rather than relying on the service behaving |
 | Auth | Long-lived bearer token from Vault | What a Muse-written custom connector does naturally. Muse stores it where its model cannot freely read it |
 | Protocol | REST plus a published OpenAPI document | Consumer Muse has no MCP. An MCP face over the same handlers can be added later if a caller wants one |
