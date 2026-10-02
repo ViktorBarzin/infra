@@ -1,0 +1,14 @@
+#!/bin/sh
+# Installed as /etc/hotplug.d/net/60-mtk-debug-off by
+# infra/scripts/london-flint/provision.sh, and listed in /etc/sysupgrade.conf so
+# firmware upgrades keep it.
+#
+# GL firmware 4.11.0 runs the MediaTek Wi-Fi driver at debug level 1, which logs
+# "MlmeEnqueueForRecv" about 47 times a second (measured 2026-10-02). That
+# filled the 512 KB log ring in about 80 s and sent about 90k lines an hour to
+# Loki. The level is a runtime setting, so set it again whenever the driver
+# brings an interface up (boot, Wi-Fi restart).
+[ "$ACTION" = add ] || exit 0
+case "$INTERFACE" in
+ra0 | rax0) iwpriv "$INTERFACE" set Debug=0 ;;
+esac
