@@ -775,6 +775,29 @@ resource "kubectl_manifest" "middleware_crowdsec" {
           # on the traefik pods' stdout, which is also the alerting surface
           # (Prometheus counters are not cheaply available inside Yaegi).
           dryRun = false
+
+          # AppSec check (ADR-0027): each request that passes the ban check is
+          # sent to CrowdSec AppSec before it reaches the backend, and a 403
+          # from AppSec blocks it. KILL SWITCH: set appsecEnabled = false. This
+          # Middleware is dynamic config, so that is a reload, not a restart.
+          appsecEnabled = true
+          appsecUrl     = "http://crowdsec-appsec-service.crowdsec.svc.cluster.local:7422"
+          # Fails open after this; a breaker stops calling AppSec for 30s when
+          # half of the last 20 checks failed.
+          appsecTimeoutMs = 200
+          # Only a form/JSON/XML body with a known length up to this is sent to
+          # AppSec. Every other body (uploads, chunked, multipart, compressed)
+          # is never read and streams straight to the backend.
+          appsecBodyLimit = 65536
+          # Hosts that skip the AppSec check but keep ban enforcement. The
+          # Authentik hosts are already out via skipHosts above.
+          #
+          # immich: Viktor asked for it to be skipped (2026-10-02), after an
+          # earlier AppSec setup held its uploads at the ingress. The body
+          # policy alone already keeps uploads untouched (a 1 GB upload through
+          # the inspected path streamed with 2.7ms of Traefik overhead), so
+          # this also takes its JSON API out of the generic rules' reach.
+          appsecSkipHosts = ["immich.viktorbarzin.me"]
         }
       }
     }

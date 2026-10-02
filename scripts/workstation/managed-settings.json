@@ -15,6 +15,7 @@
     ]
   },
   "env": {
+    "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
     "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
     "CLAUDE_CODE_SHELL_PREFIX": "/usr/local/bin/claude-command-scope",
     "CLAUDE_CODE_TMPDIR": "/var/tmp",
@@ -30,90 +31,6 @@
     "OTEL_LOGS_EXPORT_INTERVAL": "30000"
   },
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-tmux-state done 2>/dev/null || true",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-se-hook session-start",
-            "timeout": 8
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-tmux-state running 2>/dev/null || true",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-se-hook prompt-submit",
-            "timeout": 8
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-tmux-state running 2>/dev/null || true",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-tmux-state running 2>/dev/null || true",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-tmux-state running 2>/dev/null || true",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-tmux-state done 2>/dev/null || true",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "SessionEnd": [
       {
         "hooks": [
@@ -124,42 +41,14 @@
           }
         ]
       }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-tmux-state notify 2>/dev/null || true",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-se-hook question",
-            "timeout": 86400
-          }
-        ]
-      }
-    ],
-    "TeammateIdle": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/local/bin/claude-tmux-state teammate-idle 2>/dev/null || true",
-            "timeout": 5
-          }
-        ]
-      }
     ]
   },
+  "extraKnownMarketplaces": {
+    "terminal-lobby": {
+      "source": { "source": "directory", "path": "/usr/share/terminal-lobby/claude-plugins" }
+    }
+  },
+  "enabledPlugins": { "terminal-lobby@terminal-lobby": true },
   "autoMode": {
     "environment": [
       "$defaults",

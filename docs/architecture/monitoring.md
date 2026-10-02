@@ -594,10 +594,14 @@ makes the rule cover the journal ceasing to ship at all, which reads as
 
 #### agent-api trace — `AgentApiTraceSilent`
 
-`agent-api` is Terminal Lobby's machine-facing interface, reached over the
-Headscale tailnet by an external agent (Muse first) and driving real Claude Code
-sessions on the devvm. Design:
-[plans/2026-09-14-muse-agent-broker-design.md](../plans/2026-09-14-muse-agent-broker-design.md).
+`agent-api` is Terminal Lobby's machine-facing interface, reached by external
+callers (Muse first) through `terminal-api.viktorbarzin.me`
+([runbook](../runbooks/terminal-api.md)) and driving real Claude Code sessions
+on the devvm. Design:
+[plans/2026-09-14-muse-agent-broker-design.md](../plans/2026-09-14-muse-agent-broker-design.md),
+with the transport as revised in
+[plans/2026-10-02-muse-homelab-integration-design.md](../plans/2026-10-02-muse-homelab-integration-design.md)
+(the earlier tailnet path was retired on 2026-10-02).
 
 **The trace is the compensating control.** The design carries no human approval
 gate, and the worker runs as `wizard` with that account's access, so the record

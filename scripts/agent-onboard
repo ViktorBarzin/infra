@@ -5,9 +5,13 @@
 #   agent-onboard <name> [--os-user wizard] [--memory] [--no-prompt]
 #
 # It does every step it can do safely and correctly by itself, and PRINTS the
-# two it cannot: the roster line (a repo diff somebody should review) and the
-# Headscale ACL (a git-crypt'd file that only CI applies). Printing beats a
-# script that half-edits an encrypted file from a checkout that may be locked.
+# two it cannot: the roster line and the terminal-api source allowlist entry.
+# Both are repo diffs somebody should review, and the allowlist needs the
+# caller's egress range, which only the caller's operator knows.
+#
+# Callers reach agent-api only through https://terminal-api.viktorbarzin.me
+# (docs/runbooks/terminal-api.md). The Headscale tailnet path this script
+# used to print was retired on 2026-10-02.
 set -euo pipefail
 
 NAME=""; OSUSER=wizard; MEMORY=0; PROMPT=1
@@ -16,15 +20,15 @@ while [ $# -gt 0 ]; do
     --os-user) OSUSER="$2"; shift 2 ;;
     --memory)  MEMORY=1; shift ;;
     --no-prompt) PROMPT=0; shift ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "unknown flag $1" >&2; exit 2 ;;
     *) NAME="$1"; shift ;;
   esac
 done
 [ -n "$NAME" ] || { echo "usage: agent-onboard <name> [--os-user U] [--memory]" >&2; exit 2; }
 
-# The name becomes a tmux origin, a Vault field and a tailnet tag, so hold it
-# to the narrowest of those: a tag is [a-z0-9-].
+# The name becomes a tmux origin, a Vault field and the actor in the trace.
+# [a-z0-9-] keeps it safe in all three and in a shell word.
 case "$NAME" in
   *[!a-z0-9-]*|-*|*-) echo "name must be lowercase letters, digits and dashes" >&2; exit 2 ;;
 esac
@@ -69,21 +73,12 @@ cat <<TXT
           os_user: ${OSUSER}
       then: ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml --check --diff
 
-   b) stacks/headscale/acl.hujson, from an UNLOCKED clone (the devvm's is
-      locked; a fresh clone plus git-crypt unlock is the path):
-        tagOwners:  "tag:${NAME}": ["group:admin"]
-        acls:       {"action":"accept","src":["tag:${NAME}"],
-                     "dst":["devvm-tailnet:8710"]}
-        tests:      {"src":"tag:${NAME}","accept":["100.64.0.64:8710"],
-                     "deny":["10.0.20.100:6443","192.168.1.13:445"]}
-      Land the RULE first, then tag the node, then add the TEST: policy check
-      resolves a tag to its nodes and fails on one nothing carries yet.
-
-   c) once its node has joined and you know its id:
-        kubectl -n headscale exec deploy/headscale -c headscale -- \\
-          headscale nodes tag -i <id> -t tag:${NAME}
-      Tagging moves it to tagged-devices, which is what drops it out of
-      group:admin and its 0.0.0.0/0 grant.
+   b) stacks/terminal/terminal_api.tf, local.api_allowed_sources: the
+      caller's egress range, unless it is already covered (Cloudflare WARP
+      2a09:bac0::/29 is). Everyone else gets 403 at Traefik before the token
+      check. An address in Meta's space also needs carving out of CrowdSec's
+      static Meta ban; see docs/runbooks/terminal-api.md, "Source addresses".
+      CI applies the terminal stack on push.
 TXT
 
 if [ "$PROMPT" = "1" ]; then
@@ -91,11 +86,10 @@ if [ "$PROMPT" = "1" ]; then
   {
     echo "You are being given access to a coding-agent API I run at home."
     echo
-    echo "Reach it at http://100.64.0.64:8710 over my tailnet. If your network"
-    echo "stack is in userspace mode your ordinary HTTP client will have no"
-    echo "route and you must go through your local SOCKS5 proxy."
+    echo "Reach it at https://terminal-api.viktorbarzin.me over the public"
+    echo "internet; requests from unlisted source addresses get 403."
     echo
-    echo "Fetch http://100.64.0.64:8710/openapi.json and build a connector from"
+    echo "Fetch https://terminal-api.viktorbarzin.me/openapi.json and build a connector from"
     echo "it. Every endpoint, field and status value is documented there, the"
     echo "model list is the real one for this machine, so read it rather than"
     echo "guessing. Authenticate every /v1/* request with:"

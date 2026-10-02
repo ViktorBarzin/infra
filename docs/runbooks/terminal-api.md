@@ -4,6 +4,11 @@
 internet that cannot use a VPN or a browser login. The first caller is Meta Muse, which runs in
 Meta's cloud. The browser host `terminal.viktorbarzin.me` is separate and unchanged.
 
+This is agent-api's only way in from outside the devvm. The earlier Headscale tailnet path
+(node `koda`, the devvm's `tailscaled-agent` and its `tailscale serve` of `:8710`, and the `tag:muse`
+grant to `devvm-tailnet:8710` in `stacks/headscale/acl.hujson`) was retired on 2026-10-02
+([design](../plans/2026-10-02-muse-homelab-integration-design.md)).
+
 - Config: `stacks/terminal/terminal_api.tf`, plus `playbooks/devvm.yml` (agent-api bind, nftables)
 - Ban scenario: `viktor/terminal-api-auth-bf` in `stacks/crowdsec`
 - Alerts: `TerminalApiAuthFailure`, `TerminalApiBlockedSurge` (Slack #alerts, security lane); `AgentApiDelegationUndelivered` (event lane, see [delegations.md](delegations.md))
@@ -33,23 +38,30 @@ cluster-admin kubeconfig and a Vault token on the devvm (Viktor's decision, 2026
 | Path | Backend | Notes |
 |---|---|---|
 | `/v1/*` | agent-api `10.0.10.10:8710` | conversations, messages, transcripts, tasks, delegation results |
+| `/openapi.json` (exact path) | agent-api `10.0.10.10:8710` | the API description; served without a token, holds routes and no data |
 | `/api/sessions/*` | tmux-api `:7684` (prefix stripped) | except `/metrics`, `/health`, `/push*`, `/internal/*`, which need no login |
 | `/events/` `/prompt/` `/cancel/` `/earlier/` `/result/` `/pane/` `/keys/` `/commands/` `/search/` `/answer-text/` `/answer/` `/model/` | session-events `:7685` | `/keys/` and `/pane/` type into tmux panes |
 | `/files/*` | file-api `:7686` | |
 | `/skills`, `/skills/*` | skills-api `:7688` | |
 
 Not exposed: ttyd (`/`, `/ws`, `/token`, an interactive shell), clipboard-upload (it parses the
-upload body before checking auth), static assets, build stamps, agent-api `/health` and
-`/openapi.json`. Unmatched paths get Traefik's catch-all error page.
+upload body before checking auth), static assets, build stamps and agent-api `/health`.
+Unmatched paths get Traefik's catch-all error page.
 
 ## Calling it
 
 ```sh
+curl https://terminal-api.viktorbarzin.me/openapi.json   # from an allowlisted address, no token
 curl -H "Authorization: Bearer $TOKEN" https://terminal-api.viktorbarzin.me/v1/conversations
 curl -H "Authorization: Bearer $TOKEN" https://terminal-api.viktorbarzin.me/api/sessions/whoami
 ```
 
 Muse's token: `vault kv get -field=agent_api_muse_token secret/terminal-lobby`.
+
+A client generated from `/openapi.json` takes its base URL from the document's first `servers`
+entry, which is `https://terminal-api.viktorbarzin.me` (the second is loopback on the devvm). Check
+it with `curl -s https://terminal-api.viktorbarzin.me/openapi.json | jq -r '.servers[0].url'`; an
+older terminal-lobby build still answers `http://{host}:8710`, the retired tailnet address.
 
 Long waits: agent-api's `?wait=N` (send-and-wait on messages, long-poll on tasks, N up to 300 s)
 holds the request open. The `/v1/` route therefore uses the ServersTransport
