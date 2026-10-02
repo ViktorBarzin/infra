@@ -51,12 +51,19 @@ curl -H "Authorization: Bearer $TOKEN" https://terminal-api.viktorbarzin.me/api/
 
 Muse's token: `vault kv get -field=agent_api_muse_token secret/terminal-lobby`.
 
-## Allow a new source address
+## Source addresses
 
-Edit `local.api_allowed_sources` in `stacks/terminal/terminal_api.tf` and apply the terminal
-stack. If the address is in Meta's space (Muse), it is also in CrowdSec's static Meta ban
-(`meta-asn.txt` in `stacks/crowdsec/modules/crowdsec/main.tf`); carve the exact prefix out there
-too, or the bouncer answers 403 before the allowlist is reached.
+`local.api_allowed_sources` in `stacks/terminal/terminal_api.tf` lists who reaches the token check
+at all: Cloudflare WARP's IPv6 block `2a09:bac0::/29` and mx2 (`92.5.132.215`, for testing).
+
+Muse egresses through Cloudflare WARP, a shared range used by everyone running the free WARP app,
+and its address changes on nearly every request. So the allowlist filters out non-WARP traffic but
+cannot single Muse out, and the per-address defences (the 401 ban, the rate limit) cannot stop a
+caller who also rotates through WARP. The bearer token, about 288 bits, is what identifies Muse.
+
+To add a source, edit the list and apply the terminal stack. An address in Meta's space would also
+hit CrowdSec's static Meta ban (`meta-asn.txt` in `stacks/crowdsec/modules/crowdsec/main.tf`) and
+needs carving out there too. Muse's WARP addresses are not in that list.
 
 ## Add, rotate or revoke a caller
 
