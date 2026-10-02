@@ -452,6 +452,46 @@
         daemon_reload: true
       when: not ansible_check_mode
 
+    # ---- meshagent: nightly restart (added 2026-10-02) ----------------------
+    # The MeshCentral agent is installed by MeshCentral itself, not by this
+    # playbook; this only bounds its memory leak. It grew to 10.4 GB RSS plus
+    # 8 GB of swap in under 20 days, which starved the devvm. Viktor chose a
+    # nightly restart over a memory cap. Reasons and numbers are in the units.
+    - name: Create the meshagent drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/meshagent.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Shorten meshagent's stop timeout
+      ansible.builtin.copy:
+        src: files/devvm/meshagent-stop-timeout.conf
+        dest: /etc/systemd/system/meshagent.service.d/stop-timeout.conf
+        mode: "0644"
+        owner: root
+        group: root
+      notify: reload systemd
+
+    - name: Install the meshagent nightly-restart units
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+        owner: root
+        group: root
+      loop:
+        - meshagent-restart.service
+        - meshagent-restart.timer
+      notify: reload systemd
+
+    - name: Enable the meshagent nightly-restart timer
+      ansible.builtin.systemd_service:
+        name: meshagent-restart.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
     # Ansible's copy and template do NOT create parent directories, and every one
     # of these already existed on the live box -- so a check run there could never
     # have caught this. A blank machine has none of them.
