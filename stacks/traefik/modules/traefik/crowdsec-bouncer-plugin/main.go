@@ -39,10 +39,12 @@
 package crowdsec_bouncer_plugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -60,6 +62,9 @@ const userAgent = "crowdsec-traefik-bouncer/v0.1.0"
 // defaultLapiURL is the in-cluster LAPI service. No NetworkPolicy stands
 // between the traefik and crowdsec namespaces.
 const defaultLapiURL = "http://crowdsec-service.crowdsec.svc.cluster.local:8080"
+
+// defaultAppsecURL is the crowdsec chart's AppSec Service (release "crowdsec").
+const defaultAppsecURL = "http://crowdsec-appsec-service.crowdsec.svc.cluster.local:7422"
 
 // Config is the plugin configuration, supplied by the Middleware CRD.
 type Config struct {
@@ -100,6 +105,23 @@ type Config struct {
 	// BanStatusCode and BanMessage are the response to a banned client.
 	BanStatusCode int    `json:"banStatusCode,omitempty" yaml:"banStatusCode,omitempty"`
 	BanMessage    string `json:"banMessage,omitempty" yaml:"banMessage,omitempty"`
+
+	// AppsecEnabled turns on the AppSec check: each request that passes the
+	// ban check is sent to the CrowdSec AppSec component before it reaches the
+	// backend, and a 403 from AppSec blocks it (ADR-0027). Off by default, and
+	// it is the kill switch: flipping it on the Middleware is a dynamic reload,
+	// not a Traefik restart.
+	AppsecEnabled bool `json:"appsecEnabled,omitempty" yaml:"appsecEnabled,omitempty"`
+	// AppsecURL is the AppSec component's listen address.
+	AppsecURL string `json:"appsecUrl,omitempty" yaml:"appsecUrl,omitempty"`
+	// AppsecSkipHosts skip the AppSec check but keep ban enforcement. SkipHosts
+	// above skip both.
+	AppsecSkipHosts []string `json:"appsecSkipHosts,omitempty" yaml:"appsecSkipHosts,omitempty"`
+	// AppsecTimeoutMs bounds one AppSec check. On expiry the request is allowed.
+	AppsecTimeoutMs int `json:"appsecTimeoutMs,omitempty" yaml:"appsecTimeoutMs,omitempty"`
+	// AppsecBodyLimit is the largest body sent to AppSec. See inspectBody for
+	// the rest of the body policy; it is what keeps uploads streaming.
+	AppsecBodyLimit int `json:"appsecBodyLimit,omitempty" yaml:"appsecBodyLimit,omitempty"`
 }
 
 // CreateConfig returns the defaults. They are deliberately the safe end of every
@@ -114,6 +136,10 @@ func CreateConfig() *Config {
 		DryRun:            true,
 		BanStatusCode:     http.StatusForbidden,
 		BanMessage:        "Forbidden\n",
+		AppsecEnabled:     false,
+		AppsecURL:         defaultAppsecURL,
+		AppsecTimeoutMs:   200,
+		AppsecBodyLimit:   65536,
 	}
 }
 
@@ -387,6 +413,13 @@ type Bouncer struct {
 	// Deliberately NOT func(string, ...interface{}) — see the package doc: a
 	// variadic func in a struct field panics Yaegi at import.
 	logf func(string)
+
+	appsecOn        bool
+	appsecURL       string
+	appsecKey       string
+	appsecSkipHosts map[string]struct{}
+	appsecClient    *http.Client
+	appsecBodyLimit int64
 }
 
 // newBouncer validates the configuration and builds the request-path state. It
@@ -429,16 +462,56 @@ func newBouncer(cfg *Config, next http.Handler, name string) (*Bouncer, error) {
 		statusCode = http.StatusForbidden
 	}
 
+	// AppSec settings never make New fail. This middleware sits on the
+	// websecure entrypoint, so an error here would make every router on the
+	// entrypoint unresolvable; a bad AppSec setting turns AppSec off instead.
+	appsecOn := cfg.AppsecEnabled
+	appsecURL := strings.TrimSpace(cfg.AppsecURL)
+	if appsecURL == "" {
+		appsecURL = defaultAppsecURL
+	}
+	appsecKey := strings.TrimSpace(cfg.LapiKey)
+	if appsecOn {
+		u, err := url.Parse(appsecURL)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			stdoutLogf(fmt.Sprintf("[crowdsec-bouncer] action=appsec-disabled reason=bad-url url=%q", appsecURL))
+			appsecOn = false
+		} else if appsecKey == "" {
+			stdoutLogf("[crowdsec-bouncer] action=appsec-disabled reason=no-api-key")
+			appsecOn = false
+		}
+	}
+	appsecSkipHosts := map[string]struct{}{}
+	for _, h := range cfg.AppsecSkipHosts {
+		if h = normaliseHost(h); h != "" {
+			appsecSkipHosts[h] = struct{}{}
+		}
+	}
+	timeout := time.Duration(cfg.AppsecTimeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 200 * time.Millisecond
+	}
+	bodyLimit := int64(cfg.AppsecBodyLimit)
+	if bodyLimit <= 0 {
+		bodyLimit = 65536
+	}
+
 	return &Bouncer{
-		next:        next,
-		name:        name,
-		trustedNets: trustedNets,
-		skipHosts:   skipHosts,
-		dryRun:      cfg.DryRun,
-		statusCode:  statusCode,
-		banMessage:  cfg.BanMessage,
-		logf:        stdoutLogf,
-		store:       &store{},
+		next:            next,
+		name:            name,
+		trustedNets:     trustedNets,
+		skipHosts:       skipHosts,
+		dryRun:          cfg.DryRun,
+		statusCode:      statusCode,
+		banMessage:      cfg.BanMessage,
+		logf:            stdoutLogf,
+		store:           &store{},
+		appsecOn:        appsecOn,
+		appsecURL:       appsecURL,
+		appsecKey:       appsecKey,
+		appsecSkipHosts: appsecSkipHosts,
+		appsecClient:    sharedAppsecClient(timeout),
+		appsecBodyLimit: bodyLimit,
 	}, nil
 }
 
@@ -475,8 +548,8 @@ func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http
 		// on every dynamic-config reload, which on this cluster is ~285 times an
 		// hour — a per-New() line was pure noise, and it is also the reason the
 		// poller is shared rather than started per instance.
-		b.logf(fmt.Sprintf("[crowdsec-bouncer] action=started name=%s lapi=%s interval=%s dryRun=%t origins=%s skipHosts=%d",
-			name, lapiURL, interval, b.dryRun, strings.Join(origins, ","), len(b.skipHosts)))
+		b.logf(fmt.Sprintf("[crowdsec-bouncer] action=started name=%s lapi=%s interval=%s dryRun=%t origins=%s skipHosts=%d appsec=%t appsecSkipHosts=%d",
+			name, lapiURL, interval, b.dryRun, strings.Join(origins, ","), len(b.skipHosts), b.appsecOn, len(b.appsecSkipHosts)))
 		// Load once synchronously so the first request through a fresh Traefik
 		// pod is already enforced instead of failing open for a whole interval.
 		if err := s.refresh(client, lapiURL, lapiKey, origins, b.logf); err != nil {
@@ -573,35 +646,340 @@ func (b *Bouncer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// A never-loaded set contains nothing, so the ban check below allows until
+	// the first successful poll. Fail open.
 	set := b.store.snapshot()
-	if !set.loaded {
-		// Nothing has ever been loaded: allow. Fail open.
-		b.next.ServeHTTP(rw, req)
-		return
-	}
-
 	ip := b.clientIP(req)
-	if ip == nil || !set.contains(ip) {
-		b.next.ServeHTTP(rw, req)
+	if set.loaded && ip != nil && set.contains(ip) {
+		// Only decisions are logged, never allowed requests — at ~10 req/s
+		// steady state and 64 req/s peak, logging every request would dwarf the
+		// signal. These lines are the alerting surface: Prometheus counters are
+		// not cheaply available inside Yaegi, so the Loki recording/alert rules
+		// read this.
+		if b.dryRun {
+			b.logf(fmt.Sprintf("[crowdsec-bouncer] action=dry-run-block ip=%s host=%s method=%s path=%s",
+				ip, host, req.Method, req.URL.Path))
+			b.next.ServeHTTP(rw, req)
+			return
+		}
+		b.logf(fmt.Sprintf("[crowdsec-bouncer] action=block ip=%s host=%s method=%s path=%s status=%d",
+			ip, host, req.Method, req.URL.Path, b.statusCode))
+		b.deny(rw)
 		return
 	}
 
-	// Only decisions are logged, never allowed requests — at ~10 req/s steady
-	// state and 64 req/s peak, logging every request would dwarf the signal.
-	// These lines are the alerting surface: Prometheus counters are not cheaply
-	// available inside Yaegi, so the Loki recording/alert rules read this.
-	if b.dryRun {
-		b.logf(fmt.Sprintf("[crowdsec-bouncer] action=dry-run-block ip=%s host=%s method=%s path=%s",
-			ip, host, req.Method, req.URL.Path))
-		b.next.ServeHTTP(rw, req)
-		return
+	if b.appsecOn {
+		if _, skip := b.appsecSkipHosts[host]; !skip {
+			if b.appsecCheck(rw, req, ip, host) {
+				return
+			}
+		}
 	}
+	b.next.ServeHTTP(rw, req)
+}
 
-	b.logf(fmt.Sprintf("[crowdsec-bouncer] action=block ip=%s host=%s method=%s path=%s status=%d",
-		ip, host, req.Method, req.URL.Path, b.statusCode))
+func (b *Bouncer) deny(rw http.ResponseWriter) {
 	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	rw.WriteHeader(b.statusCode)
 	if b.banMessage != "" {
 		fmt.Fprint(rw, b.banMessage)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AppSec check (ADR-0027)
+// ---------------------------------------------------------------------------
+
+// appsecCheck asks the AppSec component about one request. It returns true
+// when it has written the response (a block, or a 400 for a body the client
+// failed to deliver) and false when the request should continue to the backend.
+//
+// Everything except an explicit 403 from AppSec allows: 401 (a fresh AppSec pod
+// whose LAPI is unreachable answers that to everything), 5xx, timeouts and
+// connection errors all fail open and count against the breaker.
+//
+// The ResponseWriter is never wrapped, so websockets (Hijacker), SSE and
+// streamed responses (Flusher) behave exactly as without this check.
+func (b *Bouncer) appsecCheck(rw http.ResponseWriter, req *http.Request, ip net.IP, host string) bool {
+	breaker := currentBreaker()
+	if !breaker.allow(time.Now(), b.logf) {
+		return false
+	}
+
+	var body []byte
+	if inspectBody(req, b.appsecBodyLimit) {
+		// Bounded by Go's own enforcement of Content-Length (at most limit
+		// bytes), and grown as bytes arrive rather than pre-allocated from the
+		// declared length, so a client that declares 64 KiB and sends nothing
+		// pins no memory.
+		data, err := io.ReadAll(io.LimitReader(req.Body, b.appsecBodyLimit+1))
+		if err != nil {
+			// The client did not deliver the body it declared. Passing a
+			// truncated body on would be worse than refusing it.
+			rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			rw.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(rw, "Bad Request\n")
+			return true
+		}
+		req.Body = &replayBody{r: bytes.NewReader(data), closer: req.Body}
+		body = data
+	}
+
+	status, err := b.callAppsec(req, ip, body)
+	if err != nil || (status != http.StatusOK && status != http.StatusForbidden) {
+		breaker.record(true, time.Now(), b.logf)
+		return false
+	}
+	breaker.record(false, time.Now(), b.logf)
+	if status != http.StatusForbidden {
+		return false
+	}
+	b.logf(fmt.Sprintf("[crowdsec-bouncer] action=appsec-block ip=%s host=%s method=%s path=%s status=%d",
+		ip, host, req.Method, req.URL.Path, b.statusCode))
+	b.deny(rw)
+	return true
+}
+
+// inspectBody is the body policy, and the reason an upload is never held at
+// the ingress: only a short text body whose length Go has already parsed is
+// read. Chunked or unknown-length bodies (ContentLength -1), multipart,
+// octet-stream and media uploads, compressed bodies, and anything over the
+// limit are inspected on method, URI and headers only, and their bodies reach
+// the backend untouched. ContentLength is Go's parsed value, never the header.
+func inspectBody(req *http.Request, limit int64) bool {
+	if req.Body == nil || req.ContentLength <= 0 || req.ContentLength > limit {
+		return false
+	}
+	if ce := strings.TrimSpace(req.Header.Get("Content-Encoding")); ce != "" && !strings.EqualFold(ce, "identity") {
+		return false
+	}
+	return inspectableMediaType(req.Header.Get("Content-Type"))
+}
+
+// inspectableMediaType reports whether a Content-Type is form, JSON or XML.
+func inspectableMediaType(contentType string) bool {
+	if strings.TrimSpace(contentType) == "" {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	switch mediaType {
+	case "application/x-www-form-urlencoded", "application/json", "application/xml", "text/xml":
+		return true
+	}
+	return strings.HasSuffix(mediaType, "+json") || strings.HasSuffix(mediaType, "+xml")
+}
+
+// replayBody hands the backend the bytes already read for inspection and still
+// closes the original body.
+type replayBody struct {
+	r      *bytes.Reader
+	closer io.Closer
+}
+
+func (rb *replayBody) Read(p []byte) (int, error) { return rb.r.Read(p) }
+
+func (rb *replayBody) Close() error { return rb.closer.Close() }
+
+// appsecDropHeaders are not forwarded to AppSec: hop-by-hop headers, and the
+// framing headers that belong to the original connection.
+var appsecDropHeaders = map[string]struct{}{
+	"Connection":        {},
+	"Keep-Alive":        {},
+	"Proxy-Connection":  {},
+	"Te":                {},
+	"Trailer":           {},
+	"Transfer-Encoding": {},
+	"Upgrade":           {},
+	"Expect":            {},
+	"Content-Length":    {},
+}
+
+// callAppsec sends one check using the AppSec remediation protocol: GET when no
+// body is forwarded, POST with the body otherwise, the original headers, and
+// the X-Crowdsec-Appsec-* headers describing the original request.
+func (b *Bouncer) callAppsec(req *http.Request, ip net.IP, body []byte) (int, error) {
+	method := http.MethodGet
+	var payload io.Reader
+	if body != nil {
+		method = http.MethodPost
+		payload = bytes.NewReader(body)
+	}
+	out, err := http.NewRequest(method, b.appsecURL, payload)
+	if err != nil {
+		return 0, err
+	}
+
+	connectionListed := map[string]struct{}{}
+	for _, v := range req.Header.Values("Connection") {
+		for _, name := range strings.Split(v, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				connectionListed[http.CanonicalHeaderKey(name)] = struct{}{}
+			}
+		}
+	}
+	for k, vs := range req.Header {
+		ck := http.CanonicalHeaderKey(k)
+		if _, drop := appsecDropHeaders[ck]; drop {
+			continue
+		}
+		if _, drop := connectionListed[ck]; drop {
+			continue
+		}
+		// A client must not be able to name its own IP, key or verb to AppSec.
+		if strings.HasPrefix(ck, "X-Crowdsec-Appsec-") {
+			continue
+		}
+		for _, v := range vs {
+			out.Header.Add(ck, v)
+		}
+	}
+
+	uri := req.RequestURI
+	if !strings.HasPrefix(uri, "/") {
+		uri = req.URL.RequestURI()
+	}
+	ipText := ""
+	if ip != nil {
+		ipText = ip.String()
+	}
+	out.Header.Set("X-Crowdsec-Appsec-Ip", ipText)
+	out.Header.Set("X-Crowdsec-Appsec-Uri", uri)
+	out.Header.Set("X-Crowdsec-Appsec-Host", req.Host)
+	out.Header.Set("X-Crowdsec-Appsec-Verb", req.Method)
+	out.Header.Set("X-Crowdsec-Appsec-Api-Key", b.appsecKey)
+	out.Header.Set("X-Crowdsec-Appsec-User-Agent", req.UserAgent())
+	out.Header.Set("X-Crowdsec-Appsec-Http-Version", strconv.Itoa(req.ProtoMajor*10+req.ProtoMinor))
+
+	resp, err := b.appsecClient.Do(out)
+	if err != nil {
+		return 0, err
+	}
+	// Drain a little so the keep-alive connection can be reused.
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
+// One HTTP client per timeout, shared by every middleware instance. Traefik
+// rebuilds middlewares on every config reload (~285 times an hour), and a
+// Transport per instance would leak its idle connections each time.
+var (
+	appsecClientMu sync.Mutex
+	appsecClients  = map[time.Duration]*http.Client{}
+)
+
+func sharedAppsecClient(timeout time.Duration) *http.Client {
+	appsecClientMu.Lock()
+	defer appsecClientMu.Unlock()
+	if c, ok := appsecClients[timeout]; ok {
+		return c
+	}
+	c := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			MaxIdleConns:        128,
+			MaxIdleConnsPerHost: 64,
+			IdleConnTimeout:     90 * time.Second,
+			DisableCompression:  true,
+		},
+	}
+	appsecClients[timeout] = c
+	return c
+}
+
+// The circuit breaker stops AppSec checks for breakerOpenFor once at least
+// half of the last breakerWindow checks failed, so an AppSec outage costs each
+// request nothing instead of a full timeout. It is package-level for the same
+// reason as the client: per-instance state would reset on every reload. Only
+// state changes are logged.
+const breakerWindow = 20
+
+var breakerOpenFor = 30 * time.Second
+
+type circuitBreaker struct {
+	mu        sync.Mutex
+	outcomes  []bool
+	filled    int
+	next      int
+	failures  int
+	open      bool
+	openUntil time.Time
+}
+
+func newCircuitBreaker() *circuitBreaker {
+	return &circuitBreaker{outcomes: make([]bool, breakerWindow)}
+}
+
+var (
+	appsecBreakerMu sync.Mutex
+	appsecBreaker   = newCircuitBreaker()
+)
+
+func currentBreaker() *circuitBreaker {
+	appsecBreakerMu.Lock()
+	defer appsecBreakerMu.Unlock()
+	return appsecBreaker
+}
+
+func resetBreaker() {
+	appsecBreakerMu.Lock()
+	defer appsecBreakerMu.Unlock()
+	appsecBreaker = newCircuitBreaker()
+}
+
+func (cb *circuitBreaker) clearLocked() {
+	for i := range cb.outcomes {
+		cb.outcomes[i] = false
+	}
+	cb.filled = 0
+	cb.next = 0
+	cb.failures = 0
+}
+
+// allow reports whether a check may be made now.
+func (cb *circuitBreaker) allow(now time.Time, logf func(string)) bool {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if !cb.open {
+		return true
+	}
+	if now.Before(cb.openUntil) {
+		return false
+	}
+	cb.open = false
+	cb.clearLocked()
+	logf("[crowdsec-bouncer] action=appsec-breaker state=closed")
+	return true
+}
+
+// record adds one check's outcome, and opens the breaker when the window is
+// full and at least half of it failed.
+func (cb *circuitBreaker) record(failed bool, now time.Time, logf func(string)) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if cb.open {
+		return
+	}
+	if cb.filled == breakerWindow && cb.outcomes[cb.next] {
+		cb.failures--
+	}
+	cb.outcomes[cb.next] = failed
+	if failed {
+		cb.failures++
+	}
+	cb.next = (cb.next + 1) % breakerWindow
+	if cb.filled < breakerWindow {
+		cb.filled++
+	}
+	if cb.filled == breakerWindow && cb.failures*2 >= breakerWindow {
+		failures := cb.failures
+		cb.open = true
+		cb.openUntil = now.Add(breakerOpenFor)
+		cb.clearLocked()
+		logf(fmt.Sprintf("[crowdsec-bouncer] action=appsec-breaker state=open failures=%d/%d open-for=%s",
+			failures, breakerWindow, breakerOpenFor))
 	}
 }
