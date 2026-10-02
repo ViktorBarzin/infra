@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +35,9 @@ func TestParseVideoArgs(t *testing.T) {
 		{name: "quality and expire with =",
 			args: []string{"https://x.com/1", "--quality=best", "--expire=3", "--no-link"},
 			want: videoArgs{urls: []string{"https://x.com/1"}, quality: "best", expireDays: 3, noLink: true}},
+		{name: "force skips the duplicate check",
+			args: []string{"--force", "https://x.com/1"},
+			want: videoArgs{urls: []string{"https://x.com/1"}, quality: "1080", expireDays: 30, force: true}},
 		{name: "help needs no url",
 			args: []string{"--help"},
 			want: videoArgs{quality: "1080", expireDays: 30, help: true}},
@@ -61,7 +65,7 @@ func TestParseVideoArgs(t *testing.T) {
 			}
 			if strings.Join(got.urls, " ") != strings.Join(c.want.urls, " ") ||
 				got.quality != c.want.quality || got.expireDays != c.want.expireDays ||
-				got.noLink != c.want.noLink || got.help != c.want.help {
+				got.noLink != c.want.noLink || got.force != c.want.force || got.help != c.want.help {
 				t.Errorf("got %+v, want %+v", got, c.want)
 			}
 		})
@@ -304,16 +308,18 @@ func TestHasAudioStream(t *testing.T) {
 // exercise the upload path, with knobs for the failures seen in practice.
 type fakeNextcloud struct {
 	mu            sync.Mutex
-	chunks        map[string][]byte // chunk name -> body, for the one upload in flight
-	files         map[string][]byte // path under /remote.php/dav/files/<user> -> content
-	failChunkOnce map[string]bool   // chunk name -> answer 500 on its first PUT
-	moveAnswer404 bool              // assemble the file, then pretend the MOVE was lost
-	mkcolFiles405 bool              // the destination folder already exists
+	chunks        map[string][]byte            // chunk name -> body, for the one upload in flight
+	files         map[string][]byte            // path under /remote.php/dav/files/<user> -> content
+	failChunkOnce map[string]bool              // chunk name -> answer 500 on its first PUT
+	moveAnswer404 bool                         // assemble the file, then pretend the MOVE was lost
+	mkcolFiles405 bool                         // the destination folder already exists
+	props         map[string]map[string]string // path -> homelab-video property -> value
 	calls         []string
 }
 
 func newFakeNextcloud() *fakeNextcloud {
-	return &fakeNextcloud{chunks: map[string][]byte{}, files: map[string][]byte{}, failChunkOnce: map[string]bool{}}
+	return &fakeNextcloud{chunks: map[string][]byte{}, files: map[string][]byte{}, failChunkOnce: map[string]bool{},
+		props: map[string]map[string]string{}}
 }
 
 func (f *fakeNextcloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -381,6 +387,48 @@ func (f *fakeNextcloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
+	case r.Method == "PROPFIND" && r.Header.Get("Depth") == "1" && strings.HasSuffix(r.URL.Path, "/"):
+		dir := strings.TrimPrefix(r.URL.Path, filesPrefix)
+		var names []string
+		for p := range f.files {
+			if strings.HasPrefix(p, dir) {
+				names = append(names, p)
+			}
+		}
+		if len(names) == 0 {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		sort.Strings(names)
+		var b strings.Builder
+		b.WriteString(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>` + r.URL.Path +
+			`</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`)
+		for _, p := range names {
+			b.WriteString(`<d:response><d:href>` + filesPrefix + encodePath(p) + `</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>` +
+				strconv.Itoa(len(f.files[p])) + `</d:getcontentlength>`)
+			for k, v := range f.props[p] {
+				b.WriteString(`<x1:` + k + ` xmlns:x1="` + videoPropNS + `">` + v + `</x1:` + k + `>`)
+			}
+			b.WriteString(`</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`)
+		}
+		b.WriteString(`</d:multistatus>`)
+		w.WriteHeader(207)
+		io.WriteString(w, b.String())
+	case r.Method == "PROPPATCH" && strings.HasPrefix(r.URL.Path, filesPrefix):
+		p := strings.TrimPrefix(r.URL.Path, filesPrefix)
+		if _, ok := f.files[p]; !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if f.props[p] == nil {
+			f.props[p] = map[string]string{}
+		}
+		for _, m := range regexp.MustCompile(`<hl:([a-z]+)>([^<]*)</hl:[a-z]+>`).FindAllStringSubmatch(string(body), -1) {
+			f.props[p][m[1]] = m[2]
+		}
+		w.WriteHeader(207)
+		io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`)
 	case r.Method == "PROPFIND" && strings.HasPrefix(r.URL.Path, filesPrefix):
 		p := strings.TrimPrefix(r.URL.Path, filesPrefix)
 		content, ok := f.files[p]
