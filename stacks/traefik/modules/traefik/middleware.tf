@@ -812,11 +812,11 @@ resource "kubectl_manifest" "middleware_crowdsec" {
           appsecSkipHosts = ["immich.viktorbarzin.me"]
           # Second AppSec listener that adds the OWASP core rule set, for the
           # public hosts with no Authentik in front of them (Viktor's scope,
-          # 2026-10-02). The host list is filled once the pre-launch replay
-          # through this listener is clean. Each listener has its own breaker,
-          # so a failing CRS listener cannot switch the default one off.
+          # 2026-10-02), computed from the live Ingresses in crs-hosts.tf minus
+          # the replay-driven exclusions there. Each listener has its own
+          # breaker, so a failing CRS listener cannot switch the default off.
           appsecCrsUrl   = "http://crowdsec-appsec-crs.crowdsec.svc.cluster.local:7423"
-          appsecCrsHosts = []
+          appsecCrsHosts = local.appsec_crs_hosts
         }
       }
     }
