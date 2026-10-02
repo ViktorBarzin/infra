@@ -1,5 +1,14 @@
 # Repowise — as-built
 
+> **MCP endpoint REMOVED on 2026-10-02.** Viktor asked for the repowise MCP to
+> be deleted while keeping the parked app. Gone: the `mcp` container and its
+> `mcp_serve.py` launcher, the `repowise-mcp` Service, the
+> `repowise-mcp.viktorbarzin.me` ingress and DNS record, the per-holder
+> `bearer-auth` Middleware, and the entry in Viktor's `~/.claude.json`. The
+> `bearer_tokens` key is left in Vault `secret/repowise`, unused. Everything
+> below about `/mcp` describes the system as it was; restoring it means
+> bringing those pieces back from git history.
+>
 > **PARKED at `replicas = 0` since 2026-09-19.** Viktor's call: "we haven't
 > used repowise and agents aren't using it either so let's scale it down. don't
 > delete, just scale it down permanently." Nothing was destroyed. The PVC and
