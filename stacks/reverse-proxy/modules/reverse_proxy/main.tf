@@ -421,6 +421,29 @@ module "ha-london" {
   }
 }
 
+# GL firmware 4.11 (on the London Flint since 2026-10-02) answers 403 to any
+# request whose Host is not localhost or one of the router's own addresses.
+# The allowlist is hardcoded in /usr/share/gl-ngx/oui-access.lua with no
+# setting, so Traefik names the router by its tunnel address instead.
+# customRequestHeaders treats Host specially and rewrites the request's Host.
+resource "kubernetes_manifest" "london_host_header" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "london-host-header"
+      namespace = "reverse-proxy"
+    }
+    spec = {
+      headers = {
+        customRequestHeaders = {
+          Host = "10.3.2.6"
+        }
+      }
+    }
+  }
+}
+
 # https://london.viktorbarzin.me/
 module "london" {
   source           = "./factory"
@@ -431,7 +454,12 @@ module "london" {
   tls_secret_name  = var.tls_secret_name
   backend_protocol = "HTTPS"
   protected        = true
-  depends_on       = [kubernetes_namespace.reverse-proxy]
+  # The same firmware cut the router's header buffers to 1k / 2 x 2k, so a
+  # single header over 2 KB gets a 400 (measured 2026-10-02). Dropping the
+  # X-authentik-* lines keeps the request smaller; cookies still pass whole.
+  strip_auth_headers = true
+  extra_middlewares  = ["reverse-proxy-london-host-header@kubernetescrd"]
+  depends_on         = [kubernetes_namespace.reverse-proxy, kubernetes_manifest.london_host_header]
   extra_annotations = {
     "gethomepage.dev/enabled" : "false"
     "gethomepage.dev/description" : "OpenWRT London"
