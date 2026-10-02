@@ -27,7 +27,7 @@ homelab version
 | `tf validate <stack>` | read | `scripts/tg validate` |
 | `tf fmt <stack>` | read | `terraform fmt -recursive` on the stack |
 | `tf force-unlock <stack> <lock-id>` | write | release a stuck state lock |
-| `tf apply <stack>` | write | `scripts/tg apply` — auto-claims `stack:<name>`, always releases, warns it's out-of-band |
+| `tf apply <stack> [tf args]` | write | `scripts/tg apply` — auto-claims `stack:<name>`, always releases, warns it's out-of-band. Extra args are forwarded, so `-target=<addr>` works (it was silently dropped before 2026-10-02, turning a targeted apply into a full one) |
 | `work start <topic>` | write | create `.worktrees/<topic>` on `<user>/<topic>` off `<remote>/master`; enter with native `EnterWorktree` |
 | `work land [--verify-cmd "…"] [--no-verify]` | write | merge master in → verify → push `HEAD:master` (non-ff retry; PR fallback) |
 | `work clean <topic>` | write | remove a task's worktree + branch (run from the main checkout) |

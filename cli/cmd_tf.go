@@ -92,8 +92,22 @@ func tfForceUnlock(args []string) error {
 // tfApply applies a stack out-of-band: claim the stack on the presence board,
 // ALWAYS release on exit (normal, error, or signal — fixing the claim leak),
 // and warn that CI applies canonically on push.
+// tfApplyArgs builds the scripts/tg argv for an apply. Everything after the
+// stack name is forwarded, so `homelab tf apply vault -target=helm_release.vault`
+// is a targeted apply; it used to be dropped, which silently made it a full one.
+func tfApplyArgs(rest []string) []string {
+	out := []string{"apply", "--non-interactive"}
+	for _, a := range rest {
+		if a == "--non-interactive" {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 func tfApply(args []string) error {
-	infraRoot, stackName, stackDir, _, err := resolveTfStack(args)
+	infraRoot, stackName, stackDir, rest, err := resolveTfStack(args)
 	if err != nil {
 		return err
 	}
@@ -118,5 +132,5 @@ func tfApply(args []string) error {
 		os.Exit(130)
 	}()
 
-	return runStreamingIn(stackDir, tgPath(infraRoot), "apply", "--non-interactive")
+	return runStreamingIn(stackDir, tgPath(infraRoot), tfApplyArgs(rest)...)
 }
