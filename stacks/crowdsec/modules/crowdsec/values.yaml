@@ -325,14 +325,29 @@ appsec:
               type: appsec
           topologyKey: kubernetes.io/hostname
   acquisitions:
+    # Default listener: every inspected host.
     - source: appsec
       listen_addr: "0.0.0.0:7422"
       path: /
       # appsec-default loads base-config plus every vpatch-* and generic-*
-      # rule in-band. The OWASP core rule set is deliberately not loaded.
+      # rule in-band.
       appsec_config: crowdsecurity/appsec-default
       # One worker per pod by default, which serialises checks; at the
       # 197 req/s 30-day peak that queues behind the plugin's 200 ms deadline.
+      routines: 4
+      labels:
+        type: appsec
+    # Core-rule-set listener (added 2026-10-02): the same rules PLUS the OWASP
+    # core rule set in-band, blocking. The Traefik bouncer sends only the
+    # appsecCrsHosts here, the public hosts with no Authentik in front of them
+    # (Viktor's scope: a login wall already stops anonymous reach, and CRS is
+    # noisiest on logged-in app traffic). Paranoia level 1, the hub default.
+    - source: appsec
+      listen_addr: "0.0.0.0:7423"
+      path: /
+      appsec_configs:
+        - crowdsecurity/appsec-default
+        - crowdsecurity/crs-inband
       routines: 4
       labels:
         type: appsec
@@ -340,15 +355,19 @@ appsec:
     # appsec-virtual-patching also brings the appsec-vpatch scenario, which
     # bans an address for 4h (default_ip_remediation) once two DISTINCT rules
     # match it within 60s. A single rule hit is a single 403.
+    # appsec-crs-inband brings the core rule set and the appsec-native
+    # scenario, which bans after more than 3 core-rule-set blocks in 30s.
+    # The Nextcloud exclusion plugin is picked up by the CRS rule on install.
     - name: COLLECTIONS
-      value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-generic-rules"
+      value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-generic-rules crowdsecurity/appsec-crs-inband crowdsecurity/appsec-crs-exclusion-plugin-nextcloud"
   resources:
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 384Mi
     limits:
       cpu: null
-      memory: 512Mi
+      # 512Mi -> 1Gi with the core rule set loaded on the second listener.
+      memory: 1Gi
   # The trusted-IP whitelist, so the appsec-vpatch scenario running in these
   # pods can never ban home, London, Meta corp or an internal range. It does
   # NOT stop a per-request 403: in-band blocks ignore whitelists.
