@@ -18,7 +18,7 @@ const videoUploadDir = "/Videos/"
 // that answered 413 for a single PUT (memory #14305).
 const videoChunkSize = 100 << 20
 
-const videoUsage = `homelab video get <url>... [--quality 1080|720|480|best] [--expire DAYS] [--no-link]
+const videoUsage = `homelab video get <url>... [--quality 1080|720|480|best] [--expire DAYS] [--no-link] [--force]
 
 Downloads each video with yt-dlp as an H.264 MP4 that plays in a phone's own
 player, uploads it to Videos/ in your Nextcloud, and prints the path plus a
@@ -27,6 +27,12 @@ public link that expires after DAYS (default 30).
   --quality   height cap, default 1080. "best" drops the cap.
   --expire    public-link lifetime in days, default 30. 0 means no expiry.
   --no-link   upload only, print no public link.
+  --force     download even when Videos/ already has the video.
+
+Before downloading, the link is compared with what Videos/ already holds. The
+same video id, or a length within 2% plus two shared title words (a repost by
+another account), counts as already there: nothing downloads and the existing
+file's path and link are printed instead.
 
 YouTube links fetch visitor cookies from the cluster Chrome first, because
 YouTube blocks yt-dlp from the homelab's address without them. Several URLs run
@@ -40,6 +46,7 @@ type videoArgs struct {
 	quality    string
 	expireDays int
 	noLink     bool
+	force      bool
 	help       bool
 }
 
@@ -75,6 +82,8 @@ func parseVideoArgs(args []string) (videoArgs, error) {
 		switch name {
 		case "no-link":
 			out.noLink = true
+		case "force":
+			out.force = true
 		case "quality":
 			v, err := value(&i, name, inline, hasInline)
 			if err != nil {
@@ -95,7 +104,7 @@ func parseVideoArgs(args []string) (videoArgs, error) {
 			}
 			out.expireDays = d
 		default:
-			return out, fmt.Errorf("unknown flag %q; homelab video get takes --quality, --expire or --no-link", a)
+			return out, fmt.Errorf("unknown flag %q; homelab video get takes --quality, --expire, --no-link or --force", a)
 		}
 	}
 	if len(out.urls) == 0 && !out.help {
@@ -148,15 +157,26 @@ func ytdlpArgs(videoURL, outDir, quality, cookiesPath string) []string {
 		"--no-playlist",
 		"--newline", "--progress",
 	}
-	if cookiesPath != "" {
-		args = append(args,
-			"--cookies", cookiesPath,
-			"--extractor-args", "youtube:player_client=web_safari",
-			"--remote-components", "ejs:github",
-			"--no-js-runtimes", "--js-runtimes", "node",
-		)
+	return append(append(args, youtubeCookieArgs(cookiesPath)...), videoURL)
+}
+
+func youtubeCookieArgs(cookiesPath string) []string {
+	if cookiesPath == "" {
+		return nil
 	}
-	return append(args, videoURL)
+	return []string{
+		"--cookies", cookiesPath,
+		"--extractor-args", "youtube:player_client=web_safari",
+		"--remote-components", "ejs:github",
+		"--no-js-runtimes", "--js-runtimes", "node",
+	}
+}
+
+// ytdlpProbeArgs asks yt-dlp for the link's metadata as JSON without
+// downloading it, so a duplicate is caught before the transfer starts.
+func ytdlpProbeArgs(videoURL, cookiesPath string) []string {
+	args := []string{"-j", "--no-playlist", "--ignore-no-formats-error", "--no-warnings"}
+	return append(append(args, youtubeCookieArgs(cookiesPath)...), videoURL)
 }
 
 // finalVideoPath picks the file yt-dlp recorded: the last non-empty line,
@@ -285,8 +305,8 @@ func chunkPlan(size, chunk int64) []chunkRange {
 
 // remoteVideoPath puts the file directly in Videos/, flattened to its base
 // name the way remoteSharePath does, so the name cannot escape the folder.
-// No timestamp: yt-dlp's name already carries the video id, and uploading the
-// same video again should replace it rather than make a copy.
+// No timestamp: yt-dlp's name already carries the video id, so a --force
+// download of the same video replaces it rather than making a copy.
 func remoteVideoPath(localFile string) string {
 	base := path.Base(strings.ReplaceAll(localFile, "\\", "/"))
 	base = strings.TrimLeft(base, ".")
