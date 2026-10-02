@@ -98,6 +98,14 @@ deploymentMode: SingleBinary
 
 singleBinary:
   replicas: 1
+  # Explicit, not left to Kyverno's inject-priority-class-from-tier. That
+  # policy runs as a mutating webhook with failurePolicy Ignore, so a pod
+  # created while Kyverno is unreachable starts with NO priority class and
+  # keeps none for its whole life. loki-0 was created that way on 2026-09-28
+  # and was preempted by a tier-3-edge pod during the 2026-10-02 kured reboot
+  # of k8s-node3, leaving Loki returning 503 for about 5 minutes.
+  # tier-1-cluster is what the monitoring namespace's tier label maps to.
+  priorityClassName: tier-1-cluster
   # Loki was not scraped at all until 2026-08-15 — no loki_* series existed in
   # Prometheus, so the stream-limit exhaustion above ran silently and could not
   # have alerted. The cluster's scrape job discovers endpoints by annotation.

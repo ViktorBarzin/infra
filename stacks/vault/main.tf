@@ -42,6 +42,14 @@ resource "helm_release" "vault" {
     server = {
       enabled = true
 
+      # Explicit, not left to Kyverno's inject-priority-class-from-tier: that
+      # webhook has failurePolicy Ignore, so a pod created while Kyverno is
+      # unreachable starts with no priority class. vault-1 was created that way
+      # on 2026-09-27 and ran without one, preemptible by any tiered pod.
+      # tier-0-core matches the vault namespace's tier label. The StatefulSet is
+      # OnDelete, so this reaches each pod only when that pod is recreated.
+      priorityClassName = "tier-0-core"
+
       resources = {
         requests = { memory = "384Mi", cpu = "100m" }
         limits   = { memory = "384Mi" }
