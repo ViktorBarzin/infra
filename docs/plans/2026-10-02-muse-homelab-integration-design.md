@@ -150,7 +150,7 @@ Rules:
 | # | Phase | Contents | Bead |
 |---|---|---|---|
 | 0 | Done 2026-10-02 | terminal-api; agent-api 1.1.0 (built, release in progress) (send-and-wait, long-poll, incremental transcripts, answer endpoint); 330 s transport | — |
-| 1 | Hygiene | Retire the tailnet path (node `koda`, `tailscaled-agent`, Headscale ACL entries, Vault `secret/muse-tailscale`) and the bastion `muse` key; route `/openapi.json`; Muse corrects its own memories #13323 and #13342 | code-tm6a |
+| 1 | Hygiene | Retire the tailnet path (nodes `koda` and `devvm-wizard`, `tailscaled-agent`, Headscale ACL entries, Headscale pre-auth key 19 (expired 2026-10-02), Vault `secret/muse-tailscale` and `secret/devvm-tailscale`) and the bastion `muse` key; route `/openapi.json`; Muse corrects its own memories #13323 and #13342 | code-tm6a |
 | 2 | Inputs | Images and files on the messages endpoint (widened from images to files) | code-1dcq |
 | 3 | Lifecycle | 24 h auto-suspend with transparent resume for Caller sessions; `DELETE /v1/conversations/{id}` | code-ufpp |
 | 4 | Visibility | One sidebar group per Caller; Caller sessions in telemetry tagged by Caller | code-gr2v |
