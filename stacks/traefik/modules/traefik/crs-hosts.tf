@@ -9,9 +9,10 @@
 # Authentik is covered on the next traefik apply. A host qualifies only if NONE
 # of its Ingresses carries an Authentik forward-auth middleware (a host with one
 # unauthenticated path carve-out next to an Authentik-gated main path stays
-# out), it is not LAN-only (home-lans-only middleware or a .lan name), and it is
-# not excluded below. IngressRoutes are not read; their hosts get the default
-# listener.
+# out), it is not LAN-only (home-lans-only or local-only middleware, or a .lan
+# name; the OTLP telemetry hosts are local-only and CRS 403s their protobuf
+# pushes on headers alone), and it is not excluded below. IngressRoutes are not
+# read; their hosts get the default listener.
 #
 # One query per namespace: with namespace omitted, kubernetes_resources lists
 # only "default" for a namespaced kind (provider 3.3.0, datasource.go), and it
@@ -80,6 +81,7 @@ locals {
     for row in local._ingress_host_rows : row.host
     if !strcontains(row.middlewares, "authentik-forward-auth")
     && !strcontains(row.middlewares, "home-lans-only")
+    && !strcontains(row.middlewares, "traefik-local-only")
     && !endswith(row.host, ".lan")
     && !contains(local._authentik_hosts, row.host)
     && !contains(local.appsec_crs_exclude_hosts, row.host)
