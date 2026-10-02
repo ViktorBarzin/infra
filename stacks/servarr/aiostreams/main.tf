@@ -9,6 +9,9 @@ resource "kubernetes_namespace" "aiostreams" {
     labels = {
       "istio-injection" : "disabled"
       "keel.sh/enrolled" = "true"
+      # The module's own tier, which its pods already carry; the namespace
+      # lacked it, so Kyverno injected no priority class (found 2026-10-02).
+      tier = var.tier
     }
   }
   lifecycle {

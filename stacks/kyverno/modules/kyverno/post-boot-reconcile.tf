@@ -1,6 +1,18 @@
 # =============================================================================
 # Post-boot dependency-init reconcile — restart pods that MISSED Kyverno injection
 # =============================================================================
+# SECOND CHECK, added 2026-10-02: pods with NO priority class in a tiered
+# namespace. `inject-priority-class-from-tier` has the same CREATE-only +
+# failurePolicy=Ignore shape, so any Kyverno restart leaves pods preemptible
+# (loki-0 was preempted in a kured reboot; vault-1 ran without tier-0-core;
+# wt-tracker was created the second a Kyverno pod was shutting down). Same
+# gates as below, a shared per-run cap, and a loop guard: the ConfigMap
+# post-boot-reconcile-state remembers owners recycled in the last 24h, and a
+# pod that is still missing its class after a recycle is logged STUCK and
+# counted in post_boot_reconcile_priority_stuck instead of being deleted again.
+# Viktor chose this reconciler over making the webhook mandatory
+# (failurePolicy=Fail would block ALL pod creation whenever Kyverno is down).
+# =============================================================================
 # See memory #10050. The ClusterPolicy `inject-dependency-init-containers`
 # (dependency-init-containers.tf) injects a busybox `wait-for-<host>`
 # initContainer for every entry in a pod's `dependency.kyverno.io/wait-for`
@@ -103,6 +115,51 @@ resource "kubernetes_cluster_role" "post_boot_reconcile" {
     resources  = ["pods"]
     verbs      = ["list", "delete"]
   }
+  # The priority-class check (added 2026-10-02) needs each namespace's tier
+  # label to know which pods SHOULD have been injected.
+  rule {
+    api_groups = [""]
+    resources  = ["namespaces"]
+    verbs      = ["list"]
+  }
+}
+
+# Loop guard for the priority-class check: owners already recycled in the last
+# 24h, so a pod Kyverno keeps failing to inject is reported, not deleted every
+# 10 minutes. Namespaced and limited to configmaps in kyverno.
+resource "kubernetes_role" "post_boot_reconcile_state" {
+  metadata {
+    name      = "post-boot-reconcile-state"
+    namespace = kubernetes_namespace.kyverno.metadata[0].name
+  }
+  rule {
+    api_groups     = [""]
+    resources      = ["configmaps"]
+    resource_names = ["post-boot-reconcile-state"]
+    verbs          = ["get", "update"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["configmaps"]
+    verbs      = ["create"]
+  }
+}
+
+resource "kubernetes_role_binding" "post_boot_reconcile_state" {
+  metadata {
+    name      = "post-boot-reconcile-state"
+    namespace = kubernetes_namespace.kyverno.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.post_boot_reconcile_state.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.post_boot_reconcile.metadata[0].name
+    namespace = kubernetes_namespace.kyverno.metadata[0].name
+  }
 }
 
 resource "kubernetes_cluster_role_binding" "post_boot_reconcile" {
@@ -127,13 +184,24 @@ resource "kubernetes_config_map" "post_boot_reconcile_script" {
   data = {
     "reconcile.py" = <<-EOT
 #!/usr/bin/env python3
-"""post-boot-reconcile — restart pods that MISSED Kyverno dependency-init injection.
+"""post-boot-reconcile — restart pods that MISSED a Kyverno CREATE-time mutation.
 
-The ClusterPolicy `inject-dependency-init-containers` is CREATE-only +
-failurePolicy=Ignore, so a pod created while the Kyverno webhook is down (cold
-boot) starts WITHOUT its wait-for-<host> initContainer and wedges. This job, run
-every 10 min, deletes such pods ONLY once Kyverno is healthy so their controller
-recreates them and the now-up webhook injects the initContainer. Pure stdlib.
+Two checks, same safety gates:
+
+1. dependency-init: `inject-dependency-init-containers` is CREATE-only +
+   failurePolicy=Ignore, so a pod created while the Kyverno webhook is down
+   starts WITHOUT its wait-for-<host> initContainer and wedges.
+2. priority class (added 2026-10-02): `inject-priority-class-from-tier` is the
+   same shape, so a pod created during a Kyverno restart runs with NO priority
+   class and is preemptible by any tiered pod. Seen live: loki-0 was preempted
+   during a kured reboot, vault-1 ran without tier-0-core, and wt-tracker was
+   created in the very second a Kyverno pod was shutting down.
+
+Run every 10 min, it deletes such pods ONLY once Kyverno is healthy so their
+controller recreates them and the now-up webhook mutates them. For the priority
+check a ConfigMap remembers which owners were recycled in the last 24h, so a
+pod Kyverno keeps failing to inject is reported as stuck, never deleted in a
+loop. Pure stdlib.
 """
 import json
 import os
@@ -163,21 +231,43 @@ PUSHGATEWAY_URL = os.environ.get(
 )
 PUSH_JOB = os.environ.get("PUSH_JOB", "post-boot-reconcile")
 WAIT_FOR_ANNOTATION = "dependency.kyverno.io/wait-for"
+# Namespaces inject-priority-class-from-tier excludes: pods there never get a
+# class from Kyverno, so they are never priority candidates.
+PRIORITY_EXCLUDED = {
+    ns.strip()
+    for ns in os.environ.get(
+        "PRIORITY_EXCLUDED",
+        "kube-system,metallb-system,kyverno,calico-system,calico-apiserver",
+    ).split(",")
+    if ns.strip()
+}
+KNOWN_TIERS = {"0-core", "1-cluster", "2-gpu", "3-edge", "4-aux"}
+STATE_CONFIGMAP = os.environ.get("STATE_CONFIGMAP", "post-boot-reconcile-state")
+STATE_TTL_SECONDS = int(os.environ.get("STATE_TTL_SECONDS", "86400"))
 
-TOKEN = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
+TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 CA = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-_ctx = ssl.create_default_context(cafile=CA)
+_ctx = None
 
 
-def api(method, path):
+def api(method, path, body=None):
+    # Token and TLS context are loaded on first use, so the pure functions
+    # below can be imported and tested outside the cluster.
+    global _ctx
+    if _ctx is None:
+        _ctx = ssl.create_default_context(cafile=CA)
+    token = open(TOKEN_PATH).read().strip()
+    data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
         APISERVER + path,
         method=method,
-        headers={"Authorization": "Bearer " + TOKEN, "Accept": "application/json"},
+        data=data,
+        headers={"Authorization": "Bearer " + token, "Accept": "application/json",
+                 "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, context=_ctx, timeout=30) as r:
-        body = r.read().decode()
-    return json.loads(body) if body else None
+        out = r.read().decode()
+    return json.loads(out) if out else None
 
 
 def kyverno_ready():
@@ -232,6 +322,67 @@ def missed_injection(pod):
     return not any((c.get("name") or "").startswith("wait-for-") for c in inits)
 
 
+def tiered_namespaces(namespaces):
+    """{namespace: tier} for namespaces carrying a known tier label."""
+    out = {}
+    for ns in namespaces:
+        md = ns.get("metadata", {}) or {}
+        tier = (md.get("labels") or {}).get("tier", "")
+        if tier in KNOWN_TIERS:
+            out[md.get("name", "")] = tier
+    return out
+
+
+def missed_priority(pod, tiered):
+    """True when Kyverno should have given this pod a priority class and did not:
+    its namespace has a tier, the policy does not exclude it, and the pod has
+    no priorityClassName at all."""
+    md = pod.get("metadata", {}) or {}
+    ns = md.get("namespace", "")
+    if ns not in tiered or ns in PRIORITY_EXCLUDED:
+        return False
+    return not (pod.get("spec", {}) or {}).get("priorityClassName")
+
+
+def owner_uid(pod):
+    refs = (pod.get("metadata", {}) or {}).get("ownerReferences") or []
+    return refs[0].get("uid", "") if refs else ""
+
+
+def prune_state(state, now):
+    """Drop owners recycled longer ago than STATE_TTL_SECONDS."""
+    return {uid: ts for uid, ts in state.items() if now - ts < STATE_TTL_SECONDS}
+
+
+def load_state():
+    path = "/api/v1/namespaces/%s/configmaps/%s" % (KYVERNO_NAMESPACE, STATE_CONFIGMAP)
+    try:
+        cm = api("GET", path) or {}
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {}, False
+        raise
+    raw = ((cm.get("data") or {}).get("priority_recycled")) or "{}"
+    try:
+        return {k: float(v) for k, v in json.loads(raw).items()}, True
+    except ValueError:
+        return {}, True
+
+
+def save_state(state, exists):
+    body = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": STATE_CONFIGMAP, "namespace": KYVERNO_NAMESPACE},
+        "data": {"priority_recycled": json.dumps(state, sort_keys=True)},
+    }
+    if exists:
+        api("PUT", "/api/v1/namespaces/%s/configmaps/%s"
+            % (KYVERNO_NAMESPACE, STATE_CONFIGMAP), body)
+    else:
+        api("POST", "/api/v1/namespaces/%s/configmaps" % KYVERNO_NAMESPACE, body)
+
+
 def is_safe(pod):
     md = pod.get("metadata", {}) or {}
     if not md.get("ownerReferences"):
@@ -246,8 +397,15 @@ def is_safe(pod):
     return True, "ok"
 
 
-def push_metrics(restarted, found, ready, capped, success):
+def push_metrics(restarted, found, ready, capped, success,
+                 prio_found=0, prio_restarted=0, prio_stuck=0):
     lines = [
+        "# TYPE post_boot_reconcile_priority_missing_found gauge",
+        "post_boot_reconcile_priority_missing_found %d" % prio_found,
+        "# TYPE post_boot_reconcile_priority_restarted gauge",
+        "post_boot_reconcile_priority_restarted %d" % prio_restarted,
+        "# TYPE post_boot_reconcile_priority_stuck gauge",
+        "post_boot_reconcile_priority_stuck %d" % prio_stuck,
         "# TYPE post_boot_reconcile_restarted gauge",
         "post_boot_reconcile_restarted %d" % restarted,
         "# TYPE post_boot_reconcile_missed_found gauge",
@@ -325,7 +483,70 @@ def main():
                 print("ERROR deleting %s/%s: %s" % (ns, name, e), flush=True)
         except Exception as e:  # noqa: BLE001
             print("ERROR deleting %s/%s: %s" % (ns, name, e), flush=True)
-    push_metrics(restarted=restarted, found=found, ready=1, capped=capped, success=1)
+
+    prio_found, prio_restarted, prio_stuck = priority_pass(
+        pods, budget=max(0, MAX_RESTARTS_PER_RUN - min(len(candidates), MAX_RESTARTS_PER_RUN)))
+    push_metrics(restarted=restarted, found=found, ready=1, capped=capped, success=1,
+                 prio_found=prio_found, prio_restarted=prio_restarted,
+                 prio_stuck=prio_stuck)
+
+
+def select_priority_candidates(pods, tiered, state, now):
+    """Split missed-priority pods into (delete candidates, stuck, found count).
+    A pod whose owner was already recycled within STATE_TTL_SECONDS is stuck:
+    Kyverno failed it twice, so deleting again would only loop."""
+    candidates, stuck, found = [], [], 0
+    for pod in pods:
+        if not missed_priority(pod, tiered):
+            continue
+        found += 1
+        md = pod.get("metadata", {}) or {}
+        ns, name = md.get("namespace", ""), md.get("name", "")
+        ok, reason = is_safe(pod)
+        if not ok:
+            print("SKIP %s/%s: %s" % (ns, name, reason), flush=True)
+            continue
+        uid = owner_uid(pod)
+        if uid in state:
+            stuck.append((ns, name))
+            continue
+        candidates.append((ns, name, uid))
+    return candidates, stuck, found
+
+
+def priority_pass(pods, budget):
+    tiered = tiered_namespaces((api("GET", "/api/v1/namespaces") or {}).get("items", []))
+    now = time.time()
+    state, exists = load_state()
+    state = prune_state(state, now)
+    candidates, stuck, found = select_priority_candidates(pods, tiered, state, now)
+    for ns, name in stuck:
+        print("STUCK %s/%s: still no priority class after a recycle in the last %ds; "
+              "not deleting again" % (ns, name, STATE_TTL_SECONDS), flush=True)
+    print("missing-priority found=%d delete-eligible=%d stuck=%d budget=%d%s"
+          % (found, len(candidates), len(stuck), budget,
+             " [DRY_RUN]" if DRY_RUN else ""), flush=True)
+    restarted = 0
+    for ns, name, uid in candidates[:budget]:
+        if DRY_RUN:
+            print("WOULD delete %s/%s (no priority class)" % (ns, name), flush=True)
+            continue
+        try:
+            api("DELETE", "/api/v1/namespaces/%s/pods/%s" % (ns, name))
+            restarted += 1
+            state[uid] = now
+            print("deleted %s/%s (no priority class; controller recreates it and "
+                  "Kyverno injects one)" % (ns, name), flush=True)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                print("SKIP %s/%s: already gone (404)" % (ns, name), flush=True)
+            else:
+                print("ERROR deleting %s/%s: %s" % (ns, name, e), flush=True)
+        except Exception as e:  # noqa: BLE001
+            print("ERROR deleting %s/%s: %s" % (ns, name, e), flush=True)
+    if restarted or not exists:
+        save_state(state, exists)
+    return found, restarted, len(stuck)
 
 
 if __name__ == "__main__":

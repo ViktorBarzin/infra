@@ -11,6 +11,11 @@
 resource "kubernetes_namespace" "local_path_storage" {
   metadata {
     name = "local-path-storage"
+    labels = {
+      # Storage provisioner. Without a tier label Kyverno injects no priority
+      # class, so it ran preemptible (found 2026-10-02).
+      tier = local.tiers.cluster
+    }
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: goldilocks-vpa-auto-mode ClusterPolicy stamps this label on every namespace
