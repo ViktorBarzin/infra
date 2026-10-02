@@ -626,12 +626,27 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           name = "London site"
           rules = [
             {
-              alert  = "LondonInternetDrop"
-              expr   = "sum by (source, drop_id, layer, duration_s) (count_over_time({job=\"london-drops\", source=\"flint\", layer!~\"rehearsal-.*\"} | json duration_s=\"duration_s\" [10m])) > 0"
+              alert = "LondonInternetDrop"
+              # layer=dns posts as LondonDnsFailure below; layer=ipv6 (probe
+              # 0.5.0) is IPv6 failing while IPv4 works.
+              expr   = "sum by (source, drop_id, layer, duration_s) (count_over_time({job=\"london-drops\", source=\"flint\", layer!~\"rehearsal-.*|dns\"} | json duration_s=\"duration_s\" [10m])) > 0"
               for    = "0s"
               labels = { severity = "warning", subsystem = "london", lane = "event" }
               annotations = {
                 summary = "London internet drop: {{ $labels.layer }} for {{ $labels.duration_s }}s, seen by the {{ $labels.source }} ({{ $labels.drop_id }})"
+              }
+            },
+            {
+              # The Flint probe resolves a fresh name through dnsmasq every
+              # 30 s; this fires when lookups failed for 30 s or more while
+              # HTTP worked. Split from LondonInternetDrop on 2026-10-02
+              # (docs/plans/2026-10-02-london-dns-block-monitoring.md).
+              alert  = "LondonDnsFailure"
+              expr   = "sum by (source, drop_id, layer, duration_s) (count_over_time({job=\"london-drops\", source=\"flint\", layer=\"dns\"} | json duration_s=\"duration_s\" [10m])) > 0"
+              for    = "0s"
+              labels = { severity = "warning", subsystem = "london", lane = "event" }
+              annotations = {
+                summary = "London DNS failure: lookups through the Flint's dnsmasq failed for {{ $labels.duration_s }}s while the internet worked ({{ $labels.drop_id }}). Check dnsmasq and the AdGuard upstreams; the Flint's log is {job=\"syslog\", host=\"flint-london\"}."
               }
             },
             {

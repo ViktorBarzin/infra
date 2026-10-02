@@ -77,9 +77,10 @@ hardcoded in `/usr/share/gl-ngx/oui-access.lua`). A browser on the LAN using
 |---|---|---|
 | node exporter | package `prometheus-node-exporter-lua` (+ `-wifi_stations`, `-netstat`, `-openwrt`), `listen_interface '*'` | Prometheus job `flint-london` scrapes `10.3.2.6:9100`. The WAN zone drops 9100; the tunnel zone accepts it. The `wifi` collector is left out because the MediaTek iwinfo backend lacks noise/quality/bitrate. `wifi_stations` packet counters read 0 on this driver; signal and rates are real. |
 | tunnel ping | blackbox job `london-flint-icmp`, 30 s | `LondonTunnelDown` after 10 minutes |
-| drop probe | package `london-drop-probe` (HTTP checks to http://1.1.1.1 and https://8.8.8.8 every 10 s, every 2 s after a failure; a drop is 30 s or more; since 0.4.0. Ping-based 0.1.x produced false drops; the cron-driven 0.1–0.3 missed every other minute) (built by `scripts/london-flint/build-ipk.py`, installed by `scripts/london-flint/provision.sh`), a procd service shown in LuCI → System → Startup | Detects internet drops, snapshots routing/kmwan/DPI-queue state, and pushes one event per drop to Loki (`{job="london-drops", source="flint"}`) after the path returns. Queue survives reboots in `/root/drop-probe.queue` (written only when a drop ends). |
+| drop probe | package `london-drop-probe` 0.5.0, built by `scripts/london-flint/build-ipk.py`, installed by `scripts/london-flint/provision.sh`, a procd service shown in LuCI → System → Startup | HTTP checks to http://1.1.1.1 and https://8.8.8.8, and over IPv6 to Cloudflare and Google, every 10 s (every 2 s after a failure); a fresh name (`probe-<time>.viktorbarzin.me`) resolved through dnsmasq every 30 s. A drop is 30 s or more: `layer=internet`/`gateway` (IPv4), `ipv6` (IPv6 failing while IPv4 works, since 0.5.0), `dns` (lookups through dnsmasq failing while HTTP works). Snapshots routing/kmwan/DPI-queue state and pushes one event per drop to Loki (`{job="london-drops", source="flint"}`) after the path returns; the queue survives reboots in `/root/drop-probe.queue` (written only when a drop ends). Every 5 minutes it also pushes the IPv4/IPv6 neighbour tables and DHCP leases as `{job="london-neigh"}`, which the DNS digest uses to name devices. History: ping-based 0.1.x produced false drops; the cron-driven 0.1–0.3 missed every other minute; 0.4.x queried AdGuard directly for DNS, skipping dnsmasq. |
 | Mac probe | launchd agent `me.viktorbarzin.london-probe` on mbp-london (Viktor's M4 MacBook), source in the `dot_files` repo under `mac/london-probe` | Reports drops of the Mac's own Wi-Fi and DNS (`source="mac"`). The Mac has no git access to Forgejo, so deploy by copying `mac/london-probe` over SSH and running its `install.sh` (runs the tests, then bootstraps the agent). Log: `~/Library/Logs/london-probe.log`. |
-| alerts | Loki rules `LondonInternetDrop`, `LondonFirmwareReset`; Prometheus rule `LondonTunnelDown` | Event alerts go to the `slack-event` receiver: one post per drop, no RESOLVED. |
+| alerts | Loki rules `LondonInternetDrop`, `LondonDnsFailure` (probe `layer=dns`, split out 2026-10-02), `LondonFirmwareReset`; Prometheus rule `LondonTunnelDown` | Event alerts go to the `slack-event` receiver: one post per drop, no RESOLVED. |
+| DNS digest | CronJob `london-dns-digest` (monitoring namespace, `stacks/monitoring/modules/monitoring/london_dns_digest.py`), 08:00 Europe/London | Posts to #alerts only when there is something to report: DNS errors (SERVFAIL/REFUSED per device and name, dnsmasq's concurrent-query limit), names newly blocked by AdGuard (not blocked in the previous 30 days; empty until 7 days after the query log started on 2026-10-02), and names added to `GL_DPI_BLOCK`. Run by hand with `DRY_RUN=1 LOKI_URL=... python3 london_dns_digest.py`. |
 
 The probe and the Mac push to `https://loki.viktorbarzin.lan/loki/api/v1/push`
 pinned to Traefik's `10.0.20.203`. London traffic reaches Sofia masqueraded as
@@ -92,6 +93,25 @@ pinned to Traefik's `10.0.20.203`. London traffic reaches Sofia masqueraded as
 {job="syslog", host="flint-london"} |= "mt7986_dump_ser_stat"   # firmware resets
 wifi_station_signal_dbm{instance="flint-london"}  # per-client signal
 ```
+
+DNS, on demand (dnsmasq `--log-queries=extra` lines: `<serial> <client>/<port> <verb> ...`):
+
+```
+{job="syslog", host="flint-london"} |~ " (reply|cached) [^ ]+ is (0\\.0\\.0\\.0|::)$"   # blocked answers
+{job="syslog", host="flint-london"} |~ " reply error is (SERVFAIL|REFUSED)$"          # errors; the name is on the query[ line with the same serial
+{job="syslog", host="flint-london"} |= " ipset add GL_DPI_BLOCK "                     # GL content protection
+{job="syslog", host="flint-london"} |= "query[" |= " from 192.168.8.198"             # everything one device asked
+{job="london-neigh"}                                                                 # address -> MAC -> hostname snapshots
+```
+
+To unblock one name that AdGuard blocks, on the Flint:
+
+```sh
+uci add_list dhcp.@dnsmasq[0].server='/<domain>/94.140.14.140'   # AdGuard's unfiltered resolver
+uci commit dhcp && /etc/init.d/dnsmasq restart
+```
+
+Devices may keep the cached block for up to an hour (AdGuard answers blocks with a 3,600 s TTL).
 
 Client disconnects, on demand (MediaTek driver lines, one per event):
 
