@@ -398,6 +398,9 @@ appsec:
     #    icon targets itself.
     #  - /api/camera_proxy (Home Assistant): signed authSig URLs tripped CRS;
     #    the path is authorised by that signature.
+    #  - ci.viktorbarzin.me /api/hook (Woodpecker): GitHub's push webhooks
+    #    tripped CRS on go-live; Woodpecker verifies each hook's HMAC
+    #    signature. Host and exact path both have to match (chained rule).
     viktor-crs-setup.yaml: |
       name: viktor/crs-setup
       seclang_rules:
@@ -405,6 +408,8 @@ appsec:
         - SecAction "id:900230,phase:1,pass,nolog,t:none,setvar:'tx.allowed_http_versions=HTTP/1.0 HTTP/1.1 HTTP/2 HTTP/2.0 HTTP/3 HTTP/3.0'"
         - SecRule REQUEST_FILENAME "@beginsWith /icons/" "id:1000101,phase:1,pass,nolog,t:none,ctl:ruleRemoveById=930130,ctl:ruleRemoveById=931100-931130"
         - SecRule REQUEST_FILENAME "@beginsWith /api/camera_proxy" "id:1000102,phase:1,pass,nolog,t:none,ctl:ruleEngine=Off"
+        - SecRule REQUEST_HEADERS:Host "@streq ci.viktorbarzin.me" "id:1000103,phase:1,pass,nolog,t:none,t:lowercase,chain"
+        - SecRule REQUEST_FILENAME "@streq /api/hook" "t:none,ctl:ruleEngine=Off"
   env:
     # appsec-virtual-patching also brings the appsec-vpatch scenario, which
     # bans an address for 4h (default_ip_remediation) once two DISTINCT rules
