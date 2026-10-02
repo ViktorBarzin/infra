@@ -352,11 +352,13 @@ appsec:
       labels:
         type: appsec
   # viktor/crs-inband = the hub's crs-inband plus a setup rule loaded first.
+  # To see which CRS rules a request trips, add `log_level: debug` to it
+  # temporarily: the per-request output is hundreds of lines, so keep it off
+  # whenever real traffic or a replay runs (it all lands in Loki).
   configs:
     viktor-crs-inband.yaml: |
       name: viktor/crs-inband
       default_remediation: ban
-      log_level: debug
       inband_rules:
         - viktor/crs-setup
         - crowdsecurity/crs
