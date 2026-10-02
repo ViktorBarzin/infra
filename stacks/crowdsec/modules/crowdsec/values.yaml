@@ -368,10 +368,20 @@ appsec:
     # Matrix federation PUTs, claude-memory PUT/PATCH/DELETE and Nextcloud
     # WebDAV. CRS only sets the default when nothing set it first, and this
     # phase-1 SecAction runs before CRS's own setup rules.
+    #
+    # Path exclusions from the same replay, kept narrow:
+    #  - /icons/ (Vaultwarden's icon lookups for saved logins): 930130
+    #    restricted-file names ("docker" in a domain) and 931100-931130 remote
+    #    file inclusion (saved logins on LAN IPs). Vaultwarden refuses non-global
+    #    icon targets itself.
+    #  - /api/camera_proxy (Home Assistant): signed authSig URLs tripped CRS;
+    #    the path is authorised by that signature.
     viktor-crs-setup.yaml: |
       name: viktor/crs-setup
       seclang_rules:
         - SecAction "id:900200,phase:1,pass,nolog,t:none,setvar:'tx.allowed_methods=GET HEAD POST OPTIONS PUT PATCH DELETE PROPFIND PROPPATCH MKCOL COPY MOVE LOCK UNLOCK REPORT SEARCH'"
+        - SecRule REQUEST_FILENAME "@beginsWith /icons/" "id:1000101,phase:1,pass,nolog,t:none,ctl:ruleRemoveById=930130,ctl:ruleRemoveById=931100-931130"
+        - SecRule REQUEST_FILENAME "@beginsWith /api/camera_proxy" "id:1000102,phase:1,pass,nolog,t:none,ctl:ruleEngine=Off"
   env:
     # appsec-virtual-patching also brings the appsec-vpatch scenario, which
     # bans an address for 4h (default_ip_remediation) once two DISTINCT rules
