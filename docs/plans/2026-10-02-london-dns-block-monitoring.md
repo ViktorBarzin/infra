@@ -1,7 +1,7 @@
 # London DNS block monitoring
 
-Status: approved (grilling with Viktor, 2026-10-02; revised the same day after
-two independent reviews)
+Status: done (grilling with Viktor, 2026-10-02; revised the same day after two
+independent reviews; built and verified the same day)
 
 ## Goal
 
@@ -141,8 +141,7 @@ not replayed after a tunnel outage).
 
 - `nslookup doubleclick.net 127.0.0.1` on the Flint appears in Loki as a
   `reply`/`cached ... is 0.0.0.0` line with a client address.
-- The Flint's Loki line rate falls back near the pre-upgrade 2.7k/h plus DNS
-  lines, and the ring spans hours again.
+- The driver debug line stops reaching Loki.
 - A rehearsed DNS failure (probe pointed at an unreachable resolver) posts
   `LondonDnsFailure` once and no `LondonInternetDrop`.
 - A rehearsed IPv6 failure posts with `layer=ipv6`.
@@ -151,12 +150,25 @@ not replayed after a tunnel outage).
   run against an empty window.
 - The live CrowdSec whitelist no longer contains 137.220.71.46.
 
+## Outcome (2026-10-02)
+
+| step | result |
+|---|---|
+| Router | Query log and `dnsforwardmax 1000` set through `provision.sh` (a8360d67). `iwpriv ra0/rax0 set Debug=0` stopped the driver line at the source; a hotplug hook keeps it at 0 and is listed in `/etc/sysupgrade.conf`. The Alloy fallback was not needed |
+| Log volume | Driver lines fell from about 28k to 17 per 10 minutes. The Flint now sends about 68k lines an hour, almost all dnsmasq query lines (about 575k lookups a day), so the 512 KB ring holds about 3 minutes. Loki has the full log; lines from a tunnel outage longer than that are lost |
+| Drop probe 0.5.1 | IPv6 checks, DNS through dnsmasq with a fresh name, neighbour push every 5 minutes. A rehearsal with IPv6 and DNS unreachable for 50 s pushed `rehearsal-ipv6` and `rehearsal-dns` events and no alert |
+| Alerts | A synthetic `layer=dns` event raised `LondonDnsFailure` on the event lane and no `LondonInternetDrop` |
+| Digest | 18 tests pass. A dry run inside the cluster returned errors (SERVFAIL per device), the concurrent-query limit count and newly blocked names with device names. The CronJob runs at 08:00 Europe/London; the newly-blocked section starts on 2026-10-09 |
+| CrowdSec | 137.220.71.46 removed; the live whitelist ConfigMap and all five agents carry the new file |
+| Unblock path | Tested on the Flint with `doubleclick.net` (resolved to Google's address) and reverted |
+
 ## Open questions
 
 - Whether firmware 4.11 lets the driver debug level be lowered; the Alloy drop
   is the fallback.
-- How dnsmasq logs upstream timeouts; a timeout may not produce a per-query
-  line, in which case the errors section covers SERVFAIL and REFUSED and the
+- How dnsmasq logs upstream timeouts. An upstream SERVFAIL is logged as
+  `reply error is SERVFAIL` without the name (the digest joins it to the
+  `query[` line by serial); a timeout may produce no per-query line, so the
   probe covers timeouts.
 - Lookups that bypass the Flint (the Portal's direct 1.1.1.1, browser DoH,
   iCloud Private Relay) are not visible to this design.
