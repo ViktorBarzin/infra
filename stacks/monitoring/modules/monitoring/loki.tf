@@ -1405,6 +1405,35 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               }
             },
             {
+              # The false-positive signature. appsec-vpatch bans an address once
+              # it trips two DISTINCT rules within 60s, after which the ban check
+              # answers it and no appsec-block line is written; scanners walk many
+              # rules, so they produce a handful of appsec-blocks and then go
+              # quiet. A false positive is usually ONE rule matching real traffic
+              # over and over, which never bans, so the blocks keep coming on
+              # that host. The pre-launch replay (2026-10-02: 407,413 inspected
+              # unique requests from 7 days) blocked 20,461, every one a probe or
+              # exploit, 933 of them on real services.
+              alert = "CrowdSecAppsecBlockSurge"
+              expr  = "sum by (host) (count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=appsec-block\" | regexp \"host=(?P<host>[^ ]+)\" [15m])) > 20"
+              for   = "15m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "AppSec keeps blocking requests on {{ $labels.host }} ({{ $value }} in 15m) without the clients getting banned — likely a false positive"
+                description = <<-EOT
+                  Scanners get banned after two distinct rules, so a steady
+                  stream of AppSec blocks on one host usually means a single
+                  rule is matching real traffic. The blocked paths are in the
+                  `[crowdsec-bouncer] action=appsec-block` lines; the rule name
+                  is in the crowdsec-appsec pod logs. To unblock users at once,
+                  add the host to appsecSkipHosts in
+                  stacks/traefik/modules/traefik/middleware.tf (dynamic reload).
+                EOT
+              }
+            },
+            {
               # Overhead is the access log's total time minus backend time, so
               # an AppSec call shows up in it. Measured before the check went
               # in (7d to 2026-10-02): per-pod 10m MEDIAN 4.8ms typical, 8.6ms
