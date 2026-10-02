@@ -166,7 +166,7 @@ The outbound channel from the cluster to Cloudflare that carries **proxied** **p
 _Avoid_: "the tunnel" without "Cloudflared" (could mean Headscale or the HE IPv6 tunnel).
 
 **Bastion**:
-The jump-only SSH entry point reachable from the internet on port 443 at `ssh.viktorbarzin.me`, with SSH carried inside TLS so it passes networks that only allow HTTPS. It gives no shell: a client authenticates with its own key and then hops (ProxyJump) to one of an allowlisted set of internal sshd targets. A specific client can be granted wider forwarding; that is a per-client exception, not the default. It runs in the cluster, so it is unavailable when the cluster is; the **break-glass** paths are the ones that do not depend on the cluster.
+The jump-only SSH entry point reachable from the internet on port 443 at `ssh.viktorbarzin.me`, with SSH carried inside TLS so it passes networks that only allow HTTPS. It gives no shell: a client authenticates with its own key and then hops (ProxyJump) to one of an allowlisted set of internal sshd targets. It runs in the cluster, so it is unavailable when the cluster is; the **break-glass** paths are the ones that do not depend on the cluster.
 _Avoid_: "sslh" (a protocol multiplexer we chose not to use), "jump box", "SSH gateway"; calling it a break-glass path.
 
 **Ingress chain**:

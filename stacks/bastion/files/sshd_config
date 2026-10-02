@@ -42,13 +42,3 @@ ForceCommand /sbin/nologin
 # VERBOSE logs the key fingerprint with each "Accepted publickey" line; the
 # Loki rule BastionLogin in stacks/monitoring keys off that line.
 LogLevel VERBOSE
-
-# Per-client exceptions. Match blocks must stay at the end of this file.
-#
-# muse (Viktor's Muse agent): local forwarding to any host and port, chosen by
-# Viktor on 2026-09-28 so Muse can reach services such as the devvm's
-# agent-api through the bastion. Still no shell, no TTY and no remote (-R)
-# forwarding. Because of this exception the pod's egress is open; see the
-# Calico policy in stacks/bastion/main.tf.
-Match User muse
-    PermitOpen any

@@ -99,6 +99,10 @@ agent:
       mountPath: /etc/crowdsec/scenarios/http-429-abuse.yaml
       subPath: "http-429-abuse.yaml"
       readonly: true
+    - name: custom-scenarios
+      mountPath: /etc/crowdsec/scenarios/terminal-api-auth-bf.yaml
+      subPath: "terminal-api-auth-bf.yaml"
+      readonly: true
     # These two REPLACE the hub symlink at the same path, which is what makes
     # them an override rather than a second scenario with a duplicate name. A
     # ConfigMap key on its own is inert — the mount is what lands the file.

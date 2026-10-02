@@ -72,6 +72,27 @@ resource "kubernetes_config_map" "crowdsec_custom_scenarios" {
         behavior: abusive_403
         remediation: true
     YAML
+    # terminal-api.viktorbarzin.me (stacks/terminal/terminal_api.tf) is the
+    # public machine API for Terminal Lobby. A legitimate caller never gets a
+    # 401 there, so a handful of failures from one address is a credential
+    # guess or a stale token: ban after 5 inside roughly a minute. Router name,
+    # not target_fqdn: evt.Parsed.traefik_router_name is the field the traefik
+    # parser actually populates (see the immich whitelist below). Every router
+    # of that IngressRoute is named terminal-terminal-api-<hash>.
+    "terminal-api-auth-bf.yaml" = <<-YAML
+      type: leaky
+      name: viktor/terminal-api-auth-bf
+      description: "Repeated 401s on terminal-api.viktorbarzin.me (bearer-token guessing)"
+      filter: "evt.Meta.log_type == 'http_access-log' && evt.Parsed.status == '401' && evt.Parsed.traefik_router_name contains 'terminal-terminal-api-'"
+      groupby: "evt.Meta.source_ip"
+      leakspeed: "12s"
+      capacity: 5
+      blackhole: 5m
+      labels:
+        service: http
+        behavior: http:bruteforce
+        remediation: true
+    YAML
     # ---------------------------------------------------------------------
     # Two hub scenarios re-declared LOCALLY to fix their groupby. Upstream both
     # group by "evt.Meta.source_ip + '/' + evt.Parsed.target_fqdn", but NEITHER

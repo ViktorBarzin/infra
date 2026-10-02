@@ -32,9 +32,13 @@ locals {
   # than an Ingress, so the ingress sync never sees it. Points at Traefik's LB
   # like every ingress host does. Without it, LAN clients got NXDOMAIN for
   # ssh.viktorbarzin.me (2026-09-28) while public DNS answered the WAN IP.
+  #
+  # terminal-api: Terminal Lobby's machine API (stacks/terminal/terminal_api.tf),
+  # also IngressRoute-only, so the same reasoning applies.
   static_a_records = {
-    turn = "10.0.20.205"
-    ssh  = "10.0.20.203"
+    turn           = "10.0.20.205"
+    ssh            = "10.0.20.203"
+    "terminal-api" = "10.0.20.203"
   }
 
   # Same, for the internal-only viktorbarzin.lan zone — the household devices

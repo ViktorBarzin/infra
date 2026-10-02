@@ -1802,6 +1802,12 @@
       changed_when: false
       check_mode: false
       no_log: true
+      # An empty TL_PROXY_SECRET switches the services' secret check OFF
+      # (authuser checkSecret: unset means disabled), and vault exits 0 on an
+      # empty field. Refuse anything that cannot be a real secret.
+      failed_when: >-
+        devvm_tl_proxy_secret.rc != 0 or
+        (devvm_tl_proxy_secret.stdout | trim | length) < 32
 
     - name: Filter ttyd down to the proxy
       ansible.builtin.copy:
@@ -1829,6 +1835,18 @@
               # The Traefik nodes, and this box reaching its own address.
               tcp dport 7681 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
               tcp dport 7681 drop
+
+              # agent-api's LAN listener, for terminal-api.viktorbarzin.me. Same
+              # sources as ttyd. Pods on those nodes are SNATed to the node
+              # address too; the AdminNetworkPolicy devvm-lobby-ports in
+              # stacks/terminal keeps every namespace but traefik off it.
+              tcp dport 8710 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
+              tcp dport 8710 drop
+
+              # Traefik reaches the lobby over IPv4 only. The services listen on
+              # every interface, which includes this box's global IPv6 address;
+              # nothing legitimate arrives that way, so close it.
+              meta nfproto ipv6 tcp dport { 7681, 7683-7688, 8710 } drop
             }
           }
       notify: reload nftables
@@ -2232,15 +2250,14 @@
           # rotating means writing that key and re-running both.
           TL_PROXY_SECRET={{ devvm_tl_proxy_secret.stdout }}
 
-          # agent-api ignores TL_BIND and binds loopback ONLY. It is reached
-          # over the tailnet, but the daemon runs in userspace-networking mode,
-          # so there is no TUN device and the 100.64.x.x address is not a local
-          # address at all: binding it fails with "cannot assign requested
-          # address". `tailscale serve --tcp` below forwards the tailnet port to
-          # this loopback one instead, which is how userspace mode accepts
-          # inbound. Leaving TL_AGENT_BIND unset is therefore correct here, not
-          # an omission.
-          TL_AGENT_BIND=
+          # agent-api ignores TL_BIND and always binds loopback. The tailnet
+          # reaches it through `tailscale serve --tcp` (userspace mode has no
+          # local 100.64.x.x address to bind). TL_AGENT_BIND adds this box's LAN
+          # address for terminal-api.viktorbarzin.me, Terminal Lobby's public
+          # machine API (stacks/terminal/terminal_api.tf): Traefik reaches
+          # 10.0.10.10:8710, and the nftables table above admits only the
+          # Traefik nodes to that port. agent-api accepts bearer tokens only.
+          TL_AGENT_BIND=10.0.10.10
 
           # Per-caller bearer credentials for agent-api. See the task that
           # writes this file for why root owns it.
@@ -2530,6 +2547,11 @@
         - session-events
         - file-api
         - skills-api
+        # agent-api reads TL_AGENT_BIND and the tokens file at start. Its
+        # cgroup holds only itself (tmux runs in tmux-spawn-*.scope units), so
+        # a restart is a ~1s API gap. ttyd is deliberately NOT here: restarting
+        # it drops every attached terminal.
+        - agent-api
 
     - name: reload nftables
       ansible.builtin.systemd_service:

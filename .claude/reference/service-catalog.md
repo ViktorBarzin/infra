@@ -105,6 +105,7 @@
 | n8n | Workflow automation | n8n |
 | real-estate-crawler | Property crawler | real-estate-crawler |
 | tor-proxy | Tor proxy | tor-proxy |
+| terminal-api | Public machine API for Terminal Lobby at `terminal-api.viktorbarzin.me` (no Authentik): source-IP allowlist, CrowdSec 401 ban, rate limit, then Lobby bearer tokens (`devvm_external_agents`, Vault `secret/terminal-lobby`). No ttyd. Runbook `docs/runbooks/terminal-api.md` | terminal |
 | bastion | Jump-only SSH on 443: `ssh.viktorbarzin.me` (SSH inside TLS, Traefik `IngressRouteTCP` on `websecure`) → ProxyJump to devvm / pfSense / Proxmox. Keys only, accounts from Vault `secret/bastion`, Slack post per login. Runbook `docs/runbooks/bastion-ssh.md` | bastion |
 | forgejo | Git forge. Open native self-signup (Turnstile captcha + email confirm) + Authentik & GitHub OAuth sign-in; see `docs/runbooks/forgejo-open-signups.md` | forgejo |
 | freshrss | RSS reader | freshrss |

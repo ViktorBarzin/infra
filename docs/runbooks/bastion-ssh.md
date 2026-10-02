@@ -99,12 +99,9 @@ restart, open connections from that client are closed.
 
 Three places, which must agree:
 
-1. The global `PermitOpen` in `stacks/bastion/files/sshd_config`
-2. The client config table in this runbook
-
-Pod egress is currently open (see [Per-client exceptions](#per-client-exceptions)), so no network
-policy change is needed. If egress is tightened again, the target also goes in the Calico policy
-`bastion-egress` in `stacks/bastion/main.tf`.
+1. `PermitOpen` in `stacks/bastion/files/sshd_config`
+2. `local.targets` in `stacks/bastion/main.tf` (Calico egress policy `bastion-egress`)
+3. The client config table in this runbook
 
 ## What gets logged
 
@@ -122,20 +119,10 @@ policy change is needed. If egress is tightened again, the target also goes in t
 - sshd `PerSourcePenalties no`: every client arrives from Traefik's pod IP, so OpenSSH's per-source
   penalties would let one client's failures lock out the rest.
 - sshd: public keys only, `MaxAuthTries 2`, `LoginGraceTime 20`, no TTY, no shell
-  (`ForceCommand /sbin/nologin`), forwarding only to the `PermitOpen` targets (except `muse`, below).
-- Ingress only from the `traefik` namespace on 22 (Kubernetes NetworkPolicy).
-- Egress is open (Calico NetworkPolicy `bastion-egress` is a single Allow), because `muse` may
-  forward anywhere and a network policy cannot tell accounts apart. sshd `PermitOpen` is the only
-  per-account limit. To tighten, restore the Allow-targets + Deny pair from commit 2e5cd6b4; a
-  Kubernetes egress policy alone has no effect in this namespace, see `docs/agents/known-issues.md`.
-
-## Per-client exceptions
-
-Exceptions are `Match User` blocks at the end of `stacks/bastion/files/sshd_config`.
-
-| Client | Exception | Why |
-|---|---|---|
-| `muse` | `PermitOpen any`: local forwarding (`-L`, `-D`, `-W`) to any host and port, LAN or internet. Still no shell, no TTY, no `-R` | Viktor, 2026-09-28: Muse reaches services such as the devvm's `agent-api` through the bastion. Anyone holding Muse's key gets the same reach, so revoke it promptly if it leaks |
+  (`ForceCommand /sbin/nologin`), forwarding only to the `PermitOpen` targets.
+- Ingress only from the `traefik` namespace on 22 (Kubernetes NetworkPolicy). Egress only to the
+  three targets on 22, then an explicit Deny (Calico NetworkPolicy `bastion-egress`, order 100).
+  A Kubernetes egress policy alone has no effect in this namespace, see `docs/agents/known-issues.md`.
 - CrowdSec's Traefik plugin is HTTP middleware and does not apply to TCP routes.
 
 ## Troubleshooting
@@ -146,4 +133,4 @@ Exceptions are `Match User` blocks at the end of `stacks/bastion/files/sshd_conf
 | TLS works, SSH hangs with no banner | `kubectl -n traefik logs deploy/traefik \| grep -i bastion`, and `kubectl get ingressroutetcp -n bastion` |
 | `Permission denied (publickey)` | The client's key is not in Vault, or the pod has not restarted since. Check the pod log for the `ready` line |
 | `administratively prohibited: open failed` | The target is not in `PermitOpen` |
-| Hop opens but the target never answers | The target is not listening on that address (e.g. `agent-api` binds `127.0.0.1` unless `TL_AGENT_BIND` adds more), or egress was tightened and the Calico `bastion-egress` policy is missing it |
+| Hop opens but the target never answers | The Calico `bastion-egress` policy is missing the target |
