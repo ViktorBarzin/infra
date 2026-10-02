@@ -1881,6 +1881,28 @@
               # nothing legitimate arrives that way, so close it.
               meta nfproto ipv6 tcp dport { 7681, 7683-7688, 8710 } drop
             }
+
+            # Ports published with `docker run -p` stay on this box. dockerd
+            # binds a bare `-p 18099:7681` to 0.0.0.0 and DNATs it in
+            # prerouting, so that traffic is forwarded to the bridge and never
+            # passes the input chain above. On 2026-10-02 a month-old test
+            # container published an unauthenticated ttyd that way and every
+            # pod could open it. Docker's own nat counters showed no other
+            # off-box use of a published port, so this drops all of them:
+            # a DNATed flow into a docker bridge that did not start on one.
+            # The box reaching 127.0.0.1:<port> takes the output path and is
+            # untouched, as is container egress. To share a container with
+            # the LAN, give it a Traefik route instead.
+            #
+            # IPv6 is not covered here: dockerd has no ip6 DNAT on this box,
+            # so [::]:<port> is docker-proxy, a local socket on the input path.
+            chain forward {
+              type filter hook forward priority -10; policy accept;
+              iifname "docker0" accept
+              iifname "br-*" accept
+              ct status dnat oifname "docker0" drop
+              ct status dnat oifname "br-*" drop
+            }
           }
       notify: reload nftables
 
