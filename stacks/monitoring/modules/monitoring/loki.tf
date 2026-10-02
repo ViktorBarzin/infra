@@ -1869,6 +1869,39 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                 EOT
               }
             },
+            {
+              # Delegations (2026-10-02, phase 5 of
+              # docs/plans/2026-10-02-muse-homelab-integration-design.md). A
+              # delegation whose WhatsApp send failed closes as undelivered,
+              # and Viktor asked for that to be visible rather than silent:
+              # the usual cause is WhatsApp Web logged out in the shared
+              # browser, which stops every later delegation too.
+              #
+              # One post per delegation on the event lane: drop_id is the
+              # delegation id, so Alertmanager groups each on its own, posts it
+              # once and never sends RESOLVED. The 10m window only has to
+              # outlast a ruler evaluation; the line leaves it afterwards and
+              # cannot post again.
+              #
+              # The verb matches both shapes agent-api can trace the event as:
+              # the route entry for POST /v1/delegations/{id}/undelivered, and
+              # a separate `delegation.undelivered` event entry. If both are
+              # written they carry the same id and reason, so the sum folds
+              # them into one series. delegation_id != "" drops refusals (a
+              # 409 answers {"error": ...}, which projects no id). The id and
+              # reason reach Loki through the keep-set in
+              # scripts/devvm-promtail.yaml.
+              #
+              # Parses against live Loki (homelab logs query, 2026-10-02,
+              # empty result); a broken copy of it returns a 400 parse error.
+              alert  = "AgentApiDelegationUndelivered"
+              expr   = "sum by (drop_id, reason) (count_over_time({job=\"agent-api-trace\"} | json | verb=~`delegation[.]undelivered|POST /v1/delegations/[{]id[}]/undelivered` | delegation_id!=\"\" | label_format drop_id=`{{.delegation_id}}` [10m])) > 0"
+              for    = "0s"
+              labels = { severity = "warning", subsystem = "agent-api", lane = "event" }
+              annotations = {
+                summary = "Delegation {{ $labels.drop_id }} undelivered: {{ $labels.reason }}. Runbook: docs/runbooks/delegations.md"
+              }
+            },
           ]
         },
         {

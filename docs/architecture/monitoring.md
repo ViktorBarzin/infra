@@ -623,7 +623,10 @@ unauthenticated client on those ranges can read.
 
 So the pipeline rebuilds the line from an enumerated keep-set — `ts`,
 `trace_id`, `task_id`, `conversation_id`, `actor`, `verb`, `response.status`,
-`duration_ms` and the tool *names* — and ships that. The projection is an
+`duration_ms`, the tool *names*, and for delegations `delegation_id` and the
+undelivered `reason` — and ships that. The delegation fields were added
+2026-10-02 for `AgentApiDelegationUndelivered`; both are written by this box's
+own `homelab` CLI, while a delegation's task, WhatsApp text and result stay out. The projection is an
 allowlist, which fails safe: a field added to the trace later is absent from
 Loki until someone adds it to the pipeline, rather than silently published. It
 is deliberately not a regex hunt for secret-shaped substrings, because a
@@ -672,8 +675,20 @@ is in Loki: an entry whose Loki timestamp is far from its own `ts` field.
 | Alert | Expr | For | Severity |
 |---|---|---|---|
 | `AgentApiTraceSilent` | `((sum(count_over_time({job="agent-api-trace"}[7d])) or vector(0)) < 1) and (sum(count_over_time({job="agent-api-trace"}[7d] offset 7d)) > 0) and (sum(count_over_time({job="agent-api-trace"}[7d] offset 14d)) > 0)` | 2h | warning |
+| `AgentApiDelegationUndelivered` | `` sum by (drop_id, reason) (count_over_time({job="agent-api-trace"} \| json \| verb=~`delegation[.]undelivered\|POST /v1/delegations/[{]id[}]/undelivered` \| delegation_id!="" \| label_format drop_id=`{{.delegation_id}}` [10m])) > 0 `` | 0s | warning, `lane = "event"` |
 
-Group `agent-api` in `loki.tf`. The two clauses do different jobs.
+Group `agent-api` in `loki.tf`.
+
+**`AgentApiDelegationUndelivered`** posts once to #alerts for each delegation
+whose WhatsApp send failed, with the reason in the summary
+([runbooks/delegations.md](../runbooks/delegations.md)). It rides the event
+lane: `drop_id` is the delegation id, so each one is its own Alertmanager
+group, posted once and never resolved. The verb pattern covers both shapes
+agent-api can trace it as (the `/undelivered` route entry and a standalone
+`delegation.undelivered` event); if both are written they share id and reason
+and fold into one series. `delegation_id!=""` drops refusals such as a 409.
+
+**`AgentApiTraceSilent`.** The two clauses do different jobs.
 
 **Left, the silence test.** `or vector(0)` is load-bearing here for the reason
 `TerminalUpgradesCollapsed` above spells out: a bare `sum(count_over_time(...))`
