@@ -1414,14 +1414,21 @@ resource "kubernetes_config_map" "loki_alert_rules" {
               # that host. The pre-launch replay (2026-10-02: 407,413 inspected
               # unique requests from 7 days) blocked 20,461, every one a probe or
               # exploit, 933 of them on real services.
+              #
+              # SUSTAINED, not a total: a scanner fires hundreds of requests in
+              # the seconds before its ban reaches the bouncer (one 30s poll).
+              # Seen on day one: 383 appsec-blocks from 34.186.103.250 in one
+              # burst, banned at 05:05:00. A 15m total with for=15m would fire
+              # on that burst; blocks in EVERY 5m window for 20m cannot come
+              # from one burst.
               alert = "CrowdSecAppsecBlockSurge"
-              expr  = "sum by (host) (count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=appsec-block\" | regexp \"host=(?P<host>[^ ]+)\" [15m])) > 20"
-              for   = "15m"
+              expr  = "sum by (host) (count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=appsec-block\" | regexp \"host=(?P<host>[^ ]+)\" [5m])) > 5"
+              for   = "20m"
               labels = {
                 severity = "warning"
               }
               annotations = {
-                summary     = "AppSec keeps blocking requests on {{ $labels.host }} ({{ $value }} in 15m) without the clients getting banned — likely a false positive"
+                summary     = "AppSec has blocked requests on {{ $labels.host }} in every 5-minute window for 20 minutes ({{ $value }} in the last 5m) without the clients getting banned — likely a false positive"
                 description = <<-EOT
                   Scanners get banned after two distinct rules, so a steady
                   stream of AppSec blocks on one host usually means a single
