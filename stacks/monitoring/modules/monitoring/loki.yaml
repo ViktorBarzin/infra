@@ -24,11 +24,24 @@ loki:
     # either way, just sooner. Only a bursty stream that goes quiet and resumes
     # pays, by starting a new chunk — and there are ~100 such streams, not 5000.
     chunk_idle_period: 1h
-    max_chunk_age: 24h
+    # 2h (the upstream default), NOT the 24h this had until 2026-10-02. A
+    # stream that writes a few lines a minute never goes idle for an hour and
+    # never fills a 1.5MB chunk, so max_chunk_age is the only thing that
+    # flushes it. At 24h such streams (agent-api.service, agent-api-trace,
+    # tmux-api.service) sat in memory for most of a day.
+    max_chunk_age: 2h
     chunk_retain_period: 1m
     chunk_target_size: 1572864
+    # The WAL lives on the PVC so a replaced pod replays it. Until 2026-10-02
+    # it was an emptyDir with medium: Memory at /loki-wal; when loki-0 was
+    # replaced at 11:19:40 that day the WAL went with the old pod and Loki
+    # lost ~9h of the low-volume devvm streams above, which the devvm journal
+    # still held. tests/loki-wal-durable.test.sh guards this block.
     wal:
-      dir: /loki-wal
+      dir: /var/loki/wal
+      # 50% of the 6Gi limit. The 4GB default plus Loki's baseline could
+      # OOM the pod during replay; past the ceiling Loki flushes and goes on.
+      replay_memory_ceiling: 3GB
   pattern_ingester:
     enabled: true
   limits_config:
@@ -118,16 +131,10 @@ singleBinary:
     size: 50Gi
     storageClass: "proxmox-lvm"
   extraVolumes:
-    - name: wal
-      emptyDir:
-        medium: Memory
-        sizeLimit: 2Gi
     - name: rules
       configMap:
         name: loki-alert-rules
   extraVolumeMounts:
-    - name: wal
-      mountPath: /loki-wal
     - name: rules
       mountPath: /var/loki/rules/fake
   resources:
