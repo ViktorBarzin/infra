@@ -304,8 +304,20 @@ resource "vault_jwt_auth_backend" "oidc" {
   oidc_client_id     = data.vault_kv_secret_v2.vault.data["authentik_client_id"]
   oidc_client_secret = data.vault_kv_secret_v2.vault.data["authentik_client_secret"]
   default_role       = "default"
+  # Every tune field spelled out with its live value. Declaring only
+  # listing_visibility left a permanent plan diff (the provider plans the
+  # undeclared fields away every time) that sat unapplied and was mistaken for
+  # pending work (2026-10-02). These are Vault's own defaults (768h = the
+  # system TTL); OIDC login tokens get their 7d TTL from the role below.
   tune {
-    listing_visibility = "hidden"
+    listing_visibility           = "hidden"
+    default_lease_ttl            = "768h"
+    max_lease_ttl                = "768h"
+    token_type                   = "default-service"
+    allowed_response_headers     = []
+    audit_non_hmac_request_keys  = []
+    audit_non_hmac_response_keys = []
+    passthrough_request_headers  = []
   }
   depends_on = [helm_release.vault]
 }
