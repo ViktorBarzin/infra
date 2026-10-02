@@ -3,20 +3,20 @@ variable "tls_secret_name" {
   sensitive = true
 }
 
-# Plan-time read: the /mcp bearer token list is rendered straight into the
-# Traefik Middleware CRD, so it cannot come from an ESO-created K8s Secret.
-data "vault_kv_secret_v2" "secrets" {
-  mount = "secret"
-  name  = "repowise"
-}
+# The MCP endpoint (repowise-mcp.viktorbarzin.me) was REMOVED on 2026-10-02 at
+# Viktor's request; the parked web/API app below stays so it can be revived.
+# That took out the mcp container, its launcher script, the repowise-mcp
+# Service and ingress, and the per-holder bearer-auth Middleware with the
+# plan-time Vault read that fed it. The bearer_tokens key is still in Vault
+# secret/repowise, unused. Restoring the MCP means bringing those back from git
+# history (the commit that added this note).
 
 locals {
   app = "repowise"
 
   # Pinned upstream release. Keel (policy=patch) rolls 0.x.Y forward on its
   # own; a minor bump is a deliberate edit here. Upstream ships roughly every
-  # other day at v0.x, and the MCP tool surface agents depend on should not
-  # change under them.
+  # other day at v0.x, and its API surface should not change under us.
   image = "ghcr.io/viktorbarzin/repowise:0.42.0"
 
   # Do NOT add image_pull_policy here. The cluster-wide Kyverno policy
@@ -37,7 +37,6 @@ locals {
   workspace = "/workspace"
   api_port  = 7337
   web_port  = 3000
-  mcp_port  = 7338
 }
 
 resource "kubernetes_namespace" "repowise" {
@@ -95,9 +94,9 @@ resource "kubernetes_limit_range" "repowise" {
 # requests.memory for the WHOLE namespace forced api's request down to 2Gi — a
 # figure the comment on that container flagged as knowingly below what the
 # process really holds, which under-counted the pod to the scheduler by ~1.8 GiB.
-# Sized for honest requests: api 4Gi + mcp 256Mi + sync 192Mi + web 128Mi =
-# 4,672Mi of requests and 10,752Mi of limits, with headroom for one rollout
-# running old and new pods side by side. count/pods is the runaway-create backstop.
+# Sized for honest requests: api 4Gi + sync 192Mi + web 128Mi = 4,416Mi of
+# requests (the mcp container's 256Mi went with it on 2026-10-02), with
+# headroom for one rollout running old and new pods side by side. count/pods is the runaway-create backstop.
 resource "kubernetes_resource_quota" "repowise" {
   metadata {
     name      = "repowise-quota"
@@ -157,8 +156,8 @@ resource "kubernetes_manifest" "external_secret" {
 # The Corpus: 42 git clones plus their derived per-repo SQLite indexes.
 #
 # Block storage rather than NFS because repowise hard-codes per-repo SQLite in
-# workspace mode (create_engine("sqlite+aiosqlite:///...")), and both the API
-# and the MCP server write. Ordinary POSIX locking on a block device is the
+# workspace mode (create_engine("sqlite+aiosqlite:///...")), and the API and the
+# reconciler both write (the MCP server did too, until it was removed). Ordinary POSIX locking on a block device is the
 # safe way to run that; NFS lock semantics with multiple writers is the
 # classic corruption path. All writers therefore live in one pod.
 #
@@ -203,41 +202,8 @@ resource "kubernetes_config_map" "scripts" {
   }
   data = {
     "reconcile.py"  = file("${path.module}/files/reconcile.py")
-    "mcp_serve.py"  = file("${path.module}/files/mcp_serve.py")
     "cross_repo.py" = file("${path.module}/files/cross_repo.py")
   }
-}
-
-# Gateway-level bearer auth for /mcp. repowise's MCP HTTP transport is
-# UNAUTHENTICATED — mcp.run(transport="streamable-http") is called with no auth
-# wiring, and REPOWISE_API_KEY only silences a log warning there. This
-# Middleware is therefore the only credential gate on that path, behind the
-# home-LAN allowlist. Per-holder tokens live in Vault as a JSON array so one
-# can be revoked without disturbing the others; rotation = update Vault, apply.
-resource "kubernetes_manifest" "bearer_middleware" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "bearer-auth"
-      namespace = kubernetes_namespace.repowise.metadata[0].name
-    }
-    spec = {
-      plugin = {
-        # Inner key must match the static-config key in Traefik
-        # experimental.plugins.api-token-middleware.
-        api-token-middleware = {
-          authenticationHeader   = false
-          bearerHeader           = true
-          bearerHeaderName       = "Authorization"
-          tokens                 = jsondecode(data.vault_kv_secret_v2.secrets.data["bearer_tokens"])
-          removeHeadersOnSuccess = true
-          authenticationErrorMsg = "Access Denied"
-        }
-      }
-    }
-  }
-  depends_on = [kubernetes_namespace.repowise]
 }
 
 # One pod, four containers, one image. Everything that writes SQLite has to
@@ -286,11 +252,9 @@ resource "kubernetes_deployment" "repowise" {
     # way. The 1 MB response is the one datum that does not look like a
     # handshake. Parking it was Viktor's call made with those numbers in hand.
     #
-    # SIDE EFFECT, expected: any Claude Code session still wiring the repowise
-    # MCP server will now fail its handshake and show a dead server at startup,
-    # the way phpipam does. The wiring lives in each user's own ~/.claude.json,
-    # which is per-user mutable state and not managed here, so it is removed by
-    # hand or left to fail visibly.
+    # The MCP endpoint was removed outright on 2026-10-02 (see the note at the
+    # top of this file), and Viktor's ~/.claude.json entry for it with it. Any
+    # other ~/.claude.json still wiring it will fail its handshake at startup.
     #
     # Uptime Kuma: the "Repowise API" (id 1207) and "Repowise Corpus Sync" (id
     # 1205) monitors were paused on 2026-09-27 so the parked app stops reading
@@ -613,109 +577,6 @@ resource "kubernetes_deployment" "repowise" {
         }
 
         # ---------------------------------------------------------------
-        # mcp — what agents actually consume. streamable-http on /mcp.
-        # ---------------------------------------------------------------
-        container {
-          name        = "mcp"
-          image       = local.image
-          working_dir = local.workspace
-          # Not `repowise mcp` directly: the SDK derives a localhost-only Host
-          # allowlist from repowise's FastMCP construction, which 421s every
-          # request under a real hostname (including the ClusterIP that
-          # in-cluster agents use). The launcher sets an allowlist matching
-          # where this is actually reachable from, keeping the protection on.
-          command = ["python3", "/opt/repowise/mcp_serve.py"]
-
-          port {
-            name           = "mcp"
-            container_port = local.mcp_port
-          }
-
-          env {
-            name  = "REPOWISE_HOST"
-            value = "0.0.0.0"
-          }
-          env {
-            name  = "REPOWISE_EMBEDDER"
-            value = "mock"
-          }
-          env {
-            name  = "REPOWISE_WORKSPACE"
-            value = local.workspace
-          }
-          env {
-            name  = "REPOWISE_MCP_PORT"
-            value = tostring(local.mcp_port)
-          }
-          # The Host allowlist the launcher builds. Kept here so the coupling
-          # between the Service/ingress names and that allowlist is visible in
-          # one place.
-          env {
-            name  = "MCP_SERVICE_NAME"
-            value = "repowise-mcp"
-          }
-          env {
-            name  = "MCP_NAMESPACE"
-            value = local.app
-          }
-          env {
-            name  = "MCP_INGRESS_HOST"
-            value = "repowise-mcp.viktorbarzin.me"
-          }
-          env {
-            # Silences the unauthenticated-transport warning and signs SSE
-            # stream tokens. It does NOT gate the MCP tools — the Traefik
-            # bearer middleware is what does that.
-            name = "REPOWISE_API_KEY"
-            value_from {
-              secret_key_ref {
-                name = "repowise-secrets"
-                key  = "api_key"
-              }
-            }
-          }
-
-          volume_mount {
-            name       = "workspace"
-            mount_path = local.workspace
-          }
-          volume_mount {
-            name       = "scripts"
-            mount_path = "/opt/repowise"
-            read_only  = true
-          }
-
-          liveness_probe {
-            tcp_socket {
-              port = local.mcp_port
-            }
-            initial_delay_seconds = 20
-            period_seconds        = 30
-          }
-          readiness_probe {
-            tcp_socket {
-              port = local.mcp_port
-            }
-            initial_delay_seconds = 10
-            period_seconds        = 10
-          }
-
-          resources {
-            # OOMKilled 2026-08-29 03:44 at 1,020 MiB anon-rss — a hair under
-            # this container's own 1Gi ceiling, the same failure as api but on a
-            # smaller scale: mcp also holds per-repo state for the workspace.
-            # Request stays at 256Mi so only the ceiling moves.
-            requests = {
-              memory = "256Mi"
-              cpu    = "10m"
-            }
-            limits = {
-              memory = "2Gi"
-            }
-          }
-        }
-
-        # ---------------------------------------------------------------
         # sync — the reconciler. Bootstraps the Corpus, then keeps it in step
         # with Forgejo and asks the API to reindex whatever moved.
         # ---------------------------------------------------------------
@@ -905,26 +766,6 @@ resource "kubernetes_service" "web" {
   }
 }
 
-resource "kubernetes_service" "mcp" {
-  metadata {
-    name      = "repowise-mcp"
-    namespace = kubernetes_namespace.repowise.metadata[0].name
-    labels = {
-      app = local.app
-    }
-  }
-  spec {
-    selector = {
-      app = local.app
-    }
-    port {
-      name        = "mcp"
-      port        = local.mcp_port
-      target_port = local.mcp_port
-    }
-  }
-}
-
 # ---------------------------------------------------------------------------
 # Ingress. Two hostnames, not one: combining home-lans-only with a proxied
 # host would be self-defeating, since cloudflared pod source IPs sit inside
@@ -967,8 +808,8 @@ module "ingress_api" {
   tls_secret_name = var.tls_secret_name
   # Same Authentik gate as the dashboard: same-origin XHR carries the session
   # cookie, and repowise's own bearer (from the settings page, held in
-  # localStorage) applies underneath it. Nothing programmatic needs /api —
-  # agents use /mcp — so gating it costs nothing.
+  # localStorage) applies underneath it. Nothing programmatic needs /api, so
+  # gating it costs nothing.
   auth     = "required"
   dns_type = "proxied"
   # Shares a hostname with ingress_web, which already carries the external
@@ -977,38 +818,5 @@ module "ingress_api" {
   external_monitor = false
   extra_annotations = {
     "gethomepage.dev/description" = "Codebase documentation engine (HTTP API)"
-  }
-}
-
-# What agents consume. Internal-only, because this answers questions about
-# every private repo in the Corpus.
-module "ingress_mcp" {
-  source          = "../../modules/kubernetes/ingress_factory"
-  name            = "repowise-mcp"
-  namespace       = kubernetes_namespace.repowise.metadata[0].name
-  service_name    = kubernetes_service.mcp.metadata[0].name
-  port            = local.mcp_port
-  ingress_path    = ["/mcp"]
-  tls_secret_name = var.tls_secret_name
-  # auth = "none": MCP clients are programmatic and cannot complete a
-  # forward-auth redirect. The gates here are the home-LAN allowlist plus the
-  # per-holder bearer middleware below — the latter matters because repowise's
-  # MCP HTTP transport performs no authentication of its own.
-  auth     = "none"
-  dns_type = "internal"
-  # Internal-only: an external probe through Cloudflare could never reach it,
-  # and the default opt-in would have external-monitor-sync create a monitor
-  # that is red by construction.
-  external_monitor = false
-  extra_middlewares = [
-    # Must precede the allowlist: a middleware only intercepts what is
-    # downstream of it, and the allowlist short-circuits without calling next.
-    "traefik-error-pages-403@kubernetescrd",
-    "traefik-home-lans-only@kubernetescrd",
-    "repowise-bearer-auth@kubernetescrd",
-  ]
-  depends_on = [kubernetes_manifest.bearer_middleware]
-  extra_annotations = {
-    "gethomepage.dev/description" = "Codebase documentation engine (MCP endpoint)"
   }
 }

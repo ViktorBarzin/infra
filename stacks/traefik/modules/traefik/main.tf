@@ -417,11 +417,11 @@ resource "helm_release" "traefik" {
           }
         }
         # Static-token bearer/header auth for gateways with no app-layer
-        # auth (paperless-mcp; repowise while it is parked). Plugin key
+        # auth (paperless-mcp; repowise's MCP gate used it until that endpoint was
+        # removed on 2026-10-02). Plugin key
         # `api-token-middleware` is the inner key in
         # `Middleware.spec.plugin.<key>` on consuming Middleware CRDs and MUST
-        # keep that name: paperless-mcp/bearer-auth and repowise/bearer-auth
-        # reference it.
+        # keep that name: paperless-mcp/bearer-auth references it.
         #
         # VENDORED LOCALLY on 2026-09-21, and that is the whole point of this
         # change. It was the last REMOTE plugin, fetched from

@@ -9,7 +9,7 @@ version Traefik itself embeds**, the way Traefik loads a `localPlugins`
 
 One broken plugin disables **every** Traefik plugin at startup — Traefik logs
 `Plugins are disabled because an error has occurred.` and
-`api-token-middleware` goes with it, taking paperless-mcp and repowise's gates
+`api-token-middleware` goes with it, taking paperless-mcp's gate
 down. `go build` and `go test` do **not** catch that class: the plugin compiles
 and its tests pass, then Yaegi rejects it at import.
 
