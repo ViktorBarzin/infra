@@ -5,8 +5,9 @@ internet that cannot use a VPN or a browser login. The first caller is Meta Muse
 Meta's cloud. The browser host `terminal.viktorbarzin.me` is separate and unchanged.
 
 This is agent-api's only way in from outside the devvm. The earlier Headscale tailnet path
-(node `koda`, the devvm's `tailscaled-agent` and its `tailscale serve` of `:8710`) was retired on
-2026-10-02 ([design](../plans/2026-10-02-muse-homelab-integration-design.md)).
+(node `koda`, the devvm's `tailscaled-agent` and its `tailscale serve` of `:8710`, and the `tag:muse`
+grant to `devvm-tailnet:8710` in `stacks/headscale/acl.hujson`) was retired on 2026-10-02
+([design](../plans/2026-10-02-muse-homelab-integration-design.md)).
 
 - Config: `stacks/terminal/terminal_api.tf`, plus `playbooks/devvm.yml` (agent-api bind, nftables)
 - Ban scenario: `viktor/terminal-api-auth-bf` in `stacks/crowdsec`
