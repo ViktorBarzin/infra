@@ -159,8 +159,13 @@ resource "kubernetes_deployment" "local_path_provisioner" {
         }
       }
       spec {
-        service_account_name            = kubernetes_service_account.local_path_provisioner.metadata[0].name
-        automount_service_account_token = false
+        service_account_name = kubernetes_service_account.local_path_provisioner.metadata[0].name
+        # TRUE: the provisioner talks to the API server (it watches PVCs and
+        # creates helper pods) with this token. This read `false` from the
+        # 2026-04-18 Terraform adoption but never reached the live template
+        # until the template was next re-sent on 2026-10-02, when every new pod
+        # crashed with "unable to get client config: stat /.kube/config".
+        automount_service_account_token = true
         enable_service_links            = false
         container {
           name              = "local-path-provisioner"
