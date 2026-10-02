@@ -12,9 +12,17 @@
 # out), it is not LAN-only (home-lans-only middleware or a .lan name), and it is
 # not excluded below. IngressRoutes are not read; their hosts get the default
 # listener.
-data "kubernetes_resources" "all_ingresses" {
+#
+# One query per namespace: with namespace omitted, kubernetes_resources lists
+# only "default" for a namespaced kind (provider 3.3.0, datasource.go), and it
+# has no all-namespaces option.
+data "kubernetes_all_namespaces" "all" {}
+
+data "kubernetes_resources" "ingresses" {
+  for_each    = toset(data.kubernetes_all_namespaces.all.namespaces)
   api_version = "networking.k8s.io/v1"
   kind        = "Ingress"
+  namespace   = each.key
 }
 
 locals {
@@ -55,7 +63,7 @@ locals {
   ]
 
   _ingress_host_rows = flatten([
-    for ing in data.kubernetes_resources.all_ingresses.objects : [
+    for ing in flatten([for q in data.kubernetes_resources.ingresses : q.objects if q.objects != null]) : [
       for rule in try(ing.spec.rules, []) : {
         host        = lower(try(rule.host, ""))
         middlewares = try(ing.metadata.annotations["traefik.ingress.kubernetes.io/router.middlewares"], "")
