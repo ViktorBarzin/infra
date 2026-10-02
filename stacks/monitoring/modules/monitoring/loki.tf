@@ -1375,6 +1375,82 @@ resource "kubernetes_config_map" "loki_alert_rules" {
                 EOT
               }
             },
+            # ---- AppSec check (ADR-0027) -----------------------------------
+            # The bouncer asks CrowdSec AppSec about each request before it
+            # reaches the backend. Everything below is about regressions that
+            # check could cause; the kill switch for all of them is
+            # appsecEnabled = false in stacks/traefik/modules/traefik/middleware.tf
+            # (a dynamic reload, no Traefik restart).
+            {
+              # The bouncer stops calling AppSec for 30s when at least half of
+              # its last 20 checks failed, and logs only the transition. Each
+              # open means requests went uninspected for 30s, and before it
+              # opened they waited up to the 200ms timeout.
+              alert = "CrowdSecAppsecBreakerOpen"
+              expr  = "sum(count_over_time({namespace=\"traefik\"} |= \"[crowdsec-bouncer] action=appsec-breaker state=open\" [10m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "Traefik bouncer's AppSec breaker opened — AppSec checks were failing and requests went uninspected"
+                description = <<-EOT
+                  At least half of 20 consecutive AppSec checks timed out or
+                  errored. Traffic is unaffected (fail-open) apart from the
+                  wait before the breaker opened. Check the AppSec pods
+                  (`kubectl -n crowdsec get pods -l type=appsec`, their logs;
+                  401 to everything means they lost LAPI) and
+                  CrowdSecAppsecDown.
+                EOT
+              }
+            },
+            {
+              # Overhead is the access log's total time minus backend time, so
+              # an AppSec call shows up in it. Measured before the check went
+              # in (7d to 2026-10-02): per-pod 10m MEDIAN 4.8ms typical, 8.6ms
+              # max. The median, not p99: p99 includes streaming a response to
+              # a slow client and reached 39s on ordinary days, while a slow
+              # AppSec delays EVERY request and moves the median.
+              alert = "TraefikOverheadHigh"
+              expr  = "max by (pod) (quantile_over_time(0.5, {namespace=\"traefik\", container=\"traefik\"} |= \"\\\"Overhead\\\"\" | json Overhead | __error__=\"\" | unwrap Overhead [10m]) by (pod)) > 30000000"
+              for   = "15m"
+              labels = {
+                severity = "warning"
+              }
+              annotations = {
+                summary     = "Traefik on {{ $labels.pod }} adds a median {{ $value }} ns of its own time per request (baseline ~5,000,000 ns = 5ms)"
+                description = <<-EOT
+                  Something inside Traefik is slowing every request. The usual
+                  suspect since 2026-10-02 is the bouncer's AppSec call (200ms
+                  timeout): check AppSec pod health and CPU, then flip
+                  appsecEnabled to false to confirm. Other candidates: the
+                  Authentik forward-auth or the anti-AI middlewares.
+                EOT
+              }
+            },
+            {
+              # One broken plugin disables ALL Traefik plugins on that pod
+              # (upstream #13005), which leaves it 404ing every host; this is
+              # the log line itself, minutes before TraefikNoRouterMatch404s
+              # can accumulate enough 404s to fire.
+              alert = "TraefikPluginsDisabled"
+              expr  = "sum by (pod) (count_over_time({namespace=\"traefik\"} |= \"Plugins are disabled\" [10m])) > 0"
+              for   = "0m"
+              labels = {
+                severity = "critical"
+              }
+              annotations = {
+                summary     = "{{ $labels.pod }} started with every Traefik plugin disabled — it is 404ing every host routed to it"
+                description = <<-EOT
+                  A plugin failed to load (Yaegi error, or a remote plugin fetch
+                  timing out). The pod's log line just before names the cause.
+                  If a vendored plugin just changed, revert it; otherwise
+                  `kubectl -n traefik delete pod {{ $labels.pod }}` usually
+                  recovers a transient failure. Gate any plugin change with
+                  scripts/yaegi-plugin-gate first.
+                EOT
+              }
+            },
           ]
         },
         {
