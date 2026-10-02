@@ -331,7 +331,9 @@ appsec:
       path: /
       # appsec-default loads base-config plus every vpatch-* and generic-*
       # rule in-band.
-      appsec_config: crowdsecurity/appsec-default
+      appsec_configs:
+        - crowdsecurity/appsec-default
+        - viktor/appsec-no-alerts
       # One worker per pod by default, which serialises checks; at the
       # 197 req/s 30-day peak that queues behind the plugin's 200 ms deadline.
       routines: 4
@@ -348,6 +350,7 @@ appsec:
       appsec_configs:
         - crowdsecurity/appsec-default
         - viktor/crs-inband
+        - viktor/appsec-no-alerts
       routines: 4
       labels:
         type: appsec
@@ -356,6 +359,19 @@ appsec:
   # temporarily: the per-request output is hundreds of lines, so keep it off
   # whenever real traffic or a replay runs (it all lands in Loki).
   configs:
+    # No LAPI alert per blocked request. By default every in-band block also
+    # becomes an alert, and in the first 12 hours (2026-10-02) those filled
+    # the 10,000-alert cap (db_config.flush.max_items). The flush deletes the
+    # oldest alerts whatever they hold, and it took the morning's static
+    # blocklist import with it: the Meta and proxy-ASN ranges went unenforced
+    # until re-imported. The ban scenarios (appsec-vpatch, appsec-native) read
+    # events, which still flow, and the bouncer logs every block itself.
+    viktor-appsec-no-alerts.yaml: |
+      name: viktor/appsec-no-alerts
+      on_match:
+        - filter: IsInBand == true
+          apply:
+            - CancelAlert()
     viktor-crs-inband.yaml: |
       name: viktor/crs-inband
       default_remediation: ban
