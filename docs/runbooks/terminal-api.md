@@ -58,6 +58,11 @@ curl -H "Authorization: Bearer $TOKEN" https://terminal-api.viktorbarzin.me/api/
 
 Muse's token: `vault kv get -field=agent_api_muse_token secret/terminal-lobby`.
 
+A client generated from `/openapi.json` takes its base URL from the document's first `servers`
+entry, which is `https://terminal-api.viktorbarzin.me` (the second is loopback on the devvm). Check
+it with `curl -s https://terminal-api.viktorbarzin.me/openapi.json | jq -r '.servers[0].url'`; an
+older terminal-lobby build still answers `http://{host}:8710`, the retired tailnet address.
+
 Long waits: agent-api's `?wait=N` (send-and-wait on messages, long-poll on tasks, N up to 300 s)
 holds the request open. The `/v1/` route therefore uses the ServersTransport
 `terminal-api-longpoll` (response-header timeout 330 s); the cluster-wide default is 30 s and
