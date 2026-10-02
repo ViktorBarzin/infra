@@ -1,6 +1,6 @@
 # Muse as an orchestrator of homelab agents
 
-**Status:** approved, not started
+**Status:** live (agent-api serving Muse since 2026-10-02). The transport described here, a Headscale tailnet node, is superseded by [Muse and the homelab](2026-10-02-muse-homelab-integration-design.md): callers now reach agent-api only through `terminal-api.viktorbarzin.me`, and the tailnet path was retired on 2026-10-02.
 **Date:** 2026-09-14, revised 2026-09-16 (twice)
 **Author:** Viktor Barzin (design worked out with Claude in a grilling session)
 **Component:** `agent-api` (new service in the `terminal-lobby` repo), Headscale, devvm
