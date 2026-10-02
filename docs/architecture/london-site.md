@@ -19,9 +19,14 @@ flowchart TD
   flint -->|"WireGuard, 10.3.2.6"| pf[pfSense, Sofia]
 ```
 
-Until early October 2026 the Flint sits behind the Hyperoptic router (WAN
-192.168.20.0/24, double NAT). After the cutover it takes the Hyperoptic line
-directly.
+Since 2026-10-02 the Flint takes the Hyperoptic line directly; the Hyperoptic
+router is gone. The WAN gets 100.67.94.6/18 by DHCP, a carrier-grade NAT range
+(RFC 6598), and leaves the internet as 137.220.71.46 (AS56478). That address is
+most likely shared with other Hyperoptic customers, so it is not ours to
+allowlist. IPv6 is native: Hyperoptic delegates 2a01:4b00:ab23:1200::/56 and the
+LAN gets real addresses from it.
+
+Firmware is GL 4.11.0 since 2026-10-02 (was 4.9.1).
 
 ## Access
 
@@ -31,10 +36,18 @@ directly.
 | LuCI | GL UI → SYSTEM → Advanced Settings → Go To LuCI |
 | admin password | Vaultwarden item `london.viktorbarzin.me` (user `root`) |
 | APIs | GL JSON-RPC `POST /rpc` (challenge, login, call); OpenWrt ubus at `http://10.3.2.6:8080/ubus` (session.login as root) |
-| SSH | `ssh root@10.3.2.6`, read-only diagnostics only |
+| SSH | `ssh root@10.3.2.6`, read-only diagnostics only. With the tunnel down: `ssh -o HostKeyAlias=10.3.2.6 root@2a01:4b00:ab23:1200::1` from the devvm (IPv6), same host key |
 
 Every change goes through the GL UI settings or LuCI, or the RPC calls those UIs
-make, so the result is visible in one of the two UIs.
+make, so the result is visible in one of the two UIs. The exception is the
+monitoring packages, which `scripts/london-flint/provision.sh` installs over SSH
+(see [After a firmware upgrade](#after-a-firmware-upgrade)).
+
+Firmware 4.11 answers 403 on the admin page to any request whose Host header is
+not `localhost` or one of the router's own addresses (DNS-rebinding protection,
+hardcoded in `/usr/share/gl-ngx/oui-access.lua`). A browser on the LAN using
+`192.168.8.1` is unaffected; a reverse proxy that forwards another hostname gets
+403.
 
 ## Intended settings
 
@@ -53,7 +66,7 @@ make, so the result is visible in one of the two UIs.
 | DPI / per-app stats | on | GL → Network | Viktor uses them. |
 | Guest network | forwards to the tunnel | unchanged | Viktor's call (2026-09-27). Guest traffic reaches Sofia masqueraded as 10.3.2.6. |
 | SSH and admin page on WAN | open, password login on | unchanged | Viktor's call (2026-09-27). After the cutover they are reachable from the internet over IPv6. |
-| IPv6 | NAT6 behind the Hyperoptic router today; Native with the delegated prefix after cutover | GL → Network → IPv6 | Real addresses skip NAT and any ISP CGNAT. |
+| IPv6 | Native with the delegated /56 (set 2026-10-02) | GL → Network → IPv6 | Real addresses skip NAT and the ISP's IPv4 CGNAT. |
 
 ## Monitoring
 
@@ -61,7 +74,7 @@ make, so the result is visible in one of the two UIs.
 |---|---|---|
 | node exporter | package `prometheus-node-exporter-lua` (+ `-wifi_stations`, `-netstat`, `-openwrt`), `listen_interface '*'` | Prometheus job `flint-london` scrapes `10.3.2.6:9100`. The WAN zone drops 9100; the tunnel zone accepts it. The `wifi` collector is left out because the MediaTek iwinfo backend lacks noise/quality/bitrate. `wifi_stations` packet counters read 0 on this driver; signal and rates are real. |
 | tunnel ping | blackbox job `london-flint-icmp`, 30 s | `LondonTunnelDown` after 10 minutes |
-| drop probe | package `london-drop-probe` (HTTP checks to http://1.1.1.1 and https://8.8.8.8 every 10 s, every 2 s after a failure; a drop is 30 s or more; since 0.4.0. Ping-based 0.1.x produced false drops; the cron-driven 0.1–0.3 missed every other minute) (built by `scripts/london-flint/build-ipk.py`, installed from LuCI → System → Software → Upload), a procd service shown in LuCI → System → Startup | Detects internet drops, snapshots routing/kmwan/DPI-queue state, and pushes one event per drop to Loki (`{job="london-drops", source="flint"}`) after the path returns. Queue survives reboots in `/root/drop-probe.queue` (written only when a drop ends). |
+| drop probe | package `london-drop-probe` (HTTP checks to http://1.1.1.1 and https://8.8.8.8 every 10 s, every 2 s after a failure; a drop is 30 s or more; since 0.4.0. Ping-based 0.1.x produced false drops; the cron-driven 0.1–0.3 missed every other minute) (built by `scripts/london-flint/build-ipk.py`, installed by `scripts/london-flint/provision.sh`), a procd service shown in LuCI → System → Startup | Detects internet drops, snapshots routing/kmwan/DPI-queue state, and pushes one event per drop to Loki (`{job="london-drops", source="flint"}`) after the path returns. Queue survives reboots in `/root/drop-probe.queue` (written only when a drop ends). |
 | Mac probe | launchd agent `me.viktorbarzin.london-probe` on mbp-london (Viktor's M4 MacBook), source in the `dot_files` repo under `mac/london-probe` | Reports drops of the Mac's own Wi-Fi and DNS (`source="mac"`). The Mac has no git access to Forgejo, so deploy by copying `mac/london-probe` over SSH and running its `install.sh` (runs the tests, then bootstraps the agent). Log: `~/Library/Logs/london-probe.log`. |
 | alerts | Loki rules `LondonInternetDrop`, `LondonFirmwareReset`; Prometheus rule `LondonTunnelDown` | Event alerts go to the `slack-event` receiver: one post per drop, no RESOLVED. |
 
@@ -89,11 +102,29 @@ sum by (mac) (count_over_time({job="syslog", host="flint-london"} |= "Del Sta:" 
 Remote syslog has been complete only since 2026-09-28 10:43 BST (the switch to
 TCP); earlier router lines in Loki are a sample.
 
+## After a firmware upgrade
+
+A GL firmware upgrade keeps UCI settings (everything in the Intended settings
+table survived 4.9.1 → 4.11.0) but removes every package installed with opkg.
+On 2026-10-02 that took out the node exporter and the drop probe. Reinstall
+both from the devvm:
+
+```sh
+scripts/london-flint/provision.sh
+```
+
+It builds the probe package, installs whatever is missing, sets the exporter to
+listen on every interface, and checks from Sofia that the exporter answers and
+the probe runs. It is idempotent, so a second run changes nothing. After an
+upgrade, also check that the tunnel came up (`ifstatus wgclient1` shows
+`"up": true`): on 2026-10-02 a network restart left it `pending` with no
+address until `ifup wgclient1`.
+
 ## Rebuilding the probe package
+
+Edit `scripts/london-flint/drop-probe.sh`, bump `PROBE_VERSION` in
+`provision.sh`, and run `provision.sh`. To build the package alone:
 
 ```sh
 python3 scripts/london-flint/build-ipk.py <version> <out-dir>
 ```
-
-Upload the `.ipk` in LuCI → System → Software → Upload Package. Bump the
-version on every change so the upgrade is visible in the package list.
