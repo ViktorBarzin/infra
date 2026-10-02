@@ -171,7 +171,15 @@ resource "helm_release" "tigera_operator" {
     # OOM-crashlooped on 2026-06-23 the first time the pod restarted (a latent
     # landmine — any restart would have triggered it). 512Mi covers the spike;
     # data plane (calico-node) is unaffected by an operator restart.
-    resources = { limits = { memory = "512Mi" } }
+    #
+    # Requests explicit since 2026-10-02: with only a limit the pod had no CPU
+    # request, so once this namespace got its tier ResourceQuota (which demands
+    # requests) the operator could not be recreated until the tier LimitRange
+    # appeared ~25 minutes later. Memory request = the old implicit value.
+    resources = {
+      requests = { cpu = "50m", memory = "512Mi" }
+      limits   = { memory = "512Mi" }
+    }
   })]
 }
 

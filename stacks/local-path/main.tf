@@ -100,6 +100,15 @@ resource "kubernetes_config_map" "local_path_config" {
         - name: helper-pod
           image: busybox
           imagePullPolicy: IfNotPresent
+          # Explicit, so a helper pod is admitted under the namespace's tier
+          # ResourceQuota even when no LimitRange supplies defaults (see the
+          # provisioner container below for the 2026-10-02 outage).
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
     EOT
     "setup"          = <<-EOT
       #!/bin/sh
@@ -179,6 +188,21 @@ resource "kubernetes_deployment" "local_path_provisioner" {
           volume_mount {
             name       = "config-volume"
             mount_path = "/etc/config/"
+          }
+          # Explicit since 2026-10-02. The container had none and borrowed
+          # defaults from a LimitRange; when this namespace got its tier label,
+          # the tier ResourceQuota arrived ~25 minutes before the tier
+          # LimitRange, every replacement pod was rejected ("must specify
+          # limits"), and local-path provisioning (CI workspaces included) was
+          # down until it was restarted. Uses ~13 MiB.
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "64Mi"
+            }
+            limits = {
+              memory = "192Mi"
+            }
           }
         }
         volume {
