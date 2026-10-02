@@ -1376,8 +1376,17 @@ serverFiles:
             # allowed address presented a wrong or stale bearer token. A
             # legitimate caller never does that; one is worth a look. CrowdSec
             # (viktor/terminal-api-auth-bf) bans after 5 in about a minute.
+            #
+            # Two halves, because increase() cannot see the FIRST 401s: the
+            # code="401" series does not exist until a pod serves one, and a
+            # series born mid-window is born holding its count. Verified
+            # 2026-10-02: six test 401s created the series at 6 and increase()
+            # said 0. The second half fires on a series that was absent 10m ago.
             expr: |
               sum(increase(traefik_router_requests_total{router=~"terminal-terminal-api-.*", code="401"}[10m])) > 0
+              or
+              sum(traefik_router_requests_total{router=~"terminal-terminal-api-.*", code="401"}
+                unless traefik_router_requests_total{router=~"terminal-terminal-api-.*", code="401"} offset 10m) > 0
             labels:
               severity: warning
               lane: security
