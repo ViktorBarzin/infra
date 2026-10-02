@@ -3,8 +3,8 @@
 # cloud with no VPN). The browser host terminal.viktorbarzin.me is untouched.
 #
 # Layers, outermost first:
-#   1. Source-IP allowlist (local.api_allowed_sources). Only listed addresses
-#      reach any backend; everyone else gets 403 at Traefik.
+#   1. Source-IP allowlist (local.api_allowed_sources): Cloudflare WARP, which
+#      Muse egresses through, plus mx2. Everyone else gets 403 at Traefik.
 #   2. CrowdSec bouncer (websecure entrypoint) + a 401 ban scenario for this
 #      host (stacks/crowdsec).
 #   3. Per-client rate limit and concurrency cap.
@@ -31,12 +31,20 @@ variable "cloudflare_zone_id" { type = string }
 locals {
   api_host = "terminal-api.viktorbarzin.me"
 
-  # Who may reach the API at all. Muse's egress addresses go here once known;
-  # until then only mx2 (the OCI verification VM, ADR-0019) is listed, so the
-  # endpoint can be tested from outside without being open to anyone else.
-  # Muse runs in Meta's address space, which CrowdSec bans wholesale, so its
-  # range also needs carving out of the meta-asn list in stacks/crowdsec.
+  # Who may reach the API at all.
+  #
+  # Muse does not egress from Meta's address space: its requests arrive from
+  # Cloudflare WARP, rotating across 2a09:bac1::/32 and 2a09:bac5::/32 almost
+  # per request (seen 2026-10-02). 2a09:bac0::/29 is the WARP IPv6 block
+  # (bac0 through bac7 each register as CLOUDFLAREWARP, AS13335). WARP is
+  # shared by everyone running the free app, so this list cannot single Muse
+  # out; it keeps non-WARP traffic (datacenter scanners, botnets) from ever
+  # reaching the token check, and the bearer token is what identifies Muse.
+  # Viktor chose this over removing the allowlist (2026-10-02). No WARP IPv4
+  # range is listed: Muse has only used IPv6, and 104.28.0.0/16 registers as
+  # generic CLOUDFLARENET, not WARP. Add one only if Muse is seen using it.
   api_allowed_sources = [
+    "2a09:bac0::/29",  # Cloudflare WARP IPv6 (Muse's egress)
     "92.5.132.215/32", # mx2, external verification vantage
   ]
 
