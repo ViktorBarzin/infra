@@ -110,6 +110,84 @@ flowchart TD
   pod. The plugin change is gated by `scripts/yaegi-plugin-gate` and ships dark
   (`appsecEnabled = false`) before AppSec is switched on.
 
+## Addendum (2026-10-02, same day): core rule set on hosts without Authentik, and CAPI
+
+Two changes followed once the first rollout was stable.
+
+**OWASP core rule set (CRS) in ban mode on public hosts without Authentik.**
+On those hosts the app's own login is the only gate, so they get the stronger
+rule set; Authentik-gated hosts keep virtual patching, because anonymous
+traffic cannot reach the app and CRS is noisiest on logged-in traffic.
+
+```mermaid
+flowchart TD
+    R[request passes the ban check] --> S{host in appsecCrsHosts?}
+    S -->|yes| C["CRS listener :7423<br/>appsec-default + viktor/crs-inband"]
+    S -->|no| D["default listener :7422<br/>virtual patching + generic rules"]
+    C -->|403| B[blocked, ruleset=crs]
+    D -->|403| B2[blocked, ruleset=default]
+    C -->|anything else| N[backend]
+    D -->|anything else| N
+```
+
+- The same AppSec pods serve a second listener with the CRS
+  (`crowdsecurity/crs` behind a small `viktor/crs-setup` rule file). The
+  bouncer picks the listener per host; each listener has its own breaker.
+- `appsecCrsHosts` is computed at plan time in
+  `stacks/traefik/modules/traefik/crs-hosts.tf` from the live Ingresses: a host
+  qualifies when none of its Ingresses carries Authentik forward-auth, it is not
+  LAN-only (`home-lans-only`, `traefik-local-only`, `.lan`), and it is not on
+  the exclusion list. 36 hosts on go-live. IngressRoute hosts stay on the
+  default listener.
+- Hosts whose normal content looks like attack payloads are excluded, with the
+  reason next to each: Forgejo (file paths and code search), Vault (arbitrary
+  secret values), and the free-text hosts (claude-memory, Matrix, n8n,
+  webhook, ntfy, novelapp, AFFiNE, dolt-workbench, Linkwarden, Tandoor,
+  recruiter-responder, json).
+- CRS defaults were widened where they rejected normal traffic: the method list
+  (911100) now includes PUT, PATCH, DELETE and WebDAV verbs, and the version
+  list (920430) includes HTTP/3. Three path exclusions: Vaultwarden `/icons/`,
+  Home Assistant `/api/camera_proxy`, and Woodpecker's signed webhook
+  `ci.viktorbarzin.me/api/hook`.
+- Bans: more than 3 CRS blocks from one address in 30s bans it (`appsec-native`).
+  The trusted-IP whitelist applies, as for virtual patching.
+
+Evidence: a replay of 322,883 unique requests from a week of traffic on the
+then-52 qualifying hosts, with realistic request bodies added. Before the
+exclusions it blocked 6,238; 4,620 of those were Forgejo, and the rest were
+probes apart from the two excluded paths.
+
+What the replay did not show, and production did in the first ten minutes:
+
+- Every HTTP/3 request was blocked, because the replay sent HTTP/1.1 only. Home
+  Assistant's iOS app and Shortcuts hit it first. Fixed by the version list
+  above.
+- The OTLP telemetry hosts counted as public because the filter did not yet
+  recognise `traefik-local-only`; CRS rejected their protobuf content type.
+- GitHub's push webhooks to Woodpecker (`ci.viktorbarzin.me/api/hook`) were
+  blocked twice; that host and path is excluded, since Woodpecker verifies
+  each hook's signature.
+
+Found the same afternoon, and older than the CRS change: AppSec wrote one LAPI
+alert for every blocked request. The replay tests sent their requests to the
+live AppSec pods, which wrote 9,250 alerts, and the table reached its 10,000
+cap (`db_config.flush.max_items`) at 04:25 UTC. Real traffic adds about 1,000
+a day (472 public-address alerts in the 12 hours measured), so it would have
+reached the cap within about ten days without the replays. The flush deletes the oldest
+alerts whatever they hold, and it deleted the 04:00 static blocklist import,
+so the Meta and proxy-ASN ranges were not enforced from 04:25 to 16:15 UTC.
+They were re-imported by hand, and `viktor/appsec-no-alerts` now cancels the
+per-request alert on both listeners. The ban scenarios read events, which
+still flow; the bouncer's log lines are the per-request record.
+
+**CAPI community blocklist enforced on HTTP.** The plugin gained
+`dryRunOrigins`: decisions from those origins are logged as
+`action=dry-run-block origin=<origin>` and not enforced. CAPI ran in dry run
+for two hours (15:49 to 17:49 UTC), then moved to enforced. All 13 would-be
+blocks in that window were scanners: 11 Tencent Cloud addresses with a fake
+iOS 13 user agent, 7 of them following the Anubis honeypot link, and 2
+self-declared Palo Alto Networks scans. Every block line now carries `origin=`.
+
 ## Where to look when something regresses
 
 | symptom | first check |
@@ -119,3 +197,5 @@ flowchart TD
 | Someone banned everywhere for 4h | `cscli alerts list -s crowdsecurity/appsec-vpatch` |
 | Every site 404 on one Traefik pod after a deploy | "Plugins are disabled" in that pod's log: a Yaegi load failure |
 | Requests slower everywhere | `Overhead` p99, `action=appsec-breaker` lines, AppSec pod health |
+| 403s on a host without Authentik | `ruleset=crs` on the block line. Fix a path with a narrow exclusion in `viktor/crs-setup` (crowdsec values), or add the host to `appsec_crs_exclude_hosts` in `crs-hosts.tf` |
+| Someone blocked who should not be, with `origin=CAPI` | Put `"CAPI"` back in `dryRunOrigins` on the Middleware (dynamic reload), or whitelist the address |

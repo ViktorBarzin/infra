@@ -49,7 +49,7 @@ graph TB
     Agent -.->|report| LAPI
     LAPI -.->|all decisions incl. CAPI| FWB
     FWB -.->|program drop rules| NFT
-    LAPI -.->|poll /v1/decisions every 30s<br/>ban only, CAPI excluded| Bouncer
+    LAPI -.->|poll /v1/decisions every 30s<br/>ban only, CAPI included| Bouncer
 
     style Bouncer fill:#f9f,stroke:#333
     style NFT fill:#f9f,stroke:#333
@@ -182,14 +182,15 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   since 2026-10-02: `137.220.71.46` became a carrier-grade NAT address shared
   with other Hyperoptic customers, so London is treated like any public IP. **If a legitimate source starts getting banned,
   whitelist it; do not reintroduce a remediation that goes nowhere.**
-- **CAPI is excluded** (`origins` config: `crowdsec`, `cscli`, `cscli-import`,
-  `lists`, `console`). Those 22.7k community bans have never been enforced on
-  proxied hosts, and their false positives (CGNAT, carrier ranges) would surface
-  as user-visible 403s. It is a config flag, not a hard-coded exclusion — but
-  measure in dry run before flipping it, and note the snapshot then weighs ~3 MB
-  per poll instead of a few KB. **Consequence worth stating plainly: the enforced
-  set is currently 4 decisions.** This surface is new coverage, not a like-for-like
-  replacement of a large blocklist.
+- **CAPI is enforced (since 2026-10-02).** The `origins` config lists
+  `crowdsec`, `cscli`, `cscli-import`, `lists`, `console` and `CAPI`, so the
+  ~16k community bans now apply to proxied hosts too. It went live after two
+  hours in dry run: `dryRunOrigins` on the Middleware logs a hit from a listed
+  origin as `action=dry-run-block origin=<origin>` and lets the request through.
+  Every block line names its `origin=`. If a legitimate client gets blocked with
+  `origin=CAPI`, put `"CAPI"` back in `dryRunOrigins` (a dynamic reload) or
+  whitelist the address. Each poll now carries the full CAPI set: 2.1 MB measured on 2026-10-02,
+  against 1 KB without it.
 - **The agents must POLL the traefik log, not trust inotify (2026-09-03).** The
   helm chart renders every `agent.acquisition` entry with `force_inotify: true`
   and `poll_without_inotify: false`, and with inotify alone an agent keeps
@@ -294,9 +295,10 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
 #### AppSec check (since 2026-10-02, ADR-0027)
 
 The same plugin also sends each request that passes the ban check to the
-CrowdSec AppSec component (`crowdsec-appsec`, 2 pods, rules
-`appsec-virtual-patching` + `appsec-generic-rules`, no OWASP core rule set)
-before the backend sees it. A 403 from AppSec blocks the request; every other
+CrowdSec AppSec component (`crowdsec-appsec`, 2 pods) before the backend sees
+it. The pods serve two listeners: `:7422` with `appsec-virtual-patching` +
+`appsec-generic-rules`, and `:7423` with those plus the OWASP core rule set
+(CRS) in ban mode, used for the hosts in `appsecCrsHosts`. A 403 from AppSec blocks the request; every other
 outcome lets it through.
 
 - **Uploads are never read.** A body goes to AppSec only when it is form, JSON
@@ -305,20 +307,45 @@ outcome lets it through.
   and headers, and its body streams to the backend untouched. This is what
   keeps the Immich problem (uploads held at the ingress, then re-sent) from
   coming back; the stock CrowdSec Traefik bouncer reads up to 10 MB per body.
+- **Which hosts get the CRS.** Public hosts with no Authentik in front, where
+  the app's own login is the only gate. `appsecCrsHosts` is computed at plan
+  time in `stacks/traefik/modules/traefik/crs-hosts.tf` from the live
+  Ingresses: no Authentik forward-auth on any of the host's Ingresses, not
+  LAN-only (`home-lans-only`, `traefik-local-only`, `.lan`), and not on
+  `appsec_crs_exclude_hosts`, which lists the hosts whose normal content looks
+  like attack payloads (Forgejo, Vault, and the free-text apps), each with its
+  reason. 36 hosts on 2026-10-02. A new public host without Authentik joins on
+  the next traefik apply. IngressRoute hosts stay on `:7422`.
+- **CRS tuning** lives in the crowdsec values as `viktor/crs-setup`, loaded
+  before the CRS: the allowed methods include PUT, PATCH, DELETE and WebDAV
+  (rule 911100), the allowed versions include HTTP/3 (920430; without it every
+  HTTP/3 request was blocked on go-live), and three narrow path exclusions
+  (Vaultwarden `/icons/`, Home Assistant `/api/camera_proxy`, Woodpecker's
+  signed webhook `ci.viktorbarzin.me/api/hook`). Fix a false
+  positive with a path exclusion there, or exclude the host in `crs-hosts.tf`.
 - **Opt-out per host**: `appsecSkipHosts` on the `crowdsec` Middleware
   (`stacks/traefik/modules/traefik/middleware.tf`). Those hosts keep ban
   enforcement. `skipHosts` (the Authentik hosts) skip the plugin entirely.
 - **Fails open.** 200 ms per check; 401, 5xx, timeouts and errors allow. A
-  circuit breaker shared by every middleware instance stops calling AppSec for
-  30s when half of the last 20 checks failed.
+  circuit breaker per listener, shared by every middleware instance, stops
+  calling that listener for 30s when half of its last 20 checks failed.
 - **Bans.** `appsec-vpatch` bans an address for 4h on every host when two
   distinct rules match it within 60s. The trusted-IP whitelist is mounted in the
   AppSec pods, so home, London, Meta corp and internal ranges are never banned,
-  though a single request from them can still get a 403.
+  though a single request from them can still get a 403. On the CRS listener,
+  `appsec-native` bans an address that collects more than 3 blocks in 30s.
+- **No LAPI alert per blocked request** (`viktor/appsec-no-alerts`). The
+  per-request alerts filled the 10,000-alert cap (replay tests wrote most of
+  them; real traffic adds about 1,000 a day), and the cap's
+  flush deletes the oldest alerts whatever they hold: on 2026-10-02 it deleted
+  the static blocklist import and the Meta and proxy-ASN ranges went
+  unenforced for 12 hours. Scenario alerts and bans are unaffected. If the
+  static ranges ever go missing, `kubectl -n crowdsec create job
+  --from=cronjob/crowdsec-blocklist-import <name>` re-imports them.
 - **Kill switch**: `appsecEnabled = false` on the Middleware. A dynamic reload;
   no Traefik pod restarts.
-- **Signals**: `[crowdsec-bouncer] action=appsec-block` and
-  `action=appsec-breaker` lines on the Traefik pods; alerts
+- **Signals**: `[crowdsec-bouncer] action=appsec-block ... ruleset=crs|default`
+  and `action=appsec-breaker ... listener=` lines on the Traefik pods; alerts
   CrowdSecAppsecBreakerOpen, CrowdSecAppsecBlockSurge, TraefikOverheadHigh,
   TraefikPluginsDisabled (Loki) and CrowdSecAppsecDown, TraefikMemoryHigh,
   TraefikRestarting (Prometheus).

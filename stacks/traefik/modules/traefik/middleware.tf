@@ -756,19 +756,21 @@ resource "kubectl_manifest" "middleware_crowdsec" {
           lapiKey = var.crowdsec_bouncer_key
           # Fresh enough that an unban is felt immediately (the whole point of
           # moving off the edge). With CAPI included the snapshot is ~16k
-          # decisions (~3 MB) per poll per pod, all single IPs, so it is map
-          # lookups at request time, not a range scan.
+          # decisions (2.1 MB measured) per poll per pod, all single IPs, so it
+          # is map lookups at request time, not a range scan.
           pollSeconds = 30
-          # Origins to enforce. CAPI was left out until 2026-10-02 for fear of
-          # false positives on CGNAT and carrier addresses; it is now rolled out
-          # through dryRunOrigins below rather than switched on blind.
+          # Origins to enforce. CAPI (the community blocklist) was left out until
+          # 2026-10-02 for fear of false positives on CGNAT and carrier
+          # addresses. It enforces since 2026-10-02 (Viktor) after a 2-hour dry
+          # run in which all 13 would-be blocks were scanners: 11 Tencent Cloud
+          # addresses with a fake iOS 13 user agent, 7 of them following the
+          # Anubis honeypot link, and 2 self-declared Palo Alto Networks scans.
           origins = ["crowdsec", "cscli", "cscli-import", "lists", "console", "CAPI"]
-          # CAPI (the community blocklist, ~16k IPs) is being rolled out on HTTP
-          # (Viktor, 2026-10-02): its matches log `action=dry-run-block
-          # origin=CAPI` and are served while the would-blocks are checked
-          # against known-good traffic, then this list empties and CAPI
-          # enforces. An IP banned by an enforcing origin too is blocked.
-          dryRunOrigins = ["CAPI"]
+          # Origins listed here are logged as `action=dry-run-block
+          # origin=<origin>` and served instead of blocked; an IP banned by an
+          # enforcing origin too is still blocked. Put "CAPI" back here (a
+          # dynamic reload, no restart) if CAPI starts blocking real clients.
+          dryRunOrigins = []
           # Trust Cf-Connecting-Ip / X-Forwarded-For ONLY from the cloudflared pod
           # peer; any other peer is judged on its own unspoofable TCP address.
           # Same model and same CIDR as real-ip.
