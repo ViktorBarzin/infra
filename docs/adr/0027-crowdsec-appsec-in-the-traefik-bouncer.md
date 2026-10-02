@@ -117,7 +117,8 @@ Two changes followed once the first rollout was stable.
 **OWASP core rule set (CRS) in ban mode on public hosts without Authentik.**
 On those hosts the app's own login is the only gate, so they get the stronger
 rule set; Authentik-gated hosts keep virtual patching, because anonymous
-traffic cannot reach the app and CRS is noisiest on logged-in traffic.
+traffic cannot reach the app, and logged-in traffic is where CRS false
+positives are most likely.
 
 ```mermaid
 flowchart TD
@@ -157,7 +158,7 @@ then-52 qualifying hosts, with realistic request bodies added. Before the
 exclusions it blocked 6,238; 4,620 of those were Forgejo, and the rest were
 probes apart from the two excluded paths.
 
-What the replay did not show, and production did in the first ten minutes:
+What the replay did not show, and production did in the first hour:
 
 - Every HTTP/3 request was blocked, because the replay sent HTTP/1.1 only. Home
   Assistant's iOS app and Shortcuts hit it first. Fixed by the version list
@@ -172,9 +173,9 @@ Found the same afternoon, and older than the CRS change: AppSec wrote one LAPI
 alert for every blocked request. The replay tests sent their requests to the
 live AppSec pods, which wrote 9,250 alerts, and the table reached its 10,000
 cap (`db_config.flush.max_items`) at 04:25 UTC. Real traffic adds about 1,000
-a day (472 public-address alerts in the 12 hours measured), so it would have
-reached the cap within about ten days without the replays. The flush deletes the oldest
-alerts whatever they hold, and it deleted the 04:00 static blocklist import,
+a day (472 public-address alerts in the 12 hours measured); at that rate it
+would have reached the cap in roughly ten days without the replays. The flush
+deletes the oldest alerts whatever they hold, and it deleted the 04:00 static blocklist import,
 so the Meta and proxy-ASN ranges were not enforced from 04:25 to 16:15 UTC.
 They were re-imported by hand, and `viktor/appsec-no-alerts` now cancels the
 per-request alert on both listeners. The ban scenarios read events, which
