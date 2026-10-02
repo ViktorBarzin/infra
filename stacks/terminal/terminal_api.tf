@@ -179,6 +179,27 @@ resource "kubernetes_manifest" "terminal_api_inflight" {
   }
 }
 
+# agent-api's ?wait=N (send-and-wait and task long-poll, up to 300 s) holds the
+# request and sends headers only when the wait ends. Traefik's global
+# serversTransport gives a backend 30 s to send headers
+# (forwardingTimeouts.responseHeaderTimeout in stacks/traefik), so without this
+# every wait past 30 s came back as a 504. 330 s = the 300 s cap plus margin.
+resource "kubernetes_manifest" "terminal_api_longpoll_transport" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "ServersTransport"
+    metadata = {
+      name      = "terminal-api-longpoll"
+      namespace = kubernetes_namespace.terminal.metadata[0].name
+    }
+    spec = {
+      forwardingTimeouts = {
+        responseHeaderTimeout = "330s"
+      }
+    }
+  }
+}
+
 # --- routes ---
 # One IngressRoute, so every router is named terminal-terminal-api-<hash>; the
 # Prometheus alert and dashboards match on that prefix. Anything not matched
@@ -198,7 +219,11 @@ resource "kubernetes_manifest" "terminal_api_ingressroute" {
           match       = "Host(`${local.api_host}`) && PathPrefix(`/v1/`)"
           kind        = "Rule"
           middlewares = local.api_middlewares
-          services    = [{ name = kubernetes_service.agent_api.metadata[0].name, port = 80 }]
+          services = [{
+            name             = kubernetes_service.agent_api.metadata[0].name
+            port             = 80
+            serversTransport = kubernetes_manifest.terminal_api_longpoll_transport.manifest.metadata.name
+          }]
         },
         {
           # tmux-api serves /metrics, /health, /push/* and /internal/* without
@@ -239,6 +264,7 @@ resource "kubernetes_manifest" "terminal_api_ingressroute" {
     kubernetes_manifest.terminal_api_strip_identity,
     kubernetes_manifest.terminal_api_rate_limit,
     kubernetes_manifest.terminal_api_inflight,
+    kubernetes_manifest.terminal_api_longpoll_transport,
   ]
 }
 
