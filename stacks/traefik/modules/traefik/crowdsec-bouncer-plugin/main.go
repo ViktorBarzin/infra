@@ -122,6 +122,18 @@ type Config struct {
 	// AppsecBodyLimit is the largest body sent to AppSec. See inspectBody for
 	// the rest of the body policy; it is what keeps uploads streaming.
 	AppsecBodyLimit int `json:"appsecBodyLimit,omitempty" yaml:"appsecBodyLimit,omitempty"`
+
+	// DryRunOrigins are enforced origins whose decisions are logged as
+	// dry-run-block instead of blocking. Used to roll a new origin out (CAPI,
+	// 2026-10-02) without the global DryRun flag, which would stop every ban.
+	// An IP banned by both a dry-run and an enforcing origin is blocked.
+	DryRunOrigins []string `json:"dryRunOrigins,omitempty" yaml:"dryRunOrigins,omitempty"`
+
+	// AppsecCrsURL is a second AppSec listener that adds the OWASP core rule
+	// set, used for AppsecCrsHosts only. Every other inspected host keeps the
+	// default listener (virtual patching and generic rules).
+	AppsecCrsURL   string   `json:"appsecCrsUrl,omitempty" yaml:"appsecCrsUrl,omitempty"`
+	AppsecCrsHosts []string `json:"appsecCrsHosts,omitempty" yaml:"appsecCrsHosts,omitempty"`
 }
 
 // CreateConfig returns the defaults. They are deliberately the safe end of every
@@ -157,9 +169,22 @@ type decision struct {
 // wholesale on each successful poll, never mutated in place, so readers need no
 // lock beyond fetching the current pointer.
 type decisionSet struct {
-	ips    map[string]struct{}
-	ranges []*net.IPNet
+	ips    map[string]banEntry
+	ranges []rangeEntry
 	loaded bool
+}
+
+// banEntry records whether a banned address is enforced or only dry-run, and
+// the origin to name in the log line.
+type banEntry struct {
+	enforce bool
+	origin  string
+}
+
+type rangeEntry struct {
+	n       *net.IPNet
+	enforce bool
+	origin  string
 }
 
 func (d *decisionSet) size() int {
@@ -169,19 +194,53 @@ func (d *decisionSet) size() int {
 	return len(d.ips) + len(d.ranges)
 }
 
-func (d *decisionSet) contains(ip net.IP) bool {
-	if d == nil || ip == nil {
-		return false
+func (d *decisionSet) dryRunCount() int {
+	if d == nil {
+		return 0
 	}
-	if _, ok := d.ips[ip.String()]; ok {
-		return true
-	}
-	for _, n := range d.ranges {
-		if n.Contains(ip) {
-			return true
+	n := 0
+	for _, e := range d.ips {
+		if !e.enforce {
+			n++
 		}
 	}
-	return false
+	for _, r := range d.ranges {
+		if !r.enforce {
+			n++
+		}
+	}
+	return n
+}
+
+func (d *decisionSet) contains(ip net.IP) bool {
+	found, _, _ := d.match(ip)
+	return found
+}
+
+// match reports whether ip is banned, whether that ban is enforced (any
+// enforcing decision wins over dry-run ones), and the origin to log.
+func (d *decisionSet) match(ip net.IP) (bool, bool, string) {
+	if d == nil || ip == nil {
+		return false, false, ""
+	}
+	found, enforce, origin := false, false, ""
+	if e, ok := d.ips[ip.String()]; ok {
+		found, enforce, origin = true, e.enforce, e.origin
+		if enforce {
+			return true, true, origin
+		}
+	}
+	for _, r := range d.ranges {
+		if r.n.Contains(ip) {
+			if r.enforce {
+				return true, true, r.origin
+			}
+			if !found {
+				found, origin = true, r.origin
+			}
+		}
+	}
+	return found, enforce, origin
 }
 
 // parseIP canonicalises an address so that textual variants of the same IPv6
@@ -222,28 +281,48 @@ func originSet(origins []string) map[string]struct{} {
 // Any other scope (Country, AS, Username) is not something this middleware can
 // evaluate, and is skipped.
 func parseDecisions(decisions []decision, allowedOrigins map[string]struct{}) *decisionSet {
-	set := &decisionSet{ips: map[string]struct{}{}, loaded: true}
+	return parseDecisionsDryRun(decisions, allowedOrigins, nil)
+}
+
+// parseDecisionsDryRun is parseDecisions with per-origin dry run: decisions
+// from dryRunOrigins are kept but marked not enforced. When the same address
+// is banned by an enforcing origin too, the enforcing ban wins regardless of
+// order.
+func parseDecisionsDryRun(decisions []decision, allowedOrigins, dryRunOrigins map[string]struct{}) *decisionSet {
+	set := &decisionSet{ips: map[string]banEntry{}, loaded: true}
 	for _, d := range decisions {
 		if !strings.EqualFold(strings.TrimSpace(d.Type), "ban") {
 			continue
 		}
+		origin := strings.ToLower(strings.TrimSpace(d.Origin))
 		if allowedOrigins != nil {
-			if _, ok := allowedOrigins[strings.ToLower(strings.TrimSpace(d.Origin))]; !ok {
+			if _, ok := allowedOrigins[origin]; !ok {
 				continue
+			}
+		}
+		enforce := true
+		if dryRunOrigins != nil {
+			if _, dry := dryRunOrigins[origin]; dry {
+				enforce = false
 			}
 		}
 		value := strings.TrimSpace(d.Value)
 		if value == "" {
 			continue
 		}
+		logOrigin := strings.TrimSpace(d.Origin)
 		switch strings.ToLower(strings.TrimSpace(d.Scope)) {
 		case "ip":
 			if ip := parseIP(value); ip != nil {
-				set.ips[ip.String()] = struct{}{}
+				key := ip.String()
+				if prev, ok := set.ips[key]; ok && (prev.enforce || !enforce) {
+					continue
+				}
+				set.ips[key] = banEntry{enforce: enforce, origin: logOrigin}
 			}
 		case "range":
 			if _, n, err := net.ParseCIDR(value); err == nil {
-				set.ranges = append(set.ranges, n)
+				set.ranges = append(set.ranges, rangeEntry{n: n, enforce: enforce, origin: logOrigin})
 			}
 		}
 	}
@@ -256,6 +335,9 @@ type store struct {
 	mu   sync.RWMutex
 	set  *decisionSet
 	stop chan struct{}
+	// dryRun holds the origins whose decisions are logged, not enforced. Set
+	// once when the shared store is created; part of the registry key.
+	dryRun map[string]struct{}
 }
 
 func (s *store) publish(set *decisionSet) {
@@ -326,12 +408,12 @@ func (s *store) refresh(client *http.Client, lapiURL, lapiKey string, origins []
 		return fmt.Errorf("lapi %s: %v", endpoint, err)
 	}
 
-	set := parseDecisions(decisions, originSet(origins))
+	set := parseDecisionsDryRun(decisions, originSet(origins), s.dryRun)
 	previous := s.snapshot()
 	s.publish(set)
 	if !previous.loaded || previous.size() != set.size() {
-		logf(fmt.Sprintf("[crowdsec-bouncer] action=loaded entries=%d ips=%d ranges=%d",
-			set.size(), len(set.ips), len(set.ranges)))
+		logf(fmt.Sprintf("[crowdsec-bouncer] action=loaded entries=%d ips=%d ranges=%d dry-run=%d",
+			set.size(), len(set.ips), len(set.ranges), set.dryRunCount()))
 	}
 	return nil
 }
@@ -420,6 +502,9 @@ type Bouncer struct {
 	appsecSkipHosts map[string]struct{}
 	appsecClient    *http.Client
 	appsecBodyLimit int64
+	appsecCrsURL    string
+	appsecCrsHosts  map[string]struct{}
+	dryRunOrigins   map[string]struct{}
 }
 
 // newBouncer validates the configuration and builds the request-path state. It
@@ -495,6 +580,19 @@ func newBouncer(cfg *Config, next http.Handler, name string) (*Bouncer, error) {
 	if bodyLimit <= 0 {
 		bodyLimit = 65536
 	}
+	appsecCrsURL := strings.TrimSpace(cfg.AppsecCrsURL)
+	if appsecCrsURL != "" {
+		if u, err := url.Parse(appsecCrsURL); err != nil || u.Scheme == "" || u.Host == "" {
+			stdoutLogf(fmt.Sprintf("[crowdsec-bouncer] action=appsec-crs-disabled reason=bad-url url=%q", appsecCrsURL))
+			appsecCrsURL = ""
+		}
+	}
+	appsecCrsHosts := map[string]struct{}{}
+	for _, h := range cfg.AppsecCrsHosts {
+		if h = normaliseHost(h); h != "" {
+			appsecCrsHosts[h] = struct{}{}
+		}
+	}
 
 	return &Bouncer{
 		next:            next,
@@ -512,6 +610,9 @@ func newBouncer(cfg *Config, next http.Handler, name string) (*Bouncer, error) {
 		appsecSkipHosts: appsecSkipHosts,
 		appsecClient:    sharedAppsecClient(timeout),
 		appsecBodyLimit: bodyLimit,
+		appsecCrsURL:    appsecCrsURL,
+		appsecCrsHosts:  appsecCrsHosts,
+		dryRunOrigins:   originSet(cfg.DryRunOrigins),
 	}, nil
 }
 
@@ -542,14 +643,16 @@ func New(ctx context.Context, next http.Handler, cfg *Config, name string) (http
 	// requests up; the deadline covers the whole exchange, body included.
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	key := lapiURL + "\x00" + lapiKey + "\x00" + strings.Join(origins, ",") + "\x00" + strconv.Itoa(int(interval/time.Second))
+	key := lapiURL + "\x00" + lapiKey + "\x00" + strings.Join(origins, ",") + "\x00" + strconv.Itoa(int(interval/time.Second)) +
+		"\x00" + strings.Join(cfg.DryRunOrigins, ",")
 	b.store = sharedStore(key, func(s *store) {
+		s.dryRun = b.dryRunOrigins
 		// Logged HERE, not once per New(): Traefik rebuilds the middleware chain
 		// on every dynamic-config reload, which on this cluster is ~285 times an
 		// hour — a per-New() line was pure noise, and it is also the reason the
 		// poller is shared rather than started per instance.
-		b.logf(fmt.Sprintf("[crowdsec-bouncer] action=started name=%s lapi=%s interval=%s dryRun=%t origins=%s skipHosts=%d appsec=%t appsecSkipHosts=%d",
-			name, lapiURL, interval, b.dryRun, strings.Join(origins, ","), len(b.skipHosts), b.appsecOn, len(b.appsecSkipHosts)))
+		b.logf(fmt.Sprintf("[crowdsec-bouncer] action=started name=%s lapi=%s interval=%s dryRun=%t origins=%s dryRunOrigins=%s skipHosts=%d appsec=%t appsecSkipHosts=%d appsecCrsHosts=%d",
+			name, lapiURL, interval, b.dryRun, strings.Join(origins, ","), strings.Join(cfg.DryRunOrigins, ","), len(b.skipHosts), b.appsecOn, len(b.appsecSkipHosts), len(b.appsecCrsHosts)))
 		// Load once synchronously so the first request through a fresh Traefik
 		// pod is already enforced instead of failing open for a whole interval.
 		if err := s.refresh(client, lapiURL, lapiKey, origins, b.logf); err != nil {
@@ -650,20 +753,25 @@ func (b *Bouncer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// the first successful poll. Fail open.
 	set := b.store.snapshot()
 	ip := b.clientIP(req)
-	if set.loaded && ip != nil && set.contains(ip) {
+	found, enforce, origin := false, false, ""
+	if set.loaded && ip != nil {
+		found, enforce, origin = set.match(ip)
+	}
+	if found {
 		// Only decisions are logged, never allowed requests — at ~10 req/s
 		// steady state and 64 req/s peak, logging every request would dwarf the
 		// signal. These lines are the alerting surface: Prometheus counters are
 		// not cheaply available inside Yaegi, so the Loki recording/alert rules
 		// read this.
-		if b.dryRun {
-			b.logf(fmt.Sprintf("[crowdsec-bouncer] action=dry-run-block ip=%s host=%s method=%s path=%s",
-				ip, host, req.Method, req.URL.Path))
+		// Global dryRun, or a ban that only a dry-run origin holds: log and serve.
+		if b.dryRun || !enforce {
+			b.logf(fmt.Sprintf("[crowdsec-bouncer] action=dry-run-block ip=%s host=%s method=%s path=%s origin=%s",
+				ip, host, req.Method, req.URL.Path, origin))
 			b.next.ServeHTTP(rw, req)
 			return
 		}
-		b.logf(fmt.Sprintf("[crowdsec-bouncer] action=block ip=%s host=%s method=%s path=%s status=%d",
-			ip, host, req.Method, req.URL.Path, b.statusCode))
+		b.logf(fmt.Sprintf("[crowdsec-bouncer] action=block ip=%s host=%s method=%s path=%s status=%d origin=%s",
+			ip, host, req.Method, req.URL.Path, b.statusCode, origin))
 		b.deny(rw)
 		return
 	}
@@ -701,7 +809,15 @@ func (b *Bouncer) deny(rw http.ResponseWriter) {
 // The ResponseWriter is never wrapped, so websockets (Hijacker), SSE and
 // streamed responses (Flusher) behave exactly as without this check.
 func (b *Bouncer) appsecCheck(rw http.ResponseWriter, req *http.Request, ip net.IP, host string) bool {
-	breaker := currentBreaker()
+	// Hosts without Authentik go to the listener that adds the OWASP core rule
+	// set; every other inspected host gets virtual patching and generic rules.
+	target, ruleset := b.appsecURL, "default"
+	if b.appsecCrsURL != "" {
+		if _, crs := b.appsecCrsHosts[host]; crs {
+			target, ruleset = b.appsecCrsURL, "crs"
+		}
+	}
+	breaker := currentBreaker(target)
 	if !breaker.allow(time.Now(), b.logf) {
 		return false
 	}
@@ -725,7 +841,7 @@ func (b *Bouncer) appsecCheck(rw http.ResponseWriter, req *http.Request, ip net.
 		body = data
 	}
 
-	status, err := b.callAppsec(req, ip, body)
+	status, err := b.callAppsec(req, ip, body, target)
 	if err != nil || (status != http.StatusOK && status != http.StatusForbidden) {
 		breaker.record(true, time.Now(), b.logf)
 		return false
@@ -734,8 +850,8 @@ func (b *Bouncer) appsecCheck(rw http.ResponseWriter, req *http.Request, ip net.
 	if status != http.StatusForbidden {
 		return false
 	}
-	b.logf(fmt.Sprintf("[crowdsec-bouncer] action=appsec-block ip=%s host=%s method=%s path=%s status=%d",
-		ip, host, req.Method, req.URL.Path, b.statusCode))
+	b.logf(fmt.Sprintf("[crowdsec-bouncer] action=appsec-block ip=%s host=%s method=%s path=%s status=%d ruleset=%s",
+		ip, host, req.Method, req.URL.Path, b.statusCode, ruleset))
 	b.deny(rw)
 	return true
 }
@@ -800,14 +916,14 @@ var appsecDropHeaders = map[string]struct{}{
 // callAppsec sends one check using the AppSec remediation protocol: GET when no
 // body is forwarded, POST with the body otherwise, the original headers, and
 // the X-Crowdsec-Appsec-* headers describing the original request.
-func (b *Bouncer) callAppsec(req *http.Request, ip net.IP, body []byte) (int, error) {
+func (b *Bouncer) callAppsec(req *http.Request, ip net.IP, body []byte, target string) (int, error) {
 	method := http.MethodGet
 	var payload io.Reader
 	if body != nil {
 		method = http.MethodPost
 		payload = bytes.NewReader(body)
 	}
-	out, err := http.NewRequest(method, b.appsecURL, payload)
+	out, err := http.NewRequest(method, target, payload)
 	if err != nil {
 		return 0, err
 	}
@@ -907,27 +1023,37 @@ type circuitBreaker struct {
 	failures  int
 	open      bool
 	openUntil time.Time
+	// listener is the AppSec URL this breaker guards, named in its log lines.
+	listener string
 }
 
 func newCircuitBreaker() *circuitBreaker {
 	return &circuitBreaker{outcomes: make([]bool, breakerWindow)}
 }
 
+// One breaker per AppSec listener URL, so a failing core-rule-set listener
+// cannot switch inspection off for the hosts on the default listener.
 var (
 	appsecBreakerMu sync.Mutex
-	appsecBreaker   = newCircuitBreaker()
+	appsecBreakers  = map[string]*circuitBreaker{}
 )
 
-func currentBreaker() *circuitBreaker {
+func currentBreaker(target string) *circuitBreaker {
 	appsecBreakerMu.Lock()
 	defer appsecBreakerMu.Unlock()
-	return appsecBreaker
+	cb, ok := appsecBreakers[target]
+	if !ok {
+		cb = newCircuitBreaker()
+		cb.listener = target
+		appsecBreakers[target] = cb
+	}
+	return cb
 }
 
 func resetBreaker() {
 	appsecBreakerMu.Lock()
 	defer appsecBreakerMu.Unlock()
-	appsecBreaker = newCircuitBreaker()
+	appsecBreakers = map[string]*circuitBreaker{}
 }
 
 func (cb *circuitBreaker) clearLocked() {
@@ -951,7 +1077,7 @@ func (cb *circuitBreaker) allow(now time.Time, logf func(string)) bool {
 	}
 	cb.open = false
 	cb.clearLocked()
-	logf("[crowdsec-bouncer] action=appsec-breaker state=closed")
+	logf("[crowdsec-bouncer] action=appsec-breaker state=closed listener=" + cb.listener)
 	return true
 }
 
@@ -979,7 +1105,7 @@ func (cb *circuitBreaker) record(failed bool, now time.Time, logf func(string)) 
 		cb.open = true
 		cb.openUntil = now.Add(breakerOpenFor)
 		cb.clearLocked()
-		logf(fmt.Sprintf("[crowdsec-bouncer] action=appsec-breaker state=open failures=%d/%d open-for=%s",
-			failures, breakerWindow, breakerOpenFor))
+		logf(fmt.Sprintf("[crowdsec-bouncer] action=appsec-breaker state=open failures=%d/%d open-for=%s listener=%s",
+			failures, breakerWindow, breakerOpenFor, cb.listener))
 	}
 }

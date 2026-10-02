@@ -755,16 +755,20 @@ resource "kubectl_manifest" "middleware_crowdsec" {
           lapiUrl = "http://crowdsec-service.crowdsec.svc.cluster.local:8080"
           lapiKey = var.crowdsec_bouncer_key
           # Fresh enough that an unban is felt immediately (the whole point of
-          # moving off the edge), cheap because the origin filter below keeps the
-          # response at a few KB.
+          # moving off the edge). With CAPI included the snapshot is ~16k
+          # decisions (~3 MB) per poll per pod, all single IPs, so it is map
+          # lookups at request time, not a range scan.
           pollSeconds = 30
-          # Origins to ENFORCE. CAPI is deliberately ABSENT: it is ~22.7k
-          # community bans that have never been enforced on proxied hosts, and
-          # its false positives (CGNAT, carrier ranges) would land as
-          # user-visible 403s. It is already dropped in-kernel on direct hosts by
-          # cs-firewall-bouncer. Adding "CAPI" enables it — measure in dryRun
-          # first, and note the snapshot then weighs ~3MB per poll.
-          origins = ["crowdsec", "cscli", "cscli-import", "lists", "console"]
+          # Origins to enforce. CAPI was left out until 2026-10-02 for fear of
+          # false positives on CGNAT and carrier addresses; it is now rolled out
+          # through dryRunOrigins below rather than switched on blind.
+          origins = ["crowdsec", "cscli", "cscli-import", "lists", "console", "CAPI"]
+          # CAPI (the community blocklist, ~16k IPs) is being rolled out on HTTP
+          # (Viktor, 2026-10-02): its matches log `action=dry-run-block
+          # origin=CAPI` and are served while the would-blocks are checked
+          # against known-good traffic, then this list empties and CAPI
+          # enforces. An IP banned by an enforcing origin too is blocked.
+          dryRunOrigins = ["CAPI"]
           # Trust Cf-Connecting-Ip / X-Forwarded-For ONLY from the cloudflared pod
           # peer; any other peer is judged on its own unspoofable TCP address.
           # Same model and same CIDR as real-ip.
@@ -806,6 +810,13 @@ resource "kubectl_manifest" "middleware_crowdsec" {
           # the inspected path streamed with 2.7ms of Traefik overhead), so
           # this also takes its JSON API out of the generic rules' reach.
           appsecSkipHosts = ["immich.viktorbarzin.me"]
+          # Second AppSec listener that adds the OWASP core rule set, for the
+          # public hosts with no Authentik in front of them (Viktor's scope,
+          # 2026-10-02). The host list is filled once the pre-launch replay
+          # through this listener is clean. Each listener has its own breaker,
+          # so a failing CRS listener cannot switch the default one off.
+          appsecCrsUrl   = "http://crowdsec-appsec-crs.crowdsec.svc.cluster.local:7423"
+          appsecCrsHosts = []
         }
       }
     }
