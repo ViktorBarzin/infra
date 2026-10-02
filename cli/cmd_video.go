@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,7 +22,7 @@ import (
 func videoCommands() []Command {
 	return []Command{
 		{Path: []string{"video", "get"}, Tier: TierWrite,
-			Summary: "download videos (X, YouTube, any yt-dlp site) to Videos/ in your Nextcloud with a phone link: video get <url>... [--quality Q] [--expire DAYS] [--no-link]",
+			Summary: "download videos (X, YouTube, any yt-dlp site) to Videos/ in your Nextcloud with a phone link, skipping ones already there: video get <url>... [--quality Q] [--expire DAYS] [--no-link] [--force]",
 			Run:     videoGet},
 	}
 }
@@ -75,6 +77,18 @@ func getOneVideo(videoURL string, opts videoArgs, up ncUploader) error {
 		}
 	}
 
+	var meta videoMeta
+	if !opts.force {
+		if meta, err = probeVideo(videoURL, cookies); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v; downloading without the duplicate check\n", err)
+		} else if v, reason, ok, err := alreadyHave(meta, up); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not check Videos/ for duplicates: %v\n", err)
+		} else if ok {
+			fmt.Fprintf(os.Stderr, "already in Videos/ (%s); not downloading. --force downloads it anyway.\n", reason)
+			return printVideoResult(v.Path, opts, up)
+		}
+	}
+
 	cmd := exec.Command("yt-dlp", ytdlpArgs(videoURL, tmp, opts.quality, cookies)...)
 	cmd.Stdout = os.Stderr // progress; stdout is kept for the path and link
 	cmd.Stderr = os.Stderr
@@ -101,13 +115,42 @@ func getOneVideo(videoURL string, opts videoArgs, up ncUploader) error {
 	if err := up.upload(local, remote); err != nil {
 		return err
 	}
+	if err := up.setVideoProps(remote, uploadedVideoProps(meta, local)); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: the next duplicate check will have to probe this file: %v\n", err)
+	}
+	return printVideoResult(remote, opts, up)
+}
+
+// uploadedVideoProps is what a later run compares against. The length comes
+// from the file itself when the probe was skipped or reported none.
+func uploadedVideoProps(meta videoMeta, local string) map[string]string {
+	props := map[string]string{}
+	if id := firstNonEmpty(meta.ID, idFromFilename(filepath.Base(local))); id != "" {
+		props["id"] = id
+	}
+	d := meta.Duration
+	if d <= 0 {
+		if out, err := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration",
+			"-of", "csv=p=0", local).Output(); err == nil {
+			d, _ = strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+		}
+	}
+	if d > 0 {
+		props["duration"] = formatSeconds(d)
+	}
+	return props
+}
+
+// printVideoResult prints the file's path and, unless --no-link, a fresh
+// public link to it.
+func printVideoResult(remote string, opts videoArgs, up ncUploader) error {
 	fmt.Printf("path: %s\n", strings.TrimPrefix(remote, "/"))
 	if opts.noLink {
 		return nil
 	}
 	link, expiration, err := createPublicShare(up.user, up.pass, remote, opts.expireDays)
 	if err != nil {
-		return fmt.Errorf("uploaded, but the public link failed: %w", err)
+		return fmt.Errorf("the public link failed: %w", err)
 	}
 	fmt.Printf("link: %s\n", link)
 	if expiration != "" {
@@ -321,3 +364,104 @@ func (u ncUploader) remoteSize(remote string) (int64, bool) {
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	return parsePropfindSize(string(b))
 }
+
+// listVideos reads every file in Videos/ with the properties video get stores.
+// A missing folder means nothing has been downloaded yet.
+func (u ncUploader) listVideos() ([]remoteVideo, error) {
+	const body = `<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:hl="` + videoPropNS + `"><d:prop>` +
+		`<d:resourcetype/><d:getcontentlength/><hl:duration/><hl:id/></d:prop></d:propfind>`
+	req, err := http.NewRequest("PROPFIND", u.filesURL(videoUploadDir), strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(u.user, u.pass)
+	req.Header.Set("Depth", "1")
+	req.Header.Set("User-Agent", homelabUserAgent())
+	resp, err := u.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != 207 {
+		return nil, fmt.Errorf("listing %s answered %d", videoUploadDir, resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return nil, err
+	}
+	return parseVideoListing(string(b))
+}
+
+// setVideoProps stores homelab-video properties on a file with PROPPATCH.
+func (u ncUploader) setVideoProps(remote string, props map[string]string) error {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0"?><d:propertyupdate xmlns:d="DAV:" xmlns:hl="` + videoPropNS + `"><d:set><d:prop>`)
+	for k, v := range props {
+		b.WriteString("<hl:" + k + ">")
+		xml.EscapeText(&b, []byte(v))
+		b.WriteString("</hl:" + k + ">")
+	}
+	b.WriteString(`</d:prop></d:set></d:propertyupdate>`)
+	req, err := http.NewRequest("PROPPATCH", u.filesURL(remote), strings.NewReader(b.String()))
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(u.user, u.pass)
+	req.Header.Set("User-Agent", homelabUserAgent())
+	resp, err := u.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 207 {
+		return fmt.Errorf("storing properties on %s answered %d", remote, resp.StatusCode)
+	}
+	return nil
+}
+
+// remoteDuration asks ffprobe for a file's length straight from Nextcloud;
+// it reads only the container headers over range requests, not the video.
+func (u ncUploader) remoteDuration(remote string) (float64, error) {
+	auth := base64.StdEncoding.EncodeToString([]byte(u.user + ":" + u.pass))
+	out, err := exec.Command("ffprobe", "-v", "error", "-headers", "Authorization: Basic "+auth+"\r\n",
+		"-show_entries", "format=duration", "-of", "csv=p=0", u.filesURL(remote)).Output()
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+}
+
+// probeVideo asks yt-dlp what a link is without downloading it.
+func probeVideo(videoURL, cookies string) (videoMeta, error) {
+	out, err := exec.Command("yt-dlp", ytdlpProbeArgs(videoURL, cookies)...).Output()
+	if err != nil {
+		return videoMeta{}, fmt.Errorf("yt-dlp could not read the link: %w", err)
+	}
+	return parseVideoMeta(string(out))
+}
+
+// alreadyHave reports the file in Videos/ that is the same video as m, filling
+// in and saving the lengths of older files that were uploaded without one.
+func alreadyHave(m videoMeta, up ncUploader) (remoteVideo, string, bool, error) {
+	have, err := up.listVideos()
+	if err != nil {
+		return remoteVideo{}, "", false, err
+	}
+	if v, reason, ok := findDuplicate(videoMeta{ID: m.ID}, have); ok {
+		return v, reason, true, nil
+	}
+	if m.Duration > 0 {
+		fillDurations(have, up.remoteDuration, func(remote string, d float64) {
+			if err := up.setVideoProps(remote, map[string]string{"duration": formatSeconds(d)}); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+			}
+		})
+	}
+	v, reason, ok := findDuplicate(m, have)
+	return v, reason, ok, nil
+}
+
+func formatSeconds(d float64) string { return strconv.FormatFloat(d, 'f', 2, 64) }

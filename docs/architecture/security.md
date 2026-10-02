@@ -80,7 +80,7 @@ Intelligence below):
 
 1. **Cloudflare WAF / edge** - managed DDoS L7 protection and Bot Fight Mode. No CrowdSec rule here since 2026-08-18
 2. **Cloudflared Tunnel** - Zero Trust tunnel, hides origin IP (proxied hosts)
-3. **CrowdSec** - in-kernel nftables drop on direct hosts, and the `crowdsec` entrypoint middleware for all HTTP (one map lookup; 403 on a hit)
+3. **CrowdSec** - in-kernel nftables drop on direct hosts, and the `crowdsec` entrypoint middleware for all HTTP (one map lookup; 403 on a hit), which also runs the AppSec check on request content (see "AppSec check" below)
 4. **Anti-AI Scraping** - 3-layer bot defense (optional per service, updated 2026-04-17)
 5. **Authentik ForwardAuth** - Authentication check (if `protected = true`)
 6. **Rate Limiting** - per-client limits keyed on `X-Real-Ip`, 10/s average and 50 burst per Traefik pod (returns 429 on breach). A chain: `real-ip` then the limiter
@@ -289,6 +289,42 @@ in that module's `middleware.tf`, attached to the `websecure` entrypoint):
   and `bot-block-proxy` exist as shims). Drilled live: with `crowdsec-lapi` scaled
   to 0, traffic kept flowing and the plugin logged `serving=last-known-set`.
 - `dryRun` decides and logs without blocking. Registered bouncer key: **`traefik`**.
+
+#### AppSec check (since 2026-10-02, ADR-0027)
+
+The same plugin also sends each request that passes the ban check to the
+CrowdSec AppSec component (`crowdsec-appsec`, 2 pods, rules
+`appsec-virtual-patching` + `appsec-generic-rules`, no OWASP core rule set)
+before the backend sees it. A 403 from AppSec blocks the request; every other
+outcome lets it through.
+
+- **Uploads are never read.** A body goes to AppSec only when it is form, JSON
+  or XML, uncompressed, with a known length of 64 KiB or less. Everything else,
+  every multipart, chunked or media upload included, is checked on method, URI
+  and headers, and its body streams to the backend untouched. This is what
+  keeps the Immich problem (uploads held at the ingress, then re-sent) from
+  coming back; the stock CrowdSec Traefik bouncer reads up to 10 MB per body.
+- **Opt-out per host**: `appsecSkipHosts` on the `crowdsec` Middleware
+  (`stacks/traefik/modules/traefik/middleware.tf`). Those hosts keep ban
+  enforcement. `skipHosts` (the Authentik hosts) skip the plugin entirely.
+- **Fails open.** 200 ms per check; 401, 5xx, timeouts and errors allow. A
+  circuit breaker shared by every middleware instance stops calling AppSec for
+  30s when half of the last 20 checks failed.
+- **Bans.** `appsec-vpatch` bans an address for 4h on every host when two
+  distinct rules match it within 60s. The trusted-IP whitelist is mounted in the
+  AppSec pods, so home, London, Meta corp and internal ranges are never banned,
+  though a single request from them can still get a 403.
+- **Kill switch**: `appsecEnabled = false` on the Middleware. A dynamic reload;
+  no Traefik pod restarts.
+- **Signals**: `[crowdsec-bouncer] action=appsec-block` and
+  `action=appsec-breaker` lines on the Traefik pods; alerts
+  CrowdSecAppsecBreakerOpen, CrowdSecAppsecBlockSurge, TraefikOverheadHigh,
+  TraefikPluginsDisabled (Loki) and CrowdSecAppsecDown, TraefikMemoryHigh,
+  TraefikRestarting (Prometheus).
+- **Plugin changes roll Traefik.** Traefik loads local plugins only at startup,
+  so `checksum/local-plugins` on the pod template restarts the pods when a
+  shipped plugin file changes. Run `scripts/yaegi-plugin-gate` before landing
+  one: a plugin that fails to load disables every plugin on that pod.
 
 #### Why the edge channel was retired (2026-08-18)
 
