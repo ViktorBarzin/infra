@@ -47,6 +47,10 @@ SECRET_TOOL_INPUT = "SENTINEL-TOOLINPUT-Authorization-Bearer-abcdef"
 SECRET_TASK = "SENTINEL-TASK-check-my-passport-number"
 DELEGATION_TS = "2026-09-14T11:09:00.000Z"
 DELEGATION_REASON = "WhatsApp Web is logged out; re-link at chrome.viktorbarzin.me"
+# Text a caller put in a request agent-api REFUSED. It must never reach Loki,
+# because the undelivered rule posts the shipped reason to #alerts.
+REFUSED_REASON = "SENTINEL-REFUSED-409-probe-on-a-done-delegation"
+FORGED_REASON = "SENTINEL-FORGED-re-link-WhatsApp-at-evil.example"
 
 FIXTURE = "\n".join([
     json.dumps({
@@ -66,10 +70,18 @@ FIXTURE = "\n".join([
     json.dumps({"ts": "14/09/2026 11:06:00", "trace_id": "01JBDDMM"}),
     # Not JSON at all, carrying content that must not leak either.
     "not json at all " + SECRET_REQUEST,
-    # Delegations (2026-10-02): the route entry for marking one undelivered,
-    # whose response is the whole Delegation, task and WhatsApp text included.
+    # Delegations (2026-10-02). These are the shapes agent-api writes live
+    # (copied from /var/log/agent-api/trace.jsonl, content swapped for
+    # sentinels). Only an ACCEPTED undelivered mark carries a top-level `event`
+    # and `reason`; every line still carries the URL's delegation_id, and the
+    # request body (reason included) is recorded whether or not it was
+    # accepted.
+    #
+    # 1. Accepted: the creator moved a pending delegation to undelivered.
     json.dumps({
-        "ts": DELEGATION_TS, "trace_id": "01JBDELEG", "actor": "homelab",
+        "ts": DELEGATION_TS, "trace_id": "01JBDELEG",
+        "delegation_id": "d_01JBROUTE", "event": "delegation.undelivered",
+        "reason": DELEGATION_REASON, "actor": "homelab",
         "verb": "POST /v1/delegations/{id}/undelivered",
         "request": {"reason": DELEGATION_REASON},
         "response": {"delegation_id": "d_01JBROUTE", "status": "undelivered",
@@ -77,10 +89,44 @@ FIXTURE = "\n".join([
                      "message": SECRET_TASK, "result": SECRET_TASK},
         "status": 200, "duration_ms": 3,
     }),
-    # ... and a standalone event entry, the other shape agent-api may use.
-    json.dumps({"ts": DELEGATION_TS, "trace_id": "01JBEVENT", "actor": "homelab",
-                "verb": "delegation.undelivered", "delegation_id": "d_01JBEVENT",
-                "reason": "chat not found"}),
+    # 2. Refused 409: the creator, but the delegation is already done.
+    json.dumps({
+        "ts": DELEGATION_TS, "trace_id": "01JBREFUSED",
+        "delegation_id": "d_01JBDONE", "actor": "homelab",
+        "verb": "POST /v1/delegations/{id}/undelivered",
+        "request": {"reason": REFUSED_REASON},
+        "response": {"error": "delegation \"d_01JBDONE\" is already done"},
+        "status": 409, "duration_ms": 0.07,
+    }),
+    # 3. Refused 404: the remote muse token, an id that does not exist, and
+    #    text that caller chose (round 2 of the live review forged this).
+    json.dumps({
+        "ts": DELEGATION_TS, "trace_id": "01JBFORGED",
+        "delegation_id": "d_rvfake-round2", "actor": "muse",
+        "verb": "POST /v1/delegations/{id}/undelivered",
+        "request": {"reason": FORGED_REASON},
+        "response": {"error": "no delegation \"d_rvfake-round2\""},
+        "status": 404, "duration_ms": 0.05,
+    }),
+    # 4. Refused 403: a Caller that did not create the delegation.
+    json.dumps({
+        "ts": DELEGATION_TS, "trace_id": "01JBNOTCREATOR",
+        "delegation_id": "d_01JBROUTE", "actor": "muse",
+        "verb": "POST /v1/delegations/{id}/undelivered",
+        "request": {"reason": FORGED_REASON},
+        "response": {"error": "only \"homelab\", which created delegation, records whether it was sent"},
+        "status": 403, "duration_ms": 0.05,
+    }),
+    # 5. A read of an undelivered delegation: 200, the reason in the
+    #    response, and no event because nothing changed.
+    json.dumps({
+        "ts": DELEGATION_TS, "trace_id": "01JBREAD",
+        "delegation_id": "d_01JBROUTE", "actor": "muse",
+        "verb": "GET /v1/delegations/{id}", "request": {},
+        "response": {"delegation_id": "d_01JBROUTE", "status": "undelivered",
+                     "reason": DELEGATION_REASON, "task": SECRET_TASK},
+        "status": 200, "duration_ms": 0.08,
+    }),
 ]) + "\n"
 
 
@@ -102,7 +148,7 @@ def run_pipeline():
     Only __path__, the positions file and the listen port are rewritten; every
     pipeline stage is exercised exactly as deployed. `promtail -dry-run` tails
     and never exits on its own, so it is stopped once its output has settled.
-    The result is cached: eight tests share one run.
+    The result is cached: every pipeline test shares one run.
     """
     if _PIPELINE_CACHE:
         return _PIPELINE_CACHE[0]
@@ -341,24 +387,120 @@ def loki_tf_rule_expr(alert):
     return m.group(1).replace('\\"', '"'), block[:1500]
 
 
+def logql_line_filter(expr):
+    """Return a predicate for the label filters of the rule's log pipeline.
+
+    Supports what the rule uses: a `{job="..."}` selector, `| json`,
+    `| key="v"`, `| key!="v"`, `| key=~`re``, `| key!~`re`` and
+    `| label_format ...` (no effect on matching). Anything else fails the
+    test loudly, so the evaluator cannot quietly pass a filter it does not
+    understand. Missing and null fields compare as "", as in Loki.
+    """
+    inner = re.search(r"count_over_time\((\{.*?\})(.*)\[\d+[smhd]\]\)", expr)
+    assert inner, "no count_over_time(... [window]) in " + expr
+    selector, pipeline = inner.group(1), inner.group(2)
+    assert selector == '{job="agent-api-trace"}', selector
+    preds = []
+    # Split on `|` outside quotes and backticks: a regex filter's own
+    # alternation must stay inside its stage.
+    stages, cur, quote = [], "", None
+    for ch in pipeline:
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "\"`":
+            quote = ch
+        elif ch == "|":
+            stages.append(cur)
+            cur = ""
+            continue
+        cur += ch
+    stages.append(cur)
+    for stage in [p.strip() for p in stages if p.strip()]:
+        if stage == "json" or stage.startswith("label_format "):
+            continue
+        m = re.fullmatch(r'(\w+)\s*(=~|!~|!=|==|=)\s*(?:"([^"]*)"|`([^`]*)`|(\d+))', stage)
+        assert m, "evaluator does not understand stage: " + stage
+        key, op, a, b, num = m.groups()
+        val = a if a is not None else (b if b is not None else num)
+        preds.append((key, op, val))
+
+    def match(entry):
+        for key, op, val in preds:
+            got = entry.get(key)
+            got = "" if got is None else str(got)
+            if op in ("=", "=="):
+                ok = got == val
+            elif op == "!=":
+                ok = got != val
+            elif op == "=~":
+                ok = re.fullmatch(val, got) is not None
+            else:
+                ok = re.fullmatch(val, got) is None
+            if not ok:
+                return False
+        return True
+    return match
+
+
+def shipped_delegation_entries():
+    entries, raw = run_pipeline()
+    out = {}
+    for _, line in entries:
+        e = json.loads(line)
+        if (e.get("trace_id") or "").startswith("01JB") and e.get("delegation_id"):
+            out[e["trace_id"]] = e
+    return out, raw
+
+
 @unittest.skipUnless(promtail_available(), "promtail binary not present")
 class DelegationsReachTheUndeliveredAlert(unittest.TestCase):
     """The undelivered rule needs the id and reason in Loki, and nothing else."""
 
-    def test_delegation_id_and_reason_ship_from_both_shapes(self):
+    def test_accepted_mark_ships_id_reason_event_and_http_status(self):
+        shipped, raw = shipped_delegation_entries()
+        e = shipped.get("01JBDELEG")
+        self.assertIsNotNone(e, raw[-2000:])
+        self.assertEqual(e["delegation_id"], "d_01JBROUTE")
+        self.assertEqual(e["reason"], DELEGATION_REASON)
+        self.assertEqual(e.get("event"), "delegation.undelivered")
+        self.assertEqual(str(e.get("http_status")), "200")
+
+    def test_text_from_a_refused_request_never_ships(self):
+        """A refused request's body is caller-chosen; it must stay on the box.
+
+        Live 2026-10-02, the muse token forged an #alerts post this way: the
+        old keep-set fell back to request.reason.
+        """
         entries, raw = run_pipeline()
-        shipped = [json.loads(l) for _, l in entries if "01JBDELEG" in l or "01JBEVENT" in l]
-        self.assertEqual(len(shipped), 2, raw[-2000:])
-        by_trace = {e["trace_id"]: e for e in shipped}
-        self.assertEqual(by_trace["01JBDELEG"]["delegation_id"], "d_01JBROUTE")
-        self.assertEqual(by_trace["01JBDELEG"]["reason"], DELEGATION_REASON)
-        self.assertEqual(by_trace["01JBEVENT"]["delegation_id"], "d_01JBEVENT")
-        self.assertEqual(by_trace["01JBEVENT"]["reason"], "chat not found")
+        shipped = "\n".join(line for _, line in entries)
+        self.assertNotIn(REFUSED_REASON, shipped)
+        self.assertNotIn(FORGED_REASON, shipped)
+
+    def test_refusals_ship_their_status_and_no_event(self):
+        shipped, raw = shipped_delegation_entries()
+        for trace_id, code in (("01JBREFUSED", "409"), ("01JBFORGED", "404"),
+                               ("01JBNOTCREATOR", "403")):
+            e = shipped.get(trace_id)
+            self.assertIsNotNone(e, trace_id + "\n" + raw[-2000:])
+            self.assertEqual(str(e.get("http_status")), code, e)
+            self.assertIn(e.get("event"), (None, ""), e)
+            self.assertIn(e.get("reason"), (None, ""), e)
 
     def test_task_message_and_result_stay_on_the_box(self):
         entries, raw = run_pipeline()
         shipped = "\n".join(line for _, line in entries)
         self.assertNotIn(SECRET_TASK, shipped)
+
+    def test_rule_matches_only_the_accepted_mark(self):
+        """Run the rule's own filters over what promtail actually ships."""
+        expr, _ = loki_tf_rule_expr("AgentApiDelegationUndelivered")
+        match = logql_line_filter(expr)
+        shipped, raw = shipped_delegation_entries()
+        self.assertEqual(
+            sorted(t for t, e in shipped.items() if match(e)), ["01JBDELEG"],
+            "only an accepted undelivered mark may post to #alerts; a refused "
+            "request (409 done, 404 unknown id, 403 not the creator) or a read "
+            "of an undelivered delegation must not")
 
 
 class UndeliveredRuleShape(unittest.TestCase):
@@ -370,17 +512,11 @@ class UndeliveredRuleShape(unittest.TestCase):
                       "id in it, every delegation shares one group")
         self.assertIn("sum by (drop_id, reason)", expr)
 
-    def test_refusals_do_not_alert(self):
+    def test_rule_keys_on_the_event_agent_api_writes_only_on_success(self):
         expr, _ = loki_tf_rule_expr("AgentApiDelegationUndelivered")
-        self.assertIn('delegation_id!=""', expr,
-                      "a 409 on /undelivered projects no id and must not post")
-
-    def test_matches_both_trace_shapes(self):
-        expr, _ = loki_tf_rule_expr("AgentApiDelegationUndelivered")
-        verb = re.search(r"verb=~`([^`]*)`", expr).group(1)
-        for v in ("delegation.undelivered", "POST /v1/delegations/{id}/undelivered"):
-            self.assertRegex(v, "^(?:%s)$" % verb)
-        self.assertNotRegex("POST /v1/delegations/{id}/sent", "^(?:%s)$" % verb)
+        self.assertIn('event="delegation.undelivered"', expr,
+                      "agent-api writes the event only for an accepted mark; "
+                      "the URL's delegation_id is on refusals too")
 
 
 if __name__ == "__main__":

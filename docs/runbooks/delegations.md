@@ -69,6 +69,8 @@ verified on screen before typing, and every send is appended to
 
 `AgentApiDelegationUndelivered` posts once per delegation whose send failed, with the reason.
 
+It fires only on the trace line for an accepted mark (`event: delegation.undelivered`, HTTP 200), which only the delegation's creator can produce. A refused request to the same route, from any Caller, does not post.
+
 | Reason starts with | What to do |
 |---|---|
 | WhatsApp Web is logged out | Re-link at `chrome.viktorbarzin.me` (step 2 above), then delegate again |
