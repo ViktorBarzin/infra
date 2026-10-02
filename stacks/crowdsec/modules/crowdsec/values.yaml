@@ -347,10 +347,29 @@ appsec:
       path: /
       appsec_configs:
         - crowdsecurity/appsec-default
-        - crowdsecurity/crs-inband
+        - viktor/crs-inband
       routines: 4
       labels:
         type: appsec
+  # viktor/crs-inband = the hub's crs-inband plus a setup rule loaded first.
+  configs:
+    viktor-crs-inband.yaml: |
+      name: viktor/crs-inband
+      default_remediation: ban
+      log_level: debug
+      inband_rules:
+        - viktor/crs-setup
+        - crowdsecurity/crs
+  rules:
+    # CRS defaults tx.allowed_methods to GET HEAD POST OPTIONS and blocks every
+    # other verb (rule 911100). The 2026-10-02 replay showed that blocking
+    # Matrix federation PUTs, claude-memory PUT/PATCH/DELETE and Nextcloud
+    # WebDAV. CRS only sets the default when nothing set it first, and this
+    # phase-1 SecAction runs before CRS's own setup rules.
+    viktor-crs-setup.yaml: |
+      name: viktor/crs-setup
+      seclang_rules:
+        - SecAction "id:900200,phase:1,pass,nolog,t:none,setvar:'tx.allowed_methods=GET HEAD POST OPTIONS PUT PATCH DELETE PROPFIND PROPPATCH MKCOL COPY MOVE LOCK UNLOCK REPORT SEARCH'"
   env:
     # appsec-virtual-patching also brings the appsec-vpatch scenario, which
     # bans an address for 4h (default_ip_remediation) once two DISTINCT rules
