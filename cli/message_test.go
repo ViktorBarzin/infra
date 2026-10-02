@@ -136,3 +136,11 @@ func TestBuildAuditRecord(t *testing.T) {
 		t.Errorf("round-trip to = %q", back.To)
 	}
 }
+
+// A delegation is a multi-line message, and Enter alone sends in WhatsApp
+// Web, so the automation must type newlines as Shift+Enter.
+func TestMessageWATypesNewlineAsShiftEnter(t *testing.T) {
+	if !strings.Contains(messageWAJS, `if (ch === '\n') await page.keyboard.press('Shift+Enter');`) {
+		t.Error("message_wa.js typeHuman no longer types a newline as Shift+Enter")
+	}
+}

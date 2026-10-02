@@ -68,6 +68,10 @@ type browserOpts struct {
 	noSeed    bool   // pool: do NOT seed the master's cookies (pure clean context)
 	seedPath  string // runtime: path to the fetched seed file (set by the pool path)
 	help      bool
+
+	// stderrTee also receives the runner's stderr, so a caller (delegate) can
+	// say why a script failed. nil leaves stderr on the terminal only.
+	stderrTee io.Writer
 }
 
 // parseBrowserArgs parses the args after `browser run` / `browser open`.
@@ -754,6 +758,9 @@ func runBrowserNode(dir, cdpURL string, o browserOpts) error {
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if o.stderrTee != nil {
+		cmd.Stderr = io.MultiWriter(os.Stderr, o.stderrTee)
+	}
 	cmd.Stdin = os.Stdin
 	return cmd.Run()
 }

@@ -376,6 +376,40 @@ daily through the `yt-dlp-update` timer. YouTube still refuses some videos from
 our address at random (memory #13410), so a YouTube failure is reported with
 that hint rather than retried.
 
+### v0.26 verbs — delegate (hand a task to Muse)
+
+A homelab session hands work to another **Caller** of Terminal Lobby's
+`agent-api` (Muse first) and can wait for the result. Design:
+`docs/plans/2026-10-02-muse-homelab-integration-design.md`; operating notes:
+`docs/runbooks/delegations.md`.
+
+| Command | tier | notes |
+|---|---|---|
+| `delegate <caller> "<task>" [--wait] [--expires 24h] [--from <session>]` | write | records the delegation (`POST /v1/delegations` as the local `homelab` Caller), sends the text agent-api rendered to that Caller's WhatsApp chat, then marks it `sent`. A failed send marks it `undelivered` with a one-line reason, exits non-zero, and #alerts gets one post. `--expires` takes Go durations or whole days (default 24h, maximum 14d). `--from` defaults to the tmux session name. `--wait` long-polls until a final status; exit is zero only for `done`. |
+| `delegate status <id> [--wait] [--json]` | read | one delegation; `--wait` follows it to a final status. |
+| `delegate list [--status S] [--limit N] [--json]` | read | delegations this Caller created. |
+
+The send goes through the same function as `message send` (`sendMessageAs`):
+the WhatsApp automation, the on-screen recipient check, and the audit log
+(action `delegate`). It is the one send without a confirm prompt. In its place
+the recipient is pinned by two files a human wrote, and the verb refuses before
+recording anything unless both agree exactly (no fuzzy matching):
+
+- `~/.config/homelab/delegate-contacts`, lines `muse=<exact WhatsApp chat name>`
+- `~/.config/homelab/message-allowlist`, the same name on its own line
+
+The bearer token is read from `~/.config/homelab/agent-api-token` (0600,
+installed by `playbooks/devvm.yml` from Vault `secret/terminal-lobby`
+`agent_api_homelab_token`) and never printed. The API is agent-api's loopback
+listener, `http://127.0.0.1:8710`. agent-api caps each target Caller at 20
+delegations an hour and 100 a day; a refusal prints the `Retry-After`.
+
+Newlines in any WhatsApp send are now typed as Shift+Enter, since Enter alone
+sends and a delegation is a multi-line message.
+
+Overrides: `HOMELAB_DELEGATE_CONTACTS`, `HOMELAB_AGENT_API_TOKEN_FILE`,
+`HOMELAB_AGENT_API_URL`, plus the `message` ones above.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning

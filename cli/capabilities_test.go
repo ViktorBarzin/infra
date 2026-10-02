@@ -326,3 +326,12 @@ func TestVPNEgressNamesThePathForProxyIgnoringClients(t *testing.T) {
 		}
 	}
 }
+
+func TestDelegationToMuseIsFindable(t *testing.T) {
+	for _, q := range []string{"ask Muse to do something", "hand a task to muse", "delegate this to Muse and wait"} {
+		hits := matchCapabilities(capabilities(), q)
+		if len(hits) == 0 || !strings.Contains(hits[0].Use, "homelab delegate") {
+			t.Errorf("%q: top hit is not homelab delegate (%v)", q, hits)
+		}
+	}
+}
