@@ -34,7 +34,7 @@ flowchart TD
 | Tunnel | Spoke dials the hub with a 25s keepalive; the pfSense peer has no endpoint. Allowed IPs `10.0.0.0/8, 192.168.1.0/24, 192.168.8.0/24, 192.168.9.0/24` with routes; the site's own subnet is not in the list. Internet stays on the local ISP. |
 | Routing | Both directions: Mladost reaches the cluster, Sofia and London; the homelab and tailnet reach Mladost. The `vpn` zone masquerades, because Sofia LAN hosts default-route to the TP-Link, which routes 10/8 back to pfSense but not 192.168.3.0/24. |
 | Management | SSH by key only and LuCI, on the LAN and tunnel addresses, from 10.0.0.0/8. LuCI root password in Vaultwarden `mladost3.viktorbarzin.me`. |
-| DNS | dnsmasq forwards to 9.9.9.9 / 8.8.4.4 with `rebind_domain viktorbarzin.me`. Technitium: `mladost3.viktorbarzin.lan` = 10.3.2.7, `openwrt-mladost3.viktorbarzin.lan` = 192.168.3.1, PTR in `3.168.192.in-addr.arpa`. |
+| DNS | dnsmasq forwards to 9.9.9.9 / 8.8.4.4 with `rebind_domain viktorbarzin.me`. Technitium: `mladost3.viktorbarzin.lan` = 10.3.2.7, `mladost3-openwrt.viktorbarzin.lan` = 192.168.3.1, PTR in `3.168.192.in-addr.arpa`. |
 | Web UI | `mladost3.viktorbarzin.me` proxies LuCI over the tunnel, public behind Authentik like Valchedrym. |
 | Monitoring | Uptime Kuma port monitor on 192.168.3.1:80. |
 

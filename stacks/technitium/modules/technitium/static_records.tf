@@ -69,7 +69,7 @@ locals {
   # it there is no way to drive the app on a real phone without going through
   # the Authentik SSO flow, which is what makes it worth a record.
   #
-  # mladost3 / openwrt-mladost3: the Mladost 3 site router (OpenWrt WDR4300),
+  # mladost3 / mladost3-openwrt: the Mladost 3 site router (OpenWrt WDR4300),
   # by its WireGuard tunnel address and by its LAN address. The reverse-proxy
   # ingress for mladost3.viktorbarzin.me targets mladost3.viktorbarzin.lan.
   static_lan_a_records = {
@@ -77,7 +77,7 @@ locals {
     "projector-london" = "192.168.9.100"
     "health-test"      = "10.0.20.203"
     "mladost3"         = "10.3.2.7"
-    "openwrt-mladost3" = "192.168.3.1"
+    "mladost3-openwrt" = "192.168.3.1"
   }
 
   # IPv4 address => PTR target. The job creates the /24 reverse zone on the
@@ -85,7 +85,7 @@ locals {
   # sets the PTR. 0.168.192.in-addr.arpa (Valchedrym) predates this and was
   # made by hand.
   static_ptr_records = {
-    "192.168.3.1" = "openwrt-mladost3.viktorbarzin.lan"
+    "192.168.3.1" = "mladost3-openwrt.viktorbarzin.lan"
   }
 }
 

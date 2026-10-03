@@ -68,7 +68,7 @@ alloy:
         // reliable here: the LoadBalancer may SNAT it).
         rule {
           source_labels = ["__syslog_message_hostname"]
-          regex         = "openwrt-mladost3"
+          regex         = "mladost3-openwrt|openwrt-mladost3"
           target_label  = "host"
           replacement   = "mladost3-openwrt"
         }
