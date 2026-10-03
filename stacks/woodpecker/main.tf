@@ -379,6 +379,45 @@ resource "kubernetes_cron_job_v1" "vault_secret_sync" {
   }
 }
 
+# Per-route ServersTransport: give woodpecker-server more than 30s to send its
+# first response header (infra#109).
+#
+# WHY. Creating a manual/deployment pipeline (`POST /api/repos/1/pipelines`)
+# makes woodpecker-server load the pipeline config from the forge synchronously
+# BEFORE it answers the HTTP call. Repo 1 is ViktorBarzin/infra on the GitHub
+# forge, so that fetch goes to api.github.com over the WAN — the one forge path
+# the in-cluster `forgejo.viktorbarzin.me` hostAlias (see null_resource above)
+# cannot shortcut. The config loader makes 4-6 sequential forge calls, each with
+# a 30s per-call deadline (WOODPECKER_FORGE_TIMEOUT, values.yaml), so when GitHub
+# is slow (not down) the cumulative wall-clock climbs past 30s. Traefik's global
+# serversTransport responseHeaderTimeout is ALSO 30s (stacks/traefik .../main.tf),
+# so it fired first and returned 504 — rendered by the error-pages middleware —
+# even in cases woodpecker would have answered 200 a few seconds later. That was
+# the 2026-10-03 symptom: two terminal-lobby release triggers 504'd at exactly
+# Duration ~30012ms during a GitHub API brownout.
+#
+# This raises the header timeout for the woodpecker route alone to 180s (6 × the
+# 30s forge-call deadline), so a slow-but-successful config load returns the real
+# 200 instead of a masked 504. It does NOT help a full GitHub outage (repeated
+# 503s fail fast); that needs a retry on the one-shot trigger curl in the
+# terminal-lobby release workflow, which lives in another repo (see infra#109).
+# Same pattern as stacks/terminal (330s long-poll) and stacks/reverse-proxy.
+resource "kubernetes_manifest" "forge_slowfetch_transport" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "ServersTransport"
+    metadata = {
+      name      = "forge-slowfetch"
+      namespace = kubernetes_namespace.woodpecker.metadata[0].name
+    }
+    spec = {
+      forwardingTimeouts = {
+        responseHeaderTimeout = "180s"
+      }
+    }
+  }
+}
+
 module "ingress" {
   source = "../../modules/kubernetes/ingress_factory"
   # Forgejo webhooks + webhook_handler POSTs hit ci.viktorbarzin.me to trigger
@@ -398,7 +437,12 @@ module "ingress" {
     "gethomepage.dev/icon"         = "woodpecker-ci.png"
     "gethomepage.dev/group"        = "Development & CI"
     "gethomepage.dev/pod-selector" = ""
+    # infra#109: 180s header timeout for slow GitHub-forge config loads (see
+    # kubernetes_manifest.forge_slowfetch_transport above). Ref format is
+    # <namespace>-<name>@kubernetescrd.
+    "traefik.ingress.kubernetes.io/service.serverstransport" = "woodpecker-forge-slowfetch@kubernetescrd"
   }
+  depends_on = [kubernetes_manifest.forge_slowfetch_transport]
 }
 
 # CI retrigger 2026-05-16T13:42:57+00:00 — bulk enrollment apply (pipeline #689 killed)
