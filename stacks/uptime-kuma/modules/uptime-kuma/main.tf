@@ -777,6 +777,23 @@ locals {
       retry_interval              = 30
       max_retries                 = 3
     },
+    {
+      # Mladost 3 site router (OpenWrt) LuCI on its LAN address. The probe
+      # crosses pfSense and the site-to-site WireGuard tunnel, so a down
+      # tunnel and a down router both show here.
+      name                        = "Mladost 3 router (192.168.3.1)"
+      type                        = "port"
+      database_connection_string  = null
+      database_password_vault_key = null
+      hostname                    = "192.168.3.1"
+      port                        = 80
+      url                         = null
+      accepted_statuscodes        = null
+      ignore_tls                  = null
+      interval                    = 60
+      retry_interval              = 60
+      max_retries                 = 3
+    },
   ]
 }
 

@@ -258,6 +258,7 @@ resource "kubernetes_manifest" "middleware_home_lans_only" {
           "192.168.8.0/24", # London LAN (via WG tunnel)
           "192.168.9.0/24", # London GUEST net — the Portal Plus actually leases here (Portal-75AE8F9C2A8A = 192.168.9.198)
           "192.168.0.0/24", # Valchedrym LAN (via WG tunnel)
+          "192.168.3.0/24", # Mladost 3 LAN (via WG tunnel)
           "fc00::/7",
           "fe80::/10",
         ]

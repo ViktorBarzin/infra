@@ -38,7 +38,7 @@ $blank_key = array_key_exists('blank-key', $opts);
 $changes   = [];
 
 /* ── Desired state ──────────────────────────────────────────────────────────
- * Routes advertised to the tailnet. Sofia's three local subnets plus the three
+ * Routes advertised to the tailnet. Sofia's three local subnets plus the four
  * WireGuard-transited remote LANs. Deliberately NOT 10.0.0.0/8: a blanket /8
  * hijacks a client's own 10.x network (office / hotel / CGNAT), and swallows
  * the CCTV segment (10.0.30.0/24, ADR-0017), the k8s pod CIDR (10.10.0.0/16)
@@ -56,6 +56,7 @@ $DESIRED_ROUTES = [
     '192.168.0.0/24' => 'valchedrym (via wg)',
     '192.168.8.0/24' => 'london lan (via wg)',
     '192.168.9.0/24' => 'london guest (via wg)',
+    '192.168.3.0/24' => 'mladost3 lan (via wg)',
 ];
 
 $LOGIN_SERVER = 'https://headscale.viktorbarzin.me/';

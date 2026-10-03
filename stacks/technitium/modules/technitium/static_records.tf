@@ -68,10 +68,24 @@ locals {
   # lost to a reconcile. Declared here so the next rebuild keeps it. Without
   # it there is no way to drive the app on a real phone without going through
   # the Authentik SSO flow, which is what makes it worth a record.
+  #
+  # mladost3 / openwrt-mladost3: the Mladost 3 site router (OpenWrt WDR4300),
+  # by its WireGuard tunnel address and by its LAN address. The reverse-proxy
+  # ingress for mladost3.viktorbarzin.me targets mladost3.viktorbarzin.lan.
   static_lan_a_records = {
     "mbp-london"       = "192.168.8.168"
     "projector-london" = "192.168.9.100"
     "health-test"      = "10.0.20.203"
+    "mladost3"         = "10.3.2.7"
+    "openwrt-mladost3" = "192.168.3.1"
+  }
+
+  # IPv4 address => PTR target. The job creates the /24 reverse zone on the
+  # primary if it is missing (technitium-zone-sync then replicates it) and
+  # sets the PTR. 0.168.192.in-addr.arpa (Valchedrym) predates this and was
+  # made by hand.
+  static_ptr_records = {
+    "192.168.3.1" = "openwrt-mladost3.viktorbarzin.lan"
   }
 }
 
@@ -118,6 +132,11 @@ resource "kubernetes_cron_job_v1" "technitium_static_records" {
                   [for name, ip in local.static_lan_a_records : "viktorbarzin.lan ${name} ${ip}"],
                 ))
               }
+              # "<ip> <ptr target>" per line.
+              env {
+                name  = "PTRS"
+                value = join("\n", [for ip, target in local.static_ptr_records : "${ip} ${target}"])
+              }
               command = ["/bin/sh", "-c", <<-EOT
                 set -e
                 TECH_API="http://technitium-web:5380"
@@ -161,6 +180,23 @@ resource "kubernetes_cron_job_v1" "technitium_static_records" {
                     RC=1
                   fi
                 done < /tmp/records
+
+                printf '%s\n' "$$PTRS" > /tmp/ptrs
+                while read -r IP TARGET; do
+                  [ -z "$$IP" ] && continue
+                  REVZONE=$$(echo "$$IP" | awk -F. '{print $$3"."$$2"."$$1".in-addr.arpa"}')
+                  PTRNAME=$$(echo "$$IP" | awk -F. '{print $$4}').$$REVZONE
+                  # Creating an existing zone fails harmlessly; the PTR add below
+                  # is what decides success.
+                  curl -sf -G "$$TECH_API/api/zones/create" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$REVZONE" --data-urlencode "type=Primary" > /dev/null || true
+                  R=$$(curl -sf -G "$$TECH_API/api/zones/records/add" --data-urlencode "token=$$TOKEN" --data-urlencode "zone=$$REVZONE" --data-urlencode "domain=$$PTRNAME" --data-urlencode "type=PTR" --data-urlencode "ptrName=$$TARGET" --data-urlencode "overwrite=true" --data-urlencode "ttl=3600") || true
+                  if echo "$$R" | grep -q '"status":"ok"'; then
+                    echo "static-records: PTR $$PTRNAME -> $$TARGET"
+                  else
+                    echo "static-records: FAILED PTR $$PTRNAME -- $$R"
+                    RC=1
+                  fi
+                done < /tmp/ptrs
                 exit $$RC
               EOT
               ]

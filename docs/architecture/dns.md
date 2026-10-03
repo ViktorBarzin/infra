@@ -244,6 +244,7 @@ All three pods share the `dns-server=true` label, so the DNS LoadBalancer (10.0.
 | `1.168.192.in-addr.arpa` | Primary | PTR | Reverse DNS for LAN |
 | `2.3.10.in-addr.arpa` | Primary | PTR | Reverse DNS for VPN |
 | `0.168.192.in-addr.arpa` | Primary | PTR | Reverse DNS for Valchedrym site |
+| `3.168.192.in-addr.arpa` | Primary | PTR | Reverse DNS for Mladost 3 site (created and kept by `technitium-static-records`, `static_ptr_records`) |
 | `emrsn.org` | Primary (stub) | — | Returns NXDOMAIN locally (avoids 27K+ daily corporate query floods) |
 
 **Dynamic updates**: Enabled via `UseSpecifiedNetworkACL` from pfSense IPs (10.0.20.1, 10.0.10.1, 192.168.1.2) **AND require a valid TSIG signature** on `viktorbarzin.lan`, `10.0.10.in-addr.arpa`, `20.0.10.in-addr.arpa`, `1.168.192.in-addr.arpa`. Policy: `updateSecurityPolicies = [{tsigKeyName: "kea-ddns", domain: "*.<zone>", allowedTypes: ["ANY"]}]`. Unsigned updates from the allowlisted pfSense source IPs are refused ("Dynamic Updates Security Policy"). TSIG key `kea-ddns` (HMAC-SHA256) present on primary/secondary/tertiary; secret in Vault `secret/viktor/kea_ddns_tsig_secret`. Applied 2026-04-19 (WS E, bd `code-o6j`).
