@@ -321,7 +321,9 @@ outcome lets it through.
   (rule 911100), the allowed versions include HTTP/3 (920430; without it every
   HTTP/3 request was blocked on go-live), and three narrow path exclusions
   (Vaultwarden `/icons/`, Home Assistant `/api/camera_proxy`, Woodpecker's
-  signed webhook `ci.viktorbarzin.me/api/hook`). Fix a false
+  signed webhook `ci.viktorbarzin.me/api/hook`). Rule 931100 (a parameter
+  holding an `http://<IPv4>` URL) is off on every host: in 7 days only Music
+  Assistant's Home Assistant login sent one (2026-10-03). Fix a false
   positive with a path exclusion there, or exclude the host in `crs-hosts.tf`.
 - **Opt-out per host**: `appsecSkipHosts` on the `crowdsec` Middleware
   (`stacks/traefik/modules/traefik/middleware.tf`). Those hosts keep ban
