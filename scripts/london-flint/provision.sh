@@ -108,6 +108,9 @@ if [ "$(uci -q get system.@system[0].log_size)" != 8192 ]; then
 	uci set system.@system[0].log_size='8192'
 	uci commit system
 	/etc/init.d/log restart
+	# dnsmasq keeps writing to the old logd's socket after a log restart and
+	# the query log goes silent (seen 2026-10-03), so restart it too.
+	/etc/init.d/dnsmasq restart
 	echo "system log: 8 MB ring"
 else
 	echo "system log ring present"
