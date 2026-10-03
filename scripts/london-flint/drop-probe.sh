@@ -35,16 +35,19 @@
 # push time so the Loki ruler sees it; start and end are in the body.
 #
 # Syslog backfill (since 0.6.0). The remote-syslog forwarder (logread -f -r)
-# drops lines while the path to Sofia is down and never replays them, so a
-# tunnel outage left a hole in {job="syslog",host="flint-london"} exactly when
-# the router's own account of it mattered. Every check also asks Loki's /ready
-# over the tunnel; when it answers again after failing, the lines the RAM ring
-# holds for the outage window are pushed to Loki with their original
-# timestamps as {job="syslog",host="flint-london",source="backfill"}, plus one
-# summary line saying how many were sent and whether the ring still reached
-# back to the start of the outage. The ring is 8 MB (provision.sh), about one
-# to four hours of log, so longer outages lose their oldest lines. Nothing is
-# written to flash.
+# sends over TCP, so through a short tunnel outage TCP holds the lines and
+# retransmits them when the path returns (a 46 s simulated outage on
+# 2026-10-03 lost nothing). Lines are lost only when the connection dies,
+# after about 15 minutes of retransmits (tcp_retries2=15): logread then
+# reconnects ("Logread connected to ...") and never replays what it missed.
+# Every check also asks Loki's /ready over the tunnel. When it answers again
+# after failing, the probe waits for logread to settle and looks for a
+# reconnect since the outage began. If there was one, the ring's lines from
+# the start of the outage to the reconnect are pushed to Loki with their
+# original timestamps as {job="syslog",host="flint-london",source="backfill"}.
+# Either way one summary line records the outage and what was done. The ring
+# is 8 MB (provision.sh), about one to four hours of log, so a longer outage
+# loses its oldest lines. Nothing is written to flash.
 #
 # Source of truth: infra/scripts/london-flint/drop-probe.sh. Design:
 # infra/docs/plans/2026-09-27-london-flint-main-router.md.
@@ -86,8 +89,10 @@ LOKI_URL=https://$LOKI_HOST/loki/api/v1/push
 STATE=/tmp/drop-probe.state
 SNAP=/tmp/drop-probe.snapshot
 QUEUE=/root/drop-probe.queue
-# Backfill pushes this many log lines per Loki request.
+# Backfill pushes this many log lines per Loki request, after waiting this
+# many seconds for the forwarder to reconnect.
 BACKFILL_BATCH=500
+BACKFILL_SETTLE=${BACKFILL_SETTLE:-20}
 
 web_ok() {
 	[ "$(curl -sk --connect-timeout 1 -m 2 -o /dev/null -w '%{http_code}' "$1")" != 000 ]
@@ -104,15 +109,31 @@ link_ok() {
 # (5 s of margin each side) to Loki. Runs in the background so the checks keep
 # their cadence; the lock directory keeps it to one at a time.
 backfill() {
-	local from="$1" to="$2" lock=/tmp/drop-probe.backfill out=/tmp/drop-probe.backfill.json body
+	local from="$1" up="$2" to lock=/tmp/drop-probe.backfill out=/tmp/drop-probe.backfill.json body
 	mkdir "$lock" 2>/dev/null || return 0
+	# logread retries its connection on its own; give it time to come back.
+	sleep "$BACKFILL_SETTLE"
+	# The last forwarder reconnect since the outage began. None means the TCP
+	# connection survived and delivered every line, so only the summary goes.
+	to=$(logread -t | awk -v from="$from" '
+		match($0, /\[[0-9]+\./) && /Logread connected to/ {
+			t = substr($0, RSTART + 1, RLENGTH - 2) + 0
+			if (t >= from) last = t
+		}
+		END { print last }')
+	if [ -z "$to" ]; then
+		push_line "drop-probe backfill: path to Sofia was down from $from to $up (epoch s); the syslog connection survived, so nothing was lost or backfilled"
+		logger -t drop-probe "backfill $from-$up: syslog connection survived, nothing to backfill"
+		rm -rf "$lock"
+		return 0
+	fi
 	# logread -t adds "[epoch.ms]" after the date. Each output line is one Loki
 	# push body of up to BACKFILL_BATCH lines; the last one is the summary.
 	# Nanosecond stamps are built as strings (awk numbers are doubles and lose
 	# precision at 1e18) with a per-line counter so equal-millisecond lines stay
 	# distinct and ordered.
 	logread -t | awk -v from=$((from - 5)) -v to=$((to + 5)) -v batch="$BACKFILL_BATCH" \
-		-v ofrom="$from" -v oto="$to" '
+		-v ofrom="$from" -v oto="$to" -v up="$up" '
 		function esc(s) {
 			gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\t/, "\\t", s)
 			gsub(/[\001-\037]/, "", s); return s
@@ -127,13 +148,15 @@ backfill() {
 			if (t[1] + 0 < from || t[1] + 0 > to) next
 			seq++
 			ts = t[1] sprintf("%03d%06d", t[2], seq % 1000000)
-			vals = vals (n ? "," : "") "[\"" ts "\",\"" esc(substr($0, RSTART + RLENGTH)) "\"]"
+			# Separator first: busybox awk reads "name (" as a function call.
+			sep = n ? "," : ""
+			vals = vals sep "[\"" ts "\",\"" esc(substr($0, RSTART + RLENGTH)) "\"]"
 			sent++; last = ts
 			if (++n >= batch) flush()
 		}
 		END {
 			flush()
-			msg = "drop-probe backfill: path to Sofia was down from " ofrom " to " oto " (epoch s); pushed " sent " ring lines"
+			msg = "drop-probe backfill: path to Sofia was down from " ofrom " to " up " (epoch s); the syslog connection was re-established at " oto ", so pushed " sent " ring lines from the gap"
 			if (first != "" && ofrom + 0 > 1 && first + 0 > ofrom) msg = msg "; the ring starts at " first ", so lines from " ofrom " to " first " are lost"
 			sent += 0
 			if (last == "") last = oto "000000000"
@@ -143,7 +166,7 @@ backfill() {
 		curl -sk -m 10 -o /dev/null --resolve "$LOKI_HOST:443:$LOKI_IP" \
 			-H 'Content-Type: application/json' --data-binary "$body" "$LOKI_URL"
 	done <"$out"
-	logger -t drop-probe "backfill $from-$to: $(($(wc -l <"$out") - 1)) pushes"
+	logger -t drop-probe "backfill $from-$to (path back at $up): $(($(wc -l <"$out") - 1)) pushes"
 	rm -rf "$out" "$lock"
 }
 
@@ -236,6 +259,30 @@ flush_queue() {
 		[ "$code" = 204 ] || echo "$body" >>"$keep"
 	done <"$QUEUE"
 	if [ -s "$keep" ]; then mv "$keep" "$QUEUE"; else rm -f "$QUEUE" "$keep"; fi
+}
+
+# push_line <text>: one line into the backfill stream, stamped now.
+push_line() {
+	local body
+	json_init
+	json_add_array streams
+	json_add_object
+	json_add_object stream
+	json_add_string job syslog
+	json_add_string host flint-london
+	json_add_string source backfill
+	json_close_object
+	json_add_array values
+	json_add_array
+	json_add_string "" "$(date +%s)000000000"
+	json_add_string "" "$1"
+	json_close_array
+	json_close_array
+	json_close_object
+	json_close_array
+	body=$(json_dump)
+	curl -sk -m 5 -o /dev/null --resolve "$LOKI_HOST:443:$LOKI_IP" \
+		-H 'Content-Type: application/json' --data-binary "$body" "$LOKI_URL"
 }
 
 # One Loki line with the neighbour tables and DHCP leases. Best effort: a
