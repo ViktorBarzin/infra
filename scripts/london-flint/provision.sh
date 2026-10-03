@@ -19,7 +19,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROUTER=${ROUTER:-root@10.3.2.6}
 SSH_OPTS=${SSH_OPTS:-}
-PROBE_VERSION=0.5.1
+PROBE_VERSION=0.6.0
 # The wifi collector is left out on purpose: the MediaTek iwinfo backend has
 # no noise, quality or bitrate, so it exports nothing useful.
 EXPORTER_PKGS="prometheus-node-exporter-lua prometheus-node-exporter-lua-wifi_stations prometheus-node-exporter-lua-netstat prometheus-node-exporter-lua-openwrt"
@@ -99,6 +99,19 @@ if [ "$changed" = 1 ]; then
 else
 	echo "dnsmasq settings present"
 fi
+
+# System log: an 8 MB ring in RAM (was 512 KB, which the DNS query log filled
+# in 3 to 14 minutes). The drop probe backfills tunnel outages from this ring,
+# so its size is how long an outage can be and still arrive in Loki whole.
+# Never log_file: that would write to flash (Viktor, 2026-09-28).
+if [ "$(uci -q get system.@system[0].log_size)" != 8192 ]; then
+	uci set system.@system[0].log_size='8192'
+	uci commit system
+	/etc/init.d/log restart
+	echo "system log: 8 MB ring"
+else
+	echo "system log ring present"
+fi
 EOF
 
 # Verify from this side of the tunnel, the same path Prometheus uses.
@@ -106,5 +119,8 @@ metrics=$(curl -s -m 10 http://10.3.2.6:9100/metrics | grep -c '^node_' || true)
 # shellcheck disable=SC2086
 probe=$(ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'pgrep -f /usr/bin/london-drop-probe >/dev/null && echo running || echo stopped')
 echo "node exporter: $metrics node_* series over the tunnel"
+# shellcheck disable=SC2086
+ring=$(ssh -o BatchMode=yes $SSH_OPTS "$ROUTER" 'ps w | sed -n "s|.*/sbin/logd -S \([0-9]*\).*|\1|p"')
 echo "drop probe: $probe"
-[ "$metrics" -gt 0 ] && [ "$probe" = running ]
+echo "log ring: ${ring} KB"
+[ "$metrics" -gt 0 ] && [ "$probe" = running ] && [ "$ring" = 8192 ]

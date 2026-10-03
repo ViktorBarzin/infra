@@ -34,6 +34,18 @@
 # retrying on later runs until Loki accepts it. The line is stamped with the
 # push time so the Loki ruler sees it; start and end are in the body.
 #
+# Syslog backfill (since 0.6.0). The remote-syslog forwarder (logread -f -r)
+# drops lines while the path to Sofia is down and never replays them, so a
+# tunnel outage left a hole in {job="syslog",host="flint-london"} exactly when
+# the router's own account of it mattered. Every check also asks Loki's /ready
+# over the tunnel; when it answers again after failing, the lines the RAM ring
+# holds for the outage window are pushed to Loki with their original
+# timestamps as {job="syslog",host="flint-london",source="backfill"}, plus one
+# summary line saying how many were sent and whether the ring still reached
+# back to the start of the outage. The ring is 8 MB (provision.sh), about one
+# to four hours of log, so longer outages lose their oldest lines. Nothing is
+# written to flash.
+#
 # Source of truth: infra/scripts/london-flint/drop-probe.sh. Design:
 # infra/docs/plans/2026-09-27-london-flint-main-router.md.
 
@@ -74,9 +86,65 @@ LOKI_URL=https://$LOKI_HOST/loki/api/v1/push
 STATE=/tmp/drop-probe.state
 SNAP=/tmp/drop-probe.snapshot
 QUEUE=/root/drop-probe.queue
+# Backfill pushes this many log lines per Loki request.
+BACKFILL_BATCH=500
 
 web_ok() {
 	[ "$(curl -sk --connect-timeout 1 -m 2 -o /dev/null -w '%{http_code}' "$1")" != 000 ]
+}
+
+# 0 when Loki answers over the tunnel, the path the syslog forwarder and every
+# push take.
+link_ok() {
+	[ "$(curl -sk --connect-timeout 1 -m 2 -o /dev/null -w '%{http_code}' \
+		--resolve "$LOKI_HOST:443:$LOKI_IP" "https://$LOKI_HOST/ready")" = 200 ]
+}
+
+# backfill <from> <to>: push the ring's lines stamped between the two epochs
+# (5 s of margin each side) to Loki. Runs in the background so the checks keep
+# their cadence; the lock directory keeps it to one at a time.
+backfill() {
+	local from="$1" to="$2" lock=/tmp/drop-probe.backfill out=/tmp/drop-probe.backfill.json body
+	mkdir "$lock" 2>/dev/null || return 0
+	# logread -t adds "[epoch.ms]" after the date. Each output line is one Loki
+	# push body of up to BACKFILL_BATCH lines; the last one is the summary.
+	# Nanosecond stamps are built as strings (awk numbers are doubles and lose
+	# precision at 1e18) with a per-line counter so equal-millisecond lines stay
+	# distinct and ordered.
+	logread -t | awk -v from=$((from - 5)) -v to=$((to + 5)) -v batch="$BACKFILL_BATCH" \
+		-v ofrom="$from" -v oto="$to" '
+		function esc(s) {
+			gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\t/, "\\t", s)
+			gsub(/[\001-\037]/, "", s); return s
+		}
+		function head() {
+			return "{\"streams\":[{\"stream\":{\"job\":\"syslog\",\"host\":\"flint-london\",\"source\":\"backfill\"},\"values\":["
+		}
+		function flush() { if (n > 0) print head() vals "]}]}"; vals = ""; n = 0 }
+		match($0, /\[[0-9]+\.[0-9]+\] /) {
+			split(substr($0, RSTART + 1, RLENGTH - 3), t, ".")
+			if (first == "") first = t[1]
+			if (t[1] + 0 < from || t[1] + 0 > to) next
+			seq++
+			ts = t[1] sprintf("%03d%06d", t[2], seq % 1000000)
+			vals = vals (n ? "," : "") "[\"" ts "\",\"" esc(substr($0, RSTART + RLENGTH)) "\"]"
+			sent++; last = ts
+			if (++n >= batch) flush()
+		}
+		END {
+			flush()
+			msg = "drop-probe backfill: path to Sofia was down from " ofrom " to " oto " (epoch s); pushed " sent " ring lines"
+			if (first != "" && ofrom + 0 > 1 && first + 0 > ofrom) msg = msg "; the ring starts at " first ", so lines from " ofrom " to " first " are lost"
+			sent += 0
+			if (last == "") last = oto "000000000"
+			print head() "[\"" last "\",\"" msg "\"]]}]}"
+		}' >"$out"
+	while IFS= read -r body; do
+		curl -sk -m 10 -o /dev/null --resolve "$LOKI_HOST:443:$LOKI_IP" \
+			-H 'Content-Type: application/json' --data-binary "$body" "$LOKI_URL"
+	done <"$out"
+	logger -t drop-probe "backfill $from-$to: $(($(wc -l <"$out") - 1)) pushes"
+	rm -rf "$out" "$lock"
 }
 
 is_dns() { [ "$1" = dns ] || [ "$1" = rehearsal-dns ]; }
@@ -97,13 +165,14 @@ gateway() { ip -4 route show default table main | awk '/default/ {print $3; exit
 load_state() {
 	first_fail=0; dns_first_fail=0; start=0; layer=""; last_dns=0
 	v6_first_fail=0; v6_start=0; last_neigh=0
+	link_ok_at=0; link_down_from=0
 	[ -f "$STATE" ] && . "$STATE"
 }
 
 save_state() {
-	printf 'first_fail=%s\ndns_first_fail=%s\nstart=%s\nlayer=%s\nlast_dns=%s\nv6_first_fail=%s\nv6_start=%s\nlast_neigh=%s\n' \
+	printf 'first_fail=%s\ndns_first_fail=%s\nstart=%s\nlayer=%s\nlast_dns=%s\nv6_first_fail=%s\nv6_start=%s\nlast_neigh=%s\nlink_ok_at=%s\nlink_down_from=%s\n' \
 		"$first_fail" "$dns_first_fail" "$start" "$layer" "$last_dns" \
-		"$v6_first_fail" "$v6_start" "$last_neigh" >"$STATE"
+		"$v6_first_fail" "$v6_start" "$last_neigh" "$link_ok_at" "$link_down_from" >"$STATE"
 }
 
 snapshot() {
@@ -220,13 +289,33 @@ check_v6() {
 	v6_first_fail=0
 }
 
+# The path to Sofia: remember when it was last up, and when it comes back
+# after failing, backfill the syslog lines from the gap. A path that was
+# already down when the probe started backfills from the start of the ring.
+link_check() {
+	local now="$1" ok="$2"
+	if [ "$ok" = 0 ]; then
+		if [ "$link_down_from" != 0 ]; then
+			backfill "$link_down_from" "$now" &
+			link_down_from=0
+		fi
+		link_ok_at=$now
+	elif [ "$link_down_from" = 0 ]; then
+		link_down_from=$link_ok_at
+		[ "$link_down_from" = 0 ] && link_down_from=1
+	fi
+}
+
 tick() {
-	local now p1 p2 r1 r2
+	local now p1 p2 pl r1 r2 rl
 	now=$(date +%s)
 	web_ok "$PUBLIC1" & p1=$!
 	web_ok "$PUBLIC2" & p2=$!
+	link_ok & pl=$!
 	wait $p1; r1=$?
 	wait $p2; r2=$?
+	wait $pl; rl=$?
+	link_check "$now" "$rl"
 
 	if [ "$r1" != 0 ] && [ "$r2" != 0 ]; then
 		[ "$first_fail" = 0 ] && first_fail=$now
