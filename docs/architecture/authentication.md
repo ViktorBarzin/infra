@@ -71,8 +71,10 @@ When `auth = "required"`, an unauthenticated request flows:
 3. Authentik checks for valid session cookie (domain-level `authentik_proxy_*` cookie on `.viktorbarzin.me`, 4-week validity — one cookie covers all forward-auth apps)
 4. If missing/invalid, redirects to Authentik login page (authentik.viktorbarzin.me)
 5. User authenticates on a **single screen**: username + password together (the identification stage embeds the password stage), or a social provider button (Google/GitHub/Facebook), then MFA validation
-6. Authentik creates session, sets cookie, redirects back to original URL
+6. Authentik creates session, sets cookie, redirects back to original URL. The outpost rebuilds that URL from the `X-Forwarded-Proto`, `-Host` and `-Uri` headers Traefik sends, and `auth-proxy` passes Traefik's scheme through. Before 2026-10-03 it sent its own `http` instead, so every post-login redirect went to `http://<host>/`. A browser tab follows the 301 to https and the hop goes unnoticed. An installed iOS web app opens out-of-scope pages in a sheet and hands the sheet back to the app when a redirect lands inside the app's scope, which `http://` is not. On 2026-10-03 the health PWA signed in inside the sheet and then stayed there, running the app. Installed PWAs need this redirect to be `https`.
 7. Subsequent requests include session cookie, pass auth check, reach backend
+
+An installable app behind forward-auth also needs its icons and web manifest carved out with `auth = "none"`, because OS icon fetchers (iOS Add to Home Screen, macOS Add to Dock, Android install) send no session cookie and otherwise receive the login page. `module.ingress_icons` in `stacks/health` is the reference: it sets `traefik.ingress.kubernetes.io/router.pathmatcher = "Path"` so each listed file is an exact match (Traefik's default for an Ingress path is a string prefix, so `/apple-touch-icon.pngX` would otherwise skip Authentik too), and it attaches `traefik-strip-auth-headers` so a client cannot send its own `X-authentik-*` identity to the app. `stacks/tasks` has the same carve-out without those two settings. Each carve-out has an entry in the walling-off probe.
 
 Authentik adds authentication headers (user, email, groups) to forwarded requests. These headers are stripped before reaching the backend to prevent confusion.
 
