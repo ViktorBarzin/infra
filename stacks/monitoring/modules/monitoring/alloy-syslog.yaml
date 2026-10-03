@@ -70,7 +70,7 @@ alloy:
           source_labels = ["__syslog_message_hostname"]
           regex         = "openwrt-mladost3"
           target_label  = "host"
-          replacement   = "mladost3"
+          replacement   = "mladost3-openwrt"
         }
       }
       loki.write "default" {

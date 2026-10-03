@@ -7794,12 +7794,12 @@ extraScrapeConfigs: |
     static_configs:
       - targets: ["192.168.3.1:9100"]
         labels:
-          node: 'mladost3'
+          node: 'mladost3-openwrt'
     metrics_path: '/metrics'
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
-        replacement: 'mladost3'
+        replacement: 'mladost3-openwrt'
   - job_name: 'mladost3-icmp'
     scrape_interval: 30s
     scrape_timeout: 10s
