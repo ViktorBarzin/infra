@@ -406,6 +406,36 @@ locals {
           evt.Parsed.traefik_router_name contains "nextcloud-viktorbarzin-me" &&
           evt.Parsed.request startsWith "/index.php/core/preview"
     ---
+    name: viktor/terminal-authed-whitelist
+    description: "Terminal Lobby backends only answer a logged-in user, so their 404s are not probing"
+    # The four IngressRoutes in stacks/terminal that reach the lobby's own
+    # backends (session-events, file-api, skills-api, tmux-api) all run
+    # authentik-forward-auth and then tl-proxy-secret before the backend.
+    # A request without an Authentik session is answered by the forward-auth
+    # middleware and never reaches the backend, so it is logged with
+    # OriginStatus 0 and stays scored. A non-zero OriginStatus on these
+    # routers means a logged-in user's own page made the request.
+    #
+    # On 2026-10-03 at 15:11 UTC Viktor's phone (148.252.140.64, Vodafone UK)
+    # was banned by crowdsecurity/http-probing: the text view asked for 34
+    # transcript pictures that session-events could not find, about 12 times
+    # each in seven seconds, which made 421 distinct-path 404s on
+    # /result/<session>/<toolId>/image/0. The pictures sat in a subagent's
+    # transcript, which the picture route did not read at the time.
+    #
+    # Router names come from the live access log (terminal-session-events-
+    # 136d9220e8254f339cf9@kubernetescrd); the suffix is a hash of the route,
+    # so the match is on the prefix.
+    whitelist:
+      reason: "Authentik-gated Terminal Lobby backend answered, so the client is a logged-in user"
+      expression:
+        - >
+          (evt.Parsed.traefik_router_name startsWith "terminal-session-events-" ||
+           evt.Parsed.traefik_router_name startsWith "terminal-file-api-" ||
+           evt.Parsed.traefik_router_name startsWith "terminal-skills-api-" ||
+           evt.Parsed.traefik_router_name startsWith "terminal-tmux-api-") &&
+          (evt.Unmarshaled.traefik?.OriginStatus ?? 0) != 0
+    ---
     name: viktor/bouncer-refusals-whitelist
     description: "Don't score the 403s our own Traefik bouncer returns"
     # A request the bouncer refuses is logged by Traefik like any other 403,

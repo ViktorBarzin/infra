@@ -443,6 +443,13 @@ the account name `admin` in the path and otherwise trip
 `crowdsecurity/http-admin-interface-probing`, banning the client's shared egress
 IP; 2026-07-19; plus `/index.php/core/preview`, where a thumbnail burst of 404s
 tripped `crowdsecurity/http-probing` on 2026-09-27).
+`viktor/terminal-authed-whitelist` drops any response the Terminal Lobby
+backends (the `terminal-session-events-`, `-file-api-`, `-skills-api-` and
+`-tmux-api-` routers) actually returned. Those routes run Authentik
+forward-auth first, so a backend answer means a logged-in user; a request
+Authentik turns away has `OriginStatus` 0 and is still scored. Added
+2026-10-03 after the text view's 421 picture 404s in seven seconds tripped
+`crowdsecurity/http-probing` on Viktor's phone.
 `viktor/bouncer-refusals-whitelist` drops the 403s the Traefik bouncer returns
 itself (`OriginStatus` 0 in the access log), so a banned client's retries
 cannot renew its own ban; before it, one false positive stacked 24 decisions
