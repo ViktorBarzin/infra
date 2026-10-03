@@ -339,6 +339,18 @@ alertmanager:
           - alertname =~ "WANGatewayUnreachable|InternetEgressDown|PfSenseVMDown"
         target_matchers:
           - alertname = LondonTunnelDown
+      # Mladost 3 (2026-10-03): same shape as London. The router is reachable
+      # only through its tunnel, and Sofia's own egress going down looks the
+      # same from here.
+      - source_matchers:
+          - alertname = Mladost3TunnelDown
+        target_matchers:
+          - alertname = ScrapeTargetDown
+          - job = mladost3-router
+      - source_matchers:
+          - alertname =~ "WANGatewayUnreachable|InternetEgressDown|PfSenseVMDown"
+        target_matchers:
+          - alertname = Mladost3TunnelDown
       - source_matchers:
           - alertname = DevvmDown
         target_matchers:
@@ -6610,6 +6622,18 @@ serverFiles:
             annotations:
               summary: "London Flint unreachable over the site-to-site tunnel (>10m)"
               description: "Blackbox ICMP from the cluster to 10.3.2.6 has failed for >10m. Either London's internet is down (the Flint's probe reports the drop once it returns), the WireGuard tunnel is stuck (toggle GL -> VPN -> WireGuard Client), or the Flint is off. Design: docs/plans/2026-09-27-london-flint-main-router.md; settings: docs/architecture/london-site.md."
+      - name: Mladost 3 site
+        rules:
+          - alert: Mladost3TunnelDown
+            # ICMP from the cluster to the Mladost 3 router's tunnel address.
+            expr: probe_success{job="mladost3-icmp"} == 0
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: mladost3
+            annotations:
+              summary: "Mladost 3 router unreachable over the site-to-site tunnel (>10m)"
+              description: "Blackbox ICMP from the cluster to 10.3.2.7 has failed for >10m. Either Mladost 3's internet is down, the router is off, or its WireGuard peer is not handshaking with pfSense (check `wg show tun_wg0` on pfSense for peer GONv96...). The router dials vpn.viktorbarzin.me:51821 itself, so a changed Mladost IP needs no action. Settings: docs/architecture/vpn.md (WireGuard, Mladost 3); design: docs/plans/2026-10-03-mladost3-site-design.md."
       - name: Egress / pfSense
         rules:
           - alert: WANGatewayUnreachable
@@ -7757,6 +7781,33 @@ extraScrapeConfigs: |
       module: [icmp_egress]
     static_configs:
       - targets: ["10.3.2.6"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter.monitoring.svc.cluster.local:9115'
+  # Mladost 3 site router (OpenWrt, prometheus-node-exporter-lua bound to its
+  # LAN address), reached over the site-to-site tunnel.
+  - job_name: 'mladost3-router'
+    static_configs:
+      - targets: ["192.168.3.1:9100"]
+        labels:
+          node: 'mladost3'
+    metrics_path: '/metrics'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'mladost3'
+  - job_name: 'mladost3-icmp'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /probe
+    params:
+      module: [icmp_egress]
+    static_configs:
+      - targets: ["10.3.2.7"]
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
