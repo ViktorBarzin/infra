@@ -374,11 +374,11 @@ dns_config:
 
 ### WireGuard (Mladost 3 — OpenWRT)
 
-- Router: TP-Link TL-WDR4300 v1, OpenWrt 25.12 with a USB extroot for packages. It was the Sofia edge router before the TP-Link AX6000; the AX6000's cloned WAN MAC `10:fe:ed:9b:7d:3e` comes from it.
+- Router: TP-Link TL-WDR4300 v1, OpenWrt 23.05.0 (userland packages at the final 23.05 builds, kernel 5.15.134) with a USB extroot for packages. Kept on 23.05 by decision (2026-10-03): a sysupgrade would mean rebuilding the extroot, and nothing listens on the WAN side. Its Sofia-era config was reset to stock and backed up on the router at `/root/config-backup-sofia-era-20261003/`. It was the Sofia edge router before the TP-Link AX6000; the AX6000's cloned WAN MAC `10:fe:ed:9b:7d:3e` comes from it.
 - WireGuard IP: `10.3.2.7`, interface `wg0`, peer `vpn.viktorbarzin.me:51821`, keepalive 25s
 - Allowed IPs: `10.0.0.0/8, 192.168.1.0/24, 192.168.8.0/24, 192.168.9.0/24` with `route_allowed_ips=1`. The site's own `192.168.3.0/24` stays out of this list, because routing it into the tunnel cuts the router off from its own LAN (the 2026-04-12 Valchedrym fix). Internet traffic stays on the local ISP.
 - LAN: `192.168.3.0/24`, router `192.168.3.1`. WAN: DHCP with the previous D-Link's MAC `00:18:F3:68:52:92` cloned.
-- Firewall: `lan → vpn` and `vpn → lan` forwarding, `vpn` zone masquerades. SSH (key only) and LuCI answer on the LAN and tunnel addresses for `10.0.0.0/8` sources.
+- Firewall: `lan → vpn` and `vpn → lan` forwarding, `vpn` zone masquerades (Sofia LAN hosts default-route to the TP-Link, which routes 10/8 back to pfSense but not 192.168.3.0/24). SSH (key only) and LuCI answer on the LAN and tunnel addresses for `10.0.0.0/8` sources. uhttpd serves plain HTTP on :80 with `redirect_https=0`, so the reverse-proxy ingress can reach it.
 - DNS: dnsmasq forwards to `9.9.9.9` / `8.8.4.4`, with `rebind_domain viktorbarzin.me` so internal names (A = 10.0.20.203) resolve, as on Valchedrym.
 - Names: `mladost3.viktorbarzin.lan` = 10.3.2.7, `openwrt-mladost3.viktorbarzin.lan` = 192.168.3.1 (PTR in `3.168.192.in-addr.arpa`), all declared in `stacks/technitium/modules/technitium/static_records.tf`. LuCI is public at `mladost3.viktorbarzin.me` behind Authentik.
 - Credentials: root SSH by key; LuCI root password in Vaultwarden `mladost3.viktorbarzin.me`.
