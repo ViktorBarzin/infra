@@ -1,6 +1,6 @@
 # Mladost 3 site: OpenWrt router on the WireGuard hub
 
-Status: executing. Staged in Sofia; the ship step and cutover are pending.
+Status: executing. Ready to ship: the router runs the Mladost settings and its tunnel already connects through the public endpoint. Cutover at Mladost is pending.
 
 ## Goal
 
@@ -36,7 +36,9 @@ flowchart TD
 | Management | SSH by key only and LuCI, on the LAN and tunnel addresses, from 10.0.0.0/8. LuCI root password in Vaultwarden `mladost3.viktorbarzin.me`. |
 | DNS | dnsmasq forwards to 9.9.9.9 / 8.8.4.4 with `rebind_domain viktorbarzin.me`. Technitium: `mladost3.viktorbarzin.lan` = 10.3.2.7, `mladost3-openwrt.viktorbarzin.lan` = 192.168.3.1, PTR in `3.168.192.in-addr.arpa`. |
 | Web UI | `mladost3.viktorbarzin.me` proxies LuCI over the tunnel, public behind Authentik like Valchedrym. |
-| Monitoring | Uptime Kuma port monitor on 192.168.3.1:80. |
+| Monitoring | Loki `{job="syslog", host="mladost3-openwrt"}` (syslog over TCP to the in-cluster listener), Prometheus jobs `mladost3-router` (node exporter) and `mladost3-icmp`, alert `Mladost3TunnelDown` after 10 minutes, Uptime Kuma port monitor on 192.168.3.1:80. |
+| Name | `mladost3-openwrt` everywhere: hostname, DNS, Loki, Prometheus, Uptime Kuma. `mladost3` is the site. |
+| Backup | Final config in Nextcloud as `backup-mladost3-openwrt-2026-10-03.tar.gz`. |
 
 ## Where each piece lives
 
@@ -63,7 +65,7 @@ flowchart TD
   F --> G["Verify remotely; retire the D-Link"]
 ```
 
-Steps A to D are done. During staging the tunnel goes to pfSense's LAN leg, and 192.168.1.0/24 stays out of the tunnel, because the router's WAN sits inside that subnet. The ship step runs right before the router leaves Sofia. It changes the WAN MAC, which also ends the temporary link-local SSH path, so after it the router is managed only over the tunnel.
+Steps A to E are done. The ship step went on before the router left the Sofia LAN, and on its next boot the tunnel connected through `vpn.viktorbarzin.me` (via the Archer's NAT loopback), so the public path is proven. During staging the tunnel goes to pfSense's LAN leg, and 192.168.1.0/24 stays out of the tunnel, because the router's WAN sits inside that subnet. The ship step runs right before the router leaves Sofia. It changes the WAN MAC, which also ends the temporary link-local SSH path, so after it the router is managed only over the tunnel.
 
 > [!NOTE]
 > Fallback at cutover: plugging the D-Link back in restores Mladost exactly as before. It stays as a spare until the new router has run for a while.
@@ -77,8 +79,14 @@ Steps A to D are done. During staging the tunnel goes to pfSense's LAN leg, and 
 - Technitium answers the A and PTR records; pfSense advertises 192.168.3.0/24 to the tailnet, approved.
 - Uptime Kuma monitor is up.
 
+## What we learned on the way
+
+- **Extroot boot race.** The USB stick enumerates about 12 s after power-on, but extroot gave up after a 5 s wait, so some boots fell back to the internal flash and its 2024 Sofia-era config (old password, no LuCI, no devvm key). `delay_root` is now 30 in both `fstab` copies.
+- **Stick integrity.** After an upgrade and reboot, one file on the stick (`hostapd.sh`) came back with garbage in it, which took WiFi down until its package was reinstalled. A read test of all 3,900 MB, a fake-capacity check and `e2fsck -n` found nothing, and a 2.94 GB write completed; the readback comparison was stopped by decision. Every power pull costs an ext4 journal recovery, so the router is shut down with `halt`.
+- **Cleanup.** Sofia-era packages (DDNS, OpenVPN, Tailscale) and leftover configs were removed, userland upgraded within 23.05, and three extra dropbear instances (one allowing passwords on the LAN) deleted.
+
 ## Open questions
 
-- The public endpoint path (Mladost's ISP to `vpn.viktorbarzin.me:51821`) is proven only once the router is at Mladost.
+- Whether Mladost's ISP needs the cloned D-Link MAC is unknown; the router uses it either way.
 - No WiFi client has joined the new network yet; the LAN behaviour was tested from the router itself.
 - A logged-in view of `mladost3.viktorbarzin.me` through Authentik has not been checked, since it needs Viktor's session.
