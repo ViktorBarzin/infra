@@ -206,8 +206,8 @@
     #   port  where its socket listens (the stack's Endpoints point here)
     #
     # Its proxy secret is Vault secret/agentmd -> proxy_secret_<name>.
-    devvm_agentmd_version: v0.1.2
-    devvm_agentmd_sha256: c7dd55be02e8fc70407954ee5a3bfce2f12195183f20a1c70f7cbdae56483942
+    devvm_agentmd_version: v0.1.3
+    devvm_agentmd_sha256: e39e910fd02b2e0f946482f81a80ee7352ee3073870a83995e5ba47ac1de6dc7
     devvm_agentmd_users:
       - name: wizard
         port: 7390
