@@ -12,7 +12,7 @@ offers itself as an exit node.
 | Tailnet address | `100.64.0.9` (Headscale node ID 10, name `pfsense`) |
 | Tags | `tag:infra` (owned by `group:admin`) — drives `autoApprovers` |
 | Node expiry | **None.** Pre-auth-key registration; do not "fix" this with OIDC login |
-| Advertised routes | `192.168.1.0/24`, `10.0.10.0/24`, `10.0.20.0/24`, `192.168.0.0/24`, `192.168.8.0/24`, `192.168.9.0/24` + exit node |
+| Advertised routes | `192.168.1.0/24`, `10.0.10.0/24`, `10.0.20.0/24`, `192.168.0.0/24`, `192.168.8.0/24`, `192.168.9.0/24`, `192.168.3.0/24` (Mladost 3, since 2026-10-03) + exit node |
 | Client DNS for `.lan` | Technitium **`10.0.20.201`** (NOT `.200` — nothing listens there) |
 | Reproducer | `playbooks/pfsense-tailscale.yml` + `playbooks/files/pfsense-tailscale-config.php` |
 | Policy source of truth | `stacks/headscale/acl.hujson` (**git-crypt**, main checkout only) |
@@ -82,7 +82,7 @@ Expected `rc.conf.d` contents — this file, not the GUI, is what survives a reb
 ```
 pfsense_tailscaled_acceptdns_enable="NO"
 pfsense_tailscaled_acceptroutes_enable="NO"
-pfsense_tailscaled_advertiseroutes="192.168.1.0/24,10.0.10.0/24,10.0.20.0/24,192.168.0.0/24,192.168.8.0/24,192.168.9.0/24"
+pfsense_tailscaled_advertiseroutes="192.168.1.0/24,10.0.10.0/24,10.0.20.0/24,192.168.0.0/24,192.168.8.0/24,192.168.9.0/24,192.168.3.0/24"
 pfsense_tailscaled_authkey=""
 pfsense_tailscaled_loginserver="https://headscale.viktorbarzin.me/"
 pfsense_tailscaled_exitnode_enable="YES"
