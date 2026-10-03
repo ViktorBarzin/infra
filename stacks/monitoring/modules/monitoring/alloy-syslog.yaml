@@ -1,7 +1,7 @@
 # Syslog listener for devices outside the cluster (the London Flint 2 today).
 # One replica behind a dedicated MetalLB IP, separate from the log-shipping
 # DaemonSet so a DaemonSet roll never interrupts syslog. OpenWrt logd sends
-# RFC3164 over UDP. Design: docs/plans/2026-09-27-london-flint-main-router.md.
+# RFC3164 over TCP (UDP lost most lines, 2026-09-28). Design: docs/plans/2026-09-27-london-flint-main-router.md.
 crds:
   create: false
 rbac:
@@ -44,7 +44,24 @@ alloy:
           syslog_format = "rfc3164"
           labels        = { job = "syslog", host = "flint-london" }
         }
-        forward_to = [loki.write.default.receiver]
+        forward_to    = [loki.write.default.receiver]
+        relabel_rules = loki.relabel.syslog.rules
+      }
+      // Keep the program name and severity the listener parses out of each
+      // line, which are otherwise dropped with the other __ labels: without
+      // them the router's kernel and Wi-Fi lines could only be told apart from
+      // ~70k DNS query lines an hour by regex. Both sets are small (a few
+      // dozen programs, eight severities). Added 2026-10-03.
+      loki.relabel "syslog" {
+        forward_to = []
+        rule {
+          source_labels = ["__syslog_message_app_name"]
+          target_label  = "app"
+        }
+        rule {
+          source_labels = ["__syslog_message_severity"]
+          target_label  = "level"
+        }
       }
       loki.write "default" {
         endpoint {
