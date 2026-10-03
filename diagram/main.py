@@ -136,9 +136,10 @@ def valchedrym():
 
 def mladost3():
     with Cluster("Mladost 3"):
-        _, tp_link = border_router("Mladost 3 Router    ")
+        _, openwrt = border_router("Mladost 3 OpenWRT",
+                                   include_vpn_client=True)
         laptop = Windows()
-        tp_link >> laptop
+        openwrt >> laptop
 
 
 def outer_infra():

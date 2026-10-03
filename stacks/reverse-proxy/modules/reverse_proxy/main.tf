@@ -225,18 +225,18 @@ module "valchedrym" {
 # }
 
 # https://mladost3.viktorbarzin.me/
+# LuCI on the Mladost 3 site router, reached over its WireGuard tunnel
+# (mladost3.viktorbarzin.lan = 10.3.2.7). Public behind Authentik, same shape
+# as valchedrym above.
 module "mladost3" {
-  source        = "./factory"
-  name          = "mladost3"
-  external_name = "mladost3.ddns.net"
-  port          = 8080
-  # Internal-only: shadows the * wildcard CNAME (2026-07-09) — without an
-  # explicit record this name would resolve via Cloudflare and go public.
-  dns_type          = "internal"
-  extra_middlewares = ["traefik-home-lans-only@kubernetescrd"]
+  source            = "./factory"
+  dns_type          = "proxied"
+  name              = "mladost3"
+  external_name     = "mladost3.viktorbarzin.lan"
   tls_secret_name   = var.tls_secret_name
+  port              = 80
+  backend_protocol  = "HTTP"
   depends_on        = [kubernetes_namespace.reverse-proxy]
-  external_monitor  = false
   extra_annotations = { "gethomepage.dev/enabled" = "false" }
 }
 

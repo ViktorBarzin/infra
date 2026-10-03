@@ -197,6 +197,16 @@ _Avoid_: equating "service identity" with a workload's **ServiceAccount** (that'
 Calico 3.30's OSS flow-observability pair — **Goldmane** aggregates identity-stamped flows (namespace/pod/workload/labels + allow-deny + policy trace) streamed from Felix over gRPC into an in-memory ~60-min ring buffer (no etcd/API writes); **Whisker** is its live web UI. The east-west "who-talks-to-whom" data plane, succeeding raw iptables-`LOG`→journald lines (which carry no identity). The in-memory buffer alone is not an audit trail — durable history is the **`goldmane-edge-aggregator`** (the implemented trail; ADR-0014 originally framed this as a Loki emitter), which streams Goldmane's gRPC `Flows.Stream` over mTLS and upserts the namespace-pair **edge set** into CNPG DB `goldmane_edges` + a daily `#alerts` digest (the `#security` channel was abandoned 2026-06-25). As-built: `docs/runbooks/goldmane-flow-trail.md`.
 _Avoid_: assuming Goldmane persists (it's a ring buffer — lost on restart); expecting a ServiceAccount field in its schema (it carries labels, not SA); confusing it with Cilium **Hubble** (needs the Cilium datapath, unusable on Calico) or **Kiali** (needs an Istio mesh).
 
+### Sites
+
+**Site**:
+A physical location whose network joins the homelab through its own router on the site-to-site WireGuard tunnel to pfSense in Sofia. Sofia is the hub; London, Valchedrym and Mladost 3 are spokes. A site has a LAN subnet that is unique across all sites, so every site can route to every other through the hub. Roaming devices and single-host peers (mx2) are not sites.
+_Avoid_: "branch", "remote office"; calling a roaming WireGuard or tailnet client a site.
+
+**Mladost 3 site**:
+The network at the flat in Mladost 3, Sofia (code name `mladost3`): one OpenWrt router serving `192.168.3.0/24` on its own ISP line, reaching the hub over the tunnel. It replaced a stock D-Link router in Oct 2026, and the router was the Sofia edge router before that. `mladost3.viktorbarzin.me` is that router's admin UI.
+_Avoid_: "Mladost" alone (Mladost 1-4 are different districts); using `mladost3` for the D-Link it replaced.
+
 ### London site
 
 **London site**:

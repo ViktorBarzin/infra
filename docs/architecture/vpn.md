@@ -77,10 +77,12 @@ graph TB
         Sofia[Sofia pfSense<br/>10.3.2.1<br/>tun_wg0]
         London[London GL-iNet Flint 2<br/>10.3.2.6<br/>192.168.8.0/24]
         Valchedrym[Valchedrym OpenWRT<br/>10.3.2.5<br/>192.168.0.0/24]
+        Mladost3[Mladost 3 OpenWRT<br/>10.3.2.7<br/>192.168.3.0/24]
         MX2[mx2 backup MX<br/>10.3.2.10<br/>Oracle Cloud, mail drain only]
 
         Sofia ---|WireGuard Tunnel| London
         Sofia ---|WireGuard Tunnel| Valchedrym
+        Sofia ---|WireGuard Tunnel| Mladost3
         Sofia ---|WireGuard Tunnel| MX2
     end
 
@@ -155,14 +157,15 @@ sequenceDiagram
 
 ### WireGuard Site-to-Site
 
-Three physical locations are permanently connected via WireGuard in a **hub-and-spoke** topology with Sofia as the hub. A single WireGuard interface (`tun_wg0`) on pfSense carries all peers on the `10.3.2.0/24` tunnel subnet:
+Four physical locations are permanently connected via WireGuard in a **hub-and-spoke** topology with Sofia as the hub. A single WireGuard interface (`tun_wg0`) on pfSense carries all peers on the `10.3.2.0/24` tunnel subnet:
 
 - **Sofia** (hub): `10.3.2.1` — pfSense, K8s cluster on `10.0.20.0/24`, management on `10.0.10.0/24`, LAN on `192.168.1.0/24`
 - **London** (spoke): `10.3.2.6` — GL-iNet Flint 2 (GL-MT6000), LAN `192.168.8.0/24`, guest `192.168.9.0/24`
 - **Valchedrym** (spoke): `10.3.2.5` — OpenWRT router, LAN `192.168.0.0/24`
+- **Mladost 3** (spoke, since 2026-10): `10.3.2.7` — OpenWRT router (TP-Link TL-WDR4300 v1), LAN `192.168.3.0/24`
 - **mx2 / backup MX** (road-warrior peer, since 2026-07-08): `10.3.2.10/32` — the Oracle Always-Free backup-MX relay (ADR-0019). Not a site: no LAN behind it; its side allows only `10.0.20.1/32`. The tunnel exists solely so mx2 can drain queued mail to the mailserver HAProxy (Oracle blocks egress TCP 25; the drain is UDP-encapsulated to pfSense `:51821`). Peer reproducer: `scripts/pfsense-backup-mx-wg.sh` (pfSense WireGuard is hand-configured kernel `wg` via `/usr/local/etc/wireguard/tun_wg0.conf`, not the package). Runbook: [`backup-mx.md`](../runbooks/backup-mx.md).
 
-Routes are configured as static routes on pfSense. London and Valchedrym route Sofia-bound traffic through their WireGuard tunnels. London ↔ Valchedrym traffic transits through Sofia (no direct tunnel).
+Routes are configured as static routes on pfSense. London, Valchedrym and Mladost 3 route Sofia-bound traffic through their WireGuard tunnels. Traffic between spokes transits through Sofia (no direct tunnels).
 
 **Use cases**:
 - Replication of Vault data between Sofia and London
@@ -320,7 +323,7 @@ dns_config:
 
 ### WireGuard (pfSense — Hub)
 
-**Single interface `tun_wg0`** (OPT2) with two peers on subnet `10.3.2.0/24`. Listens on `*:51821` for both IPv4 and IPv6. IPv6 access via HE tunnel (`gif0`, `2001:470:6e:43d::2`) requires a `pass in` pf rule on the `HE_IPv6` interface (interface name `opt3` in config.xml):
+**Single interface `tun_wg0`** (OPT2) with four peers (three sites + mx2) on subnet `10.3.2.0/24`. Listens on `*:51821` for both IPv4 and IPv6. IPv6 access via HE tunnel (`gif0`, `2001:470:6e:43d::2`) requires a `pass in` pf rule on the `HE_IPv6` interface (interface name `opt3` in config.xml):
 
 **Peer: London Flint 2**:
 - WireGuard IP: `10.3.2.6`
@@ -334,8 +337,15 @@ dns_config:
 - Allowed IPs: `10.3.2.5/32, 192.168.0.0/24`
 - Keepalive: none (should be added)
 
+**Peer: Mladost 3** (added 2026-10-03, reproducer `scripts/pfsense-mladost3-wg.sh`):
+- WireGuard IP: `10.3.2.7`
+- Remote endpoint: none on the pfSense side. The router dials `vpn.viktorbarzin.me:51821`, so Mladost's own address can change freely and no DDNS or port forward is needed there.
+- Allowed IPs: `10.3.2.7/32, 192.168.3.0/24`
+- Keepalive: 25 seconds (both sides)
+
 **Static routes on pfSense**:
 - `192.168.0.0/24` → gateway `valchedrym` (10.3.2.5)
+- `192.168.3.0/24` → gateway `mladost3` (10.3.2.7)
 - `192.168.8.0/24` → gateway `london_flint_2` (10.3.2.6)
 - `192.168.9.0/24` → gateway `london_flint_2` (10.3.2.6)
 - `192.168.10.0/24` → gateway `london_flint_2` (10.3.2.6)
@@ -362,10 +372,21 @@ dns_config:
 - Remote endpoint: Sofia public IP
 - LAN: `192.168.0.0/24`
 
+### WireGuard (Mladost 3 — OpenWRT)
+
+- Router: TP-Link TL-WDR4300 v1, OpenWrt 25.12 with a USB extroot for packages. It was the Sofia edge router before the TP-Link AX6000; the AX6000's cloned WAN MAC `10:fe:ed:9b:7d:3e` comes from it.
+- WireGuard IP: `10.3.2.7`, interface `wg0`, peer `vpn.viktorbarzin.me:51821`, keepalive 25s
+- Allowed IPs: `10.0.0.0/8, 192.168.1.0/24, 192.168.8.0/24, 192.168.9.0/24` with `route_allowed_ips=1`. The site's own `192.168.3.0/24` stays out of this list, because routing it into the tunnel cuts the router off from its own LAN (the 2026-04-12 Valchedrym fix). Internet traffic stays on the local ISP.
+- LAN: `192.168.3.0/24`, router `192.168.3.1`. WAN: DHCP with the previous D-Link's MAC `00:18:F3:68:52:92` cloned.
+- Firewall: `lan → vpn` and `vpn → lan` forwarding, `vpn` zone masquerades. SSH (key only) and LuCI answer on the LAN and tunnel addresses for `10.0.0.0/8` sources.
+- DNS: dnsmasq forwards to `9.9.9.9` / `8.8.4.4`, with `rebind_domain viktorbarzin.me` so internal names (A = 10.0.20.203) resolve, as on Valchedrym.
+- Names: `mladost3.viktorbarzin.lan` = 10.3.2.7, `openwrt-mladost3.viktorbarzin.lan` = 192.168.3.1 (PTR in `3.168.192.in-addr.arpa`), all declared in `stacks/technitium/modules/technitium/static_records.tf`. LuCI is public at `mladost3.viktorbarzin.me` behind Authentik.
+- Credentials: root SSH by key; LuCI root password in Vaultwarden `mladost3.viktorbarzin.me`.
+
 ### Vault Secrets
 
 - Headscale OIDC client secret: `secret/headscale/oidc_client_secret`
-- WireGuard private keys: `secret/pfsense/wg_privkey_london`, `secret/pfsense/wg_privkey_valchedrym`
+- Site WireGuard keys live in `secret/viktor`: `mladost3_wg_private_key` / `mladost3_wg_public_key`, and `backup_mx_wg_*` for mx2. No London or Valchedrym router keys were found in Vault on 2026-10-03. An earlier version of this doc named `secret/pfsense/wg_privkey_*`, a path that does not exist.
 
 ## Decisions & Rationale
 
