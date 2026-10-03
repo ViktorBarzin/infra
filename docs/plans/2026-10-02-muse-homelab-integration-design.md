@@ -1,6 +1,6 @@
 # Muse and the homelab: one integration, both directions
 
-**Status:** approved, 2026-10-02
+**Status:** executing, 2026-10-03 (phases 0-4 live; phase 5 built and live except the WhatsApp send, which waits on WhatsApp Web being re-linked)
 **Date:** 2026-10-02
 **Author:** Viktor Barzin (design worked out with Claude in a grilling session)
 **Component:** terminal-lobby `agent-api`, `terminal-api.viktorbarzin.me`, claude-memory, homelab CLI, Headscale
@@ -147,14 +147,31 @@ Rules:
 
 ## Roadmap
 
-| # | Phase | Contents | Bead |
-|---|---|---|---|
-| 0 | Done 2026-10-02 | terminal-api; agent-api 1.1.0 (built, release in progress) (send-and-wait, long-poll, incremental transcripts, answer endpoint); 330 s transport | — |
-| 1 | Hygiene | Retire the tailnet path (nodes `koda` and `devvm-wizard`, `tailscaled-agent`, Headscale ACL entries, Headscale pre-auth key 19 (expired 2026-10-02), Vault `secret/muse-tailscale` and `secret/devvm-tailscale`) and the bastion `muse` key; route `/openapi.json`; Muse corrects its own memories #13323 and #13342 | code-tm6a |
-| 2 | Inputs | Images and files on the messages endpoint (widened from images to files) | code-1dcq |
-| 3 | Lifecycle | 24 h auto-suspend with transparent resume for Caller sessions; `DELETE /v1/conversations/{id}` | code-ufpp |
-| 4 | Visibility | One sidebar group per Caller; Caller sessions in telemetry tagged by Caller | code-gr2v |
-| 5 | Delegations | `/v1/delegations` in agent-api, the `homelab` Caller, `homelab delegate`, WhatsApp delivery, caps, expiry, failure alert | code-1dbu |
+| # | Phase | Contents | Bead | State on 2026-10-03 |
+|---|---|---|---|---|
+| 0 | Done 2026-10-02 | terminal-api; agent-api 1.1.0 (built, release in progress) (send-and-wait, long-poll, incremental transcripts, answer endpoint); 330 s transport | — | live |
+| 1 | Hygiene | Retire the tailnet path (nodes `koda` and `devvm-wizard`, `tailscaled-agent`, Headscale ACL entries, Headscale pre-auth key 19 (expired 2026-10-02), Vault `secret/muse-tailscale` and `secret/devvm-tailscale`) and the bastion `muse` key; route `/openapi.json`; Muse corrects its own memories #13323 and #13342 | code-tm6a | live |
+| 2 | Inputs | Images and files on the messages endpoint (widened from images to files) | code-1dcq | live |
+| 3 | Lifecycle | 24 h auto-suspend with transparent resume for Caller sessions; `DELETE /v1/conversations/{id}` | code-ufpp | live |
+| 4 | Visibility | One sidebar group per Caller; Caller sessions in telemetry tagged by Caller | code-gr2v | live |
+| 5 | Delegations | `/v1/delegations` in agent-api, the `homelab` Caller, `homelab delegate`, WhatsApp delivery, caps, expiry, failure alert | code-1dbu | live except the WhatsApp send (WhatsApp Web logged out; Muse chat name unknown) |
+
+## How it was verified
+
+Each phase was built test-first in its own worktree and landed, then tested on the live system from
+outside (a tunnel exiting from mx2, the real public path) by adversarial review rounds: five lenses
+(security, the Muse flow end to end, delegations, the Lobby UI, regressions), two skeptics per
+CRITICAL or MAJOR finding, and a fixer per repo that landed, deployed and re-ran the repro live.
+The loop ran until a round came back with nothing CRITICAL or MAJOR, on 2026-10-03 against
+terminal-lobby 0.95.8. Among what it found and fixed: premature task results when a session
+backgrounds work or subagents, tasks stuck after Lobby's automatic rename, uploads landing in
+another session's folder on a name collision, Loki losing low-volume logs on a pod restart, an
+orphaned Headscale pre-auth key, and a docker-published devvm port reachable from pods.
+
+Known limits that remain: why the Lobby mod's hello is occasionally missing was not found
+(agent-api no longer depends on it; such a session shows no state in the sidebar), IPv6 on the
+public endpoint was not testable (mx2 has no IPv6), and the WhatsApp delivery of delegations has
+not run against real WhatsApp.
 
 ## What Viktor needs to do
 
