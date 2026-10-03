@@ -781,7 +781,7 @@ locals {
       # Mladost 3 site router (OpenWrt) LuCI on its LAN address. The probe
       # crosses pfSense and the site-to-site WireGuard tunnel, so a down
       # tunnel and a down router both show here.
-      name                        = "Mladost 3 router (192.168.3.1)"
+      name                        = "mladost3-openwrt (192.168.3.1)"
       type                        = "port"
       database_connection_string  = null
       database_password_vault_key = null
