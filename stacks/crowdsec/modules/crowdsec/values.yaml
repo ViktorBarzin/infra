@@ -401,6 +401,12 @@ appsec:
     #  - ci.viktorbarzin.me /api/hook (Woodpecker): GitHub's push webhooks
     #    tripped CRS on go-live; Woodpecker verifies each hook's HMAC
     #    signature. Host and exact path both have to match (chained rule).
+    #
+    # Rule 931100 (remote file inclusion: a parameter holding an http://<IPv4>
+    # URL) is off everywhere. Over the 7 days to 2026-10-03 the only requests
+    # carrying one were Music Assistant's Home Assistant login, whose client_id
+    # and redirect_uri are http://192.168.1.8:8095; no external client sent one.
+    # Its siblings 931110 and 931120 stay on.
     viktor-crs-setup.yaml: |
       name: viktor/crs-setup
       seclang_rules:
@@ -410,6 +416,7 @@ appsec:
         - SecRule REQUEST_FILENAME "@beginsWith /api/camera_proxy" "id:1000102,phase:1,pass,nolog,t:none,ctl:ruleEngine=Off"
         - SecRule REQUEST_HEADERS:Host "@streq ci.viktorbarzin.me" "id:1000103,phase:1,pass,nolog,t:none,t:lowercase,chain"
         - SecRule REQUEST_FILENAME "@streq /api/hook" "t:none,ctl:ruleEngine=Off"
+        - SecAction "id:1000104,phase:1,pass,nolog,t:none,ctl:ruleRemoveById=931100"
   env:
     # appsec-virtual-patching also brings the appsec-vpatch scenario, which
     # bans an address for 4h (default_ip_remediation) once two DISTINCT rules
