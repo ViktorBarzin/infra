@@ -291,6 +291,58 @@ module "ingress" {
   }
 }
 
+# Carve-out for the PWA icons + web manifest, the same shape as tasks'
+# ingress_icons. The OS icon fetchers carry no session cookie, so behind
+# forward-auth they got the Authentik login page instead of a PNG. Measured on
+# 2026-10-03 when the PWA was added to an iPhone home screen: the iOS fetcher's
+# requests for /apple-touch-icon.png and /favicon.ico each 302'd to
+# /application/o/authorize/. Traefik prefers these longer paths over the main
+# "/" router, and the app shell and /api stay gated by the ingress above.
+# Guarded by the health-icons entry in the Authentik walling-off probe
+# (stacks/monitoring/.../authentik_walloff_probe.tf).
+#
+# Two things here differ from tasks' copy, both found in review on 2026-10-03.
+# Traefik matches an Ingress path as a STRING prefix by default, so
+# /apple-touch-icon.pngX or /manifest.webmanifest/anything would also skip
+# Authentik (probed live on tasks: 200 from the app, no auth). The pathmatcher
+# annotation makes each path an exact Path() match. And the app trusts
+# X-authentik-email, falling back to DEV_AUTH_EMAIL when it is absent, so a
+# public route must strip any identity header a client sends, as ingress_api
+# below already does.
+module "ingress_icons" {
+  source = "../../modules/kubernetes/ingress_factory"
+  # auth = "none": public static icons + manifest, no user data; required for
+  # OS icon fetchers (iOS Add to Home Screen, Android install) that carry no
+  # session and cannot complete the Authentik redirect.
+  auth         = "none"
+  namespace    = kubernetes_namespace.health.metadata[0].name
+  name         = "health-icons"
+  service_name = kubernetes_service.health.metadata[0].name
+  port         = 80
+  ingress_path = [
+    "/apple-touch-icon.png",
+    "/favicon.png",
+    "/favicon.ico",
+    "/pwa-192x192.png",
+    "/pwa-512x512.png",
+    "/pwa-maskable-192x192.png",
+    "/pwa-maskable-512x512.png",
+    "/manifest.webmanifest",
+  ]
+  full_host         = "health.viktorbarzin.me" # MUST match the main ingress host; otherwise the factory derives health-icons.viktorbarzin.me and the carve-out never matches.
+  dns_type          = "none"                   # host record already owned by the main health ingress
+  tls_secret_name   = var.tls_secret_name
+  anti_ai_scraping  = false # Static icons + a manifest; nothing for scrapers to mine.
+  homepage_enabled  = false # path carve-out, not its own dashboard tile
+  extra_middlewares = ["traefik-strip-auth-headers@kubernetescrd"]
+  extra_annotations = {
+    # Exact match: only these eight paths skip Authentik, not every path that
+    # starts with one of them. Honoured for ImplementationSpecific paths, which
+    # is what the factory renders (traefik v3.7.1, ingress/kubernetes.go:764-772).
+    "traefik.ingress.kubernetes.io/router.pathmatcher" = "Path"
+  }
+}
+
 # https://health-test.viktorbarzin.lan — internal LAN-only test host for
 # automated/E2E testing + manual screenshots without the Authentik SSO dance
 # (ADR-0008). Same `health` deployment; acts as DEV_AUTH_EMAIL=vbarzin@gmail.com.

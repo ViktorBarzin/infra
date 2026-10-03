@@ -1122,6 +1122,35 @@ resource "kubernetes_config_map" "auth_proxy_config" {
 
   data = {
     "default.conf" = <<-EOT
+      # The scheme the browser used, which the outpost builds the post-login
+      # redirect from (X-Forwarded-Proto + -Host + -Uri). Traefik's forwardAuth
+      # always sends it, and it is "https" (or "wss" on a WebSocket upgrade)
+      # because the web entrypoint redirects plain http before any middleware.
+      #
+      # This was $scheme until 2026-10-03, which is THIS hop's scheme. Traefik
+      # reaches nginx over plain http on :9000, so the outpost was told "http"
+      # and every forward-auth host's post-login redirect went to
+      # http://<host>/. Measured: the state JWT for health and tasks both
+      # carried "redirect":"http://...". A browser tab hides it behind the 301
+      # to https. An installed iOS web app opens out-of-scope pages in a
+      # sheet and hands the sheet back to the app when a redirect lands inside
+      # the app's scope; http://health.viktorbarzin.me/ is outside
+      # https://health.viktorbarzin.me/. On 2026-10-03 the health PWA signed in
+      # inside the sheet and then stayed there, running the app.
+      #
+      # Only the two values Traefik actually sends pass through. Anything else,
+      # including no header at all, falls back to $scheme. Websecure trusts
+      # forwarded headers from 10/8 and 192.168/16, so a LAN or VPN client can
+      # set this one, and the outpost answers 500 to a forward URL it cannot
+      # parse and records the request headers in a configuration_error Event
+      # (src/outpost/proxy/application/handlers/forward.rs, events.rs). nginx
+      # also drops a header set to "", which would leave the scheme empty.
+      map $http_x_forwarded_proto $client_proto {
+          default $scheme;
+          https   https;
+          wss     wss;
+      }
+
       upstream authentik {
           # Forward-auth MUST be answered by the SAME outpost that answers the
           # OAuth callback. Both are the INLINE outpost inside the
@@ -1214,7 +1243,7 @@ resource "kubernetes_config_map" "auth_proxy_config" {
               proxy_set_header Host $host;
               proxy_set_header X-Real-IP $remote_addr;
               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_set_header X-Forwarded-Proto $client_proto;
               proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
           }
 
@@ -1232,7 +1261,7 @@ resource "kubernetes_config_map" "auth_proxy_config" {
               proxy_set_header Host $host;
               proxy_set_header X-Real-IP $remote_addr;
               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_set_header X-Forwarded-Proto $client_proto;
               proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
           }
 
@@ -1261,7 +1290,7 @@ resource "kubernetes_config_map" "auth_proxy_config" {
               proxy_set_header Host $host;
               proxy_set_header X-Real-IP $remote_addr;
               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_set_header X-Forwarded-Proto $client_proto;
           }
 
           location /healthz {

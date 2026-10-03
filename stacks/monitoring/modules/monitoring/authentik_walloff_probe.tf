@@ -76,6 +76,10 @@ locals {
     # module.ingress_icons): macOS/iOS/Android icon fetchers carry no session
     # cookies, so an Authentik 302 here breaks Add-to-Dock icons.
     "tasks-icons" = "https://tasks.viktorbarzin.me/apple-touch-icon.png"
+    # health PWA icons + manifest (auth="none" path carve-out, stacks/health
+    # module.ingress_icons): the iOS Add to Home Screen fetcher carries no
+    # session cookie, so an Authentik 302 here breaks the home-screen icon.
+    "health-icons" = "https://health.viktorbarzin.me/apple-touch-icon.png"
     # terminal PWA manifest + icons + webfonts (auth="none" path carve-out,
     # stacks/terminal module.ingress_assets): the manifest fetch is
     # credential-less by spec and OS icon fetchers carry no session cookies.
