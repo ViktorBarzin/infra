@@ -314,7 +314,7 @@ outcome lets it through.
   LAN-only (`home-lans-only`, `traefik-local-only`, `.lan`), and not on
   `appsec_crs_exclude_hosts`, which lists the hosts whose normal content looks
   like attack payloads (Forgejo, Vault, and the free-text apps), each with its
-  reason. 36 hosts on 2026-10-02. A new public host without Authentik joins on
+  reason. 35 hosts on 2026-10-03. A new public host without Authentik joins on
   the next traefik apply. IngressRoute hosts stay on `:7422`.
 - **CRS tuning** lives in the crowdsec values as `viktor/crs-setup`, loaded
   before the CRS: the allowed methods include PUT, PATCH, DELETE and WebDAV

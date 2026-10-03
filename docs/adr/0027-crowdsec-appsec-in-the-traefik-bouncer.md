@@ -138,13 +138,14 @@ flowchart TD
   `stacks/traefik/modules/traefik/crs-hosts.tf` from the live Ingresses: a host
   qualifies when none of its Ingresses carries Authentik forward-auth, it is not
   LAN-only (`home-lans-only`, `traefik-local-only`, `.lan`), and it is not on
-  the exclusion list. 36 hosts on go-live. IngressRoute hosts stay on the
+  the exclusion list. 36 hosts on go-live, 35 after pages-publish was excluded. IngressRoute hosts stay on the
   default listener.
 - Hosts whose normal content looks like attack payloads are excluded, with the
   reason next to each: Forgejo (file paths and code search), Vault (arbitrary
   secret values), and the free-text hosts (claude-memory, Matrix, n8n,
   webhook, ntfy, novelapp, AFFiNE, dolt-workbench, Linkwarden, Tandoor,
-  recruiter-responder, json).
+  recruiter-responder, json, and the pages-publish API, whose bodies are whole
+  documents).
 - CRS defaults were widened where they rejected normal traffic: the method list
   (911100) now includes PUT, PATCH, DELETE and WebDAV verbs, and the version
   list (920430) includes HTTP/3. Three path exclusions: Vaultwarden `/icons/`,
