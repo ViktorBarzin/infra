@@ -15,10 +15,10 @@ import (
 // (137.220.71.46) was banned by hand for 8717h — 363 days. A Linkwarden
 // /api/v1/search 401 retry loop was traced to the address, and its reverse DNS
 // (71.220.137.46.bcube.co.uk) read as an unrelated third party rather than as
-// our own ISP's PTR domain; the traffic was in fact our own Mac. Because every
-// LAPI decision is also pushed to the Cloudflare edge list, the ban eventually
-// locked Viktor out of every proxied host, and a year-long expiry meant nothing
-// would have cleared it on its own.
+// our own ISP's PTR domain; the traffic was in fact our own Mac. Every LAPI
+// decision was then also pushed to a Cloudflare edge list (retired the same
+// month), so the ban locked Viktor out of every proxied host, and a year-long
+// expiry meant nothing would have cleared it on its own.
 //
 // A short ban costs little when it is right and expires on its own when it is
 // wrong, so `ban` defaults to 24h and refuses anything beyond 7d. Deliberately
@@ -58,10 +58,10 @@ func crowdsecHelp() string {
   homelab crowdsec unban <ip|cidr>    delete every decision for the address
   homelab crowdsec decisions [--all]  list decisions (--all includes CAPI)
 
-Bans are enforced in two places: the node firewall bouncer (all traffic) and
-the Cloudflare edge IP list for proxied hosts. The edge list is slow to
-correct — Cloudflare rate-limits Lists writes hard — so prefer a short expiry
-over trusting that you can undo a long one quickly.
+Bans are enforced in two places: the Traefik bouncer (every HTTP host,
+proxied included, within one 30s poll) and the node firewall bouncer (all
+traffic, within about a minute). Both lift an unban just as fast, but a ban
+you forget about lasts as long as you set it, so prefer a short expiry.
 
 Blocks meant to be permanent belong in the reviewable external blocklist
 import (stacks/crowdsec), not in a manual decision.
@@ -253,7 +253,7 @@ func crowdsecBan(args []string) error {
 		return fmt.Errorf("cscli decisions add failed: %w", err)
 	}
 	fmt.Printf("banned %s for %s — expires on its own; `homelab crowdsec unban %s` to lift it sooner\n", target, humanDuration(d), target)
-	fmt.Println("note: proxied hosts are enforced via the Cloudflare edge list, which can lag by hours (Cloudflare rate-limits Lists writes)")
+	fmt.Println("note: the Traefik bouncer enforces it within ~30s, the firewall bouncer within ~1m")
 	return nil
 }
 
@@ -274,7 +274,7 @@ func crowdsecUnban(args []string) error {
 		return fmt.Errorf("cscli decisions delete failed: %w", err)
 	}
 	fmt.Printf("removed local decisions for %s\n", target)
-	fmt.Println("note: the Cloudflare edge list is reconciled by the crowdsec-cf-sync CronJob and may lag; check `homelab crowdsec decisions` plus the list itself if a proxied host still blocks")
+	fmt.Println("note: the Traefik bouncer lifts it within ~30s, the firewall bouncer within ~1m")
 	return nil
 }
 
