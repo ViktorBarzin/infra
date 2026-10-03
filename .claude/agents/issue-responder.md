@@ -207,6 +207,11 @@ You still own the issue. Your part:
    repro command — run the repro command. If it now succeeds, the source
    recovered on its own: comment with what you ran and what you saw, close the
    issue, and stop. Nothing is dispatched.
+   **Exception: an issue labelled `intermittent`.** The guard files one when a
+   source failed a probe and then played on its re-probe three times in one race
+   weekend, and the body lists each of those flaps. A repro that succeeds is
+   expected there and proves nothing, so do not close it as recovered. Classify
+   it and hand it to `f1-source-fixer` as below, saying it is intermittent.
 2. **Classify** (Step 3). One dead source with another still serving is SEV3, not
    an outage — the site still works, but its redundancy is down to one and the
    next break takes it out. All sources dead is SEV2.
