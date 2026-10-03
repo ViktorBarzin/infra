@@ -1998,11 +1998,15 @@
         url: https://pkgs.tailscale.com/stable/ubuntu/jammy.asc
         dest: /usr/share/keyrings/tailscale-archive-keyring.asc
         mode: "0644"
-        # Without this the key is re-fetched on every run and the task reports
+        # Without these the key is re-fetched on every run and the task reports
         # changed forever, which is the noise that teaches people to ignore a
-        # non-no-op check run. A signing key does not rotate silently; replace
-        # it deliberately by removing the file.
+        # non-no-op check run. force: false alone is not enough: the server
+        # ignores If-Modified-Since, so a check run's HEAD request still
+        # reports changed. With the checksum, a matching file skips the
+        # request. A signing key does not rotate silently; replace it
+        # deliberately by updating the checksum and removing the file.
         force: false
+        checksum: "sha256:53c6f7dfbd774839d9f37e6c5022ba952108aba9a0e556a56f292a9eb605d7cf"
 
     # jammy, not noble, for the reason the HashiCorp source above gives: it is
     # the suite the installed tailscale was resolved from, and moving it here
