@@ -112,6 +112,15 @@ curl -s -H "$AUTH" "$FJ/repos/viktor/infra/issues/<N>/comments?limit=100"
    If it is healthy now, do NOT change anything: comment with what you checked
    and what you saw, close the issue, and stop. A confident "this is not broken
    any more, here is the evidence" is a good outcome.
+   **Except on an issue labelled `intermittent`.** There the source fails some
+   guard probes and plays on others, and the body lists every flap this weekend
+   with its stage, failure class and time. A healthy repro is expected and is not
+   a reason to close. Work from the flap list: run the extractor several times,
+   compare what differs between failing and playing runs (which chrome-fleet
+   worker was leased, warm or fresh, upstream status codes, timing), and repair
+   that. infra#95 is the worked example: a readiness probe that passed before
+   Chrome served CDP, so only freshly created workers failed. Close only after a
+   shipped repair, or hand to a human with `needs-human` and what you ruled out.
 3. **Diagnose to the stage the issue names.**
    - **extract** — the upstream moved. Follow redirects; read the site's own
      frontend JS for a new API base (a `NEXT_PUBLIC_API_BASE_URL`-style env or a
