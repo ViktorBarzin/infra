@@ -65,6 +65,12 @@ locals {
     # rendered HTML full of code). CRS blocked `homelab pages preview` from
     # the devvm on go-live (2026-10-02).
     "pages-publish.viktorbarzin.me",
+    # Actual Budget: every app boot fetches ~55 /data/migrations/*.sql files
+    # and /sync/* POSTs carry binary sync messages. CRS 403'd 58 of these from
+    # the LAN in one day (2026-10-04), breaking load and sync. Actual has its
+    # own login, and its CVEs stay virtually patched.
+    "budget-viktor.viktorbarzin.me",
+    "budget-anca.viktorbarzin.me",
   ]
 
   _ingress_host_rows = flatten([
