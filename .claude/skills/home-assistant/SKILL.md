@@ -370,7 +370,7 @@ Advanced SSH, File Editor, Studio Code Server, InfluxDB, Mosquitto, Node-RED, Fr
 - **Player providers**: UPnP/DLNA, AirPlay, Sendspin (port 8927)
 - **Registered players**: Marantz ND8006 (DLNA + AirPlay), Sony BRAVIA XR-65A80L (AirPlay), Web (Chrome)
 - **Librespot cache**: `/data/.cache/spotify--5s3mSP8y/credentials.json` (inside addon container)
-- **Troubleshooting**: See skill `music-assistant-librespot-wrong-account` for Spotify playback failures
+- **Troubleshooting**: tracks that pause after 1-2 s with "librespot does not support free accounts", although the account has Premium, come from a stale librespot credential cache for a different, free account. Delete the librespot cache above through the container exec, restart the Music Assistant container, and check the logs again
 - **SSH addon access to container**: `sudo curl -s --unix-socket /run/docker.sock http://localhost/containers/<id>/exec` (requires sudo)
 
 ### Zones

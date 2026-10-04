@@ -77,8 +77,8 @@ Terragrunt-based homelab managing a Kubernetes cluster (6 nodes, v1.35) on Proxm
 `var.nfs_server` (192.168.1.127), `var.redis_host`, `var.postgresql_host`, `var.mysql_host`, `var.ollama_host`, `var.mail_host`
 
 ## Claude-Specific Resources
-- **Skills**: `.claude/skills/` (11 active). Archived runbooks: `.claude/skills/archived/`
-- **Agents**: `.claude/agents/` (10 files; `k8s-version-upgrade` is deprecated).
+- **Skills**: `.claude/skills/` (10).
+- **Agents**: `.claude/agents/` (10 files).
   - **Incident pipeline**: post-mortem → sev-triage → sev-historian → sev-report-writer
   - **Other**: service-upgrade, issue-responder, postmortem-todo-resolver, f1-source-fixer, payslip-extractor
 - **Reference**: `.claude/reference/` — patterns.md, service-catalog.md, proxmox-inventory.md, github-api.md, authentik-state.md
@@ -142,7 +142,7 @@ curl -X POST -H "Authorization: token $TOK" -H 'Content-Type: application/json' 
 - **OOMKilled**: Check `kubectl describe limitrange tier-defaults -n <ns>`. Increase `resources.limits.memory` in the stack's main.tf.
 
 ## Detailed Reference
-See `.claude/reference/patterns.md` for: NFS volume code examples, iSCSI details, Kyverno governance tables, anti-AI scraping layers, Terragrunt architecture, node rebuild procedure, archived troubleshooting runbooks index.
+See `.claude/reference/patterns.md` for: NFS volume code examples, iSCSI details, Kyverno governance tables, anti-AI scraping layers, Terragrunt architecture, node rebuild procedure.
 
 Moved out of this file on 2026-09-22, verbatim (read the one your task touches):
 - `docs/agents/service-notes.md` — Service-Specific Notes (per-service operational knowledge)

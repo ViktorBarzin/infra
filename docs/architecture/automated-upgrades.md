@@ -352,7 +352,7 @@ each Job's pod and its drain target are always different nodes.
 | Per-node upgrade script | `scripts/update_k8s.sh` |
 | Alerts | `stacks/monitoring/modules/monitoring/prometheus_chart_values.tpl` (group "Upgrade Gates") |
 | Vault secrets | `secret/k8s-upgrade/{ssh_key, ssh_key_pub, slack_webhook}` |
-| Deprecated agent prompt (reference) | `.claude/agents/k8s-version-upgrade.deprecated.md` |
+| Deprecated agent prompt (reference, removed 2026-10-04) | `git show fd0f4a03:.claude/agents/k8s-version-upgrade.deprecated.md` |
 
 ### Why this design
 
