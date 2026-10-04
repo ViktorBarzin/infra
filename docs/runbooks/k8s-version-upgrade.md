@@ -534,4 +534,4 @@ kill %1
 | Vault secrets | `secret/k8s-upgrade/{ssh_key, ssh_key_pub, slack_webhook}` |
 | Architecture doc | `infra/docs/architecture/automated-upgrades.md` (K8s Version Upgrades section) |
 | Related (OS reboots) | `infra/docs/runbooks/k8s-node-auto-upgrades.md` |
-| Deprecated agent prompt (reference) | `infra/.claude/agents/k8s-version-upgrade.deprecated.md` |
+| Deprecated agent prompt (reference, removed 2026-10-04) | `git show fd0f4a03:.claude/agents/k8s-version-upgrade.deprecated.md` (in `infra`) |

@@ -11,7 +11,7 @@ You are the report-writer for a homelab Kubernetes cluster's post-mortem pipelin
 
 - **Infra repo**: `/home/wizard/code/infra`
 - **Post-mortems archive**: `/home/wizard/code/infra/docs/post-mortems/`
-- **Post-mortem template**: `/home/wizard/code/infra/.claude/skills/post-mortem/template.md`
+- **Post-mortem template**: `/home/wizard/code/infra/.claude/templates/post-mortem.md`
 - **Stacks directory**: `/home/wizard/code/infra/stacks/`
 - **Service catalog**: `/home/wizard/code/infra/.claude/reference/service-catalog.md`
 

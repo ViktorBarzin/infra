@@ -219,7 +219,7 @@ flowchart LR
 | SEV Historian | `.claude/agents/sev-historian.md` | Cross-references past incidents |
 | SEV Report Writer | `.claude/agents/sev-report-writer.md` | Writes final postmortem + links to issue |
 | TODO Resolver | `.claude/agents/postmortem-todo-resolver.md` | Implements safe follow-up fixes |
-| Post-Mortem Skill | `.claude/skills/post-mortem/` | Manual `/post-mortem` command |
+| Post-Mortem Template | `.claude/templates/post-mortem.md` | The report layout the SEV Report Writer fills in |
 | Cluster Health | `.claude/skills/cluster-health/` | Health check with auto-filing for SEV1/SEV2 |
 | Status Page CronJob | `stacks/status-page/main.tf` | RETIRED (disabled 2026-05-26) — status page is now gatus on mx2 (ADR-0020) |
 | paused label | `viktor/infra` issue label | Per-issue brake — the fixer will not pick up an issue while it carries `paused` |
