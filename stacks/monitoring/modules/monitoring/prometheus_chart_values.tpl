@@ -2166,6 +2166,35 @@ serverFiles:
             annotations:
               summary: "{{ $labels.user }} waits {{ $value | printf \"%.0f\" }}ms to see a keystroke appear — typing feels broken to them right now"
               description: "Someone is sitting in front of this and feeling it, so treat it as live. Check whether it is the box or their link: tl_input_latency_p95_ms is keydown to ws.send and never leaves their device, so input high with echo high is their laptop or network, while input low with echo high is us. If it is us, DevvmIOStalled and DevvmUserIOStarved say whether the disk is the cause and whose work is doing it; homelab metrics query 'devvm_slice_pressure_ratio{resource=\"io\"}' breaks it down per user. A quiet board with slow echo points at the pty path rather than the machine: check ttyd and tmux-api in the devvm journal. The metric only exists while a browser is open and posting, so absence means nobody is typing, not that typing is fast."
+          - alert: LobbyFirstPromptSlow
+            # Viktor, 2026-10-04: "it takes ~20 seconds from me sending the
+            # prompt in the composer until i see it in the session and claude
+            # working on it." The target agreed then: Send to Accepted under
+            # 2s, timed by the New-session composer on the browser's clock
+            # (terminal-lobby docs/plans/2026-10-04-warm-slot-at-send-design.md).
+            #
+            # A daily p90 over 2s is the same as more than 10% of a day's first
+            # prompts over 2s, so the lobby exports two counters rather than a
+            # histogram whose buckets jump from 1s to 2.5s. Before the fix, 4 of
+            # 17 first prompts were slow (24%); a slot that is still booting at
+            # Send costs a Claude boot, 3 to 10s.
+            #
+            # Gated on at least five first prompts in the day, so one slow
+            # create on a quiet day does not page anyone. The counters reset
+            # when tmux-api restarts on an install, which increase() absorbs.
+            # Samples from a tab hidden after Send are not counted at all.
+            expr: |
+              (
+                sum by (user) (increase(tl_first_prompt_slow_total[1d]))
+                / sum by (user) (increase(tl_first_prompt_total[1d]))
+              ) > 0.1
+              and on(user) (sum by (user) (increase(tl_first_prompt_total[1d])) >= 5)
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.user }}'s new sessions are slow to start: {{ $value | humanizePercentage }} of today's first prompts took over 2s to reach Claude"
+              description: "Send in the New-session composer should reach Claude in under 2s, because a pre-warmed Claude is waiting. Split by what the claim found: homelab metrics query 'sum by (slot) (increase(tl_first_prompt_slow_total{user=\"{{ $labels.user }}\"}[1d]))'. stale means slots were not replaced after an install (tmux-api's stale-slot sweep, grep 'slots:' in its journal); booting means Send came while the slot's Claude was still starting; none means no slot existed for that directory or model. For one prompt's timeline, homelab logs query '{job=\"devvm-journal\"} |= \"TLEVENT\" |= \"prompt.\"' --since 24h."
           - alert: TerminalLobbyDown
             # The scrape IS the liveness check. /metrics answers 200 with build
             # and uptime even when tmux is unreachable and every session gauge
