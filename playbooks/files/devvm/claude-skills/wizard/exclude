@@ -12,5 +12,28 @@ code-review
 # Workflow (CRITICAL/MAJOR/NIT, up to 5 rounds), and ends with a screenshot or
 # pasted live output. `implement` is in upstream's promoted set, so without
 # this line the nightly run reinstalls matt's copy straight over it.
-# Skill lives in ~/.claude/skills/implement/, deliberately not provisioned.
+# His skill lives in ~/.agents/skills/implement/, managed by his dotfiles.
 implement
+
+# Unused, dropped in the 2026-10-04 cleanup: no model call, slash command or
+# Codex read in any session from mid-August to 2026-10-04 (5,098 Claude
+# transcripts plus the Codex session logs).
+ask-matt
+codebase-design
+handoff
+implement-spec
+improve-codebase-architecture
+pr
+prototype
+retro
+to-questionnaire
+to-tickets
+triage
+wait-what
+wayfinder
+
+# Rarely used, dropped in the same cleanup: last used in July or August.
+find-skills
+setup-matt-pocock-skills
+tdd
+to-spec
