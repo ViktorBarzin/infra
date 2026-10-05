@@ -79,7 +79,10 @@ for entry in ${ROUTERS}; do
     if (umask 077; ssh -o BatchMode=yes -o ConnectTimeout=20 -o IdentitiesOnly=yes \
             -i "${SSH_KEY}" "${target}" "sysupgrade -b -" > "${tmp}"); then
         # Accept only a complete archive that really holds a router config.
-        if gzip -t "${tmp}" 2>/dev/null && tar tzf "${tmp}" 2>/dev/null | grep -qx 'etc/config/network'; then
+        # List first, then match: `tar | grep -q` stops reading at the first
+        # match, tar dies of SIGPIPE, and pipefail turns that into a failure.
+        listing="$(tar tzf "${tmp}" 2>/dev/null)" || listing=""
+        if gzip -t "${tmp}" 2>/dev/null && grep -qx 'etc/config/network' <<< "${listing}"; then
             mv -f "${tmp}" "${dest}/${file}"
             chmod 600 "${dest}/${file}"
             bytes="$(stat -c %s "${dest}/${file}")"
