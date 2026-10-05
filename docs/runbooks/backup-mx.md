@@ -217,7 +217,9 @@ with mx2 logging `status=sent`, not `bounced`.
 ## Status page / failover tenants (ADR-0020)
 
 mx2 doubles as the homelab's **external vantage**
-([ADR-0020](../adr/0020-mx2-outage-failover-and-external-vantage.md), 2026-07-08):
+([ADR-0020](../adr/0020-mx2-outage-failover-and-external-vantage.md), 2026-07-08;
+the Mladost 3 router is a second, residential one, see
+[`external-vantages.md`](external-vantages.md)):
 `status.viktorbarzin.me` is a **grey-cloud A → 92.5.132.215**, so it resolves
 and serves through a homelab + tunnel outage. Everything below is codified in
 `stacks/backup-mx/cloud-init.yaml.tftpl` — the single source of truth for
