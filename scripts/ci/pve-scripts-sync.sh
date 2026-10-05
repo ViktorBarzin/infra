@@ -1,8 +1,9 @@
 #!/bin/sh
 # Sync the PVE host backup scripts and their systemd units from this repo.
 #
-# Covers all six: lvm-pvc-snapshot, daily-backup, offsite-sync-backup,
-# devvm-home-backup, vzdump-vms and nfs-mirror. The first three were here from
+# Covers all seven: lvm-pvc-snapshot, daily-backup, offsite-sync-backup,
+# devvm-home-backup, vzdump-vms, nfs-mirror and router-config-backup (joined
+# 2026-10-05, the weekly site-router config backup). The first three were here from
 # the start; devvm-home-backup and vzdump-vms joined on 2026-09-03, the former
 # because nothing deployed it at all and the latter to close a drift window.
 # nfs-mirror joined 2026-09-04, the last one still deployed by hand.
@@ -22,7 +23,7 @@
 set -eu
 
 PVE_HOST="${PVE_HOST:-192.168.1.127}"
-NAMES="${NAMES:-lvm-pvc-snapshot daily-backup offsite-sync-backup devvm-home-backup vzdump-vms nfs-mirror}"
+NAMES="${NAMES:-lvm-pvc-snapshot daily-backup offsite-sync-backup devvm-home-backup vzdump-vms nfs-mirror router-config-backup}"
 
 # Timers that are deployed but must stay off. Their script and units keep
 # arriving with everyone else's, so re-enabling one is a single systemctl
@@ -79,6 +80,13 @@ done
 
 echo "---reloading---"
 $SSH "systemctl daemon-reload"
+# Enable every timer that is not deliberately disabled, so a newly added unit
+# runs without a hand step. A no-op for the ones already enabled (all six were
+# on 2026-10-05, except vzdump-vms, which DISABLED_TIMERS skips).
+for n in $NAMES; do
+    case " $DISABLED_TIMERS " in *" $n "*) continue ;; esac
+    $SSH "systemctl enable --now $n.timer" 2>&1 | grep -v '^Created symlink' || true
+done
 # Naming every timer explicitly: list-timers with no argument would hide a unit
 # that failed to load, which is the failure this sync exists to surface.
 for n in $NAMES; do

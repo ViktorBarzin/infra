@@ -333,6 +333,7 @@ graph LR
 | Auto SQLite Backup | Daily 05:00 + daily-backup | PVE host: magic number check + ?mode=ro | Safe SQLite backup from PVC snapshots |
 | NFS Change Tracker | Continuous (inotifywait) | PVE host: `nfs-change-tracker.service` | Logs changed NFS file paths to `/mnt/backup/.nfs-changes.log` |
 | pfSense Backup | Daily 05:00 + daily-backup | PVE host: SSH + API | config.xml + full filesystem tar |
+| Site-router config | Weekly, Sunday 04:30 | PVE host: `router-config-backup` | `sysupgrade -b` archive per OpenWrt site router (mladost3-openwrt today), 8 kept |
 | Offsite Sync | Daily 06:00 (after daily-backup) | PVE host: `offsite-sync-backup` | Two-step: sda→pve-backup + NFS→nfs/nfs-ssd via inotify |
 | VM Image Backup (vzdump) | **Retired 2026-09-15** (timer disabled) | PVE host: `vzdump-vms` | Was a weekly live `vzdump` of devvm → `/mnt/backup/vzdump/`. The last three images (newest 2026-09-13) stay as a floor that no longer advances; daily protection is `devvm-home-backup` |
 | devvm /home (incremental) | Daily 03:30, keep 14 | PVE host: `devvm-home-backup` | `rsync --link-dest` hardlink generations of devvm `/home` → `/mnt/backup/devvm-home/` |
@@ -377,7 +378,7 @@ The hand-managed Linux VMs are **intentionally not in Terraform** (telmate/bpg p
 **Mode**: `vzdump --mode snapshot` — live, no downtime. devvm has the qemu guest agent enabled (`agent: 1`), so the snapshot is **filesystem-consistent** (fs-freeze) rather than merely crash-consistent. Runs `Nice=10` + `IOSchedulingClass=idle` + `--ionice 7` so it never starves etcd on the contended sdc IO domain.
 **Scope**: VMIDs in `VZDUMP_VMIDS` (default `102` = devvm). Add VMIDs there to image other hand-managed VMs.
 **Retention**: `KEEP=3` newest dumps per VMID on sda (`/mnt/backup/vzdump/`); each devvm image is ~35-50 GB zstd.
-**Critical dependency**: `nfs-mirror` MUST keep `--exclude='/vzdump/'` **and `--exclude='/devvm-home/'`**. Its nightly `rsync -rlt --delete /srv/nfs/ → /mnt/backup/` treats any `/mnt/backup` dir with no `/srv/nfs` counterpart as an orphan and deletes it — this silently reaped the first two vzdump images at 02:00 on 2026-06-10 before the exclude was added (same reason `pvc-data`/`pfsense`/`pve-config`/`sqlite-backup` are excluded).
+**Critical dependency**: `nfs-mirror` MUST keep `--exclude='/vzdump/'` **and `--exclude='/devvm-home/'`**. Its nightly `rsync -rlt --delete /srv/nfs/ → /mnt/backup/` treats any `/mnt/backup` dir with no `/srv/nfs` counterpart as an orphan and deletes it — this silently reaped the first two vzdump images at 02:00 on 2026-06-10 before the exclude was added (same reason `pvc-data`/`pfsense`/`pve-config`/`sqlite-backup`/`routers` are excluded). Any new top-level folder under `/mnt/backup` needs its exclude in `scripts/nfs-mirror.sh` in the same commit: devvm-home (2026-09) and vzdump (2026-06) were both emptied nightly before theirs was added.
 
 **It happened again.** `devvm-home-backup` landed 2026-08-16 without a matching exclude, so `nfs-mirror` reaped its generations nightly for the next 19 days. Measured 2026-09-04: generations `2026-08-31` through `2026-09-03` held **0 entries under `wizard/`** against 87 in `2026-09-04`, and their mtimes (02:05-02:11) sat just after this job's 02:00 slot. Only the current night's generation ever survived, so retention was **1 day, not 14**. Fixed the same day by adding `/devvm-home/`. **Anything new written under `/mnt/backup/` needs its own exclude line here on the same commit** — that is the whole lesson from both incidents.
 **Offsite**: deliberately **NOT** appended to the incremental offsite manifest — it never deletes, so daily multi-GB images would accumulate unbounded on Synology. Instead the **monthly offsite-sync full pass (days 1-7)** mirrors all of `/mnt/backup` (including `vzdump/`) to Synology with `--delete`, bounded to local retention. So Copy 2 (sda) refreshes **weekly**; Copy 3 (Synology) refreshes **monthly**.
@@ -410,6 +411,17 @@ The hand-managed Linux VMs are **intentionally not in Terraform** (telmate/bpg p
 - `config.xml` via API (base64 decode)
 - Full filesystem tar via SSH (`tar czf /tmp/pfsense-full.tar.gz /cf /var/db /boot/loader.conf`)
 - 4 weekly versions
+
+**Site-router config backups** (`router-config-backup`, separate from daily-backup):
+- **Script**: `/usr/local/bin/router-config-backup` on the PVE host (source `infra/scripts/router-config-backup.sh`, unit + timer alongside). Deploy is CI, like the others (see "Deploying the PVE host scripts").
+- **Schedule**: weekly, Sunday 04:30 (after devvm-home-backup, before daily-backup and offsite-sync), `Persistent=true`.
+- **What**: each router in `ROUTERS` (today `mladost3-openwrt=root@10.3.2.7`, over the site-to-site tunnel) streams `sysupgrade -b -`, the standard OpenWrt config backup, into `/mnt/backup/routers/<name>/backup-<name>-<YYYYMMDD>.tar.gz` (mode 0600: the archives hold WireGuard private keys and root password hashes). An archive is kept only if it is valid gzip and contains `etc/config/network`.
+- **Offsite**: each new archive is appended to `/mnt/backup/.changed-files`, so the next daily offsite-sync copies just that file to `Synology:/Backup/Viki/pve-backup/routers/`; the monthly full pass mirrors the folder too.
+- **Retention**: 8 per router on sda (about two months), plus the Synology's daily snapshots of the Backup share.
+- **Auth**: dedicated key `/root/.ssh/id_router_backup` on the PVE host. On the router it is pinned in `/etc/dropbear/authorized_keys` as `command="sysupgrade -b - 2>/dev/null",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty`, so it can only produce a backup (verified: asking it to run `id; cat /etc/shadow` returns the backup stream instead). The router's tunnel firewall rule admits the PVE host (`192.168.1.127`) next to 10.0.0.0/8.
+- **Adding a router**: authorize the key with the same pinned line, allow 192.168.1.127 to its SSH port, and append `name=root@<tunnel-ip>` to `ROUTERS` in the script.
+- **Monitoring**: Pushgateway job `router-config-backup`, one `instance` per router, `backup_last_status` / `backup_last_success_timestamp` / `backup_last_bytes`, pushed on success and failure. Alerts `RouterConfigBackupStale` (>9d) and `RouterConfigBackupFailing`.
+- **Restore**: copy the archive to the router and `sysupgrade -r <file>`, then reinstall the packages listed in `docs/architecture/vpn.md` (Mladost 3 section); the archive carries config, not packages.
 
 **4. PVE Config** (`/mnt/backup/pve-config/`):
 - `/etc/pve/` (cluster config, VM definitions)

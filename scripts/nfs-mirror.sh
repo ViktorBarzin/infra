@@ -72,6 +72,9 @@ EXCLUDES=(
     # effectively 1 day, not 14. Same failure that reaped the first two vzdump
     # images on 2026-06-10, on a directory added after that exclude was written.
     --exclude='/devvm-home/'
+    # router-config-backup's weekly site-router archives (added 2026-10-05,
+    # with this exclude in the same commit so the third such job is not reaped).
+    --exclude='/routers/'
     --exclude='/lost+found/'
 
     # ---- state files used by other backup jobs ----
