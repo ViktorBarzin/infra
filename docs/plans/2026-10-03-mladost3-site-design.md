@@ -1,6 +1,6 @@
 # Mladost 3 site: OpenWrt router on the WireGuard hub
 
-Status: executing. Ready to ship: the router runs the Mladost settings and its tunnel already connects through the public endpoint. Cutover at Mladost is pending.
+Status: done. Installed at Mladost 3 on 2026-10-05; tunnel, LAN, WiFi, monitoring and logs verified remotely.
 
 ## Goal
 
@@ -38,7 +38,7 @@ flowchart TD
 | Web UI | `mladost3.viktorbarzin.me` proxies LuCI over the tunnel, public behind Authentik like Valchedrym. |
 | Monitoring | Loki `{job="syslog", host="mladost3-openwrt"}` (syslog over TCP to the in-cluster listener), Prometheus jobs `mladost3-router` (node exporter) and `mladost3-icmp`, alert `Mladost3TunnelDown` after 10 minutes, Uptime Kuma port monitor on 192.168.3.1:80. |
 | Name | `mladost3-openwrt` everywhere: hostname, DNS, Loki, Prometheus, Uptime Kuma. `mladost3` is the site. |
-| Backup | Final config in Nextcloud as `backup-mladost3-openwrt-2026-10-03.tar.gz`. |
+| Backup | Final config in Nextcloud as `backup-mladost3-openwrt-2026-10-05.tar.gz`. |
 
 ## Where each piece lives
 
@@ -65,7 +65,7 @@ flowchart TD
   F --> G["Verify remotely; retire the D-Link"]
 ```
 
-Steps A to E are done. The ship step went on before the router left the Sofia LAN, and on its next boot the tunnel connected through `vpn.viktorbarzin.me` (via the Archer's NAT loopback), so the public path is proven. During staging the tunnel goes to pfSense's LAN leg, and 192.168.1.0/24 stays out of the tunnel, because the router's WAN sits inside that subnet. The ship step runs right before the router leaves Sofia. It changes the WAN MAC, which also ends the temporary link-local SSH path, so after it the router is managed only over the tunnel.
+All steps are done. The ship step went on before the router left the Sofia LAN, and on its next boot the tunnel connected through `vpn.viktorbarzin.me` (via the Archer's NAT loopback), so the public path is proven. During staging the tunnel goes to pfSense's LAN leg, and 192.168.1.0/24 stays out of the tunnel, because the router's WAN sits inside that subnet. The ship step runs right before the router leaves Sofia. It changes the WAN MAC, which also ends the temporary link-local SSH path, so after it the router is managed only over the tunnel.
 
 > [!NOTE]
 > Fallback at cutover: plugging the D-Link back in restores Mladost exactly as before. It stays as a spare until the new router has run for a while.
@@ -79,6 +79,14 @@ Steps A to E are done. The ship step went on before the router left the Sofia LA
 - Technitium answers the A and PTR records; pfSense advertises 192.168.3.0/24 to the tailnet, approved.
 - Uptime Kuma monitor is up.
 
+## Verified at Mladost 3 (2026-10-05)
+
+- WAN DHCP gave the same public address the D-Link had (77.85.22.145) with the cloned MAC; the tunnel to pfSense comes up from it through `vpn.viktorbarzin.me`.
+- Extroot mounted on the second check (`retrying in 30 seconds`, then `switched to extroot`), so the boot-race fix works on site.
+- WiFi broadcasts on both bands and three clients took leases right away. From the router's LAN address: an internal app returns 200 through the tunnel, Sofia (ha-sofia, 22 ms) and London (41 ms) answer, and the internet goes out the local line.
+- Prometheus scrapes the router, the ICMP probe is up, Uptime Kuma shows both monitors up, `mladost3.viktorbarzin.me` redirects to Authentik and its backend answers.
+- One fix on site: syslog. At boot the log forwarder connected before the tunnel existed and got stuck on the WAN, so a hotplug hook now reconnects it whenever the tunnel comes up.
+
 ## What we learned on the way
 
 - **Extroot boot race.** The USB stick enumerates about 12 s after power-on, but extroot gave up after a 5 s wait, so some boots fell back to the internal flash and its 2024 Sofia-era config (old password, no LuCI, no devvm key). `delay_root` is now 30 in both `fstab` copies.
@@ -87,6 +95,4 @@ Steps A to E are done. The ship step went on before the router left the Sofia LA
 
 ## Open questions
 
-- Whether Mladost's ISP needs the cloned D-Link MAC is unknown; the router uses it either way.
-- No WiFi client has joined the new network yet; the LAN behaviour was tested from the router itself.
 - A logged-in view of `mladost3.viktorbarzin.me` through Authentik has not been checked, since it needs Viktor's session.
