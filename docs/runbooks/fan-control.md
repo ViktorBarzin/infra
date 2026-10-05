@@ -13,7 +13,8 @@ math. Design + history: `infra/docs/plans/2026-06-04-pve-fan-control-design.md`.
 > **anti-flap**: holds the last command through transient HA losses instead of
 > dumping to Dell auto. (5) 2026-10-05 **5-minute mean** as the curve input,
 > freshness guard, minute pulse, HA hysteresis removed; **Simple PID Controller**
-> installed alongside, switched off until tuned.
+> tuned from a step test and active the same day (setpoint 60 °C), the curve kept as
+> the fallback.
 
 ## What it is
 
@@ -63,12 +64,21 @@ treats a negative command as unknown.
 v1.6.1), instance "R730 Fan PID": input `sensor.r730_cpu_temperature_5min`, setpoint
 60 °C, output 25–90 %, sample time 30 s, Kd 0, start mode "Last known value". Cooling
 needs **negative** Kp and Ki. Tuning entities: `number.r730_fan_pid_{setpoint,kp,ki,kd,
-output_min,output_max,sample_time,startup_value}`. Status 2026-10-05: installed with
-auto mode off and gains 0, pending a step test and model-based tuning; the curve is
-active. To switch on without a jump, set start mode "Startup value" with
-`startup_value` = the current command, then auto mode on, then
-`input_boolean.r730_fan_use_pid` on. Turning `input_boolean.r730_fan_use_pid` off
-returns to the curve immediately.
+output_min,output_max,sample_time,startup_value}`. To switch on without a jump, set
+start mode "Startup value" with `startup_value` = the current command, then auto mode
+on, then `input_boolean.r730_fan_use_pid` on, then start mode back to "Last known
+value". Turning `input_boolean.r730_fan_use_pid` off returns to the curve immediately.
+
+**Status 2026-10-05 12:51: PI active, Kp −0.5 %/K, Ki −0.001 %/(K·s) (Ti ≈ 500 s).**
+Tuned from a step test the same day (Lock at 30 → 38 → 30 → 38 → 30 %, 15 min each,
+garage closed): CPU temperature falls about 0.40 K per % duty, time constant ≈ 160 s,
+dead time ≈ 90 s, and rises about 0.15–0.20 K per % of CPU load. A closed-loop model
+calibrated to reproduce the old controller (24.7 writes/h, σ 2.3 K) predicts for this
+setting about 2 IPMI writes per hour, average duty ~30 % instead of ~37 %, CPU held at
+60 °C with a 99th percentile around 66 °C, and a peak near 65 °C for a 30-minute load
+surge from 32 to 60 %; the prediction stayed stable for gain ±25 % and dead time up to
+150 s. These are model results; compare them against the daemon's journal over the
+following week.
 
 **Inputs** (`input_number` sliders): `r730_fan_temp_min`, `r730_fan_temp_max`,
 `r730_fan_duty_min`, `r730_fan_duty_max`, `r730_fan_bias` (flat % added on top —
