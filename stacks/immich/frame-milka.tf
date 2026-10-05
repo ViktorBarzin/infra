@@ -1,7 +1,9 @@
 # Immich photo-frame for Milka (milka.barzina@gmail.com) — a third instance,
 # cloned from frame-emo.tf, scoped to Milka's own Immich account and Valchedrym
 # weather. Served at highlights-immich-milka.viktorbarzin.me and shown on her
-# Portal Mini (Valchedrym LAN 192.168.0.228) via the portal-immich-frame app,
+# Portal Mini (Portal-0A2AB3D9FEC5) via the portal-immich-frame app. The Portal
+# moved from Valchedrym to the Mladost 3 site on 2026-10-05 (LAN 192.168.3.228);
+# the weather stays on Valchedrym by Viktor's choice. It was
 # built with -PframeUrl=https://highlights-immich-milka.viktorbarzin.me.
 #
 # API key: Vault secret/emo -> immich_api_key_milka. It lives under emo's path
@@ -205,12 +207,14 @@ resource "kubernetes_service" "immich-frame-milka" {
 
 module "ingress_milka" {
   source = "../../modules/kubernetes/ingress_factory"
-  # Photo-frame kiosk on Milka's Portal Mini (Valchedrym LAN, reached over the
-  # WireGuard spoke). Same gating as the other two frames: home-lans-only
-  # ipAllowList + dns_type "internal". 192.168.0.0/24 is already in that
-  # allowlist, and the Valchedrym router masquerades onto the tunnel so Traefik
-  # sees 10.3.2.5 — inside 10.0.0.0/8, allowed either way.
-  # NOTE: the Valchedrym router's dnsmasq had rebind_protection on, which
+  # Photo-frame kiosk on Milka's Portal Mini, at the Mladost 3 site since
+  # 2026-10-05 (before that Valchedrym). Same gating as the other two frames:
+  # home-lans-only ipAllowList + dns_type "internal". The Mladost 3 router
+  # masquerades onto the tunnel, so Traefik sees 10.3.2.7 (inside 10.0.0.0/8);
+  # 192.168.3.0/24 is in the allowlist as well. Verified 2026-10-05: the Portal
+  # gets 200, an outside request to the WAN IP with this SNI gets 403.
+  # NOTE: both spoke routers need rebind_domain='viktorbarzin.me' (Mladost 3
+  # has it from the start). The Valchedrym router's dnsmasq had rebind_protection on, which
   # stripped the RFC1918 answer for internal-DNS hosts; fixed 2026-08-06 with
   # rebind_domain='viktorbarzin.me' on that router.
   # auth = "none": kiosk WebView, no user auth by design; gated by the home-lans-only ipAllowList instead.
@@ -227,7 +231,7 @@ module "ingress_milka" {
   tls_secret_name  = var.tls_secret_name
   service_name     = "immich-frame-milka"
   extra_annotations = {
-    "gethomepage.dev/description" = "Immich photo frame feed for Milka's kiosk in Valchedrym"
+    "gethomepage.dev/description" = "Immich photo frame feed for Milka's kiosk in Mladost 3"
     "gethomepage.dev/icon"        = "immich.png"
     "gethomepage.dev/name"        = "Immich Highlights (Milka)"
   }
