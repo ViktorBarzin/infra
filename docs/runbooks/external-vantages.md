@@ -12,9 +12,9 @@ two machines below.
 | Network | Oracle Cloud, Frankfurt, hosting ASN | BTC/Vivacom residential broadband, Sofia, AS8866 |
 | Public address | 92.5.132.215 | 77.85.22.145 (DHCP, has been stable; it can change) |
 | IP families | IPv4 only in practice (its IPv6 egress is dead) | IPv4 only (the ISP gives no IPv6) |
-| Login | `ssh -i ~/.ssh/backup-mx ubuntu@92.5.132.215` | `ssh root@192.168.3.1` (or `root@10.3.2.7`), key only, over the site-to-site tunnel |
+| Login | `ssh -i ~/.ssh/backup-mx ubuntu@92.5.132.215` | `ssh root@192.168.3.1` (or `root@10.3.2.7`) over the tunnel; `ssh root@77.85.22.145` over the internet when the tunnel is down; key only |
 | Tools | full Ubuntu userland | `curl`, busybox `ping`/`nslookup`/`traceroute`; more via `opkg` (the USB extroot has 3.4 GB free) |
-| Survives a homelab outage | yes, it has its own uplink and SSH | no: it is reached through the tunnel to Sofia, so a Sofia WAN outage takes the login path with it |
+| Survives a homelab outage | yes, it has its own uplink and SSH | yes via its public address: SSH on 77.85.22.145 is open (key only), so with Sofia's internet down log in through mx2 (`ssh -J ubuntu@92.5.132.215 root@77.85.22.145`) |
 
 Use mx2 when the homelab may be down, and for anything that should look like
 a datacentre client. Use mladost3-openwrt when a residential, Bulgarian
