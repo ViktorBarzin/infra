@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly config backup of the OpenWrt site routers to sda
+
+[Timer]
+# Sunday 04:30: after the 03:30 devvm-home-backup, before daily-backup (05:00)
+# and offsite-sync (06:00), so the new archive goes offsite the same morning.
+OnCalendar=Sun *-*-* 04:30:00
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

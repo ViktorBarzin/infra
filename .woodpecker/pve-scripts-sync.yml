@@ -57,6 +57,9 @@ when:
       - scripts/nfs-mirror.sh
       - scripts/nfs-mirror.service
       - scripts/nfs-mirror.timer
+      - scripts/router-config-backup.sh
+      - scripts/router-config-backup.service
+      - scripts/router-config-backup.timer
     # A bare `event: manual` matches EVERY manual pipeline, so a trigger meant
     # for another workflow would run this one too. Same guard the sibling
     # pipelines carry. An undefined variable compares as empty, so a bare

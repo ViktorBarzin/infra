@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly config backup of the OpenWrt site routers to sda
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/router-config-backup
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=router-config-backup
+TimeoutStartSec=600

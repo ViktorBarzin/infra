@@ -3971,6 +3971,23 @@ serverFiles:
               severity: warning
             annotations:
               summary: "pfsense backup is {{ $value | humanizeDuration }} old (threshold: 9d)"
+          # Site-router config backups (scripts/router-config-backup.sh, weekly
+          # Sunday 04:30 on the PVE host). One series per router (instance).
+          - alert: RouterConfigBackupStale
+            expr: (time() - backup_last_success_timestamp{job="router-config-backup"}) > 777600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Router config backup for {{ $labels.instance }} is {{ $value | humanizeDuration }} old (threshold: 9d)"
+          - alert: RouterConfigBackupFailing
+            expr: backup_last_status{job="router-config-backup"} != 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Router config backup for {{ $labels.instance }} failed on its last run"
+              description: "router-config-backup on the PVE host could not fetch a valid config archive. Run `systemctl start router-config-backup` and read `journalctl -u router-config-backup`; usually the tunnel to the router is down or the router's pinned key line in /etc/dropbear/authorized_keys is missing. Docs: docs/architecture/backup-dr.md."
           - alert: OffsiteBackupSyncStale
             expr: (time() - backup_last_success_timestamp{job="offsite-backup-sync"}) > 777600
             for: 30m
