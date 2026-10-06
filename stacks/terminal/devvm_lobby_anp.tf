@@ -10,12 +10,16 @@
 # with `terraform console` and check who reaches which port. The resources
 # that apply it are in terminal_api.tf.
 locals {
-  devvm_lobby_network      = "10.0.10.10/32"
-  devvm_lobby_port_numbers = [7681, 7683, 7684, 7685, 7686, 7687, 7688, 8710]
+  devvm_lobby_network = "10.0.10.10/32"
+  # 7692 and 7693 are the public-link ttyds (ttyd-link-ro, ttyd-link-rw), which
+  # take connections with no identity at all: only Traefik may reach them, so its
+  # rate limits and header stripping always sit in front.
+  devvm_lobby_port_numbers = [7681, 7683, 7684, 7685, 7686, 7687, 7688, 7692, 7693, 8710]
 
   devvm_lobby_ports = [
     { portNumber = { protocol = "TCP", port = 7681 } },
     { portRange = { protocol = "TCP", start = 7683, end = 7688 } },
+    { portRange = { protocol = "TCP", start = 7692, end = 7693 } },
     { portNumber = { protocol = "TCP", port = 8710 } },
   ]
 
