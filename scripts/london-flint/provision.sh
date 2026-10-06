@@ -89,13 +89,19 @@ for i in ra0 rax0; do iwpriv "$i" set Debug=0; done
 # DNS: log every lookup (--log-queries=extra puts a serial and the client on
 # each line; the lines leave over the TCP syslog to Loki and nothing goes to
 # flash), and raise the concurrent-query limit from 150, which was being hit.
+# AdGuard is also asked over IPv6: over IPv4 the flat shares a CGNAT address,
+# and AdGuard stopped answering it for up to 283 s at a time while IPv6 kept
+# answering. "All servers" is on, so the first answer wins.
 changed=0
 [ "$(uci -q get dhcp.@dnsmasq[0].logqueries)" = 1 ] || { uci set dhcp.@dnsmasq[0].logqueries='1'; changed=1; }
 [ "$(uci -q get dhcp.@dnsmasq[0].dnsforwardmax)" = 1000 ] || { uci set dhcp.@dnsmasq[0].dnsforwardmax='1000'; changed=1; }
+for s in 2a10:50c0::ad1:ff 2a10:50c0::ad2:ff; do
+	uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep -qxF "$s" || { uci add_list dhcp.@dnsmasq[0].server="$s"; changed=1; }
+done
 if [ "$changed" = 1 ]; then
 	uci commit dhcp
 	/etc/init.d/dnsmasq restart
-	echo "dnsmasq: query log on, forward-max 1000"
+	echo "dnsmasq: query log on, forward-max 1000, AdGuard IPv6 upstreams"
 else
 	echo "dnsmasq settings present"
 fi
