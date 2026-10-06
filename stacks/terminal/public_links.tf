@@ -10,6 +10,11 @@
 #                       A PathPrefix here would hand every tmux-api route to
 #                       anyone who sends their own X-Authentik-Username, so it
 #                       must stay an exact match.
+#   /s/api/link/transcript, /result, /image, /picture
+#                       exact Paths, /s/api stripped, to tmux-api. An ENDED
+#                       link's conversation and its pictures (terminal-lobby
+#                       ADR-0040). Authorized by a view cookie redeem sets,
+#                       scoped to /s/api/link/; same exact-match rule.
 #   /s/rw/              ttyd-link-rw (devvm :7693), read-write links
 #   /s/assets/          clipboard-upload's hashed chunks, with /s stripped
 #   /s/                 ttyd-link-ro (devvm :7692), the visitor page and
@@ -17,8 +22,8 @@
 #                       no input at all
 #
 # Every route blanks the identity headers first (terminal-api-strip-identity),
-# so nothing a client sends can name a user; only the redeem route then stamps
-# the proxy secret, after the strip, because tmux-api checks it there. What
+# so nothing a client sends can name a user; only the tmux-api routes then
+# stamp the proxy secret, after the strip, because tmux-api checks it there. What
 # authorizes an attach is a single-use ticket the page gets from redeem, spent
 # by the devvm's attach scripts.
 #
@@ -122,6 +127,44 @@ resource "kubernetes_manifest" "public_link_inflight" {
   }
 }
 
+# The transcript routes load every picture in a conversation at once, which a
+# page-load-sized limit would cut off, so they get their own, looser one.
+resource "kubernetes_manifest" "public_link_read_rate_limit" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "public-link-read-rate-limit"
+      namespace = local.public_link_ns
+    }
+    spec = {
+      rateLimit = {
+        average = 20
+        burst   = 120
+        sourceCriterion = {
+          requestHeaderName = "X-Real-Ip"
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_manifest" "public_link_strip_api" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "public-link-strip-api"
+      namespace = local.public_link_ns
+    }
+    spec = {
+      stripPrefix = {
+        prefixes = ["/s/api"]
+      }
+    }
+  }
+}
+
 resource "kubernetes_manifest" "public_link_redeem_path" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -173,6 +216,22 @@ resource "kubernetes_manifest" "public_link_ingressroute" {
             { name = "tl-proxy-secret", namespace = local.public_link_ns },
             { name = "public-link-redeem-path", namespace = local.public_link_ns },
           ])
+          services = [{ name = kubernetes_service.tmux_api.metadata[0].name, port = 80 }]
+        },
+        {
+          match = join(" || ", [
+            for p in ["transcript", "result", "image", "picture"] :
+            "(Host(`${local.public_link_host}`) && Path(`/s/api/link/${p}`))"
+          ])
+          kind     = "Rule"
+          priority = 400
+          middlewares = [
+            { name = "terminal-api-strip-identity", namespace = local.public_link_ns },
+            { name = "real-ip", namespace = "traefik" },
+            { name = "public-link-read-rate-limit", namespace = local.public_link_ns },
+            { name = "tl-proxy-secret", namespace = local.public_link_ns },
+            { name = "public-link-strip-api", namespace = local.public_link_ns },
+          ]
           services = [{ name = kubernetes_service.tmux_api.metadata[0].name, port = 80 }]
         },
         {
