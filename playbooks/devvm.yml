@@ -653,6 +653,20 @@
         owner: root
         group: root
 
+    # /usr/local/bin/tmux sits ahead of /usr/bin/tmux on PATH and refuses
+    # kill-server against a user's default server, which holds every lobby
+    # session. On 2026-10-06 an agent's e2e script ran `tmux kill-server` with
+    # a private TMUX_TMPDIR; $TMUX from the lobby pane overrode it and the
+    # command killed wizard's real server twice. Everything else passes through.
+    # Tests: files/devvm/tmux-guard-test.sh.
+    - name: Install tmux-guard as /usr/local/bin/tmux
+      ansible.builtin.copy:
+        src: files/devvm/tmux-guard
+        dest: /usr/local/bin/tmux
+        mode: "0755"
+        owner: root
+        group: root
+
     - name: Install the adopted units
       ansible.builtin.copy:
         src: "files/devvm/{{ item }}"
