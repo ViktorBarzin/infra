@@ -1,38 +1,27 @@
-# Public links on terminal.viktorbarzin.me/s/ — a URL that opens one Lobby
-# session, read-only or read-write, for someone who is not signed in.
-# Design: terminal-lobby docs/plans/2026-10-06-public-links-design.md (ADR-0039).
+# Public links on terminal.viktorbarzin.me/s/ — a URL that shows one Lobby
+# session's conversation, read-only, to someone who is not signed in.
+# Design: terminal-lobby docs/plans/2026-10-06-public-links-design.md
+# (ADR-0039, ADR-0040, ADR-0041). Links carry no terminal since ADR-0041, so
+# every route here goes to tmux-api or clipboard-upload.
 #
 # These are the only routes on this host without forward-auth, so each one is
 # narrow:
 #
-#   /s/api/link/redeem  exact Path, rewritten to tmux-api /link/redeem. The one
-#                       tmux-api route that serves a caller with no identity.
-#                       A PathPrefix here would hand every tmux-api route to
-#                       anyone who sends their own X-Authentik-Username, so it
-#                       must stay an exact match.
+#   /s/api/link/redeem  exact Path, rewritten to tmux-api /link/redeem. Sets
+#                       the link's view cookie. A PathPrefix here would hand
+#                       every tmux-api route to anyone who sends their own
+#                       X-Authentik-Username, so it must stay an exact match.
 #   /s/api/link/transcript, /result, /image, /picture
-#                       exact Paths, /s/api stripped, to tmux-api. An ENDED
-#                       link's conversation and its pictures (terminal-lobby
-#                       ADR-0040). Authorized by a view cookie redeem sets,
-#                       scoped to /s/api/link/; same exact-match rule.
-#   /s/rw/              ttyd-link-rw (devvm :7693), read-write links
+#                       exact Paths, /s/api stripped, to tmux-api: the
+#                       conversation and its pictures, authorized by the view
+#                       cookie redeem set; same exact-match rule.
 #   /s/assets/          clipboard-upload's hashed chunks, with /s stripped
-#   /s/                 ttyd-link-ro (devvm :7692), the visitor page and
-#                       read-only links; that ttyd runs without -W, so it takes
-#                       no input at all
+#   /s, /s/             exact Paths to clipboard-upload, which serves the
+#                       visitor page
 #
 # Every route blanks the identity headers first (terminal-api-strip-identity),
 # so nothing a client sends can name a user; only the tmux-api routes then
-# stamp the proxy secret, after the strip, because tmux-api checks it there. What
-# authorizes an attach is a single-use ticket the page gets from redeem, spent
-# by the devvm's attach scripts.
-#
-# The two ttyd ports are also restricted to the Traefik nodes by the devvm's
-# nftables (playbooks/devvm.yml) and to the traefik namespace in-cluster
-# (devvm_lobby_anp.tf), so these middlewares are always in front of them.
-#
-# Priorities are explicit because Traefik's default is rule length, which
-# would rank the /s/ rule (two matchers) above /s/rw/.
+# stamp the proxy secret, after the strip, because tmux-api checks it there.
 
 locals {
   public_link_host = "terminal.viktorbarzin.me"
@@ -43,49 +32,12 @@ locals {
     { name = "real-ip", namespace = "traefik" },
     { name = "public-link-rate-limit", namespace = local.public_link_ns },
   ]
-
-  public_link_ttyds = {
-    "ttyd-link-ro" = 7692
-    "ttyd-link-rw" = 7693
-  }
-}
-
-resource "kubernetes_service" "public_link_ttyd" {
-  for_each = local.public_link_ttyds
-  metadata {
-    name      = each.key
-    namespace = local.public_link_ns
-  }
-  spec {
-    port {
-      name        = "http"
-      port        = 80
-      target_port = each.value
-    }
-  }
-}
-
-resource "kubernetes_endpoints" "public_link_ttyd" {
-  for_each = local.public_link_ttyds
-  metadata {
-    name      = each.key
-    namespace = local.public_link_ns
-  }
-  subset {
-    address {
-      ip = "10.0.10.10"
-    }
-    port {
-      name = "http"
-      port = each.value
-    }
-  }
 }
 
 # Keyed on X-Real-Ip, which traefik/real-ip sets from the connection earlier in
-# the chain. A page load is three requests and a visit is one redeem plus one
-# socket, so these leave room for a reconnecting phone and stop a flood. Per
-# Traefik pod (3), so the effective ceiling is about 3x.
+# the chain. A page load is a few requests and a redeem, so these leave room
+# for a reloading phone and stop a flood. Per Traefik pod (3), so the
+# effective ceiling is about 3x.
 resource "kubernetes_manifest" "public_link_rate_limit" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -106,29 +58,9 @@ resource "kubernetes_manifest" "public_link_rate_limit" {
   }
 }
 
-# Open terminals per client. A socket is held, not repeated, so the rate limit
-# does not bound it; each one holds a pty on the devvm.
-resource "kubernetes_manifest" "public_link_inflight" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "public-link-inflight"
-      namespace = local.public_link_ns
-    }
-    spec = {
-      inFlightReq = {
-        amount = 16
-        sourceCriterion = {
-          requestHeaderName = "X-Real-Ip"
-        }
-      }
-    }
-  }
-}
-
-# The transcript routes load every picture in a conversation at once, which a
-# page-load-sized limit would cut off, so they get their own, looser one.
+# The read routes take a live page's poll every few seconds and every picture
+# in a conversation at once, which a page-load-sized limit would cut off, so
+# they get their own, looser one.
 resource "kubernetes_manifest" "public_link_read_rate_limit" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -235,31 +167,18 @@ resource "kubernetes_manifest" "public_link_ingressroute" {
           services = [{ name = kubernetes_service.tmux_api.metadata[0].name, port = 80 }]
         },
         {
-          match    = "Host(`${local.public_link_host}`) && PathPrefix(`/s/assets/`)"
-          kind     = "Rule"
-          priority = 300
-          middlewares = concat(local.public_link_guard, [
-            { name = "public-link-strip-s", namespace = local.public_link_ns },
-          ])
-          services = [{ name = kubernetes_service.clipboard_upload.metadata[0].name, port = 80 }]
+          match       = "Host(`${local.public_link_host}`) && PathPrefix(`/s/assets/`)"
+          kind        = "Rule"
+          priority    = 300
+          middlewares = concat(local.public_link_guard, [{ name = "public-link-strip-s", namespace = local.public_link_ns }])
+          services    = [{ name = kubernetes_service.clipboard_upload.metadata[0].name, port = 80 }]
         },
         {
-          match    = "Host(`${local.public_link_host}`) && PathPrefix(`/s/rw/`)"
-          kind     = "Rule"
-          priority = 300
-          middlewares = concat(local.public_link_guard, [
-            { name = "public-link-inflight", namespace = local.public_link_ns },
-          ])
-          services = [{ name = kubernetes_service.public_link_ttyd["ttyd-link-rw"].metadata[0].name, port = 80 }]
-        },
-        {
-          match    = "Host(`${local.public_link_host}`) && (Path(`/s`) || PathPrefix(`/s/`))"
-          kind     = "Rule"
-          priority = 200
-          middlewares = concat(local.public_link_guard, [
-            { name = "public-link-inflight", namespace = local.public_link_ns },
-          ])
-          services = [{ name = kubernetes_service.public_link_ttyd["ttyd-link-ro"].metadata[0].name, port = 80 }]
+          match       = "Host(`${local.public_link_host}`) && (Path(`/s`) || Path(`/s/`))"
+          kind        = "Rule"
+          priority    = 200
+          middlewares = local.public_link_guard
+          services    = [{ name = kubernetes_service.clipboard_upload.metadata[0].name, port = 80 }]
         },
       ]
       tls = {

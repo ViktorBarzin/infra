@@ -1876,18 +1876,10 @@
               tcp dport 8710 ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
               tcp dport 8710 drop
 
-              # The public-link ttyds (terminal-lobby ADR-0039): ttyd-link-ro on
-              # 7692 and ttyd-link-rw on 7693. They take connections with no
-              # identity at all and authorize each attach by a single-use
-              # ticket, so the only way in must be Traefik's /s/ routes, which
-              # strip identity headers and rate-limit first.
-              tcp dport { 7692, 7693 } ip saddr { 10.0.10.10, 10.0.20.102, 10.0.20.103, 10.0.20.104, 10.0.20.105 } accept
-              tcp dport { 7692, 7693 } drop
-
               # Traefik reaches the lobby over IPv4 only. The services listen on
               # every interface, which includes this box's global IPv6 address;
               # nothing legitimate arrives that way, so close it.
-              meta nfproto ipv6 tcp dport { 7681, 7683-7688, 7692-7693, 8710 } drop
+              meta nfproto ipv6 tcp dport { 7681, 7683-7688, 8710 } drop
             }
 
             # Ports published with `docker run -p` stay on this box. dockerd
