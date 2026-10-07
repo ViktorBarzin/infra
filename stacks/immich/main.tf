@@ -26,7 +26,7 @@ variable "immich_version" {
   # immich-machine-learning); this var just records the current floor. Only a
   # MAJOR bump (v3.x -> v4.x) now needs a hand-landing: change this +
   # `kubectl set image` live.
-  default = "v3.1.0"
+  default = "v3.3.0"
 }
 variable "proxmox_host" { type = string }
 variable "redis_host" { type = string }
@@ -1032,6 +1032,14 @@ resource "kubernetes_deployment" "immich-machine-learning" {
           env {
             name  = "MACHINE_LEARNING_MODEL_TTL"
             value = "600"
+          }
+          # v3.3.0 opt-in: fetch the optimized "v2" model exports (fp16 on
+          # GPU, bucketed input shapes, mmap). Outputs are numerically
+          # equivalent to the old exports, so no re-indexing; upstream says
+          # this becomes the default in a later release.
+          env {
+            name  = "MACHINE_LEARNING_MODEL_REVISION"
+            value = "v2"
           }
           env {
             name  = "TRANSFORMERS_CACHE"
