@@ -55,11 +55,25 @@ leaving the field restores the shown value. The ⚙ and ? buttons in the facepla
 toggle `input_boolean.r730_fan_pid_show_settings` / `_show_help` (shared, like the AC
 Infinity card's "Настройка параметри" / "Помощ"), which show two conditional cards next
 to it: "PID tuning" with Kp, Ki, Kd, SP min / SP max (`input_number.r730_fan_pid_sp_min`
-/ `_sp_max`, 45 / 75 °C at creation on 2026-10-07) and Output min/max, and "R730 FAN PID:
-помощ", a markdown card that explains the faceplate, the modes, typed input, the tuning
-values (filled in live) and the protections, ending with a live status line. Changing an
-SP limit moves the setpoint inside it when it falls outside (automation "R730 fan PID —
-keep SP within SP min / SP max").
+/ `_sp_max`, 45 / 75 °C at creation on 2026-10-07) and Output min/max, then "Разширени"
+(sample time, windup protection, proportional on measurement, start mode, startup value)
+and read-only "Диагностика" (the integration's P and I contributions and its error
+sensor, which reports PV − SP, the opposite sign of simple-pid's SP − PV), and "R730 FAN
+PID: помощ", a markdown card that explains the faceplate, the modes, typed input, the
+tuning and advanced values (filled in live), the daemon's settings and the built-in
+constants, ending with a live status line. Changing an SP limit moves the setpoint inside
+it when it falls outside (automation "R730 fan PID — keep SP within SP min / SP max").
+
+**Reload / restart.** Reloading the Simple PID Controller config entry (which HA also
+does when one of its disabled entities is enabled) restarted the PID at Output min on
+2026-10-07, because the last output was not restored, and the fans dropped from 31 % to
+25 % until it was re-seeded by hand. The automation "R730 fan PID — re-seed after HA
+start or integration reload" now handles this: when HA starts or the PID output sensor
+comes back from unavailable/unknown, it waits for PV, the PID output and the daemon's
+applied % (`sensor.r730_fan_control_target`), and in AUTO calls
+`set_output(applied − Kp × (SP − PV))`. Verified with a second reload: the command was
+`-1` for 10.6 s (the daemon held), then 30.1 % and, a second later, 31.0 %, with no IPMI
+write.
 Built from button-card cards inside a stack-in-card;
 the generator and the last card JSON are on the NAS
 (`Claude shared/r730-fan-pid/faceplate-generator/`).
