@@ -51,10 +51,15 @@ gap), the badge reads "DELL AUTO · резерв". In AUTO the SP value can be t
 in MAN the OP value;
 a typed value is sent only on Enter and only inside the limits (SP min..SP max, OP from
 Output min to 100 %), otherwise the field turns red and nothing is sent; Escape or
-leaving the field restores the shown value. Next to it, "PID tuning" holds
-Kp, Ki, Kd, SP min / SP max (`input_number.r730_fan_pid_sp_min` / `_sp_max`, 45 / 75 °C
-since 2026-10-07) and Output min/max. Changing an SP limit moves the setpoint inside it
-when it falls outside (automation "R730 fan PID — keep SP within SP min / SP max").
+leaving the field restores the shown value. The ⚙ and ? buttons in the faceplate header
+toggle `input_boolean.r730_fan_pid_show_settings` / `_show_help` (shared, like the AC
+Infinity card's "Настройка параметри" / "Помощ"), which show two conditional cards next
+to it: "PID tuning" with Kp, Ki, Kd, SP min / SP max (`input_number.r730_fan_pid_sp_min`
+/ `_sp_max`, 45 / 75 °C at creation on 2026-10-07) and Output min/max, and "R730 FAN PID:
+помощ", a markdown card that explains the faceplate, the modes, typed input, the tuning
+values (filled in live) and the protections, ending with a live status line. Changing an
+SP limit moves the setpoint inside it when it falls outside (automation "R730 fan PID —
+keep SP within SP min / SP max").
 Built from button-card cards inside a stack-in-card;
 the generator and the last card JSON are on the NAS
 (`Claude shared/r730-fan-pid/faceplate-generator/`).
