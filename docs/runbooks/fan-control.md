@@ -49,7 +49,12 @@ number each loop and applies it over IPMI — it does **no** math. Design + hist
 `last_updated` moving, so the daemon's `STALE_SECS` check never trips on a value that
 is legitimately constant (smoothed output, or Lock, which previously fell to Dell auto
 after ~35 min). The daemon truncates decimals, so the pulse never causes an IPMI write.
-The daemon's `MIN_STEP` (3 %) is the only deadband.
+The daemon's `MIN_STEP` is the only deadband: 2 % since 2026-10-07, set in
+`/etc/fan-control.env` (the script default is 3). A replay of the two measured days
+put the 5-min mean within ±1 K of the setpoint 61 % / 51 % of the time at 2 %, against
+50 % / 40 % at 3 %, for 3–4 writes per hour instead of 1.5. A 1 % step added little
+more and made the duty flip between neighbouring values (77–93 quick reversals a day),
+because the daemon truncates and has no other deadband.
 
 **Freshness guard:** when not locked, if `sensor.r730_cpu_temperature` has no value or
 its `last_reported` is older than 150 s, the command is `-1` (step 3 above). This
@@ -117,6 +122,17 @@ daemon's own state comes from the Pushgateway through `rest_resources/fan_contro
 the daemon pushes 2 while it applies or holds the HA command (labelled "Cool", a name
 kept from the June design) and 0 for Dell auto.
 
+**Chart "R730 — CPU & Fans"** (same view, apexcharts-card inside a config-template-card
+with 1 h / 12 h / 1 week buttons): since 2026-10-07 the four header numbers are the
+live entity states (`show.in_header: raw`), the lines draw the recorded states as steps
+for 1 h and 12 h (`group_by.func: raw`), and the week view averages 5-minute intervals,
+because a week holds about 45 000 records across the four lines (the history fetch
+alone took 18 s) and that is more points than the chart has pixels. Legend values are
+hidden so no averaged number appears next to the live ones. Note that "Fan set point"
+on the PID card is the HA command with an rpm estimated as 160 × % + 1520, while the
+chart's "Fan Speed" is the measured mean of the six fans; the fans run at the last
+value the daemon wrote, which can differ from the command by up to `MIN_STEP`.
+
 ## Actuator (host) — what the daemon does
 
 Loop every ~15 s, using only the existing IPMI + HA-REST methods:
@@ -147,7 +163,12 @@ applied). `HA command miss — holding 49%` = a transient HA blip being ridden o
 The PID (setpoint, Kp, Ki, Kd, output min/max) is tuned **live from the HA
 dashboard** — no host access needed. `/etc/fan-control.env` only holds the
 actuator plumbing + safety knobs (`COMMAND_ENTITY`, `STALE_SECS`, `HA_GRACE_SECS`,
-`MIN_STEP`, `CEILING`); edit it then `systemctl restart fan-control`.
+`MIN_STEP`, `CEILING`); edit it then `systemctl restart fan-control`. The unit
+reads it as a systemd `EnvironmentFile`, which keeps everything after `=` as the
+value, so put comments on their own line: `MIN_STEP=2  # note` reached the script
+as `2  # note` on 2026-10-07 and broke its arithmetic test until the line was fixed.
+A restart hands the fans to Dell auto for a few seconds (`ExecStopPost`) before the
+new process writes the HA command again.
 
 ## Deploy / update (daemon source)
 `playbooks/pve-host.yml` installs `scripts/fan-control.sh` as
