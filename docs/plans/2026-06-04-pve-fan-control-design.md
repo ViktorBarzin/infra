@@ -1,7 +1,7 @@
 # PVE R730 presence-aware fan control — design
 
 **Date:** 2026-06-04
-**Status:** implemented; **redesigned 2026-06-08, anti-flap 2026-06-15** (see update below)
+**Status:** implemented; **redesigned 2026-06-08, anti-flap 2026-06-15, PID 2026-10-05, curve removed 2026-10-07** (see update below)
 **Scripts:** `infra/scripts/fan-control.{sh,service,env.example}`, `test-fan-control.sh`
 **Runbook:** `infra/docs/runbooks/fan-control.md`
 
@@ -22,9 +22,15 @@
 >   and `STALE_SECS` loosened 120→1800 (staleness only happens at flat temp,
 >   where the held value is still valid). Killed a ~14%-of-the-time flap to the
 >   Dell floor; verified fallback 14%→0%, command std 16→3 over 8 h.
+> - **2026-10-05:** a PI controller (HACS Simple PID Controller, setpoint 60 °C)
+>   tuned from a step test replaced the curve as the active mode; IPMI writes fell
+>   from 24.7 to about 1.5 per hour.
+> - **2026-10-07:** the curve and its sliders were removed. Order now: Lock →
+>   PID → `-1`, which the daemon rides out for 300 s before Dell auto. Current
+>   state and measurements: the runbook.
 >
-> The HA objects (sliders, command template, display/equilibrium sensors,
-> Lock/Override, dashboard cards, REST sensors) live on ha-sofia, not this repo.
+> The HA objects (PID controller, command template, display sensor,
+> Lock/Override, dashboard card, REST sensors) live on ha-sofia, not this repo.
 > Sections below are retained as historical context.
 
 ## Problem
