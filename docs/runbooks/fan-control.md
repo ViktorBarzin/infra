@@ -26,14 +26,35 @@ number each loop and applies it over IPMI — it does **no** math. Design + hist
 ## What it is
 
 - **HA (brain), on ha-sofia — NOT in this repo:** the Simple PID Controller
-  instance, the command template sensor, the display sensor, the Lock/Override
-  controls, and the dashboard card. Auto-git-tracked on ha-sofia by the
+  instance, the command template sensor, the Lock/Override helpers, the two
+  faceplate scripts, and the dashboard cards. Auto-git-tracked on ha-sofia by the
   version-control add-on.
 - `/usr/local/bin/fan-control` — bash **actuator** (source: `infra/scripts/fan-control.sh`).
 - `fan-control.service` — systemd unit (`Type=simple`, restarts on failure).
 - `/etc/fan-control.env` — config incl. the ha-sofia token (chmod 600, not in git).
 
-## HA brain (dashboard-it → "Server" view → "Fan control (PID)")
+## HA brain (dashboard-it → "Server" view → "R730 FAN PID" faceplate)
+
+**Faceplate (since 2026-10-07)**, in the style of a DCS loop faceplate: PV / SP / OP
+values on top, a PV bar (40–90 °C; amber = 5-min mean, white line = raw reading, red
+line = the daemon's 83 °C ceiling, white pointer = SP), an OP bar (0–100 %; blue =
+command, white line = % the daemon applied, grey marks = Output min/max), AUTO / MAN
+buttons, SP ±0.5 °C and OP ±1 % arrows, and a footer with the applied %, the measured
+rpm and whether the daemon is on the HA command or Dell auto. MAN is the Lock (OP is
+the Override %). In AUTO the SP value can be typed in place, in MAN the OP value;
+a typed value is sent only on Enter and only inside the limits (SP 45–75 °C, OP from
+Output min to 100 %), otherwise the field turns red and nothing is sent; Escape or
+leaving the field restores the shown value. Next to it, "PID tuning" holds Auto mode,
+Kp, Ki, Kd and Output min/max. Built from button-card cards inside a stack-in-card;
+the generator and the last card JSON are on the NAS
+(`Claude shared/r730-fan-pid/faceplate-generator/`).
+
+Scripts behind the buttons: `script.r730_fan_pid_auto` (AUTO; from MAN it calls
+`simple_pid_controller.set_output` with the current Override %, waits until the PID
+output is there and only then unlocks, so the switch is bumpless; toggling Auto mode
+does not re-initialise the controller because the integration reads the switch once
+per sample) and `script.r730_fan_pid_nudge` (fields `target` sp/op, `delta` or
+`value`; SP kept within 45–75 °C, OP within Output min..100 % and only in MAN).
 
 `sensor.r730_fan_command_pct` (template) computes, in order:
 
@@ -71,10 +92,10 @@ v1.6.1), instance "R730 Fan PID". Process value: `sensor.r730_cpu_temperature_5m
 25–90 %, sample time 30 s, Kd 0, windup protection on, start mode "Last known value".
 Cooling needs **negative** Kp and Ki. Tuning entities:
 `number.r730_fan_pid_{setpoint,kp,ki,kd,output_min,output_max,sample_time,startup_value}`;
-all but sample time and startup value are on the dashboard card, the rest on the
-"R730 Fan PID" device page. To switch on without a jump: start mode "Startup value"
-with `startup_value` = the current command, then Auto mode on, then start mode back to
-"Last known value".
+setpoint on the faceplate, Kp/Ki/Kd and the output limits on "PID tuning", sample time
+and startup value on the "R730 Fan PID" device page. To set the controller's output
+without a jump, call `simple_pid_controller.set_output` on `sensor.r730_fan_pid_pid_output`
+with a `value` inside the output limits (what the AUTO script does).
 
 **Tuning basis (2026-10-05):** a step test (Lock at 30 → 38 → 30 → 38 → 30 %, 15 min
 each, garage closed) showed the CPU temperature falling about 0.40 K per % duty, a time
@@ -105,15 +126,18 @@ duty) reproduces the measurements and shows that higher Kp/Ki lower the 5-min pe
 (58 °C: raw ≈ 73 °C, 5-min ≈ 67 °C, duty about 5 % higher). The iDRAC upper non-critical
 threshold for CPU1 is 88 °C; the daemon's own ceiling is 83 °C.
 
-**Manual override:** `input_boolean.r730_fan_lock` (Lock — freeze) +
+**Manual override (MAN on the faceplate):** `input_boolean.r730_fan_lock` +
 `input_number.r730_fan_manual_pct` (Override %). While unlocked, the automation
 "R730 fan override — track live speed while unlocked" keeps Override % equal to the
 live applied % (`sensor.r730_fan_control_target`); "R730 fan lock — freeze current
 speed" snapshots it once more when Lock turns on, and the command template then
-outputs it.
+outputs it, so entering MAN does not move the fans. Leave MAN with the faceplate's AUTO
+button: turning the Lock off any other way skips the re-initialisation and the
+command jumps to whatever the PID computed meanwhile.
 
-**Readout sensors:** `sensor.r730_fan_command_display` ("Fan set point", "X % (Y rpm)"),
-`sensor.r730_cpu_load`, `sensor.r730_fan_speed_avg` (mean of 6 fans),
+**Readout sensors:** `sensor.r730_fan_command_display` ("X % (Y rpm)", rpm estimated as
+160 × % + 1520; no longer on a dashboard), `sensor.r730_cpu_load`,
+`sensor.r730_fan_speed_avg` (mean of 6 fans),
 `sensor.r730_fan_power_avg` (cube-law estimate). The Prometheus-backed REST
 sensors live in `rest_resources/idrac_redfish_exporter.yaml` on ha-sofia and have
 value-template fallbacks so they don't blink `unavailable` on a transient empty. The
@@ -128,10 +152,9 @@ live entity states (`show.in_header: raw`), the lines draw the recorded states a
 for 1 h and 12 h (`group_by.func: raw`), and the week view averages 5-minute intervals,
 because a week holds about 45 000 records across the four lines (the history fetch
 alone took 18 s) and that is more points than the chart has pixels. Legend values are
-hidden so no averaged number appears next to the live ones. Note that "Fan set point"
-on the PID card is the HA command with an rpm estimated as 160 × % + 1520, while the
-chart's "Fan Speed" is the measured mean of the six fans; the fans run at the last
-value the daemon wrote, which can differ from the command by up to `MIN_STEP`.
+hidden so no averaged number appears next to the live ones. The chart's "Fan Speed" is
+the measured mean of the six fans; the fans run at the last value the daemon wrote,
+which can differ from the command (OP) by up to `MIN_STEP`; the faceplate shows both.
 
 ## Actuator (host) — what the daemon does
 
@@ -193,10 +216,12 @@ records every command line on this host and ships it to Loki.
 | PID setting changes ignored | does `sensor.r730_fan_pid_pid_output` move, and does `sensor.r730_fan_command_pct` follow it? token valid? |
 | Command shows `-1` | the PID's Auto mode is off, its output is unavailable (e.g. right after an HA restart), or the freshness guard fired because `sensor.r730_cpu_temperature` has no fresh reading (Prometheus / SNMP iDRAC scrape). The daemon holds 300 s, then Dell auto; it resumes on its own when the command returns. |
 | Box left in manual after crash | `ipmitool raw 0x30 0x30 0x01 0x01` to force Dell auto. |
+| Faceplate field does not take a click or loses typed text | the input needs `pointer-events:auto` (button-card disables pointer events on its content), and it must live in its own card: a button-card re-creates nested cards when it re-renders, which drops focus. Both are handled in the generator on the NAS. |
 
 ## Verify wiring
 ```bash
 ssh -i ~/.ssh/pve_root root@192.168.1.127 'set -a; . /etc/fan-control.env; set +a; RUN_ONCE=1 /usr/local/bin/fan-control'
 ```
-The log `cmd=%` should equal `sensor.r730_fan_command_pct`. Turn Lock on and move
-Override % so the HA sensor changes, re-run, and the applied `cmd=%` should follow.
+The log `cmd=%` should equal `sensor.r730_fan_command_pct`. Switch the faceplate to
+MAN and type a different OP so the HA sensor changes, re-run, and the applied `cmd=%`
+should follow; return with AUTO.
