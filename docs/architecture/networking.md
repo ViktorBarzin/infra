@@ -601,7 +601,7 @@ From the bastion, clients `ProxyJump` to devvm (10.0.10.10), pfSense (10.0.20.1)
 
 ### terminal-api (Terminal Lobby machine API)
 
-`terminal-api.viktorbarzin.me` (non-proxied A/AAAA) exposes Terminal Lobby's HTTP APIs to programs on the internet, first Meta Muse, without Authentik. Traefik routes an explicit path list (agent-api `/v1/` and `/openapi.json`, tmux-api minus its unauthenticated `/metrics`/`/health`/`/push*`/`/internal/`, session-events, file-api, skills-api) to the devvm and never routes ttyd or clipboard-upload. Layers: CrowdSec bouncer, an `ipAllowList` (Cloudflare WARP IPv6, which Muse egresses through, plus mx2 for testing), identity headers stripped and no proxy secret injected (so only a Lobby bearer token authenticates), a per-client rate limit and concurrency cap, then Lobby's bearer check. A CrowdSec scenario bans after repeated 401s and two Prometheus alerts post to Slack. An AdminNetworkPolicy keeps every namespace except traefik off the devvm Lobby ports, because Calico SNATs pod egress to the node addresses the devvm's nftables admits. Runbook: [terminal-api.md](../runbooks/terminal-api.md).
+`terminal-api.viktorbarzin.me` (non-proxied A/AAAA) exposes Terminal Lobby's HTTP APIs to programs on the internet, first Meta Muse, without Authentik. Traefik routes an explicit path list (agent-api `/v1/` and `/openapi.json`, tmux-api minus its unauthenticated `/metrics`/`/health`/`/push*`/`/internal/`, session-events, file-api, skills-api) to the devvm and never routes ttyd or clipboard-upload. Layers: CrowdSec bouncer, identity headers stripped and no proxy secret injected (so only a Lobby bearer token authenticates), a per-client rate limit and concurrency cap, then Lobby's bearer check. There is no source-IP allowlist (removed 2026-10-07: Muse's egress moves between shared ranges, WARP then Fastly, and the list refused it each time). A CrowdSec scenario bans after repeated 401s; a Loki-ruler alert on refused tokens and a Prometheus alert on 403 volume post to Slack. An AdminNetworkPolicy keeps every namespace except traefik off the devvm Lobby ports, because Calico SNATs pod egress to the node addresses the devvm's nftables admits. Runbook: [terminal-api.md](../runbooks/terminal-api.md).
 
 ### IPv6 on the Sofia home LAN (ULA for Matter)
 
@@ -689,7 +689,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 | MetalLB | `stacks/platform/` (sub-module) | Helm release, IPAddressPool |
 | Cloudflared | `stacks/cloudflared/` | Deployment (3 replicas), tunnel config; runs `--no-autoupdate` (in-place self-updates exited the pods and severed all tunnel WebSockets, 2026-06-09/10) |
 | ingress_factory | `modules/ingress_factory/` | IngressRoute + middleware chain |
-| terminal-api | `stacks/terminal/terminal_api.tf`, `stacks/terminal/devvm_lobby_anp.tf` | IngressRoute + middlewares (allowlist, header strip, rate limit, in-flight cap), agent-api Service/Endpoints, AdminNetworkPolicies `devvm-lobby-ports*`, Cloudflare A/AAAA `terminal-api` |
+| terminal-api | `stacks/terminal/terminal_api.tf`, `stacks/terminal/devvm_lobby_anp.tf` | IngressRoute + middlewares (header strip, rate limit, in-flight cap), agent-api Service/Endpoints, AdminNetworkPolicies `devvm-lobby-ports*`, Cloudflare A/AAAA `terminal-api` |
 | Bastion | `stacks/bastion/` | sshd Deployment, IngressRouteTCP + MiddlewareTCP on `websecure`, NetworkPolicy, ExternalSecret, Cloudflare A/AAAA `ssh` |
 
 ### Key Configuration Files

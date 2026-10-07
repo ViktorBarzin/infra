@@ -73,12 +73,9 @@ cat <<TXT
           os_user: ${OSUSER}
       then: ansible-playbook -i playbooks/inventory.ini playbooks/devvm.yml --check --diff
 
-   b) stacks/terminal/terminal_api.tf, local.api_allowed_sources: the
-      caller's egress range, unless it is already covered (Cloudflare WARP
-      2a09:bac0::/29 is). Everyone else gets 403 at Traefik before the token
-      check. An address in Meta's space also needs carving out of CrowdSec's
-      static Meta ban; see docs/runbooks/terminal-api.md, "Source addresses".
-      CI applies the terminal stack on push.
+   b) nothing on the network side: terminal-api has no source-IP allowlist.
+      An address in Meta's space does need carving out of CrowdSec's static
+      Meta ban; see docs/runbooks/terminal-api.md, "Source addresses".
 TXT
 
 if [ "$PROMPT" = "1" ]; then
@@ -87,7 +84,7 @@ if [ "$PROMPT" = "1" ]; then
     echo "You are being given access to a coding-agent API I run at home."
     echo
     echo "Reach it at https://terminal-api.viktorbarzin.me over the public"
-    echo "internet; requests from unlisted source addresses get 403."
+    echo "internet."
     echo
     echo "Fetch https://terminal-api.viktorbarzin.me/openapi.json and build a connector from"
     echo "it. Every endpoint, field and status value is documented there, the"

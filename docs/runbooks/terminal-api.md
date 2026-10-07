@@ -19,8 +19,7 @@ grant to `devvm-tailnet:8710` in `stacks/headscale/acl.hujson`) was retired on 2
 flowchart TD
   C["client"] --> E["TP-Link, pfSense rdr (IPv4) or HAProxy PROXY v2 (IPv6)"]
   E --> B["Traefik websecure: CrowdSec bouncer"]
-  B --> A["ipAllowList: only listed source addresses"]
-  A --> H["identity headers removed, no proxy secret added"]
+  B --> H["identity headers removed, no proxy secret added"]
   H --> R["per-client rate limit 5/s burst 20, 10 concurrent"]
   R --> L["Lobby service: bearer token, sha256 digest, constant-time"]
 ```
@@ -46,12 +45,13 @@ cluster-admin kubeconfig and a Vault token on the devvm (Viktor's decision, 2026
 
 Not exposed: ttyd (`/`, `/ws`, `/token`, an interactive shell), clipboard-upload (it parses the
 upload body before checking auth), static assets, build stamps and agent-api `/health`.
-Unmatched paths get Traefik's catch-all error page.
+Unmatched paths get Traefik's catch-all error page, which answers `GET /health` with 200, so a 200
+there says nothing about agent-api. Check a real route instead: `/openapi.json` with no token.
 
 ## Calling it
 
 ```sh
-curl https://terminal-api.viktorbarzin.me/openapi.json   # from an allowlisted address, no token
+curl https://terminal-api.viktorbarzin.me/openapi.json   # no token needed
 curl -H "Authorization: Bearer $TOKEN" https://terminal-api.viktorbarzin.me/v1/conversations
 curl -H "Authorization: Bearer $TOKEN" https://terminal-api.viktorbarzin.me/api/sessions/whoami
 ```
@@ -71,17 +71,20 @@ client address).
 
 ## Source addresses
 
-`local.api_allowed_sources` in `stacks/terminal/terminal_api.tf` lists who reaches the token check
-at all: Cloudflare WARP's IPv6 block `2a09:bac0::/29` and mx2 (`92.5.132.215`, for testing).
+Any address may reach the token check. There is no source-IP allowlist, by Viktor's decision on
+2026-10-07.
 
-Muse egresses through Cloudflare WARP, a shared range used by everyone running the free WARP app,
-and its address changes on nearly every request. So the allowlist filters out non-WARP traffic but
-cannot single Muse out, and the per-address defences (the 401 ban, the rate limit) cannot stop a
-caller who also rotates through WARP. The bearer token, about 288 bits, is what identifies Muse.
+Muse egresses through shared networks it does not control, and its address changes on nearly every
+request: Cloudflare WARP (`2a09:bac0::/29`) until 2026-10-02, Fastly (`2a04:4e41::/32`) from
+2026-10-04. The allowlist that existed from 2026-10-02 to 2026-10-07 listed WARP and mx2. It
+admitted every other WARP user, so it never identified Muse, and when Muse moved to Fastly it
+refused every request with a 403 before the token was checked. The bearer token, about 288 bits,
+is what identifies Muse.
 
-To add a source, edit the list and apply the terminal stack. An address in Meta's space would also
-hit CrowdSec's static Meta ban (`meta-asn.txt` in `stacks/crowdsec/modules/crowdsec/main.tf`) and
-needs carving out there too. Muse's WARP addresses are not in that list.
+Per-address defences still apply: the CrowdSec bouncer, the 401 ban scenario and the rate limit.
+They slow a scanner that keeps one address, and cannot stop a caller that rotates through a shared
+range. An address in Meta's space hits CrowdSec's static Meta ban (`meta-asn.txt` in
+`stacks/crowdsec/modules/crowdsec/main.tf`); Muse's WARP and Fastly addresses are not in that list.
 
 ## Add, rotate or revoke a caller
 
@@ -115,10 +118,14 @@ message. Setup, caps, expiry and the `AgentApiDelegationUndelivered` alert:
 
 | Alert | Meaning | First checks |
 |---|---|---|
-| `TerminalApiAuthFailure` | an allowlisted address sent a wrong or stale token | Was the token rotated without updating the caller? Source address and path in the Traefik access log |
-| `TerminalApiBlockedSurge` | sustained 403s: the allowlist or CrowdSec is refusing someone in volume | Sources in the access log; `cscli decisions list` in the crowdsec LAPI pod |
+| `TerminalApiAuthFailure` | a Lobby service logged `auth: invalid bearer token`: a token was presented and matched no entry | Was the token rotated without updating the caller? Route: `homelab logs query '{unit="agent-api.service"} \|= "invalid bearer"'`; source address: the 401s in the Traefik access log |
+| `TerminalApiBlockedSurge` | sustained 403s: CrowdSec is refusing someone in volume | Sources in the access log; `cscli decisions list` in the crowdsec LAPI pod |
 
-A caller that sends 5 bad tokens within about a minute is banned by CrowdSec for the default
+`TerminalApiAuthFailure` is a Loki-ruler rule (`loki.tf`, group "Terminal Lobby API"), not a
+Prometheus one, because Traefik's 401 count includes scanners that send no token at all. Those
+log `no bearer credential` and do not fire it.
+
+A caller that gets 5 401s within about a minute (a bad token or none) is banned by CrowdSec for the default
 duration. To lift a ban on a legitimate caller:
 `kubectl -n crowdsec exec deploy/crowdsec-lapi -- cscli decisions delete --ip <addr>`.
 

@@ -2,7 +2,7 @@
 # The devvm's nftables admits the Traefik NODE addresses, and Calico SNATs
 # every pod's egress to its node address, so without these policies any pod on
 # those nodes could reach ttyd (7681, header-trust auth) or skip Traefik's
-# allowlist and limits on 8710. AdminNetworkPolicy is evaluated before
+# limits and CrowdSec on 8710. AdminNetworkPolicy is evaluated before
 # namespace NetworkPolicies and Calico's default tier, and traffic it does not
 # match continues to them unchanged.
 #

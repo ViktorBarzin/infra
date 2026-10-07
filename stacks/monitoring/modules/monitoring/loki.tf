@@ -718,6 +718,31 @@ resource "kubernetes_config_map" "loki_alert_rules" {
           ]
         },
         {
+          # Terminal Lobby API (terminal-api.viktorbarzin.me, stacks/terminal/
+          # terminal_api.tf). Moved here from a Prometheus rule on Traefik's
+          # 401 count on 2026-10-07, when the host's source-IP allowlist was
+          # removed: from then on scanners reach the services and get a 401 for
+          # sending no token, which a 401 count cannot tell apart from a caller
+          # whose token stopped working. authuser logs this exact line only
+          # when a bearer WAS presented and matched no digest; a missing token
+          # logs "no bearer credential" instead and is ignored here. Calibrated
+          # against Loki 2026-10-07: 44 matches across the five units in 30d,
+          # all from token rotation and testing on 2026-10-02/03.
+          name = "Terminal Lobby API"
+          rules = [
+            {
+              alert  = "TerminalApiAuthFailure"
+              expr   = "sum by (unit) (count_over_time({job=\"devvm-journal\", unit=~\"agent-api.service|tmux-api.service|session-events.service|file-api.service|skills-api.service\"} |= \"auth: invalid bearer token\" [10m])) > 0"
+              for    = "0m"
+              labels = { severity = "warning", lane = "security" }
+              annotations = {
+                summary     = "{{ $labels.unit }} refused {{ $value }} bearer token(s) in 10m: a caller presented a wrong or stale token"
+                description = "A bearer token was presented and matched no entry in /etc/terminal-lobby-tokens. Usually a caller (Muse, the homelab CLI) still holding a rotated token; repeated from one address it is guessing, which CrowdSec's viktor/terminal-api-auth-bf bans after 5 in about a minute. Route: homelab logs query '{unit=\"agent-api.service\"} |= \"invalid bearer\"' --since 1h. Source address: the 401s for that route in the Traefik access log. Runbook: docs/runbooks/terminal-api.md."
+              }
+            },
+          ]
+        },
+        {
           # App auto-upgrades (Keel). Keel's direct Slack notifier was disabled
           # 2026-07-02 after a stuck update (gotenberg vs require-trusted-
           # registries) re-posted an identical failure to #general on every

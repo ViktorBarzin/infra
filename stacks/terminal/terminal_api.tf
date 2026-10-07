@@ -3,12 +3,10 @@
 # cloud with no VPN). The browser host terminal.viktorbarzin.me is untouched.
 #
 # Layers, outermost first:
-#   1. Source-IP allowlist (local.api_allowed_sources): Cloudflare WARP, which
-#      Muse egresses through, plus mx2. Everyone else gets 403 at Traefik.
-#   2. CrowdSec bouncer (websecure entrypoint) + a 401 ban scenario for this
+#   1. CrowdSec bouncer (websecure entrypoint) + a 401 ban scenario for this
 #      host (stacks/crowdsec).
-#   3. Per-client rate limit and concurrency cap.
-#   4. Lobby's own bearer check (authuser, sha256 digests, constant-time). The
+#   2. Per-client rate limit and concurrency cap.
+#   3. Lobby's own bearer check (authuser, sha256 digests, constant-time). The
 #      header path is closed here on purpose: this host injects NO proxy
 #      secret and blanks the identity headers, so a forged
 #      X-Authentik-Username cannot authenticate. A bearer token is the only
@@ -19,6 +17,13 @@
 # skills-api. NOT exposed: ttyd (/, /ws, /token — an interactive shell),
 # clipboard-upload (reads the body before checking auth), assets and build
 # stamps.
+#
+# There is no source-IP allowlist. Muse egresses through shared networks whose
+# addresses it does not control: Cloudflare WARP (2a09:bac0::/29) until
+# 2026-10-02, Fastly (2a04:4e41::/32) from 2026-10-04. An allowlist of those
+# ranges admitted every other user of them too, so it never identified Muse,
+# and each egress change refused Muse with a 403 before the token was checked.
+# Viktor removed it on 2026-10-07; the bearer token is what identifies a caller.
 #
 # A valid token acts as the OS user it maps to (muse -> wizard, Viktor's
 # decision 2026-10-02), which on this box means sudo, cluster-admin and Vault.
@@ -32,26 +37,8 @@ variable "cloudflare_zone_id" { type = string }
 locals {
   api_host = "terminal-api.viktorbarzin.me"
 
-  # Who may reach the API at all.
-  #
-  # Muse does not egress from Meta's address space: its requests arrive from
-  # Cloudflare WARP, rotating across 2a09:bac1::/32 and 2a09:bac5::/32 almost
-  # per request (seen 2026-10-02). 2a09:bac0::/29 is the WARP IPv6 block
-  # (bac0 through bac7 each register as CLOUDFLAREWARP, AS13335). WARP is
-  # shared by everyone running the free app, so this list cannot single Muse
-  # out; it keeps non-WARP traffic (datacenter scanners, botnets) from ever
-  # reaching the token check, and the bearer token is what identifies Muse.
-  # Viktor chose this over removing the allowlist (2026-10-02). No WARP IPv4
-  # range is listed: Muse has only used IPv6, and 104.28.0.0/16 registers as
-  # generic CLOUDFLARENET, not WARP. Add one only if Muse is seen using it.
-  api_allowed_sources = [
-    "2a09:bac0::/29",  # Cloudflare WARP IPv6 (Muse's egress)
-    "92.5.132.215/32", # mx2, external verification vantage
-  ]
-
   # Shared by every route below. Order: cheapest refusal first.
   api_middlewares = [
-    { name = "terminal-api-allowlist", namespace = kubernetes_namespace.terminal.metadata[0].name },
     { name = "terminal-api-strip-identity", namespace = kubernetes_namespace.terminal.metadata[0].name },
     { name = "real-ip", namespace = "traefik" },
     { name = "terminal-api-rate-limit", namespace = kubernetes_namespace.terminal.metadata[0].name },
@@ -93,26 +80,6 @@ resource "kubernetes_endpoints" "agent_api" {
 }
 
 # --- middlewares ---
-resource "kubernetes_manifest" "terminal_api_allowlist" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "terminal-api-allowlist"
-      namespace = kubernetes_namespace.terminal.metadata[0].name
-    }
-    spec = {
-      # Default strategy = the connection's remote address, which is the real
-      # client here: the host is non-proxied, Traefik's IPv4 Service is
-      # externalTrafficPolicy Local, and IPv6 arrives with PROXY v2 trusted
-      # only from pfSense. Do not add an ipStrategy that reads headers.
-      ipAllowList = {
-        sourceRange = local.api_allowed_sources
-      }
-    }
-  }
-}
-
 # Closes the header path: with no X-TL-Proxy-Secret the services refuse the
 # identity header anyway, and blanking these makes sure a client can supply
 # neither. An empty value in customRequestHeaders removes the header.
@@ -274,7 +241,6 @@ resource "kubernetes_manifest" "terminal_api_ingressroute" {
     }
   }
   depends_on = [
-    kubernetes_manifest.terminal_api_allowlist,
     kubernetes_manifest.terminal_api_strip_identity,
     kubernetes_manifest.terminal_api_rate_limit,
     kubernetes_manifest.terminal_api_inflight,
@@ -283,8 +249,8 @@ resource "kubernetes_manifest" "terminal_api_ingressroute" {
 }
 
 # --- DNS ---
-# Non-proxied so Traefik sees the real client address (the allowlist and the
-# per-client limits depend on it). Internal DNS: technitium static_records.tf.
+# Non-proxied so Traefik sees the real client address (the per-client limits
+# and CrowdSec's per-address bans depend on it). Internal DNS: technitium static_records.tf.
 resource "cloudflare_record" "terminal_api_a" {
   name            = "terminal-api"
   content         = var.public_ip
