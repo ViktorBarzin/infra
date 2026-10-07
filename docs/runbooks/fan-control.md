@@ -40,13 +40,18 @@ values on top (the raw reading as small text under PV), a PV bar (40–90 °C; a
 5-min mean, white line with the white pointer on its level = SP, grey marks = SP min /
 SP max, red line = the daemon's 83 °C ceiling), an OP bar (0–100 %; blue = the
 controller's command, white line = % the daemon applied, which trails the command in
-`MIN_STEP` steps; grey marks = Output min/max), AUTO / MAN
-buttons, SP ±0.5 °C and OP ±1 % arrows, and a footer with the applied %, the measured
-rpm and whether the daemon is on the HA command or Dell auto. MAN is the Lock (OP is
-the Override %). In AUTO the SP value can be typed in place, in MAN the OP value;
+`MIN_STEP` steps; grey marks = Output min/max), mode buttons AUTO / MAN / DELL, SP
+±0.5 °C and OP ±1 % arrows, and a footer with the applied %, the measured rpm and
+whether the daemon is on the HA command or Dell auto. MAN is the Lock (OP is the
+Override %). DELL (asks for confirmation) turns the PID's Auto mode and the Lock off,
+so the daemon holds the last % for up to 5 minutes and then hands the fans to Dell
+auto; the badge reads "DELL след ≤5 мин" until the daemon reports Dell auto, then
+"DELL". If the daemon falls back to Dell auto on its own while AUTO is selected (a data
+gap), the badge reads "DELL AUTO · резерв". In AUTO the SP value can be typed in place,
+in MAN the OP value;
 a typed value is sent only on Enter and only inside the limits (SP min..SP max, OP from
 Output min to 100 %), otherwise the field turns red and nothing is sent; Escape or
-leaving the field restores the shown value. Next to it, "PID tuning" holds Auto mode,
+leaving the field restores the shown value. Next to it, "PID tuning" holds
 Kp, Ki, Kd, SP min / SP max (`input_number.r730_fan_pid_sp_min` / `_sp_max`, 45 / 75 °C
 since 2026-10-07) and Output min/max. Changing an SP limit moves the setpoint inside it
 when it falls outside (automation "R730 fan PID — keep SP within SP min / SP max").
@@ -58,8 +63,10 @@ Scripts behind the buttons: `script.r730_fan_pid_auto` (AUTO; from MAN it calls
 `simple_pid_controller.set_output` with the current Override %, waits until the PID
 output is there and only then unlocks, so the switch is bumpless; toggling Auto mode
 does not re-initialise the controller because the integration reads the switch once
-per sample) and `script.r730_fan_pid_nudge` (fields `target` sp/op, `delta` or
-`value`; SP kept within SP min..SP max, OP within Output min..100 % and only in MAN).
+per sample; from DELL it just turns Auto mode back on, and the PID resumes from its
+last output), `script.r730_fan_pid_dell` (DELL) and `script.r730_fan_pid_nudge`
+(fields `target` sp/op, `delta` or `value`; SP kept within SP min..SP max, OP within
+Output min..100 % and only in MAN).
 
 `sensor.r730_fan_command_pct` (template) computes, in order:
 
@@ -136,7 +143,9 @@ threshold for CPU1 is 88 °C; the daemon's own ceiling is 83 °C.
 "R730 fan override — track live speed while unlocked" keeps Override % equal to the
 live applied % (`sensor.r730_fan_control_target`); "R730 fan lock — freeze current
 speed" snapshots it once more when Lock turns on, and the command template then
-outputs it, so entering MAN does not move the fans. Leave MAN with the faceplate's AUTO
+outputs it, so entering MAN does not move the fans. While the daemon is on Dell auto it
+reports 0 % applied, so the tracking ignores 0 and the snapshot then takes the PID's
+last output (within Output min..100) instead. Leave MAN with the faceplate's AUTO
 button: turning the Lock off any other way skips the re-initialisation and the
 command jumps to whatever the PID computed meanwhile.
 
@@ -216,7 +225,7 @@ records every command line on this host and ships it to Loki.
 | Symptom | Check |
 |---------|-------|
 | Fans surge then crash to ~7100 then surge | flapping to Dell auto — `journalctl -u fan-control \| grep -E 'holding\|Dell auto'`; pre-2026-06-15 this was the stale-command bug (now fixed). |
-| Fans stuck loud | `journalctl` — `CEILING` breach or `HA command lost`? Check CPU temp + HA reachability, and whether the PID's Auto mode is on. |
+| Fans stuck loud | `journalctl` — `CEILING` breach or `HA command lost`? Check CPU temp + HA reachability, and whether the faceplate is on DELL (PID Auto mode off). |
 | A readout blinks `unavailable` | the REST value-template fallback should hold it; a 1×/8h blip at ~02:00 (backup window) is a benign fetch hiccup. |
 | PID setting changes ignored | does `sensor.r730_fan_pid_pid_output` move, and does `sensor.r730_fan_command_pct` follow it? token valid? |
 | Command shows `-1` | the PID's Auto mode is off, its output is unavailable (e.g. right after an HA restart), or the freshness guard fired because `sensor.r730_cpu_temperature` has no fresh reading (Prometheus / SNMP iDRAC scrape). The daemon holds 300 s, then Dell auto; it resumes on its own when the command returns. |
