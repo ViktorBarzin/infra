@@ -37,17 +37,20 @@ number each loop and applies it over IPMI — it does **no** math. Design + hist
 
 **Faceplate (since 2026-10-07)**, in the style of a DCS loop faceplate: PV / SP / OP
 values on top (the raw reading as small text under PV), a PV bar (40–90 °C; amber =
-5-min mean, white line with the white pointer on its level = SP, white marks 45 / 75 =
-SP limits, red line = the daemon's 83 °C ceiling), an OP bar (0–100 %; blue = the
+5-min mean, white line with the white pointer on its level = SP, grey marks = SP min /
+SP max, red line = the daemon's 83 °C ceiling), an OP bar (0–100 %; blue = the
 controller's command, white line = % the daemon applied, which trails the command in
 `MIN_STEP` steps; grey marks = Output min/max), AUTO / MAN
 buttons, SP ±0.5 °C and OP ±1 % arrows, and a footer with the applied %, the measured
 rpm and whether the daemon is on the HA command or Dell auto. MAN is the Lock (OP is
 the Override %). In AUTO the SP value can be typed in place, in MAN the OP value;
-a typed value is sent only on Enter and only inside the limits (SP 45–75 °C, OP from
+a typed value is sent only on Enter and only inside the limits (SP min..SP max, OP from
 Output min to 100 %), otherwise the field turns red and nothing is sent; Escape or
 leaving the field restores the shown value. Next to it, "PID tuning" holds Auto mode,
-Kp, Ki, Kd and Output min/max. Built from button-card cards inside a stack-in-card;
+Kp, Ki, Kd, SP min / SP max (`input_number.r730_fan_pid_sp_min` / `_sp_max`, 45 / 75 °C
+since 2026-10-07) and Output min/max. Changing an SP limit moves the setpoint inside it
+when it falls outside (automation "R730 fan PID — keep SP within SP min / SP max").
+Built from button-card cards inside a stack-in-card;
 the generator and the last card JSON are on the NAS
 (`Claude shared/r730-fan-pid/faceplate-generator/`).
 
@@ -56,7 +59,7 @@ Scripts behind the buttons: `script.r730_fan_pid_auto` (AUTO; from MAN it calls
 output is there and only then unlocks, so the switch is bumpless; toggling Auto mode
 does not re-initialise the controller because the integration reads the switch once
 per sample) and `script.r730_fan_pid_nudge` (fields `target` sp/op, `delta` or
-`value`; SP kept within 45–75 °C, OP within Output min..100 % and only in MAN).
+`value`; SP kept within SP min..SP max, OP within Output min..100 % and only in MAN).
 
 `sensor.r730_fan_command_pct` (template) computes, in order:
 
