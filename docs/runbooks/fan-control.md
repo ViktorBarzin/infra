@@ -64,14 +64,25 @@ Built from button-card cards inside a stack-in-card;
 the generator and the last card JSON are on the NAS
 (`Claude shared/r730-fan-pid/faceplate-generator/`).
 
-Scripts behind the buttons: `script.r730_fan_pid_auto` (AUTO; from MAN it calls
-`simple_pid_controller.set_output` with the current Override %, waits until the PID
-output is there and only then unlocks, so the switch is bumpless; toggling Auto mode
-does not re-initialise the controller because the integration reads the switch once
-per sample; from DELL it just turns Auto mode back on, and the PID resumes from its
-last output), `script.r730_fan_pid_dell` (DELL) and `script.r730_fan_pid_nudge`
-(fields `target` sp/op, `delta` or `value`; SP kept within SP min..SP max, OP within
-Output min..100 % and only in MAN).
+**Bumpless MAN → AUTO (output tracking, since 2026-10-07).** simple-pid starts the
+integral at the value handed to `simple_pid_controller.set_output` and adds the P term
+on top, so initialising it with the manual % made the first AUTO output jump by
+Kp × (SP − PV): measured −1.1 % at a 2.1 K error and +0.9 % at −1.9 K. Now, while in
+MAN, the automation "R730 fan PID — track the manual OP while in MAN (bumpless)"
+calls `set_output(manual − Kp × (SP − PV))` every 30 s and on any change of the
+manual %, SP or Kp, so the PID's computed output equals the manual %. Verified: 4
+minutes of MAN at 35 % built a 2.33 K error, and AUTO kept the command at 35.0 %, then
+moved it by 0.07–0.15 % per sample.
+
+Scripts behind the buttons: `script.r730_fan_pid_auto` (AUTO; from MAN it turns the
+PID's Auto mode on, forces a compute with `homeassistant.update_entity` on the PID
+output sensor (the integration otherwise reads the switch only once per sample), does
+a last `set_output` as above, waits until the PID output is within 0.3 % of the manual %
+and only then unlocks; from DELL it just turns Auto mode back on and the PID resumes
+from its last output), `script.r730_fan_pid_man` (MAN: Lock on and PID Auto mode on, so
+tracking also works after DELL), `script.r730_fan_pid_dell` (DELL) and
+`script.r730_fan_pid_nudge` (fields `target` sp/op, `delta` or `value`; SP kept within
+SP min..SP max, OP within Output min..100 % and only in MAN).
 
 `sensor.r730_fan_command_pct` (template) computes, in order:
 
@@ -151,8 +162,8 @@ speed" snapshots it once more when Lock turns on, and the command template then
 outputs it, so entering MAN does not move the fans. While the daemon is on Dell auto it
 reports 0 % applied, so the tracking ignores 0 and the snapshot then takes the PID's
 last output (within Output min..100) instead. Leave MAN with the faceplate's AUTO
-button: turning the Lock off any other way skips the re-initialisation and the
-command jumps to whatever the PID computed meanwhile.
+button; thanks to the tracking, turning the Lock off another way now jumps at most by
+the change of the P term since the last 30-second tracking update.
 
 **Readout sensors:** `sensor.r730_fan_command_display` ("X % (Y rpm)", rpm estimated as
 160 × % + 1520; no longer on a dashboard), `sensor.r730_cpu_load`,
