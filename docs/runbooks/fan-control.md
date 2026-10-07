@@ -40,7 +40,7 @@ values on top (the raw reading as small text under PV), a PV bar (40–90 °C; a
 5-min mean, white line with the white pointer on its level = SP, grey marks = SP min /
 SP max, red line = the daemon's 83 °C ceiling), an OP bar (0–100 %; blue = the
 controller's command, white line = % the daemon applied, which trails the command in
-`MIN_STEP` steps; grey marks = Output min/max), mode buttons AUTO / MAN / DELL, SP
+`MIN_STEP` steps; grey marks = Output min/max), mode buttons AUTO and MAN stacked with a half-width DELL below them, SP
 ±0.5 °C and OP ±1 % arrows, and a footer with the applied %, the measured rpm and
 whether the daemon is on the HA command or Dell auto. MAN is the Lock (OP is the
 Override %). DELL (asks for confirmation) turns the PID's Auto mode and the Lock off,
