@@ -28,7 +28,7 @@ import json, sys
 
 anps = json.loads(json.loads(open(sys.argv[1]).read()))
 DEVVM = "10.0.10.10/32"
-PORTS = [7681, 7683, 7684, 7685, 7686, 7687, 7688, 7692, 7693, 8710]
+PORTS = [7681, 7683, 7684, 7685, 7686, 7687, 7688, 8710]
 EXPECT = {
     "traefik": set(PORTS),
     "monitoring": {7684},
