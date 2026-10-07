@@ -36,9 +36,11 @@ number each loop and applies it over IPMI — it does **no** math. Design + hist
 ## HA brain (dashboard-it → "Server" view → "R730 FAN PID" faceplate)
 
 **Faceplate (since 2026-10-07)**, in the style of a DCS loop faceplate: PV / SP / OP
-values on top, a PV bar (40–90 °C; amber = 5-min mean, white line = raw reading, red
-line = the daemon's 83 °C ceiling, white pointer = SP), an OP bar (0–100 %; blue =
-command, white line = % the daemon applied, grey marks = Output min/max), AUTO / MAN
+values on top (the raw reading as small text under PV), a PV bar (40–90 °C; amber =
+5-min mean, white line with the white pointer on its level = SP, white marks 45 / 75 =
+SP limits, red line = the daemon's 83 °C ceiling), an OP bar (0–100 %; blue = the
+controller's command, white line = % the daemon applied, which trails the command in
+`MIN_STEP` steps; grey marks = Output min/max), AUTO / MAN
 buttons, SP ±0.5 °C and OP ±1 % arrows, and a footer with the applied %, the measured
 rpm and whether the daemon is on the HA command or Dell auto. MAN is the Lock (OP is
 the Override %). In AUTO the SP value can be typed in place, in MAN the OP value;
