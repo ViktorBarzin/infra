@@ -36,9 +36,11 @@ resource "helm_release" "keel" {
   namespace  = kubernetes_namespace.keel.metadata[0].name
   repository = "https://charts.keel.sh"
   chart      = "keel"
-  # Latest stable per `helm search repo keel/keel -l` 2026-05-16
-  # (app version 0.21.1). 1.0.6 doesn't exist — verify before bumping.
-  version = "1.2.0"
+  # 1.2.3 = app 0.22.4 (2026-10-08). 0.22.x resolves each workload's node
+  # platforms before updating, and this chart version grants the
+  # list/watch on core/v1 nodes it needs. Verify with
+  # `kubectl auth can-i list nodes --as=system:serviceaccount:keel:keel`.
+  version = "1.2.3"
 
   # Atomic mitigates partial-deploy state. Keel itself is exempt from
   # auto-update (Kyverno mutate excludes the keel namespace), so it only
