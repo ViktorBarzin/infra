@@ -1,6 +1,6 @@
 # homelab map: maps on demand for workstation agents
 
-- Status: approved
+- Status: done (shipped 2026-10-08 as CLI v0.27.0, v0.27.1)
 - Date: 2026-10-08
 - Decision record: ADR-0028 (provider, key sharing, page tiles)
 
@@ -61,7 +61,10 @@ homelab map geocode "<address>" [--json]
   skipped with a warning, since GPX has no polygon). No network call unless
   addresses need geocoding.
 - **geocode** prints `lat,lon` and the matched address, or JSON with
-  `--json`. One Geoapify credit per address.
+  `--json`. One Geoapify credit per address. When Geoapify matches only at
+  area level (city, postcode, suburb and similar) the verb prints a warning,
+  because Geoapify falls back to the city centre when it cannot find a street.
+  Added in v0.27.1 after verification hit exactly that case.
 - **--share** reuses the `homelab share` upload and link code, so the file goes
   to the caller's own Nextcloud with the existing 30-day default. Map uploads are
   named `<stamp>-map-<name>`. Before each upload the verb deletes `-map-` files
