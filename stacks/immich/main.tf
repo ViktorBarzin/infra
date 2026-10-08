@@ -230,6 +230,10 @@ resource "kubernetes_deployment" "immich_server" {
       # "minor" set explicitly + kept OUT of ignore_changes so it survives
       # applies/recreates instead of falling back to Kyverno's "patch" default.
       "keel.sh/policy" = "minor"
+      # Poll only tags pushed after the running tag (patched Keel, see
+      # stacks/keel/main.tf). Keel applies it only when every workload on the
+      # same image opts in, so it is set on immich-api and here together.
+      "keel.sh/pollTagsAfterCurrent" = "true"
     }
   }
 
@@ -472,6 +476,10 @@ resource "kubernetes_deployment" "immich_api" {
       "keel.sh/policy"       = "minor"
       "keel.sh/trigger"      = "poll"
       "keel.sh/pollSchedule" = "@every 1h"
+      # Poll only tags pushed after the running tag (patched Keel, see
+      # stacks/keel/main.tf). Keel applies it only when every workload on the
+      # same image opts in, so it is set on immich-worker and here together.
+      "keel.sh/pollTagsAfterCurrent" = "true"
     }
   }
 
@@ -965,13 +973,14 @@ resource "kubernetes_deployment" "immich-machine-learning" {
       # "minor" set explicitly + kept OUT of ignore_changes so it survives
       # applies/recreates instead of falling back to Kyverno's "patch" default.
       #
-      # CAVEAT (2026-08-12): Keel's hourly tag-list poll for THIS repo currently
-      # fails every run with a ghcr 429 (the repo carries thousands of
-      # per-commit / per-accelerator / PR tags and the walk trips the registry
-      # rate limit mid-pagination), so a new release can land on immich-api and
-      # be missed here. Check `kubectl -n immich get deploy -o wide` after any
-      # immich bump and `kubectl set image` this one if it lagged.
-      "keel.sh/policy" = "minor"
+      # This repo has 150k+ per-commit / per-accelerator / PR tags. Walking
+      # all of them got HTTP 429 from ghcr on every hourly poll (2026-08 to
+      # 2026-10), so releases could land on immich-api and be missed here.
+      # pollTagsAfterCurrent (patched Keel, see stacks/keel/main.tf) makes
+      # Keel list only the tags pushed after the running one: a few pages.
+      # If this lags immich-api again, check Loki for 429s on this image.
+      "keel.sh/policy"               = "minor"
+      "keel.sh/pollTagsAfterCurrent" = "true"
     }
   }
 

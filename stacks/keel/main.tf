@@ -59,6 +59,17 @@ resource "helm_release" "keel" {
     # via keel.sh/policy=never LABEL) stay opted-out via the Kyverno
     # exclude rule, not via Keel's own annotation.
     replicaCount = 1
+    # Patched Keel: 0.22.4 + keel.sh/pollTagsAfterCurrent, which lets a
+    # workload poll only the tags pushed after its running tag. Needed for
+    # ghcr.io/immich-app/immich-machine-learning, whose 150k+ tag list gets
+    # HTTP 429 from ghcr before a full walk finishes. Built by
+    # github.com/ViktorBarzin/keel (branch homelab, homelab-image.yml).
+    # Upstream: keel-hq/keel#942 (issue), keel-hq/keel#943 (PR). Once a
+    # release contains the patch, remove this override and bump the chart.
+    image = {
+      repository = "ghcr.io/viktorbarzin/keel"
+      tag        = "0.22.4-tagcursor.1@sha256:f602a4cc5c6f5d8e455db89ad586f096c21732eb2f6f54b0f93e9f3c13e39e98"
+    }
     # Prometheus pod-annotation scrape — picks up Keel-specific metrics
     # (pending_approvals, poll_trigger_tracked_images, registries_scanned_total{image,registry})
     # on container port 9300 /metrics. The cluster's `kubernetes-pods`

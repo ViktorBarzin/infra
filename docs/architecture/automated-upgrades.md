@@ -1,6 +1,6 @@
 # Automated Upgrades
 
-This doc covers three independent automation paths:
+This doc covers three independent automation paths, plus a short section on Keel, which applies in-cluster image updates for workloads that opt in (see "Keel").
 
 1. **Service-level upgrades** — Container image bumps for OSS apps (DIUN → n8n → claude-agent → Terraform). Most of this doc.
 2. **OS-level upgrades on K8s nodes** — `unattended-upgrades` + `kured` with sentinel-gate + Prometheus halt-on-alert. See "K8s Node OS Upgrades" section and the runbook at `docs/runbooks/k8s-node-auto-upgrades.md`.
@@ -211,6 +211,22 @@ The `DIUN Upgrade Agent` workflow is imported once into n8n's PG DB — it is **
 - **`N8N_BLOCK_ENV_ACCESS_IN_NODE=false`** must be set on the n8n deployment for expressions to read `$env.*` at all.
 - **Troubleshooting 401**: the workflow will show `success` status on the webhook node but error on `Run Upgrade Agent`. Inspect in n8n UI → Executions, or query `execution_entity` + `execution_data` directly. Claude-agent-service logs will also show `POST /execute HTTP/1.1 401 Unauthorized`.
 - **Patching the live workflow** (one-off, since it's not in TF): `UPDATE workflow_entity SET nodes = REPLACE(nodes::text, OLD, NEW)::json WHERE name = 'DIUN Upgrade Agent';`
+
+## Keel
+
+Keel (`stacks/keel/`) polls the registry of each enrolled workload hourly and rolls it when a newer tag or digest matches the workload's `keel.sh/policy`. Enrollment and default annotations come from the Kyverno `inject-keel-annotations` policy (`stacks/kyverno/modules/kyverno/keel-annotations.tf`). Design and history: `docs/plans/2026-05-16-auto-upgrade-apps-design.md`.
+
+### Patched image (`keel.sh/pollTagsAfterCurrent`)
+
+Since 2026-10-08 the cluster runs Keel 0.22.4 plus one patch, built from `github.com/ViktorBarzin/keel` (branch `homelab`, workflow `homelab-image.yml`) and pinned by digest in `stacks/keel/main.tf`.
+
+- **Why**: stock Keel lists every tag of a repository on each poll, 100 per page. `ghcr.io/immich-app/immich-machine-learning` has more than 150,000 tags, and ghcr returned HTTP 429 around page 1,537 on every hourly poll from 2026-08 to 2026-10, so the ML deployment was never updated by Keel in that period and drifted behind immich-api.
+- **What it adds**: the annotation `keel.sh/pollTagsAfterCurrent: "true"`. Keel then lists only the tags pushed after the running tag, using the registry's `last` cursor. ghcr lists tags in push order, so this is a few pages instead of the whole list.
+- **Safety net**: the distribution spec lists tags lexically (Docker Hub, quay), where a cursor would skip `v3.10.0` when running `v3.9.x`. The patch uses the cursor result only when the registry's response shows push order, and otherwise lists every tag as stock Keel does.
+- **Scope**: it applies only when every workload polling the same image opts in. It is set on immich-api, immich-worker and immich-machine-learning. Other repositories with large tag lists (frigate, rybbit, openclaw, the lscr images) poll successfully today and are left on the full listing.
+- **Known limitation**: a newer version pushed *before* the running tag (for example, while running a backport release) is not seen.
+- **When to use it**: a workload whose image repository has a very large tag list on a push-ordered registry (ghcr), and whose Keel poll fails with 429 or times out.
+- **Exit**: upstream issue keel-hq/keel#942, PR keel-hq/keel#943. When a Keel release contains the patch, remove the `image` override in `stacks/keel/main.tf`, bump the chart, and archive the fork's `homelab` branch. If upstream changes the annotation name, update the three Immich deployments to match.
 
 ## K8s Node OS Upgrades
 
