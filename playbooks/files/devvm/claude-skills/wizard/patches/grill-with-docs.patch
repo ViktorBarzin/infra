@@ -1,6 +1,10 @@
---- a/SKILL.md	2026-09-04 13:14:18.403543882 +0000
-+++ b/SKILL.md	2026-09-04 13:14:18.447544283 +0000
-@@ -5,3 +5,17 @@
+--- a/SKILL.md	2026-10-08 12:04:31.981848306 +0000
++++ b/SKILL.md	2026-10-08 12:04:31.987848356 +0000
+@@ -1,7 +1,20 @@
+ ---
+ name: grill-with-docs
+ description: A relentless interview to sharpen a plan or design, which also creates docs (ADR's and glossary) as we go.
+-disable-model-invocation: true
  ---
  
  Call the Skill tool twice, for "grilling" and "domain-modeling".
