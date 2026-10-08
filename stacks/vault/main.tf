@@ -1603,7 +1603,7 @@ resource "vault_policy" "personal_emo" {
   EOT
 }
 
-# emo project/service secrets — tuya-bridge (deliberate, Viktor-approved 2026-07-07)
+# emo project/service secrets — tuya-bridge (Viktor-approved 2026-07-07), shared maps key (2026-10-08)
 # ----------------------------------------------------------------------------------
 # emo authors + maintains the tuya-bridge "Саксии" (planters) HA-Sofia feature
 # (shipped in infra master bf604dbf, the emo/saksii-live-poller PR). To manage its
@@ -1628,6 +1628,10 @@ resource "vault_policy" "projects_emo" {
     }
     path "secret/metadata/tuya-bridge" {
       capabilities = ["list", "read"]
+    }
+    # Read the shared Geoapify key for `homelab map` (ADR-0028, 2026-10-08)
+    path "secret/data/workstation/shared/maps" {
+      capabilities = ["read"]
     }
   EOT
 }

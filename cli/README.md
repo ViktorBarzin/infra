@@ -410,6 +410,24 @@ sends and a delegation is a multi-line message.
 Overrides: `HOMELAB_DELEGATE_CONTACTS`, `HOMELAB_AGENT_API_TOKEN_FILE`,
 `HOMELAB_AGENT_API_URL`, plus the `message` ones above.
 
+### v0.27 verbs — map (static maps, KML/GPX, geocoding)
+
+| Command | tier | notes |
+|---|---|---|
+| `map render <file.geojson\|-> [-o out.png] [--size WxH] [--style S] [--share]` | write | posts the features to Geoapify's static map API and writes a PNG (default 1024x768, `osm-bright`). Points become pins numbered in input order, and the numbers are printed with their names. Lines and polygons are drawn; the view fits the features. |
+| `map export <file.geojson\|-> --format kml\|gpx [-o file] [--share]` | write | KML (for Google My Maps) or GPX (for nav apps). GPX has no polygon, so polygons are skipped with a warning. No network call unless addresses need geocoding. |
+| `map geocode "<address>" [--json]` | read | prints `lat,lon` and the matched address. One Geoapify credit. |
+
+Input is a GeoJSON FeatureCollection or one Feature. A feature with `"geometry": null`
+and an `address` property is geocoded first. The key is `geoapify_api_key` at
+`secret/workstation/shared/maps`, read with the caller's own Vault token (wizard via
+`vault-admin`, emo via `projects-emo`); it is the same key Dawarich uses, so both share
+the free plan's 3,000 credits a day. `--share` goes through the `share` code (the
+caller's Nextcloud, `/_share/`, 30-day link), names the upload `<stamp>-map-<name>`,
+and first deletes `-map-` files in `/_share/` older than 30 days. `map --help` ends
+with a Leaflet snippet for an interactive map in a pages doc, on keyless OSM tiles.
+Design: `docs/plans/2026-10-08-homelab-map-verb-design.md`, ADR-0028.
+
 ## Build / install
 
 Built from source to `/usr/local/bin/homelab` during devvm provisioning
