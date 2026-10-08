@@ -335,3 +335,23 @@ func TestDelegationToMuseIsFindable(t *testing.T) {
 		}
 	}
 }
+
+func TestMapPhrasingsFindTheMapVerb(t *testing.T) {
+	for _, q := range []string{
+		"make a map of these places",
+		"pin the restaurants on a map",
+		"export a kml for google my maps",
+		"geocode an address to coordinates",
+		"generate a gpx track for my phone",
+		"set up the osm api key",
+	} {
+		hits := matchCapabilities(capabilities(), q)
+		if len(hits) == 0 || !strings.Contains(hits[0].Use, "homelab map") {
+			got := "nothing"
+			if len(hits) > 0 {
+				got = hits[0].Use
+			}
+			t.Errorf("query %q -> %s, want homelab map", q, got)
+		}
+	}
+}

@@ -21,7 +21,7 @@ fails loud rather than minting an unknown scope.
 | User | `display_name` | `policies` | Can self-heal a clobber? |
 |---|---|---|---|
 | `wizard` | `token-devvm-wizard` | `default`, `sops-admin`, `vault-admin` | yes — holds orphan-create authority |
-| `emo` | `token-devvm-emo` | `default`, `personal-emo` (own tree `secret/emo/*`), `projects-emo` (`secret/tuya-bridge`) | no — fails loud; an admin re-mints |
+| `emo` | `token-devvm-emo` | `default`, `personal-emo` (own tree `secret/emo/*`), `projects-emo` (`secret/tuya-bridge`, read on `secret/workstation/shared/maps`) | no — fails loud; an admin re-mints |
 
 `emo`'s base scope matches emo's OIDC entitlement (entity `emo`, alias
 `emil.barzin@gmail.com`, policy `personal-emo`) made persistent; `projects-emo`

@@ -322,6 +322,23 @@ func capabilities() []capability {
 			Synonyms: []string{"paste", "share", "send file", "link", "pastebin", "upload"},
 		},
 		{
+			Intent:  "make a map: pin places, draw a route, export KML or GPX, geocode an address",
+			Use:     "homelab map render|export|geocode  (run `homelab map --help`)",
+			Instead: "public Nominatim or hand-stitched OSM tiles from a script, CARTO tiles (watermarked without a key), or automating Google My Maps",
+			Synonyms: []string{"map", "maps", "pin", "pins", "kml", "gpx", "geocode", "geocoding",
+				"coordinates", "lat lon", "osm", "openstreetmap", "my maps", "google maps",
+				"leaflet", "static map", "places", "geoapify", "nominatim", "track",
+				"osm api key", "map api key"},
+			Detail: []string{
+				"Input is GeoJSON; features with only an \"address\" get geocoded.",
+				"render -> PNG with numbered pins via Geoapify; export -> KML (My Maps) or GPX.",
+				"--share prints a 30-day Nextcloud link. OSM has no API key for reading:",
+				"        the Geoapify key at secret/workstation/shared/maps is the one to use.",
+				"Interactive map in a pages doc: the Leaflet snippet at the end of",
+				"        `homelab map --help` (keyless OSM tiles, no key in the page).",
+			},
+		},
+		{
 			Intent:  "download a video from X / YouTube / any site to watch on my phone",
 			Use:     "homelab video get <url>...",
 			Instead: "yt-dlp by hand plus a manual Nextcloud upload",
