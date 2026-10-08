@@ -33,7 +33,7 @@ number each loop and applies it over IPMI — it does **no** math. Design + hist
 - `fan-control.service` — systemd unit (`Type=simple`, restarts on failure).
 - `/etc/fan-control.env` — config incl. the ha-sofia token (chmod 600, not in git).
 
-## HA brain (dashboard-it → "Server" view → "R730 FAN PID" faceplate)
+## HA brain (dashboard-it → "Server" view → "R730 Fan PID" faceplate)
 
 **Faceplate (since 2026-10-07)**, in the style of a DCS loop faceplate: PV / SP / OP
 values on top (the raw reading as small text under PV), a PV bar (40–90 °C; amber =
