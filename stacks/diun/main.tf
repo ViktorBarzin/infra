@@ -118,6 +118,41 @@ resource "kubernetes_persistent_volume_claim" "data_proxmox" {
   }
 }
 
+# Upstream Keel release watch. The cluster runs a patched Keel fork
+# (stacks/keel/main.tf) until a keel-hq/keel release contains PR #943. DIUN's
+# only other notifier is the n8n webhook, which drops status=new, so this pair
+# posts the first new upstream release tag to Slack and ignores every other
+# image. Remove both once stacks/keel is back on the stock image.
+resource "kubernetes_config_map" "keel_release_watch" {
+  metadata {
+    name      = "diun-keel-release-watch"
+    namespace = kubernetes_namespace.diun.metadata[0].name
+  }
+  data = {
+    # semver sorts newest first and max_tags applies after include_tags, so
+    # each scan checks only the newest release tag (not nightly/master).
+    "keel.yml"       = <<-EOT
+      - name: ghcr.io/keel-hq/keel
+        watch_repo: true
+        sort_tags: semver
+        max_tags: 1
+        include_tags:
+          - ^\d+\.\d+\.\d+$
+    EOT
+    "notify-keel.sh" = <<-EOT
+      #!/bin/sh
+      case "$DIUN_ENTRY_IMAGE" in
+        ghcr.io/keel-hq/keel:*) ;;
+        *) exit 0 ;;
+      esac
+      tag="$${DIUN_ENTRY_IMAGE##*:}"
+      text="Keel $tag is out. If it contains keel-hq/keel#943, move stacks/keel off the patched fork (docs/architecture/automated-upgrades.md, Keel section). https://github.com/keel-hq/keel/releases/tag/$tag"
+      exec wget -q -O /dev/null --header 'Content-Type: application/json' \
+        --post-data "{\"text\":\"$text\"}" "$SLACK_URL"
+    EOT
+  }
+}
+
 resource "kubernetes_deployment" "diun" {
   metadata {
     name      = "diun"
@@ -208,12 +243,38 @@ resource "kubernetes_deployment" "diun" {
           # 6h watch cycle). The n8n webhook feed above remains the machine
           # consumer; humans get the weekly upgrade report instead.
           env {
+            name  = "DIUN_PROVIDERS_FILE_FILENAME"
+            value = "/etc/diun/keel.yml"
+          }
+          env {
+            name  = "DIUN_NOTIF_SCRIPT_CMD"
+            value = "sh"
+          }
+          env {
+            name  = "DIUN_NOTIF_SCRIPT_ARGS"
+            value = "/etc/diun/notify-keel.sh"
+          }
+          env {
+            name = "SLACK_URL"
+            value_from {
+              secret_key_ref {
+                name = "diun-secrets"
+                key  = "slack_url"
+              }
+            }
+          }
+          env {
             name  = "LOG_LEVEL"
             value = "debug"
           }
           volume_mount {
             name       = "data"
             mount_path = "/data"
+          }
+          volume_mount {
+            name       = "keel-release-watch"
+            mount_path = "/etc/diun"
+            read_only  = true
           }
           resources {
             requests = {
@@ -223,6 +284,12 @@ resource "kubernetes_deployment" "diun" {
             limits = {
               memory = "256Mi"
             }
+          }
+        }
+        volume {
+          name = "keel-release-watch"
+          config_map {
+            name = kubernetes_config_map.keel_release_watch.metadata[0].name
           }
         }
         volume {

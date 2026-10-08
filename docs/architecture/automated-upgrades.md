@@ -226,6 +226,7 @@ Since 2026-10-08 the cluster runs Keel 0.22.4 plus one patch, built from `github
 - **Scope**: it applies only when every workload polling the same image opts in. It is set on immich-api, immich-worker and immich-machine-learning. Other repositories with large tag lists (frigate, rybbit, openclaw, the lscr images) poll successfully today and are left on the full listing.
 - **Known limitation**: a newer version pushed *before* the running tag (for example, while running a backport release) is not seen.
 - **When to use it**: a workload whose image repository has a very large tag list on a push-ordered registry (ghcr), and whose Keel poll fails with 429 or times out.
+- **Release watch**: DIUN watches `ghcr.io/keel-hq/keel` for the newest semver tag and posts the first new one to Slack through a script notifier that ignores every other image (`stacks/diun/main.tf`, `kubernetes_config_map.keel_release_watch`). PR keel-hq/keel#943 merged on 2026-10-08; the message asks you to confirm the release contains it. Remove the watch after the exit below.
 - **Exit**: upstream issue keel-hq/keel#942, PR keel-hq/keel#943. When a Keel release contains the patch, remove the `image` override in `stacks/keel/main.tf`, bump the chart, and archive the fork's `homelab` branch. If upstream changes the annotation name, update the three Immich deployments to match.
 
 ## K8s Node OS Upgrades
