@@ -129,7 +129,16 @@ that moved the single `snmp-exporter` pod: 8 minutes without iDRAC data, then 38
 of Dell auto before the readings returned.
 
 **PID controller:** Simple PID Controller (HACS `bvweerd/simple_pid_controller`,
-v1.6.1), instance "R730 Fan PID". Process value: `sensor.r730_cpu_temperature_5min`
+v1.6.2 since 2026-10-08; the v1.6.1 files are archived on the NAS in
+`Claude shared/r730-fan-pid/`), instance "R730 Fan PID". v1.6.2 uses probatio schemas on
+HA 2026.10 and later, so it has to be in place before that core update, and it refreshes
+the controller as soon as one of its inputs changes (Kp, Ki, SP, limits, auto mode,
+start mode): a single SP step reached the output at once, a second one 5 s later after
+6 s, because the coordinator debounces requests for 10 s. v1.6.1 matched those inputs by
+a wrong entity_id and picked changes up only at the next 30 s sample. The HA restart that
+loaded it (2026-10-08, about 80 s) went through cleanly: the daemon held 27 %, the PID
+came back at its last value and the re-seed automation set it to the applied 27.0 %.
+Process value: `sensor.r730_cpu_temperature_5min`
 (Statistics helper, `mean`, 5 min, no `keep_last_sample`). Setpoint 60 °C, output
 25–90 %, sample time 30 s, Kd 0, windup protection on, start mode "Last known value".
 Cooling needs **negative** Kp and Ki. Tuning entities:
