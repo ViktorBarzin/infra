@@ -214,9 +214,21 @@ func toPoints(cs [][]float64) ([]mapPoint, error) {
 // --- geocoding ----------------------------------------------------------------
 
 type geocodeResult struct {
-	Lat       float64 `json:"lat"`
-	Lon       float64 `json:"lon"`
-	Formatted string  `json:"formatted"`
+	Lat        float64 `json:"lat"`
+	Lon        float64 `json:"lon"`
+	Formatted  string  `json:"formatted"`
+	ResultType string  `json:"result_type"`
+}
+
+// coarse reports a match at area level rather than the place itself. Geoapify
+// returns the city centre when it cannot find a street, and a pin there looks
+// plausible while being wrong.
+func (r geocodeResult) coarse() bool {
+	switch r.ResultType {
+	case "country", "state", "county", "city", "postcode", "suburb", "district":
+		return true
+	}
+	return false
 }
 
 func parseGeocodeResponse(body []byte) (geocodeResult, error) {

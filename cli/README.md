@@ -416,7 +416,7 @@ Overrides: `HOMELAB_DELEGATE_CONTACTS`, `HOMELAB_AGENT_API_TOKEN_FILE`,
 |---|---|---|
 | `map render <file.geojson\|-> [-o out.png] [--size WxH] [--style S] [--share]` | write | posts the features to Geoapify's static map API and writes a PNG (default 1024x768, `osm-bright`). Points become pins numbered in input order, and the numbers are printed with their names. Lines and polygons are drawn; the view fits the features. |
 | `map export <file.geojson\|-> --format kml\|gpx [-o file] [--share]` | write | KML (for Google My Maps) or GPX (for nav apps). GPX has no polygon, so polygons are skipped with a warning. No network call unless addresses need geocoding. |
-| `map geocode "<address>" [--json]` | read | prints `lat,lon` and the matched address. One Geoapify credit. |
+| `map geocode "<address>" [--json]` | read | prints `lat,lon` and the matched address. One Geoapify credit. Warns on stderr when the match is only area level (city, postcode, suburb and similar), since Geoapify falls back to the city centre when it cannot find a street. Geocoding inside `render`/`export` warns the same way. |
 
 Input is a GeoJSON FeatureCollection or one Feature. A feature with `"geometry": null`
 and an `address` property is geocoded first. The key is `geoapify_api_key` at

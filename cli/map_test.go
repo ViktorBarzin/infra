@@ -274,3 +274,26 @@ func TestDefaultMapOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestGeocodeResultFlagsCoarseMatches(t *testing.T) {
+	// Geoapify falls back to the city centre when it cannot find the street
+	// (seen live 2026-10-08: "Vitosha Boulevard 1, Sofia" -> "Sofia, SF,
+	// Bulgaria"). A pin there is silently wrong, so the verb has to say so.
+	city, err := parseGeocodeResponse([]byte(`{"results":[{"lat":42.68,"lon":23.32,"formatted":"Sofia, SF, Bulgaria","result_type":"city"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !city.coarse() {
+		t.Error("a city-level match must count as coarse")
+	}
+	for _, rt := range []string{"amenity", "building", "street", ""} {
+		if (geocodeResult{ResultType: rt}).coarse() {
+			t.Errorf("result_type %q should not be coarse", rt)
+		}
+	}
+	for _, rt := range []string{"country", "state", "county", "city", "postcode", "suburb", "district"} {
+		if !(geocodeResult{ResultType: rt}).coarse() {
+			t.Errorf("result_type %q should be coarse", rt)
+		}
+	}
+}
