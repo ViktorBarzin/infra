@@ -138,6 +138,10 @@ func geocodeAddress(key, address string) (geocodeResult, error) {
 	if err != nil {
 		return geocodeResult{}, fmt.Errorf("geocoding %q: %w", address, err)
 	}
+	if r.coarse() {
+		fmt.Fprintf(os.Stderr, "warning: %q matched only at %s level (%s); the point may be far from the place, so give a fuller address or coordinates\n",
+			address, r.ResultType, r.Formatted)
+	}
 	return r, nil
 }
 
