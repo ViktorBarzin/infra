@@ -53,7 +53,7 @@ resource "helm_release" "prometheus" {
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "prometheus"
   # version    = "15.0.2"
-  version = "25.8.2"
+  version = "29.36.1"
 
   # wait=false: do NOT block the apply on the slow Recreate + WAL-replay roll.
   # Blocking held an ~15-min in-flight `helm upgrade` that Woodpecker's
@@ -85,7 +85,46 @@ resource "helm_release" "prometheus" {
 
   # The haos scrape job now reads its credential from this Secret's mount, so
   # the Secret has to exist before the pod is rescheduled onto the new values.
-  depends_on = [kubernetes_secret.haos_scrape_token]
+  depends_on = [
+    kubernetes_secret.haos_scrape_token,
+    kubernetes_cluster_role_binding.prometheus_server_nodes_proxy,
+  ]
+}
+
+# Chart 29 dropped `nodes/proxy` from the prometheus-server ClusterRole (25.x
+# had it). Our kubernetes-nodes and kubernetes-nodes-cadvisor jobs reach each
+# kubelet through the API server's node proxy
+# (/api/v1/nodes/<node>/proxy/metrics and .../metrics/cadvisor), and that path
+# needs `get` on nodes/proxy. Without this grant those 12 targets return 403,
+# which removes container_* and kubelet_volume_stats_* (pvc-autoresizer reads
+# the latter). Declared here, not in the chart, because the chart exposes no
+# extra-rules value. The binding exists before the chart narrows its own role,
+# via depends_on above.
+resource "kubernetes_cluster_role" "prometheus_server_nodes_proxy" {
+  metadata {
+    name = "prometheus-server-nodes-proxy"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["nodes/proxy"]
+    verbs      = ["get"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding" "prometheus_server_nodes_proxy" {
+  metadata {
+    name = "prometheus-server-nodes-proxy"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.prometheus_server_nodes_proxy.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "prometheus-server"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
 }
 
 # Keel opt-out for this Deployment lives ENTIRELY in the annotation — see the

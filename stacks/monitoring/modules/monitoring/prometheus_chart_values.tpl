@@ -470,7 +470,7 @@ prometheus-pushgateway:
       memory: 256Mi
 server:
   # Opt this Deployment out of Keel. Terraform declares every image in this
-  # release (prometheus v2.55.1, config-reloader v0.70.0, and the
+  # release (prometheus v3.15.0, config-reloader v0.94.1, and the
   # prometheus-backup sidecar's alpine tag below), so a Keel bump is always
   # reverted by the next apply and the two just take turns.
   #
@@ -498,12 +498,6 @@ server:
   # annotation, but cannot remove the policy=patch it already stamped.
   deploymentAnnotations:
     keel.sh/policy: never
-  # Pinned ahead of the chart (25.8.2 ships v2.48.1) as hop 1 of the 3.x
-  # upgrade (docs/plans/2026-10-09-software-currency-design.md). 2.55 is the
-  # last 2.x release and the one that can read blocks written by 3.x, so it is
-  # the rollback target for hop 2. Removed again when the chart moves to 29.x.
-  image:
-    tag: v2.55.1
   # Halve scrape load on apiserver + cAdvisor + node-exporter without losing
   # alerting fidelity. Per-job overrides (snmp-ups 30s, snmp-idrac 1m, etc.)
   # below keep critical metrics fresh; alert `for:` durations were audited and
@@ -515,7 +509,6 @@ server:
   extraFlags:
     - "web.enable-admin-api"
     - "web.enable-lifecycle"
-    - "storage.tsdb.allow-overlapping-blocks"
     - "storage.tsdb.retention.size=180GB"
     - "storage.tsdb.wal-compression"
     # Accept remote-write from the Loki ruler (share-link recording rules in
@@ -526,11 +519,10 @@ server:
     # (docs/adr/0025-claude-session-telemetry.md). Claude sessions on the devvm
     # push claude_code.* counters and histograms to
     # /api/v1/otlp/v1/metrics, reached over the LAN-only
-    # prometheus-otlp.viktorbarzin.me ingress. Experimental in v2.48.1 and
-    # therefore behind --enable-feature rather than its own flag; it becomes
-    # --web.enable-otlp-receiver in Prometheus 3.x, so this line moves at the
-    # next major upgrade.
-    - "enable-feature=otlp-write-receiver"
+    # prometheus-otlp.viktorbarzin.me ingress. Prometheus 3.x replaced the
+    # 2.x `--enable-feature=otlp-write-receiver` with this flag; 3.x only
+    # warns on the old feature name and the endpoint then returns 404.
+    - "web.enable-otlp-receiver"
   persistentVolume:
     # enabled: false
     existingClaim: prometheus-data-proxmox
@@ -669,6 +661,14 @@ server:
           # - "alertmanager.viktorbarzin.me"
       tls_config:
         insecure_skip_verify: true
+
+# Chart 28+ renders its own default scrape jobs from this map and prepends
+# them to serverFiles.prometheus.yml's scrape_configs. Every one of them
+# (prometheus, kubernetes-nodes, kubernetes-service-endpoints, ...) is already
+# declared below with our own relabels and keep-lists, so leaving the map in
+# place produces duplicate job names and Prometheus refuses the config.
+# null removes the chart default entirely.
+scrapeConfigs: null
 
 serverFiles:
   prometheus.yml:
@@ -8244,6 +8244,9 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'registry_$${1}' 
   - job_name: 'automatic-transfer-switch'
+    # tuya-bridge (Flask) answers text/html; Prometheus 3.x refuses that
+    # Content-Type unless a fallback protocol is named.
+    fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
         - targets:
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
@@ -8257,6 +8260,9 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'automatic_transfer_switch_$${1}'
   - job_name: 'fuse-garage'
+    # tuya-bridge (Flask) answers text/html; Prometheus 3.x refuses that
+    # Content-Type unless a fallback protocol is named.
+    fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
         - targets:
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
@@ -8270,6 +8276,9 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'fuse_garage_$${1}'
   - job_name: 'fuse-main'
+    # tuya-bridge (Flask) answers text/html; Prometheus 3.x refuses that
+    # Content-Type unless a fallback protocol is named.
+    fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
         - targets:
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
@@ -8283,6 +8292,9 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'fuse_main_$${1}'
   - job_name: 'thermostat-hol'
+    # tuya-bridge (Flask) answers text/html; Prometheus 3.x refuses that
+    # Content-Type unless a fallback protocol is named.
+    fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
         - targets:
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
@@ -8296,6 +8308,9 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'thermostat_hol_$${1}'
   - job_name: 'thermostat-master-bedroom'
+    # tuya-bridge (Flask) answers text/html; Prometheus 3.x refuses that
+    # Content-Type unless a fallback protocol is named.
+    fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
         - targets:
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
@@ -8309,6 +8324,9 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'thermostat_master_bedroom_$${1}'
   - job_name: 'thermostat-office'
+    # tuya-bridge (Flask) answers text/html; Prometheus 3.x refuses that
+    # Content-Type unless a fallback protocol is named.
+    fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
         - targets:
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"
@@ -8322,6 +8340,9 @@ extraScrapeConfigs: |
         regex: '(.*)'
         replacement: 'thermostat_office_$${1}'
   - job_name: 'thermostat-kids-room'
+    # tuya-bridge (Flask) answers text/html; Prometheus 3.x refuses that
+    # Content-Type unless a fallback protocol is named.
+    fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
         - targets:
           - "tuya-bridge.tuya-bridge.svc.cluster.local:80"

@@ -44,7 +44,7 @@ Every question this ADR set out to answer maps onto a signal already emitted.
 | Mechanism | Native OTel export, enabled by an `env` block in the org-wide managed settings |
 | Scope | Every surface — lobby, t3-serve, SSH, headless, cron. No tmux gate |
 | Logs | OTLP → Loki's native `/otlp/v1/logs` (already live) |
-| Metrics | OTLP → Prometheus, behind `--enable-feature=otlp-write-receiver` |
+| Metrics | OTLP → Prometheus, behind `--enable-feature=otlp-write-receiver` (`--web.enable-otlp-receiver` since Prometheus 3.x) |
 | Prompt content | Recorded verbatim (`OTEL_LOG_USER_PROMPTS=1`), no interposer |
 | History | Loki takes the last 7 days it will accept; the full corpus is analysed on demand |
 | Analysis | `homelab claude-usage`, over transcripts on disk, both users, `--user` to filter |
@@ -110,6 +110,12 @@ available in this version as an experimental feature, so the change is adding
 ```
 --enable-feature=otlp-write-receiver
 ```
+
+Update 2026-10-09: Prometheus moved to v3.15.0 (chart 29.36.1), where the
+receiver is a stable flag, `--web.enable-otlp-receiver`. 3.x only warns on the
+old feature name and the endpoint then returns 404, so the flag changed in the
+same commit as the chart. The series names ingested are identical on 2.48.1,
+2.55.1 and 3.15.0.
 
 Loki needs nothing: `POST /otlp/v1/logs` already answers on the running
 instance.
