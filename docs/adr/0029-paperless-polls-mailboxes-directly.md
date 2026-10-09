@@ -75,9 +75,14 @@ flowchart TD
 5. Documents get the tag `email-ingest`. Until the first pass has drained, the
    rules also apply `email-backfill` (tag 5227), so the historical batch can be
    reverted with one filter. After that the tag comes off the rules.
-6. Content-hash duplicates are rejected across all owners, so a bill sent to
-   both Viktor and Emo lands with whichever mailbox Paperless reads first. Viktor
-   accepted first-wins.
+6. One copy per document, and the first owner wins. Paperless 3.x consumes
+   duplicates by default (it only logs a warning), and in the first hour of the
+   first pass 9 of 12 new documents were second copies of Viktor's June import,
+   and 2 were his copies of Emo's papers. `PAPERLESS_CONSUMER_DELETE_DUPLICATES=true`
+   now rejects any file whose checksum matches an existing document, across all
+   owners, and the extra copies from that hour were deleted. A bill sent to both
+   Viktor and Emo lands with whichever mailbox Paperless reads first; Viktor
+   still sees it as superuser.
 7. The `docs@` manual-forward path and its rules 13-17 stay as they are, still
    taking every attachment type.
 8. `viktorbarzin@meta.com` is out of scope. Manual forwards to `docs@` still work

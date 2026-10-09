@@ -39,8 +39,11 @@ first pass drains. Like the forward rules, this is DB state, not Terraform.
 - **Ending the backfill:** when rules 18-20 stop producing new documents
   beyond the daily trickle, remove tag 5227 from their `assign_tags`. To revert
   the historical batch, bulk-delete documents tagged `email-backfill`.
-- **Duplicates:** the same file in both mailboxes lands with whichever is read
-  first (content-hash dedup across owners, accepted).
+- **Duplicates:** `PAPERLESS_CONSUMER_DELETE_DUPLICATES=true`
+  (stacks/paperless-ngx) rejects any file whose checksum matches an existing
+  document, any owner, including documents in the trash. The same file in both
+  mailboxes lands with whichever is read first. A rejected attachment records a
+  FAILED `ProcessedMail` row and is not retried.
 - **Noise:** if marketing or T&C PDFs pile up, add
   `filter_attachment_filename_exclude` patterns using the filenames actually
   seen.

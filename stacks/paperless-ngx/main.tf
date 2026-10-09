@@ -348,6 +348,15 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_WEBSERVER_WORKERS"
             value = "3"
           }
+          # Reject a file whose checksum matches any existing document, across
+          # all owners. 3.x consumes duplicates by default; the mailbox poll
+          # (ADR-0029) re-reads mail whose attachments were already imported, so
+          # without this every overlap became a second copy. Viktor, 2026-10-09:
+          # one copy per document, first owner wins.
+          env {
+            name  = "PAPERLESS_CONSUMER_DELETE_DUPLICATES"
+            value = "true"
+          }
           volume_mount {
             name       = "data"
             mount_path = "/usr/src/paperless/data"
