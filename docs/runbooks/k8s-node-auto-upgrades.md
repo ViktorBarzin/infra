@@ -56,7 +56,7 @@ kured uncordons + posts Slack notification (configuration.notifyUrl)
 
 ### kured (Helm release)
 - **Stack**: `infra/stacks/kured/main.tf`
-- **Helm chart**: `kured-5.11.0` (image `ghcr.io/kubereboot/kured:1.21.0`)
+- **Helm chart**: `kured-6.1.0` (image `ghcr.io/kubereboot/kured:1.23.0`)
 - **Window**: 02:00-06:00 Europe/London, every day of the week (was Mon-Fri until 2026-05-16), period=1h, concurrency=1
 - **Sentinel**: `/sentinel/gated-reboot-required` (created by sentinel-gate DaemonSet)
 - **Slack hook**: Vault `secret/kured` → `slack_kured_webhook`

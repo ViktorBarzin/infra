@@ -103,7 +103,13 @@ resource "helm_release" "kured" {
   name             = "kured"
   chart            = "kured"
   repository       = "https://kubereboot.github.io/charts/"
-  version          = "5.11.0"
+  version          = "6.1.0"
+  # A failed upgrade without these leaves a release with no deployed revision
+  # that Terraform cannot upgrade again. The DaemonSet rolls one node at a
+  # time, so give the wait 15 minutes.
+  atomic          = true
+  cleanup_on_fail = true
+  timeout         = 900
 
   values = [yamlencode({
     configuration = {
