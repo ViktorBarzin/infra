@@ -256,6 +256,20 @@ _Avoid_: bare "backup" without saying which copy you mean (a service is "backed 
 **CNPG** is the CloudNativePG operator; **`pg-cluster`** is the Postgres cluster it manages — the shared Postgres substrate. Backs Tier-1 Terraform state (`pg-cluster-rw.dbaas.svc.cluster.local:5432/terraform_state`) and ~12 application databases, reached through **PgBouncer** (a **critical-path Service**) for connection pooling; app credentials rotate via the `vault-database` ClusterSecretStore.
 _Avoid_: "the database" (many DBs share one cluster); the legacy `postgresql.dbaas` Service for NEW work (it is a live compatibility alias selecting the CNPG primary — authentik's PgBouncer still uses it — but `pg-cluster-rw` is the canonical name); conflating the CNPG operator with the `pg-cluster` it manages.
 
+### Documents
+
+**Mail ingest**:
+Paperless-ngx turning email attachments into documents through its built-in IMAP reader. It has two paths, a **Manual forward** and a **Mailbox poll**, and both tag documents `email-ingest`. Runbook: `docs/runbooks/paperless-mail-ingest.md`.
+_Avoid_: "email import" (the one-off June 2026 bulk upload, tag `email-import`, which used the REST API, not the mail reader).
+
+**Manual forward**:
+A person deliberately forwards a message to `docs@viktorbarzin.me`. The sieve allowlist and the Paperless rules pick the owner from the From address, and every attachment type is taken.
+_Avoid_: "auto-forward" (nothing forwards automatically; see **Mailbox poll**).
+
+**Mailbox poll**:
+Paperless logs into a person's own mailbox (Viktor's and Emo's Gmail All Mail, Viktor's `me@` INBOX) and takes PDF and Office attachments from every message, marking each consumed message with the Gmail label or IMAP keyword `paperless`. The mailbox decides the owner. ADR-0029.
+_Avoid_: "forwarding"; "docs@" (a Mailbox poll never touches `docs@`).
+
 ### Secrets
 
 **Vault path**:
