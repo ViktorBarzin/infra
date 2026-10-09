@@ -99,11 +99,18 @@ Callers are `devvm_external_agents` in `playbooks/devvm.yml`; each token is Vaul
 - If the token may have leaked: revoke first, then check `homelab logs query '{namespace="traefik"} |= "terminal-api"' --since 24h`
   and the agent-api trace in Loki for what it was used for.
 
-Two optional keys on an entry: `delegation_creator: true` lets that Caller create Delegations
+Three optional keys on an entry: `delegation_creator: true` lets that Caller create Delegations
 (it feeds `TL_DELEGATION_CREATORS`), and `token_file` installs the plaintext token for `os_user`
 at 0600, for a Caller that runs on the devvm itself. The `homelab` entry uses both: it is the
 homelab CLI's own credential for `homelab delegate`, used over loopback rather than through this
 endpoint.
+
+`pin` sets `model`, `effort` and `permission_mode` on every conversation that Caller creates,
+replacing what it sends (it feeds `TL_CALLER_PINS`). `inherit` means the box default:
+managed-settings for model and effort, bypass for the mode. Muse's entry is
+`model: inherit, effort: inherit, permission_mode: bypassPermissions`, set on 2026-10-09 because
+Muse's own client sent `claude-opus-5` and `permission_mode=default` (manual mode), and that
+client lives in Muse's VM. agent-api logs each override as `<caller> asked for ... pinned to ...`.
 
 ## Delegations
 
