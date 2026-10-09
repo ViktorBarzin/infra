@@ -63,7 +63,7 @@ homelab metrics query 'rate(vault_core_handle_request_count[5m])'
 
 A pod with `vault_core_active=1`, a flat applied index and no completed
 requests is the stuck leader. `VaultRaftLeaderStuck` alerts on all three
-together. (`vault_raft_last_index_gauge` does not exist in Vault 1.20.4; the
+together. (`vault_raft_last_index_gauge` does not exist in Vault 1.21.4; the
 applied index is the one that moves on every committed entry.)
 
 A flat applied index on its own is normal when nobody writes. Vault 1.18.1
