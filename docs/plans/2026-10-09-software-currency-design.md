@@ -7,9 +7,10 @@
 
 ## Goal
 
-1. Every component moves to new upstream versions without someone having to notice first, including majors and cluster operators.
-2. A fixable, high-severity CVE on an internet-reachable workload reaches Slack within a day, without depending on an outside tool noticing it.
-3. If the upgrade automation itself stops running, we hear about it.
+1. Every component moves to new upstream versions without someone having to notice first, including majors, cluster operators and database engines.
+2. Every automated upgrade proves the component still works before it counts as landed, with the deepest checks on databases and the GPU stack.
+3. A fixable, high-severity CVE on an internet-reachable workload reaches Slack within a day, without depending on an outside tool noticing it.
+4. If the upgrade automation itself stops running, we hear about it.
 
 ## What exists today (measured 2026-10-09)
 
@@ -84,9 +85,37 @@ flowchart TD
 |---|---|
 | `helm_release` chart versions (all 28, after pinning the 7 unpinned ones to their live versions) | Renovate |
 | Image pins in `.tf` and Helm values for workloads Keel does not manage (`keel.sh/policy=never`, chart `tag` values) | Renovate |
+| Database engines: pg-cluster image, MySQL (latest innovation release), Redis, ClickHouse, Dolt | Renovate (moved off Keel, so they get the rails and DB checks) |
+| Immich Postgres | Renovate, tracking the `immich-app/postgres` tag in Immich's own release compose |
 | Live app image tags (Terraform has `ignore_changes`) | Keel |
 | Base images and language dependencies in our own image repos that opt in with `renovate.json` (Forgejo and GitHub) | Renovate, gated by that repo's own CI |
 | Node OS packages, Kubernetes components | unchanged (unattended-upgrades + kured, k8s version chain) |
+
+### Verification contract
+
+An upgrade counts as landed only when the component's checks pass. Checks run as Kubernetes Jobs from a `verify` script kept next to each stack, so the Woodpecker rails and the Keel watcher run the same code.
+
+| Component | Checks |
+|---|---|
+| Floor (everything) | rollout complete within 10 minutes, ingress HTTP check where one exists, no new firing alerts in the component's namespaces for 10 minutes |
+| Every Renovate-owned component | the floor, plus its own `verify` script exercising real function. Fail closed: a component without a script does not auto-land |
+| Databases | operator or cluster healthy and replication lag 0; a scratch table written, read back and dropped; extensions load and answer a query where used (postgis, vector, vchord); every dependent app passes its own check; the backup job runs successfully on the new version |
+| GPU stack (gpu-operator, driver, toolkit, device plugin) | `nvidia.com/gpu` allocatable still 100 and validator pods succeed; a test pod runs `nvidia-smi` and a small CUDA operation; one real inference each on llama-swap (`/v1/chat/completions`), Immich ML (`/predict`) and Frigate (`/api/stats` detector inference speed); DCGM metrics (`nvidia_tesla_t4_DCGM_*`) still flowing |
+| Keel app rollouts | the floor, plus the app's `verify` script where one exists. Failure pages Slack with the app and old/new tag. No automatic rollback |
+
+Inventory behind these checks (2026-10-09):
+
+- Databases: CNPG `dbaas/pg-cluster` (PG 16.9, 3 instances, 34 databases, custom `cnpg-postgis-pgvector` image), Immich PG 15.14 (vchord 0.4.3, vector 0.8.1), MySQL `mysql-standalone` 8.4.8 (20 schemas), Redis 8.10.0, ClickHouse 25.4.13 (rybbit), Dolt 2.0.7 (beads), Vault raft.
+- GPU: one Tesla T4 on node1, time-sliced to 100 slots, driver 570.195.03 compiled at runtime. Live consumers: llama-swap, Immich ML and worker, Frigate, claude-memory, f1-stream, stremio, android-emulator.
+
+### Database and GPU upgrade paths
+
+- **pg-cluster majors** use CNPG's declarative offline in-place upgrade (since CNPG 1.26; we run 1.28.1) after a fresh `pg_dumpall`. Each new major needs our `cnpg-postgis-pgvector` image built for it first. After the upgrade, run the `update_extensions.sql` that `pg_upgrade` writes and an `ANALYZE`. The backup CronJob clients (`postgres:16.4-bullseye`) move in the same change, because `pg_dump` 16 refuses a PG 17 server.
+- **Immich PG** moves only when Immich's release compose moves its tag. A major is an automated dump, image swap and restore, followed by the DB checks and a smart-search query.
+- **MySQL** tracks the latest innovation release. It upgrades in place after a dump; the 2026-09-04 rehearsal measured an 8.4 patch upgrade at 25 s end to end.
+- **Redis, ClickHouse, Dolt** upgrade in place after their backup runs.
+- No restore test before DB upgrades. Recovery from a failed major is a manual restore from the pre-upgrade dump.
+- **GPU node kernel stays held** at 6.8.0-117. The driver compiles against kernel headers at runtime, and the 2026-05-17 post-mortem covers what happens when the headers are missing. Everything above the kernel upgrades automatically under the GPU checks. A kernel move becomes a supervised step when a driver version supports a newer kernel whose headers exist in the repos.
 
 ### Phase 1: supervised Vault and Prometheus upgrades
 
@@ -132,6 +161,21 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
 
 ### Phase 3: Renovate, Woodpecker rails, Keel to major
 
+**Groundwork before Renovate lands anything**
+
+- Move the GPU time-slicing config to the right key. `stacks/nvidia/modules/nvidia/values.yaml:54` nests `devicePlugin.config` under `driver:`. The live ClusterPolicy only has it because of an earlier manual patch that Helm's 3-way merge has kept, so a gpu-operator upgrade would likely drop GPU slots from 100 to 1.
+- Add an alert for `nvidia.com/gpu` allocatable below 100 (asked for in the 2026-05-17 post-mortem).
+- Add a MySQL exporter, a pg-cluster Uptime Kuma monitor, and ClickHouse metrics, so the DB checks and the floor have signals to read.
+- Add backup CronJobs for ClickHouse and Dolt, so the snapshot step has something to run.
+- Write the `verify` script for every Renovate-owned component, and the shared Job runner.
+- Give the CI Vault role the admin rights the vault stack needs, and remove the vault skip at `.woodpecker/default.yml:288`, so Vault chart bumps actually apply.
+
+**Adjacent fixes, in the same build**
+
+- Backup freshness metrics: the dbaas and Immich backup jobs succeed, but `apt-get update` fails on bullseye, so the Pushgateway push never happens and `backup_last_success_timestamp` reads about 33 days old.
+- Remove the leftover MySQL InnoDB Cluster CR and CRDs (0 pods, reports ONLINE), `drone-logbook-backup` (failing since 2026-08-04, namespace empty) and the stale postiz backup metric.
+- Fix the stale MySQL upgrade comment (`stacks/dbaas/modules/dbaas/main.tf:255-262`, superseded by the 2026-09-04 rehearsal) and the gpu-operator pin rationale (`stacks/nvidia/main.tf:136-141`; node1 runs 24.04).
+
 **Renovate**
 
 - New stack `stacks/renovate`: `renovate/renovate` image as a CronJob every 2 hours, `platform: forgejo` (Forgejo 11.0.14; native since Renovate 41.41.0), plus a GitHub run for opted-in GitHub repos.
@@ -150,13 +194,14 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
 1. Upgrade gate: the same opt-in blocking-alert allowlist used by kured and the k8s version chain. Blocked → the pipeline exits without applying, and the next Renovate run tries again.
 2. Snapshot for stateful stacks: Vault raft snapshot, DB dump through the existing backup CronJobs, etcd snapshot for charts that change CRDs.
 3. `terragrunt apply` for the touched stack.
-4. Health check: rollout complete for the stack's workloads within 10 minutes, ingress HTTP check where one exists, no new firing alerts from the stack's namespaces during a 10-minute window.
+4. Verification: run the component's checks from the verification contract above. The Woodpecker apply loop has no per-stack hook today, so a new step reads the list of applied stacks and runs each one's verify Job.
 5. On failure: `git revert` of the Renovate commit, with that exact version added to Renovate's ignore list in the same commit, and a Slack page naming the snapshot location. The next upstream release is tried automatically. No automatic data restore.
 
 **Keel**
 
 - The Kyverno-injected default moves from `policy: patch` to `policy: major` for every unfenced workload, in one change.
-- Existing fences stay: Calico, gpu-operator (`never`), ESO, Kyverno (`patch`), and the excluded infrastructure namespaces. Those move through Renovate as chart bumps.
+- Existing fences stay: Calico, gpu-operator (`never`), ESO, Kyverno (`patch`), and the excluded infrastructure namespaces. Those move through Renovate as chart bumps. Database engines move to `never` and come under Renovate.
+- A watcher CronJob notices Keel rollouts (image changes on Keel-managed workloads), runs the floor check plus the app's `verify` script where one exists, and pages on failure without rolling back.
 
 **DIUN retirement**
 
@@ -172,6 +217,9 @@ Viktor chose these knowingly during the design interview:
 - Keel on `major` will move Nextcloud from 32 straight to 35. Nextcloud's upgrader does not support skipping majors, so expect a manual repair, starting from the DB backup.
 - The Keel default flips to `major` for all unfenced workloads at once, so many apps may upgrade within the first hour.
 - Vault stays reachable from the internet with only its own auth.
+- Database engine majors, including MySQL innovation releases, land unattended in place. There is no restore test beforehand, and no automatic way back: recovery is a manual restore from the pre-upgrade dump. MySQL innovation releases cannot be downgraded.
+- The CI Vault role gets admin rights over Vault's mounts and policies, so a compromised CI job could change them.
+- Keel app rollouts that fail their check are paged, not rolled back.
 - There is no versions-behind metric. A stalled pipeline is caught by the Renovate liveness alert, and silent drift on things Renovate doesn't own (Keel `never` workloads without a Terraform pin) is not tracked.
 
 ## Open questions
@@ -180,3 +228,5 @@ Viktor chose these knowingly during the design interview:
 - Whether Renovate automerges exactly one branch per run on its own, or needs `branchConcurrentLimit: 1` plus a schedule guard to hold that to one. To confirm against current Renovate docs before building.
 - Trivy's scanner image registry default, and the node-collector's exact privilege needs, to confirm against the chart version we pin.
 - The Prometheus regex change (`.` matching newline) has not been audited across the 402 rules.
+- MySQL 8.4 → latest 9.x: confirm which jumps Oracle supports in place (LTS to innovation, innovation to innovation) and encode any required stepping in Renovate.
+- Where the `cnpg-postgis-pgvector` image is built, and how a new PG major's image gets built before Renovate proposes the major.

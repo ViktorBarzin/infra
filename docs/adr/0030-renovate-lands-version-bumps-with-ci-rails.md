@@ -24,6 +24,9 @@ What we found on 2026-10-09:
 6. **The DIUN → n8n → agent pipeline is retired**, along with the service-upgrade agent files.
 7. **Trivy Operator provides the CVE signal.** It alerts on fixable Critical/High findings on internet-reachable workloads and on secrets found in images. Everything else goes to a weekly section of `alert-digest`. Findings do not trigger upgrades directly, since Keel (hourly) and Renovate (every 2 hours) already pick up fixed versions.
 8. **A Renovate liveness alert** fires when no run has succeeded for 8 hours. There is no separate versions-behind metric.
+9. **Every automated upgrade must pass its component's checks before it counts as landed** (added the same day, after Viktor asked to "make sure each chart works after the upgrades, especially the db and gpu ones"). Each Renovate-owned component has a `verify` script, run as a Kubernetes Job; one without a script does not auto-land. Databases must show a healthy cluster, a successful write/read probe with their extensions, healthy dependent apps and a successful post-upgrade backup. The GPU stack must keep 100 GPU slots, run a CUDA test pod, answer one real inference on each GPU workload and keep DCGM metrics flowing. Keel app rollouts get a generic check plus the app's script where one exists, and failures page without rolling back.
+10. **Database engines upgrade too, majors included**, in place after a dump and with no restore test first. MySQL tracks the latest innovation release. Immich's Postgres follows the tag in Immich's own release compose. The GPU node's kernel stays held; everything above it upgrades.
+11. **CI gets Vault-admin rights** so Vault chart bumps apply through the same pipeline instead of being skipped.
 
 ## Alternatives considered
 
@@ -38,4 +41,7 @@ What we found on 2026-10-09:
 - A failed bump costs one revert commit and one Slack page, and the next upstream release is tried automatically.
 - Unattended majors can include CRD or schema migrations that `git revert` cannot undo. Recovery from those is the pre-upgrade snapshot, restored by hand. Viktor accepted this.
 - Nextcloud will be moved across several majors at once by Keel, which Nextcloud's upgrader does not support. Viktor accepted that this may need a manual repair.
+- A failed database major has no automatic way back; recovery is a manual restore from the pre-upgrade dump, which is not restore-tested first. MySQL innovation releases cannot be downgraded.
+- A compromised CI job could change Vault's mounts and policies.
+- Several checks need groundwork first: the GPU time-slicing config has to move to the right Helm key (a chart upgrade would otherwise likely drop GPU slots from 100 to 1), and MySQL, pg-cluster and ClickHouse need the metrics and backups the checks and snapshots read.
 - Renovate needs a Forgejo bot account allowed to push to master, and its commits carry the audit trail (what changed and why) like any other commit.
