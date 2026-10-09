@@ -28,6 +28,13 @@ The weekly "upgrade report" (`k8s-upgrade-nightly-report`) covers Kubernetes com
 
 ### Drift on the Helm-managed layer
 
+```stats
+~25 | Vault CVE fixes missing
+22 months | Prometheus age
+7 of 28 | charts with no pin
+2026-04-19 | last DIUN agent upgrade
+```
+
 | Component | Running | Latest upstream | Reachable from the internet |
 |---|---|---|---|
 | Prometheus | v2.48.1 (Dec 2023) | v3.15.0 | yes, behind Authentik |
@@ -49,7 +56,7 @@ The 2026-04-20 infra audit (`docs/plans/2026-04-20-infra-audit-design.md`, findi
 ## Design
 
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph detect[Detection]
     R[Renovate CronJob<br/>every 2h, at most 1 bump per run]
     K[Keel, hourly<br/>default policy=major]
