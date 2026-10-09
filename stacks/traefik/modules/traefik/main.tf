@@ -277,7 +277,7 @@ resource "helm_release" "traefik" {
         # hosts (stacks/cloudflared), and for origin-direct hosts strip the
         # alt-svc response header with a middleware rather than touching this
         # entrypoint. Verify any change here by rendering the Service first:
-        #   helm template traefik traefik/traefik --version 40.2.0 -f <values>
+        #   helm template traefik traefik/traefik --version 41.7.0 -f <values>
         # and confirm websecure/TCP:443 is still in the output.
         http3 = {
           enabled        = true
