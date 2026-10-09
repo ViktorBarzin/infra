@@ -51,9 +51,19 @@ driver:
   startupProbe:
     failureThreshold: 300
 
-  devicePlugin:
-    config:
-      name: time-slicing-config
+# GPU time-slicing: the device plugin reads `time-slicing-config` (the
+# kubernetes_config_map in main.tf) and advertises the T4 as 100
+# nvidia.com/gpu slots. This block must sit at the TOP LEVEL. Until
+# 2026-10-09 it was nested under `driver:`, where the chart ignores it;
+# the live ClusterPolicy kept the config only because an earlier manual
+# `kubectl patch` survived Helm's 3-way merge, so a chart upgrade would
+# likely have dropped the node to 1 slot. The chart template renders
+# `spec.devicePlugin.config` only when `name` is set, and writes `default`
+# as-is, so both keys are needed. Alert: GPUAllocatableBelowExpected.
+devicePlugin:
+  config:
+    name: time-slicing-config
+    default: any
 
 # DCGM Exporter - reduced to 768Mi (actual usage ~489Mi, 1.5x margin)
 dcgmExporter:

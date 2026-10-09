@@ -356,6 +356,15 @@ device's rated continuous capacity is not recorded in this repo — revisit the
 
 NVIDIA GPU metrics are collected via dcgm-exporter with configurable resource limits (`dcgmExporter.resources`). Metrics include GPU utilization, memory usage, temperature, and power consumption.
 
+`GPUAllocatableBelowExpected` (warning, added 2026-10-09) fires when
+`max by (node) (kube_node_status_allocatable{resource="nvidia_com_gpu"}) < 100`
+holds for 10m. The T4 is time-sliced into 100 slots by the `time-slicing-config`
+ConfigMap, so a lower number means the device plugin lost that config (for
+example after a gpu-operator chart upgrade) or the driver or device plugin is
+down. Over the 180 days before it was added, the expression matched 224
+two-minute samples, 1 of them in the last 60 days. Wiring of the config:
+`docs/architecture/compute.md` (GPU Workloads).
+
 ### Database Version Pinning
 
 MySQL, PostgreSQL, and Redis images have Diun monitoring disabled to prevent automatic version updates that could cause compatibility issues. Version upgrades are manual and coordinated.
