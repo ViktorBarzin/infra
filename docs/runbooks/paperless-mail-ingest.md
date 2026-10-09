@@ -1,6 +1,53 @@
 # Paperless-ngx Mail Ingest (docs@viktorbarzin.me)
 
-Last updated: 2026-07-25
+Last updated: 2026-10-09
+
+Two paths feed Paperless from email:
+
+- **Mailbox poll** (since 2026-10-09, ADR-0029): Paperless reads each person's
+  own mailbox and takes PDF and Office attachments without anyone forwarding.
+  See [Mailbox poll](#mailbox-poll) below.
+- **Manual forward** to `docs@`: the rest of this page.
+
+## Mailbox poll
+
+| Rule | Mail account | Folder | Owner |
+|---|---|---|---|
+| 18 `auto: Emo (Gmail All Mail)` | 4, `emil.barzin@gmail.com` (imap.gmail.com) | `[Gmail]/All Mail` | emo (id 7) |
+| 19 `auto: Viktor (Gmail All Mail)` | 5, `vbarzin@gmail.com` (imap.gmail.com) | `[Gmail]/All Mail` | root (id 3) |
+| 20 `auto: Viktor (me@ INBOX)` | 1, `me@viktorbarzin.me` | `INBOX` | root (id 3) |
+
+Shared settings: `attachment_type=2` (inline parts included),
+`filter_attachment_filename_include=*.pdf,*.doc,*.docx,*.xls,*.xlsx,*.odt,*.ods`,
+`maximum_age=0`, consumption scope attachments only, action TAG with parameter
+`paperless` (a Gmail label on Gmail, an IMAP keyword on `me@`), title from
+subject, tags `email-ingest` (4689) plus `email-backfill` (5227) until the
+first pass drains. Like the forward rules, this is DB state, not Terraform.
+
+- **Credentials:** the Gmail app passwords live in the Paperless DB. Their
+  sources are Vault `secret/recruiter-responder` `gmail_imap_pass` (Viktor's,
+  shared with recruiter-responder) and Emo's Vaultwarden item
+  `accounts.google.com (emil.barzin@gmail.com)`, custom field
+  `claude app password` (read as emo: `sudo -u emo -i homelab vault get
+  59a3cb8b-0667-4e47-847e-f29a5e323813 --all`). If an app password is revoked,
+  update the mail account's password in Paperless (Mail → Accounts).
+- **First pass:** every message in the folder is downloaded once (about 4.7 GB
+  for Viktor's All Mail, 4.3 GB for Emo's, measured 2026-10-09). Every message
+  gets a `ProcessedMail` row, consumed or not, so later polls only look at new
+  UIDs. Google documents a 2,500 MB/day IMAP download limit for Workspace; if
+  Gmail suspends IMAP, the poll errors and retries every 10 minutes.
+- **Ending the backfill:** when rules 18-20 stop producing new documents
+  beyond the daily trickle, remove tag 5227 from their `assign_tags`. To revert
+  the historical batch, bulk-delete documents tagged `email-backfill`.
+- **Duplicates:** the same file in both mailboxes lands with whichever is read
+  first (content-hash dedup across owners, accepted).
+- **Noise:** if marketing or T&C PDFs pile up, add
+  `filter_attachment_filename_exclude` patterns using the filenames actually
+  seen.
+- **Pause one person:** disable that person's rule. Deleting the mail account
+  also drops its stored password.
+
+## Manual forward to docs@
 
 Forward any email with document attachments to **`docs@viktorbarzin.me`** and
 paperless-ngx ingests the attachments, owned by the paperless account mapped
@@ -126,6 +173,12 @@ The map lives in **two places by design** — keep them in sync:
   filtering).
 
 ## Rollback
+
+Mailbox poll: delete rules 18-20 and mail accounts 4 and 5. Documents already
+consumed stay; bulk-delete by tag `email-backfill` to remove the historical
+batch.
+
+Manual forward:
 
 1. Disable/delete the 5 `forward:` mail rules + the `docs@` mail account
    (paperless admin UI or API).
