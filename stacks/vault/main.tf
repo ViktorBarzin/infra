@@ -31,7 +31,7 @@ locals {
   # CronJob, so the three cannot drift apart. Chart 0.34.1 defaults
   # server.image.tag to 2.0.4, so the tag must always be set explicitly.
   # Upgrade path: docs/plans/2026-10-09-software-currency-design.md (Phase 1).
-  vault_version = "1.19.5"
+  vault_version = "1.20.4"
 }
 
 resource "helm_release" "vault" {
