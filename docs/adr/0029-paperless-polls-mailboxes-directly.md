@@ -49,6 +49,18 @@ Volumes measured over IMAP on 2026-10-09:
 Viktor chose the simplest setup that Paperless supports on its own: Paperless
 logs into each mailbox and picks out the documents itself. Nothing forwards.
 
+```mermaid
+flowchart TD
+  EG["emil.barzin@gmail.com<br/>All Mail"] -->|"account 4, rule 18"| P
+  VG["vbarzin@gmail.com<br/>All Mail"] -->|"account 5, rule 19"| P
+  ME["me@viktorbarzin.me<br/>INBOX"] -->|"account 1, rule 20"| P
+  D["docs@ manual forwards"] -->|"rules 13-17, unchanged"| P
+  P["Paperless mail task<br/>every 10 min<br/>PDF + Office only"] --> C["Consume + OCR<br/>owner from the rule"]
+  C --> AI["paperless-ai (local model)<br/>daily RAG refresh"]
+  P -.->|"label 'paperless'"| EG
+  P -.->|"label 'paperless'"| VG
+```
+
 1. Two new Paperless mail accounts on `imap.gmail.com:993` with the existing app
    passwords: account 4 for `emil.barzin@gmail.com` (owner emo), account 5 for
    `vbarzin@gmail.com` (owner Viktor).
