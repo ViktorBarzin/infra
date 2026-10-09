@@ -19,7 +19,8 @@ locals {
   #   • pfSense alias `rustdesk_lb` (the RustDesk NAT rules)
   #   • stacks/technitium static_records.tf (internal rustdesk.viktorbarzin.me)
   lb_ip = "10.0.20.209"
-  image = "rustdesk/rustdesk-server:1.1.16"
+  # docker.io/ prefix: the bare name fails Kyverno's trusted-registry allowlist
+  image = "docker.io/rustdesk/rustdesk-server:1.1.16"
 }
 
 resource "kubernetes_namespace" "rustdesk" {
