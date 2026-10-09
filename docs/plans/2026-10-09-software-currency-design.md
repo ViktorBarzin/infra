@@ -35,7 +35,7 @@ The weekly "upgrade report" (`k8s-upgrade-nightly-report`) covers Kubernetes com
 2026-04-19 | last DIUN agent upgrade
 ```
 
-| Component | Running | Latest upstream | Reachable from the internet |
+| Component | Running | Latest | Public |
 |---|---|---|---|
 | Prometheus | v2.48.1 (Dec 2023) | v3.15.0 | yes, behind Authentik |
 | Alertmanager | v0.26.0 | v0.34.1 | yes, behind Authentik |
@@ -55,23 +55,27 @@ The 2026-04-20 infra audit (`docs/plans/2026-04-20-infra-audit-design.md`, findi
 
 ## Design
 
+Renovate-owned pins land through the rails in the existing Woodpecker pipeline:
+
 ```mermaid
 flowchart TD
-  subgraph detect[Detection]
-    R[Renovate CronJob<br/>every 2h, at most 1 bump per run]
-    K[Keel, hourly<br/>default policy=major]
-    T[Trivy Operator]
-  end
-  R -->|commit to master| W[Woodpecker pipeline]
+  R[Renovate<br/>every 2h, 1 bump] -->|commit| W[Woodpecker]
   W --> G{upgrade-gate<br/>alerts clear?}
-  G -->|no| H[hold, retry next run]
-  G -->|yes| S[snapshot if stateful] --> A[terragrunt apply] --> V{health check}
+  G -->|no| H[hold]
+  G -->|yes| S[snapshot<br/>if stateful]
+  S --> A[terragrunt apply]
+  A --> V{health check}
   V -->|pass| OK[done]
-  V -->|fail| RV[git revert,<br/>ignore that version,<br/>Slack page]
-  K -->|rolls app images| Apps[app workloads]
-  T -->|fixable Crit/High on public workload,<br/>or secret in image| AL[Slack #alerts]
-  T -->|everything else| D[alert-digest, weekly section]
-  R -.->|success timestamp| PG[Pushgateway] -.-> LV[liveness alert]
+  V -->|fail| RV[revert +<br/>page]
+```
+
+Keel keeps rolling app images hourly, now on `policy=major`. Trivy findings route by severity and exposure:
+
+```mermaid
+flowchart TD
+  T[Trivy Operator] --> Q{fixable Crit/High<br/>on public,<br/>or secret?}
+  Q -->|yes| AL[Slack<br/>#alerts]
+  Q -->|no| D[weekly<br/>digest]
 ```
 
 ### Ownership of versions
