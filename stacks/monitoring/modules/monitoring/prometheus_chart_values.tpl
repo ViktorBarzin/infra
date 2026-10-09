@@ -470,7 +470,7 @@ prometheus-pushgateway:
       memory: 256Mi
 server:
   # Opt this Deployment out of Keel. Terraform declares every image in this
-  # release (prometheus v2.48.1, config-reloader v0.70.0, and the
+  # release (prometheus v2.55.1, config-reloader v0.70.0, and the
   # prometheus-backup sidecar's alpine tag below), so a Keel bump is always
   # reverted by the next apply and the two just take turns.
   #
@@ -498,6 +498,12 @@ server:
   # annotation, but cannot remove the policy=patch it already stamped.
   deploymentAnnotations:
     keel.sh/policy: never
+  # Pinned ahead of the chart (25.8.2 ships v2.48.1) as hop 1 of the 3.x
+  # upgrade (docs/plans/2026-10-09-software-currency-design.md). 2.55 is the
+  # last 2.x release and the one that can read blocks written by 3.x, so it is
+  # the rollback target for hop 2. Removed again when the chart moves to 29.x.
+  image:
+    tag: v2.55.1
   # Halve scrape load on apiserver + cAdvisor + node-exporter without losing
   # alerting fidelity. Per-job overrides (snmp-ups 30s, snmp-idrac 1m, etc.)
   # below keep critical metrics fresh; alert `for:` durations were audited and
