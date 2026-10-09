@@ -18,7 +18,7 @@ locals {
   # Consumers that must track it:
   #   • pfSense alias `rustdesk_lb` (the RustDesk NAT rules)
   #   • stacks/technitium static_records.tf (internal rustdesk.viktorbarzin.me)
-  lb_ip = "10.0.20.206"
+  lb_ip = "10.0.20.209"
   image = "rustdesk/rustdesk-server:1.1.16"
 }
 

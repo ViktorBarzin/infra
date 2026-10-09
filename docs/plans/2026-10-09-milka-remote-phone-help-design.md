@@ -31,7 +31,7 @@ Neither MeshCentral nor RustDesk offers an API for a program to take screenshots
 
 ```mermaid
 flowchart LR
-  M[Milka's A55<br/>RustDesk + MeshCentral agent] -->|21115-21117| S[RustDesk server<br/>10.0.20.206]
+  M[Milka's A55<br/>RustDesk + MeshCentral agent] -->|21115-21117| S[RustDesk server<br/>10.0.20.209]
   V[Viktor / emo<br/>RustDesk app] --> S
   C[Claude] -->|adb| E[shared emulator<br/>RustDesk client] --> S
   M -->|agent.ashx| MC[meshcentral.viktorbarzin.me]
@@ -39,7 +39,7 @@ flowchart LR
 
 ## Components
 
-- `stacks/rustdesk`: hbbs and hbbr in one pod, `rustdesk/rustdesk-server:1.1.16`, both started with `-k _` so only clients holding the server's public key can register or relay. Dedicated MetalLB address `10.0.20.206` with `externalTrafficPolicy: Local`, the same reasoning as coturn. Keypair from Vault `secret/rustdesk` via ESO. Grey-cloud A record `rustdesk.viktorbarzin.me`, plus an internal Technitium record pointing at the LB address.
+- `stacks/rustdesk`: hbbs and hbbr in one pod, `rustdesk/rustdesk-server:1.1.16`, both started with `-k _` so only clients holding the server's public key can register or relay. Dedicated MetalLB address `10.0.20.209` with `externalTrafficPolicy: Local`, the same reasoning as coturn. Keypair from Vault `secret/rustdesk` via ESO. Grey-cloud A record `rustdesk.viktorbarzin.me`, plus an internal Technitium record pointing at the LB address.
 - pfSense alias `rustdesk_lb` with NAT for 21115-21117/tcp and 21116/udp, and matching forwards on the TP-Link. Both routers are configured by hand, outside Terraform.
 - `stacks/meshcentral`: the init container now forces `NewAccounts` off on the existing volume. The live config had `"NewAccounts": "true"`.
 

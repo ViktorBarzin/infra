@@ -41,7 +41,7 @@ locals {
   # also IngressRoute-only, so the same reasoning applies.
   static_a_records = {
     turn           = "10.0.20.205"
-    rustdesk       = "10.0.20.206"
+    rustdesk       = "10.0.20.209"
     ssh            = "10.0.20.203"
     "terminal-api" = "10.0.20.203"
   }
