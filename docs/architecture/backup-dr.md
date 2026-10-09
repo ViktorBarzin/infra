@@ -453,7 +453,7 @@ K8s CronJobs run inside the cluster, dumping database/state to NFS-exported back
 **Daily backups (Sunday 01:00-04:00)**:
 - **etcd**: `etcdctl snapshot save /mnt/main/etcd-backup/snapshot-$(date +%Y%m%d).db`. 30-day retention. Critical for cluster recovery.
 - **Vaultwarden**: See "Vaultwarden Enhanced Protection" below. 30-day retention.
-- **Vault**: `vault operator raft snapshot save /mnt/main/vault-backup/snapshot-$(date +%Y%m%d).snap`. 30-day retention.
+- **Vault**: `vault-raft-backup` CronJob, `vault operator raft snapshot save /backup/vault-raft-$(date +%Y%m%d-%H%M%S).db` onto the NFS share `192.168.1.127:/srv/nfs/vault-backup` (PVC `vault-backup-host`). 30-day retention.
 - **Redis**: `redis-cli BGSAVE` then copy RDB file. 30-day retention.
 
 ### Vaultwarden Enhanced Protection

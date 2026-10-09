@@ -58,7 +58,7 @@ graph LR
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| HashiCorp Vault | 1.21.4 (Helm chart 0.34.1), pinned by `local.vault_version` | `stacks/vault/` | Secret storage, dynamic credentials, rotation |
+| HashiCorp Vault | 2.1.2 (Helm chart 0.34.1), pinned by `local.vault_version` | `stacks/vault/` | Secret storage, dynamic credentials, rotation |
 | External Secrets Operator | v1beta1 API | `stacks/external-secrets/` | Sync Vault secrets to K8s Secrets (52 total ExternalSecrets) |
 | Sealed Secrets | Latest | `stacks/platform/` | User-managed encrypted secrets |
 | SOPS | Latest | `scripts/state-sync`, `scripts/tg` | Terraform state encryption (Vault Transit + age) |
@@ -258,6 +258,8 @@ spec:
 - Cannot use ESO (circular dependency during restore)
 - Writes a Raft snapshot weekly (Sunday 02:00) to the NFS share `192.168.1.127:/srv/nfs/vault-backup` on the PVE host (PVC `vault-backup-host`), 30-day retention
 - Runs the same `hashicorp/vault` image as the server (`local.vault_version`)
+- Since Vault 2.x the image runs as `USER vault` (uid 100) and the CronJob sets no securityContext, so snapshots written from 2026-10-09 onward are owned by uid 100; older ones are owned by root. The share is mode 2777 (group 33, no sticky bit), so the 30-day `find -delete` removes both
+- The server and `auto-unseal` containers are unaffected by that image change: the pod securityContext already runs them as uid 100, gid 1000
 
 ### Terraform Provider Auth
 
