@@ -874,6 +874,25 @@ the **`AggregatorDown`** + **`DigestFailing`** alerts and cluster-health check #
 - cert-manager/certbot manages certificate lifecycle
 - Let's Encrypt integration for automatic renewal
 
+### Alias header names stripped on websecure (since 2026-10-09)
+
+The `websecure` entrypoint sets `aliasHeadersStrategy = "delete"`
+(`stacks/traefik/modules/traefik/main.tf`). Traefik removes any request header
+whose name contains a character other than a letter, a digit or a dash, before
+routing. That covers `_` and `.` as well as `! # $ % & ' * + ^ ` | ~`.
+Hyphenated names such as `X-Forwarded-For` or `X-Authentik-Username` pass
+through unchanged.
+
+It closes CVE-2026-88879, where a header like `X_Authentik_Username` aliases
+`X-Authentik-Username` and can get past header-based checks. The fix needs both
+Traefik v3.7.12 or later and this setting: the fixed versions still default to
+`keep`, which leaves the alias path open. It shipped with the chart 41.7.0
+(v3.7.14) upgrade.
+
+If a client or integration reports that a header with an underscore or a dot in
+its name never reaches the backend, this setting is the reason. Rename the
+header to use dashes rather than relaxing the strategy.
+
 ### Rate Limiting
 
 Read from `stacks/traefik/modules/traefik/middleware.tf` on 2026-09-09. The
