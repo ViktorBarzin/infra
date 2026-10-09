@@ -150,7 +150,7 @@ steps:
       platforms: linux/amd64
 
   - name: deploy
-    image: hashicorp/vault:1.18.1
+    image: hashicorp/vault:1.19.5
     commands:
       - export VAULT_ADDR=http://vault-active.vault.svc.cluster.local:8200
       - export VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login

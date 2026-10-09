@@ -5,11 +5,11 @@ Last updated: 2026-04-06
 ## Prerequisites
 - `kubectl` access to the cluster
 - Vault root token (from `vault-root-token` secret in `vault` namespace — manually created, independent of automation)
-- Raft snapshot available on NFS at `/mnt/main/vault-backup/`
-- Unseal keys (stored securely — check `secret/viktor` in Vault or emergency kit)
+- Raft snapshot available on NFS at `192.168.1.127:/srv/nfs/vault-backup/` (PVC `vault-backup-host` in the `vault` namespace)
+- The unseal key (single Shamir share, threshold 1; kept in the `vault-unseal-key` K8s Secret, also in `secret/viktor` or the emergency kit)
 
 ## Backup Location
-- NFS: `/mnt/main/vault-backup/vault-raft-YYYYMMDD-HHMMSS.db`
+- NFS: `192.168.1.127:/srv/nfs/vault-backup/vault-raft-YYYYMMDD-HHMMSS.db`
 - Mirrored to sda: `/mnt/backup/nfs-mirror/vault-backup/` (PVE host 192.168.1.127)
 - Replicated to Synology NAS: `Synology/Backup/Viki/pve-backup/nfs-mirror/vault-backup/`
 - Retention: 30 days (on NFS), latest only (on sda), unlimited (on Synology)
@@ -29,7 +29,7 @@ Vault provides secrets to the entire cluster via ESO (External Secrets Operator)
 ### 1. Identify the snapshot to restore
 ```bash
 # List available snapshots
-ls -lt /mnt/main/vault-backup/vault-raft-*.db | head -10
+ls -lt /srv/nfs/vault-backup/vault-raft-*.db | head -10   # on the PVE host 192.168.1.127
 ```
 
 ### 2. Restore Raft snapshot
@@ -56,10 +56,8 @@ vault operator raft snapshot restore -force /path/to/vault-raft-YYYYMMDD-HHMMSS.
 # Check seal status
 vault status
 
-# If sealed, unseal with keys (need threshold number of keys)
-vault operator unseal <key1>
-vault operator unseal <key2>
-vault operator unseal <key3>
+# If sealed, unseal with the single key (seal config is shares=1, threshold=1)
+vault operator unseal <key>
 ```
 
 ### 4. Verify restoration

@@ -58,7 +58,7 @@ graph LR
 
 | Component | Version | Location | Purpose |
 |-----------|---------|----------|---------|
-| HashiCorp Vault | Latest | `stacks/vault/` | Secret storage, dynamic credentials, rotation |
+| HashiCorp Vault | 1.19.5 (Helm chart 0.34.1), pinned by `local.vault_version` | `stacks/vault/` | Secret storage, dynamic credentials, rotation |
 | External Secrets Operator | v1beta1 API | `stacks/external-secrets/` | Sync Vault secrets to K8s Secrets (52 total ExternalSecrets) |
 | Sealed Secrets | Latest | `stacks/platform/` | User-managed encrypted secrets |
 | SOPS | Latest | `scripts/state-sync`, `scripts/tg` | Terraform state encryption (Vault Transit + age) |
@@ -256,7 +256,8 @@ spec:
 **CronJob**: `vault-raft-backup`
 - Uses manually-created `vault-root-token` K8s Secret
 - Cannot use ESO (circular dependency during restore)
-- Backs up Raft storage to S3-compatible backend
+- Writes a Raft snapshot weekly (Sunday 02:00) to the NFS share `192.168.1.127:/srv/nfs/vault-backup` on the PVE host (PVC `vault-backup-host`), 30-day retention
+- Runs the same `hashicorp/vault` image as the server (`local.vault_version`)
 
 ### Terraform Provider Auth
 
