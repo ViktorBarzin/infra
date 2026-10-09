@@ -97,6 +97,7 @@
 | cyberchef | Data transformation | cyberchef |
 | diun | Docker image update notifier — detects new versions, fires webhook to n8n upgrade agent | diun |
 | meshcentral | Remote management | meshcentral |
+| rustdesk | Remote control of family Android phones (hbbs + hbbr, key-locked) | rustdesk |
 | homepage | Dashboard/startpage | homepage |
 | matrix | Matrix homeserver (tuwunel — Rust, RocksDB; native password auth) | matrix |
 | linkwarden | Bookmark manager | linkwarden |

@@ -28,6 +28,10 @@ locals {
   # Note this record only helps clients that USE Technitium; London resolves via
   # its own dnsmasq and gets the public answer, reaching coturn over the WAN.
   #
+  # rustdesk: the RustDesk server's DEDICATED MetalLB address (stacks/rustdesk
+  # local.lb_ip), same reasoning as turn: LAN clients and pods reach it directly
+  # instead of hairpinning through the WAN.
+  #
   # ssh: the Bastion (stacks/bastion), an IngressRouteTCP on Traefik rather
   # than an Ingress, so the ingress sync never sees it. Points at Traefik's LB
   # like every ingress host does. Without it, LAN clients got NXDOMAIN for
@@ -37,6 +41,7 @@ locals {
   # also IngressRoute-only, so the same reasoning applies.
   static_a_records = {
     turn           = "10.0.20.205"
+    rustdesk       = "10.0.20.206"
     ssh            = "10.0.20.203"
     "terminal-api" = "10.0.20.203"
   }
