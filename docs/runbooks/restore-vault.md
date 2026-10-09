@@ -1,6 +1,6 @@
 # Restore Vault (Raft)
 
-Last updated: 2026-04-06
+Last updated: 2026-10-09 (Vault 2.1.2)
 
 ## Prerequisites
 - `kubectl` access to the cluster
@@ -48,17 +48,26 @@ vault operator raft snapshot restore -force /path/to/vault-raft-YYYYMMDD-HHMMSS.
 
 ### 3. Unseal Vault (if sealed after restore)
 
-> **Note:** Vault now has an auto-unseal sidecar that automatically unseals pods
-> using the `vault-unseal-key` K8s Secret. The manual procedure below is a
-> fallback if auto-unseal fails.
+Unsealing is automatic. The seal config is a single Shamir share (shares=1,
+threshold=1), and every Vault pod runs an `auto-unseal` sidecar that checks
+`vault status` every 10 s and runs `vault operator unseal` with the key from the
+`vault-unseal-key` K8s Secret (key `unseal-key`) whenever the pod is sealed. A
+pod that restarts after the restore unseals itself within about 10 s; its
+sidecar logs `Vault is sealed, unsealing...` once:
 
 ```bash
-# Check seal status
-vault status
-
-# If sealed, unseal with the single key (seal config is shares=1, threshold=1)
-vault operator unseal <key>
+kubectl logs -n vault vault-0 -c auto-unseal | tail -3
 ```
+
+Manual fallback, only if the sidecar is not running or the Secret is missing:
+
+```bash
+vault status                  # Sealed: true
+vault operator unseal <key>   # one key, from secret/viktor or the emergency kit
+```
+
+`sys/unseal` needs no token in Vault 2.x either, so the sidecar and the manual
+fallback work the same as on 1.x.
 
 ### 4. Verify restoration
 ```bash
@@ -132,12 +141,30 @@ scp Administrator@192.168.1.13:/volume1/Backup/Viki/nfs/vault-backup/vault-raft-
 If Vault needs to be rebuilt from scratch:
 1. Comment out data sources + OIDC config in `stacks/vault/main.tf`
 2. Apply Helm release: `scripts/tg apply -target=helm_release.vault stacks/vault`
-3. Initialize: `vault operator init`
-4. Unseal with generated keys
-5. Restore raft snapshot (step 2 above)
-6. Populate `secret/vault` with OIDC credentials
-7. Uncomment data sources + OIDC
-8. Re-apply: `scripts/tg apply stacks/vault`
+3. Initialize with a single share, which is what the auto-unseal sidecar expects:
+   `vault operator init -key-shares=1 -key-threshold=1`
+4. Store the unseal key where the sidecar reads it:
+   `kubectl create secret generic vault-unseal-key -n vault --from-literal=unseal-key=<key>`.
+   The pods unseal themselves within about 10 s (or run `vault operator unseal <key>`).
+5. Restore raft snapshot (step 2 above). The snapshot carries the old cluster's
+   keyring and root token, so after the restore Vault unseals only with the old
+   unseal key and accepts the old root token, not the ones `init` printed. Put
+   the old key into `vault-unseal-key` (same key name) so the sidecar can unseal
+   restarted pods.
+6. Recreate the `vault-root-token` Secret (key `vault-root-token`) for the backup CronJob if it is missing
+7. Populate `secret/vault` with OIDC credentials
+8. Uncomment data sources + OIDC
+9. Re-apply: `scripts/tg apply stacks/vault`
+
+### Vault 2.x: generate-root and rekey need a token
+
+From Vault 2.0, the `sys/generate-root` and `sys/rekey` endpoints
+(`vault operator generate-root`, `vault operator rekey`) require a Vault token as
+well as the unseal key. The server config key `enable_unauthenticated_access`
+(values `"generate-root"`, `"rekey"`) restores the old behaviour; we do not set it.
+If the root token is lost, use any token with `sudo` on `sys/generate-root` (for
+example the devvm admin token, policy `vault-admin`) to start generate-root.
+With no working token at all, restore a snapshot whose root token is known.
 
 ## Estimated Time
 - Snapshot restore + unseal: ~10 minutes
