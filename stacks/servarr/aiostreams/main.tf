@@ -61,6 +61,12 @@ resource "kubernetes_deployment" "aiostreams" {
       app  = "aiostreams"
       tier = var.tier
     }
+    # Keel opt-out (annotation, per stacks/kyverno/.../keel-annotations.tf): this
+    # image is pinned in Terraform below, waiting for the Renovate migration
+    # (ADR-0030). Keel's policy=patch never moved it, and with Terraform owning
+    # the tag the two would fight. keel.sh/policy is deliberately NOT in
+    # ignore_changes, so this value is applied to the existing Deployment.
+    annotations = { "keel.sh/policy" = "never" }
   }
   spec {
     replicas = 1
@@ -80,7 +86,14 @@ resource "kubernetes_deployment" "aiostreams" {
       }
       spec {
         container {
-          image = "viren070/aiostreams:2026.05.14.1326-nightly"
+          # RENOVATE (ADR-0030): one-time bump on 2026-10-09 from the dated nightly
+          # 2026.05.14.1326-nightly (2.29.5) to the v2.35.9 stable tag. Stay on
+          # vX.Y.Z tags: Keel and Renovate cannot order dated nightly tags, which is
+          # why this sat on May's build for five months. Since v2.35.0 AIOStreams
+          # refuses a database migrated by a different build, so a rollback needs
+          # the pre-upgrade pg_dump restored, not just the old tag. Hand this pin to
+          # Renovate when this stack migrates.
+          image = "viren070/aiostreams:v2.35.9"
           name  = "aiostreams"
           port {
             container_port = 3000
@@ -154,11 +167,9 @@ resource "kubernetes_deployment" "aiostreams" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
       metadata[0].annotations["keel.sh/trigger"],
       metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
       metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
