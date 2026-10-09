@@ -60,7 +60,7 @@ Renovate-owned pins land through the rails in the existing Woodpecker pipeline:
 
 ```mermaid
 flowchart TD
-  R[Renovate<br/>every 2h, 1 bump] -->|commit| W[Woodpecker]
+  R[Renovate<br/>every 30m, 1 bump] -->|commit| W[Woodpecker]
   W --> G{upgrade-gate<br/>alerts clear?}
   G -->|no| H[hold]
   G -->|yes| S[snapshot<br/>if stateful]
@@ -70,7 +70,7 @@ flowchart TD
   V -->|fail| RV[revert +<br/>page]
 ```
 
-Keel keeps rolling app images hourly, now on `policy=major`. Trivy findings route by severity and exposure:
+Every third-party version, apps included, moves through that path; Keel is retired. Trivy findings route by severity and exposure:
 
 ```mermaid
 flowchart TD
@@ -84,24 +84,24 @@ flowchart TD
 | What | Owner |
 |---|---|
 | `helm_release` chart versions (all 28, after pinning the 7 unpinned ones to their live versions) | Renovate |
-| Image pins in `.tf` and Helm values for workloads Keel does not manage (`keel.sh/policy=never`, chart `tag` values) | Renovate |
-| Database engines: pg-cluster image, MySQL (latest innovation release), Redis, ClickHouse, Dolt | Renovate (moved off Keel, so they get the rails and DB checks) |
+| Every third-party image pin in `.tf` and Helm values: about 230 apps (moved from Keel at their live tags), chart `tag` values, and the 91 `:latest` pins (pinned to the concrete version they run today, or by digest where an image publishes no version tags) | Renovate |
+| Database engines: pg-cluster image, MySQL (latest innovation release), Redis, ClickHouse, Dolt | Renovate |
 | Immich Postgres | Renovate, tracking the `immich-app/postgres` tag in Immich's own release compose |
-| Live app image tags (Terraform has `ignore_changes`) | Keel |
+| Our own images (`viktorbarzin/*`, `ghcr.io/viktorbarzin/*`), deployed by their CI | unchanged (existing build and deploy path) |
 | Base images and language dependencies in our own image repos that opt in with `renovate.json` (Forgejo and GitHub) | Renovate, gated by that repo's own CI |
 | Node OS packages, Kubernetes components | unchanged (unattended-upgrades + kured, k8s version chain) |
 
 ### Verification contract
 
-An upgrade counts as landed only when the component's checks pass. Checks run as Kubernetes Jobs from a `verify` script kept next to each stack, so the Woodpecker rails and the Keel watcher run the same code.
+An upgrade counts as landed only when the component's checks pass. Checks run as Kubernetes Jobs from a `verify` script kept next to each stack, so they can be run by the Woodpecker rails or by hand.
 
 | Component | Checks |
 |---|---|
 | Floor (everything) | rollout complete within 10 minutes, ingress HTTP check where one exists, no new firing alerts in the component's namespaces for 10 minutes |
-| Every Renovate-owned component | the floor, plus its own `verify` script exercising real function. Fail closed: a component without a script does not auto-land |
+| Charts, databases, GPU stack | the floor, plus its own `verify` script exercising real function. Fail closed: a component in these groups without a script does not auto-land |
 | Databases | operator or cluster healthy and replication lag 0; a scratch table written, read back and dropped; extensions load and answer a query where used (postgis, vector, vchord); every dependent app passes its own check; the backup job runs successfully on the new version |
 | GPU stack (gpu-operator, driver, toolkit, device plugin) | `nvidia.com/gpu` allocatable still 100 and validator pods succeed; a test pod runs `nvidia-smi` and a small CUDA operation; one real inference each on llama-swap (`/v1/chat/completions`), Immich ML (`/predict`) and Frigate (`/api/stats` detector inference speed); DCGM metrics (`nvidia_tesla_t4_DCGM_*`) still flowing |
-| Keel app rollouts | the floor, plus the app's `verify` script where one exists. Failure pages Slack with the app and old/new tag. No automatic rollback |
+| Apps | the floor, plus the app's `verify` script where one exists. Apps go through the same rails as everything else: snapshot if stateful, and revert plus skip-that-version on failure |
 
 Inventory behind these checks (2026-10-09):
 
@@ -157,9 +157,9 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
   - fixable Critical or High CVE on an internet-reachable workload
   - a secret found in an image layer
 - Everything else (non-public or unfixable CVEs, config audit, node findings) becomes a weekly section in the existing `alert-digest`: counts by severity, top fixable items, change since last week.
-- No automatic trigger from a finding to an upgrade. Keel-owned apps pick up a fixed tag within an hour and Renovate-owned pins within 2 hours. The runbook documents how to start a Renovate run by hand.
+- No automatic trigger from a finding to an upgrade. Renovate runs every 30 minutes, so a fixed version is picked up on its next run once the backlog has cleared. The runbook documents how to start a Renovate run by hand.
 
-### Phase 3: Renovate, Woodpecker rails, Keel to major
+### Phase 3: Renovate, Woodpecker rails, Keel retired
 
 **Groundwork before Renovate lands anything**
 
@@ -178,15 +178,15 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
 
 **Renovate**
 
-- New stack `stacks/renovate`: `renovate/renovate` image as a CronJob every 2 hours, `platform: forgejo` (Forgejo 11.0.14; native since Renovate 41.41.0), plus a GitHub run for opted-in GitHub repos.
+- New stack `stacks/renovate`: `renovate/renovate` image as a CronJob every 30 minutes, `platform: forgejo` (Forgejo 11.0.14; native since Renovate 41.41.0), plus a GitHub run for opted-in GitHub repos.
 - A dedicated Forgejo bot account, allowed to push to master. Tokens in Vault via ESO. Kyverno allowlist gets the full `docker.io/renovate/*` form.
 - Lands straight to master, no PRs (branch automerge with no required status checks). One commit per chart or pin.
-- At most one bump lands per run. Woodpecker cancels a running pipeline when the next push arrives, so several commits in one run would cancel each other's health checks and reverts. About 20 components are behind today, plus stepped hops, so the backlog clears in about 3 days.
+- At most one bump lands per run. Woodpecker cancels a running pipeline when the next push arrives, so several commits in one run would cancel each other's health checks and reverts. Each run takes about 15 to 20 minutes including the 10-minute check window, so 30-minute runs don't overlap. That is up to 48 bumps a day. Keel rolled 23 workloads in the 30 days to 2026-10-09 on `patch` only (a lower bound), so steady state fits easily. The first backlog (about 20 charts plus the apps that are a minor or major behind) clears in about 4 days.
 - `customManagers` regexes cover the pins Renovate's Terraform manager skips (`tag` inside Helm values maps, YAML/tpl values files).
 - Grouped exceptions, where versions must move together: Vault chart + unseal sidecar + backup image.
-- Stepping only where upstream requires it (`separateMultipleMajor`/`separateMultipleMinor` package rules): Vault, Authentik, CNPG, Calico. Everything else jumps straight to the newest version.
+- Stepping only where upstream requires it (`separateMultipleMajor`/`separateMultipleMinor` package rules): Vault, Authentik, CNPG, Calico, Nextcloud. Everything else jumps straight to the newest version.
 - Kill switch: a Terraform variable sets the CronJob `suspend: true`.
-- Liveness: each successful run pushes a timestamp to Pushgateway. An alert fires if no run has succeeded for 8 hours.
+- Liveness: each successful run pushes a timestamp to Pushgateway. An alert fires if no run has succeeded for 2 hours.
 - Commit messages say what changed and why (the upstream release-note summary), as for any other commit.
 
 **Woodpecker rails** (only for commits authored by the Renovate bot, inside the existing pipeline):
@@ -197,30 +197,29 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
 4. Verification: run the component's checks from the verification contract above. The Woodpecker apply loop has no per-stack hook today, so a new step reads the list of applied stacks and runs each one's verify Job.
 5. On failure: `git revert` of the Renovate commit, with that exact version added to Renovate's ignore list in the same commit, and a Slack page naming the snapshot location. The next upstream release is tried automatically. No automatic data restore.
 
-**Keel**
+**Keel retirement** (one change)
 
-- The Kyverno-injected default moves from `policy: patch` to `policy: major` for every unfenced workload, in one change.
-- Existing fences stay: Calico, gpu-operator (`never`), ESO, Kyverno (`patch`), and the excluded infrastructure namespaces. Those move through Renovate as chart bumps. Database engines move to `never` and come under Renovate.
-- A watcher CronJob notices Keel rollouts (image changes on Keel-managed workloads), runs the floor check plus the app's `verify` script where one exists, and pages on failure without rolling back.
+1. Scale Keel to 0 first. An active Keel writes back its cached copy of a workload and would revert annotation changes mid-cutover.
+2. Write every live image tag into Terraform, resolving `:latest` pins to the version running today.
+3. Remove the `KEEL_IGNORE_IMAGE` / `KEEL_LIFECYCLE_V1` / `KYVERNO_LIFECYCLE_V2` keel lines from `ignore_changes`, the Kyverno `inject-keel-annotations` policy, the `keel.sh/*` annotations, the Keel stack and its patched-fork image.
+4. Check the plan before applying: pins equal the running tags, so it should show no pod restarts. Any planned restart is investigated before the apply.
+5. Apply, then confirm every workload still runs the same image digest as before.
 
 **DIUN retirement**
 
 - Delete the n8n "DIUN Upgrade Agent" workflow and its backup JSON, remove DIUN's webhook notifier, and remove `.claude/agents/service-upgrade.md` and `.claude/reference/upgrade-config.json`.
-- DIUN keeps only the Keel release watch until the Keel fork exit (keel-hq/keel#943 in a release), then goes too.
-- `docs/architecture/automated-upgrades.md` is rewritten around Renovate, Keel and Trivy.
+- DIUN goes entirely, including the Keel release watch, since Keel is retired.
+- `docs/architecture/automated-upgrades.md` is rewritten around Renovate and Trivy, and `docs/agents/kyverno-drift.md` drops the Keel markers.
 
 ## Accepted risks
 
 Viktor chose these knowingly during the design interview:
 
-- Majors land unattended, including Calico, Vault, CNPG, the GPU operator and the other fenced operators. The rails can revert the commit but cannot undo a CRD or schema migration. Recovery from that is the snapshot, restored by hand.
-- Keel on `major` will move Nextcloud from 32 straight to 35. Nextcloud's upgrader does not support skipping majors, so expect a manual repair, starting from the DB backup.
-- The Keel default flips to `major` for all unfenced workloads at once, so many apps may upgrade within the first hour.
+- Majors land unattended for every component, apps included, including Calico, Vault, CNPG, the GPU operator and the other fenced operators. The rails can revert the commit but cannot undo a CRD or schema migration. Recovery from that is the snapshot, restored by hand.
 - Vault stays reachable from the internet with only its own auth.
 - Database engine majors, including MySQL innovation releases, land unattended in place. There is no restore test beforehand, and no automatic way back: recovery is a manual restore from the pre-upgrade dump. MySQL innovation releases cannot be downgraded.
 - The CI Vault role gets admin rights over Vault's mounts and policies, so a compromised CI job could change them.
-- Keel app rollouts that fail their check are paged, not rolled back.
-- There is no versions-behind metric. A stalled pipeline is caught by the Renovate liveness alert, and silent drift on things Renovate doesn't own (Keel `never` workloads without a Terraform pin) is not tracked.
+- There is no versions-behind metric. A stalled pipeline is caught by the Renovate liveness alert. A pin Renovate cannot parse would drift without an alert; the cutover checks that every pin is in a form Renovate reads.
 
 ## Open questions
 
