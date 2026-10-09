@@ -54,15 +54,25 @@ own metrics-only listener (port 8202, `stacks/vault/main.tf`) and the
 commit index are one query away:
 
 ```sh
-# Which pod thinks it is the leader, and is its commit index moving?
+# Which pod thinks it is the leader, is its commit index moving, and is it
+# still completing requests?
 homelab metrics query 'vault_core_active'
 homelab metrics query 'rate(vault_raft_storage_stats_applied_index[5m])'
+homelab metrics query 'rate(vault_core_handle_request_count[5m])'
 ```
 
-A pod with `vault_core_active=1` and a flat `vault_raft_last_index_gauge`
-is the stuck leader — that pairing is what `VaultRaftLeaderStuck` alerts on.
-(`vault_raft_last_index_gauge` does not exist in Vault 1.20.4; the applied
-index is the one that moves on every committed entry.)
+A pod with `vault_core_active=1`, a flat applied index and no completed
+requests is the stuck leader. `VaultRaftLeaderStuck` alerts on all three
+together. (`vault_raft_last_index_gauge` does not exist in Vault 1.20.4; the
+applied index is the one that moves on every committed entry.)
+
+A flat applied index on its own is normal when nobody writes. Vault 1.18.1
+turned every storage read into a write (GH-29050, fixed in 1.18.3), which
+moved the index about once a minute even on an idle cluster. From 1.19.5
+the index can sit still for many minutes, so the alert also requires the
+active node to have completed no requests. A healthy active node completes
+at least 0.1 requests/s (7-day minimum on 2026-10-09; ESO alone refreshes
+one secret every 10 s).
 If Prometheus itself is unreachable, fall back to reading the logs:
 
 ```sh
@@ -221,11 +231,13 @@ curl -s https://alertmanager.viktorbarzin.me/api/v2/alerts | \
 
 ## Known limitations
 
-- **No alert for stuck leaders yet.** `VaultRaftLeaderStuck` and
-  `VaultHAStatusUnavailable` require Vault telemetry enabled
-  (`telemetry { unauthenticated_metrics_access = true }`) and a
-  scrape job. Alerts are defined in `prometheus_chart_values.tpl`
-  but stay silent until telemetry lands — tracked as a beads task.
+- **The stuck-leader alert has not been tested against a real hang.**
+  `VaultRaftLeaderStuck` and `VaultHAStatusUnavailable` are live
+  (`prometheus_chart_values.tpl`, scraped by the `vault` job on port 8202
+  since 2026-09-03). The stuck-leader rule assumes a hung leader stops
+  completing requests, as it did on 2026-04-22, and that its metrics
+  listener still answers. If the metrics listener hangs as well, the
+  series go stale and `up{job="vault"}` drops instead.
 - **Vault on NFS violates the documented rule.** `infra/.claude/CLAUDE.md`
   says critical services must use `proxmox-lvm-encrypted`. The
   `dataStorage`/`auditStorage` still use `nfs-proxmox`. Migration

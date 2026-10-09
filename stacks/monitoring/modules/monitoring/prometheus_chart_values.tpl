@@ -3799,16 +3799,26 @@ serverFiles:
           # on 2026-09-03, which is also why nobody noticed: a rule referencing
           # a metric that was never emitted evaluates to nothing, and nothing is
           # exactly what a healthy cluster looks like.
+          # A flat commit index alone is not enough: an idle cluster commits
+          # nothing for minutes at a time. Vault before 1.18.3 hid this,
+          # because a seal-unwrapper bug (GH-29050) turned reads into
+          # storage writes, about one per minute here; from 1.19.5 this
+          # rule fired on every quiet 5 minutes. A hung leader also stops
+          # completing requests, while a healthy active node always has
+          # some (never under 0.1/s over 7 days, 2026-10-09: ESO refreshes
+          # every 10s), so both must stall before this fires.
           - alert: VaultRaftLeaderStuck
             expr: |
               (vault_core_active == 1)
               and on(instance)
               (rate(vault_raft_storage_stats_applied_index[5m]) == 0)
+              and on(instance)
+              (rate(vault_core_handle_request_count[5m]) == 0)
             for: 2m
             labels:
               severity: critical
             annotations:
-              summary: "Vault raft leader {{ $labels.instance }} is active but commit index has not advanced for >2m"
+              summary: "Vault raft leader {{ $labels.instance }} is active but has committed nothing and completed no requests for >2m"
               description: "The raft leader is reachable on TCP but its commit index has stalled — likely a stuck goroutine hang (see 2026-04-22 post-mortem). External /v1/sys/health will be 503. Recovery: graceful delete of the stuck pod (see docs/runbooks/vault-raft-leader-deadlock.md)."
           - alert: VaultHAStatusUnavailable
             expr: |
