@@ -7357,6 +7357,34 @@ serverFiles:
             annotations:
               summary: "f1-stream clients reported {{ $value | printf \"%.0f\" }} fatal playback errors in 15m during a session"
               description: "Playback is dying outright on viewers' devices while a session is on. Break it down by site, device and rung with `sum by (site, device, rung) (increase(f1_playback_fatal_errors_total[15m]))` before touching anything: one site failing is a source problem and the answer is to switch feeds, every site failing on one device class is ours. This rule is calendar-gated by design (ADR-0003), so it says nothing between sessions no matter what clients report."
+          # Added 2026-10-09. The live quality ladder did not start on the
+          # strmd.st source from 2026-09-12 to 2026-10-09: the provider moved its
+          # segments behind a fake WebP header, the relay only stripped a fake
+          # PNG one, and ffmpeg exited "Invalid data found when processing
+          # input". Browsers kept playing the source, so every phone quietly
+          # got full quality and the only sign was a log line.
+          #
+          # Not calendar-gated, unlike F1PlaybackFailing. That rule reads
+          # client telemetry (ADR-0003); this counter is server-side and moves
+          # only when a viewer asks for the ladder. The 30 days of failure logs
+          # before this rule put the peaks in live (2026-10-04, 324 in an hour),
+          # post_session (2026-10-09, the one a viewer reported) and idle
+          # (2026-09-25/26), so a live|pre_session gate would have missed two
+          # of the three.
+          #
+          # Threshold: healthy days show isolated failures, 1-2 per 15m at
+          # most, counted per waiting client in the logs. The counter counts
+          # once per encoder, which is fewer. More than 3 in 30m is a source
+          # the ladder cannot read, not a hiccup.
+          - alert: F1LadderStartFailing
+            expr: |
+              sum(increase(f1_transcode_start_failures_total[30m])) > 3
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream live quality ladder failed to start {{ $value | printf \"%.0f\" }} times in 30m"
+              description: "Viewers who asked for 540p/360p are being sent back to the full-quality source. Read the reason off the encoder's stderr: `homelab logs query '{namespace=\"f1-stream\"} |~ \"transcode: .* (exited rc=|produced nothing)\"' --since 1h`. 'Invalid data found when processing input' usually means a provider changed how it disguises segments (see Disguised segment in f1-stream's CONTEXT.md); run ffprobe in the pod against the /proxy URL to see what ffmpeg thinks the segment is. reason=timeout with no exits points at the encoder or the GPU instead."
           - alert: F1RelayUpstreamFailing
             # Added 2026-09-11, when AnubisChallengeStoreErrors was narrowed to
             # 500 and stopped reporting these. /relay and /proxy fetch segments
