@@ -1,6 +1,6 @@
 # Keeping the homelab current and CVE-aware
 
-- Status: approved
+- Status: executing
 - Date: 2026-10-09
 - Decision record: ADR-0030 (Renovate lands version bumps straight to master, with CI rails and no agent)
 - Origin: Muse flagged CVE-2026-88879 in Traefik on 2026-10-08. Traefik was on v3.7.1 while v3.7.14 existed. Viktor asked what our posture is against upgrades like this and wants the cluster always on the latest software.
@@ -210,6 +210,37 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
 - Delete the n8n "DIUN Upgrade Agent" workflow and its backup JSON, remove DIUN's webhook notifier, and remove `.claude/agents/service-upgrade.md` and `.claude/reference/upgrade-config.json`.
 - DIUN goes entirely, including the Keel release watch, since Keel is retired.
 - `docs/architecture/automated-upgrades.md` is rewritten around Renovate and Trivy, and `docs/agents/kyverno-drift.md` drops the Keel markers.
+
+## Build plan
+
+The build runs as a sequence of workflows, one wave at a time, and I review each wave's results before starting the next. Inside a wave, every change that touches a stack is landed one at a time: a push to master cancels any Woodpecker pipeline still running, so two concurrent landings would cancel each other's apply.
+
+Every stack step has the same shape:
+
+1. Claim the stack with `presence`, work in a worktree, and land with `homelab work land`, which waits for CI.
+2. Stacks CI does not apply (Vault today) are applied from the main checkout with `homelab tf apply`.
+3. A separate verifier agent, which did not make the change, compares the live system against the wave-0 baseline and runs the component's checks. The step passes only on its verdict.
+4. On failure, fix forward if the cause is clear. If a user-facing service is down and the fix isn't clear, revert, land the revert, and stop the wave.
+
+```mermaid
+flowchart TD
+  W0[Wave 0<br/>baseline snapshot] --> W1[Wave 1<br/>GPU key fix, Vault x4,<br/>Prometheus x2]
+  W1 --> W2[Wave 2<br/>Trivy Operator]
+  W2 --> W3[Wave 3<br/>groundwork, verify Jobs,<br/>adjacent fixes]
+  W3 --> W4[Wave 4<br/>Renovate stack + rails,<br/>suspended]
+  W4 --> W5[Wave 5<br/>Keel cutover,<br/>DIUN removal]
+  W5 --> W6[Wave 6<br/>unsuspend Renovate,<br/>watch first bumps]
+```
+
+| Wave | Steps | Passes when |
+|---|---|---|
+| 0 | Baseline: firing alerts, `cluster_healthcheck.sh`, Uptime Kuma down list, image digest per pod, `nvidia.com/gpu` allocatable, scrape `up` by job, rule count, Vault status | snapshot saved for later comparison |
+| 1 | GPU time-slicing key fix + allocatable alert; Vault 1.19.5 → 1.20.4 → 1.21.4 → 2.1.2; Prometheus 2.55.1, then chart 29.36.1 / v3.15; the Vault doc corrections | GPU checks, Vault checks and Prometheus checks from this doc pass after every hop, and nothing new is firing compared with the baseline |
+| 2 | Trivy Operator with its Kyverno and scrape prerequisites, alert rules, alert-digest section | VulnerabilityReports appear for running images, `trivy_` metrics are scraped, the test alert routes |
+| 3 | MySQL exporter, pg-cluster monitor, ClickHouse metrics, ClickHouse and Dolt backups, the shared verify Job runner and every chart/DB/GPU verify script, CI Vault-admin, pin the 7 unpinned charts, adjacent fixes | each verify script passes against today's versions, and each new backup has run once |
+| 4 | Renovate stack (suspended), Forgejo bot account, Renovate config with package rules and custom managers, Woodpecker rails, liveness alert | a dry run lists the expected pending bumps, and the rails are exercised end to end on one deliberate low-risk bump and one deliberate failing bump that reverts |
+| 5 | Keel cutover in one change, DIUN and the upgrade-agent files removed, docs rewritten | the plan shows no pod restarts, and every pod runs the same image digest as in the baseline |
+| 6 | Unsuspend Renovate | the first bumps land through the rails with green checks, and the backlog shrinks run over run |
 
 ## Accepted risks
 
