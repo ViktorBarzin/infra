@@ -26,13 +26,21 @@ module "tls_secret" {
   tls_secret_name = var.tls_secret_name
 }
 
+locals {
+  # One pin for the server, the auto-unseal sidecar and the raft-backup
+  # CronJob, so the three cannot drift apart. Chart 0.34.1 defaults
+  # server.image.tag to 2.0.4, so the tag must always be set explicitly.
+  # Upgrade path: docs/plans/2026-10-09-software-currency-design.md (Phase 1).
+  vault_version = "1.19.5"
+}
+
 resource "helm_release" "vault" {
   name             = "vault"
   namespace        = kubernetes_namespace.vault.metadata[0].name
   create_namespace = false
   repository       = "https://helm.releases.hashicorp.com"
   chart            = "vault"
-  version          = "0.29.1"
+  version          = "0.34.1"
   atomic           = false # HA pods start sealed — readiness probes fail until unsealed
   timeout          = 600
 
@@ -41,6 +49,11 @@ resource "helm_release" "vault" {
 
     server = {
       enabled = true
+
+      image = {
+        repository = "hashicorp/vault"
+        tag        = local.vault_version
+      }
 
       # Explicit, not left to Kyverno's inject-priority-class-from-tier: that
       # webhook has failurePolicy Ignore, so a pod created while Kyverno is
@@ -213,7 +226,7 @@ resource "helm_release" "vault" {
       extraContainers = [
         {
           name    = "auto-unseal"
-          image   = "hashicorp/vault:1.18.1"
+          image   = "hashicorp/vault:${local.vault_version}"
           command = ["/bin/sh", "-c"]
           args = [join("", [
             "while true; do ",
@@ -432,7 +445,7 @@ resource "kubernetes_cron_job_v1" "vault_backup" {
           spec {
             container {
               name    = "backup"
-              image   = "hashicorp/vault:1.18.1"
+              image   = "hashicorp/vault:${local.vault_version}"
               command = ["/bin/sh", "-c"]
               args = [join("", [
                 "set -eu; ",
