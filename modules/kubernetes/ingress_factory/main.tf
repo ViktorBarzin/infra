@@ -168,6 +168,14 @@ variable "skip_default_rate_limit" {
   type    = bool
   default = false
 }
+# true for JSON/API backends whose browser clients read the error status: the
+# shared error-pages middleware swaps a backend 5xx body for an HTML page and
+# drops the backend's CORS headers, so a cross-origin fetch() sees an opaque
+# network error ("Failed to fetch" / Safari "Load failed") instead of the status.
+variable "skip_error_pages" {
+  type    = bool
+  default = false
+}
 variable "anti_ai_scraping" {
   type    = bool
   default = null # null = auto (enabled when not protected, disabled when protected)
@@ -407,7 +415,7 @@ resource "kubernetes_ingress_v1" "proxied-ingress" {
         # it. distinct() dedupes if a site also lists real-ip in extra_middlewares.
         var.service_name != null && startswith(var.service_name, "anubis-") ? "traefik-real-ip@kubernetescrd" : null,
         "traefik-retry@kubernetescrd",
-        "traefik-error-pages@kubernetescrd",
+        var.skip_error_pages ? null : "traefik-error-pages@kubernetescrd",
         var.skip_default_rate_limit ? null : "traefik-rate-limit@kubernetescrd",
         var.custom_content_security_policy == null ? "traefik-csp-headers@kubernetescrd" : null,
         local.effective_anti_ai ? "traefik-ai-bot-block@kubernetescrd" : null,
