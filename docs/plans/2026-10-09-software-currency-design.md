@@ -30,7 +30,7 @@ The weekly "upgrade report" (`k8s-upgrade-nightly-report`) covers Kubernetes com
 
 ```stats
 ~25 | Vault CVE fixes missing
-22 months | Prometheus age
+34 months | Prometheus age
 7 of 28 | charts with no pin
 2026-04-19 | last DIUN agent upgrade
 ```
