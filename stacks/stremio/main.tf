@@ -442,6 +442,9 @@ module "cinemeta_ingress" {
   # both are disabled. The proxy exposes only Cinemeta's read-only JSON.
   auth             = "none"
   anti_ai_scraping = false # stremio-core fetch can't solve PoW; it's an API host
+  # The proxy's own errors carry CORS; Traefik's HTML error page does not, and
+  # Safari then shows "Env: Failed to fetch: Load failed" instead of the status.
+  skip_error_pages = true
   # Proxied: rides the CF `*` wildcard publicly AND gets an internal Technitium
   # record from the ingress-DNS-sync, so cinemeta.viktorbarzin.me resolves on
   # both the public internet and the home LAN. (Carved out of the outage-failover
