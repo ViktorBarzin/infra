@@ -54,20 +54,16 @@ flowchart TD
   EG["emil.barzin@gmail.com<br/>All Mail"] -->|"account 4, rule 18"| P
   VG["vbarzin@gmail.com<br/>All Mail"] -->|"account 5, rule 19"| P
   ME["me@viktorbarzin.me<br/>INBOX"] -->|"account 1, rule 20"| P
-  D["docs@ manual forwards"] -->|"rules 13-17, unchanged"| P
-  P["Paperless mail task<br/>every 10 min<br/>PDF + Office only"] --> C["Consume + OCR<br/>owner from the rule"]
+  P["Paperless mail task, every 10 min<br/>PDF + Office only<br/>labels source mail 'paperless'"] --> C["Consume + OCR<br/>owner from the rule"]
   C --> AI["paperless-ai (local model)<br/>daily RAG refresh"]
-  P -.->|"label 'paperless'"| EG
-  P -.->|"label 'paperless'"| VG
 ```
 
 1. Two new Paperless mail accounts on `imap.gmail.com:993` with the existing app
    passwords: account 4 for `emil.barzin@gmail.com` (owner emo), account 5 for
    `vbarzin@gmail.com` (owner Viktor).
-2. One rule per mailbox:
-   - rule 18, Emo's `[Gmail]/All Mail`, owner emo
-   - rule 19, Viktor's `[Gmail]/All Mail`, owner Viktor
-   - rule 20, `INBOX` on the existing `me@` account, owner Viktor
+2. One rule per mailbox: rule 18 on Emo's `[Gmail]/All Mail` (owner emo),
+   rule 19 on Viktor's `[Gmail]/All Mail` (owner Viktor), and rule 20 on
+   `INBOX` of the existing `me@` account (owner Viktor).
 3. All three rules share one shape. They include attachments and inline parts
    (`attachment_type=2`, because Apple Mail marks real PDFs as inline), keep only
    files matching `*.pdf,*.doc,*.docx,*.xls,*.xlsx,*.odt,*.ods`, have no age
