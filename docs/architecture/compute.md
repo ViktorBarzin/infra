@@ -371,7 +371,15 @@ next apply (discovery keyed on
 
 **GPU Workloads** (time-sliced — node advertises `Tesla-T4-SHARED`,
 `sharing-strategy=time-slicing`, `nvidia.com/gpu.replicas=100`, so many pods
-share the single T4; request `nvidia.com/gpu: 1` for a slice, not the whole card):
+share the single T4; request `nvidia.com/gpu: 1` for a slice, not the whole card).
+The 100 slots come from the `time-slicing-config` ConfigMap (`replicas: 100`,
+key `any`) in `stacks/nvidia/modules/nvidia/main.tf`, wired to the device plugin
+by the top-level `devicePlugin.config` block (`name` + `default`) in that
+module's `values.yaml`. Before 2026-10-09 the block was nested under `driver:`
+and ignored by the chart, and only an old manual ClusterPolicy patch kept
+time-slicing on. The `GPUAllocatableBelowExpected` alert fires if k8s-node1
+advertises fewer than 100 `nvidia.com/gpu` for 10m, which is what a lost
+config looks like. Workloads:
 - immich-machine-learning (CLIP smart-search + facial recognition, CUDA)
 - immich-worker (NVENC/NVDEC video transcoding — `ffmpeg.accel=nvenc` + `accelDecode=true`; ex immich-server — since the 2026-07-12 worker split the GPU-free `immich-api` replicas serve clients, only this job tier holds a GPU slice)
 - Frigate (object-detection inference)
