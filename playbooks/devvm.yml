@@ -181,12 +181,22 @@
     #   token_file  optional; where to install the plaintext token for os_user,
     #           0600. Only for a Caller that runs ON this box, such as the
     #           homelab CLI; a remote Caller keeps its token on its own side.
+    #   pin     optional; launch settings forced on this Caller's new
+    #           conversations whatever it sends, via TL_CALLER_PINS below.
+    #           Any of model, effort, permission_mode; the rest stay its own.
     #
     # Removing an entry revokes that agent at the next run. For an immediate
     # revoke, scripts/agent-api-kill <name>.
     devvm_external_agents:
       - name: muse
         os_user: wizard
+        # Viktor, 2026-10-09: Muse's sessions start on Opus 5.5 in bypass at
+        # xhigh. Its connector sent claude-opus-5 and permission_mode=default
+        # (manual), and that client is Muse's, not ours to edit.
+        pin:
+          model: claude-opus-5-5
+          effort: xhigh
+          permission_mode: bypassPermissions
       # The homelab CLI's own credential for `homelab delegate`, used over
       # loopback. A separate Caller from muse so it can be revoked on its own
       # and the trace tells the two apart (design 2026-10-02, phase 5).
@@ -2143,6 +2153,12 @@
           # The base URL a Delegation message tells its target to post the
           # result to. Muse reaches this box only through terminal-api.
           TL_AGENT_PUBLIC_URL=https://terminal-api.viktorbarzin.me
+
+          # Launch settings forced on a Caller's new conversations, from pin
+          # in devvm_external_agents. A field the pin leaves out stays the
+          # Caller's choice.
+          TL_CALLER_PINS={% for a in devvm_external_agents if a.pin is defined %}{{ a.name }}:{% for k, v in a.pin.items() %}{{ k }}={{ v }}{{ ',' if not loop.last }}{% endfor %}{{ ';' if not loop.last }}{% endfor %}
+
       no_log: true
       notify: restart lobby services
 
