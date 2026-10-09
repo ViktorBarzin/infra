@@ -2262,6 +2262,24 @@ serverFiles:
               subsystem: gpu
             annotations:
               summary: "GPU node {{ $labels.node }} is cordoned — Frigate and GPU workloads cannot schedule"
+          # The T4 is time-sliced into 100 nvidia.com/gpu slots by the
+          # `time-slicing-config` ConfigMap, wired in through the top-level
+          # devicePlugin.config block of stacks/nvidia/modules/nvidia/values.yaml.
+          # Until 2026-10-09 that block sat under `driver:` and only a manual
+          # ClusterPolicy patch kept it live, so a gpu-operator upgrade could
+          # drop the node to 1 slot (or 0 while the driver is down).
+          # max by (node) collapses the per-kube-state-metrics-pod series.
+          # 180d of history: 224 two-minute samples below 100, i.e. real GPU
+          # outages, and 1 sample in the last 60d.
+          - alert: GPUAllocatableBelowExpected
+            expr: max by (node) (kube_node_status_allocatable{resource="nvidia_com_gpu"}) < 100
+            for: 10m
+            labels:
+              severity: warning
+              subsystem: gpu
+            annotations:
+              summary: "GPU node {{ $labels.node }} advertises {{ $value | printf \"%.0f\" }} nvidia.com/gpu slots (expected 100)"
+              description: "Time-slicing should give 100 slots. Fewer means the device plugin lost the time-slicing config (ConfigMap nvidia/time-slicing-config, referenced by ClusterPolicy cluster-policy spec.devicePlugin.config name=time-slicing-config default=any) or the driver/device plugin is not running. Check: kubectl get clusterpolicies.nvidia.com cluster-policy -o jsonpath='{.spec.devicePlugin.config}' and the nvidia-device-plugin-daemonset pod in ns nvidia. GPU pods beyond the available slots stay Pending. See docs/architecture/compute.md (GPU Workloads)."
       - name: Immich Smart Search
         rules:
           # Context (smart) search latency. The vchord clip_index must stay
