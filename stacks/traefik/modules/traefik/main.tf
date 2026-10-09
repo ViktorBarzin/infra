@@ -45,12 +45,13 @@ resource "helm_release" "traefik" {
   name             = "traefik"
   repository       = "https://traefik.github.io/charts"
   chart            = "traefik"
-  # Pin to the deployed chart version. Was unpinned, so a refreshed helm repo
-  # index silently tries to upgrade to the latest chart on the next apply —
-  # chart 41.0.0 rejects this values block's `logs` key ("Additional property
-  # logs is not allowed"). Bump deliberately (with values migration), never
-  # implicitly. Deployed since 2026-05-30 (release rev 57).
-  version = "40.2.0"
+  # Pinned so a refreshed helm repo index never upgrades the chart implicitly.
+  # Bump deliberately, with a values migration and a re-vendor of crds/.
+  # 41.7.0 (app v3.7.14) since 2026-10-09, for CVE-2026-88879 (affected range
+  # 3.0.0-3.7.11). That bump moved logs.access to accessLog (41.0.0 changed the
+  # logs syntax) and added aliasHeadersStrategy on websecure. No image.tag pin:
+  # the chart default image is the version.
+  version = "41.7.0"
   atomic  = true
   timeout = 600
 
@@ -223,6 +224,13 @@ resource "helm_release" "traefik" {
             "traefik-crowdsec@kubernetescrd",
             "traefik-compress@kubernetescrd",
           ]
+          # CVE-2026-88879: a header whose name aliases another one (X_Foo vs
+          # X-Foo) could slip past header-based checks. delete drops any request
+          # header whose name holds a character other than a letter, digit or
+          # dash; hyphenated names are untouched. The fixed versions default to
+          # keep, which leaves the bypass open, so this must stay set. Static
+          # config: v3.7.11 and older reject the key outright.
+          aliasHeadersStrategy = "delete"
         }
         # DO NOT set enabled = false to "turn off QUIC". It takes the whole
         # site down, and the reason is not obvious from this file.
@@ -543,18 +551,18 @@ resource "helm_release" "traefik" {
     # JSON makes that easier, not harder — a header value cannot contain a bare
     # `"`, so an extraction anchored to a `"FieldName":"` prefix cannot be
     # reached from a header value. See the guards in stacks/monitoring/loki.tf.
-    logs = {
-      access = {
-        enabled = true
-        format  = "json"
-        fields = {
-          headers = {
-            names = {
-              "User-Agent"           = "keep"
-              "Referer"              = "keep"
-              "X-Authentik-Username" = "keep"
-              "X-Auth-Fallback"      = "keep"
-            }
+    # Chart 41.0.0 renamed logs.access to the top-level accessLog key, matching
+    # upstream's static config. The rendered --accesslog.* flags are unchanged.
+    accessLog = {
+      enabled = true
+      format  = "json"
+      fields = {
+        headers = {
+          names = {
+            "User-Agent"           = "keep"
+            "Referer"              = "keep"
+            "X-Authentik-Username" = "keep"
+            "X-Auth-Fallback"      = "keep"
           }
         }
       }
