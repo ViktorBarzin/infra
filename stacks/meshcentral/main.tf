@@ -147,6 +147,12 @@ if [ -f "$CONFIG" ]; then
   sed -i 's/"TLSOffload": "[^"]*"/"TLSOffload": true/g' "$CONFIG"
   sed -i 's/"TLSOffload": false/"TLSOffload": true/g' "$CONFIG"
 
+  # Keep self-service sign-up off. The image's generated config carried
+  # "NewAccounts": "true" (a string, which MeshCentral reads as on), and the
+  # first-run template below only applies to a fresh volume. Found live on
+  # 2026-10-09 while enrolling Milka's phone.
+  sed -i 's/"NewAccounts": *"true"/"NewAccounts": false/g; s/"NewAccounts": *true/"NewAccounts": false/g' "$CONFIG"
+
   # ignoreAgentHashCheck: stop pinning the OUTER (Traefik) TLS cert hash on the
   # agent handshake. With TLS offload, the agent sees Traefik's Let's Encrypt
   # cert (which also differs between the internal .203 LB and the external
