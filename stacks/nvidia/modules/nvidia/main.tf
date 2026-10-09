@@ -100,8 +100,11 @@ resource "null_resource" "gpu_node_config" {
   }
 }
 
-# [not needed anymore; part of the chart values] Apply to operator with:
-# kubectl patch clusterpolicies.nvidia.com/cluster-policy -n gpu-operator --type merge -p '{"spec": {"devicePlugin": {"config": {"name": "time-slicing-config", "default": "any"}}}}'
+# The device plugin is pointed at this ConfigMap by the top-level
+# `devicePlugin.config` block in values.yaml (name + default key `any`), so
+# the ClusterPolicy carries it through Helm. Before 2026-10-09 that block sat
+# under `driver:` and was ignored; a manual `kubectl patch` of the
+# ClusterPolicy was what actually kept time-slicing on. No patch is needed now.
 
 resource "kubernetes_config_map" "time_slicing_config" {
   metadata {
@@ -132,12 +135,16 @@ resource "helm_release" "nvidia-gpu-operator" {
   repository = "https://helm.ngc.nvidia.com/nvidia"
   chart      = "gpu-operator"
   atomic     = true
-  # Pinned 2026-05-17. v26.3.1's operator auto-detects the host OS via NFD
-  # and constructs `driver:<version>-ubuntu26.04` image tags, but NVIDIA
-  # has not published any ubuntu26.04 driver images yet. v25.10.1 falls
-  # back to ubuntu24.04 (which exists), so we stay here until NVIDIA ships
-  # 26.04 builds (or until the host kernel is rolled back to a 24.04 line
-  # one). See post-mortem 2026-05-17-gpu-driver-ubuntu2604-mismatch.md.
+  # Pinned 2026-05-17, when k8s-node1 had been upgraded to Ubuntu 26.04 and
+  # the operator (v25.10.1 and v26.3.1 alike) built `driver:<version>-ubuntu26.04`
+  # image tags that NVIDIA does not publish. The node was mitigated rather
+  # than the chart: kernel rolled back to 6.8.0-117-generic and apt-held,
+  # /etc/os-release replaced with the 24.04 content, so NFD and the node
+  # report Ubuntu 24.04.4 / 6.8.0-117-generic (checked 2026-10-09) and the
+  # ubuntu24.04 driver image is used. The pin stays until a chart upgrade is
+  # tested against that setup and the 570.195.03 driver pin in values.yaml.
+  # See docs/known-issues.md and post-mortem
+  # 2026-05-17-gpu-driver-ubuntu2604-mismatch.md.
   version = "v25.10.1"
   timeout = 6000
 
