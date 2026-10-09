@@ -138,8 +138,10 @@ These two go first because both are reachable from the internet and are one to t
    - remove `--storage.tsdb.allow-overlapping-blocks` (removed in v3)
    - `--enable-feature=otlp-write-receiver` → `--web.enable-otlp-receiver`
    - `scrapeConfigs: null`, so chart 28+ default jobs don't duplicate our `serverFiles` jobs
+   - a Terraform ClusterRole + binding granting `get nodes/proxy` to `monitoring/prometheus-server`: chart 29 dropped it from its own role, and the `kubernetes-nodes` and `kubernetes-nodes-cadvisor` jobs scrape kubelets through the API server node proxy (12 targets, all `container_*` and `kubelet_volume_stats_*`)
+   - `fallback_scrape_protocol: PrometheusText0.0.4` on the 7 tuya-bridge jobs, which answer `Content-Type: text/html` that 3.x otherwise refuses
 
-Checked already: Alertmanager matchers are all new-style; `le`/`quantile` literals are unaffected by normalization; every dependent (kured, pvc-autoresizer, the k8s version chain, vpn-portal, `homelab metrics query`) uses the `prometheus-server` Service name, which the chart keeps. Not yet audited: the regex `.` now matching newline, rule by rule. Verified after: 26 weeks of history queryable, all 60 scrape jobs up, alert rules loaded, a test alert reaching Slack.
+Checked already: Alertmanager matchers are all new-style; `le`/`quantile` literals are unaffected by normalization; every dependent (kured, pvc-autoresizer, the k8s version chain, vpn-portal, `homelab metrics query`) uses the `prometheus-server` Service name, which the chart keeps. The regex `.` now matching newline was audited before hop 2: one label value in the TSDB contains a newline and no rule or relabel matches it. Verified after: 26 weeks of history queryable, all scrape jobs up except `openwrt` (down at baseline), alert rules loaded, a test alert reaching Slack.
 
 **Doc corrections** in the same phase: `docs/architecture/secrets.md` (backup target is NFS on the PVE host, not S3; Vault version), `docs/runbooks/restore-vault.md` (single-key unseal sidecar, not three-key manual), `docs/runbooks/vault-raft-leader-deadlock.md` (version), `docs/architecture/automated-upgrades.md` and the DIUN stack comment (what the weekly report covers).
 
