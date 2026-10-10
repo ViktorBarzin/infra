@@ -137,7 +137,7 @@ The permanent password for her phone is in Vault (`secret/rustdesk-milka`, `pass
 ## Open questions
 
 - The battery cost of the Automate loop. It wakes for a moment about once a minute while the phone is awake and less often while it dozes (gaps of 6 to 14 minutes in its log on 2026-10-10).
-- Wireless debugging still has to be allowed once on the Mladost 3 Wi-Fi before the flow can switch it on there.
+- Wireless debugging still has to be allowed once on the Mladost 3 Wi-Fi before the flow can switch it on there. Until then RustDesk cannot be started while she is at Mladost 3. Planned for when she is there in December 2026.
 - Whether laptop keystrokes can reach her text fields with a different RustDesk keyboard mode. Only the legacy mode was tested.
 - Where Claude's viewer lives permanently. The container used on 2026-10-10 ran from a session scratch directory on the devvm; it has no permanent home yet.
 - Whether RustDesk still reports usage to rustdesk.com when pointed at our own server (F-Droid flags the app for this).
