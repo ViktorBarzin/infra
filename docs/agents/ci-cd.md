@@ -86,8 +86,16 @@ stays DRY_RUN. Pull-through caches on `10.0.20.10` are unchanged. Runbook:
 `stacks/<stack>/verify.sh` from the changed-file list before picking stacks to
 apply, because only `scripts/verify/run` reads those files. A commit that only
 edits verify scripts applies nothing. The runner itself runs in the infra-ci
-image with `KUBECONFIG=$PWD/config` (checked 2026-10-10); the Phase 3 rails
-will call it after each Renovate apply (`docs/runbooks/verify-jobs.md`).
+image with `KUBECONFIG=$PWD/config` (checked 2026-10-10).
+
+**Renovate rails** (2026-10-10): `default.yml` calls `scripts/renovate-rails`
+in its apply step: `prepare` after stack detection (gate, backup snapshot),
+`finish` after the apply loops (`scripts/verify/run` per stack; on failure
+revert + ignore entry + rollback apply + Slack), `exit` after the state push.
+It acts only on renovate-bot commits not yet verified, tracked by the
+ConfigMap `woodpecker/renovate-rails`; other pushes are unaffected. A failed
+apply of a stack the rails own does not fail the step, since the rails revert
+it. Runbook: `docs/runbooks/renovate.md` ("Rails").
 
 **Woodpecker now runs only:** per-app `deploy.yml` (manual, `kubectl set
 image`), `default.yml` (terragrunt apply), `renew-tls.yml` (certbot),

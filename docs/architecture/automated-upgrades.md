@@ -10,7 +10,7 @@ Since 2026-10-10 the Trivy Operator reports which running images have fixable Cr
 
 The Renovate stack itself (`stacks/renovate`, runbook `docs/runbooks/renovate.md`) exists since 2026-10-10 and is suspended until the rails and the Keel cutover are in place. Its repo config is `renovate.json5` at the repo root.
 
-Also since 2026-10-10, every chart, database and GPU stack has a `stacks/<stack>/verify.sh`, run as a Kubernetes Job by `scripts/verify/run` (`docs/runbooks/verify-jobs.md`). These are the checks the Phase 3 Woodpecker rails will run after a Renovate apply; until then they are run by hand after an upgrade.
+Also since 2026-10-10, every chart, database and GPU stack has a `stacks/<stack>/verify.sh`, run as a Kubernetes Job by `scripts/verify/run` (`docs/runbooks/verify-jobs.md`). The Woodpecker rails (`scripts/renovate-rails`, runbook `docs/runbooks/renovate.md` "Rails") run these checks after every Renovate apply and revert a bump that fails them.
 
 ## Overview
 

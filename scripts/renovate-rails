@@ -1,0 +1,558 @@
+#!/usr/bin/env bash
+# Woodpecker rails for Renovate commits (ADR-0030; software-currency design,
+# "Woodpecker rails"; runbook docs/runbooks/renovate.md, section "Rails").
+#
+# Called from the apply step of .woodpecker/default.yml:
+#
+#   renovate-rails prepare   after stack detection, before any apply:
+#                            find the Renovate commits to act on, run the
+#                            upgrade gate and the pre-upgrade snapshot, and add
+#                            their stacks to the apply lists
+#   renovate-rails owned     prints the stacks whose apply failure the rails
+#                            handle (the apply loops do not fail the step for them)
+#   renovate-rails finish    after the apply loops, before the state push:
+#                            verify each stack; on failure revert the commit,
+#                            add the version to renovate/ignored-versions.json,
+#                            apply the reverted tree and post to Slack
+#   renovate-rails exit      after the state push: non-zero when a bump failed
+#
+# Which commits: every commit authored by renovate-bot on master after the last
+# commit the rails handled (ConfigMap woodpecker/renovate-rails, key
+# last_handled), minus the ones a later commit reverted. A human push cancels a
+# running Renovate pipeline, so the next pipeline, whoever pushed it, picks up
+# the Renovate commits that were never verified and verifies them. A pipeline
+# with no such commits does nothing here beyond moving the marker.
+#
+# Unit tests: scripts/renovate-rails.test.sh. Sourcing this file defines the
+# functions without running anything.
+
+RENOVATE_LOGIN=${RENOVATE_LOGIN:-renovate-bot}
+RENOVATE_EMAIL=${RENOVATE_EMAIL:-renovate-bot@viktorbarzin.me}
+MARKER_NS=${RAILS_MARKER_NS:-woodpecker}
+MARKER_CM=${RAILS_MARKER_CM:-renovate-rails}
+PROM=${RAILS_PROM:-http://prometheus-server.monitoring.svc.cluster.local:80}
+PGW=${RAILS_PGW:-http://prometheus-prometheus-pushgateway.monitoring:9091}
+# How long the gate waits for blocking alerts to clear before holding the bump.
+GATE_WAIT=${RAILS_GATE_WAIT:-600}
+GATE_POLL=${RAILS_GATE_POLL:-60}
+SNAPSHOT_TIMEOUT=${RAILS_SNAPSHOT_TIMEOUT:-1800}
+IGNORE_FILE=renovate/ignored-versions.json
+CI_NAME='Woodpecker CI'
+CI_EMAIL=ci@viktorbarzin.me
+# Stacks whose data lives in another namespace's backup CronJob.
+EXTRA_SNAPSHOTS="cnpg=dbaas/postgresql-backup"
+
+log() { echo "[rails] $*"; }
+
+# ---------------------------------------------------------------------------
+# Pure helpers (unit-tested)
+# ---------------------------------------------------------------------------
+
+# Renovate commits in base..head, oldest first, minus those reverted in range.
+pending_commits() {
+  local base=$1 head=$2 reverted c
+  reverted=$(git log --format=%B "$base..$head" | sed -n 's/^This reverts commit \([0-9a-f]\{40\}\).*/\1/p')
+  git rev-list --reverse --author="<${RENOVATE_EMAIL//./\\.}>" "$base..$head" | while read -r c; do
+    grep -qx "$c" <<<"$reverted" || echo "$c"
+  done
+}
+
+# Terragrunt stacks a commit changes. verify.sh is read by the verify runner,
+# not by Terraform, so a commit touching only that file applies nothing.
+commit_stacks() {
+  git diff-tree --no-commit-id --name-only -r "$1" | grep '^stacks/' |
+    grep -Ev '^stacks/[^/]+/verify\.sh$' | cut -d/ -f2 | sort -u |
+    while read -r s; do [ -f "stacks/$s/terragrunt.hcl" ] && echo "$s"; done
+  return 0
+}
+
+# "datasource package version" per Renovate-Dep trailer (renovate.json5 commitBody).
+commit_deps() {
+  git log -1 --format=%B "$1" | sed -n 's/^Renovate-Dep: *//p' | awk 'NF == 3'
+}
+
+# True when any of the commits bumps a Helm chart (CRDs may change).
+commits_have_helm() {
+  local c
+  for c in "$@"; do
+    commit_deps "$c" | awk '$1 == "helm" {f = 1} END {exit !f}' && return 0
+  done
+  return 1
+}
+
+# One packageRule that makes Renovate skip that exact version. A digest-only
+# pin has no version to match, so digest updates for the package are disabled
+# until someone removes the entry.
+ignore_rule() { # datasource package value description
+  if [[ $3 == sha256:* ]]; then
+    jq -nc --arg d "$1" --arg p "$2" --arg desc "$4" \
+      '{description: $desc, matchDatasources: [$d], matchPackageNames: [$p], matchUpdateTypes: ["digest"], enabled: false}'
+  else
+    jq -nc --arg d "$1" --arg p "$2" --arg v "$3" --arg desc "$4" \
+      '{description: $desc, matchDatasources: [$d], matchPackageNames: [$p], matchNewValue: $v, enabled: false}'
+  fi
+}
+
+# Append one rule per Renovate-Dep trailer of <sha> to <file>. Fails (and
+# leaves the file alone) when the commit carries no trailer.
+add_ignore_entries() { # file sha description
+  local file=$1 sha=$2 desc=$3 rules d p v tmp
+  rules=$(commit_deps "$sha" | while read -r d p v; do ignore_rule "$d" "$p" "$v" "$desc"; done | jq -sc .)
+  [ "$(jq 'length' <<<"$rules")" -gt 0 ] || { log "commit ${sha:0:8} has no Renovate-Dep trailer; no ignore entry written"; return 1; }
+  tmp=$(mktemp)
+  jq --argjson r "$rules" '.packageRules += $r' "$file" >"$tmp" && mv "$tmp" "$file"
+}
+
+# git revert of one Renovate commit, as the CI identity, in one commit.
+#   mode fail: also add its versions to the ignore list (Renovate skips them)
+#   mode hold: no ignore entry (Renovate offers the same bump again next run)
+revert_commit() { # mode sha why extra-body-lines
+  local mode=$1 sha=$2 why=$3 extra=$4 subject deps
+  subject=$(git log -1 --format=%s "$sha")
+  if ! git -c user.name="$CI_NAME" -c user.email="$CI_EMAIL" revert --no-commit "$sha"; then
+    # --abort restores the index and tree of the paths the revert touched and
+    # leaves other uncommitted changes (the state push stages them later).
+    git revert --abort 2>/dev/null || git reset -q --merge 2>/dev/null || true
+    log "git revert of ${sha:0:8} did not apply cleanly"
+    return 1
+  fi
+  deps=$(commit_deps "$sha" | sed 's/^/  /')
+  if [ "$mode" = fail ]; then
+    add_ignore_entries "$IGNORE_FILE" "$sha" \
+      "rails revert $(date -u +%F) pipeline #${CI_PIPELINE_NUMBER:-local}: ${why} (commit ${sha:0:8})" || true
+    git add "$IGNORE_FILE"
+  fi
+  local body
+  if [ "$mode" = fail ]; then
+    body="Why: ${why}. The Renovate rails restored the previous version by applying the reverted tree, and added the version below to ${IGNORE_FILE} so Renovate skips it. The next upstream release is tried automatically."
+  else
+    body="Why: ${why}. The bump was not verified, so the rails took it back without an ignore entry; Renovate offers it again on a later run."
+  fi
+  git -c user.name="$CI_NAME" -c user.email="$CI_EMAIL" commit -q -F - <<EOF
+Revert "$subject"
+
+This reverts commit $sha.
+
+$body
+
+Version:
+$deps
+$extra
+Pipeline: ${CI_PIPELINE_URL:-local}
+EOF
+}
+
+# The marker if it is an ancestor of head, else the pipeline's diff base.
+choose_base() { # marker diffbase head
+  local marker=$1 diffbase=$2 head=$3
+  if [ -n "$marker" ] && git cat-file -e "$marker^{commit}" 2>/dev/null &&
+    git merge-base --is-ancestor "$marker" "$head" 2>/dev/null; then
+    echo "$marker"
+  else
+    echo "$diffbase"
+  fi
+}
+
+# The k8s version chain's opt-in allowlist (UPGRADE_GATE_ALERTS in its
+# upgrade-step.sh), read from that file so the rails and the chain share one list.
+gate_chain_alerts() {
+  awk '/^UPGRADE_GATE_ALERTS=/ {f = 1}
+       f { l = $0; sub(/^UPGRADE_GATE_ALERTS=/, "", l); c = (l ~ /\\$/); gsub(/[\\'"'"']/, "", l); printf "%s", l; if (!c) exit }' \
+    stacks/k8s-version-upgrade/scripts/upgrade-step.sh 2>/dev/null | grep -E '^[A-Za-z0-9|]+$' || true
+}
+
+# kured's alertFilterRegexp (match-only: these firing alerts block reboots).
+gate_kured_regex() {
+  sed -n 's/^[[:space:]]*alertFilterRegexp[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' stacks/kured/main.tf 2>/dev/null | head -1
+}
+
+# Blocking alert names from a Prometheus /api/v1/alerts body on stdin: firing
+# criticals on the chain's allowlist (every firing critical when the list is
+# empty, which is how the chain fails closed), plus any firing alert kured's
+# filter names.
+gate_match() { # chain-allowlist kured-regex
+  local chain=$1 kured=$2 json
+  json=$(cat)
+  {
+    jq -r '.data.alerts[] | select(.state == "firing" and .labels.severity == "critical") | .labels.alertname' <<<"$json" |
+      if [ -n "$chain" ]; then grep -E "^($chain)\$" || true; else cat; fi
+    if [ -n "$kured" ]; then
+      jq -r '.data.alerts[] | select(.state == "firing") | .labels.alertname' <<<"$json" | { grep -E "$kured" || true; }
+    fi
+  } | sort -u
+}
+
+# ---------------------------------------------------------------------------
+# Cluster side
+# ---------------------------------------------------------------------------
+
+kc() { kubectl "$@"; }
+
+get_marker() {
+  kc -n "$MARKER_NS" get configmap "$MARKER_CM" -o jsonpath='{.data.last_handled}' 2>/dev/null || true
+}
+
+# Move the marker forward to <sha>. Never backwards: a restarted older pipeline
+# must not make the rails re-handle commits a newer pipeline already handled.
+set_marker() {
+  local new=$1 cur
+  cur=$(get_marker)
+  if [ -n "$cur" ] && git cat-file -e "$cur^{commit}" 2>/dev/null &&
+    ! git merge-base --is-ancestor "$cur" "$new" 2>/dev/null; then
+    log "marker ${cur:0:8} is not an ancestor of ${new:0:8}; leaving it"
+    return 0
+  fi
+  kc -n "$MARKER_NS" create configmap "$MARKER_CM" \
+    --from-literal=last_handled="$new" \
+    --from-literal=pipeline="${CI_PIPELINE_NUMBER:-}" \
+    --from-literal=updated="$(date -u +%FT%TZ)" \
+    --dry-run=client -o yaml | kc apply -f - >/dev/null &&
+    log "marker -> ${new:0:8}" || log "WARN: could not write the marker ConfigMap"
+}
+
+gate_blocking() { # prints blocking alert names; "prometheus-unreachable" fails closed
+  local chain kured body
+  chain=$(gate_chain_alerts)
+  kured=$(gate_kured_regex)
+  [ -n "$chain" ] || log "WARN: chain allowlist not found; every firing critical blocks"
+  if ! body=$(curl -sf --max-time 20 "$PROM/api/v1/alerts") || ! jq -e '.data.alerts' >/dev/null 2>&1 <<<"$body"; then
+    echo prometheus-unreachable
+    return
+  fi
+  gate_match "$chain" "$kured" <<<"$body"
+}
+
+slack() {
+  if [ -z "${SLACK_WEBHOOK:-}" ]; then log "no SLACK_WEBHOOK; would post: $1"; return 0; fi
+  jq -nc --arg t "$1" '{text: $t}' |
+    curl -s --max-time 20 -X POST -H 'Content-type: application/json' --data @- "$SLACK_WEBHOOK" >/dev/null ||
+    log "WARN: Slack post failed"
+}
+
+push_metrics() { # outcome: 0 verified, 1 reverted, 2 held, 3 incomplete
+  local now body
+  now=$(date +%s)
+  body="renovate_rails_last_run_timestamp_seconds $now
+renovate_rails_last_outcome $1
+"
+  [ "$1" = 1 ] && body="${body}renovate_rails_last_revert_timestamp_seconds $now
+"
+  [ "$1" = 2 ] && body="${body}renovate_rails_hold_timestamp_seconds $now
+"
+  printf '%s' "$body" | curl -s --max-time 20 --data-binary @- "$PGW/metrics/job/renovate-rails" >/dev/null ||
+    log "WARN: Pushgateway push failed"
+}
+
+# Namespaces a stack's verify script checks, else the stack name.
+stack_namespaces() {
+  local ns
+  ns=$(sed -n 's/^VERIFY_NAMESPACES="\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' "stacks/$1/verify.sh" 2>/dev/null | head -1)
+  echo "${ns:-$1}"
+}
+
+# Backup CronJobs to run before applying: every unsuspended "*-backup" CronJob
+# in the stack's namespaces, the extra map above, and the etcd snapshot when a
+# chart (and so possibly a CRD) changes.
+snapshot_targets() { # helm(0|1) stacks...
+  local helm=$1 s n e
+  shift
+  {
+    for s in "$@"; do
+      for n in $(stack_namespaces "$s"); do
+        kc get cronjob -n "$n" -o json 2>/dev/null |
+          jq -r '.items[] | select(.spec.suspend != true) | select(.metadata.name | test("(^|-)backup$")) | "\(.metadata.namespace)/\(.metadata.name)"'
+      done
+      for e in $EXTRA_SNAPSHOTS; do [ "${e%%=*}" = "$s" ] && echo "${e#*=}"; done
+    done
+    [ "$helm" = 1 ] && echo default/backup-etcd
+  } | sort -u
+}
+
+# Where a backup CronJob writes: its PVCs resolved to NFS server:path.
+cj_location() { # ns cj
+  local ns=$1 cj=$2 pvc pv
+  kc get cronjob -n "$ns" "$cj" -o json 2>/dev/null |
+    jq -r '.spec.jobTemplate.spec.template.spec.volumes[]? | .persistentVolumeClaim.claimName // empty' |
+    while read -r pvc; do
+      pv=$(kc get pvc -n "$ns" "$pvc" -o jsonpath='{.spec.volumeName}' 2>/dev/null)
+      [ -n "$pv" ] || continue
+      kc get pv "$pv" -o json 2>/dev/null | jq -r --arg pv "$pv" '
+        if .spec.nfs then "\(.spec.nfs.server):\(.spec.nfs.path)"
+        elif .spec.csi.volumeAttributes.server then "\(.spec.csi.volumeAttributes.server):\(.spec.csi.volumeAttributes.share)\(if .spec.csi.volumeAttributes.subdir then "/" + .spec.csi.volumeAttributes.subdir else "" end)"
+        else "pv/\($pv)" end'
+    done | paste -sd, -
+}
+
+# Run each backup CronJob once as a Job and wait. Writes .rails_snapshots.
+run_snapshots() { # sha targets...
+  local sha=$1 t ns cj job jobs=() rc=0 deadline st
+  shift
+  : >.rails_snapshots
+  for t in "$@"; do
+    ns=${t%/*} cj=${t#*/}
+    job=$(printf 'rails-%s' "$cj" | cut -c1-48)-${sha:0:7}-$(date +%s | tail -c 5)
+    if kc create job -n "$ns" "$job" --from="cronjob/$cj" --dry-run=client -o json |
+      jq --arg c "$sha" '.spec.ttlSecondsAfterFinished = 86400 | .metadata.labels["renovate-rails/commit"] = $c[0:40]' |
+      kc create -f - >/dev/null; then
+      log "snapshot: started $ns/$job from CronJob $cj"
+      jobs+=("$ns/$job/$cj")
+    else
+      log "snapshot: could not start a Job from $ns/$cj"
+      rc=1
+    fi
+  done
+  deadline=$(($(date +%s) + SNAPSHOT_TIMEOUT))
+  for t in "${jobs[@]}"; do
+    ns=${t%%/*} job=${t#*/} cj=${job#*/} job=${job%/*}
+    while :; do
+      st=$(kc get job -n "$ns" "$job" -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.type} {end}' 2>/dev/null)
+      case "$st" in
+        *Complete*) echo "$ns/$job (CronJob $cj) -> $(cj_location "$ns" "$cj")" >>.rails_snapshots; log "snapshot: $ns/$job complete"; break ;;
+        *Failed*) log "snapshot: $ns/$job FAILED"; kc logs -n "$ns" "job/$job" --tail=20 2>&1 | sed 's/^/  /'; rc=1; break ;;
+      esac
+      if [ "$(date +%s)" -ge "$deadline" ]; then log "snapshot: $ns/$job did not finish in ${SNAPSHOT_TIMEOUT}s"; rc=1; break; fi
+      sleep 10
+    done
+  done
+  return "$rc"
+}
+
+ensure_in_apply_lists() { # stack
+  local s=$1
+  grep -qx "$s" .platform_apply 2>/dev/null && return
+  grep -qx "$s" .app_apply 2>/dev/null && return
+  if grep -qw "$s" .platform_stacks 2>/dev/null; then echo "$s" >>.platform_apply; else echo "$s" >>.app_apply; fi
+  log "added $s to the apply list (Renovate commit not applied by an earlier pipeline)"
+}
+
+remove_from_apply_lists() { # stack
+  local f
+  for f in .platform_apply .app_apply; do
+    [ -f "$f" ] && { grep -vx "$1" "$f" >"$f.tmp" || true; mv "$f.tmp" "$f"; }
+  done
+}
+
+snapshot_text() {
+  if [ -s .rails_snapshots ]; then sed 's/^/  /' .rails_snapshots; else echo "  none (no backup CronJob for these stacks)"; fi
+}
+
+tg_apply() { # stack -> 0 ok
+  local out rc
+  out=$(cd "stacks/$1" && ../../scripts/tg apply --non-interactive 2>&1)
+  rc=$?
+  echo "$out" | tail -5
+  return "$rc"
+}
+
+# ---------------------------------------------------------------------------
+# Stages
+# ---------------------------------------------------------------------------
+
+stage_prepare() {
+  : >.rails_commits; : >.rails_stacks; echo none >.rails_mode; : >.rails_exit; : >.rails_snapshots; : >.rails_reason
+  date +%s >.rails_since
+  local head diffbase marker base pending c s mode=verify reason="" blocking waited=0 helm=0
+
+  head=$(git rev-parse HEAD)
+  diffbase=$(cat .diff_base 2>/dev/null || echo HEAD~1)
+  marker=$(get_marker)
+  if [ -n "$marker" ] && ! git cat-file -e "$marker^{commit}" 2>/dev/null; then
+    git fetch -q --depth=200 origin master 2>/dev/null || true
+  fi
+  base=$(choose_base "$marker" "$diffbase" "$head")
+  log "marker=${marker:0:8} diff-base=${diffbase:0:8} -> range ${base:0:8}..${head:0:8}"
+
+  pending=$(pending_commits "$base" "$head")
+  # A push by renovate-bot is a Renovate commit even if its git author were
+  # ever configured differently.
+  if [ "${CI_COMMIT_AUTHOR:-}" = "$RENOVATE_LOGIN" ]; then
+    pending=$(printf '%s\n%s\n' "$pending" "$(git rev-list --reverse "$diffbase..$head")" | awk 'NF && !seen[$0]++')
+  fi
+  if [ -z "$pending" ]; then
+    log "no Renovate commits to verify"
+    return 0
+  fi
+  echo "$pending" >.rails_commits
+  for c in $pending; do commit_stacks "$c"; done | sort -u >.rails_stacks
+  log "Renovate commits: $(for c in $pending; do git log -1 --format='%h %s' "$c"; done | paste -sd';' -)"
+  log "stacks: $(paste -sd' ' .rails_stacks)"
+  if [ ! -s .rails_stacks ]; then
+    log "the commits change no Terragrunt stack; nothing to apply or verify"
+    echo empty >.rails_mode
+    return 0
+  fi
+
+  # 1. Upgrade gate.
+  while :; do
+    blocking=$(gate_blocking)
+    [ -z "$blocking" ] && break
+    if [ "$waited" -ge "$GATE_WAIT" ]; then break; fi
+    log "gate: blocked by [$(paste -sd' ' <<<"$blocking")]; rechecking in ${GATE_POLL}s (waited ${waited}s of ${GATE_WAIT}s)"
+    sleep "$GATE_POLL"
+    waited=$((waited + GATE_POLL))
+  done
+  if [ -n "$blocking" ]; then
+    mode=hold reason="the upgrade gate was blocked by $(paste -sd' ' <<<"$blocking") for ${GATE_WAIT}s"
+  else
+    log "gate: clear"
+    # 2. Snapshot.
+    local commits_arr stacks_arr targets_arr
+    mapfile -t commits_arr <.rails_commits
+    mapfile -t stacks_arr <.rails_stacks
+    commits_have_helm "${commits_arr[@]}" && helm=1
+    mapfile -t targets_arr < <(snapshot_targets "$helm" "${stacks_arr[@]}")
+    if [ "${#targets_arr[@]}" -gt 0 ]; then
+      log "snapshot targets: ${targets_arr[*]}"
+      if ! run_snapshots "$(tail -1 .rails_commits)" "${targets_arr[@]}"; then
+        mode=hold reason="the pre-upgrade snapshot failed"
+      fi
+    else
+      log "snapshot: no backup CronJob for these stacks"
+    fi
+  fi
+
+  if [ "$mode" = hold ]; then
+    log "HOLD: $reason"
+    echo "$reason" >.rails_reason
+    local rev
+    for rev in $(tac .rails_commits); do
+      if ! revert_commit hold "$rev" "$reason" "Snapshot:
+$(snapshot_text)"; then
+        log "could not revert ${rev:0:8}; leaving the bump unapplied for a human"
+        echo stuck >.rails_mode
+        for s in $(cat .rails_stacks); do remove_from_apply_lists "$s"; done
+        return 0
+      fi
+    done
+    echo hold >.rails_mode
+    # The reverted tree is applied by the normal loops: a no-op when the bump
+    # was never applied, a rollback when a cancelled pipeline had applied it.
+  else
+    echo verify >.rails_mode
+  fi
+  for s in $(cat .rails_stacks); do ensure_in_apply_lists "$s"; done
+  date +%s >.rails_since
+}
+
+stage_owned() {
+  [ "$(cat .rails_mode 2>/dev/null)" = verify ] && cat .rails_stacks
+  return 0
+}
+
+stage_finish() {
+  local mode head s c rc failed=() why=() verified=() incomplete=() reverted="" rollback="" msg
+  mode=$(cat .rails_mode 2>/dev/null || echo none)
+  head=${CI_COMMIT_SHA:-$(git rev-parse HEAD)}
+  case "$mode" in
+    none | empty)
+      set_marker "$head"
+      return 0
+      ;;
+    stuck)
+      slack ":warning: Renovate rails could not revert $(paste -sd' ' .rails_commits | cut -c1-80) after: $(cat .rails_reason). The bump is on master but was not applied. A human needs to revert or apply it. Pipeline: ${CI_PIPELINE_URL:-}"
+      push_metrics 3
+      echo 1 >.rails_exit
+      return 0
+      ;;
+    hold)
+      slack ":pause_button: Renovate rails held $(for c in $(cat .rails_commits); do git log -1 --format='%s' "$c"; done | paste -sd';' -): $(cat .rails_reason). Reverted without an ignore entry; Renovate offers it again on a later run. Pipeline: ${CI_PIPELINE_URL:-}"
+      push_metrics 2
+      set_marker "$head"
+      return 0
+      ;;
+  esac
+
+  # mode = verify
+  local since
+  since=$(cat .rails_since)
+  for s in $(cat .rails_stacks); do
+    if cat .platform_failed .app_failed 2>/dev/null | tr ' ' '\n' | grep -qx "$s"; then
+      failed+=("$s"); why+=("its terragrunt apply failed")
+      continue
+    fi
+    if grep -qx "$s" .apply_skipped 2>/dev/null; then
+      log "[$s] apply was skipped (state locked); left for the next pipeline"
+      incomplete+=("$s")
+      continue
+    fi
+    log "[$s] running scripts/verify/run --since $since $s"
+    bash scripts/verify/run --since "$since" "$s"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      verified+=("$s")
+    else
+      failed+=("$s"); why+=("its verify checks failed (scripts/verify/run exit $rc)")
+    fi
+  done
+
+  local i stack_why
+  for i in "${!failed[@]}"; do
+    s=${failed[$i]} stack_why="stack $s failed after this bump: ${why[$i]}"
+    for c in $(tac .rails_commits); do
+      commit_stacks "$c" | grep -qx "$s" || continue
+      grep -qx "$c" <<<"$reverted" && continue
+      if revert_commit fail "$c" "$stack_why" "Snapshot:
+$(snapshot_text)"; then
+        reverted=$(printf '%s\n%s' "$reverted" "$c")
+        log "reverted ${c:0:8} as $(git rev-parse --short HEAD)"
+      else
+        incomplete+=("$s")
+      fi
+    done
+  done
+  reverted=$(awk 'NF' <<<"$reverted")
+
+  if [ -n "$reverted" ]; then
+    # Apply the reverted tree now, so this pipeline confirms the rollback.
+    for s in "${failed[@]}"; do
+      log "[$s] applying the reverted tree"
+      if tg_apply "$s"; then rollback="$rollback $s:ok"; else rollback="$rollback $s:FAILED"; fi
+    done
+    msg=":rewind: Renovate rails reverted a bump that failed on master.
+$(for c in $reverted; do echo "- $(git log -1 --format=%s "$c")"; commit_deps "$c" | sed 's/^/    ignored: /'; done)
+Failed: $(for i in "${!failed[@]}"; do printf '%s (%s) ' "${failed[$i]}" "${why[$i]}"; done)
+Rollback apply:${rollback}
+Snapshot taken before the apply:
+$(snapshot_text)
+The revert commit and the ignore entry are pushed to master by this pipeline. No data was restored.
+Pipeline: ${CI_PIPELINE_URL:-}"
+    slack "$msg"
+    log "$msg"
+    echo 1 >.rails_exit
+    push_metrics 1
+  fi
+
+  if [ "${#incomplete[@]}" -gt 0 ]; then
+    log "not handled: ${incomplete[*]}; the marker stays so the next pipeline retries"
+    [ -n "$reverted" ] || push_metrics 3
+    echo 1 >.rails_exit
+    return 0
+  fi
+  [ -n "$reverted" ] || { log "verified: ${verified[*]}"; push_metrics 0; }
+  set_marker "$head"
+  return 0
+}
+
+stage_exit() {
+  if [ -s .rails_exit ]; then
+    log "a Renovate bump failed or could not be handled; see the rails output above"
+    return 1
+  fi
+  return 0
+}
+
+main() {
+  set -uo pipefail
+  if [ -z "${KUBECONFIG:-}" ] && [ -f config ]; then export KUBECONFIG="$PWD/config"; fi
+  case "${1:-}" in
+    prepare) stage_prepare ;;
+    owned) stage_owned ;;
+    finish) stage_finish ;;
+    exit) stage_exit ;;
+    *) echo "usage: renovate-rails prepare|owned|finish|exit" >&2; return 2 ;;
+  esac
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

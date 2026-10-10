@@ -275,6 +275,22 @@ steps:
         echo "Platform stacks to apply: $PLATFORM_COUNT"
         echo "App stacks to apply: $APP_COUNT"
         cat .platform_apply .app_apply
+        # Inputs for scripts/renovate-rails (next command).
+        echo "$DIFF_BASE" > .diff_base
+        echo "$PLATFORM_STACKS" > .platform_stacks
+
+      # ── Renovate rails, part 1: gate and snapshot ──
+      # Acts only on commits authored by renovate-bot that no pipeline has
+      # verified yet (this push, or one whose pipeline a later push cancelled);
+      # for every other push it finds nothing and returns at once. Gate: the
+      # k8s version chain's UPGRADE_GATE_ALERTS plus kured's alertFilterRegexp,
+      # waited on for up to 10 minutes; still blocked -> the bump is reverted
+      # without an ignore entry and Renovate offers it again later. Snapshot:
+      # the stack's *-backup CronJobs run once, plus the etcd snapshot for a
+      # chart bump. Then the stacks join the apply lists below. Design:
+      # docs/runbooks/renovate.md "Rails", ADR-0030.
+      - |
+        bash scripts/renovate-rails prepare
 
       # ── Pre-warm provider cache ──
       - |
@@ -315,7 +331,7 @@ steps:
               # ("Error acquiring the state lock" / "already locked"). The PG case
               # was previously counted as a failure — the #1 source of false reds.
               if echo "$OUTPUT" | grep -qE 'is locked by|Error acquiring the state lock|already locked'; then
-                echo "[$stack] SKIPPED (locked by another session/run)"; break
+                echo "[$stack] SKIPPED (locked by another session/run)"; echo "$stack" >> .apply_skipped; break
               fi
               # Transient: provider-registry download timeout / Vault 5xx /
               # Vault read deadline → bounded retry. Deliberately NOT helm
@@ -359,7 +375,7 @@ steps:
               fi
               # Lock contention → SKIP, not fail (Tier-0 Vault + Tier-1 PG; see platform loop).
               if echo "$OUTPUT" | grep -qE 'is locked by|Error acquiring the state lock|already locked'; then
-                echo "[$stack] SKIPPED (locked by another session/run)"; break
+                echo "[$stack] SKIPPED (locked by another session/run)"; echo "$stack" >> .apply_skipped; break
               fi
               # Transient provider-download / Vault 5xx → bounded retry (see platform loop).
               if [ $ATTEMPT -lt 3 ] && echo "$OUTPUT" | grep -qE 'Failed to install provider|Client\.Timeout exceeded while awaiting headers|error reading from Vault.*Code: 5[0-9][0-9]|Error reading .*: context deadline exceeded|Cannot read PG credentials from Vault'; then
@@ -397,11 +413,34 @@ steps:
             || true
         fi
 
-        FAILED_PLATFORM=$(cat .platform_failed 2>/dev/null | tr -d ' ')
-        if [ -n "$FAILED_PLATFORM" ] || [ -n "$FAILED_APP_STACKS" ]; then
-          echo "=== FAILED STACKS: platform=[$FAILED_PLATFORM ] apps=[$FAILED_APP_STACKS ] ==="
+        echo "$FAILED_APP_STACKS" > .app_failed
+        # A stack the Renovate rails are verifying does not fail the step here:
+        # `renovate-rails finish` reverts its bump and applies the reverted tree.
+        RAILS_OWNED=" $(bash scripts/renovate-rails owned | tr '\n' ' ') "
+        FAILED_PLATFORM=""
+        for s in $(cat .platform_failed 2>/dev/null); do
+          case "$RAILS_OWNED" in *" $s "*) echo "[$s] apply failed: handed to the Renovate rails (revert + rollback)" ;; *) FAILED_PLATFORM="$FAILED_PLATFORM $s" ;; esac
+        done
+        FAILED_APPS=""
+        for s in $FAILED_APP_STACKS; do
+          case "$RAILS_OWNED" in *" $s "*) echo "[$s] apply failed: handed to the Renovate rails (revert + rollback)" ;; *) FAILED_APPS="$FAILED_APPS $s" ;; esac
+        done
+        if [ -n "$FAILED_PLATFORM" ] || [ -n "$FAILED_APPS" ]; then
+          echo "=== FAILED STACKS: platform=[$FAILED_PLATFORM ] apps=[$FAILED_APPS ] ==="
           exit 1
         fi
+
+      # ── Renovate rails, part 2: verify, revert on failure ──
+      # For each stack of a Renovate commit: scripts/verify/run (the stack's
+      # verify.sh, or the floor checks on its namespace). On a failed apply or
+      # verify: git revert of that commit plus its exact version (Renovate-Dep
+      # trailer) in renovate/ignored-versions.json, in one commit as the CI
+      # identity; the reverted tree is applied at once, a Slack message names
+      # the snapshot, and the push below carries the revert to master. Moves
+      # the ConfigMap woodpecker/renovate-rails marker once every Renovate
+      # commit is verified or reverted.
+      - |
+        bash scripts/renovate-rails finish
 
       # ── Commit and push state changes ──
       #
@@ -461,6 +500,7 @@ steps:
         if [ -z "$(git rev-list origin/master..HEAD)" ]; then
           echo "No changes to push"
           rm -f /tmp/.gitcreds
+          bash scripts/renovate-rails exit
           exit 0
         fi
         echo "Pushing $(git rev-list --count origin/master..HEAD) commit(s):"
@@ -474,6 +514,11 @@ steps:
         fi
         git push origin HEAD:master
         rm -f /tmp/.gitcreds
+
+      # ── Renovate rails, part 3: red when a bump was reverted ──
+      # After the push, so the revert reaches master first.
+      - |
+        bash scripts/renovate-rails exit
 
       # (No Slack post on success — Viktor 2026-07-02: CI notifies on FAILED
       # runs only; the notify-failure step below covers those.)

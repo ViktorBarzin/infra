@@ -202,6 +202,14 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
 4. Verification: run the component's checks from the verification contract above. The Woodpecker apply loop has no per-stack hook today, so a new step reads the list of applied stacks and runs each one's verify Job.
 5. On failure: `git revert` of the Renovate commit, with that exact version added to Renovate's ignore list in the same commit, and a Slack page naming the snapshot location. The next upstream release is tried automatically. No automatic data restore.
 
+As built (2026-10-10): `scripts/renovate-rails`, called from the apply step of `.woodpecker/default.yml` (runbook `docs/runbooks/renovate.md`, section "Rails").
+
+- The gate reads both existing lists from their source files: the k8s version chain's `UPGRADE_GATE_ALERTS` (firing criticals) and kured's `alertFilterRegexp`. It waits up to 10 minutes for them to clear.
+- A blocked gate or a failed snapshot reverts the bump without an ignore entry instead of leaving it on master unapplied, because Renovate does not push a bump again once master has it. The Renovate wrapper then skips runs for 2 hours after a hold.
+- Snapshot: every `*-backup` CronJob in the stack's namespaces (this covers Vault raft, dbaas, Immich, Redis, the ClickHouse and Dolt backups from wave 3, and the app backups), plus `default/backup-etcd` for any chart bump.
+- A failed apply counts as a failed check, so a bump that never rolls out is reverted too. The revert commit is applied in the same pipeline and pushed without `[CI SKIP]`, so the next pipeline applies it again.
+- Cancellation: ConfigMap `woodpecker/renovate-rails` records the last master commit up to which every Renovate commit was verified or reverted. Any later pipeline verifies Renovate commits after it.
+
 **Keel retirement** (one change)
 
 1. Scale Keel to 0 first. An active Keel writes back its cached copy of a workload and would revert annotation changes mid-cutover.
