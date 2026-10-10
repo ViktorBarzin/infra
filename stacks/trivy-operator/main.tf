@@ -129,9 +129,13 @@ resource "helm_release" "trivy_operator" {
         limits   = { memory = "1Gi" }
       }
 
-      # Pull image manifests and layers through the LAN pull-through cache
-      # (docs/architecture/networking.md) instead of Docker Hub and GHCR,
-      # which rate-limit and would otherwise be hit once per image per day.
+      # Pull image manifests and layers through the LAN pull-through caches
+      # (registry VM 10.0.20.10, stacks/infra: 5000 Docker Hub, 5010 GHCR,
+      # 5020 Quay, 5030 registry.k8s.io, 5040 reg.kyverno.io) instead of the
+      # upstream registries, which rate-limit and would otherwise be hit once
+      # per image per day. docker.n8n.io fronts Docker Hub's n8nio/n8n, so it
+      # maps to the Docker Hub cache; the first scan hit Docker Hub's
+      # anonymous pull limit there.
       # Trivy tries each mirror first and falls back to the original registry
       # on any error, and reports keep the original image name. The cache
       # speaks plain HTTP; go-containerregistry uses http for RFC 1918 hosts.
@@ -143,6 +147,10 @@ resource "helm_release" "trivy_operator" {
           mirrors = {
             "index.docker.io" = ["10.0.20.10:5000"]
             "ghcr.io"         = ["10.0.20.10:5010"]
+            "quay.io"         = ["10.0.20.10:5020"]
+            "registry.k8s.io" = ["10.0.20.10:5030"]
+            "reg.kyverno.io"  = ["10.0.20.10:5040"]
+            "docker.n8n.io"   = ["10.0.20.10:5000"]
           }
         }
       }
