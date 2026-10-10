@@ -92,11 +92,17 @@ JSON
 
 # --- virtual display + browser viewing ---------------------------------------
 export DISPLAY=:0
+# The processes the pod cannot work without, by PID, so the supervisor at the
+# end can say which one died. The window fitter is deliberately not in here.
+declare -A SUPERVISED
 Xvfb :0 -screen 0 "$SCREEN_GEOMETRY" -nolisten tcp &
+SUPERVISED[$!]=Xvfb
 sleep 1
 openbox &
+SUPERVISED[$!]=openbox
 x11vnc -display :0 -nopw -forever -shared -quiet -nolookup -bg
 websockify --web /usr/share/novnc 6080 localhost:5900 &
+SUPERVISED[$!]=websockify
 
 # --- emulator -----------------------------------------------------------------
 # Use the host GPU when the NVIDIA runtime injected one (driver libs +
@@ -126,6 +132,8 @@ if [ "$GPU_FLAG" = "host" ]; then
   fi
 fi
 
+SUPERVISED[$EMU_PID]=emulator
+
 adb wait-for-device
 echo "Emulator up; waiting for boot completion..."
 until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
@@ -140,7 +148,12 @@ echo "Boot completed."
 # one-shot "nested virtualization" warning dialog, undecorate + fill the phone
 # window, and park the control strip off the right edge. Re-runs for a while to
 # catch the window/dialog appearing, then periodically in case they recreate.
-( export DISPLAY=:0
+#
+# Cosmetic and best-effort, so it runs without the script's `set -e`: under it,
+# any one failing xdotool/wmctrl call in the loop below ended this subshell with
+# status 1, and the supervisor restarted the whole pod for it.
+( set +e
+  export DISPLAY=:0
   fit_once() {
     # auto-OK the nested-virt warning if it is up
     for w in $(xdotool search --name "Nested Virtualization" 2>/dev/null); do
@@ -167,8 +180,15 @@ echo "Boot completed."
 # wildcard bind fails with EADDRINUSE.
 POD_IP=$(hostname -i | awk '{print $1}')
 socat "TCP-LISTEN:5555,bind=${POD_IP},fork,reuseaddr" TCP:127.0.0.1:5555 &
+SUPERVISED[$!]=socat
 
-# Supervise: if any background process dies, exit so the pod restarts.
-wait -n
-echo "A supervised process exited; restarting pod." >&2
+# Supervise: if a supervised process dies, exit so the pod restarts. Name it
+# first. Under `set -e` a non-zero `wait -n` used to end the script on the spot,
+# so the restart reason never reached the log. The pause gives the log shipper
+# the line before the container goes.
+set +e
+wait -n -p DEAD_PID "${!SUPERVISED[@]}"
+status=$?
+echo "Supervised process ${SUPERVISED[$DEAD_PID]:-unknown} (pid ${DEAD_PID:-?}) exited with status ${status}; restarting pod." >&2
+sleep 2
 exit 1
