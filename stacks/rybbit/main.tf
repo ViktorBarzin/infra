@@ -169,7 +169,7 @@ resource "kubernetes_deployment" "clickhouse" {
           # serialization changes), so dump clickhouse.events in Native format
           # before bumping, and keep each hop within ClickHouse's one-year
           # compatibility window.
-          image = "clickhouse/clickhouse-server:26.3.46.2"
+          image = "clickhouse/clickhouse-server:26.9.14.10"
           env {
             name  = "CLICKHOUSE_DB"
             value = local.clickhouse_db
