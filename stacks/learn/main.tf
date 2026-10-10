@@ -137,6 +137,25 @@ resource "kubernetes_config_map" "caddyfile" {
       		try_files {path} {path}index.html /index.html
       		file_server
       	}
+      	# pages.viktorbarzin.me/pe-summit-trip/ — PUBLIC, no login (2026-10-10).
+      	# Viktor's trip planner for the October PE Summit road trip, opened by a
+      	# travel companion without an Authentik account. Same shape as /prep: its
+      	# own ingress (module "ingress_pe_summit_trip", auth = "none"), matched on
+      	# path rather than identity, placed before the identity handles, root
+      	# pinned to the one directory so nothing else in pages/ is reachable.
+      	# The bare path redirects to the trailing slash because the page loads its
+      	# photos by relative path.
+      	@pages_pe_summit_trip {
+      		host pages.viktorbarzin.me
+      		path /pe-summit-trip /pe-summit-trip/*
+      	}
+      	handle @pages_pe_summit_trip {
+      		redir /pe-summit-trip /pe-summit-trip/ 308
+      		root * /repo/src/current/pages/wizard/pe-summit-trip
+      		uri strip_prefix /pe-summit-trip
+      		try_files {path} {path}index.html /index.html
+      		file_server
+      	}
       	# pages.viktorbarzin.me: per-user page spaces (pages/<user>/) + a shared
       	# area (pages/shared/), served from the git-synced monorepo pages/ tree.
       	# Every page is readable by every identity that clears the Authentik gate
@@ -669,6 +688,29 @@ module "ingress_prep" {
     # A carve-out on a host that already has its dashboard tile, so it stays
     # out of the catalog rather than listing pages twice.
     "gethomepage.dev/enabled" = "false"
+  }
+}
+
+# pages.viktorbarzin.me/pe-summit-trip/ — Viktor's trip planner, public with no
+# login so a travel companion without an account can open it (2026-10-10). Same
+# carve-out pattern as ingress_prep above, including auth = "none" rather than
+# "public" for the reason given there.
+module "ingress_pe_summit_trip" {
+  source           = "../../modules/kubernetes/ingress_factory"
+  name             = "pe-summit-trip"
+  host             = "pages"
+  ingress_path     = ["/pe-summit-trip"]
+  service_name     = "learn"
+  port             = 80
+  namespace        = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name  = var.tls_secret_name
+  auth             = "none"
+  dns_type         = "none"
+  external_monitor = false
+  anti_ai_scraping = true
+  extra_annotations = {
+    "traefik.ingress.kubernetes.io/router.priority" = "150"
+    "gethomepage.dev/enabled"                       = "false"
   }
 }
 
