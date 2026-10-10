@@ -1,0 +1,39 @@
+#!/bin/bash
+# milka-help start|stop|status: switch RustDesk on Milka's phone on for a help session and off again.
+# Idle state: RustDesk force-stopped (no service, no boot start, Input accessibility off), so nothing
+# runs and nothing shows. start: Input accessibility on, then RustDesk's own boot receiver starts the
+# service headless; PROJECT_MEDIA is allowed, so capture starts with no prompt, even on the lock screen.
+# Connect with RustDesk ID 1060440055 and the password in Vaultwarden "RustDesk - Milka phone"
+# (Milka organization) or Vault secret/rustdesk-milka.
+# Needs milka-adb and ~/.android/milka-adbkey (see milka-adb).
+# Background: infra docs/plans/2026-10-09-milka-remote-phone-help-design.md
+set -u
+export ADB_SERVER_SOCKET=tcp:localhost:5039 ADB_VENDOR_KEYS=$HOME/.android/milka-adbkey
+PKG=com.carriez.flutter_hbb
+A11Y=$PKG/$PKG.InputService
+D=$(milka-adb "${2:-}") || exit 1
+sh() { adb -s "$D" shell "$@"; }
+running() { sh dumpsys activity services $PKG | grep -q "ServiceRecord.*/.MainService"; }
+
+case "${1:-}" in
+start)
+  sh settings put secure enabled_accessibility_services "$A11Y"
+  sh settings put secure accessibility_enabled 1
+  sh am broadcast -f 0x20 -a $PKG.DEBUG_BOOT_COMPLETED -n $PKG/.BootReceiver >/dev/null
+  for _ in $(seq 1 15); do running && { echo "RustDesk running on $D. Connect to 1060440055."; exit 0; }; sleep 1; done
+  echo "RustDesk service did not start on $D" >&2; exit 1 ;;
+stop)
+  # force-stop ends the service and puts the app in Android's stopped state, which also blocks its
+  # boot receiver; Android drops the Input accessibility entry with it, cleared here to be sure.
+  sh am force-stop $PKG
+  sh settings put secure enabled_accessibility_services '""'
+  sh settings put secure accessibility_enabled 0
+  running && { echo "RustDesk still running on $D" >&2; exit 1; }
+  adb disconnect "$D" >/dev/null
+  echo "RustDesk stopped on $D, adb disconnected." ;;
+status)
+  running && echo "RustDesk running" || echo "RustDesk idle"
+  echo "accessibility: $(sh settings get secure enabled_accessibility_services)"
+  echo "wireless debugging: $(sh settings get global adb_wifi_enabled)" ;;
+*) echo "usage: milka-help start|stop|status [phone-ip]" >&2; exit 2 ;;
+esac
