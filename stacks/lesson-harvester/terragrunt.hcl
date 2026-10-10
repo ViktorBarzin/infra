@@ -21,7 +21,7 @@ inputs = {
   # :latest — CI drives the rollout: on every master push the pipeline builds
   # :latest + :<sha> and runs `kubectl set image deployment/lesson-harvester
   # ...:<sha>`, so the Deployment rolls to the just-built code (the container
-  # image is ignore_changes/KEEL_IGNORE so applies don't fight it). The poll
+  # image is ignore_changes/CI_SETS_IMAGE so applies don't fight it). The poll
   # CronJob uses :latest + Always. Project semver lives in pyproject + git tag.
   image_tag = "latest"
 }

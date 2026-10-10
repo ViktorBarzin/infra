@@ -274,7 +274,7 @@ resource "kubernetes_deployment" "learn" {
 
         container {
           name  = "git-sync"
-          image = "registry.k8s.io/git-sync/git-sync:v4.7.0"
+          image = "registry.k8s.io/git-sync/git-sync:v4.7.1"
           args = [
             "--repo=git@github.com:ViktorBarzin/monorepo.git",
             "--ref=master",
@@ -370,14 +370,9 @@ resource "kubernetes_deployment" "learn" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
       metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
-      spec[0].template[0].spec[0].container[1].image,                     # KEEL_IGNORE_IMAGE
     ]
   }
 
@@ -545,7 +540,7 @@ resource "kubernetes_deployment" "prep_sync" {
       spec {
         container {
           name    = "prep-sync"
-          image   = "python:3.12-slim"
+          image   = "library/python:3.12.15-slim"
           command = ["python", "/app/prep_sync.py"]
           port {
             container_port = 8080
@@ -612,16 +607,9 @@ resource "kubernetes_deployment" "prep_sync" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].labels["tier"],             # stamped by Kyverno sync-tier-label-from-namespace
-      # Kyverno's inject-keel-annotations background rule patches every
-      # Deployment, enrolled namespace or not (accepted 2026-09-19, bead
-      # code-q9iy), so removing these only lasts until its next pass.
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
+      metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
