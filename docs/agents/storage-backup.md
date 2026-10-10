@@ -140,6 +140,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 **App-level CronJobs** (write to Proxmox host NFS, synced to Synology via inotify):
 - MySQL (daily full + per-db), PostgreSQL (daily full + per-db), ClickHouse (daily, rybbit), Dolt (daily, beads-server), Vault (weekly), Vaultwarden (6h + integrity), Redis (weekly), etcd (weekly)
 - **Per-database backups**: `postgresql-backup-per-db` (00:15, `pg_dump -Fc` → `/backup/per-db/<db>/`) and `mysql-backup-per-db` (00:45, `mysqldump` → `/backup/per-db/<db>/`). Enables single-database restore without affecting others.
+- **Pushgateway push without curl**: the PostgreSQL backup jobs (dbaas full + per-db, Immich) run `postgres:16.15-trixie`, which has no curl or wget, and push `backup_last_success_timestamp` with Perl's core `HTTP::Tiny`. Do not add a run-time `apt-get install curl`: that is what broke the push when `bullseye-pgdg` left apt (2026-09-06 to 2026-10-10, dumps fine, timestamp stale). Keep the client major equal to `pg-cluster`'s.
 - **Convention**: New proxmox-lvm apps MUST add a backup CronJob writing to `/mnt/main/<app>-backup/`
 
 **Restore paths**:

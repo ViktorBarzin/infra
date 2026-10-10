@@ -1526,9 +1526,13 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
           spec {
             container {
               name  = "postgresql-backup"
-              image = "postgres:16.4-bullseye"
+              image = "docker.io/library/postgres:16.15-trixie"
               command = ["/bin/sh", "-c", <<-EOT
-                apt-get update -qq && apt-get install -yqq curl >/dev/null 2>&1 || true
+                # Push to the Pushgateway with Perl's core HTTP::Tiny: the image has no curl
+                # or wget, and installing one at run time broke when bullseye-pgdg left apt.
+                push_metrics() {
+                  perl -MHTTP::Tiny -e 'local $/; my $b = <STDIN>; my $r = HTTP::Tiny->new(timeout => 30)->post($ARGV[0], {content => $b, headers => {"Content-Type" => "text/plain"}}); print STDERR "pushgateway: $r->{status} $r->{reason}\n"; exit($r->{success} ? 0 : 1)' "$1"
+                }
                 _t0=$(date +%s)
                 _rb0=$(awk '/^read_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
@@ -1550,7 +1554,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 echo "output:  $(ls -lh /backup/dump_$now.sql | awk '{print $5}')"
 
                 _out_bytes=$(stat -c%s /backup/dump_$now.sql)
-                curl -sf --data-binary @- "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-postgresql-backup" <<PGEOF || true
+                push_metrics "http://prometheus-prometheus-pushgateway.monitoring:9091/metrics/job/immich-postgresql-backup" <<PGEOF || true
                 backup_duration_seconds $${_dur}
                 backup_read_bytes $(( _rb1 - _rb0 ))
                 backup_written_bytes $(( _wb1 - _wb0 ))
