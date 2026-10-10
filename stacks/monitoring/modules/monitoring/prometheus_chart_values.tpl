@@ -3936,6 +3936,43 @@ serverFiles:
               severity: critical
             annotations:
               summary: "Redis backup CronJob has never completed successfully"
+          # ClickHouse (rybbit) and Dolt (beads-server) daily backups, added
+          # 2026-10-10 for the software-currency pre-upgrade snapshot step.
+          # Both jobs push backup_last_success_timestamp only after the dump
+          # has been restored into a scratch copy and checked, so the metric
+          # means "a readable backup exists", not just "the CronJob exited 0".
+          # Daily at 01:10 / 01:25 UTC; 36h matches MySQL/PostgreSQL. Failed
+          # runs are also caught by BackupCronJobFailed below.
+          - alert: ClickHouseBackupStale
+            expr: (time() - backup_last_success_timestamp{job="clickhouse-backup"}) > 129600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "ClickHouse (rybbit) backup is {{ $value | humanizeDuration }} old (threshold: 36h, runs daily 01:10)"
+              description: "rybbit/clickhouse-backup has not pushed a verified backup. Read the last job's logs; restore steps are in docs/runbooks/restore-clickhouse.md."
+          - alert: ClickHouseBackupNeverRun
+            expr: absent(backup_last_success_timestamp{job="clickhouse-backup"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "ClickHouse (rybbit) backup has never reported a successful run to Pushgateway"
+          - alert: DoltBackupStale
+            expr: (time() - backup_last_success_timestamp{job="dolt-backup"}) > 129600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dolt (beads-server) backup is {{ $value | humanizeDuration }} old (threshold: 36h, runs daily 01:25)"
+              description: "beads-server/dolt-backup has not pushed a verified backup. Read the last job's logs; restore steps are in docs/runbooks/restore-dolt.md."
+          - alert: DoltBackupNeverRun
+            expr: absent(backup_last_success_timestamp{job="dolt-backup"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Dolt (beads-server) backup has never reported a successful run to Pushgateway"
           - alert: PrometheusBackupStale
             # The backup sidecar runs monthly on the 1st SUNDAY 04:00 UTC.
             # Consecutive first-Sundays can be up to ~35-37 days apart (e.g.

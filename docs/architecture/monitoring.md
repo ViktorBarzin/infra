@@ -773,6 +773,7 @@ to settle it with one query.
 - **VaultBackupStale**: >8d since last backup
 - **VaultwardenBackupStale**: >8d since last backup
 - **RedisBackupStale**: >8d since last backup
+- **ClickHouseBackupStale** / **DoltBackupStale**: >36h since the last verified backup (`backup_last_success_timestamp` from Pushgateway, pushed only after the job's restore check passes); `...NeverRun` fires if the series has been absent for 48h
 - **PrometheusBackupStale**: >32d since last backup
 - **VaultwardenIntegrityFail**: Backup integrity check failed
 

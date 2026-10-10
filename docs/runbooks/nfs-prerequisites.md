@@ -40,6 +40,8 @@ export automatically; they just have to exist on disk.
 | `mysql-backup`                 | `/srv/nfs/mysql-backup`         | `stacks/dbaas/`         |
 | `postgresql-backup`            | `/srv/nfs/postgresql-backup`    | `stacks/dbaas/`         |
 | `vaultwarden-backup`           | `/srv/nfs/vaultwarden-backup`   | `stacks/vaultwarden/`   |
+| `clickhouse-backup`            | `/srv/nfs/clickhouse-backup`    | `stacks/rybbit/`        |
+| `dolt-backup`                  | `/srv/nfs/dolt-backup`          | `stacks/beads-server/`  |
 
 Use `grep -rn 'nfs_volume' infra/stacks/` to find all active consumers.
 

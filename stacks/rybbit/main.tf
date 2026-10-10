@@ -308,6 +308,14 @@ resource "kubernetes_service" "clickhouse" {
       port        = 8123
       protocol    = "TCP"
     }
+    # Native protocol, for clickhouse-client (the backup CronJob below). The
+    # server already listens on 9000; only the Service lacked the port.
+    port {
+      name        = "native"
+      target_port = 9000
+      port        = 9000
+      protocol    = "TCP"
+    }
   }
 }
 
@@ -344,6 +352,164 @@ resource "kubernetes_cron_job_v1" "clickhouse_truncate_logs" {
                   "echo 'System logs truncated'"
                 ])
               ]
+            }
+          }
+        }
+      }
+    }
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+    ignore_changes = [spec[0].job_template[0].spec[0].template[0].spec[0].dns_config]
+  }
+}
+
+# Daily logical backup of ClickHouse to the PVE NFS share
+# (192.168.1.127:/srv/nfs/clickhouse-backup). Software-currency groundwork
+# (docs/plans/2026-10-09-software-currency-design.md): the pre-upgrade
+# snapshot step needs a backup to run before a ClickHouse bump.
+#
+# Each run writes /backup/<UTC yyyymmdd-hhmm>/ with, per user table, the
+# schema (<db>.<table>.sql, from SHOW CREATE) and the data in Native format
+# (<db>.<table>.native.gz), plus VERSION, counts.tsv and SHA256SUMS. Before
+# the directory is written, the job restores the whole dump into
+# clickhouse-local from the same image and checks every table's row count, so
+# a dump that does not read back never lands. 14-day retention. Restore:
+# docs/runbooks/restore-clickhouse.md.
+#
+# The image must match the server tag above: Native files and SHOW CREATE
+# output are read back by the same release that wrote them.
+module "nfs_clickhouse_backup" {
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "rybbit-clickhouse-backup-host"
+  namespace          = kubernetes_namespace.rybbit.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/clickhouse-backup"
+  storage_class_name = "nfs-pve"
+}
+
+resource "kubernetes_cron_job_v1" "clickhouse_backup" {
+  metadata {
+    name      = "clickhouse-backup"
+    namespace = kubernetes_namespace.rybbit.metadata[0].name
+  }
+  spec {
+    concurrency_policy            = "Forbid"
+    schedule                      = "10 1 * * *"
+    starting_deadline_seconds     = 600
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+    job_template {
+      metadata {}
+      spec {
+        backoff_limit = 2
+        template {
+          metadata {}
+          spec {
+            restart_policy = "Never"
+            container {
+              name  = "clickhouse-backup"
+              image = "clickhouse/clickhouse-server:26.9.14.10"
+              env {
+                name  = "CH_HOST"
+                value = "${kubernetes_service.clickhouse.metadata[0].name}.${kubernetes_namespace.rybbit.metadata[0].name}.svc.cluster.local"
+              }
+              env {
+                name  = "PUSHGATEWAY"
+                value = "http://prometheus-prometheus-pushgateway.monitoring:9091"
+              }
+              env {
+                name = "CLICKHOUSE_PASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = "rybbit-secrets"
+                    key  = "clickhouse_password"
+                  }
+                }
+              }
+              command = ["/bin/bash", "-c", <<-EOT
+                set -eu
+                # Runs in the clickhouse-server image that matches the server. Dumps every
+                # user table (schema as SQL, data in Native format), restores the dump into
+                # clickhouse-local to prove it reads back, then writes it to NFS.
+                ch() { clickhouse-client --host "$CH_HOST" --port 9000 --user default --password "$CLICKHOUSE_PASSWORD" "$@"; }
+                t0=$(date -u +%s)
+                TS=$(date -u +%Y%m%d-%H%M)
+                work=/tmp/dump
+                mkdir -p "$work"
+                ch -q "SELECT version()" > "$work/VERSION"
+                ch -q "SELECT name FROM system.databases WHERE name NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA') ORDER BY name FORMAT TSV" > "$work/databases"
+                ch -q "SELECT database, name, engine LIKE '%MergeTree' OR engine IN ('Log', 'TinyLog', 'StripeLog', 'Memory') FROM system.tables WHERE database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA') AND NOT is_temporary ORDER BY database, name FORMAT TSV" > "$work/tables.tsv"
+                : > "$work/counts.tsv"
+                while read -r db; do
+                  ch -q "SHOW CREATE DATABASE \`$db\` FORMAT TSVRaw" > "$work/$db.database.sql"
+                done < "$work/databases"
+                while IFS="$(printf '\t')" read -r db t hasdata; do
+                  ch -q "SHOW CREATE TABLE \`$db\`.\`$t\` FORMAT TSVRaw" > "$work/$db.$t.sql"
+                  if [ "$hasdata" = 1 ]; then
+                    n=$(ch -q "SELECT count() FROM \`$db\`.\`$t\`")
+                    ch -q "SELECT * FROM \`$db\`.\`$t\` FORMAT Native" | gzip -6 > "$work/$db.$t.native.gz"
+                    printf '%s\t%s\t%s\n' "$db" "$t" "$n" >> "$work/counts.tsv"
+                  fi
+                done < "$work/tables.tsv"
+
+                # Restore check: tables that hold data first, then everything else (views).
+                r="$work/restore.sql"
+                : > "$r"
+                while read -r db; do
+                  [ "$db" = default ] || { cat "$work/$db.database.sql"; echo ";"; } >> "$r"
+                done < "$work/databases"
+                for pass in 1 0; do
+                  while IFS="$(printf '\t')" read -r db t hasdata; do
+                    [ "$hasdata" = "$pass" ] || continue
+                    { cat "$work/$db.$t.sql"; echo ";"; } >> "$r"
+                    [ "$hasdata" = 1 ] && echo "INSERT INTO \`$db\`.\`$t\` SELECT * FROM file('$work/$db.$t.native.gz', 'Native');" >> "$r"
+                  done < "$work/tables.tsv"
+                done
+                clickhouse-local --path /tmp/restore --queries-file "$r"
+                fail=0
+                while IFS="$(printf '\t')" read -r db t n; do
+                  got=$(clickhouse-local --path /tmp/restore -q "SELECT count() FROM \`$db\`.\`$t\`")
+                  echo "table $db.$t source=$n restored=$got"
+                  [ "$got" -ge "$n" ] || fail=1
+                done < "$work/counts.tsv"
+                [ "$fail" -eq 0 ] || { echo "restore check failed, not writing the backup"; exit 1; }
+
+                out=/backup/$TS
+                mkdir -p "$out.partial"
+                cp "$work"/*.sql "$work"/*.native.gz "$work/VERSION" "$work/databases" "$work/tables.tsv" "$work/counts.tsv" "$out.partial/"
+                rm -f "$out.partial/restore.sql"
+                (cd "$out.partial" && sha256sum * > SHA256SUMS)
+                mv "$out.partial" "$out"
+                find /backup -mindepth 1 -maxdepth 1 -type d -name '20*' -mtime +14 -exec rm -rf {} +
+                find /backup -mindepth 1 -maxdepth 1 -type d -name '*.partial' -mtime +1 -exec rm -rf {} +
+
+                dur=$(( $(date -u +%s) - t0 ))
+                bytes=$(du -sb "$out" | cut -f1)
+                echo "backup written: $out ($bytes bytes, $dur s)"; ls -l "$out"
+                printf 'backup_duration_seconds %s\nbackup_output_bytes %s\nbackup_last_success_timestamp %s\n' "$dur" "$bytes" "$(date -u +%s)" > /tmp/metrics
+                wget -qO- --post-file=/tmp/metrics "$PUSHGATEWAY/metrics/job/clickhouse-backup" || echo "pushgateway push failed"
+              EOT
+              ]
+              resources {
+                requests = {
+                  cpu    = "50m"
+                  memory = "256Mi"
+                }
+                limits = {
+                  memory = "1Gi"
+                }
+              }
+              volume_mount {
+                name       = "backup"
+                mount_path = "/backup"
+              }
+            }
+            volume {
+              name = "backup"
+              persistent_volume_claim {
+                claim_name = module.nfs_clickhouse_backup.claim_name
+              }
             }
           }
         }

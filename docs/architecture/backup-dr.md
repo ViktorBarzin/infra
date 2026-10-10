@@ -449,6 +449,8 @@ K8s CronJobs run inside the cluster, dumping database/state to NFS-exported back
 - **PostgreSQL per-db** (`pg_dump -Fc`, 00:15): Dumps each database individually to `/mnt/main/postgresql-backup/per-db/<dbname>/dump_*.dump`. Enables single-database restore via `pg_restore -d <db> --clean --if-exists`. 14-day rotation.
 - **MySQL full** (`mysqldump --all-databases`, 00:30): Dumps all databases to `/mnt/main/mysql-backup/dump_*.sql.gz`. 14-day rotation.
 - **MySQL per-db** (`mysqldump`, 00:45): Dumps each database individually to `/mnt/main/mysql-backup/per-db/<dbname>/dump_*.sql.gz`. Enables single-database restore. 14-day rotation.
+- **ClickHouse** (rybbit, 01:10): CronJob `clickhouse-backup` writes schema plus Native-format rows per table to `/srv/nfs/clickhouse-backup/<yyyymmdd-hhmm>/`, after restoring the dump into `clickhouse-local` to check it. 14-day rotation. Runbook: `docs/runbooks/restore-clickhouse.md`.
+- **Dolt** (beads-server, 01:25): CronJob `dolt-backup` writes a mysqldump per database to `/srv/nfs/dolt-backup/<yyyymmdd-hhmm>/`, after restoring it into a scratch Dolt directory to check it. Current rows only, no commit history. 14-day rotation. Runbook: `docs/runbooks/restore-dolt.md`.
 
 **Daily backups (Sunday 01:00-04:00)**:
 - **etcd**: `etcdctl snapshot save /mnt/main/etcd-backup/snapshot-$(date +%Y%m%d).db`. 30-day retention. Critical for cluster recovery.

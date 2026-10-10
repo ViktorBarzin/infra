@@ -138,7 +138,7 @@ resource "kubernetes_persistent_volume_claim" "data_encrypted" {
 - `nfs-ssd/` — mirrors `/srv/nfs-ssd` on Proxmox (inotify change-tracked rsync)
 
 **App-level CronJobs** (write to Proxmox host NFS, synced to Synology via inotify):
-- MySQL (daily full + per-db), PostgreSQL (daily full + per-db), Vault (weekly), Vaultwarden (6h + integrity), Redis (weekly), etcd (weekly)
+- MySQL (daily full + per-db), PostgreSQL (daily full + per-db), ClickHouse (daily, rybbit), Dolt (daily, beads-server), Vault (weekly), Vaultwarden (6h + integrity), Redis (weekly), etcd (weekly)
 - **Per-database backups**: `postgresql-backup-per-db` (00:15, `pg_dump -Fc` → `/backup/per-db/<db>/`) and `mysql-backup-per-db` (00:45, `mysqldump` → `/backup/per-db/<db>/`). Enables single-database restore without affecting others.
 - **Convention**: New proxmox-lvm apps MUST add a backup CronJob writing to `/mnt/main/<app>-backup/`
 
