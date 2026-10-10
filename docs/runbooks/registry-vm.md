@@ -243,6 +243,41 @@ homelab metrics query 'up{job="registry-cache-host"}'
 homelab metrics query 'node_filesystem_avail_bytes{job="registry-cache-host",mountpoint="/"}'
 ```
 
+### Freeing disk with the cache's own expiry
+
+Each pull-through registry (`registry:2.8.3`, `proxy.ttl: 168h`) deletes a
+cached blob or manifest 7 days after it first fetched it, whether or not it
+is still used, and refetches it from upstream on the next request. The
+schedule is `/opt/registry/data/<cache>/scheduler-state.json`: one entry per
+cached object with `Key` (`repo@sha256:...`), `ExpiryData` and `EntryType`
+(0 blob, 1 manifest). On start the registry fires every entry whose expiry
+has passed, which removes the repository's link and the blob data
+(`registry/proxy/proxyregistry.go`, `OnBlobExpire`).
+
+So when a burst of pulls fills the disk, the content added by that burst can
+be expired early, using the registry's own deletion path rather than `rm`:
+
+1. Pick the entries by expiry window, e.g. blobs fetched after 07:30 today
+   have `ExpiryData` from 07:30 seven days ahead. Sum their blob sizes first.
+2. `docker stop registry-<cache>`, copy `scheduler-state.json` to
+   `/dev/shm`, set `ExpiryData` of the chosen entries to a past time, write
+   the file back, `docker start registry-<cache>`.
+3. Check `df -B1 /`, then a real manifest fetch on every port and a blob
+   fetch for one expired digest (it must come back 200 from upstream).
+
+Expire blobs, not manifests: Docker Hub counts manifest GETs against its
+pull limit and blob GETs not. Never apply this to `data/private`, which is
+authoritative and has no upstream.
+
+Done on 2026-10-10 after the first Trivy scan wrote about 42 GB into the
+caches (19 GB used at 02:00, 31 MB free by 15:41): 501 GHCR blob entries
+across 47 repositories, every GHCR blob first fetched after 07:30, 19.5 GB.
+Free space went from 20 MB to 19.5 GB. Docker Hub's 18.6 GB from the same
+scan was kept, because Trivy's next rescan reads those layers through the
+cache again; GHCR is no longer mirrored for Trivy
+(`stacks/trivy-operator/main.tf`), so it does not refill. The rest of the
+burst expires on its own on 2026-10-17.
+
 ## Rollback
 
 A pre-change backup of `/etc/resolv.conf`, `/etc/systemd/resolved.conf`,
