@@ -17,12 +17,17 @@ resource "helm_release" "loki" {
   # unpinned, a refreshed helm repo index silently upgrades to the latest
   # chart on the next apply. Pinned 2026-07-06 while fixing the inert
   # `loki.ruler` values key (chart consumes `loki.rulerConfig`). Bump
-  # deliberately, with values migration.
-  version = "7.0.0"
+  # deliberately, with values migration. 2026-10-10: 7.0.0 -> 7.3.0 (Loki
+  # 3.6.11, canary 3.6.12), rendered manifests differ only in image tags and
+  # labels. grafana/loki 7.x now tracks Grafana Enterprise Logs and stays on
+  # Loki 3.6.x; Loki 3.7+ needs the grafana-community/loki chart (repo switch).
+  version = "7.3.0"
 
-  values      = [templatefile("${path.module}/loki.yaml", {})]
-  timeout     = 600
-  max_history = 10 # see helm_release.prometheus for why history is capped
+  values          = [templatefile("${path.module}/loki.yaml", {})]
+  atomic          = true
+  cleanup_on_fail = true
+  timeout         = 600
+  max_history     = 10 # see helm_release.prometheus for why history is capped
 
   depends_on = [kubernetes_config_map.loki_alert_rules]
 }
