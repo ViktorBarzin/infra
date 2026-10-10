@@ -92,12 +92,12 @@ resource "kubernetes_persistent_volume_claim" "data" {
 # Drop folder: any producer (Nextcloud sync, scp, future phone pipeline) lands
 # DJI .txt logs here over NFS; the app auto-imports on SYNC_INTERVAL.
 module "nfs_sync_logs" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "drone-logbook-sync-logs"
-  namespace  = kubernetes_namespace.drone_logbook.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/drone-logbook/sync-logs"
-  storage    = "5Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "drone-logbook-sync-logs"
+  namespace          = kubernetes_namespace.drone_logbook.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/drone-logbook/sync-logs"
+  storage            = "5Gi"
   storage_class_name = "nfs-pve"
 }
 
@@ -253,11 +253,11 @@ resource "kubernetes_service" "drone_logbook" {
 # -----------------------------------------------------------------------------
 
 module "nfs_backup" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "drone-logbook-backup-host"
-  namespace  = kubernetes_namespace.drone_logbook.metadata[0].name
-  nfs_server = var.nfs_server
-  nfs_path   = "/srv/nfs/drone-logbook-backup"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "drone-logbook-backup-host"
+  namespace          = kubernetes_namespace.drone_logbook.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/drone-logbook-backup"
   storage_class_name = "nfs-pve"
 }
 
@@ -312,6 +312,12 @@ resource "kubernetes_cron_job_v1" "backup" {
                 now=$(date +"%Y_%m_%d_%H_%M")
                 mkdir -p /backup/$now
                 cp -a /data/. /backup/$now/
+                # cp -a copies /data's own mtime onto the snapshot directory.
+                # The app is usually parked (sablier), so /data can go weeks
+                # without a write; without this touch the rotation below saw
+                # the new snapshot as older than 30 days and deleted it
+                # (every run failed this way from 2026-08-05 to 2026-10-10).
+                touch /backup/$now
                 # Rotate — 30 day retention
                 find /backup -maxdepth 1 -mindepth 1 -type d -mtime +30 -exec rm -rf {} +
                 _dur=$(($(date +%s) - _t0))

@@ -24,9 +24,9 @@ graph TB
     end
 
     subgraph MySQL
-        A3 --> MYC[MySQL InnoDB Cluster<br/>3 instances]
+        A3 --> MYC[MySQL standalone<br/>mysql-standalone-0]
         MYC --> LVM1[Proxmox-LVM Storage]
-        MYC -.anti-affinity.-> NODE1[Exclude k8s-node1<br/>GPU node]
+        MYC -.anti-affinity.-> NODE1[Exclude GPU nodes]
     end
 
     subgraph Redis
@@ -51,7 +51,7 @@ graph TB
 |-----------|---------|----------|---------|
 | PostgreSQL (CNPG) | CloudNativePG (PostGIS 16: `postgis:16`) | `dbaas` namespace | Primary/replica cluster, auto-failover |
 | PgBouncer | 3 replicas | `dbaas` namespace | Connection pooling for PostgreSQL |
-| MySQL InnoDB Cluster | 8.4.4 | `dbaas` namespace | Multi-master MySQL cluster |
+| MySQL standalone | 8.4.8 (`mysql:8.4.8`) | `dbaas` namespace | Single MySQL instance (StatefulSet `mysql-standalone`) |
 | Redis | Latest | `redis` namespace | Shared cache layer |
 | Vault DB Engine | - | `vault` namespace | Automated credential rotation |
 
@@ -61,7 +61,7 @@ graph TB
 |---------|----------|-------|
 | PostgreSQL (primary) | `pg-cluster-rw.dbaas.svc.cluster.local` | Always use this via PgBouncer |
 | PgBouncer | `pgbouncer.dbaas.svc.cluster.local` | Connection pool (3 replicas) |
-| MySQL | `mysql.dbaas.svc.cluster.local` | InnoDB Cluster VIP |
+| MySQL | `mysql.dbaas.svc.cluster.local` | Selects the `mysql-standalone` pod |
 | Redis | `redis.redis.svc.cluster.local` | Shared instance |
 | PostgreSQL (compat) | `postgresql.dbaas.svc.cluster.local` | Compatibility service, selects CNPG primary |
 
@@ -95,22 +95,17 @@ graph TB
 - tripit
 - 5 active PG roles
 
-### MySQL InnoDB Cluster
+### MySQL standalone
 
-1. **Cluster Topology**: 3 MySQL instances with auto-recovery
-   - Multi-master replication
-   - Automatic split-brain resolution
+1. **Topology**: one `mysql:8.4.8` instance, a raw `kubernetes_stateful_set_v1` (`mysql-standalone`) in `stacks/dbaas/modules/dbaas/main.tf`. It replaced the MySQL InnoDB Cluster on 2026-04-16. The image pin and how to bump it are explained in the comment above the `image` line there.
 
-2. **Storage**: Proxmox-LVM persistent volumes
-   - Thin-provisioned LVM on Proxmox hosts
-   - Block-level storage with proper write guarantees
+2. **Storage**: PVC `data-mysql-standalone-0`, 30Gi on `proxmox-lvm-encrypted`.
 
-3. **Anti-Affinity**: Excludes k8s-node1 (GPU node)
-   - Pods scheduled to node2, node3, node4, etc.
-   - Keeps database workloads off the GPU-dedicated node
+3. **Anti-Affinity**: excludes nodes labelled `nvidia.com/gpu.present=true`, keeping the database off the GPU node.
 
-4. **Resource Allocation**: 2Gi request / 3Gi limit
-   - Right-sized based on VPA recommendations
+4. **Resource Allocation**: 4Gi request / 6Gi limit (2Gi InnoDB buffer pool).
+
+The InnoDB Cluster's leftovers (a CR stuck in deletion since 2026-04-18 on the finalizers of the removed operator, its scaled-to-zero StatefulSet, router Deployment, Services, PDB, Secrets and RoleBindings, plus the `mysql.oracle.com` and `zalando.org` kopf CRDs) were removed on 2026-10-10. None of them was in Terraform state.
 
 **Used by**:
 - wrongmove (realestate-crawler)
@@ -302,12 +297,14 @@ resource "kubernetes_secret" "db_creds" {
 - Essential for apps that don't implement connection pooling
 - Required for Vault DB engine compatibility with some apps
 
-### Why MySQL InnoDB Cluster?
+### Why a single MySQL instance?
 
-**Alternatives considered**:
+The cluster ran MySQL InnoDB Cluster until 2026-04-16, when MySQL moved to the single `mysql-standalone` StatefulSet. Recovery relies on the daily dumps (`mysql-backup`, `mysql-backup-per-db`) and `docs/runbooks/restore-mysql.md`. The original comparison is kept below for history.
+
+**Alternatives considered at the time** (InnoDB Cluster era):
 1. **Single MySQL instance**: No HA
 2. **Galera Cluster**: Complex, split-brain issues
-3. **InnoDB Cluster (chosen)**: Built-in multi-master, auto-recovery
+3. **InnoDB Cluster (chosen then)**: Built-in multi-master, auto-recovery
 
 **Benefits**:
 - Native MySQL HA solution

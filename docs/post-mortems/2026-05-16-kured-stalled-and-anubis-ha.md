@@ -149,7 +149,7 @@ The two daemons never touched the same directory.
 - [ ] `KuredRebootBacklog` Prometheus alert. Spec: `kured_reboot_required == 1 and (time() - timestamp(kured_reboot_required)) > 86400`.
 - [ ] Add a `hostFilePath` value to the kured Helm release for explicit declaration (current setup is correct but undocumented).
 - [ ] Audit periodically for new single-replica + `minAvailable=1` PDB patterns (could be a Kyverno warn policy).
-- [ ] Phase 4: clean up the InnoDB Cluster CR + remaining `mysql-cluster-pdb` once the bitnami legacy is fully decommissioned.
+- [x] Phase 4: clean up the InnoDB Cluster CR + remaining `mysql-cluster-pdb` once the bitnami legacy is fully decommissioned. Done 2026-10-10 (software-currency adjacent fixes): CR finalizers cleared, owned objects garbage-collected, operator CRDs deleted.
 
 ## File pointers
 
