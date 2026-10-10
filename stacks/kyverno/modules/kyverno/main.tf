@@ -18,6 +18,7 @@ resource "helm_release" "kyverno" {
   create_namespace = false
   name             = "kyverno"
   atomic           = true
+  cleanup_on_fail  = true
 
   repository = "https://kyverno.github.io/kyverno/"
   chart      = "kyverno"
@@ -26,8 +27,15 @@ resource "helm_release" "kyverno" {
   # a time per the kyverno upgrade guide (per-minor CRD notes). atomic=true rolls back
   # a failed rollout; forceFailurePolicyIgnore keeps admissions open if the webhook is
   # mid-roll. Each hop verified: 17 ClusterPolicies stay Ready + webhook responds.
-  # 3.6.1->3.7.2 done 2026-06-21 (clean). Now 3.7.2 (1.17.2) -> 3.8.1 (1.18.1).
-  version = "3.8.1"
+  # 3.6.1->3.7.2 done 2026-06-21 (clean). 3.7.2 (1.17.2) -> 3.8.1 (1.18.1) done 2026-09-15.
+  # 3.8.1 (1.18.1) -> 3.9.1 (1.19.1) on 2026-10-10: no values change; the rendered
+  # diff only adds --excludeBootstrapResources=false / --maxGlobalContextEntries=0
+  # (both defaults) and flags the kyverno.io/v1 ClusterPolicy and v2 CleanupPolicy
+  # CRD versions deprecated. Kyverno 1.20 removes those types, so all ClusterPolicies
+  # here and cleanup-failed-pods must move to the CEL policy types
+  # (ValidatingPolicy/MutatingPolicy/GeneratingPolicy/DeletingPolicy) and run
+  # `kyverno migrate` before the next minor.
+  version = "3.9.1"
 
   values = [yamlencode({
     # When Kyverno is unavailable, allow pod creation to proceed without
