@@ -3973,6 +3973,31 @@ serverFiles:
               severity: warning
             annotations:
               summary: "Dolt (beads-server) backup has never reported a successful run to Pushgateway"
+          # PostgreSQL dumps, grouped: dbaas full dump, dbaas per-database
+          # dumps, and the Immich dump. Each job pushes
+          # backup_last_success_timestamp after the dump is written. The
+          # kube_cronjob-based PostgreSQLBackupStale above covers only the dbaas
+          # full dump and fires on a Job exiting 0, so this adds per-db and
+          # Immich and reads the job's own success signal. Same 36h threshold
+          # as ClickHouse/Dolt; all three run daily around 00:00.
+          - alert: PostgresBackupPushStale
+            expr: (time() - backup_last_success_timestamp{job=~"postgresql-backup|postgresql-backup-per-db|immich-postgresql-backup"}) > 129600
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.job }} has not pushed a successful backup for {{ $value | humanizeDuration }} (threshold: 36h, runs daily)"
+              description: "Read the last run of the {{ $labels.job }} CronJob (namespace dbaas, or immich for immich-postgresql-backup). Restore steps: docs/runbooks/restore-postgresql.md."
+          - alert: PostgresBackupNeverPushed
+            expr: |
+              absent(backup_last_success_timestamp{job="postgresql-backup"})
+              or absent(backup_last_success_timestamp{job="postgresql-backup-per-db"})
+              or absent(backup_last_success_timestamp{job="immich-postgresql-backup"})
+            for: 48h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.job }} has never reported a successful run to Pushgateway"
           - alert: PrometheusBackupStale
             # The backup sidecar runs monthly on the 1st SUNDAY 04:00 UTC.
             # Consecutive first-Sundays can be up to ~35-37 days apart (e.g.

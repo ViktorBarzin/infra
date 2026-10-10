@@ -774,6 +774,7 @@ to settle it with one query.
 - **VaultwardenBackupStale**: >8d since last backup
 - **RedisBackupStale**: >8d since last backup
 - **ClickHouseBackupStale** / **DoltBackupStale**: >36h since the last verified backup (`backup_last_success_timestamp` from Pushgateway, pushed only after the job's restore check passes); `...NeverRun` fires if the series has been absent for 48h
+- **PostgresBackupPushStale**: >36h since `postgresql-backup`, `postgresql-backup-per-db` or `immich-postgresql-backup` last pushed `backup_last_success_timestamp` (one alert per job, warning); **PostgresBackupNeverPushed** fires if one of the three series has been absent for 48h
 - **PrometheusBackupStale**: >32d since last backup
 - **VaultwardenIntegrityFail**: Backup integrity check failed
 
