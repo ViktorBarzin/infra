@@ -1,7 +1,9 @@
 # Pairing a television with the f1 API (f1-stream ADR-0007).
 #
-# The TV shows a short code and polls; a person opens /pair on a phone, signs in
-# through Authentik, types the code, and the backend mints that device a token.
+# The TV shows a short code and polls; a member of "F1 Users" opens /pair on a
+# phone, signs in through the f1-stream OIDC application (members.tf), types
+# the code, and the backend records the TV and mints it a token bound to that
+# record (f1-stream ADR-0021).
 # Nothing is ever typed on the television, which is the whole point: a password
 # field on a TV remote is about forty D-pad presses.
 #
@@ -12,14 +14,14 @@
 # api host (which is how tripit solved the same problem) would need its own DNS
 # record, ingress and certificate for no gain here.
 #
-# WHY forward-auth RATHER THAN AUTHENTIK'S OWN DEVICE-CODE FLOW. Authentik does
+# WHY NOT AUTHENTIK'S OWN DEVICE-CODE FLOW. Authentik does
 # advertise RFC 8628 -- `device_authorization_endpoint` and the
 # `urn:ietf:params:oauth:grant-type:device_code` grant are both in the discovery
 # document -- but the default brand has `flow_device_code` unset and this
 # instance has no device-code flow to point it at, so the endpoint has no page
 # to render. Standing that up is a flow-authoring change we have not tested.
-# Forward-auth on this one path is the gate that already works here, and it is
-# the same gate /admin/login has used since the admin session was introduced.
+# This path used forward-auth until 2026-10-10; it now relies on the app's own
+# Member session, because forward-auth admits Home Server Admins only.
 #
 # The television never sees any of this. Its contract is "ask for a code, poll
 # for a token", which is identical whether the backend approves the code itself
@@ -27,7 +29,6 @@
 # behind /api/device/ with no client release.
 module "ingress_tv_pairing" {
   source       = "../../modules/kubernetes/ingress_factory"
-  auth         = "required"
   host         = "f1"
   name         = "f1-tv-pairing"
   ingress_path = ["/pair"]
@@ -38,24 +39,24 @@ module "ingress_tv_pairing" {
   # The public ingress owns the DNS record and the uptime monitor for this host;
   # this is a longer path prefix on the same name, which Traefik prefers, and it
   # points at the app directly rather than through Anubis. A proof-of-work
-  # challenge in front of a sign-in redirect only gets in the way, and Authentik
-  # is the stronger gate -- the same reasoning as ingress_admin_login above it.
+  # challenge in front of a sign-in redirect only gets in the way, and the
+  # Member session the app checks is the stronger gate.
   dns_type         = "none"
   homepage_enabled = false
   tls_secret_name  = var.tls_secret_name
   anti_ai_scraping = false
 
-  # Starts narrow deliberately. Today one television needs pairing and Viktor is
-  # the person who pairs it. Widening this to the group that may watch is a
-  # one-line change here; narrowing it after friends have paired devices is not,
-  # because their tokens would already exist. The app checks the header again
-  # before it approves a code, so this list is the outer gate rather than the
-  # only one.
-  allowed_groups = ["Home Server Admins"]
+  # No forward-auth since 2026-10-10 (f1-stream ADR-0021). Any member of
+  # "F1 Users" may pair a TV now, and the domain-wide forward-auth application
+  # admits Home Server Admins only, so it would refuse them here. The app is the
+  # gate instead: /pair reads the Member session cookie that sign-in through the
+  # f1-stream OIDC application mints (members.tf), and redirects to /login
+  # without one. Paired TVs are recorded and can be unpaired, which is what
+  # makes widening this safe to undo.
+  # auth = "app": the f1-stream Member session (OIDC sign-in, members.tf) gates /pair
+  auth = "app"
 
-  # Appended after the forward-auth middleware, which is where the factory puts
-  # extra_middlewares. The app refuses a request that arrives without the
-  # header this stamps, so a caller who skips the ingress and talks to the
-  # Service cannot approve a television. See ingress-proof.tf.
-  extra_middlewares = ["f1-stream-ingress-proof@kubernetescrd"]
+  # No ingress-proof middleware any more: it guarded X-authentik-* headers, and
+  # /pair no longer reads any. A Member session is a cookie this app signed, so
+  # reaching the Service directly gains a caller nothing.
 }
