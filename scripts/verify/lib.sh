@@ -11,6 +11,10 @@
 PROM_URL=${VERIFY_PROM_URL:-http://prometheus-server.monitoring.svc.cluster.local}
 VERIFY_OWN_NS=${VERIFY_OWN_NS:-verify}
 TRAEFIK_SVC=${VERIFY_TRAEFIK_SVC:-traefik/traefik}
+# Sent with every HTTP probe. Sablier ignores user agents matching
+# "blackbox", so a probe never wakes an app parked at 0 replicas (a plain curl
+# woke affine for its 3h session on the first run).
+VERIFY_UA=${VERIFY_UA:-homelab-verify/1 (blackbox probe; docs/runbooks/verify-jobs.md)}
 
 # Alerts never counted by the floor: Trivy findings follow image scans rather
 # than the health of the change, and Watchdog/InfoInhibitor always fire.
@@ -64,6 +68,17 @@ retry() {
 
 k() { kubectl "$@"; }
 
+# iso_epoch <RFC 3339 timestamp> -> epoch seconds (busybox date cannot parse
+# Kubernetes timestamps, jq can)
+iso_epoch() {
+  jq -rn --arg t "$1" '$t | sub("\\.[0-9]+"; "") | fromdateiso8601'
+}
+
+# age_seconds <RFC 3339 timestamp>
+age_seconds() {
+  echo $(($(date +%s) - $(iso_epoch "$1")))
+}
+
 # ---------------------------------------------------------------------------
 # Prometheus
 # ---------------------------------------------------------------------------
@@ -114,6 +129,18 @@ expect_series() {
 pod_of() {
   k get pods -n "$1" -l "$2" --field-selector=status.phase=Running \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
+}
+
+# meta_list <api path> -> PartialObjectMetadataList JSON (metadata only), for
+# resources whose full objects are too large to list in a 512Mi pod
+# (VulnerabilityReports run to hundreds of MB).
+meta_list() {
+  local tok
+  tok=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+  curl -sS --max-time 60 --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+    -H "Authorization: Bearer $tok" \
+    -H 'Accept: application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1' \
+    "https://kubernetes.default.svc$1"
 }
 
 # images_of <ns> <kind/name> -> container images of the pod template
@@ -200,7 +227,7 @@ expect_workload_image() {
 http_code() {
   local url=$1
   shift
-  curl -sk -o /dev/null -w '%{http_code}' --max-time 20 "$@" "$url"
+  curl -sk -A "$VERIFY_UA" -o /dev/null -w '%{http_code}' --max-time 20 "$@" "$url"
 }
 
 # expect_http <url> <code-regex> [curl args...]
@@ -216,7 +243,7 @@ expect_http() {
 expect_body() {
   local url=$1 re=$2 body
   shift 2
-  body=$(curl -sk --max-time 30 "$@" "$url") || { echo "request failed: $url"; return 1; }
+  body=$(curl -sk -A "$VERIFY_UA" --max-time 30 "$@" "$url") || { echo "request failed: $url"; return 1; }
   if grep -Eq -- "$re" <<<"$body"; then
     echo "$url matches /$re/"
   else
@@ -236,7 +263,7 @@ via_traefik() {
   local host=$1 path=$2 ip
   shift 2
   ip=${_TRAEFIK_IP:-$(traefik_ip)}
-  curl -sk -o /dev/null -w '%{http_code}' --max-time 20 --resolve "$host:443:$ip" "$@" "https://$host$path"
+  curl -sk -A "$VERIFY_UA" -o /dev/null -w '%{http_code}' --max-time 20 --resolve "$host:443:$ip" "$@" "https://$host$path"
 }
 
 # expect_ingress <host> <path> <code-regex> [curl args...]
@@ -256,6 +283,20 @@ tcp_open() {
     echo "$1:$2 closed"
     return 1
   fi
+}
+
+# backend_parked <ns> <ingress>
+# True when the ingress's backend Service has no ready endpoint, which is how
+# a parked app (Deployment at 0 replicas, by hand or by Sablier) looks. A 503
+# from such a route is expected; a crashed app is caught by the workload check
+# instead, because its Deployment still asks for replicas it cannot make ready.
+backend_parked() {
+  local svc n
+  svc=$(k get ingress -n "$1" "$2" -o jsonpath='{.spec.rules[0].http.paths[0].backend.service.name}' 2>/dev/null)
+  [ -n "$svc" ] || return 1
+  n=$(k get endpointslices -n "$1" -l "kubernetes.io/service-name=$svc" -o json 2>/dev/null |
+    jq '[.items[].endpoints[]? | select(.conditions.ready == true)] | length')
+  [ "${n:-1}" -eq 0 ]
 }
 
 # ---------------------------------------------------------------------------
@@ -282,10 +323,13 @@ _owner_json() {
 #   pvc=<name>           mount this PVC at /data
 #   cpu=<q> memory=<q>   resource requests (memory is also the limit)
 #   command=<shell>      shell to run the script with (default /bin/sh)
+#   rm=1                 delete the pod once its log is read. Needed for pods
+#                        that mount a PVC: a Completed pod still holds the PVC
+#                        against deletion (pvc-protection).
 run_pod() {
   local suffix=$1 image=$2 script=$3
   shift 3
-  local secret="" gpu="" timeout=300 pvc="" cpu="20m" memory="128Mi" shell="/bin/sh" opt
+  local secret="" gpu="" timeout=300 pvc="" cpu="20m" memory="128Mi" shell="/bin/sh" rm="" opt
   for opt in "$@"; do
     case "$opt" in
       secret=*) secret=${opt#secret=} ;;
@@ -295,6 +339,7 @@ run_pod() {
       cpu=*) cpu=${opt#cpu=} ;;
       memory=*) memory=${opt#memory=} ;;
       command=*) shell=${opt#command=} ;;
+      rm=*) rm=${opt#rm=} ;;
     esac
   done
   local name
@@ -354,6 +399,7 @@ run_pod() {
   k logs -n "$VERIFY_OWN_NS" "$name" 2>/dev/null
   local code
   code=$(k get pod -n "$VERIFY_OWN_NS" "$name" -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}')
+  [ -n "$rm" ] && k delete pod -n "$VERIFY_OWN_NS" "$name" --wait=true --timeout=60s >/dev/null 2>&1
   [ "${code:-1}" -eq 0 ]
 }
 
@@ -459,6 +505,8 @@ floor_ingress() {
     done
     if [[ "$code" =~ ^[1-4][0-9][0-9]$ ]]; then
       log "ok    ingress $ns/$name https://$host$path -> $code"
+    elif [ "$code" = 503 ] && backend_parked "$ns" "$name"; then
+      log "ok    ingress $ns/$name https://$host$path -> 503, backend parked (no ready endpoints)"
     else
       bad=$((bad + 1))
       fail "floor: ingress $ns/$name" "https://$host$path -> $code"
@@ -495,7 +543,7 @@ new_alerts() {
 # floor_alerts: no new attributable alert fires during VERIFY_ALERT_WINDOW
 # seconds (default 600) after the checks above.
 floor_alerts() {
-  local window=${VERIFY_ALERT_WINDOW:-600} deadline found
+  local window=${VERIFY_ALERT_WINDOW:-600} deadline found left
   deadline=$(($(date +%s) + window))
   log "INFO  floor: watching alerts for ${window}s (new since $(date -u -d "@${VERIFY_SINCE:-0}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "${VERIFY_SINCE:-0}"))"
   while :; do
@@ -508,7 +556,8 @@ floor_alerts() {
       return 0
     fi
     [ "$(date +%s)" -ge "$deadline" ] && break
-    sleep 30
+    left=$((deadline - $(date +%s)))
+    sleep $((left < 30 ? (left > 0 ? left : 1) : 30))
   done
   pass "floor: no new firing alerts for ${window}s"
 }
@@ -555,6 +604,60 @@ expect_dry_run_denied() {
     echo "denied for another reason: $out"
     return 1
   fi
+}
+
+# apps_healthy <ns...>
+# Dependent-app check for the database stacks: in every namespace that
+# exists, each workload is converged, no pod is crash-looping, and each
+# ingress answers below 500 through Traefik. Prints the unhealthy ones.
+apps_healthy() {
+  local ns obj out bad=() n=0 name host path code ip
+  ip=$(traefik_ip)
+  for ns in "$@"; do
+    k get ns "$ns" >/dev/null 2>&1 || continue
+    n=$((n + 1))
+    while read -r _ obj; do
+      [ -n "$obj" ] || continue
+      out=$(workload_ready "$ns" "$obj") || bad+=("$ns/$obj")
+    done < <(list_workloads "$ns")
+    while read -r name host path; do
+      [ -n "$host" ] || continue
+      code=$(_TRAEFIK_IP=$ip via_traefik "$host" "$path")
+      [[ "$code" =~ ^[1-4][0-9][0-9]$ ]] && continue
+      [ "$code" = 503 ] && backend_parked "$ns" "$name" && continue
+      bad+=("https://$host$path=$code")
+    done < <(k get ingress -n "$ns" -o json 2>/dev/null | jq -r '.items[] | select(.spec.rules[0].host != null) | "\(.metadata.name) \(.spec.rules[0].host) \(.spec.rules[0].http.paths[0].path // "/")"')
+  done
+  out=$(bad_pods "$@")
+  [ -z "$out" ] || bad+=("$out")
+  echo "dependent namespaces checked=$n unhealthy=[${bad[*]}]"
+  [ "${#bad[@]}" -eq 0 ]
+}
+
+# redis_session <host> <port> <command>...
+# Sends inline commands on one connection and prints one reply per line.
+# Bulk replies are printed on one line; an error reply fails the call.
+redis_session() {
+  local host=$1 port=$2 cmd reply len data rc=0
+  shift 2
+  exec 3<>"/dev/tcp/$host/$port" || return 1
+  for cmd in "$@"; do printf '%s\r\n' "$cmd" >&3; done
+  for cmd in "$@"; do
+    IFS= read -r -t 10 reply <&3 || { echo "no reply to: $cmd"; rc=1; break; }
+    reply=${reply%$'\r'}
+    case "$reply" in
+      '$-1') echo "$cmd => (nil)" ;;
+      '$'*)
+        len=${reply#\$}
+        data=$(dd bs=1 count="$((len + 2))" <&3 2>/dev/null | tr -d '\r')
+        echo "$cmd => $(printf '%s' "$data" | tr '\n' ' ')"
+        ;;
+      -*) echo "$cmd => $reply"; rc=1 ;;
+      *) echo "$cmd => ${reply#?}" ;;
+    esac
+  done
+  exec 3>&-
+  return "$rc"
 }
 
 summary() {
