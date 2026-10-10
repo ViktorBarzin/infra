@@ -25,6 +25,16 @@ kubectl get infraassessmentreports -A -o wide    # control-plane static pods
 kubectl get clustercompliancereports
 ```
 
+## Alerts
+
+| Alert | First look |
+|---|---|
+| `TrivyFixableCVEInternetReachable` | Fixable CVEs in that namespace (query above). The fix is a newer image or chart; Renovate picks it up on its next run once released. Bump by hand if it is urgent. |
+| `TrivyExposedSecretInImage` | `kubectl get exposedsecretreports -n <ns> -o json \| jq '.items[].report.secrets[] \| {ruleID, target, title}'`. A key inside a third-party library (for example yt-dlp's `extractor/*.py`) is usually a public value; silence it in Alertmanager on `alertname` and `image_repository`. A credential of ours means rotating it and rebuilding the image. |
+| `TrivyMetricsAbsent` | `kubectl -n trivy-system get pods`; then check that `trivy_.+` is still on the keep allowlist in `prometheus_chart_values.tpl`. |
+
+These alerts post at most once a day per alert (own Alertmanager route, `group_interval 24h`). The weekly digest section on Mondays covers everything that does not alert.
+
 ## Force a rescan
 
 Reports expire after 24h and are rescanned automatically. To rescan one workload now, delete its report; the operator queues a new scan job:

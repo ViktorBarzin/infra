@@ -45,7 +45,7 @@ Chart `aquasecurity/trivy-operator` 0.37.0, pinned in `stacks/trivy-operator/mai
 
 Choices that keep the load down, and how to change them:
 
-- **Severity is `CRITICAL,HIGH`.** The alerts act on these two and the digest counts them. Medium, Low and Unknown would roughly triple each `VulnerabilityReport` in etcd. To widen, edit `trivy.severity`; reports refresh on their next 24h rescan.
+- **Severity is `CRITICAL,HIGH`.** The alerts act on these two and the digest counts them. The setting applies to every scanner, so config-audit, RBAC and infra findings below High are not stored either. Medium, Low and Unknown would roughly triple each `VulnerabilityReport` in etcd. To widen, edit `trivy.severity`; reports refresh on their next 24h rescan.
 - **SBOM reports are off** (`sbomGenerationEnabled = false`). They are the largest report type and nothing reads them.
 - **Client/server mode** (`builtInTrivyServer = true`). Scan jobs ask the server which layers it has not analysed yet and send only those. A daily rescan of an unchanged image fetches the manifest and config and little else. The server cache is an emptyDir: after a restart the next pass re-downloads layers once.
 - **Registry mirrors.** Scan jobs read image manifests and layers from the LAN pull-through cache (`10.0.20.10:5000` for Docker Hub, `:5010` for GHCR) through Trivy's own `registry.mirrors` config file. Trivy tries the mirror first and falls back to the original registry on any error, and reports keep the original image name. Without it, about 108 Docker Hub images rescanned daily would run into Docker Hub's anonymous pull limit, which the nodes share.
@@ -75,6 +75,33 @@ The operator Service carries `prometheus.io/scrape: "true"`, so the `kubernetes-
 Internet reachability comes from `kube_ingress_annotations{annotation_cloudflare_viktorbarzin_me_dns_type}`. `ingress_factory` already stamps `cloudflare.viktorbarzin.me/dns-type` on every ingress it creates (141 of the 201 ingresses on 2026-10-10 are `proxied` or `non-proxied`, across 103 namespaces), and kube-state-metrics exports it through `metricAnnotationsAllowList`. A namespace counts as internet-reachable when any of its ingresses is `proxied` or `non-proxied`.
 
 The design proposed a new `ingress_factory` label for this. The existing annotation carries the same information, and a module change would re-apply all 113 consuming app stacks plus every platform stack (the CI fan-out in `.woodpecker/default.yml`), including the 9 stacks with unaddressed drift on 2026-10-10. The annotation was used instead; a label can still be added later if a consumer needs one.
+
+## Alerts and the weekly digest
+
+Following the design, two kinds of finding post to Slack `#alerts` as they appear, and everything else goes into a weekly summary. Rules live in the `Trivy` group of `prometheus_chart_values.tpl`.
+
+| Alert | Fires when | Granularity |
+|---|---|---|
+| `TrivyFixableCVEInternetReachable` | an internet-reachable namespace has at least one fixable Critical or High CVE, for 1h | one alert per namespace |
+| `TrivyExposedSecretInImage` | an image holds at least one secret, for 1h | one alert per namespace and image repository |
+| `TrivyMetricsAbsent` | no `trivy_image_vulnerabilities` series for 2h | single alert |
+
+Both finding alerts use `keep_firing_for: 6h`, which covers the gap while a report is deleted at its 24h TTL and rescanned. They go through their own Alertmanager child route: grouped by alertname, `group_wait` 30m, `group_interval` 24h, `repeat_interval` 8760h. Each post lists every affected namespace or image, and a new finding joins the next daily post rather than sending its own message. Without this, the first full scan, which adds namespaces one at a time over about two hours, would have posted a fresh list every five minutes under the root route's 5m `group_interval`.
+
+Trivy's secret scanner also matches public keys that ship inside third-party libraries. The first one found was an AWS access key ID in yt-dlp's `extractor/shahid.py` in the tripit image. To check a finding, read the file and rule from `kubectl get exposedsecretreports -n <ns> -o json`; for a confirmed false positive, add an Alertmanager silence on `alertname` plus `image_repository`.
+
+The weekly section is appended to the daily `alert-digest` post on Mondays (`TRIVY_WEEKDAY` in `alert_digest.tf`). It reads Prometheus only and shows:
+
+- Critical/High CVE totals and the change since last week, split into fixable and unfixable
+- fixable Critical/High on internet-reachable workloads (the part that also alerts)
+- the 10 images with the most fixable Critical/High CVEs, marked when internet-reachable
+- how many images hold secrets
+- config-audit, RBAC and control-plane assessment counts, with the config-audit change since last week
+- failed controls per compliance spec (CIS 1.23, NSA, PSS baseline and restricted), which is where node-level CIS results show up, since per-node `ClusterInfraAssessmentReport`s have no metric
+
+The daily digest collapses more than five firing instances of one alertname into a single line, so the per-namespace Trivy alerts take one line there instead of one per namespace.
+
+There is no automatic link from a finding to an upgrade. Renovate (Phase 3 of the design) picks up a fixed version on its next run.
 
 ## Upgrades
 

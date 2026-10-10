@@ -151,10 +151,11 @@ Checked already: Alertmanager matchers are all new-style; `le`/`quantile` litera
 - Scans: workload image vulnerabilities, exposed secrets in images, config audit (including RBAC), node and Kubernetes components.
 - Cluster: 6 nodes, about 400 pods, 248 unique images. Scan-job concurrency capped at 3 so node1 (67% memory) and node5 (71%) aren't pushed over.
 - Prerequisites:
-  - Kyverno `require-trusted-registries` allows `mirror.gcr.io/aquasec/*` (the scanner image's default registry, to confirm against the chart).
+  - Kyverno `require-trusted-registries` allows `mirror.gcr.io/aquasec/*` (confirmed as the chart's default registry for the operator, server and scan jobs).
   - A Kyverno PolicyException scoped to the node-collector, which needs host namespaces and privileges that `deny-host-namespaces`, `deny-privileged-containers` and `restrict-sys-admin` block.
   - Metrics service annotated with `prometheus.io/scrape`, and `trivy_.+` added to the `kubernetes-service-endpoints` keep allowlist (`prometheus_chart_values.tpl:858`). Without it every series is dropped.
 - "Internet-reachable" means a namespace with an ingress whose `dns_type` is `proxied` or `non-proxied`. `ingress_factory` labels such ingresses so alert rules can join on namespace.
+  - As built (2026-10-10): the rules join on the `cloudflare.viktorbarzin.me/dns-type` annotation `ingress_factory` already sets, exported by kube-state-metrics, instead of a new label. A label would have been an `ingress_factory` change, which CI re-applies to all 113 consuming stacks plus every platform stack.
 - Alerts to Slack `#alerts` (once per finding, existing `repeat_interval`):
   - fixable Critical or High CVE on an internet-reachable workload
   - a secret found in an image layer
@@ -258,7 +259,7 @@ Viktor chose these knowingly during the design interview:
 
 - The Vault CVE list needs checking against HashiCorp's HCSEC posts; some IDs from the research pass look malformed.
 - Whether Renovate automerges exactly one branch per run on its own, or needs `branchConcurrentLimit: 1` plus a schedule guard to hold that to one. To confirm against current Renovate docs before building.
-- Trivy's scanner image registry default, and the node-collector's exact privilege needs, to confirm against the chart version we pin.
+- Resolved 2026-10-10: Trivy's scanner image registry default, and the node-collector's exact privilege needs. Against chart 0.37.0 (trivy-operator v0.35.0, trivy-kubernetes v0.9.1): the operator, Trivy server and scan jobs pull from `mirror.gcr.io/aquasec/*`, and the node-collector from `ghcr.io/aquasecurity/node-collector`. The node-collector needs `hostPID` and read-only hostPath mounts, runs as root, is not privileged and drops all capabilities, so only `deny-host-namespaces` needed an exception. Details in `docs/architecture/trivy.md`.
 - The Prometheus regex change (`.` matching newline) has not been audited across the 402 rules.
 - MySQL 8.4 → latest 9.x: confirm which jumps Oracle supports in place (LTS to innovation, innovation to innovation) and encode any required stepping in Renovate.
 - Where the `cnpg-postgis-pgvector` image is built, and how a new PG major's image gets built before Renovate proposes the major.

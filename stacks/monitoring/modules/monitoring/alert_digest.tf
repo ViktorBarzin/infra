@@ -88,6 +88,12 @@ resource "kubernetes_cron_job_v1" "alert_digest" {
                 name  = "SLACK_CHANNEL"
                 value = "#alerts"
               }
+              # Weekly Trivy section (alert_digest.py, docs/architecture/trivy.md):
+              # appended on this weekday's 08:00 run. "never" turns it off.
+              env {
+                name  = "TRIVY_WEEKDAY"
+                value = "Mon"
+              }
               volume_mount {
                 name       = "script"
                 mount_path = "/scripts"
