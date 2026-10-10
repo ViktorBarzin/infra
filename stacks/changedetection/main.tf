@@ -8,8 +8,7 @@ resource "kubernetes_namespace" "changedetection" {
     name = "changedetection"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -183,16 +182,18 @@ resource "kubernetes_deployment" "changedetection" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[1].image,
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
+      # IMAGE_SWAP_DEFERRED: Keel left the two images crossed on 2026-08-26
+      # (container sockpuppetbrowser runs ghcr.io/dgtlmoon/changedetection.io:0.55.8,
+      # container changedetection runs dgtlmoon/sockpuppetbrowser:0.0.3). Pinning
+      # either string here changes the pod, so both images stay ignored until a
+      # supervised session puts each image back in its own container
+      # (Keel to Renovate cutover, batch B08).
+      spec[0].template[0].spec[0].container[0].image, # IMAGE_SWAP_DEFERRED
+      spec[0].template[0].spec[0].container[1].image, # IMAGE_SWAP_DEFERRED
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
