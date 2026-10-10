@@ -78,6 +78,7 @@
 | privatebin | Encrypted pastebin | privatebin |
 | vault | HashiCorp Vault | vault |
 | reloader | ConfigMap/Secret reloader | reloader |
+| trivy-operator | Image CVE, image secret, config/RBAC and node scanning; reports as CRDs, `trivy_*` metrics (docs/architecture/trivy.md) | trivy-operator |
 | city-guesser | Game | city-guesser |
 | echo | Echo server | echo |
 | url | URL shortener | url |
