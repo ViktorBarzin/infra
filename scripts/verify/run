@@ -26,6 +26,10 @@
 # namespace (an admin kubeconfig on the devvm; the Woodpecker `default` SA in
 # CI, which is cluster-admin). Everything the checks themselves do runs inside
 # the Job as verify/verify-runner. Contract: docs/runbooks/verify-jobs.md.
+# The whole script is one function, read in full before it runs, so editing
+# this file while a run is in progress cannot corrupt the running copy (bash
+# otherwise reads a script incrementally).
+main() {
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -64,7 +68,8 @@ done
 required_stack() {
   local s=$1
   case " $DB_GPU_STACKS " in *" $s "*) return 0 ;; esac
-  grep -rqsE '^\s*resource "helm_release"' "$REPO/stacks/$s" --include='*.tf' 2>/dev/null
+  # find + grep rather than grep --include, which busybox grep (infra-ci) lacks.
+  [ -n "$(find "$REPO/stacks/$s" -name '*.tf' -not -path '*/.terraform/*' -exec grep -lE '^[[:space:]]*resource "helm_release"' {} + 2>/dev/null)" ]
 }
 
 stack_group() {
@@ -175,6 +180,15 @@ metadata:
     verify/stack: "$STACK"
 spec:
   backoffLimit: 0
+  # A pod preempted by the scheduler or evicted from its node (the namespace
+  # runs at tier-4-aux priority) is restarted instead of failing the Job; the
+  # new pod runs every check again. Seen on the first full run: a verify pod
+  # preempted mid alert-watch failed a healthy stack.
+  podFailurePolicy:
+    rules:
+      - action: Ignore
+        onPodConditions:
+          - type: DisruptionTarget
   activeDeadlineSeconds: $TIMEOUT
   ttlSecondsAfterFinished: 3600
   template:
@@ -207,7 +221,7 @@ spec:
             - secretRef: { name: verify-app-creds, optional: true }
           resources:
             requests: { cpu: 50m, memory: 128Mi }
-            limits: { memory: 384Mi }
+            limits: { memory: 512Mi }
           volumeMounts:
             - { name: verify, mountPath: /verify, readOnly: true }
       volumes:
@@ -221,33 +235,34 @@ kubectl patch configmap -n "$NS" "$CM" --type merge -p \
 
 echo "verify: job $NS/$JOB for stack $STACK (window ${WINDOW}s, quick=$QUICK, since $SINCE)"
 
-# Wait for the pod to leave Pending, then stream its log until it exits.
+# Follow the Job's pod log until the Job finishes. If the pod is disrupted the
+# Job starts a new one, and the runner follows that one too.
 deadline=$(($(date +%s) + TIMEOUT + 120))
-pod=""
-while :; do
-  pod=$(kubectl get pods -n "$NS" -l "batch.kubernetes.io/job-name=$JOB" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-  phase=$(kubectl get pod -n "$NS" "$pod" -o jsonpath='{.status.phase}' 2>/dev/null)
-  case "$phase" in Running | Succeeded | Failed) break ;; esac
-  if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "verify: pod for $JOB never started"
-    kubectl describe job -n "$NS" "$JOB" | tail -20
-    exit 1
-  fi
-  sleep 3
-done
-
 logfile=$(mktemp)
-kubectl logs -n "$NS" -f "$pod" 2>&1 | tee "$logfile"
-
-# Wait for the Job verdict (the log stream can end early on a kubelet rotation).
+seen="" pod="" result=1
 while :; do
   st=$(kubectl get job -n "$NS" "$JOB" -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.type} {end}' 2>/dev/null)
   case "$st" in
     *Complete* | *SuccessCriteriaMet*) result=0; break ;;
     *Failed* | *FailureTarget*) result=1; break ;;
   esac
-  if [ "$(date +%s)" -ge "$deadline" ]; then result=1; echo "verify: $JOB did not finish"; break; fi
-  sleep 5
+  next=$(kubectl get pods -n "$NS" -l "batch.kubernetes.io/job-name=$JOB" --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name} {.status.phase}{"\n"}{end}' 2>/dev/null |
+    awk '$2=="Running" || $2=="Succeeded" || $2=="Failed" {p=$1} END {print p}')
+  if [ -n "$next" ] && ! grep -qw -- "$next" <<<"$seen"; then
+    [ -n "$seen" ] && echo "verify: pod $pod was disrupted (preempted or evicted); following the replacement $next, which reruns every check"
+    pod=$next
+    seen="$seen $pod"
+    : >"$logfile"
+    kubectl logs -n "$NS" -f "$pod" 2>&1 | tee "$logfile"
+    continue
+  fi
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "verify: $JOB did not finish"
+    kubectl describe job -n "$NS" "$JOB" | tail -20
+    break
+  fi
+  sleep 3
 done
 if ! grep -q 'VERIFY RESULT:' "$logfile"; then
   echo "verify: log stream ended early; full log follows"
@@ -259,3 +274,6 @@ fi
 rm -f "$logfile"
 if [ "$result" -eq 0 ]; then echo "verify: $STACK PASS"; else echo "verify: $STACK FAIL"; fi
 exit "$result"
+}
+
+main "$@"
