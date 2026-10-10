@@ -1,5 +1,17 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Versions the Woodpecker rails reverted. One packageRule per (package, version); the rails append to packageRules in the revert commit. Remove an entry to let Renovate retry that version.",
-  "packageRules": []
+  "packageRules": [
+    {
+      "description": "rails revert 2026-10-10 pipeline #2192: stack homepage failed after this bump: its terragrunt apply failed (commit 42b7bffa)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/gethomepage/homepage"
+      ],
+      "matchNewValue": "v1.13.99",
+      "enabled": false
+    }
+  ]
 }
