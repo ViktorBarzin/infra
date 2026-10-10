@@ -93,8 +93,7 @@ resource "kubernetes_namespace" "ebooks" {
   metadata {
     name = "ebooks"
     labels = {
-      tier               = local.tiers.edge
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.edge
     }
   }
   lifecycle {
@@ -569,14 +568,10 @@ resource "kubernetes_deployment" "calibre-web-automated" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -655,7 +650,7 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
       }
       spec {
         container {
-          image = "zelest/stacks:latest"
+          image = "zelest/stacks:v1.3.0"
           name  = "annas-archive-stacks"
           resources {
             requests = {
@@ -705,15 +700,10 @@ resource "kubernetes_deployment" "annas-archive-stacks" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -783,7 +773,7 @@ resource "kubernetes_deployment" "audiobookshelf" {
       }
       spec {
         container {
-          image = "ghcr.io/advplyr/audiobookshelf:2.33.1"
+          image = "ghcr.io/advplyr/audiobookshelf:2.33.2"
           name  = "audiobookshelf"
 
           port {
@@ -873,15 +863,10 @@ resource "kubernetes_deployment" "audiobookshelf" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -1261,14 +1246,10 @@ resource "kubernetes_deployment" "book_search" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -1520,21 +1501,13 @@ resource "kubernetes_deployment" "goodreads_sync" {
     }
   }
 
-  # Kyverno stamps keel.sh/policy, keel.sh/trigger and keel.sh/pollSchedule onto
-  # every workload in this keel-enrolled namespace, and the kubernetes provider
-  # manages metadata.annotations as a whole map even where none is declared, so
-  # all three planned as removals on every apply. That is the same two-owners,
-  # one-field fight the siblings in this file already settle; this deployment
-  # was simply missing the block. dns_config comes from inject-ndots and is the
-  # repo-wide requirement for any kubernetes_deployment.
+  # dns_config comes from inject-ndots and is the repo-wide requirement for any
+  # kubernetes_deployment. The image is set by book-search's CI.
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                                         # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

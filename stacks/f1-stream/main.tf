@@ -9,9 +9,8 @@ variable "discord_f1_channel_ids" { type = string }
 
 # Image tag for the Forgejo-registry image. The app lives in its own repo
 # (viktor/f1-stream, extracted 2026-06-04). CI builds + pushes `latest` and
-# `<short-sha>`, then drives the rollout via `kubectl set image`. Keel stays
-# enrolled as a redundant net, so the running tag is managed outside Terraform
-# (see KEEL_IGNORE_IMAGE below).
+# `<short-sha>`, then drives the rollout via `kubectl set image`, so the
+# running tag is managed outside Terraform (see CI_SETS_IMAGE below).
 variable "image_tag" {
   type    = string
   default = "latest"
@@ -24,7 +23,6 @@ resource "kubernetes_namespace" "f1-stream" {
       "istio-injection" : "disabled"
       tier                                    = local.tiers.aux
       "chrome-service.viktorbarzin.me/client" = "true"
-      "keel.sh/enrolled"                      = "true"
     }
   }
   lifecycle {
@@ -829,15 +827,11 @@ resource "kubernetes_deployment" "f1-stream" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
