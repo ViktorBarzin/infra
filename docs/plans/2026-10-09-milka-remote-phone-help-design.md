@@ -1,24 +1,26 @@
 # Remote help for Milka's phone
 
-Status: executing (2026-10-09, revised 2026-10-10). Agreed with Viktor in a grilling session on 2026-10-09. Revised after testing both tools on the shared emulator: RustDesk is the one tool on her phone. Installed on her phone the same day, with an ADB backup path; see "Live setup on her phone".
+Status: executing (2026-10-09, revised 2026-10-10). Agreed with Viktor in a grilling session on 2026-10-09. Revised after testing both tools on the shared emulator: RustDesk is the one tool on her phone. Installed on her phone the same day, with an ADB backup path; see "Live setup on her phone". Revised again the same evening: RustDesk now stays off between sessions and nothing from the setup shows a notification; see "Quiet by default".
 
 ## Goal
 
-Viktor, emo and Claude can see and operate Milka's phone (Samsung Galaxy A55, Android 16, One UI 8) when she calls for help. She keeps using the phone as she does today. As set up on 2026-10-10 she does nothing per session: a helper connects with the permanent password.
+Viktor, emo and Claude can see and operate Milka's phone (Samsung Galaxy A55, Android 16, One UI 8) when she calls for help. She keeps using the phone as she does today. As set up on 2026-10-10 she does nothing per session: a helper starts RustDesk over ADB, connects with the permanent password, and stops it afterwards. Between sessions nothing from the setup runs except a small Automate loop, and nothing shows in her notifications, because she finds unfamiliar notifications worrying.
 
 ## Decisions
 
 | Topic | Decision |
 |---|---|
 | Kind of help | Full control (tap and type), not only viewing |
-| Helpers | Viktor and emo, from phone or laptop; Claude through a RustDesk desktop client in a container on the devvm (used on 2026-10-10), plus ADB |
+| Helpers | Viktor and emo, from phone or laptop; Claude through a RustDesk desktop client in a container on the devvm (used on 2026-10-10), plus ADB. Starting RustDesk needs the devvm, so Viktor or Claude runs `milka-help start` first |
 | How she asks | She phones a helper as usual. No help button |
 | Her part per session | None. RustDesk accepts sessions by password only, and screen capture starts without the Android prompt (see below) |
 | Control tool | RustDesk. Her phone runs 1.4.9 from F-Droid; the F-Droid and GitHub builds are signed with different keys, so updates come from F-Droid or need an uninstall first |
 | MeshCentral | Not used on her phone (decided 2026-10-10 after the emulator test). MeshCentral itself stays for other devices |
 | Server | Self-hosted RustDesk (hbbs + hbbr) in the cluster, public, key-locked |
 | Login | One permanent RustDesk password, in Vault `secret/rustdesk-milka` and in Vaultwarden shared with emo |
-| Backup access | ADB over the site-to-site tunnel, kept switched on by an Automate flow (see below) |
+| RustDesk between sessions | Off. `milka-help start` on the devvm starts it over ADB for a session and `milka-help stop` ends it (see "Quiet by default") |
+| Notifications | None from the setup. RustDesk and Automate have the notification permission revoked; during a session Android still shows its own screen-sharing chip in the status bar |
+| ADB | ADB over the site-to-site tunnel, kept switched on by an Automate flow (see below). Also the way RustDesk is started |
 | Install hygiene | Samsung Auto Blocker turned back on after install; a helper turns it off briefly for each update |
 | Claude's limits | Connects only when Viktor or emo ask; never opens banking or payment apps; never sends messages or calls as her; checks with a helper before anything irreversible |
 
@@ -49,10 +51,41 @@ flowchart TB
 | Accept mode | Password only. Viewers that tick "Remember password" connect without typing it |
 | Screen capture | App-op `PROJECT_MEDIA` set to allow for `com.carriez.flutter_hbb`, so no "Share screen" prompt |
 | Battery | RustDesk and Automate exempt from battery optimisation |
+| Notifications | `POST_NOTIFICATIONS` revoked for `com.carriez.flutter_hbb` and `com.llamalab.automate`. Both keep running; their ongoing notifications are not shown |
 | Wireless debugging | Paired with the devvm's ADB key. The connect port changes after every restart; `~/.local/bin/milka-adb` (wizard) tries port 5555 and then scans 30000-50000 |
 | Keeping ADB on | Automate flow "Keep wireless ADB on": set Global `adb_wifi_enabled` to 1, wait 1 minute (inexact, does not wake the phone), repeat. Automate has `WRITE_SECURE_SETTINGS` and "Run on system startup" |
 
 Restart test, 2026-10-10: after `adb reboot`, RustDesk registered again and accepted a password session showing the lock screen with nobody touching the phone. ADB came back once the phone had been unlocked and the flow ran; that took about 10 minutes with the original 15-minute wait, which is why the wait is now 1 minute. Apps such as Automate only start after the first unlock following a restart.
+
+## Quiet by default (2026-10-10)
+
+Viktor asked for as few notifications as possible and for RustDesk to run only when needed, to save battery. The helper script `~/.local/bin/milka-help` (wizard) does this over ADB.
+
+| Command | What it does on her phone |
+|---|---|
+| `milka-help start` | Switches the "RustDesk Input" accessibility service on, then sends RustDesk's own `DEBUG_BOOT_COMPLETED` broadcast to its `BootReceiver`. That starts the service with no app window, and `PROJECT_MEDIA` lets screen capture start with no prompt. Prints once the service is up |
+| `milka-help stop` | Force-stops RustDesk, clears the accessibility entry, disconnects ADB |
+| `milka-help status` | Service running or idle, the accessibility entry, and whether wireless debugging is on |
+
+```mermaid
+flowchart TB
+  H[Viktor or emo:<br/>she needs help] --> A[milka-help start<br/>on the devvm]
+  A -->|adb| P[Input on, RustDesk service up,<br/>capture allowed, no prompt]
+  P --> C[Helper connects with<br/>ID and password]
+  C --> Z[milka-help stop]
+  Z -->|adb| I[RustDesk force-stopped,<br/>Input off, adb disconnected]
+```
+
+Tested on 2026-10-10 from the idle state with her phone locked: the service started headless and registered with the server within 6 seconds, the devvm viewer connected with the remembered password, showed the lock screen once the screen was on, and controlled the home screen after unlock. During the session her notification list showed only her own apps (step counter, AdGuard, Viber). After `stop`, `dumpsys` showed no RustDesk service and no screen capture, the accessibility entry was empty, and ADB reconnected.
+
+A force stop also puts the app in Android's stopped state, which keeps its boot receiver from running, so RustDesk should not start after a restart until someone runs `start`. This was not yet confirmed with a restart.
+
+Things learned while making it quiet:
+
+- Revoking `POST_NOTIFICATIONS` kills the app. For Automate that also stopped the running flow; opening Automate on the phone resumed it, and it then switched wireless debugging back on 40 seconds after a test switched it off.
+- The ADB shell may not disable a single component of a third-party app (`Shell cannot change component state`), so the boot receiver cannot be switched off on its own. The stopped state does the same job.
+- With the screen off, a connected viewer shows "waiting for image": capture is running but the display sends no frames. It starts as soon as the screen wakes.
+- RustDesk's broadcast start shows a short "RustDesk is Open" toast on her screen.
 
 Things learned while setting it up:
 
@@ -101,7 +134,8 @@ The permanent password for her phone is in Vault (`secret/rustdesk-milka`, `pass
 
 ## Open questions
 
-- The battery cost of keeping the RustDesk service running all the time. To be read from her phone's battery statistics after a day of normal use.
+- Whether a restart leaves RustDesk off now that it idles in the stopped state, and whether the Automate flow keeps running across a restart without its notification permission.
+- The battery cost of the Automate loop. It wakes for a moment about once a minute while the phone is awake and less often while it dozes (gaps of 6 to 14 minutes in its log on 2026-10-10).
 - Wireless debugging still has to be allowed once on the Mladost 3 Wi-Fi before the flow can switch it on there.
 - Whether laptop keystrokes can reach her text fields with a different RustDesk keyboard mode. Only the legacy mode was tested.
 - Where Claude's viewer lives permanently. The container used on 2026-10-10 ran from a session scratch directory on the devvm; it has no permanent home yet.
