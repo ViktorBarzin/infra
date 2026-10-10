@@ -438,6 +438,40 @@ resource "kubernetes_deployment" "f1-stream" {
               }
             }
           }
+          # Session notifications (app repo ADR-0020) sign Web Push with this
+          # VAPID identity, from the Vault "f1-stream" key through the same
+          # dataFrom.extract ExternalSecret. optional=true: with any of the
+          # three missing the app keeps notifications off and hides the bell.
+          env {
+            name = "PUSH_VAPID_PRIVATE_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "push_vapid_private_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "PUSH_VAPID_PUBLIC_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "push_vapid_public_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "PUSH_VAPID_SUBJECT"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "push_vapid_subject"
+                optional = true
+              }
+            }
+          }
           # Replays feature (app repo ADR-0002). optional=true so the pod still
           # starts before the Reddit app credentials exist; the app treats missing
           # creds as "replays off" (logs "Replays pipeline disabled"). The
