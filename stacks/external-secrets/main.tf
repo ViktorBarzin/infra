@@ -19,12 +19,15 @@ resource "helm_release" "external_secrets" {
   chart      = "external-secrets"
   # ESO 0.12->2.6 migration (2026-06-21, docs/plans/2026-06-21-eso-0.12-to-2.x-migration-design.md).
   # Stepped one minor at a time on k8s 1.34; rewrite all 104 CRs v1beta1->v1 at 0.16.2 before 0.17.
-  version = "2.6.0"
+  # 2.6.0 -> 2.12.0 direct (2026-10-10): no CRD version or conversion changes in 2.7-2.12,
+  # CRDs only gained fields, and Deployment args render identically.
+  version = "2.12.0"
 
   # Added for the migration: auto-rollback a failed hop's helm upgrade (ESO had no
   # rollback safety net) and wait for the controller Deployment to be Ready first.
-  atomic  = true
-  timeout = 600
+  atomic          = true
+  cleanup_on_fail = true
+  timeout         = 600
 
   values = [yamlencode({
     installCRDs = true
