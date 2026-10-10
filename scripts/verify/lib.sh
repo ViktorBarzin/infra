@@ -304,7 +304,7 @@ backend_parked() {
 # ---------------------------------------------------------------------------
 
 # Owner reference to this verify Job, so everything a check creates is garbage
-# collected when the runner deletes the Job.
+# collected when the TTL controller deletes the finished Job.
 _owner_json() {
   if [ -n "${VERIFY_JOB_UID:-}" ]; then
     printf '[{"apiVersion":"batch/v1","kind":"Job","name":"%s","uid":"%s"}]' "$VERIFY_JOB_NAME" "$VERIFY_JOB_UID"
@@ -377,7 +377,12 @@ run_pod() {
         | .spec.containers[0].resources.requests["nvidia.com/gpu"] = $gpu
         | .spec.containers[0].resources.limits["nvidia.com/gpu"] = $gpu
       else . end')
-  k delete pod -n "$VERIFY_OWN_NS" "$name" --ignore-not-found --wait=true >/dev/null 2>&1
+  # A pod of this name exists only when a replacement Job pod reruns a check
+  # (preemption). Delete only then: K8sMassDelete counts every delete request,
+  # including ones that find nothing.
+  if k get pod -n "$VERIFY_OWN_NS" "$name" -o name >/dev/null 2>&1; then
+    k delete pod -n "$VERIFY_OWN_NS" "$name" --wait=true >/dev/null 2>&1
+  fi
   if ! printf '%s' "$spec" | k create -f - >/dev/null; then
     echo "could not create pod $name"
     return 1
