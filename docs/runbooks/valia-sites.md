@@ -8,10 +8,7 @@ only when the folder's manifest hash changed. Registry: `local.sites` in
 project, custom domain, public CNAME, internal split-horizon CNAME, sync).
 
 Current sites: `bridge` (ОбУ „Отец Паисий“ — "мост"), `stem95su` (95. СУ STEM
-board), and `trips`, which is Viktor's rather than Valia's: trip pages built by
-an agent into his Drive folder "trips-site". Its root is a blank page and each
-trip sits under an unlisted path, so the link is shared with travel companions
-only.
+board).
 
 ## Add a site
 

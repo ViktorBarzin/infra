@@ -33,14 +33,6 @@ locals {
       entry_file = "stem_board.html"
       manage_dns = true
     }
-    # Viktor's own trip pages, not a Valia site: same pipeline, folder in his
-    # Drive. The root is a blank page; each trip lives under an unlisted path.
-    trips = {
-      folder_id  = "1AqtPPTefmEB7Qxh-P8dGINpxE6A1OerS" # "trips-site"
-      src_path   = ""
-      entry_file = "index.html"
-      manage_dns = true
-    }
   }
 
   dns_managed_sites = { for k, v in local.sites : k => v if v.manage_dns }
