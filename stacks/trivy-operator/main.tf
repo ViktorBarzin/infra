@@ -158,6 +158,12 @@ resource "helm_release" "trivy_operator" {
       # own after a restart, and a PVC would add a Proxmox LUN or pin the pod
       # to one node for data that needs no backup.
       storageClassEnabled = false
+      # The server's layer cache is what keeps rescans from pulling layers
+      # again, and it lives in an emptyDir. At the namespace's tier-4-aux
+      # priority the scheduler preempted trivy-server-0 at 14:11 on
+      # 2026-10-10, emptying the cache. tier-3-edge keeps it from being
+      # displaced by ordinary workloads; scan jobs stay at tier-4-aux.
+      priorityClassName = "tier-3-edge"
       server = {
         resources = {
           requests = { cpu = "100m", memory = "512Mi" }
@@ -173,12 +179,16 @@ resource "helm_release" "trivy_operator" {
       }
 
       # Pull image manifests and layers through the LAN pull-through caches
-      # (registry VM 10.0.20.10, stacks/infra: 5000 Docker Hub, 5010 GHCR,
-      # 5020 Quay, 5030 registry.k8s.io, 5040 reg.kyverno.io) instead of the
-      # upstream registries, which rate-limit and would otherwise be hit once
-      # per image per day. docker.n8n.io fronts Docker Hub's n8nio/n8n, so it
-      # maps to the Docker Hub cache; the first scan hit Docker Hub's
+      # (registry VM 10.0.20.10, stacks/infra: 5000 Docker Hub, 5020 Quay,
+      # 5030 registry.k8s.io, 5040 reg.kyverno.io) instead of the upstream
+      # registries. Docker Hub rate-limits anonymous pulls, and the cache
+      # pulls with an account. docker.n8n.io fronts Docker Hub's n8nio/n8n, so
+      # it maps to the Docker Hub cache; the first scan hit Docker Hub's
       # anonymous pull limit there.
+      # GHCR is not mirrored (removed 2026-10-10): GHCR images were about 20
+      # GB of the 42 GB the first scan wrote into the cache VM's 61 GB disk,
+      # which filled it. GHCR has no Docker Hub-style anonymous limit, so
+      # scans read it directly and the cache holds only what nodes pull.
       # Trivy tries each mirror first and falls back to the original registry
       # on any error, and reports keep the original image name. The cache
       # speaks plain HTTP; go-containerregistry uses http for RFC 1918 hosts.
@@ -189,7 +199,6 @@ resource "helm_release" "trivy_operator" {
         registry = {
           mirrors = {
             "index.docker.io" = ["10.0.20.10:5000"]
-            "ghcr.io"         = ["10.0.20.10:5010"]
             "quay.io"         = ["10.0.20.10:5020"]
             "registry.k8s.io" = ["10.0.20.10:5030"]
             "reg.kyverno.io"  = ["10.0.20.10:5040"]
