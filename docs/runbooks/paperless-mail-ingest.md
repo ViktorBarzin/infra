@@ -44,7 +44,10 @@ first pass drains. Like the forward rules, this is DB state, not Terraform.
   queued consume tasks wait until the crawl ends. For a large new mailbox, set
   `PAPERLESS_TASK_WORKERS=2` in `stacks/paperless-ngx/main.tf` for the
   duration and remove it after. 3 workers were OOMKilled twice at the 8Gi limit
-  on 2026-10-10 (peak 7.4 GB).
+  on 2026-10-10 (peak 7.4 GB). With more than one worker, two identical
+  attachments consumed seconds apart can both pass duplicate rejection; after
+  the pass, look for same-owner pairs (`duplicate_documents` on
+  `/api/documents/<id>/`) and trash the newer copy.
 - **Restarts during a crawl:** a pod or container restart wipes
   `/tmp/paperless/paperless-mail-*`. Queued consume tasks then fail with
   `File not found` and record FAILED `ProcessedMail` rows that are never
