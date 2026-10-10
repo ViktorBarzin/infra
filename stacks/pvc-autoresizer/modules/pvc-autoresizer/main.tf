@@ -5,11 +5,6 @@ resource "kubernetes_namespace" "pvc_autoresizer" {
     name = "pvc-autoresizer"
     labels = {
       tier = var.tier
-      # Declared so plans stay clean (the label exists live). Keel does not move
-      # this release: the Kyverno keel-never-when-another-owner policy stamps
-      # keel.sh/policy=never on the Helm-owned Deployment. The chart version is
-      # pinned below instead.
-      "keel.sh/enrolled" = "true"
     }
   }
   lifecycle {

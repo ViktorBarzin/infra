@@ -5,8 +5,7 @@ resource "kubernetes_namespace" "nfs_csi" {
   metadata {
     name = "nfs-csi"
     labels = {
-      tier               = var.tier
-      "keel.sh/enrolled" = "true"
+      tier = var.tier
     }
   }
   lifecycle {
@@ -36,9 +35,8 @@ resource "helm_release" "nfs_csi_driver" {
   #     CrashLoopBackOff'd with `bind: address already in use`.
   #   * Rolling back live (helm rollback) left zombie containerd containers
   #     holding the ports — only a kubelet restart cleared them.
-  # nfs-csi namespace is in the Kyverno keel exclude list (keel-annotations.tf)
-  # so Keel will not touch it again. This version pin is the second line of
-  # defense against accidental floating-version drift on `terraform apply`.
+  # Keel is retired (2026-10 Renovate cutover); Renovate proposes chart bumps
+  # against this pin, one commit at a time, through the CI verify rails.
   #
   # Correction (2026-10-09): helm history never held chart 4.13.2. The May
   # incident was a Keel image rollout, and chart 4.13.1 already defaults

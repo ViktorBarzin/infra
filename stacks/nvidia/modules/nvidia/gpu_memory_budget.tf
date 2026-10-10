@@ -280,7 +280,7 @@ resource "kubernetes_deployment" "gpu_vram_watchdog" {
         service_account_name = kubernetes_service_account.gpu_vram_watchdog.metadata[0].name
         container {
           name    = "watchdog"
-          image   = "python:3.12-alpine"
+          image   = "library/python:3.12.15-alpine"
           command = ["python3", "/scripts/watchdog.py"]
           env {
             name  = "GPUMEM_RESOURCE"
@@ -338,12 +338,7 @@ resource "kubernetes_deployment" "gpu_vram_watchdog" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    ignore_changes = [spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-    ]
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
   }
   depends_on = [kubernetes_cluster_role_binding.gpu_vram_watchdog]
 }

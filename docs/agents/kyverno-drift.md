@@ -142,8 +142,9 @@ Two traps when adding the ignore:
   curl `vault-token-refresher` sidecar; android-emulator's drifting image lives
   in the `gate` Deployment, not the main one.
 - **`keel.sh/policy` can be a label as well as an annotation.** node-local-dns
-  carries it as a *label* valued `never`; ignoring only the annotation left
-  Terraform stripping the opt-out.
+  carried it as a *label* valued `never`; ignoring only the annotation left
+  Terraform stripping the opt-out. (The label is gone live, and the B10 Keel
+  cutover on 2026-10-10 removed that ignore.)
 
 **Audit the invariant** with `scripts/audit-keel-image-ownership.py`, which
 walks every pod-owning resource, resolves its live workload, and reports any

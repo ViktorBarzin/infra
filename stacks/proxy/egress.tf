@@ -137,28 +137,14 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
   metadata {
     name      = local.egress_name
     namespace = local.namespace
-    # The Keel opt-out is the ANNOTATION below and nothing else. This carried a
-    # matching keel.sh/policy LABEL until 2026-08-17, because the Kyverno
-    # exclude in keel-annotations.tf used to select on a label; it now selects
-    # on the annotation, so the label is redundant — and a keel.sh/* label is
-    # drift on any workload whose stack declares a `labels` map, which this one
-    # does.
-    labels = merge(local.labels, local.egress_selector)
+    labels    = merge(local.labels, local.egress_selector)
     annotations = {
-      # Keel must never touch this gateway. The digest pin on gluetun stops
-      # Keel moving THAT image, but the wgserver sidecar is still a concrete
-      # version tag (linuxserver/wireguard:1.0.20260223) that a `patch` policy
-      # would happily bump — and every image change here REPLACES the pod and
-      # drops the NordVPN tunnel, which then refuses an over-limit reconnect
-      # for ~10 min (memory #10182). On 2026-08-16 the Keel-vs-Terraform fight
-      # over the gluetun tag replaced this pod six times in ~30 minutes.
-      #
-      # This Deployment carries no `app.kubernetes.io/managed-by` label, so the
-      # `keel-never-when-another-owner` Kyverno rule cannot cover it — that is
-      # the documented gap in the label-based approach, and this is the
-      # per-workload opt-out it points at. The image-flipflop-detect CronJob
-      # remains the backstop if this ever regresses.
-      "keel.sh/policy" = "never"
+      # Both images are Terraform pins. Every image change here REPLACES the
+      # pod and drops the NordVPN tunnel, which then refuses an over-limit
+      # reconnect for ~10 min (memory #10182), so a Renovate bump of
+      # wgserver restarts the gateway once, through the CI verify rails. Keel
+      # (retired in the 2026-10 Renovate cutover) used to need an explicit
+      # keel.sh/policy = "never" here.
 
       # The NordLynx key is account-wide and rotates on multi-device login
       # (memory #8307). The broker re-fetches it into Secret `nordvpn-wg` and
@@ -251,11 +237,11 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
 
         container {
           name = "gluetun"
-          # Pinned, not `:latest`. Keel (policy=patch, hourly poll) resolves a
-          # floating tag to a concrete one on the live Deployment, and Terraform
-          # then reverts it on the next apply — the two fought and replaced this
-          # pod six times in ~30 minutes on 2026-08-16, each round trip dropping
-          # the NordVPN tunnel. That is worse here than on an ordinary app:
+          # Pinned, not `:latest`. Keel (policy=patch, hourly poll, retired
+          # 2026-10) resolved a floating tag to a concrete one on the live
+          # Deployment, and Terraform then reverted it on the next apply — the
+          # two fought and replaced this pod six times in ~30 minutes on
+          # 2026-08-16, each round trip dropping the NordVPN tunnel. That is worse here than on an ordinary app:
           # NordVPN refuses an over-limit connection with a ~10-minute cooldown
           # (memory #10182), so a looping gateway can lock itself out of its own
           # slot. This is the version Keel had settled on and which was verified
@@ -468,13 +454,6 @@ resource "kubernetes_deployment" "proxy_gw_uk" {
 
   lifecycle {
     ignore_changes = [
-      # Kyverno's inject-keel-annotations adds these two alongside the
-      # keel.sh/policy = "never" declared above. policy is set explicitly so the
-      # explicit value wins, but trigger and pollSchedule are injected only, and
-      # this resource declares an annotations map, so Terraform managed the whole
-      # map and planned both as removals on every apply. KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].labels["tier"],             # stamped by Kyverno sync-tier-label-from-namespace
 

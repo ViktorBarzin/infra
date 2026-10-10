@@ -82,9 +82,8 @@ resource "kubernetes_namespace" "kured" {
   metadata {
     name = "kured"
     labels = {
-      "istio-injection"  = "disabled"
-      tier               = local.tiers.cluster
-      "keel.sh/enrolled" = "true"
+      "istio-injection" = "disabled"
+      tier              = local.tiers.cluster
     }
   }
   lifecycle {
@@ -457,15 +456,11 @@ resource "kubernetes_daemon_set_v1" "kured_sentinel_gate" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # FLOATING_TAG_DEFERRED: bitnami/kubectl:latest has no matching version tag; a tag@digest pin restarts the gate pods
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
