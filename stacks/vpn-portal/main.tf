@@ -6,7 +6,7 @@ variable "tls_secret_name" {
 # App lives in its own repo (viktor/vpn-portal, spec infra#76). The first image
 # was built + pushed manually to bootstrap the deploy; ongoing builds move to
 # the GHA→ghcr fleet pattern (offinfra-onboard). imagePullPolicy=Always + the
-# KEEL_IGNORE_IMAGE lifecycle below keep the running tag outside Terraform.
+# CI_SETS_IMAGE lifecycle below keep the running tag outside Terraform.
 variable "image_tag" {
   type    = string
   default = "latest"
@@ -16,8 +16,7 @@ resource "kubernetes_namespace" "vpn_portal" {
   metadata {
     name = "vpn-portal"
     labels = {
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -136,15 +135,11 @@ resource "kubernetes_deployment" "vpn_portal" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel/CI manages tag updates
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

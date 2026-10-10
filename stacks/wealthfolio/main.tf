@@ -10,8 +10,7 @@ resource "kubernetes_namespace" "wealthfolio" {
     name = "wealthfolio"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -120,16 +119,9 @@ resource "kubernetes_deployment" "wealthfolio" {
       # declares annotations, so it planned as a removal on every run.
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].container[1].image,
-      spec[0].template[0].spec[0].container[2].image,
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
   metadata {
@@ -175,13 +167,11 @@ resource "kubernetes_deployment" "wealthfolio" {
           fs_group_change_policy = "OnRootMismatch"
         }
         container {
-          # Floor tag only — Keel owns the live tag (image is ignore_changes).
-          # Keel's injected policy is `patch`, so it never crosses minors;
-          # minor/major bumps are manual: update this floor AND roll the
-          # deployment (kubectl set image, the standard deploy mechanism).
+          # Terraform owns the tag; Renovate proposes bumps.
           # History: pinned 3.2.1 on 2026-05-26 after the Keel tag-rewrite
-          # incident (:3.2.1 -> :2.0 -> :3.2); bumped to 3.6.1 on 2026-07-08.
-          image = "afadil/wealthfolio:3.6.1"
+          # incident (:3.2.1 -> :2.0 -> :3.2); bumped to 3.6.1 on 2026-07-08;
+          # 3.6.3 is what Keel had rolled when it was retired (2026-10-10).
+          image = "afadil/wealthfolio:3.6.3"
           name  = "wealthfolio"
           port {
             container_port = 8080
@@ -240,7 +230,7 @@ resource "kubernetes_deployment" "wealthfolio" {
         # a nightly sqlite3 .backup so we have an off-cluster copy.
         container {
           name  = "backup"
-          image = "alpine:3.20"
+          image = "library/alpine:3.20.10"
           command = ["/bin/sh", "-c", <<-EOT
           set -eu
           apk add --no-cache --quiet sqlite busybox-suid
@@ -291,7 +281,7 @@ resource "kubernetes_deployment" "wealthfolio" {
         # incremental upserts and gives clean cold-start behaviour.
         container {
           name  = "pg-sync"
-          image = "alpine:3.20"
+          image = "library/alpine:3.20.10"
           env {
             name = "PGHOST"
             value_from {

@@ -9,8 +9,7 @@ resource "kubernetes_namespace" "whisper" {
   metadata {
     name = "whisper"
     labels = {
-      tier               = local.tiers.gpu
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.gpu
     }
   }
   lifecycle {
@@ -26,13 +25,13 @@ module "tls_secret" {
 }
 
 module "nfs_data_host" {
-  source       = "../../modules/kubernetes/nfs_volume"
-  name         = "whisper-data-host"
-  namespace    = kubernetes_namespace.whisper.metadata[0].name
-  nfs_server   = var.nfs_server
-  nfs_path     = "/srv/nfs/whisper"
-  storage      = "1Gi"
-  access_modes = ["ReadWriteMany"]
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "whisper-data-host"
+  namespace          = kubernetes_namespace.whisper.metadata[0].name
+  nfs_server         = var.nfs_server
+  nfs_path           = "/srv/nfs/whisper"
+  storage            = "1Gi"
+  access_modes       = ["ReadWriteMany"]
   storage_class_name = "nfs-pve"
 }
 
@@ -74,7 +73,7 @@ resource "kubernetes_deployment" "whisper" {
 
         container {
           name  = "whisper"
-          image = "rhasspy/wyoming-whisper:latest"
+          image = "rhasspy/wyoming-whisper:3.1.0"
           args  = ["--model", "small-int8", "--language", "en", "--beam-size", "1"]
 
           port {
@@ -109,14 +108,9 @@ resource "kubernetes_deployment" "whisper" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -205,7 +199,7 @@ resource "kubernetes_deployment" "piper" {
 
         container {
           name  = "piper"
-          image = "rhasspy/wyoming-piper:latest"
+          image = "rhasspy/wyoming-piper:2.2.2"
           args  = ["--voice", "en_US-lessac-medium"]
 
           port {
@@ -240,14 +234,9 @@ resource "kubernetes_deployment" "piper" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

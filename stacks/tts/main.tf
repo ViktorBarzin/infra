@@ -248,9 +248,8 @@ resource "kubernetes_namespace" "tts" {
   metadata {
     name = local.namespace
     labels = {
-      tier               = local.tiers.gpu
-      "istio-injection"  = "disabled"
-      "keel.sh/enrolled" = "true"
+      tier              = local.tiers.gpu
+      "istio-injection" = "disabled"
     }
   }
   lifecycle {
@@ -569,16 +568,10 @@ resource "kubernetes_deployment" "chatterbox" {
       # Off-peak CronJobs own the replica count — don't let apply reset it.
       spec[0].replicas,
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # image is TF-OWNED (pinned GHCR sha tag) — NOT keel-managed: keel can't
-      # poll the private GHCR repo, and the 2026-06-12 registry switch must apply.
-      metadata[0].annotations["keel.sh/match-tag"],
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
+      # image is TF-OWNED (pinned GHCR sha tag, var.image_tag), not ignored here.
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

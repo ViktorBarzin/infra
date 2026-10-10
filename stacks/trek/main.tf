@@ -2,7 +2,8 @@
 #
 # TRIAL deployment (2026-06-05): solo evaluation behind Authentik forward-auth
 # to decide whether an off-the-shelf tool is good enough before building a
-# custom app. Upstream image, pinned tag, Terraform-managed (no Keel/CI).
+# custom app. Upstream image, pinned tag, Terraform-managed; Renovate
+# proposes tag bumps.
 #
 # Secrets posture for the trial: TREK auto-generates its ENCRYPTION_KEY onto the
 # persistent data PVC and prints a bootstrap admin password to its logs on first
@@ -19,7 +20,8 @@ variable "tls_secret_name" {
 }
 
 variable "image_tag" {
-  type    = string
+  type = string
+  # renovate: datasource=docker depName=mauriceboe/trek
   default = "3.0.22"
 }
 
@@ -208,10 +210,6 @@ resource "kubernetes_deployment" "trek" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       spec[0].replicas,                       # SABLIER_MANAGED_REPLICAS — sablier scales 0<->1 (ADR-0022)
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image,  # KEEL_IGNORE_IMAGE
     ]
   }
 }
