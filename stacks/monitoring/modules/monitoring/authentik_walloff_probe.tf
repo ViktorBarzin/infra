@@ -322,16 +322,9 @@ resource "kubernetes_deployment" "blackbox_exporter" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    # KEEL: monitoring ns is keel-enrolled (policy=patch) — Keel owns the image
-    # tag and injects keel.sh annotations. Ignore so TF stops reverting Keel.
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
