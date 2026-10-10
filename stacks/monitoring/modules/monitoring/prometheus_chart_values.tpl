@@ -891,11 +891,13 @@ serverFiles:
           # unless its prefix is admitted below (tripit_* had been eaten since its
           # annotations landed; memory_* hit the same wall on day one). New app => add
           # your metric prefix here.
+          # NB kube_cronjob_spec_suspend is required by RenovateNotSucceeding (quiet
+          # while the renovate CronJob is suspended).
           # NB kube_job_status_active is required by the K8sUpgradeStalled live-job
           # guard (stacks/k8s-version-upgrade) — removing it re-opens the sticky-latch
           # false-critical (the guard would evaluate against an empty series).
           - source_labels: [__name__]
-            regex: 'memory_.+|tripit_.+|sablier_.+|qbittorrent_.+|trivy_.+|kube_ingress_annotations|kube_cronjob_status_last_successful_time|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_discards_completed_total|node_disk_discarded_sectors_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
+            regex: 'memory_.+|tripit_.+|sablier_.+|qbittorrent_.+|trivy_.+|kube_ingress_annotations|kube_cronjob_status_last_successful_time|kube_cronjob_spec_suspend|kube_deployment_labels|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_unavailable|kube_job_status_active|kube_job_status_failed|kube_job_status_start_time|kube_node_info|kube_node_status_allocatable|kube_node_status_capacity|kube_node_status_condition|kube_persistentvolumeclaim_status_phase|kube_volumeattachment_info|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_waiting_reason|kube_pod_info|kube_pod_status_phase|kube_pod_status_ready|kube_pod_status_reason|kube_pod_status_conditions|kube_resourcequota|kube_statefulset_replicas|kube_statefulset_status_replicas_ready|kube_daemonset_status_desired_number_scheduled|kube_daemonset_status_number_ready|kube_node_spec_unschedulable|node_cpu_seconds_total|node_disk_io_time_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_discards_completed_total|node_disk_discarded_sectors_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_device_error|node_filesystem_readonly|node_hwmon_chip_names|node_hwmon_temp_celsius|node_load1|node_load15|node_load5|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_MemFree_bytes|node_memory_SwapTotal_bytes|node_memory_SwapFree_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_nfs_requests_total|node_uname_info|node_vmstat_oom_kill|coredns_cache_entries|coredns_cache_hits_total|coredns_cache_misses_total|coredns_dns_requests_total|coredns_dns_responses_total|coredns_forward_requests_total|coredns_forward_responses_total|coredns_build_info|process_cpu_seconds_total|process_resident_memory_bytes|process_start_time_seconds|up|pve_.*|node_netstat_Udp_.*'
             action: keep
       - job_name: kubernetes-service-endpoints-slow
         honor_labels: true
@@ -5106,6 +5108,28 @@ serverFiles:
             annotations:
               summary: "K8s auto-upgrade blocked by an ACTIONABLE compat-gate refusal — a lagging addon/API/containerd can be upgraded to clear it. Reasons + remediation are in the morning k8s-upgrade nightly report."
               description: "An automated Kubernetes upgrade was REFUSED (not crashed) by the preflight compat gate with an ACTIONABLE blocker — a newer version of the lagging addon exists and upgrading it would clear the block (or an in-use deprecated API must be migrated, or a node's containerd bumped). The preflight Job Completes cleanly; the chain just halts. Specific reasons + remediation are in the morning k8s-upgrade nightly report. To clear: do the named upgrade/migration, then the next nightly run proceeds automatically. NB the gate's WAITING-on-upstream / PINNED verdict (k8s_upgrade_held=1) deliberately does NOT alert — nothing to action until upstream ships support or the pin is lifted; see the nightly report's HELD line."
+      - name: "Renovate"
+        rules:
+          # stacks/renovate pushes renovate_last_success_timestamp_seconds to
+          # Pushgateway after every run that exits 0 (job="renovate",
+          # instance="infra"; hand-started test runs use another instance).
+          # Quiet while the CronJob is suspended (the kill switch), which needs
+          # kube_cronjob_spec_suspend in the KSM keep regex above.
+          # Runbook: docs/runbooks/renovate.md.
+          - alert: RenovateNotSucceeding
+            expr: |
+              (
+                (time() - max(renovate_last_success_timestamp_seconds{job="renovate", instance="infra"})) > 7200
+                or
+                absent(renovate_last_success_timestamp_seconds{job="renovate", instance="infra"})
+              )
+              unless on() (max(kube_cronjob_spec_suspend{namespace="renovate", cronjob="renovate"}) == 1)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Renovate has not completed a successful run in the last 2h (or has never pushed one) while its CronJob is not suspended"
+              description: "renovate_last_run_exit_code shows the last outcome (75 = skipped because a Woodpecker pipeline was running, 1 = Renovate logged an ERROR). kubectl -n renovate get jobs; kubectl -n renovate logs job/<latest>. Runbook: docs/runbooks/renovate.md"
       - name: "Traefik Ingress"
         rules:
           - alert: TraefikDown
