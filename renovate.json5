@@ -1,0 +1,330 @@
+// Renovate repository config for viktor/infra (2026-10-10).
+// Design: docs/plans/2026-10-09-software-currency-design.md, ADR-0030.
+// Runbook: docs/runbooks/renovate.md.
+// Verified against Renovate 44.115.9 source and docs. Runtime/global options
+// (platform, token, prCommitsPerRunLimit) live in stacks/renovate/files/config.js.
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  // The per-version ignore list the Woodpecker rails append to on a failed bump.
+  // Resolves to renovate/ignored-versions.json on master, fetched through the
+  // Forgejo API at the start of every run.
+  extends: [
+    "workarounds:all",
+    // From config:best-practices: flag packages with no release for a year on
+    // the dashboard. (:configMigration is left out: it opens a PR that waits
+    // for a human merge; Renovate migrates old option names in memory anyway.)
+    "abandonments:recommended",
+    "local>viktor/infra//renovate/ignored-versions",
+  ],
+
+  // Only the pins Renovate owns per the design: helm_release charts, image
+  // pins in .tf, Helm values files, and the annotated pins. Keeps Renovate out
+  // of the go.mod / package.json / Dockerfile files that live under stacks/.
+  enabledManagers: ["terraform", "helm-values", "custom.regex"],
+
+  ignorePaths: [
+    "**/secrets/**", // git-crypt ciphertext
+    "**/.worktrees/**",
+    "docs/**",
+    ".planning/**",
+    ".claude/**",
+    "state/**",
+    "tests/**",
+    "stacks/keel/**", // retired in wave 5
+    "stacks/diun/**", // retired in wave 5
+    "stacks/monitoring/modules/monitoring/prometheus_snmp_chart_values.yaml", // 57k lines, no images
+    // Shared module defaults (e.g. the anubis image_tag): a change under
+    // modules/ makes the pipeline re-apply every platform stack, so these pins
+    // stay manual for now (deferred, software-currency wave 4).
+    "modules/**",
+    // CI images: a broken CI image would break the rails that revert it.
+    ".woodpecker/**",
+  ],
+
+  // ---- Landing: straight to master, no PRs, one bump per run ----
+  // automergeType=branch: Renovate pushes renovate/<dep> and, because
+  // ignoreTests=true, fast-forwards master to it in the same run, then deletes
+  // the branch. A PR is raised only if the merge fails.
+  // "One per run" is enforced by prCommitsPerRunLimit=1 in config.js, not here.
+  // No minimumReleaseAge, by choice (Viktor, 2026-10-10): a release lands
+  // within ~30 min so CVE fixes are not held. The post-merge rails are the
+  // safety net. Note: 98 of 125 dry-run bumps carry no release timestamp, and
+  // the default minimumReleaseAgeBehaviour=timestamp-required would hold those
+  // forever if a release age is ever added; pair it with timestamp-optional.
+  automerge: true,
+  automergeType: "branch",
+  ignoreTests: true,
+  rebaseWhen: "behind-base-branch",
+  prCreation: "immediate", // default; anything else returns 'pending' before the automerge attempt
+  // A Forgejo issue Renovate rewrites each run: pending, held, abandoned and
+  // errored updates in one place. Editing an issue is not a push, so it does
+  // not count against prCommitsPerRunLimit and starts no pipeline.
+  dependencyDashboard: true,
+  dependencyDashboardTitle: "Renovate dashboard",
+  separateMajorMinor: true,
+  // One major per hop for every package (upgrade-best-practices: "take major
+  // updates one version at a time"), so 2.x -> 4.x lands as 3.x then 4.x and
+  // each hop is verified and reverted on its own.
+  separateMultipleMajor: true,
+  // Docker/Helm lookups only: never pin digests we did not pin ourselves.
+  pinDigests: false,
+
+  // One branch, and so one commit, per (stack, dependency). Without this,
+  // Renovate puts every file that pins the same image into one branch: the
+  // 2026-10-10 dry run had busybox 1.36 -> 1.38 across 18 files in ~15 stacks
+  // as a single commit, which the rails would apply and verify as one unit.
+  // stacks/<name>/... -> "<name>-"; anything else keeps its directory.
+  additionalBranchPrefix: "{{replace '^stacks/([^/]+).*$' '$1' packageFileDir}}-",
+
+  // Commit message = audit trail. Subject says what changed; body says why and
+  // carries machine-readable trailers the rails parse to build the ignore entry.
+  commitMessagePrefix: "{{replace '^stacks/([^/]+).*$' '$1' packageFileDir}}:",
+  commitMessageAction: "bump",
+  semanticCommits: "disabled",
+  // commitMessageTopic/Extra are set in the first packageRule: the docker and
+  // helm datasource defaults ("<dep> Docker tag", "to v15") are merged after
+  // top-level config but before packageRules (updates/flatten.ts).
+  fetchChangeLogs: "branch", // needs GITHUB_COM_TOKEN for github.com-hosted notes
+  commitBody: "Why: upstream released {{depName}} {{newValue}} ({{updateType}}). Renovate lands third-party version bumps per ADR-0030; the Woodpecker rails gate, snapshot, apply, verify and revert this commit.\n{{#each upgrades}}\n- {{depName}} {{currentValue}} -> {{newValue}} in {{packageFile}}{{#if releases}}{{#each releases}}\n  {{version}}{{#if releaseNotes.url}}: {{releaseNotes.url}}{{/if}}{{/each}}{{/if}}{{/each}}\n\n{{#each upgrades}}Renovate-Dep: {{datasource}} {{packageName}} {{#if newValue}}{{newValue}}{{else}}{{newDigest}}{{/if}}\n{{/each}}",
+
+  // ---- Managers ----
+  "helm-values": {
+    // default is only values.yaml; ours are also named chart_values.yaml,
+    // grafana_chart_values.yaml, ... Template (.tpl) values files are left to
+    // custom manager C: prometheus_chart_values.tpl fails YAML parsing
+    // (template directives), so helm-values extracts nothing from it.
+    managerFilePatterns: [
+      "/(^|/)values\\.ya?ml$/",
+      "/(^|/)[^/]*values[^/]*\\.ya?ml$/",
+    ],
+  },
+
+  customDatasources: {
+    // Reads services.database.image from Immich's latest release compose and
+    // rewrites its PG major to ours (15; Immich's compose ships 14). Change the
+    // "15-" when our Immich PG major moves (a supervised dump/restore).
+    "immich-compose-postgres": {
+      defaultRegistryUrlTemplate: "https://github.com/immich-app/immich/releases/latest/download/docker-compose.yml",
+      format: "yaml",
+      transformTemplates: [
+        "{\"releases\": [{\"version\": $replace($split($split(services.database.image, \":\")[1], \"@\")[0], /^[0-9]+-/, \"15-\")}]}",
+      ],
+    },
+  },
+
+  customManagers: [
+    {
+      // Shape A: HCL attribute `image = "repo:tag"` or `<name>_image = "repo:tag"`
+      // (optionally @sha256 digest), anywhere in a .tf file: kubernetes_*
+      // containers, locals, module arguments, helm_release yamlencode values,
+      // kubectl_manifest yamlencode bodies. Interpolated refs ("${...}") and
+      // commented-out lines do not match.
+      // Recursive strategy: the second regex re-matches only the quoted ref,
+      // so replaceString is exactly "repo:tag" and the template rewrites it whole
+      // (avoids Renovate's first-occurrence replace hitting a tag that also
+      // appears in the name, e.g. tag "8" inside "k8s").
+      customType: "regex",
+      description: "HCL image attribute with a literal image reference",
+      managerFilePatterns: ["/\\.tf$/"],
+      matchStringsStrategy: "recursive",
+      matchStrings: [
+        "\\n[ \\t]*(?:[a-z0-9_]+_)?image[ \\t]*=[ \\t]*\"[a-z0-9][^\"$\\s]*\"",
+        "\"(?<depName>[a-z0-9][a-z0-9._/-]*(?::[0-9]+/[a-z0-9._/-]+)?)(?::(?<currentValue>[A-Za-z0-9_][A-Za-z0-9._-]{0,127}))?(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?\"",
+      ],
+      datasourceTemplate: "docker",
+      autoReplaceStringTemplate: "\"{{{depName}}}{{#if newValue}}:{{{newValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{/if}}\"",
+    },
+    {
+      // Shape B: any pin whose name and value sit on different lines: a
+      // variable default, a local, a module argument, a terragrunt input, or a
+      // Helm values `tag:` with no sibling `repository:`. The line above the
+      // pin carries the annotation:
+      //   # renovate: datasource=docker depName=ghcr.io/techarohq/anubis
+      //   default     = "v1.25.0"
+      // Optional: packageName=, versioning=, extractVersion=, registryUrl=.
+      customType: "regex",
+      description: "Annotated pin: '# renovate: datasource=... depName=...' on the line above",
+      managerFilePatterns: ["/\\.(tf|hcl)$/", "/\\.(ya?ml|tpl)$/"],
+      matchStringsStrategy: "recursive",
+      matchStrings: [
+        "#[ \\t]*renovate:[ \\t]*datasource=(?<datasource>[a-z0-9-]+)[ \\t]+depName=(?<depName>[^\\s]+)(?:[ \\t]+packageName=(?<packageName>[^\\s]+))?(?:[ \\t]+versioning=(?<versioning>[^\\s]+))?(?:[ \\t]+extractVersion=(?<extractVersion>[^\\s]+))?(?:[ \\t]+registryUrl=(?<registryUrl>[^\\s]+))?[ \\t]*\\n[ \\t]*[A-Za-z0-9_.\"-]+[ \\t]*[=:][ \\t]*\"?[^\"\\s,#]+\"?",
+        "\\n[ \\t]*[A-Za-z0-9_.\"-]+[ \\t]*[=:][ \\t]*\"?(?<currentValue>[^\"\\s,#]+)\"?",
+      ],
+    },
+    {
+      // Shape C: inline `image: repo:tag` in a Helm values template (.tpl) that
+      // helm-values cannot parse, e.g. prometheus_chart_values.tpl:577.
+      customType: "regex",
+      description: "YAML inline image reference in a values template",
+      managerFilePatterns: ["/\\.tpl$/"],
+      matchStringsStrategy: "recursive",
+      matchStrings: [
+        "\\n[ \\t]*(?:- )?[A-Za-z]*[iI]mage:[ \\t]*\"?[a-z0-9][^\"$\\s]*:[^\"$\\s]+\"?",
+        ":[ \\t]*\"?(?<depName>[a-z0-9][a-z0-9._/-]*(?::[0-9]+/[a-z0-9._/-]+)?)(?::(?<currentValue>[A-Za-z0-9_][A-Za-z0-9._-]{0,127}))?(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?\"?$",
+      ],
+      datasourceTemplate: "docker",
+      autoReplaceStringTemplate: ": {{{depName}}}{{#if newValue}}:{{{newValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",
+    },
+  ],
+
+  packageRules: [
+    {
+      description: "Commit subject: '<stack>: bump <dep> <old> -> <new>'",
+      matchPackageNames: ["*"],
+      commitMessageTopic: "{{depName}}",
+      commitMessageExtra: "{{#if currentValue}}{{currentValue}} -> {{newValue}}{{else}}digest{{/if}}{{#if newDigestShort}} ({{newDigestShort}}){{/if}}",
+    },
+
+    // ---- Scope: what Renovate does not touch ----
+    {
+      description: "Terraform providers and required_version are out of scope (not in the ownership table; pinned in root terragrunt.hcl)",
+      matchManagers: ["terraform"],
+      matchDepTypes: ["provider", "required_provider", "required_version", "module", "terraform"],
+      enabled: false,
+    },
+    {
+      description: "Image pins in .tf come from custom manager shape A; the terraform manager's own kubernetes_*/docker_* extraction would duplicate them",
+      matchManagers: ["terraform"],
+      matchDepTypes: ["/^kubernetes_/", "/^docker_/"],
+      enabled: false,
+    },
+    {
+      description: "Our own images: built and deployed by their own CI",
+      matchDatasources: ["docker"],
+      matchPackageNames: [
+        "viktorbarzin/**",
+        "docker.io/viktorbarzin/**",
+        "ghcr.io/viktorbarzin/**",
+        "forgejo.viktorbarzin.me/**",
+        "10.0.20.10:*/**",
+      ],
+      enabled: false,
+    },
+
+    // ---- Versioning fixes ----
+    {
+      description: "Immich Postgres follows the tag in Immich's own release compose (design: Ownership of versions), not the newest registry tag. A plain docker lookup offered vectorchord 1.1.1 while Immich's compose still pins 0.4.3.",
+      matchPackageNames: ["ghcr.io/immich-app/postgres"],
+      overrideDatasource: "custom.immich-compose-postgres",
+      versioning: "regex:^(?<compatibility>\\d+)-vectorchord(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?<build>-.+)?$",
+    },
+    {
+      description: "linuxserver legacy tags sort above current releases (dry runs: lidarr 2.9.4 -> 8.1.2135, qbittorrent 5.1.4 -> 20.04.1 and 14.3.9)",
+      matchPackageNames: ["lscr.io/linuxserver/lidarr"],
+      allowedVersions: "<8",
+    },
+    {
+      description: "linuxserver legacy tags (see above)",
+      matchPackageNames: ["lscr.io/linuxserver/qbittorrent"],
+      allowedVersions: "<14", // legacy 14.x and 20.04.x tags; current upstream is 5.x
+    },
+
+    // ---- Groups: versions that must move together ----
+    {
+      description: "Vault chart + server/auto-unseal/raft-backup image (one local.vault_version pin) land as one commit",
+      matchPackageNames: ["vault", "hashicorp/vault"],
+      matchDatasources: ["helm", "docker"],
+      groupName: "vault",
+      groupSlug: "vault",
+    },
+
+    // ---- Stepping: one hop per major/minor where upstream requires it ----
+    {
+      description: "Step through each minor and each major (lowest first; Renovate sorts branches numerically by title and lands one per run)",
+      matchPackageNames: [
+        "vault", "hashicorp/vault",
+        "authentik", "ghcr.io/goauthentik/server", "goauthentik/server",
+        "cloudnative-pg", "ghcr.io/cloudnative-pg/cloudnative-pg",
+        "tigera-operator",
+        "nextcloud", "docker.io/library/nextcloud", "library/nextcloud",
+      ],
+      separateMultipleMajor: true,
+      separateMultipleMinor: true,
+    },
+    {
+      description: "Vault 2.0.1 IPC_LOCK regression: never land it",
+      matchPackageNames: ["hashicorp/vault"],
+      allowedVersions: "!/^2\\.0\\.1$/",
+    },
+
+    {
+      description: "Renovate's own image (stacks/renovate) publishes several releases a day; take at most one bump a week so it does not use up the one-bump-per-run budget",
+      matchPackageNames: ["docker.io/renovate/renovate", "renovate/renovate"],
+      schedule: ["* 0-3 * * 1"],
+    },
+
+    // ---- Held until a supervised session (deferred by the AFK run, 2026-10) ----
+    // Remove a rule to release that component to the rails.
+    {
+      description: "HELD: metallb (supervised upgrade pending)",
+      matchPackageNames: ["metallb", "quay.io/metallb/**"],
+      enabled: false,
+    },
+    {
+      description: "HELD: CNPG operator chart (supervised upgrade pending)",
+      matchDatasources: ["helm"],
+      matchPackageNames: ["cloudnative-pg"],
+      enabled: false,
+    },
+    {
+      description: "HELD: Nextcloud chart and image (major stepping needs a supervised run first)",
+      matchPackageNames: ["nextcloud", "library/nextcloud", "docker.io/library/nextcloud"],
+      enabled: false,
+    },
+    {
+      description: "HELD: Calico / tigera-operator",
+      matchPackageNames: ["tigera-operator", "quay.io/tigera/**", "calico/**", "quay.io/calico/**"],
+      enabled: false,
+    },
+    {
+      description: "HELD: MySQL majors, 8.4 -> 9.x and 26.x (in-place jump path unconfirmed; innovation releases cannot be downgraded). 8.x patch/minor still land.",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["mysql", "library/mysql", "docker.io/library/mysql"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      description: "HELD: Woodpecker chart and images (the rails run on Woodpecker)",
+      matchPackageNames: ["ghcr.io/woodpecker-ci/helm/woodpecker", "woodpeckerci/woodpecker-server", "woodpeckerci/woodpecker-agent", "docker.io/woodpeckerci/**"],
+      enabled: false,
+    },
+    {
+      description: "HELD: Postgres majors for pg-cluster and its backup clients (needs the cnpg-postgis-pgvector image for the new major first)",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["postgres", "library/postgres", "docker.io/library/postgres", "ghcr.io/cloudnative-pg/postgis", "ghcr.io/cloudnative-pg/postgresql"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      description: "HELD: NVIDIA driver 570 -> 580 (kernel 6.8.0-117 held; see post-mortem 2026-05-17)",
+      matchPackageNames: ["nvcr.io/nvidia/driver"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      description: "HELD: Loki chart (grafana repo stops at 7.3.0; the move to grafana-community/loki 18.x is a supervised repository switch)",
+      matchDatasources: ["helm"],
+      matchPackageNames: ["loki"],
+      enabled: false,
+    },
+    {
+      description: "HELD: Forgejo (11 -> 16 cannot be downgraded, and Forgejo hosts this repo, the bot and the webhook the rails use). All Forgejo updates wait for a supervised session.",
+      matchPackageNames: ["codeberg.org/forgejo/forgejo", "forgejo", "forgejo/forgejo"],
+      enabled: false,
+    },
+    {
+      description: "HELD: Technitium 14 -> 15 major (home DNS). 14.x patch/minor still land.",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["technitium/dns-server", "docker.io/technitium/dns-server"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    {
+      description: "HELD: Kyverno 1.20 (chart 3.10) needs a policy migration; 3.9.x patches still land",
+      matchDatasources: ["helm"],
+      matchPackageNames: ["kyverno"],
+      allowedVersions: "<3.10.0",
+    },
+  ],
+}
