@@ -12,7 +12,7 @@ variable "nfs_server" { type = string } # 192.168.1.127 from config.tfvars
 locals {
   namespace = "offline-reader"
   app_image = "ghcr.io/viktorbarzin/offline-reader:${var.image_tag}"
-  # Capture Jobs (created at runtime by the app) run this image. Keel/CI keep :latest fresh.
+  # Capture Jobs (created at runtime by the app) run this image. CI keeps :latest fresh.
   capture_image = "ghcr.io/viktorbarzin/offline-reader-capture:latest"
   labels        = { app = "offline-reader" }
 }
@@ -21,9 +21,8 @@ resource "kubernetes_namespace" "offline_reader" {
   metadata {
     name = local.namespace
     labels = {
-      tier               = local.tiers.aux
-      "istio-injection"  = "disabled"
-      "keel.sh/enrolled" = "true"
+      tier              = local.tiers.aux
+      "istio-injection" = "disabled"
     }
   }
   lifecycle {
@@ -179,14 +178,10 @@ resource "kubernetes_deployment" "offline_reader" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

@@ -12,7 +12,6 @@ resource "kubernetes_namespace" "osm-routing" {
       "istio-injection" : "disabled"
       tier                               = local.tiers.aux
       "resource-governance/custom-quota" = "true"
-      "keel.sh/enrolled"                 = "true"
     }
   }
   lifecycle {
@@ -72,14 +71,6 @@ resource "kubernetes_deployment" "osrm-foot" {
     labels = {
       app  = "osrm-foot"
       tier = local.tiers.aux
-    }
-    annotations = {
-      # Keel opt-out. A floating :latest under the cluster-default patch policy
-      # is what silently froze wrongmove's celery on a five-month-old image; the
-      # image is pinned here and Terraform owns the tag. The annotation is the
-      # whole opt-out since 2026-08-17 — it is what Keel reads and what the
-      # Kyverno exclude selects on.
-      "keel.sh/policy" = "never"
     }
   }
   spec {
@@ -149,17 +140,14 @@ resource "kubernetes_deployment" "osrm-foot" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # keel.sh/policy and the image are NO LONGER ignored: this stack OWNS both.
-      # While they were ignored, Keel rewrote the serving image to
+      # The image is not ignored: this stack owns it. While it was ignored
+      # (Keel era, before 2026-10), Keel rewrote the serving image to
       # v26.5.0-debug-amd64-debian, which cannot read a graph built by the pinned
       # builder — "File is incompatible with this version of OSRM: prepared with
       # OSRM 6.0.0 but this is v26.5.0". Build and serve MUST use one version.
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -191,14 +179,6 @@ resource "kubernetes_deployment" "osrm-bicycle" {
     labels = {
       app  = "osrm-bicycle"
       tier = local.tiers.aux
-    }
-    annotations = {
-      # Keel opt-out. A floating :latest under the cluster-default patch policy
-      # is what silently froze wrongmove's celery on a five-month-old image; the
-      # image is pinned here and Terraform owns the tag. The annotation is the
-      # whole opt-out since 2026-08-17 — it is what Keel reads and what the
-      # Kyverno exclude selects on.
-      "keel.sh/policy" = "never"
     }
   }
   spec {
@@ -268,17 +248,14 @@ resource "kubernetes_deployment" "osrm-bicycle" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # keel.sh/policy and the image are NO LONGER ignored: this stack OWNS both.
-      # While they were ignored, Keel rewrote the serving image to
+      # The image is not ignored: this stack owns it. While it was ignored
+      # (Keel era, before 2026-10), Keel rewrote the serving image to
       # v26.5.0-debug-amd64-debian, which cannot read a graph built by the pinned
       # builder — "File is incompatible with this version of OSRM: prepared with
       # OSRM 6.0.0 but this is v26.5.0". Build and serve MUST use one version.
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -373,19 +350,14 @@ resource "kubernetes_deployment" "otp" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # keel.sh/policy and the image are NO LONGER ignored: this stack OWNS both.
-      # While they were ignored, Keel rewrote the serving image to
+      # The image is not ignored: this stack owns it. While it was ignored
+      # (Keel era, before 2026-10), Keel rewrote the serving image to
       # v26.5.0-debug-amd64-debian, which cannot read a graph built by the pinned
       # builder — "File is incompatible with this version of OSRM: prepared with
       # OSRM 6.0.0 but this is v26.5.0". Build and serve MUST use one version.
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

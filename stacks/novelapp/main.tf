@@ -38,8 +38,7 @@ resource "kubernetes_namespace" "novelapp" {
     name = "novelapp"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -95,28 +94,14 @@ resource "kubernetes_deployment" "novelapp" {
     }
     annotations = {
       "reloader.stakater.com/auto" = "true"
-      # Track upstream SEMVER. Gheorghe fixed his tag format 2026-06-06
-      # (v.1.1.1 -> valid v1.1.1 / v1.1.3), so Keel can parse versions again.
-      # policy=major = take ALL upgrades (major+minor+patch, cumulative) --
-      # Viktor wants novelapp always on Gheorghe's newest release. NO match-tag:
-      # semver policies must be free to climb to higher semver tags (match-tag
-      # would pin to a single tag's digest and freeze it). Keel only considers
-      # PARSEABLE semver tags, so the leftover malformed `v.1.x.x` / SHA / `test`
-      # tags are ignored. The image below is a floor; Keel manages the live tag
-      # (KEEL_IGNORE_IMAGE in lifecycle). If Gheorghe ever regresses to the
-      # `v.` format again, Keel silently stops upgrading -- revisit then.
-      "keel.sh/policy"       = "major"
-      "keel.sh/trigger"      = "poll"
-      "keel.sh/pollSchedule" = "@every 1h"
     }
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE — Keel manages tag updates
       spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      metadata[0].annotations["kubernetes.io/change-cause"],                                   # Keel writes this on each auto-upgrade
+      metadata[0].annotations["kubernetes.io/change-cause"],                                   # rollout tooling writes this (Keel did until 2026-10)
       metadata[0].annotations["deployment.kubernetes.io/revision"],                            # K8s increments this on every rollout
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1 — Keel writes on update
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -144,11 +129,13 @@ resource "kubernetes_deployment" "novelapp" {
           }
         }
         container {
-          image = "mghee/novelapp:v1.1.3"
+          image = "mghee/novelapp:v1.1.6"
           name  = "novelapp"
-          # IfNotPresent is correct now that the tag is a pinned semver (Keel
-          # bumps the tag string on upgrade -> a new tag always pulls fresh).
-          # Always was only needed back when this tracked the mutable :latest.
+          # Viktor wants novelapp on Gheorghe's newest release (majors
+          # included). Renovate bumps this semver tag; a new tag always pulls
+          # fresh, so IfNotPresent is enough. Upstream also has malformed
+          # `v.1.x.x`, SHA and `test` tags; the 2026-10-10 Renovate dry run
+          # still picked v1.1.6 correctly.
           image_pull_policy = "IfNotPresent"
           env {
             name  = "NODE_ENV"
