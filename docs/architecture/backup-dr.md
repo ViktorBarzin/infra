@@ -1060,7 +1060,6 @@ the 2026-04-22 backup_offsite_sync FAIL (node3 kubelet hiccup at
 | Headscale | ✓ | ✓ | — | ✓ | proxmox-lvm |
 | Uptime Kuma | ✓ | ✓ | — | ✓ | proxmox-lvm |
 | **Other apps not enumerated above** | ✓¹ | ✓¹ | varies | ✓ | proxmox-lvm / proxmox-lvm-encrypted |
-| **Postiz** (bundled bitnami PG on local-path) | — | — | ✓ daily pg_dump → NFS | ✓ | local-path + NFS |
 | **Hand-managed VMs (not in Terraform)** |
 | devvm (workstation, VMID 102) | — | — | ✓ daily `/home` rsync + weekly vzdump image | ✓ monthly | local-lvm (sdc) |
 | Other hand-managed VMs (HA 103, registry 220, k8s nodes) | — | — | — gap² | — | local-lvm — see note² |
@@ -1082,7 +1081,6 @@ the 2026-04-22 backup_offsite_sync FAIL (node3 kubelet hiccup at
 ¹ **"Other apps not enumerated above"** — the table only enumerates services worth calling out. The default backup posture for any service using `proxmox-lvm` or `proxmox-lvm-encrypted` (outside `dbaas`/`monitoring`) is **automatic** Layer 1 (LVM thin snapshots, 7d retention) + Layer 2 (file backup, 4 weekly versions on sda) + Layer 3 (offsite to Synology). Auto-discovery is by LV name pattern (`vm-*-pvc-*`), so adding a new service to the cluster gets it covered without any explicit registration. Run `ssh root@192.168.1.127 lvs --noheadings -o lv_name pve | grep '^vm-.*-pvc-' | grep -v _snap_ | wc -l` to see the live count.
 
 **Known gaps** — services with PVCs not on the proxmox-lvm path lose Layer 1+2:
-- **Postiz** PG and Redis (bundled bitnami chart) live on `local-path` (K8s node OS disk). PG covered by the postiz-postgres-backup CronJob (daily pg_dump → `/srv/nfs/postiz-backup/`, Layer 3 via offsite sync). Redis is regenerable cache — not backed up.
 - **Prometheus, Alertmanager, Pushgateway** — `monitoring` namespace excluded by policy; loss is acceptable (metrics regenerable, silences ephemeral, Pushgateway has on-disk persistence for 24h gap tolerance).
 
 ## Recovery Procedures

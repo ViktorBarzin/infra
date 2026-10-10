@@ -243,26 +243,30 @@ resource "kubernetes_stateful_set_v1" "mysql_standalone" {
 
         container {
           name = "mysql"
-          # ─────────────────────────────────────────────────────────────
-          # ⚠️  DO NOT BUMP THIS IMAGE WITHOUT FOLLOWING THE PLAN  ⚠️
-          # ─────────────────────────────────────────────────────────────
-          # Pinned to mysql:8.4.8 EXACTLY. The in-server DD upgrade from
-          # 80408 → 80409 stalls reliably on this hardware (24s of writes
-          # then no progress, no CPU, never completes). The 2026-05-18
-          # recovery from the failed auto-bump took ~25 min of full
-          # MySQL downtime + Forgejo/registry/7 apps cascade.
+          # Pinned to mysql:8.4.8. Read this before bumping it.
           #
-          # To go to 8.4.9 (or any later version), follow:
-          #   docs/plans/2026-05-19-mysql-8.4.9-upgrade-design.md
-          #   docs/plans/2026-05-19-mysql-8.4.9-upgrade-plan.md
-          #   Beads: code-963q
+          # 2026-05-18: an automatic bump to 8.4.9 stalled in the in-server
+          # data-dictionary upgrade (80408 -> 80409): about 24s of writes, then
+          # no progress and no CPU. Recovery took ~25 min of full MySQL
+          # downtime, with Forgejo, the registry and 7 apps down behind it
+          # (code-eme8 outage, code-k40p recovery).
           #
-          # The upgrade path is wipe + re-init (NOT in-place DD upgrade).
-          # Requires: maintenance window, fresh dump, Vault user reset.
+          # 2026-09-04 rehearsal (bead code-963q, memory #2237) disproved the
+          # low-IO-settings theory: a throwaway copy on the same storage class,
+          # restored to 692 tables / 7,584 MB with row counts matching prod,
+          # upgraded in place 8.4.8 -> 8.4.9 in 33.7s at the original settings,
+          # 8.4.9 -> 8.4.11 in 10.3s, and 8.4.8 -> 8.4.11 in one hop in 6.9s.
+          # An in-place image bump worked on that copy, so the wipe + re-init
+          # path in docs/plans/2026-05-19-mysql-8.4.9-upgrade-{design,plan}.md
+          # is no longer the planned route. Causes of the May stall that are still untested: client
+          # load (20 apps reconnecting, none in the rehearsal), repeated
+          # liveness kills mid-upgrade (the startup_probe added 2026-07-19 now
+          # gives 5 min before liveness arms), and MySQL Bug #117983 (memory
+          # growth when upgrading with thousands of tables; limit was 4Gi in
+          # May, 6Gi now).
           #
-          # History: code-eme8 (initial outage), code-k40p (recovery).
-          # See also: docs/runbooks/restore-mysql.md.
-          # ─────────────────────────────────────────────────────────────
+          # To bump: take a fresh dump first (mysql-backup CronJob), then
+          # change the tag. Restore path: docs/runbooks/restore-mysql.md.
           image = "mysql:8.4.8"
 
           port {

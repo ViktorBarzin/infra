@@ -8,5 +8,5 @@ Moved verbatim from the repo's agent instruction files (`AGENTS.md`, `.claude/CL
 - **GPU**: `node_selector = { "nvidia.com/gpu.present" : "true" }` + toleration `nvidia.com/gpu`. The label is auto-applied by NFD/gpu-feature-discovery on any node with an NVIDIA PCI device — nothing is hostname-pinned, so the GPU card can move between nodes without Terraform edits.
 - **Pull-through cache**: 10.0.20.10 — docker.io (:5000), ghcr.io (:5010) only. Caches stale manifests for :latest tags — use versioned tags or pre-pull with `ctr --hosts-dir ''` to bypass.
 - **pfSense**: 10.0.20.1 (gateway, firewall, DNS forwarding)
-- **MySQL InnoDB Cluster**: 1 instance on proxmox-lvm (scaled from 3 — only Uptime Kuma + phpIPAM remain), PriorityClass `mysql-critical` + PDB, anti-affinity excludes any GPU node (`nvidia.com/gpu.present=true`) so MySQL moves off the GPU host automatically if the card is relocated
+- **MySQL standalone** (`mysql-standalone` StatefulSet; InnoDB Cluster until 2026-04-16, its leftover CR, CRDs and PDB removed 2026-10-10): 1 instance on proxmox-lvm-encrypted, PriorityClass `tier-1-cluster`, no PDB, anti-affinity excludes any GPU node (`nvidia.com/gpu.present=true`) so MySQL moves off the GPU host automatically if the card is relocated
 - **SMTP**: `var.mail_host` port 587 STARTTLS (not internal svc address — cert mismatch)

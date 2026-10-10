@@ -724,7 +724,7 @@ Containerd on all K8s nodes uses `hosts.toml` to redirect pulls to the local cac
 **phpIPAM (IP Address Management)**:
 - Stack: `stacks/phpipam/`
 - Web UI: `phpipam.viktorbarzin.me` (Authentik-protected)
-- Database: MySQL InnoDB cluster (`mysql.dbaas.svc.cluster.local`)
+- Database: MySQL standalone (`mysql.dbaas.svc.cluster.local`)
 - Device import: CronJob `phpipam-pfsense-import` hourly — queries Kea DHCP leases + pfSense ARP table via SSH (no active scanning)
 - DNS sync: CronJob `phpipam-dns-sync` every 15min — bidirectional sync between phpIPAM and Technitium DNS (push named hosts → A+PTR, pull DNS hostnames → unnamed phpIPAM entries)
 - Subnets tracked: 10.0.10.0/24, 10.0.20.0/24, 192.168.1.0/24, 10.3.2.0/24, 192.168.8.0/24, 192.168.0.0/24
