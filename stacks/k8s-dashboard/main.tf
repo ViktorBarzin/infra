@@ -52,10 +52,12 @@ resource "helm_release" "kubernetes-dashboard" {
   namespace = kubernetes_namespace.k8s-dashboard.metadata[0].name
   name      = "kubernetes-dashboard"
 
-  repository = "https://kubernetes-retired.github.io/dashboard/"
-  chart      = "kubernetes-dashboard"
-  atomic     = true
-  version    = "7.12.0"
+  repository      = "https://kubernetes-retired.github.io/dashboard/"
+  chart           = "kubernetes-dashboard"
+  atomic          = true
+  cleanup_on_fail = true
+  # 7.14.0 is the final release: upstream kubernetes/dashboard was archived 2026-01-21.
+  version = "7.14.0"
 
   # values = [templatefile("${path.module}/chart_values.tpl", { postgresql_password = var.postgresql_password })]
 }
