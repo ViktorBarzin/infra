@@ -27,11 +27,9 @@ locals {
 # The two labels this declaration added and vault's does not are both dead:
 #   istio-injection = "disabled"  — no istio is installed on this cluster at all
 #                                   (0 namespaces, 0 pods, verified 2026-09-03)
-#   keel.sh/enrolled = "true"     — never reached the live namespace, and the
-#                                   deployment carries working keel.sh/policy,
-#                                   trigger and pollSchedule annotations anyway
-# so nothing observable changes by dropping them. If namespace-level keel
-# enrollment is ever wanted here, add it to vault's declaration.
+#   keel.sh/enrolled = "true"     — never reached the live namespace; Keel
+#                                   itself was retired in 2026-10
+# so nothing observable changes by dropping them.
 #
 # Ordering is safe without a depends_on: terragrunt.hcl already declares
 # dependency "vault", so the namespace exists before this stack applies.
@@ -114,12 +112,9 @@ resource "kubernetes_deployment" "plotting-book" {
   lifecycle {
     # DRIFT_WORKAROUND: CI pipeline owns image tag (kubectl set image from Woodpecker/GHA). Reviewed 2026-04-18.
     ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image,
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                                         # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: Anca's CI deploys this image, outside Renovate
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
