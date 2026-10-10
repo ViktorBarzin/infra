@@ -639,6 +639,23 @@
         - { src: devvm-cleanup, dest: /usr/local/bin/devvm-cleanup }
         - { src: networkd-dhcp-watchdog.sh, dest: /usr/local/sbin/networkd-dhcp-watchdog.sh }
 
+    # Remote help for Milka's phone: milka-help starts RustDesk on her phone over
+    # adb for a session and stops it afterwards; milka-adb finds and connects the
+    # phone. Viktor and emo both use them. Each user needs the key her phone
+    # trusts at ~/.android/milka-adbkey (a copy of wizard's adbkey), which is a
+    # secret and is not managed here.
+    # Design: docs/plans/2026-10-09-milka-remote-phone-help-design.md
+    - name: Install the Milka phone helpers
+      ansible.builtin.copy:
+        src: "files/devvm/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        mode: "0755"
+        owner: root
+        group: root
+      loop:
+        - milka-adb
+        - milka-help
+
     # The CLAUDE_CODE_SHELL_PREFIX that managed-settings.json sets for every
     # user: each Bash command Claude runs gets its own systemd scope and 6G cap,
     # so a test run that fills memory loses its own processes, not the

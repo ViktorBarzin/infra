@@ -1,0 +1,17 @@
+#!/bin/bash
+# milka-adb: connect adb to Milka's phone over the site tunnel and print the adb serial.
+# Tries the fixed port 5555 (set by 'adb tcpip 5555', lost on reboot), then scans for the
+# wireless-debugging port, which changes after every restart. Her phone lives at Valchedrym
+# (192.168.0.193, hostname A55-na-Milka) or Mladost 3; pass the IP if it moved.
+# Uses its own adb server on port 5039 with the key her phone trusts, ~/.android/milka-adbkey
+# (wizard's adbkey; emo has a copy), so it never mixes with a user's other adb devices.
+# Background: infra docs/plans/2026-10-09-milka-remote-phone-help-design.md
+set -u
+export ADB_SERVER_SOCKET=tcp:localhost:5039 ADB_VENDOR_KEYS=$HOME/.android/milka-adbkey
+IP=${1:-192.168.0.193}
+try() { timeout 8 adb connect "$IP:$1" >/dev/null 2>&1; sleep 2
+  [ "$(adb devices | awk -v d="$IP:$1" '$1==d{print $2}')" = device ] && { echo "$IP:$1"; exit 0; }
+  adb disconnect "$IP:$1" >/dev/null 2>&1; }
+try 5555
+for p in $(nmap -Pn -p 30000-50000 -T4 --max-retries 3 "$IP" 2>/dev/null | grep -oE '^[0-9]+/tcp open' | cut -d/ -f1); do try "$p"; done
+echo "no adb on $IP (phone off, not yet unlocked since boot, or on another network)" >&2; exit 1
