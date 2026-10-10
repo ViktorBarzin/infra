@@ -39,6 +39,14 @@ _reports_off() {
   [ "$a" -lt 100 ] && [ "$b" -lt 100 ]
 }
 
+_no_keel_policy() {
+  # inject-keel-annotations was deleted in the Keel cutover (2026-10-10).
+  local n
+  n=$(kubectl get clusterpolicies.kyverno.io inject-keel-annotations --no-headers 2>/dev/null | wc -l)
+  echo "inject-keel-annotations present=$n"
+  [ "$n" -eq 0 ]
+}
+
 _updaterequests_bounded() {
   local n
   n=$(kubectl get updaterequests.kyverno.io -A --no-headers 2>/dev/null | wc -l)
@@ -54,6 +62,7 @@ verify_component() {
   check "a privileged pod is denied (dry run)" _denies_privileged
   check "a plain pod gets the tier priority and ndots=2 (dry run)" _mutates
   check "policy reports stay off" _reports_off
+  check "the Keel annotation policy stays deleted" _no_keel_policy
   check "background update requests are bounded" _updaterequests_bounded
   check "no panics in Kyverno logs (15m)" expect_no_log_errors kyverno app.kubernetes.io/instance=kyverno 'panic|fatal'
 }
