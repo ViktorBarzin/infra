@@ -397,6 +397,41 @@ resource "kubernetes_deployment" "f1-stream" {
               }
             }
           }
+          # Member sign-in and the membership check (f1-stream ADR-0020,
+          # ADR-0021; members.tf). The issuer and client id are public; the
+          # client secret and the Authentik API token come from the Secret
+          # members.tf writes. Unset, /login answers 503 and nothing else
+          # changes, so the image and this stack can land in either order.
+          env {
+            name  = "OIDC_ISSUER"
+            value = "https://authentik.viktorbarzin.me/application/o/${authentik_application.f1_stream.slug}/"
+          }
+          env {
+            name  = "OIDC_CLIENT_ID"
+            value = authentik_provider_oauth2.f1_stream.client_id
+          }
+          env {
+            name = "OIDC_CLIENT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.f1_members.metadata[0].name
+                key  = "oidc_client_secret"
+              }
+            }
+          }
+          env {
+            name  = "MEMBER_GROUP"
+            value = authentik_group.f1_users.name
+          }
+          env {
+            name = "AUTHENTIK_API_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.f1_members.metadata[0].name
+                key  = "authentik_api_token"
+              }
+            }
+          }
           env {
             name = "DISCORD_TOKEN"
             value_from {
