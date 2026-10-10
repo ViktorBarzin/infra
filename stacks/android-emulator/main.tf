@@ -87,15 +87,6 @@ resource "kubernetes_deployment" "android-emulator" {
         labels = { app = "android-emulator" }
       }
       spec {
-        node_selector = {
-          "nvidia.com/gpu.present" : "true"
-        }
-        toleration {
-          key      = "nvidia.com/gpu"
-          operator = "Equal"
-          value    = "true"
-          effect   = "NoSchedule"
-        }
         image_pull_secrets {
           name = "registry-credentials"
         }
@@ -105,15 +96,6 @@ resource "kubernetes_deployment" "android-emulator" {
 
           security_context {
             privileged = true # /dev/kvm access
-          }
-
-          env {
-            # The GPU operator injects only compute,utility by default — the
-            # NVIDIA EGL/GL libraries need the graphics capability, otherwise
-            # the emulator's -gpu host silently falls back to Mesa llvmpipe
-            # (software GL) inside the container.
-            name  = "NVIDIA_DRIVER_CAPABILITIES"
-            value = "all"
           }
 
           port {
@@ -146,18 +128,7 @@ resource "kubernetes_deployment" "android-emulator" {
               memory = "3Gi"
             }
             limits = {
-              memory           = "8Gi"
-              "nvidia.com/gpu" = "1" # T4 time-slice
-              # GPU VRAM budget (ADR-0016), declared 2026-08-31. This pod ran
-              # with NO gpumem declaration, which made it invisible to the
-              # gpu-vram-watchdog: it could never be recycled no matter what it
-              # used, and its usage did not count against the seating chart.
-              # Measured 214 MiB peak / 180 MiB mean, active 12 of the 169 hours
-              # to 2026-08-31, so 300 covers it with margin. (The older
-              # "~0.5-1GiB while awake" note here was an estimate; this is the
-              # measurement.) It keeps its own android-emulator-gate rather than
-              # Sablier, which already works.
-              "viktorbarzin.me/gpumem" = "300"
+              memory = "8Gi"
             }
           }
 

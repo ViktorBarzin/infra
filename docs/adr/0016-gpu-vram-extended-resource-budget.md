@@ -164,3 +164,12 @@ f1-stream could declare 2048 MiB (was 1200): a 4K HDR replay ladder measured
 1707 MiB and the watchdog recycled the pod during a contention event. The
 declared total on node1 is now 14148 of 14200, which leaves less unallocated
 room above the watchdog's 1536 MiB free floor than before.
+
+## Amendment, 2026-10-10
+
+android-emulator no longer requests a GPU and gives up its 300 MiB seat. It
+renders on the CPU (SwiftShader) after `-gpu host` turned out to send only
+Vulkan to the T4 and was the mode that segfaulted; details in the ADR-0001
+amendment of the same date. Before this change the declared total on node1
+was 14,948 of 15,000 MiB.
+
