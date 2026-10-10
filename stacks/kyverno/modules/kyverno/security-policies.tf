@@ -328,6 +328,12 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
                   "codeberg.org/*", "mcr.microsoft.com/*", "nvcr.io/*",
                   "oci.external-secrets.io/*", "reg.kyverno.io/*",
                   "docker.n8n.io/*", "registry.gitlab.com/*",
+                  # Trivy Operator (2026-10-10): the trivy-operator chart
+                  # 0.37.0 pulls the operator, the Trivy server and every scan
+                  # job from mirror.gcr.io/aquasec/{trivy-operator,trivy}.
+                  # Scoped to the aquasec path rather than all of mirror.gcr.io.
+                  # The node-collector comes from ghcr.io, already allowed.
+                  "mirror.gcr.io/aquasec/*",
                   # Private
                   "forgejo.viktorbarzin.me/*", "10.0.20.10*",
                   # Legacy private registry (decommissioned 2026-05-07 per CLAUDE.md).
@@ -374,4 +380,53 @@ resource "kubectl_manifest" "policy_require_trusted_registries" {
   })
 
   depends_on = [helm_release.kyverno]
+}
+
+# =============================================================================
+# PolicyException: Trivy Operator node-collector
+# =============================================================================
+# The Trivy Operator (stacks/trivy-operator) runs one node-collector Job per
+# node to read kubelet, etcd and CNI config for the infra assessment and CIS
+# checks. Its pod template comes from trivy-kubernetes v0.9.1
+# (pkg/jobs/template/node-collector.yaml), pinned by trivy-operator v0.35.0:
+#   - hostPID: true                       -> blocked by deny-host-namespaces
+#   - read-only hostPath mounts of /var/lib/{etcd,kubelet,kube-scheduler,
+#     kube-controller-manager}, /etc/systemd, /lib/systemd, /etc/kubernetes,
+#     /etc/cni/net.d                      -> no policy here covers hostPath
+#   - runAsUser 0, privileged: false, allowPrivilegeEscalation: false,
+#     capabilities drop ALL, readOnlyRootFilesystem
+# So it needs exactly one exemption: hostPID. deny-privileged-containers and
+# restrict-sys-admin already pass, and the image (ghcr.io/aquasecurity/
+# node-collector) is on the trusted list.
+#
+# The Job is admitted first, so the autogen rule for Jobs needs the same
+# exemption as the Pod rule. Scope is the trivy-system namespace and the
+# node-collector-<hash> name the operator gives each Job and its Pod. Scan
+# jobs (scan-vulnerabilityreport-*) do not match and stay fully enforced.
+resource "kubectl_manifest" "policy_exception_trivy_node_collector" {
+  yaml_body = yamlencode({
+    apiVersion = "kyverno.io/v2"
+    kind       = "PolicyException"
+    metadata = {
+      name      = "trivy-node-collector-hostpid"
+      namespace = "kyverno"
+    }
+    spec = {
+      exceptions = [{
+        policyName = "deny-host-namespaces"
+        ruleNames  = ["deny-host-namespaces", "autogen-deny-host-namespaces"]
+      }]
+      match = {
+        any = [{
+          resources = {
+            kinds      = ["Pod", "Job"]
+            namespaces = ["trivy-system"]
+            names      = ["node-collector-*"]
+          }
+        }]
+      }
+    }
+  })
+
+  depends_on = [helm_release.kyverno, kubectl_manifest.policy_deny_host_namespaces]
 }

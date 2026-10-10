@@ -551,6 +551,14 @@ This prevents resource exhaustion and enforces governance without manual quota m
 | `restrict-sys-admin` | Block CAP_SYS_ADMIN | Audit | **Enforce** |
 | `require-trusted-registries` | Only allow approved image registries (forgejo.viktorbarzin.me, docker.io, ghcr.io, quay.io, registry.k8s.io, gcr.io, oci://ghcr.io/sergelogvinov) | Audit | **Enforce** |
 
+**PolicyExceptions** are enabled since 2026-10-10 (`features.policyExceptions`, chart flags `--enablePolicyException=true --exceptionNamespace=kyverno`). Kyverno honours an exception only when it lives in the `kyverno` namespace, so creating one needs write access there rather than in the workload's namespace. Exceptions are defined next to the policies in `stacks/kyverno/modules/kyverno/security-policies.tf`. A PolicyException is narrower than the shared namespace exclude list, which exempts a whole namespace from all four policies at once.
+
+| Exception | Policy and rules | Scope | Why |
+|-----------|------------------|-------|-----|
+| `trivy-node-collector-hostpid` | `deny-host-namespaces` (Pod rule and the Job autogen rule) | `Pod`/`Job` named `node-collector-*` in `trivy-system` | The Trivy Operator node-collector sets `hostPID: true` and mounts node config read-only. It is not privileged, drops all capabilities and uses a trusted image, so hostPID is the only exemption it needs. See `docs/architecture/trivy.md`. |
+
+The trusted-registry list also allows `mirror.gcr.io/aquasec/*` for the Trivy Operator, Trivy server and scan-job images (scoped to the `aquasec` path, not all of `mirror.gcr.io`).
+
 Cosign `verify-images` is **deferred** beyond wave 1 — needs image-signing infrastructure (Sigstore / cosign + KMS) before it can enforce meaningfully.
 
 #### Node sysctl posture (`allowedUnsafeSysctls`)

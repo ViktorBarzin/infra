@@ -44,6 +44,18 @@ resource "helm_release" "kyverno" {
       forceFailurePolicyIgnore = {
         enabled = true
       }
+      # PolicyExceptions on (2026-10-10, software-currency design Phase 2).
+      # The Trivy Operator node-collector needs hostPID, which
+      # deny-host-namespaces blocks. A PolicyException scoped to those pods
+      # (security-policies.tf) is narrower than adding trivy-system to the
+      # shared exclude list, which would exempt the whole namespace from all
+      # four pod-security policies. Exceptions are honoured only when they
+      # live in the kyverno namespace, so creating one needs write access
+      # there, not in the workload's namespace.
+      policyExceptions = {
+        enabled   = true
+        namespace = "kyverno"
+      }
       # Reporting features disabled (2026-06-12, etcd-load-reduction); the
       # reportsController itself is now disabled too (2026-06-28, see below).
       # policyReports were already off, so admission/aggregate/background generated
