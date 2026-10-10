@@ -11,7 +11,7 @@ Viktor, emo and Claude can see and operate Milka's phone (Samsung Galaxy A55, An
 | Topic | Decision |
 |---|---|
 | Kind of help | Full control (tap and type), not only viewing |
-| Helpers | Viktor and emo, from phone or laptop; Claude through a RustDesk desktop client in a container on the devvm (used on 2026-10-10), plus ADB. Starting RustDesk needs the devvm, so Viktor or Claude runs `milka-help start` first |
+| Helpers | Viktor and emo, from phone or laptop; Claude through a RustDesk desktop client in a container on the devvm (used on 2026-10-10), plus ADB. Starting RustDesk needs the devvm, so Viktor, emo or Claude runs `milka-help start` first |
 | How she asks | She phones a helper as usual. No help button |
 | Her part per session | None. RustDesk accepts sessions by password only, and screen capture starts without the Android prompt (see below) |
 | Control tool | RustDesk. Her phone runs 1.4.9 from F-Droid; the F-Droid and GitHub builds are signed with different keys, so updates come from F-Droid or need an uninstall first |
@@ -52,14 +52,14 @@ flowchart TB
 | Screen capture | App-op `PROJECT_MEDIA` set to allow for `com.carriez.flutter_hbb`, so no "Share screen" prompt |
 | Battery | RustDesk and Automate exempt from battery optimisation |
 | Notifications | `POST_NOTIFICATIONS` revoked for `com.carriez.flutter_hbb` and `com.llamalab.automate`. Both keep running; their ongoing notifications are not shown |
-| Wireless debugging | Paired with the devvm's ADB key. The connect port changes after every restart; `~/.local/bin/milka-adb` (wizard) tries port 5555 and then scans 30000-50000 |
+| Wireless debugging | Paired with the devvm's ADB key (wizard's, copied to emo as `~/.android/milka-adbkey`). The connect port changes after every restart; `milka-adb` tries port 5555 and then scans 30000-50000 |
 | Keeping ADB on | Automate flow "Keep wireless ADB on": set Global `adb_wifi_enabled` to 1, wait 1 minute (inexact, does not wake the phone), repeat. Automate has `WRITE_SECURE_SETTINGS` and "Run on system startup" |
 
 Restart test, 2026-10-10: after `adb reboot`, RustDesk registered again and accepted a password session showing the lock screen with nobody touching the phone. ADB came back once the phone had been unlocked and the flow ran; that took about 10 minutes with the original 15-minute wait, which is why the wait is now 1 minute. Apps such as Automate only start after the first unlock following a restart.
 
 ## Quiet by default (2026-10-10)
 
-Viktor asked for as few notifications as possible and for RustDesk to run only when needed, to save battery. The helper script `~/.local/bin/milka-help` (wizard) does this over ADB.
+Viktor asked for as few notifications as possible and for RustDesk to run only when needed, to save battery. The helper scripts `milka-help` and `milka-adb` do this over ADB. The devvm playbook installs both in `/usr/local/bin` for every user. They run their own adb server on port 5039 with the key her phone trusts at `~/.android/milka-adbkey`; Viktor and emo both have it (one shared key, Viktor's choice), and emo's own adb key for other devices is untouched.
 
 | Command | What it does on her phone |
 |---|---|
@@ -78,7 +78,9 @@ flowchart TB
 
 Tested on 2026-10-10 from the idle state with her phone locked: the service started headless and registered with the server within 6 seconds, the devvm viewer connected with the remembered password, showed the lock screen once the screen was on, and controlled the home screen after unlock. During the session her notification list showed only her own apps (step counter, AdGuard, Viber). After `stop`, `dumpsys` showed no RustDesk service and no screen capture, the accessibility entry was empty, and ADB reconnected.
 
-A force stop also puts the app in Android's stopped state, which keeps its boot receiver from running, so RustDesk should not start after a restart until someone runs `start`. This was not yet confirmed with a restart.
+A force stop also puts the app in Android's stopped state, which keeps its boot receiver from running. Restart test, 2026-10-10 21:26 UTC: RustDesk stayed off (no traffic to the server). ADB stayed off until the phone was first unlocked, as expected; Automate started at that unlock, wireless debugging came back, and a test that switched it off again saw it restored within 3 minutes. Then `milka-help start`, `status` and `stop`, run as emo with emo's copy of the key, all worked on her phone.
+
+After a restart nobody can reach the phone remotely until it has been unlocked once by hand, since neither RustDesk nor ADB runs before that.
 
 Things learned while making it quiet:
 
@@ -134,7 +136,6 @@ The permanent password for her phone is in Vault (`secret/rustdesk-milka`, `pass
 
 ## Open questions
 
-- Whether a restart leaves RustDesk off now that it idles in the stopped state, and whether the Automate flow keeps running across a restart without its notification permission.
 - The battery cost of the Automate loop. It wakes for a moment about once a minute while the phone is awake and less often while it dozes (gaps of 6 to 14 minutes in its log on 2026-10-10).
 - Wireless debugging still has to be allowed once on the Mladost 3 Wi-Fi before the flow can switch it on there.
 - Whether laptop keystrokes can reach her text fields with a different RustDesk keyboard mode. Only the legacy mode was tested.
