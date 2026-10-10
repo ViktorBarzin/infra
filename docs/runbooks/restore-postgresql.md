@@ -46,8 +46,8 @@ the data disappeared.
 ls -lt /mnt/main/postgresql-backup/dump_*.sql | head -20
 
 # Or via a pod:
-kubectl run pg-restore --rm -it --image=postgres:16.4-bullseye \
-  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"dbaas-postgresql-backup"}}],"containers":[{"name":"pg-restore","image":"postgres:16.4-bullseye","volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["ls","-lt","/backup/"]}]}}' \
+kubectl run pg-restore --rm -it --image=docker.io/library/postgres:16.15-trixie \
+  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"dbaas-postgresql-backup"}}],"containers":[{"name":"pg-restore","image":"docker.io/library/postgres:16.15-trixie","volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["ls","-lt","/backup/"]}]}}' \
   -n dbaas
 ```
 
@@ -82,8 +82,8 @@ kubectl wait --for=condition=Ready cluster/pg-cluster -n dbaas --timeout=300s
 
 # 5. Restore the dump
 PGPASSWORD=$(kubectl get secret pg-cluster-superuser -n dbaas -o jsonpath='{.data.password}' | base64 -d) \
-  kubectl run pg-restore --rm -it --image=postgres:16.4-bullseye \
-  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"dbaas-postgresql-backup"}}],"containers":[{"name":"pg-restore","image":"postgres:16.4-bullseye","env":[{"name":"PGPASSWORD","value":"'$PGPASSWORD'"}],"volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["/bin/sh","-c","zcat /backup/dump_YYYY_MM_DD_HH_MM.sql.gz | psql -h pg-cluster-rw.dbaas -U postgres"]}]}}' \
+  kubectl run pg-restore --rm -it --image=docker.io/library/postgres:16.15-trixie \
+  --overrides='{"spec":{"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"dbaas-postgresql-backup"}}],"containers":[{"name":"pg-restore","image":"docker.io/library/postgres:16.15-trixie","env":[{"name":"PGPASSWORD","value":"'$PGPASSWORD'"}],"volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["/bin/sh","-c","zcat /backup/dump_YYYY_MM_DD_HH_MM.sql.gz | psql -h pg-cluster-rw.dbaas -U postgres"]}]}}' \
   -n dbaas
 ```
 
@@ -236,8 +236,8 @@ ls -lt /mnt/backup/nfs-mirror/postgresql-backup/
 # 3. Mount sda backup on a pod
 PGPASSWORD=$(kubectl get secret pg-cluster-superuser -n dbaas -o jsonpath='{.data.password}' | base64 -d)
 
-kubectl run pg-restore --rm -it --image=postgres:16.4-bullseye \
-  --overrides='{"spec":{"volumes":[{"name":"backup","hostPath":{"path":"/mnt/backup/nfs-mirror/postgresql-backup"}}],"containers":[{"name":"pg-restore","image":"postgres:16.4-bullseye","env":[{"name":"PGPASSWORD","value":"'$PGPASSWORD'"}],"volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["/bin/sh","-c","zcat /backup/dump_YYYY_MM_DD_HH_MM.sql.gz | psql -h pg-cluster-rw.dbaas -U postgres"]}],"nodeName":"k8s-master"}}' \
+kubectl run pg-restore --rm -it --image=docker.io/library/postgres:16.15-trixie \
+  --overrides='{"spec":{"volumes":[{"name":"backup","hostPath":{"path":"/mnt/backup/nfs-mirror/postgresql-backup"}}],"containers":[{"name":"pg-restore","image":"docker.io/library/postgres:16.15-trixie","env":[{"name":"PGPASSWORD","value":"'$PGPASSWORD'"}],"volumeMounts":[{"name":"backup","mountPath":"/backup"}],"command":["/bin/sh","-c","zcat /backup/dump_YYYY_MM_DD_HH_MM.sql.gz | psql -h pg-cluster-rw.dbaas -U postgres"]}],"nodeName":"k8s-master"}}' \
   -n dbaas
 ```
 
