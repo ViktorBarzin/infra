@@ -235,6 +235,7 @@ Cutover progress, one batch per landing (batches and classes: the Keel inventory
 |---|---|---|
 | B01 | ac, actualbudget, affine, agentmd, android-emulator, blog, broker-sync, browser-bridge, city-guesser, claude-breakglass, claude-memory, coturn, cyberchef (anisette stays: digest-only pin) | 2026-10-10 |
 | B02 | dashy, dawarich, drone-logbook, ebook2audiobook, ebooks, echo, f1-stream, fire-planner, freedify, freshrss, goldmane-edge-aggregator, grampsweb, hackmd (excalidraw stays: Keel was its only deploy path) | 2026-10-10 |
+| B03 | health, insta2spotify, instagram-poster, job-hunter, jsoncrack, kms, learn, lesson-harvester, linkwarden, matrix, navidrome (interview-prep-app, k8s-portal and learning stay: Keel was their only deploy path) | 2026-10-10 |
 
 While it ran, Keel (`stacks/keel/`) polled the registry of each enrolled workload hourly and rolled it when a newer tag or digest matched the workload's `keel.sh/policy`. Enrollment and default annotations came from the Kyverno `inject-keel-annotations` policy (formerly `stacks/kyverno/modules/kyverno/keel-annotations.tf`). Design and history: `docs/plans/2026-05-16-auto-upgrade-apps-design.md`.
 

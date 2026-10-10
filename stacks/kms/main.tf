@@ -9,8 +9,7 @@ resource "kubernetes_namespace" "kms" {
     name = "kms"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -78,12 +77,8 @@ resource "kubernetes_deployment" "kms-web-page" {
     ignore_changes = [
       # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
       spec[0].template[0].spec[0].dns_config,
-      # CI (Woodpecker) manages the live image tag via `kubectl set image`
-      spec[0].template[0].spec[0].container[0].image,
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # CI_SETS_IMAGE: first-party image, deployed by its own CI
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -215,7 +210,7 @@ resource "kubernetes_deployment" "kms_diag" {
           }
         }
         container {
-          image   = "python:3.12-alpine"
+          image   = "library/python:3.12.15-alpine"
           name    = "diag-collector"
           command = ["python3", "/app/diag-collector.py"]
           resources {
@@ -241,12 +236,8 @@ resource "kubernetes_deployment" "kms_diag" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -396,7 +387,7 @@ resource "kubernetes_deployment" "windows_kms" {
           }
         }
         container {
-          image   = "kebe/vlmcsd:latest"
+          image   = "kebe/vlmcsd:v2.0.0"
           name    = "windows-kms"
           command = ["/usr/bin/vlmcsd"]
           args    = ["-D", "-v", "-l", "/var/log/vlmcsd/vlmcsd.log"]
@@ -435,7 +426,7 @@ resource "kubernetes_deployment" "windows_kms" {
           }
         }
         container {
-          image   = "python:3.12-alpine"
+          image   = "library/python:3.12.15-alpine"
           name    = "slack-notifier"
           command = ["python3", "-u", "/scripts/notifier.py"]
           env {
@@ -489,15 +480,9 @@ resource "kubernetes_deployment" "windows_kms" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].container[1].image,
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
   depends_on = [kubernetes_manifest.kms_slack_external_secret]

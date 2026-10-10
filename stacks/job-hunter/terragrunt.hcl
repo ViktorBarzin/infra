@@ -20,8 +20,8 @@ dependency "external-secrets" {
 inputs = {
   # :latest — CI drives the rollout. On every master push the pipeline builds
   # latest + :<sha> and runs `kubectl set image deployment/job-hunter ...:<sha>`
-  # so the Deployment rolls to the just-built code immediately (no wait for
-  # Keel's poll). Keel stays enrolled in parallel as a redundant net. The
+  # so the Deployment rolls to the just-built code immediately (the container
+  # image is ignore_changes/CI_SETS_IMAGE so applies don't fight it). The
   # CronJob uses :latest + Always pull (fresh pod each run). Project version
   # lives in pyproject.toml + git tag vX.Y.Z (semver), independent of the
   # deploy tag. CI OOM that had blocked all builds since 2026-04 is fixed.
