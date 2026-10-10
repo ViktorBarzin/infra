@@ -2229,7 +2229,10 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 }
               }
               command = ["/bin/bash", "-c", <<-EOT
-                set -euxo pipefail
+                # No xtrace (-x): it printed the expanded PGPASSWORD into the job
+                # log and from there into Loki (found 2026-10-10). pg_dumpall reads
+                # PGPASSWORD from the environment set above.
+                set -euo pipefail
                 # Push to the Pushgateway with Perl's core HTTP::Tiny: the image has no curl
                 # or wget, and installing one at run time broke when bullseye-pgdg left apt.
                 push_metrics() {
@@ -2240,7 +2243,7 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
                 _wb0=$(awk '/^write_bytes/{print $2}' /proc/$$/io 2>/dev/null || echo 0)
 
                 export now=$(date +"%Y_%m_%d_%H_%M")
-                PGPASSWORD=$PGPASSWORD pg_dumpall -h pg-cluster-rw.dbaas -U postgres | gzip -9 > /backup/dump_$now.sql.gz
+                pg_dumpall -h pg-cluster-rw.dbaas -U postgres | gzip -9 > /backup/dump_$now.sql.gz
 
                 # Rotate — 14 day retention
                 cd /backup
