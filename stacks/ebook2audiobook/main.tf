@@ -16,8 +16,7 @@ resource "kubernetes_namespace" "ebook2audiobook" {
     name = "ebook2audiobook"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.gpu
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.gpu
     }
   }
   lifecycle {
@@ -28,20 +27,20 @@ resource "kubernetes_namespace" "ebook2audiobook" {
 
 
 module "nfs_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebook2audiobook-data-host"
-  namespace  = kubernetes_namespace.ebook2audiobook.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/ebook2audiobook"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebook2audiobook-data-host"
+  namespace          = kubernetes_namespace.ebook2audiobook.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/ebook2audiobook"
   storage_class_name = "nfs-pve"
 }
 
 module "nfs_audiblez_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "ebook2audiobook-audiblez-data-host"
-  namespace  = kubernetes_namespace.ebook2audiobook.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/audiblez"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "ebook2audiobook-audiblez-data-host"
+  namespace          = kubernetes_namespace.ebook2audiobook.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/audiblez"
   storage_class_name = "nfs-pve"
 }
 
@@ -86,7 +85,7 @@ resource "kubernetes_deployment" "ebook2audiobook" {
 
         container {
           name  = "ebook2audiobook"
-          image = "docker.io/athomasson2/ebook2audiobook:v25.12.30-cu128"
+          image = "athomasson2/ebook2audiobook:v25.12.33-cu128"
 
           tty   = true
           stdin = true
@@ -143,15 +142,10 @@ resource "kubernetes_deployment" "ebook2audiobook" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -374,14 +368,10 @@ resource "kubernetes_deployment" "audiblez" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -492,14 +482,10 @@ resource "kubernetes_deployment" "audiblez-web" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
+      spec[0].template[0].spec[0].container[0].image, # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
