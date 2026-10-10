@@ -115,6 +115,8 @@ Since 2026-10-10 every active `helm_release` in `stacks/` sets an explicit chart
 - `prometheus` (`stacks/monitoring/modules/monitoring/prometheus.tf`) sets `cleanup_on_fail` only. It runs with `wait = false`, and Helm turns waiting back on whenever `atomic` is set.
 - `vault` (`stacks/vault/main.tf`) keeps `atomic = false`, because HA pods start sealed and fail readiness until they are unsealed.
 
+Any change to a `helm_release`, even a flag such as `cleanup_on_fail`, runs a full `helm upgrade` that re-renders the chart. Where Keel has moved a workload's image past the tag in Terraform, that upgrade puts the Terraform tag back and rolls the pods. On 2026-10-10 this rolled `homepage` (same image) and moved `woodpecker` from Keel's v3.14.1 back to v3.14.0. Because CI runs inside Woodpecker, the roll stopped the pipeline that was applying it and left the release in `pending-upgrade`; the fix was to delete the dead revision Secret, set the tag to v3.14.1, and apply `stacks/woodpecker` from a workstation. Apply `stacks/woodpecker` changes that roll its pods from a workstation, then push, so the CI apply finds nothing to change. Before changing a `helm_release`, compare its live images with the Terraform tags.
+
 ## Configuration
 
 ### Excluding images (handled by DIUN + n8n)
