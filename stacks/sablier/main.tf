@@ -21,7 +21,8 @@
 locals {
   namespace = "sablier"
   # Pin the app version (plugin v1.3.0 <-> server compatibility is verified
-  # as a pair). Diun watches for upstream releases; bump deliberately.
+  # as a pair). Renovate proposes upstream releases; the Traefik plugin is
+  # vendored in stacks/traefik, so check a bump against it.
   image = "sablierapp/sablier:1.15.0"
 }
 
@@ -169,14 +170,9 @@ resource "kubernetes_deployment" "sablier" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

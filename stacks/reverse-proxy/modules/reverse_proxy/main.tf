@@ -12,7 +12,6 @@ variable "haos_homepage_token" {
 resource "kubernetes_namespace" "reverse-proxy" {
   metadata {
     labels = {
-      "keel.sh/enrolled" = "true"
       # Edge proxy for services outside the cluster. Literal because this is a
       # module and the generated local.tiers lives in the stack root. Without
       # a tier label Kyverno injects no priority class (found 2026-10-02).

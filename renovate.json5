@@ -230,6 +230,11 @@
       versioning: "regex:^canary-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
     },
     {
+      description: "TorrServer publishes MatriX.N and MatriX.N.M tags. Docker versioning cannot read the non-numeric prefix, so MatriX.141 would never be offered a newer one (Keel cutover B11, 2026-10-10)",
+      matchPackageNames: ["ghcr.io/yourok/torrserver"],
+      versioning: "regex:^MatriX\\.(?<major>\\d+)(?:\\.(?<minor>\\d+))?$",
+    },
+    {
       description: "youtubedl-material publishes dated nightly-YYYY-MM-DD tags; read the date as the version (Keel cutover B07, 2026-10-10)",
       matchPackageNames: ["tzahi12345/youtubedl-material", "docker.io/tzahi12345/youtubedl-material"],
       versioning: "regex:^nightly-(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})$",

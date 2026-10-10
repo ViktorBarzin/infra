@@ -14,8 +14,7 @@ resource "kubernetes_namespace" "wireguard" {
   metadata {
     name = "wireguard"
     labels = {
-      tier               = var.tier
-      "keel.sh/enrolled" = "true"
+      tier = var.tier
     }
   }
   lifecycle {
@@ -278,7 +277,7 @@ resource "kubernetes_deployment" "wireguard" {
 
         container {
           name    = "prometheus-exporter"
-          image   = "mindflavor/prometheus-wireguard-exporter"
+          image   = "mindflavor/prometheus-wireguard-exporter:3.6.6"
           command = ["prometheus_wireguard_exporter", "-a", "true", "-v", "true", "-n", "/etc/wireguard/wg0.conf"]
           volume_mount {
             name       = "wg0-conf"
@@ -340,13 +339,11 @@ resource "kubernetes_deployment" "wireguard" {
     # dns_config is declared explicitly above (ndots=2), so it already matches
     # what Kyverno injects — no KYVERNO_LIFECYCLE_V1 line needed here.
     ignore_changes = [
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                                         # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
-      spec[0].template[0].spec[0].container[1].image,                                          # KEEL_IGNORE_IMAGE
-      spec[0].template[0].spec[0].container[2].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
+      # FLOATING_TAG_DEFERRED: sclevine/wg:latest has no version tag; a
+      # tag@digest pin restarts the VPN pod.
+      spec[0].template[0].spec[0].container[0].image,
+      spec[0].template[0].spec[0].container[1].image,
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
