@@ -29,8 +29,7 @@ resource "kubernetes_namespace" "terminal" {
     name = "terminal"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
