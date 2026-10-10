@@ -2,7 +2,8 @@
 # CronJob entrypoint for stacks/renovate (2026-10-10).
 # Runs Renovate once, then records the outcome in Pushgateway:
 #   renovate_last_run_timestamp_seconds      every run
-#   renovate_last_run_exit_code              every run (0 ok, 1 renovate error, 75 skipped)
+#   renovate_last_run_exit_code              every run (0 ok, 1 renovate error, 75 skipped:
+#                                            Woodpecker busy or rails hold cool-down)
 #   renovate_last_run_duration_seconds       every run
 #   renovate_last_success_timestamp_seconds  only when renovate exited 0
 # POST (not PUT) replaces only the metrics named in the body, so a failed run
@@ -63,6 +64,30 @@ if [ -n "${WOODPECKER_REPO_ID:-}" ]; then
     record 75
     exit 0
   fi
+fi
+
+# Hold cool-down: when the Woodpecker rails held a bump (upgrade gate blocked
+# or the pre-upgrade snapshot failed; scripts/renovate-rails in the infra repo)
+# within the last RAILS_HOLD_COOLDOWN seconds, skip this run, so Renovate does
+# not push the same bump into a blocked gate every 30 minutes. The rails write
+# renovate_rails_hold_timestamp_seconds to Pushgateway (job renovate-rails).
+# An unreachable Pushgateway does not block the run.
+age=$(node -e '
+  const [base] = process.argv.slice(1);
+  fetch(`${base}/api/v1/metrics`)
+    .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+    .then(j => {
+      const g = (j.data || []).find(x => x.labels && x.labels.job === "renovate-rails");
+      const m = g && g.renovate_rails_hold_timestamp_seconds;
+      const v = m && m.metrics && m.metrics[0] && Number(m.metrics[0].value);
+      console.log(v ? Math.round(Date.now() / 1000 - v) : "none");
+    })
+    .catch(e => { console.error("pushgateway", e.message); console.log("none"); });
+' "$PGW")
+if [ "$age" != "none" ] && [ "$age" -lt "${RAILS_HOLD_COOLDOWN:-7200}" ] 2>/dev/null; then
+  echo "The rails held a bump ${age}s ago; skipping this run (cool-down ${RAILS_HOLD_COOLDOWN:-7200}s)"
+  record 75
+  exit 0
 fi
 
 renovate "$@"
