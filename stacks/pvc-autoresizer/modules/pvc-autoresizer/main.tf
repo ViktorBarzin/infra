@@ -5,10 +5,10 @@ resource "kubernetes_namespace" "pvc_autoresizer" {
     name = "pvc-autoresizer"
     labels = {
       tier = var.tier
-      # Declared, not ignored: this namespace really is Keel-enrolled (the
-      # controller carries keel.sh/policy=patch), so leaving it out of Terraform
-      # meant every plan proposed removing the label — which would have quietly
-      # un-enrolled the namespace and stopped the auto-upgrades.
+      # Declared so plans stay clean (the label exists live). Keel does not move
+      # this release: the Kyverno keel-never-when-another-owner policy stamps
+      # keel.sh/policy=never on the Helm-owned Deployment. The chart version is
+      # pinned below instead.
       "keel.sh/enrolled" = "true"
     }
   }
@@ -23,10 +23,12 @@ resource "helm_release" "pvc_autoresizer" {
   create_namespace = false
   name             = "pvc-autoresizer"
   atomic           = true
+  cleanup_on_fail  = true
   timeout          = 300
 
   repository = "https://topolvm.github.io/pvc-autoresizer"
   chart      = "pvc-autoresizer"
+  version    = "0.20.1"
 
   values = [yamlencode({
     controller = {
