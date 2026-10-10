@@ -253,7 +253,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
           # removes the whole class. Bump this deliberately (and never
           # downwards) after checking the release notes; Keel is opted out
           # below for the same reason.
-          image   = "docker.io/library/redis:8.10.0-alpine"
+          image   = "docker.io/library/redis:8.10.2-alpine"
           command = ["redis-server", "/etc/redis/redis.conf"]
 
           port {
@@ -303,7 +303,7 @@ resource "kubernetes_stateful_set_v1" "redis_v2" {
 
         container {
           name  = "exporter"
-          image = "docker.io/oliver006/redis_exporter:v1.62.0"
+          image = "docker.io/oliver006/redis_exporter:v1.93.0"
 
           port {
             container_port = 9121
