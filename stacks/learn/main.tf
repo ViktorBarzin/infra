@@ -696,14 +696,15 @@ module "ingress_prep" {
 # carve-out pattern as ingress_prep above, including auth = "none" rather than
 # "public" for the reason given there.
 module "ingress_pe_summit_trip" {
-  source           = "../../modules/kubernetes/ingress_factory"
-  name             = "pe-summit-trip"
-  host             = "pages"
-  ingress_path     = ["/pe-summit-trip"]
-  service_name     = "learn"
-  port             = 80
-  namespace        = kubernetes_namespace.learn.metadata[0].name
-  tls_secret_name  = var.tls_secret_name
+  source          = "../../modules/kubernetes/ingress_factory"
+  name            = "pe-summit-trip"
+  host            = "pages"
+  ingress_path    = ["/pe-summit-trip"]
+  service_name    = "learn"
+  port            = 80
+  namespace       = kubernetes_namespace.learn.metadata[0].name
+  tls_secret_name = var.tls_secret_name
+  # auth = "none": a static trip page meant for people without an account; nothing else on pages is reachable through it (Caddy pins the root).
   auth             = "none"
   dns_type         = "none"
   external_monitor = false
