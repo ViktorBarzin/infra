@@ -121,6 +121,24 @@ resource "kubernetes_config_map" "clickhouse_memory" {
           <latency_log remove="1"/>
       </clickhouse>
     EOF
+    # ClickHouse's built-in Prometheus endpoint, scraped by the annotation-driven
+    # kubernetes-pods job (pod annotations below). Gives the DB checks and the
+    # ClickHouseDown alert a signal (software-currency design, Groundwork).
+    # Measured on a scratch 26.9.14.10 pod: about 1,300 series with events off,
+    # 2,884 with them on (1,586 ProfileEvents counters, mostly zero). Events and
+    # errors stay off until a dashboard or alert needs them.
+    "prometheus.xml" = <<-EOF
+      <clickhouse>
+          <prometheus>
+              <endpoint>/metrics</endpoint>
+              <port>9363</port>
+              <metrics>true</metrics>
+              <events>false</events>
+              <asynchronous_metrics>true</asynchronous_metrics>
+              <errors>false</errors>
+          </prometheus>
+      </clickhouse>
+    EOF
   }
 }
 
@@ -155,6 +173,11 @@ resource "kubernetes_deployment" "clickhouse" {
         labels = {
           app = "clickhouse"
         }
+        annotations = {
+          "prometheus.io/scrape" = "true"
+          "prometheus.io/port"   = "9363"
+          "prometheus.io/path"   = "/metrics"
+        }
       }
       spec {
         security_context {
@@ -188,6 +211,11 @@ resource "kubernetes_deployment" "clickhouse" {
             protocol       = "TCP"
             container_port = 8123
           }
+          port {
+            name           = "metrics"
+            protocol       = "TCP"
+            container_port = 9363
+          }
           liveness_probe {
             http_get {
               path = "/ping"
@@ -216,6 +244,11 @@ resource "kubernetes_deployment" "clickhouse" {
             name       = "memory-config"
             mount_path = "/etc/clickhouse-server/config.d/memory.xml"
             sub_path   = "memory.xml"
+          }
+          volume_mount {
+            name       = "memory-config"
+            mount_path = "/etc/clickhouse-server/config.d/prometheus.xml"
+            sub_path   = "prometheus.xml"
           }
           resources {
             requests = {

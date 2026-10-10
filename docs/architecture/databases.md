@@ -140,6 +140,12 @@ Single **standalone** instance shared by all consumers. Live client census (2026
 
 **Why standalone** — HA Redis caused more outages than it prevented in this homelab. Five incidents: (a) 2026-04-04 service selector routed writes to a replica → `READONLY`; (b) 2026-04-19 AM master OOMKilled during BGSAVE+PSYNC (256Mi too tight); (c) 2026-04-19 PM sentinel quorum drift (2 sentinels, no majority) routed writes to a slave; (d) 2026-04-22 five-factor flap cascade (soft anti-affinity co-located pods + aggressive sentinel/probe timing + HAProxy polling race); (e) **2026-05-30 split-brain** — `redis-v2-0` booted during a network partition, hit the init script's deterministic "pod-0 is bootstrap master" fallback, and became a SECOND master alongside the sentinel-elected `redis-v2-2`; HAProxy's `expect rstring role:master` matched both and round-robined client connections across them, so Immich enqueued BullMQ jobs on one master while its workers blocked-popped on the other → every queue wedged, new-upload thumbnails 404'd cluster-wide. The 3-sentinel design (beads `code-v2b`) was built specifically to prevent split-brain after incident (c), yet the bootstrap fallback manufactured one anyway. Conclusion: for a homelab cache/broker, a single instance with a few-seconds restart blip is strictly simpler and more reliable than chasing Sentinel correctness. Mirrors the MySQL InnoDB-Cluster → standalone reversion (2026-04-16). Post-mortem: `docs/post-mortems/2026-05-30-redis-split-brain.md`.
 
+### ClickHouse (rybbit)
+
+Single-replica Deployment `clickhouse` in the `rybbit` namespace (`clickhouse/clickhouse-server:26.9.14.10`, `Recreate` strategy), the event store for Rybbit analytics. Data on the `rybbit-clickhouse-data-proxmox` PVC. Config overrides live in ConfigMap `clickhouse-memory-config`, mounted into `config.d/` (`memory.xml` for the memory cap and disabled system logs, `prometheus.xml` for metrics).
+
+**Observability** (added 2026-10-10, software-currency groundwork): ClickHouse's built-in Prometheus endpoint on port 9363 (`/metrics`), scraped by the annotation-driven `kubernetes-pods` job, so its series carry `job="kubernetes-pods", namespace="rybbit", app="clickhouse"`. It exports `ClickHouseMetrics_*`, `ClickHouseHistogramMetrics_*` and `ClickHouseAsyncMetrics_*`, about 1,300 series. ProfileEvents (1,586 more series, mostly zero) and errors are off; turn them on in `prometheus.xml` when a dashboard or alert needs them.
+
 ### SQLite (Per-App)
 
 **Apps using SQLite**:
