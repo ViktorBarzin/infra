@@ -357,17 +357,6 @@ resource "kubernetes_deployment" "paperless-ngx" {
             name  = "PAPERLESS_CONSUMER_DELETE_DUPLICATES"
             value = "true"
           }
-          # Celery workers. The default of 1 lets one long mail run (the
-          # first pass over a whole Gmail All Mail, ADR-0029) hold the only
-          # worker, so every queued consume task waits behind it. 3 lets the
-          # crawl and consumption run side by side; measured 2026-10-09 at
-          # ~2.2Gi with 1 worker, well under the 8Gi limit. Earlier caveat
-          # from the Emo import (9599bead): drop back if etcd apply latency
-          # degrades, since etcd shares the HDD that OCR writes to.
-          env {
-            name  = "PAPERLESS_TASK_WORKERS"
-            value = "3"
-          }
           volume_mount {
             name       = "data"
             mount_path = "/usr/src/paperless/data"

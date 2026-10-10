@@ -36,9 +36,22 @@ first pass drains. Like the forward rules, this is DB state, not Terraform.
   gets a `ProcessedMail` row, consumed or not, so later polls only look at new
   UIDs. Google documents a 2,500 MB/day IMAP download limit for Workspace; if
   Gmail suspends IMAP, the poll errors and retries every 10 minutes.
-- **Ending the backfill:** when rules 18-20 stop producing new documents
-  beyond the daily trickle, remove tag 5227 from their `assign_tags`. To revert
-  the historical batch, bulk-delete documents tagged `email-backfill`.
+- **Backfill (done 2026-10-10 03:45 UTC):** tag 5227 has been removed from
+  rules 18-20, so new mail gets only `email-ingest`. To revert the historical
+  batch, bulk-delete documents tagged `email-backfill`.
+- **Task workers for a big first pass:** Paperless runs one celery worker by
+  default (`PAPERLESS_TASK_WORKERS` unset), and a long mail run holds it, so
+  queued consume tasks wait until the crawl ends. For a large new mailbox, set
+  `PAPERLESS_TASK_WORKERS=2` in `stacks/paperless-ngx/main.tf` for the
+  duration and remove it after. 3 workers were OOMKilled twice at the 8Gi limit
+  on 2026-10-10 (peak 7.4 GB).
+- **Restarts during a crawl:** a pod or container restart wipes
+  `/tmp/paperless/paperless-mail-*`. Queued consume tasks then fail with
+  `File not found` and record FAILED `ProcessedMail` rows that are never
+  retried. Delete those rows (`POST /api/processed_mail/bulk_delete/` with
+  `{"mail_ids": [...]}`) so the next poll re-reads the messages. The old pod's
+  mail lock also stays in Redis for up to 30 minutes, and runs log
+  `already running; skipping` until it expires.
 - **Duplicates:** `PAPERLESS_CONSUMER_DELETE_DUPLICATES=true`
   (stacks/paperless-ngx) rejects any file whose checksum matches an existing
   document, any owner, including documents in the trash. The same file in both
