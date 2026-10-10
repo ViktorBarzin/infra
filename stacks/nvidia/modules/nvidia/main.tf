@@ -616,7 +616,7 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
 
         container {
           name  = "exporter"
-          image = "python:3.11-slim"
+          image = "library/python:3.11.16-slim"
 
           command = ["/bin/bash", "-c"]
           args = [
@@ -699,11 +699,7 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
   depends_on = [helm_release.nvidia-gpu-operator]
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

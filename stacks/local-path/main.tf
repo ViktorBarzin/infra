@@ -141,8 +141,7 @@ resource "kubernetes_deployment" "local_path_provisioner" {
     name      = "local-path-provisioner"
     namespace = kubernetes_namespace.local_path_storage.metadata[0].name
     labels = {
-      tier               = "default"
-      "keel.sh/enrolled" = "true"
+      tier = "default"
     }
   }
   spec {
@@ -169,7 +168,7 @@ resource "kubernetes_deployment" "local_path_provisioner" {
         enable_service_links            = false
         container {
           name              = "local-path-provisioner"
-          image             = "rancher/local-path-provisioner:v0.0.31"
+          image             = "rancher/local-path-provisioner:v0.0.37"
           image_pull_policy = "IfNotPresent"
           command = [
             "local-path-provisioner",
@@ -222,14 +221,9 @@ resource "kubernetes_deployment" "local_path_provisioner" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

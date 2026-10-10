@@ -10,7 +10,7 @@ locals {
   # PINNED BY DIGEST (2026-08-21) = the 2026-08-20 :cuda rebuild, llama.cpp
   # b10524. Terraform now owns this field again (the KEEL_IGNORE_IMAGE
   # ignore_changes below is gone), because nothing else could select a build:
-  # imagePullPolicy is Kyverno-owned and the keel.sh/* annotations are
+  # imagePullPolicy is Kyverno-owned and the keel.sh/* annotations were
   # Terraform-ignored, so :cuda + a node-cached layer had this pod serving
   # llama.cpp b9879 from 2026-07-06 for six weeks of rollouts.
   #
@@ -20,12 +20,12 @@ locals {
   # (llama.cpp discussion #27164) — so an engine that changes under us presents
   # as a model/quant quality regression, which is expensive to diagnose and
   # reaches real consumers (recruiter-responder, paperless-ai, nextcloud-todos).
-  # A digest also makes IfNotPresent safe and gives Keel no tag to poll, so the
-  # apply/keel fight KEEL_LIFECYCLE_V1 describes cannot restart.
+  # A digest also makes IfNotPresent safe.
   #
   # TO UPGRADE llama.cpp: bump this digest deliberately and check generation
-  # output on each model afterwards. Reverting this commit restores Keel's
-  # hourly :cuda tracking.
+  # output on each model afterwards. Keel is retired (2026-10 Renovate
+  # cutover); Renovate cannot propose bumps for a digest-only pin, so this
+  # stays a hand-made change.
   llamaswap_image = "ghcr.io/mostlygeek/llama-swap@sha256:50c640b15d7914ba356eb1e034680907b6c25eff7bdbe0071d77b907abfc0e0b"
 
   # Model set: two vision VLMs (qwen3vl-8b/4b) + one text-only LLM (qwen3-8b).
@@ -184,9 +184,8 @@ resource "kubernetes_namespace" "llama_cpp" {
   metadata {
     name = local.namespace
     labels = {
-      tier               = local.tiers.gpu
-      "istio-injection"  = "disabled"
-      "keel.sh/enrolled" = "true"
+      tier              = local.tiers.gpu
+      "istio-injection" = "disabled"
     }
   }
   lifecycle {
@@ -533,24 +532,12 @@ resource "kubernetes_deployment" "llama_swap" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/match-tag"],
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      # KEEL_IGNORE_IMAGE removed 2026-08-21 — the image is a pinned digest now,
-      # so Terraform owns it and Keel has no tag to poll. Restore this line if
-      # the image ever goes back to a floating tag.
-      # KEEL_LIFECYCLE_V1 — stop the apply→keel fight: every keel digest
-      # update patches `keel.sh/update-time` on the pod template and
-      # `kubernetes.io/change-cause` + bumps the K8s rollout revision on
-      # the Deployment. Without these ignore_changes, every `tg apply`
-      # reverts those, forcing a rollout, which keel then re-patches on
-      # the next 1h poll → llama-swap was rolling several times a day
-      # (~10s model-load downtime each). Upstream :cuda nightly cadence
-      # still triggers a legitimate daily rollout.
+      # Keel (retired) left keel.sh/update-time on the pod template and
+      # change-cause on the Deployment. Dropping the template annotation from
+      # this list would restart the pod, so it stays ignored.
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 
