@@ -18,11 +18,12 @@ resource "helm_release" "proxmox_csi" {
   create_namespace = false
   name             = "proxmox-csi-plugin"
   atomic           = true
+  cleanup_on_fail  = true
   timeout          = 300
 
   repository = "oci://ghcr.io/sergelogvinov/charts"
   chart      = "proxmox-csi-plugin"
-  version    = "0.5.6"
+  version    = "0.5.12"
 
   values = [yamlencode({
     config = {
