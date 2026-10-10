@@ -1,18 +1,19 @@
 # shellcheck shell=bash
-# Verify checks for stacks/keel (docs/runbooks/verify-jobs.md). Keel is retired
-# in wave 5 of the software-currency design; until then its chart is a
-# helm_release and needs a script.
+# Verify checks for stacks/keel (docs/runbooks/verify-jobs.md). Since
+# 2026-10-10 Keel is parked at 0 replicas for the Renovate cutover
+# (software-currency design, Phase 3, batch B00), so the checks confirm it
+# stays stopped. The stack is removed after the last cutover batch.
 VERIFY_GROUP="chart"
 VERIFY_NAMESPACES="keel"
 
-_health() {
-  local ip
-  ip=$(kubectl get pod -n keel -l app=keel -o jsonpath='{.items[0].status.podIP}')
-  expect_http "http://$ip:9300/healthz" '200'
+_parked() {
+  local spec pods
+  spec=$(kubectl get deployment -n keel keel -o jsonpath='{.spec.replicas}')
+  pods=$(kubectl get pods -n keel -l app=keel --no-headers 2>/dev/null | wc -l)
+  echo "spec.replicas=$spec pods=$pods"
+  [ "$spec" = 0 ] && [ "$pods" -eq 0 ]
 }
 
 verify_component() {
-  check "keel deployment converged" retry 300 10 workload_ready keel deployment/keel
-  check "keel health endpoint answers" _health
-  check "no panics or API errors in the last 15m" expect_no_log_errors keel app=keel 'panic|forbidden|level=fatal'
+  check "keel is parked (0 replicas, no pods)" retry 300 10 _parked
 }

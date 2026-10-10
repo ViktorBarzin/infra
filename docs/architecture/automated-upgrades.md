@@ -1,6 +1,6 @@
 # Automated Upgrades
 
-This doc covers three independent automation paths, plus a short section on Keel, which applies in-cluster image updates for workloads that opt in (see "Keel").
+This doc covers three independent automation paths, plus a short section on Keel, which applied in-cluster image updates until it was parked on 2026-10-10 (see "Keel").
 
 1. **Service-level upgrades** — Container image bumps for OSS apps (DIUN → n8n → claude-agent → Terraform). Most of this doc.
 2. **OS-level upgrades on K8s nodes** — `unattended-upgrades` + `kured` with sentinel-gate + Prometheus halt-on-alert. See "K8s Node OS Upgrades" section and the runbook at `docs/runbooks/k8s-node-auto-upgrades.md`.
@@ -227,7 +227,9 @@ The `DIUN Upgrade Agent` workflow is imported once into n8n's PG DB — it is **
 
 ## Keel
 
-Keel (`stacks/keel/`) polls the registry of each enrolled workload hourly and rolls it when a newer tag or digest matches the workload's `keel.sh/policy`. Enrollment and default annotations come from the Kyverno `inject-keel-annotations` policy (`stacks/kyverno/modules/kyverno/keel-annotations.tf`). Design and history: `docs/plans/2026-05-16-auto-upgrade-apps-design.md`.
+Status since 2026-10-10: Keel is parked at 0 replicas (`replicaCount = 0` in `stacks/keel/main.tf`) and the Kyverno `inject-keel-annotations` policy, with its background-controller ClusterRole, is deleted. This is batch B00 of the Keel to Renovate cutover (`docs/plans/2026-10-09-software-currency-design.md`, Phase 3). Keel stops first because a running Keel writes back its cached copy of a workload and would revert the edits of the later batches. Nothing rolls app images on its own until Renovate takes over each stack. The `keel.sh/*` annotations already on workloads stay in place and are inert; later batches remove the ones Terraform declares, and the stack is removed after the last batch. Re-enabling Keel means setting `replicaCount = 1` and restoring `keel-annotations.tf` from git history.
+
+While it ran, Keel (`stacks/keel/`) polled the registry of each enrolled workload hourly and rolled it when a newer tag or digest matched the workload's `keel.sh/policy`. Enrollment and default annotations came from the Kyverno `inject-keel-annotations` policy (formerly `stacks/kyverno/modules/kyverno/keel-annotations.tf`). Design and history: `docs/plans/2026-05-16-auto-upgrade-apps-design.md`.
 
 ### Patched image (`keel.sh/pollTagsAfterCurrent`)
 
