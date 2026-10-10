@@ -41,8 +41,7 @@ resource "kubernetes_namespace" "agentmd" {
     name = "agentmd"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {

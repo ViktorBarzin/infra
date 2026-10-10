@@ -59,8 +59,7 @@ resource "kubernetes_namespace" "actualbudget" {
     name = "actualbudget"
     labels = {
       "istio-injection" : "disabled"
-      tier               = local.tiers.edge
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.edge
     }
   }
   lifecycle {
@@ -76,34 +75,38 @@ module "tls_secret" {
 }
 
 
-# FULL-AUTO upgrades (Viktor, 2026-07-25): keel.sh/policy=minor is set LIVE (kubectl
-# annotate) on the actual-server AND actual-http-api deployments so Keel auto-tracks new
-# minors. ACCEPTED RISK: the two are separately-released images that BOTH migrate the same
-# budget file, so an independent bump can leave the web client "too old" (or bank-sync
-# stale) until the other catches up. The bank-sync side is caught by BankSyncStale; the web
-# side is user-visible.
-# The keel.sh/policy annotation is ignore_changed (Keel/Kyverno-managed) so TF does NOT
-# restore it on a deployment RECREATE — re-annotate keel.sh/policy=minor after any recreate.
-# var.tag / var.http_api_tag below are ONLY the create-time seeds: both images are
-# KEEL_IGNORE_IMAGE (Keel owns the live tag) and diun is disabled (include_tags inert).
+# Versions: Renovate bumps the two pins below (ADR-0030); before 2026-10-10
+# Keel tracked them live with keel.sh/policy=minor. Each instance's server
+# and http-api read these locals, so one Renovate commit moves every instance.
+# ACCEPTED RISK (Viktor, 2026-07-25): actual-server and actual-http-api are
+# separately released images that BOTH migrate the same budget file, so an
+# independent bump can leave the web client "too old" (or bank-sync stale)
+# until the other catches up. The bank-sync side is caught by BankSyncStale;
+# the web side is user-visible.
 #
-# THE SEEDS MUST NOT LAG THE LIVE VERSION. Both budget files carry migrations that first
-# ship in v26.7.0 (1780099200000, 1780327681000, 1780606215000, 1780606215001), so a
-# recreate seeded at the old 26.6.0 would start a server OLDER than the file it opens and
-# reproduce the "client too old" break below. Live and seeds are 26.8.1 as of 2026-08-16 —
-# when Keel moves a minor, move these to match.
+# THE PINS MUST NOT LAG THE LIVE VERSION. Both budget files carry migrations
+# that first ship in v26.7.0 (1780099200000, 1780327681000, 1780606215000,
+# 1780606215001), so a deployment started at 26.6.0 would open a file newer
+# than itself and reproduce the "client too old" break below.
 # History: 2026-07-25 server was stuck at 26.4.0 while http-api reached 26.5.2 → Anca's web
 # UI broke ("client too old", even in incognito) since the file was already migrated to 26.5.x.
 # 2026-08-16: the seeds had drifted to 3 minors behind live (26.6.0 vs 26.8.1) and the
 # http-api image was a hardcoded `latest`; both fixed. NOTE the nightly re-import loop found
 # the same day was NOT caused by these upgrades — root cause was a budget-data rule with a
 # `set account` action, see docs/runbooks/actualbudget-bank-sync.md.
+locals {
+  # renovate: datasource=docker depName=actualbudget/actual-server
+  actual_server_tag = "26.8.1"
+  # renovate: datasource=docker depName=jhonderson/actual-http-api
+  actual_http_api_tag = "26.8.1"
+}
+
 # https://budget-viktor.viktorbarzin.me/
 module "viktor" {
   source                     = "./factory"
   name                       = "viktor"
-  tag                        = "26.8.1"
-  http_api_tag               = "26.8.1"
+  tag                        = local.actual_server_tag
+  http_api_tag               = local.actual_http_api_tag
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
@@ -127,8 +130,8 @@ module "viktor" {
 module "anca" {
   source                     = "./factory"
   name                       = "anca"
-  tag                        = "26.8.1"
-  http_api_tag               = "26.8.1"
+  tag                        = local.actual_server_tag
+  http_api_tag               = local.actual_http_api_tag
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]
@@ -155,8 +158,8 @@ module "anca" {
 module "emo" {
   source                     = "./factory"
   name                       = "emo"
-  tag                        = "26.8.1"
-  http_api_tag               = "26.8.1"
+  tag                        = local.actual_server_tag
+  http_api_tag               = local.actual_http_api_tag
   tls_secret_name            = var.tls_secret_name
   nfs_server                 = var.nfs_server
   depends_on                 = [kubernetes_namespace.actualbudget]

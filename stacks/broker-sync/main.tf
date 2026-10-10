@@ -10,9 +10,8 @@ resource "kubernetes_namespace" "broker_sync" {
   metadata {
     name = "broker-sync"
     labels = {
-      "istio-injection"  = "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      "istio-injection" = "disabled"
+      tier              = local.tiers.aux
       # The Fidelity scrape drives chrome-service over CDP, because Akamai
       # refuses a plain headless Chrome (see BROKER_SYNC_CDP_URL below).
       # chrome-service's ws-ingress NetworkPolicy allows port 9222 only from
