@@ -596,8 +596,15 @@ resource "kubernetes_daemonset" "gpu_pod_exporter" {
         host_pid             = true
         service_account_name = kubernetes_service_account.gpu_pod_exporter.metadata[0].name
 
+        # nvidia.com/gpu.deploy.client: the GPU operator's driver-manager
+        # flips this label off before a driver restart and waits for pods
+        # selecting on it to leave. Without it this DaemonSet pod (it holds
+        # an nvidia.com/gpu slot) is counted as a GPU pod the drain helper
+        # cannot evict, and the restart fails with "cannot proceed until
+        # all GPU pods are drained" (seen 2026-10-10, driver-manager v0.12.1).
         node_selector = {
           "nvidia.com/gpu.present" : "true"
+          "nvidia.com/gpu.deploy.client" : "true"
         }
 
         toleration {
