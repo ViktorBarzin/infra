@@ -25,9 +25,17 @@ variable "gpumem_resource" {
 # ladder measured 1707 MiB against its 1200, and the watchdog recycled the pod
 # mid-build. Viktor chose this over CPU decode for HDR, knowing it narrows the
 # unallocated slack the watchdog's 1536 MiB free floor leans on.
+#
+# 14200 -> 15000 on 2026-10-10 so f1-stream can declare 2848 for Early copies
+# of 4K HDR replays (f1-stream ADR-0024): one measured 1782 MiB on the T4, and
+# with the pod's live transcodes that crossed 2048. Seats already totalled
+# 14148. This leaves ~360 MiB of driver slack rather than ~1.4 GiB, and while an
+# HDR Early copy runs, free VRAM can drop under the 1536 floor, in which case
+# the watchdog recycles the largest seatless tenant (llama-swap). Viktor chose
+# this with that trade-off stated.
 variable "gpumem_total_mib" {
   type        = number
-  default     = 14200
+  default     = 15000
   description = "Schedulable GPU-memory budget advertised on the GPU node = ~15360 MiB physical minus ~1.4 GiB driver/CUDA-context/exporter slack. Sum of all tenants' declared gpumem must stay <= this."
 }
 
