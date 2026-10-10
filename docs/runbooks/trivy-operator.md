@@ -37,7 +37,7 @@ These alerts post at most once a day per alert (own Alertmanager route, `group_i
 
 ## Force a rescan
 
-Reports expire after 24h and are rescanned automatically. To rescan one workload now, delete its report; the operator queues a new scan job:
+Reports expire after 72h and are rescanned automatically. To rescan one workload now, delete its report; the operator queues a new scan job:
 
 ```sh
 kubectl -n <ns> delete vulnerabilityreport <report-name>

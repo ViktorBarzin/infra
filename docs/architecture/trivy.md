@@ -9,7 +9,7 @@ flowchart LR
   subgraph trivy-system
     OP[trivy-operator<br/>Deployment]
     SRV[trivy-server<br/>StatefulSet<br/>DB + layer cache]
-    JOB[scan Jobs<br/>max 3 at once]
+    JOB[scan Jobs<br/>max 2 at once]
     NC[node-collector Job<br/>one per node, hostPID]
   end
   OP -- creates --> JOB
@@ -27,7 +27,7 @@ flowchart LR
 |---|---|---|
 | `trivy-operator` Deployment | `mirror.gcr.io/aquasec/trivy-operator:0.35.0` | Watches workloads, runs config audit in-process, serves `trivy_*` metrics. 256Mi request, 1Gi limit. |
 | `trivy-server` StatefulSet | `mirror.gcr.io/aquasec/trivy:0.75.0` | Holds the vulnerability DB and the per-layer analysis cache on an emptyDir. 512Mi request, 2Gi limit. |
-| scan Jobs | `mirror.gcr.io/aquasec/trivy:0.75.0` | One per workload, at most 3 at once. 128M request, 1Gi limit, 10 minute timeout. |
+| scan Jobs | `mirror.gcr.io/aquasec/trivy:0.75.0` | One per workload, at most 2 at once. 128M request, 1Gi limit, 10 minute timeout, failed scans retried after 15 minutes. |
 | node-collector Jobs | `ghcr.io/aquasecurity/node-collector:0.3.1` | One per node, one at a time. Tolerates the control-plane and GPU taints so every node is assessed. |
 
 Chart `aquasecurity/trivy-operator` 0.37.0, pinned in `stacks/trivy-operator/main.tf`. The namespace is in the aux tier, so scan pods get the `tier-4-aux` priority and are the first evicted under memory pressure.
@@ -36,18 +36,21 @@ Chart `aquasecurity/trivy-operator` 0.37.0, pinned in `stacks/trivy-operator/mai
 
 | Scan | Report CRD | Trigger |
 |---|---|---|
-| Image vulnerabilities (Critical and High only) | `VulnerabilityReport` | New workload revision, then every 24h (`scannerReportTTL`) |
+| Image vulnerabilities (Critical and High only) | `VulnerabilityReport` | New workload revision, then every 72h (`scannerReportTTL`) |
 | Secrets in image layers | `ExposedSecretReport` | Same scan job as vulnerabilities |
-| Workload, Service, Ingress, PV/PVC and similar config | `ConfigAuditReport` | Resource change, in the operator |
+| Workload, Service, Ingress, PV/PVC and similar config (not ResourceQuota) | `ConfigAuditReport` | Resource change, in the operator |
 | RBAC | `RbacAssessmentReport`, `ClusterRbacAssessmentReport` | Role change, in the operator |
 | Node and control-plane config | `ClusterInfraAssessmentReport` (one per node), `InfraAssessmentReport` (control-plane static pods) | node-collector Job per node |
 | CIS 1.23, NSA 1.0, PSS baseline/restricted | `ClusterComplianceReport` | Every 6h, summary form |
 
 Choices that keep the load down, and how to change them:
 
-- **Severity is `CRITICAL,HIGH`.** The alerts act on these two and the digest counts them. The setting applies to every scanner, so config-audit, RBAC and infra findings below High are not stored either. Medium, Low and Unknown would roughly triple each `VulnerabilityReport` in etcd. To widen, edit `trivy.severity`; reports refresh on their next 24h rescan.
+- **Severity is `CRITICAL,HIGH`.** The alerts act on these two and the digest counts them. The setting applies to every scanner, so config-audit, RBAC and infra findings below High are not stored either. Medium, Low and Unknown would roughly triple each `VulnerabilityReport` in etcd. To widen, edit `trivy.severity`; reports refresh on their next rescan (72h TTL).
 - **SBOM reports are off** (`sbomGenerationEnabled = false`). They are the largest report type and nothing reads them.
-- **Client/server mode** (`builtInTrivyServer = true`). Scan jobs ask the server which layers it has not analysed yet and send only those. A daily rescan of an unchanged image fetches the manifest and config and little else. The server cache is an emptyDir: after a restart the next pass re-downloads layers once.
+- **What is not scanned.** The `verify` and `local-path-storage` namespaces (`excludeNamespaces`; their pods live for minutes, and the local-path provisioner image goes unscanned with them), Woodpecker step pods and their Services (`skipResourceByLabels` on `woodpecker-ci.org/step` and `woodpecker-ci.org/task-uuid`; the woodpecker server and agent are still scanned), and ResourceQuotas in config audit (left out of `trivy.supportedConfigAuditKinds`). Before these exclusions, on 2026-10-10, the operator created about 350 scan Jobs and 1,300 ConfigAuditReport writes per hour, mostly for short-lived pods and for ResourceQuota status changes; ResourceQuota reports are keyed on the whole object, so every pod start rewrote one.
+- **Rescans every 72h, 2 scan Jobs at a time.** Changed on 2026-10-10 from 24h and 3, after the first scan coincided with etcd WAL fsync p99 up to 2.4 s on the shared HDD. A new CVE in an unchanged image appears within 3 days.
+- **Client/server mode** (`builtInTrivyServer = true`). Scan jobs ask the server which layers it has not analysed yet and send only those. A daily rescan of an unchanged image fetches the manifest and config and little else. The server cache is an emptyDir: after a restart the next pass re-downloads every layer once through the registry cache (about 44 GB on the first pass, 2026-10-10), so avoid restarting `trivy-server` without need.
+- **Image mode, not node filesystem mode.** Trivy Operator can instead scan a workload's root filesystem on its own node (`trivy.command = "rootfs"`, no registry pulls). Evaluated on 2026-10-10 against operator v0.35.0 and not adopted: CronJobs are unsupported in that mode (about 130 CronJob images would lose coverage), Sablier-parked workloads go unscanned while parked, every rescan re-reads each image's files from node disks on the same HDD as etcd, and scan pods are pinned onto nodes at 82-99% memory requests. The reasoning is also in `stacks/trivy-operator/main.tf`.
 - **Registry mirrors.** Scan jobs read image manifests and layers from the LAN pull-through caches on `10.0.20.10` (`:5000` Docker Hub, also used for `docker.n8n.io`, which fronts Docker Hub's `n8nio/n8n`; `:5010` GHCR; `:5020` Quay; `:5030` registry.k8s.io; `:5040` reg.kyverno.io) through Trivy's own `registry.mirrors` config file. Images from other registries (nvcr.io, lscr.io, mcr.microsoft.com, codeberg.org, mirror.gcr.io) are fetched upstream. Trivy tries the mirror first and falls back to the original registry on any error, and reports keep the original image name. Without it, about 108 Docker Hub images rescanned daily would run into Docker Hub's anonymous pull limit, which the nodes share. On the first full scan the one unmirrored Docker Hub front, `docker.n8n.io`, already returned `TOOMANYREQUESTS`, which is why it now maps to the cache too.
 
 ## Admission prerequisites (stacks/kyverno)
@@ -86,7 +89,7 @@ Following the design, two kinds of finding post to Slack `#alerts` as they appea
 | `TrivyExposedSecretInImage` | an image holds at least one secret, for 1h | one alert per namespace and image repository |
 | `TrivyMetricsAbsent` | no `trivy_image_vulnerabilities` series for 2h | single alert |
 
-Both finding alerts use `keep_firing_for: 6h`, which covers the gap while a report is deleted at its 24h TTL and rescanned. They go through their own Alertmanager child route: grouped by alertname, `group_wait` 30m, `group_interval` 24h, `repeat_interval` 8760h. Each post lists every affected namespace or image, and a new finding joins the next daily post rather than sending its own message. Without this, the first full scan, which adds namespaces one at a time over about two hours, would have posted a fresh list every five minutes under the root route's 5m `group_interval`.
+Both finding alerts use `keep_firing_for: 6h`, which covers the gap while a report is deleted at its 72h TTL and rescanned. They go through their own Alertmanager child route: grouped by alertname, `group_wait` 30m, `group_interval` 24h, `repeat_interval` 8760h. Each post lists every affected namespace or image, and a new finding joins the next daily post rather than sending its own message. Without this, the first full scan, which adds namespaces one at a time over about two hours, would have posted a fresh list every five minutes under the root route's 5m `group_interval`.
 
 Trivy's secret scanner also matches public keys that ship inside third-party libraries. The first one found was an AWS access key ID in yt-dlp's `extractor/shahid.py` in the tripit image. To check a finding, read the file and rule from `kubectl get exposedsecretreports -n <ns> -o json`; for a confirmed false positive, add an Alertmanager silence on `alertname` plus `image_repository`.
 
@@ -110,4 +113,4 @@ Renovate owns the chart pin (Phase 3 of the design). Helm installs the chart's C
 ## Open questions
 
 - Whether Critical/High is the right severity floor. Medium findings are not stored today.
-- Whether the daily rescan cadence is worth its registry traffic once the first full pass has populated the server's layer cache. The first pass downloads every image's layers from the pull-through cache once.
+- Whether 72h is the right rescan cadence. With the server's layer cache warm, a rescan fetches only manifests and configs; the cost is mostly report writes to etcd.

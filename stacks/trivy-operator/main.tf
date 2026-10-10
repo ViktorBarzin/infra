@@ -13,7 +13,7 @@
 #   - trivy-server StatefulSet: holds the vulnerability DB and the per-layer
 #     analysis cache, so scan jobs neither download the DB nor re-analyse
 #     a layer the server has already seen.
-#   - scan Jobs (at most 3 at a time) and one node-collector Job per node.
+#   - scan Jobs (at most 2 at a time) and one node-collector Job per node.
 #
 # Prerequisites in stacks/kyverno (security-policies.tf):
 #   - mirror.gcr.io/aquasec/* on the require-trusted-registries list
@@ -52,19 +52,28 @@ resource "helm_release" "trivy_operator" {
   timeout         = 600
 
   values = [yamlencode({
-    # Report on every namespace. Bare pods (Woodpecker step pods, static
-    # control-plane pods) stay in scope so etcd and kube-apiserver images are
-    # scanned too.
-    excludeNamespaces = ""
+    # Report on every namespace except two whose pods live for minutes:
+    # `verify` (verify-runner Jobs and probe pods) and `local-path-storage`
+    # (a busybox helper pod per volume create/delete; the provisioner image
+    # there goes unscanned with it). On 2026-10-10 these, with Woodpecker step
+    # pods, made up most of the ~350 scan Jobs per hour; each scan of a pod
+    # that is gone a minute later is wasted registry and etcd traffic. Other
+    # bare pods (static control-plane pods) stay in scope.
+    excludeNamespaces = "verify,local-path-storage"
 
     operator = {
-      # Design: at most 3 scan jobs at once, so the first full pass over about
-      # 240 images does not push node1 (62% memory) or node5 (65%) over.
-      scanJobsConcurrentLimit = 3
+      # At most 2 scan jobs at once (3 until 2026-10-10). Fewer concurrent
+      # first-time pulls through the registry cache, less node memory, and a
+      # lower peak of report writes into etcd, which shares an HDD.
+      scanJobsConcurrentLimit = 2
       scanNodeCollectorLimit  = 1
       # The first scan of a large image downloads every layer; the 5m default
       # is too short for multi-GB images.
       scanJobTimeout = "10m"
+      # A failed scan is retried after this delay (chart default 30s). One
+      # image whose layer read kept failing was rescanned 59 times in 6 hours,
+      # each attempt pulling the same multi-GB layer again.
+      scanJobsRetryDelay = "15m"
 
       # All four scan types from the design: image vulnerabilities, secrets in
       # images, config audit including RBAC, and node/cluster components.
@@ -80,13 +89,32 @@ resource "helm_release" "trivy_operator" {
       # latency trouble from report volume before; see stacks/kyverno).
       sbomGenerationEnabled = false
 
-      # Reports expire after 24h, which triggers a rescan against the latest
-      # DB. Unchanged layers are cached on trivy-server, so a rescan only
-      # fetches manifests.
-      scannerReportTTL = "24h"
+      # Vulnerability and exposed-secret reports expire after 72h (24h until
+      # 2026-10-10), which triggers a rescan against the latest DB. Unchanged
+      # layers are cached on trivy-server, so a rescan only fetches the
+      # manifest and config; the longer TTL cuts the job and report churn to a
+      # third. A new CVE in an unchanged image shows up within 3 days.
+      scannerReportTTL = "72h"
 
       # Scan jobs talk to the built-in trivy-server (ClientServer mode) instead
       # of each downloading the vulnerability DB into an emptyDir.
+      #
+      # Image mode stays (trivy.command = "image"). Node filesystem mode
+      # (trivy.command = "rootfs": the scan pod runs the workload's own image
+      # as root on the workload's node, imagePullPolicy Never) was evaluated on
+      # 2026-10-10 against operator v0.35.0 and not adopted:
+      #   - CronJobs return ErrUnSupportedKind (pkg/kube/object.go GetNodeName),
+      #     so the ~130 CronJob images would lose vulnerability and secret
+      #     coverage; Sablier-parked workloads would go unscanned while parked.
+      #   - a rootfs scan re-reads every file of the image on each rescan
+      #     (the secret scanner reads all of them), from node disks that live
+      #     on the same HDD as etcd. Image mode with the server's layer cache
+      #     reads nothing again for an unchanged image.
+      #   - scan pods are pinned with nodeName onto nodes whose memory
+      #     requests sit at 82-99%.
+      # The trivy-server cache is what stops repeat pulls: keep the server pod
+      # running. A trivy-server restart empties it, and the following rescans
+      # pull every layer once more through the registry cache.
       builtInTrivyServer = true
 
       # Per-CVE series (trivy_vulnerability_id), needed to tell fixable from
@@ -94,6 +122,14 @@ resource "helm_release" "trivy_operator" {
       # drops the long text labels (metric_relabel_configs in
       # prometheus_chart_values.tpl).
       metricsVulnIdEnabled = true
+    }
+
+    trivyOperator = {
+      # Woodpecker step pods (label woodpecker-ci.org/step) and their
+      # Services (woodpecker-ci.org/task-uuid) live for one pipeline step.
+      # Skipping them by label keeps the woodpecker server and agent
+      # StatefulSets scanned. 199 step pods got scan Jobs in 12h on 2026-10-10.
+      skipResourceByLabels = "woodpecker-ci.org/step,woodpecker-ci.org/task-uuid"
     }
 
     service = {
@@ -110,6 +146,13 @@ resource "helm_release" "trivy_operator" {
       severity      = "CRITICAL,HIGH"
       ignoreUnfixed = false
       timeout       = "10m0s"
+
+      # Chart default minus ResourceQuota. A ResourceQuota report is keyed on
+      # a hash of the whole object, status included, so every pod start or
+      # stop in a namespace re-evaluated and rewrote its report: about 920 of
+      # the ~1300 ConfigAuditReport writes per hour on 2026-10-10, 400 of them
+      # for trivy-system's own quota, which each scan Job changes.
+      supportedConfigAuditKinds = "Workload,Service,Role,ClusterRole,NetworkPolicy,Ingress,LimitRange,PersistentVolume,PersistentVolumeClaim"
 
       # trivy-server cache on emptyDir: the DB and layer cache rebuild on their
       # own after a restart, and a PVC would add a Proxmox LUN or pin the pod
