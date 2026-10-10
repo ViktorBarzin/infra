@@ -15,7 +15,7 @@
 #                     --window is given. For iterating on a script, not for
 #                     landing an upgrade.
 #   --timeout <sec>   Job deadline (default 3600)
-#   --keep            leave the Job, its pod and ConfigMap in place
+#   --keep            leave the Job, its pod and ConfigMap in place (no TTL)
 #   -j <n>            run up to n stacks at once (default 1)
 #   --log-dir <dir>   with several stacks, write each Job log here
 #
@@ -153,22 +153,27 @@ suffix=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 5)
 JOB=$(printf 'verify-%s' "$STACK" | tr '[:upper:]_' '[:lower:]-' | cut -c1-50)-$suffix
 CM=$JOB
 
-cleanup() {
-  [ "$KEEP" -eq 1 ] && { echo "verify: kept job/$JOB and configmap/$CM in namespace $NS"; return; }
-  # Deleting the Job garbage-collects its pod, the ConfigMap and every pod a
-  # check started (all carry an owner reference to the Job).
-  kubectl delete job -n "$NS" "$JOB" --ignore-not-found --wait=false >/dev/null 2>&1
-  kubectl delete configmap -n "$NS" "$CM" --ignore-not-found --wait=false >/dev/null 2>&1
+# Cleanup is Kubernetes' job, not the caller's. The Job carries
+# ttlSecondsAfterFinished, so the TTL controller deletes it 15 minutes after it
+# finishes, and the garbage collector then removes its pod, the ConfigMap and
+# every probe pod (all carry an owner reference to the Job). The runner itself
+# deletes nothing on a normal exit: on 2026-10-10 it deleted 117 Jobs and 117
+# ConfigMaps as kubernetes-admin, which fired the critical K8sMassDelete alert
+# (it counts Pod/Secret/ConfigMap deletes per user and excludes the garbage
+# collector). Only an interrupted run deletes its Job, so the checks stop.
+if [ "$KEEP" -eq 1 ]; then TTL_LINE=""; else TTL_LINE="ttlSecondsAfterFinished: 900"; fi
+interrupted() {
+  if [ "$KEEP" -eq 0 ]; then
+    kubectl delete job -n "$NS" "$JOB" --ignore-not-found --wait=false >/dev/null 2>&1
+  fi
+  exit 130
 }
-trap cleanup EXIT
-trap 'exit 130' INT TERM
+trap interrupted INT TERM
+trap '[ "$KEEP" -eq 1 ] && echo "verify: kept job/$JOB and configmap/$CM in namespace $NS"' EXIT
 
-kubectl create configmap -n "$NS" "$CM" \
-  --from-file=lib.sh="$HERE/lib.sh" \
-  --from-file=entrypoint.sh="$HERE/entrypoint.sh" \
-  --from-file=stack.sh="$SCRIPT" >/dev/null || { echo "verify: cannot create configmap in $NS" >&2; exit 1; }
-kubectl label configmap -n "$NS" "$CM" app.kubernetes.io/managed-by=verify "verify/stack=$STACK" >/dev/null
-
+# The Job is created suspended, so its pod does not start before the ConfigMap
+# exists. The ConfigMap is created with its owner reference already set, so
+# there is no window in which it could be left behind on its own.
 cat <<EOF | kubectl create -f - >/dev/null || { echo "verify: cannot create job in $NS" >&2; exit 1; }
 apiVersion: batch/v1
 kind: Job
@@ -179,6 +184,7 @@ metadata:
     app.kubernetes.io/managed-by: verify
     verify/stack: "$STACK"
 spec:
+  suspend: true
   backoffLimit: 0
   # A pod preempted by the scheduler or evicted from its node (the namespace
   # runs at tier-4-aux priority) is restarted instead of failing the Job; the
@@ -190,7 +196,7 @@ spec:
         onPodConditions:
           - type: DisruptionTarget
   activeDeadlineSeconds: $TIMEOUT
-  ttlSecondsAfterFinished: 3600
+  $TTL_LINE
   template:
     metadata:
       labels:
@@ -230,8 +236,20 @@ spec:
 EOF
 
 uid=$(kubectl get job -n "$NS" "$JOB" -o jsonpath='{.metadata.uid}')
-kubectl patch configmap -n "$NS" "$CM" --type merge -p \
-  "{\"metadata\":{\"ownerReferences\":[{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"name\":\"$JOB\",\"uid\":\"$uid\"}]}}" >/dev/null
+if [ -z "$uid" ] || ! kubectl create configmap -n "$NS" "$CM" \
+  --from-file=lib.sh="$HERE/lib.sh" \
+  --from-file=entrypoint.sh="$HERE/entrypoint.sh" \
+  --from-file=stack.sh="$SCRIPT" --dry-run=client -o json |
+  jq --arg job "$JOB" --arg uid "$uid" --arg stack "$STACK" '
+    .metadata.labels = {"app.kubernetes.io/managed-by": "verify", "verify/stack": $stack}
+    | .metadata.ownerReferences = [{apiVersion: "batch/v1", kind: "Job", name: $job, uid: $uid}]' |
+  kubectl create -f - >/dev/null; then
+  echo "verify: cannot create configmap in $NS" >&2
+  kubectl delete job -n "$NS" "$JOB" --ignore-not-found --wait=false >/dev/null 2>&1
+  exit 1
+fi
+kubectl patch job -n "$NS" "$JOB" --type merge -p '{"spec":{"suspend":false}}' >/dev/null ||
+  { echo "verify: cannot start job $JOB" >&2; kubectl delete job -n "$NS" "$JOB" --wait=false >/dev/null 2>&1; exit 1; }
 
 echo "verify: job $NS/$JOB for stack $STACK (window ${WINDOW}s, quick=$QUICK, since $SINCE)"
 
