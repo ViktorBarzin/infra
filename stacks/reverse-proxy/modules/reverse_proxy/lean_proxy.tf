@@ -101,7 +101,11 @@ resource "kubernetes_deployment" "lean_proxy" {
   metadata {
     name      = "lean-proxy"
     namespace = kubernetes_namespace.reverse-proxy.metadata[0].name
-    labels    = local.lean_proxy_labels
+    # tier is declared because the sync-tier-label-from-namespace Kyverno
+    # policy stamps it on every update; without it each apply strips the
+    # label and the policy adds it back. Deployment metadata only: the
+    # selector and pod template keep local.lean_proxy_labels.
+    labels = merge(local.lean_proxy_labels, { tier = "3-edge" })
   }
 
   # Terraform waits here until the new pods are Ready. The factory Ingresses
