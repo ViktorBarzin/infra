@@ -26,15 +26,17 @@ resource "helm_release" "sealed_secrets" {
   create_namespace = false
   name             = "sealed-secrets"
   atomic           = true
+  cleanup_on_fail  = true
   timeout          = 300
 
   # bitnami.github.io (official per the project README) — the old
   # bitnami-labs.github.io Pages repo went 404 (Broadcom's 2025 Bitnami purge)
-  # and failed every CI apply with "Error locating chart". Same chart, same
-  # pinned version; the live release (2.18.3 / controller 0.36.0) is untouched.
+  # and failed every CI apply with "Error locating chart".
+  # 2.20.0 = controller 0.40.0 (2026-10-09). The chart ships its CRD in crds/,
+  # so Helm never upgrades it; the 2.18.3 -> 2.20.0 CRD diff is description-only.
   repository = "https://bitnami.github.io/sealed-secrets"
   chart      = "sealed-secrets"
-  version    = "2.18.3"
+  version    = "2.20.0"
 
   values = [yamlencode({
     crds = {
