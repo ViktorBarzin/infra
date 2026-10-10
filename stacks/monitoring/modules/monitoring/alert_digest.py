@@ -192,9 +192,13 @@ TRIVY_QUERIES = {
     "fixable_public": (
         "count by (severity) (last_over_time(trivy_vulnerability_id[1h]) and on (namespace) %s)" % _PUBLIC_NS
     ),
+    # Distinct CVE+package pairs per image, so an image shared by several
+    # workloads or containers (e.g. one app image behind four CronJobs) is
+    # counted once.
     "top_fixable": (
-        "topk(10, count by (namespace, image_repository, image_tag) "
-        "(last_over_time(trivy_vulnerability_id[1h])))"
+        "topk(10, count by (namespace, image_repository, image_tag) ("
+        "count by (namespace, image_repository, image_tag, vuln_id, resource, installed_version) "
+        "(last_over_time(trivy_vulnerability_id[1h]))))"
     ),
     "public_ns": _PUBLIC_NS,
     "secret_images": "count(count by (namespace, image_repository, image_tag) (trivy_image_exposedsecrets > 0))",
@@ -312,14 +316,15 @@ def build_trivy_section(stats):
     unfixable = {s: max(vt.get(s, 0) - fx.get(s, 0), 0) for s in TRIVY_SEVERITIES}
     lines = [
         "%s (%d workload containers scanned)" % (header, stats["scanned"]),
-        "\u2022 Critical/High CVEs: %s" % _fmt_counts(vt, stats["vuln_total_prev"], TRIVY_SEVERITIES),
+        "\u2022 Critical/High CVE findings, counted per workload container: %s"
+        % _fmt_counts(vt, stats["vuln_total_prev"], TRIVY_SEVERITIES),
         "\u2022 fixable %s; unfixable %s"
         % (_fmt_counts(fx, stats["fixable_prev"], TRIVY_SEVERITIES), _fmt_plain(unfixable, TRIVY_SEVERITIES)),
         "\u2022 fixable on internet-reachable workloads: %s (these alert per namespace)"
         % _fmt_plain(stats["fixable_public"], TRIVY_SEVERITIES),
     ]
     if stats["top_fixable"]:
-        lines.append("\u2022 Top fixable images:")
+        lines.append("\u2022 Top images by distinct fixable Critical/High CVEs:")
         for t in stats["top_fixable"]:
             tag = " (internet-reachable)" if t["public"] else ""
             lines.append("    \u2013 %s %s: %d%s" % (t["namespace"], t["image"], t["count"], tag))
