@@ -36,7 +36,7 @@ this rule's resource list, which is how they were overlooked.
 
 ### `# KYVERNO_LIFECYCLE_V2` — Keel auto-update annotations
 
-Status since 2026-10-10: the `inject-keel-annotations` policy is deleted and Keel is parked at 0 replicas (batch B00 of the Keel to Renovate cutover, `docs/plans/2026-10-09-software-currency-design.md`). New workloads no longer receive `keel.sh/*` annotations, so they do not need the Keel lines below. Existing workloads keep their annotations and ignore lines until their stack's cutover batch removes them. The rest of this section describes the policy as it was.
+Status since 2026-10-10: the `inject-keel-annotations` policy is deleted and Keel is parked with 0 pods (batch B00 of the Keel to Renovate cutover, `docs/plans/2026-10-09-software-currency-design.md`). New workloads no longer receive `keel.sh/*` annotations, so they do not need the Keel lines below. Existing workloads keep their annotations and ignore lines until their stack's cutover batch removes them. The rest of this section describes the policy as it was.
 
 When a namespace is labeled `keel.sh/enrolled=true` (and, through the policy's background rule, in practice on almost every namespace; see the note after the block), the `inject-keel-annotations` ClusterPolicy (`stacks/kyverno/modules/kyverno/keel-annotations.tf`) injects these annotations on every Deployment / StatefulSet / DaemonSet:
 
