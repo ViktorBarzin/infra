@@ -393,7 +393,8 @@ The infra repo runs on Woodpecker via **two** forge registrations: the Forgejo
 forge (repo id 82, registered 2026-06-08) and the legacy GitHub forge (repo id
 1). Pushes to **Forgejo** `master` fire `.woodpecker/default.yml`
 (changed-stacks terragrunt apply, in `infra-ci`) plus the `notify-nonadmin-push`
-Slack audit step. **Slack policy (2026-07-02): every infra pipeline posts only
+Slack audit step (skipped for admin authors and for `renovate-bot`, whose
+bumps are already one commit each with a `<stack>: bump` subject). **Slack policy (2026-07-02): every infra pipeline posts only
 on FAILURE** (plus the non-admin audit post and drift/error findings) — routine
 successful runs are silent. Operational facts (2026-06-10):
 

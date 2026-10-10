@@ -39,6 +39,9 @@ steps:
       - |
         case "$CI_COMMIT_AUTHOR" in
           viktor|ViktorBarzin|wizard) echo "admin push — no notify"; exit 0 ;;
+          # Renovate lands up to 48 bumps a day; each is already its own
+          # commit with a "<stack>: bump" subject, so no Slack line per push.
+          renovate-bot) echo "renovate-bot push — no notify"; exit 0 ;;
         esac
         SUBJECT=$(echo "$CI_COMMIT_MESSAGE" | head -1 | tr -d '"\\')
         curl -s -X POST -H 'Content-type: application/json' \
