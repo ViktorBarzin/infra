@@ -2,11 +2,12 @@
 
 > Snapshot of applications, groups, users, and flows. Use `authentik` skill for management tasks.
 
-## Applications (11)
+## Applications (12)
 | Application | Provider Type | Auth Flow |
 |-------------|--------------|-----------|
 | Cloudflare Access | OAuth2/OIDC | implicit consent |
 | Domain wide catch all | Proxy (forward auth) | implicit consent |
+| F1 Stream | OAuth2/OIDC (confidential, TF: `stacks/f1-stream/members.tf`) | implicit consent |
 | Forgejo | OAuth2/OIDC | implicit consent |
 | Grafana | OAuth2/OIDC | implicit consent |
 | Headscale | OAuth2/OIDC | implicit consent |
@@ -66,7 +67,7 @@
 > `postiz`→Postiz Users. Design:
 > `docs/plans/2026-07-26-authentik-forward-auth-group-authorization-design.md`.
 
-## Groups (16)
+## Groups (18)
 | Group | Parent | Superuser | Purpose |
 |-------|--------|-----------|---------|
 | Allow Login Users | -- | No | Parent group for login-permitted users |
@@ -84,6 +85,8 @@
 | Postiz Users | -- | No | `postiz.viktorbarzin.me` |
 | Chrome Users | -- | No | `chrome`/`chrome-fleet` shared browser (ADR-0023; deliberately tighter than admin) |
 | Forgejo Users | -- | No | Forgejo (OIDC binding) |
+| F1 Users | -- | No | f1-stream Member sign-in and TV pairing (OIDC binding on F1 Stream; TF owns the group, membership is UI-managed; f1-stream ADR-0025/0021) |
+| f1-stream membership readers | -- | No | holds svc-f1-stream only; role `f1-stream membership reader` = view_user + view_group |
 | Public Guests | -- | No | anonymous `public` outpost auto-bind (`guest`) |
 
 ## Users (8 real)
