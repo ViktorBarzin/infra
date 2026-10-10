@@ -83,6 +83,19 @@ alertmanager:
           matchers:
             - lane = security
           continue: false
+        # Trivy finding alerts (2026-10-10, docs/architecture/trivy.md). At most
+        # one post per alert per day: the first full scan adds namespaces one
+        # by one over about two hours, which under the root route's 5m
+        # group_interval would post a fresh list every five minutes. Grouped by
+        # alertname, so each post lists every affected namespace or image.
+        - receiver: slack-warning
+          group_by: ["alertname"]
+          group_wait: 30m
+          group_interval: 24h
+          repeat_interval: 8760h
+          matchers:
+            - alertname =~ "TrivyFixableCVEInternetReachable|TrivyExposedSecretInImage"
+          continue: false
         - receiver: slack-critical
           group_wait: 10s
           group_interval: 1m
@@ -6324,6 +6337,65 @@ serverFiles:
       # code-1ik (viktorbarzin/dovecot_exporter incompatible with
       # Dovecot 2.3 stats architecture). Re-add the rule group if a
       # working exporter is introduced.
+      - name: Trivy
+        # Trivy Operator findings (stacks/trivy-operator, docs/architecture/trivy.md,
+        # software-currency design Phase 2). Only two kinds of finding alert: a
+        # fixable Critical/High CVE in an internet-reachable namespace, and a
+        # secret baked into an image. Everything else goes into the weekly Trivy
+        # section of the alert-digest CronJob (alert_digest.py).
+        #
+        # Both finding alerts go through the Trivy child route (group_wait 30m,
+        # group_interval 24h, above), so the first full scan, which adds
+        # namespaces one at a time over about two hours, posts once rather than
+        # every five minutes, and later changes post at most once a day.
+        rules:
+          - alert: TrivyFixableCVEInternetReachable
+            # One alert per namespace, so the alert count is bounded by the 103
+            # internet-reachable namespaces however many CVEs each image has.
+            # trivy_vulnerability_id holds only fixable Critical/High findings
+            # (filtered in the kubernetes-service-endpoints metric_relabel_configs).
+            # Reachability: any ingress in the namespace with the ingress_factory
+            # dns-type annotation proxied or non-proxied.
+            #
+            # keep_firing_for bridges the daily rescan: a report is deleted at its
+            # 24h TTL and its series vanish until the new scan lands (up to about
+            # 40 minutes when the whole cluster expires at once).
+            expr: |
+              count by (namespace) (trivy_vulnerability_id{severity=~"Critical|High"})
+              and on (namespace)
+              count by (namespace) (kube_ingress_annotations{annotation_cloudflare_viktorbarzin_me_dns_type=~"proxied|non-proxied"})
+            for: 1h
+            keep_firing_for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.namespace }}: {{ $value | printf \"%.0f\" }} fixable Critical/High CVE finding(s) in an internet-reachable namespace. `kubectl get vulnerabilityreports -n {{ $labels.namespace }} -o wide`, fixed versions per docs/runbooks/trivy-operator.md"
+          - alert: TrivyExposedSecretInImage
+            # One alert per image repository per namespace. The count is the
+            # largest number of secrets any one container of that image holds.
+            # Trivy also matches public keys shipped inside third-party libraries
+            # (for example yt-dlp's extractors); the runbook says how to check
+            # the file and silence a false positive.
+            expr: |
+              max by (namespace, image_repository) (
+                sum by (namespace, name, image_repository) (trivy_image_exposedsecrets)
+              ) > 0
+            for: 1h
+            keep_firing_for: 6h
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.namespace }}: {{ $value | printf \"%.0f\" }} secret(s) found in image {{ $labels.image_repository }}. `kubectl get exposedsecretreports -n {{ $labels.namespace }} -o json`, see docs/runbooks/trivy-operator.md"
+          - alert: TrivyMetricsAbsent
+            # The two alerts above resolve silently when their series disappear,
+            # so a stopped operator or a keep-allowlist regression would look like
+            # "no findings". This makes that state visible.
+            expr: absent(trivy_image_vulnerabilities)
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "No trivy_image_vulnerabilities series for 2h: the Trivy Operator in trivy-system is down or its metrics are no longer scraped (keep allowlist in prometheus_chart_values.tpl)"
       - name: Image Ownership
         # Metrics pushed by the image-flipflop-detect CronJob (image_flipflop.tf,
         # every 6h). It finds Deployments whose image is being rewritten in a

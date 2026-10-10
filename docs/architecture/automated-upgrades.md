@@ -6,6 +6,8 @@ This doc covers three independent automation paths, plus a short section on Keel
 2. **OS-level upgrades on K8s nodes** — `unattended-upgrades` + `kured` with sentinel-gate + Prometheus halt-on-alert. See "K8s Node OS Upgrades" section and the runbook at `docs/runbooks/k8s-node-auto-upgrades.md`.
 3. **K8s component version upgrades** (kubeadm/kubelet/kubectl) — daily detection CronJob → chain of phase Jobs (preflight → master → one worker Job per worker, enumerated live → postflight). See "K8s Version Upgrades" section and the runbook at `docs/runbooks/k8s-version-upgrade.md`.
 
+Since 2026-10-10 the Trivy Operator reports which running images have fixable Critical/High CVEs (`docs/architecture/trivy.md`). It does not trigger upgrades itself; the software-currency design (`docs/plans/2026-10-09-software-currency-design.md`) has Renovate pick up fixed versions, and rewrites this doc around Renovate when Phase 3 lands.
+
 ## Overview
 
 OSS services are automatically upgraded via a pipeline that detects new container image versions, analyzes changelogs for breaking changes, backs up databases, applies version bumps through Terraform, and verifies health post-upgrade with automatic rollback on failure.
