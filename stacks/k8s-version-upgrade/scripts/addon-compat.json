@@ -47,10 +47,9 @@
       "image_re": "gpu-operator:v?([0-9]+\\.[0-9]+)",
       "max_k8s": {
         "25.10": "1.35",
-        "26.3": "1.36"
-      },
-      "pinned": true,
-      "pin_reason": "26.3 needs a newer NVIDIA driver image + Ubuntu/kernel; held until the driver/OS path is ready. Unpin = delete pinned + pin_reason."
+        "26.3": "1.36",
+        "26.7": "1.37"
+      }
     }
   ],
   "containerd_min": {

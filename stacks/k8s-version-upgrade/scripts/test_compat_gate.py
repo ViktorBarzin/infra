@@ -190,15 +190,16 @@ def test_exit_code_mapping():
 def test_real_matrix_136_is_held(monkeypatch):
     """Regression guard on the SHIPPED addon-compat.json: at today's running
     versions a 1.36 jump must be HELD (exit 4) — calico ACTIONABLE (3.32 in the
-    matrix), ESO+kyverno WAITING (no 1.36 release), gpu-operator PINNED. Catches
-    a matrix edit that silently turns the quiet held state into a nightly alert."""
+    matrix), ESO+kyverno WAITING (no 1.36 release), gpu-operator clear (26.7
+    supports up to 1.37; unpinned 2026-10-10). Catches a matrix edit that
+    silently turns the quiet held state into a nightly alert."""
     import json as _json
     matrix = _json.loads((HERE / "addon-compat.json").read_text())
     running_imgs = {
         "calico-system": "quay.io/calico/node:v3.30.7",
         "external-secrets": "ghcr.io/external-secrets/external-secrets:v2.6.0",
         "kyverno": "ghcr.io/kyverno/kyverno:v1.18.1",
-        "nvidia": "nvcr.io/nvidia/gpu-operator:v25.10.0",
+        "nvidia": "nvcr.io/nvidia/gpu-operator:v26.7.1",
     }
 
     def fake_kget(args):
@@ -211,5 +212,5 @@ def test_real_matrix_136_is_held(monkeypatch):
     assert pick("calico").startswith("[ACTIONABLE]"), reasons
     assert pick("external-secrets").startswith("[WAITING]"), reasons
     assert pick("kyverno").startswith("[WAITING]"), reasons
-    assert pick("gpu-operator").startswith("[PINNED]"), reasons
+    assert not any("gpu-operator" in r for r in reasons), reasons
     assert cg.exit_code(reasons) == 4  # held wins

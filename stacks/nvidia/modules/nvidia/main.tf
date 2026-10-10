@@ -132,20 +132,23 @@ resource "helm_release" "nvidia-gpu-operator" {
   namespace = kubernetes_namespace.nvidia.metadata[0].name
   name      = "nvidia-gpu-operator"
 
-  repository = "https://helm.ngc.nvidia.com/nvidia"
-  chart      = "gpu-operator"
-  atomic     = true
-  # Pinned 2026-05-17, when k8s-node1 had been upgraded to Ubuntu 26.04 and
-  # the operator (v25.10.1 and v26.3.1 alike) built `driver:<version>-ubuntu26.04`
-  # image tags that NVIDIA does not publish. The node was mitigated rather
-  # than the chart: kernel rolled back to 6.8.0-117-generic and apt-held,
-  # /etc/os-release replaced with the 24.04 content, so NFD and the node
-  # report Ubuntu 24.04.4 / 6.8.0-117-generic (checked 2026-10-09) and the
-  # ubuntu24.04 driver image is used. The pin stays until a chart upgrade is
-  # tested against that setup and the 570.195.03 driver pin in values.yaml.
-  # See docs/known-issues.md and post-mortem
+  repository      = "https://helm.ngc.nvidia.com/nvidia"
+  chart           = "gpu-operator"
+  atomic          = true
+  cleanup_on_fail = true
+  # Pinned since 2026-05-17, when k8s-node1 had been upgraded to Ubuntu 26.04
+  # and the operator (v25.10.1 and v26.3.1 alike) built
+  # `driver:<version>-ubuntu26.04` image tags that NVIDIA does not publish.
+  # The node was mitigated rather than the chart: kernel rolled back to
+  # 6.8.0-117-generic and apt-held, /etc/os-release replaced with the 24.04
+  # content, so NFD and the node report Ubuntu 24.04.4 / 6.8.0-117-generic
+  # and the ubuntu24.04 driver image is used. Chart v26.7.1 (2026-10-10)
+  # takes the OS for the driver tag from the NFD label, which still says
+  # 24.04, and was tested against that setup with the 570.195.03 driver pin
+  # in values.yaml. Bumping the driver is a separate step with its own GPU
+  # outage. See docs/known-issues.md and post-mortem
   # 2026-05-17-gpu-driver-ubuntu2604-mismatch.md.
-  version = "v25.10.1"
+  version = "v26.7.1"
   timeout = 6000
 
   values     = [templatefile("${path.module}/values.yaml", {})]

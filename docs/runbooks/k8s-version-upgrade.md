@@ -124,8 +124,9 @@ there's something to do — `compat-gate.py` exit code + a `[TAG]` on every reas
   target yet** (e.g. kyverno/ESO behind a brand-new k8s minor). Only an upstream
   release can clear it.
 - **`[PINNED]`** (exit 4 = held) — a supporting version exists but the addon is
-  **deliberately pinned** in the matrix (`"pinned": true`, e.g. gpu-operator,
-  whose bump is coupled to a newer NVIDIA driver image + Ubuntu/kernel).
+  **deliberately pinned** in the matrix (`"pinned": true`). No addon is pinned
+  today; gpu-operator was until 2026-10-10, when chart v26.7.1 (supports up to
+  k8s 1.37) landed against node1's 24.04 / 6.8.0-117 setup.
 - **Held wins on a mix**: if any blocker is waiting/pinned the whole target is
   held — acting on the actionable ones wouldn't unblock it yet.
 
