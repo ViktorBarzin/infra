@@ -1,6 +1,6 @@
 # ADR-0029: Paperless reads each person's mailbox directly for document attachments
 
-- Status: accepted
+- Status: accepted, first pass complete 2026-10-10
 - Date: 2026-10-09
 - Related: `docs/runbooks/paperless-mail-ingest.md` (operations and the rule table), memory #7099 (the `docs@` forward path built 2026-07-03)
 
@@ -112,6 +112,40 @@ flowchart TD
   paperless-ai RAG index (refreshed daily). Emo's documents are enriched by the
   local model only, per the 2026-06-28 decision.
 
+## Results of the first pass (2026-10-09 15:56 to 2026-10-10 04:43 UTC)
+
+| Mailbox | Emails checked | Emails with documents imported | Documents imported | Failed emails |
+|---|---|---|---|---|
+| emil.barzin@gmail.com | 7,783 | 1,303 | 1,071 (owner emo) | 6 |
+| vbarzin@gmail.com | 116,840 | 1,054 | 941 (owner Viktor, with me@) | 2 |
+| me@viktorbarzin.me | 949 | 67 | (counted with Gmail above) | 0 |
+
+- 2,012 documents in total carry `email-backfill`: 1,071 owned by emo, 941 by
+  Viktor, none by anyone else, and no document duplicates another live one. By
+  type, mostly PDF (about three quarters), then Word and Excel.
+- Duplicate rejection has a race. With 3 workers, two identical attachments
+  consumed within seconds of each other both passed the checksum check, which
+  left 66 same-owner pairs (none across owners). The newer copy of each pair was
+  moved to the trash. With the default single worker, consumption is serial and
+  the race does not occur.
+- The Gmail label `paperless` sits on 1,303 of Emo's emails, which matches his
+  imported count, and on 913 of Viktor's.
+- Consumer Gmail never suspended IMAP. Viktor's 116,840 emails took about
+  4 hours (23:00 to 03:05 UTC), and Emo's 7,783 took about 7 hours because his
+  messages are larger and shared the single worker with consumption until 19:20.
+- Failures that remain (8 emails): 5 Office files that Tika or Gotenberg could
+  not convert or parse, 2 PDFs stopped by Pillow's decompression-bomb guard, and
+  1 IMAP error in Viktor's mailbox, plus 1 malformed email in Emo's mailbox
+  (`Base64 decoding error`) that is never recorded and is retried on every poll.
+- What changed during the pass. `PAPERLESS_CONSUMER_DELETE_DUPLICATES=true`
+  was added after the first hour showed duplicates being consumed. The task
+  workers went from 1 to 3 at Viktor's request and back to the default after
+  two OOMKills at the 8Gi limit. Each restart orphaned queued attachments, and
+  their `ProcessedMail` rows were cleared so the messages were read again. The
+  runbook has the recovery steps.
+- `email-backfill` was removed from rules 18-20 at the end; new mail carries
+  `email-ingest` only.
+
 ## Alternatives considered
 
 - **Gmail auto-forward to `docs@`.** Picked first, then dropped once it was clear
@@ -127,8 +161,6 @@ flowchart TD
 
 ## Open questions
 
-- Whether consumer Gmail enforces the same IMAP download limit, and how long the
-  first pass takes in practice.
 - How much of the PDF/Office stream is noise (marketing PDFs, terms-and-conditions
   attachments). If it becomes noisy, add `filter_attachment_filename_exclude`
   patterns using filenames actually seen.
