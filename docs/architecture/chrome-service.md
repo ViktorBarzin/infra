@@ -196,7 +196,8 @@ milestone breaks a caller, pin Chrome in the Dockerfile or bump the clients.
 Since 2026-08-11 the master's Chrome milestone comes from the digest-pinned neko
 image (`local.neko_image`) rather than from a Dockerfile we control, so a neko
 bump also moves Chrome. That is one more reason the pin is a deliberate,
-reviewed bump and Keel stays off this deployment.
+reviewed bump: since the Keel to Renovate cutover (2026-10-10, batch B07) Renovate
+proposes neko and Playwright bumps as commits that the CI rails apply and verify.
 
 Callers do not have to sit on 1.48: `chesscom-streak` pins `playwright==1.58.0`
 and was verified live against this Chrome/149 browser on 2026-08-08. Because a

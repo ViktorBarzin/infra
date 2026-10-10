@@ -8,7 +8,6 @@ resource "kubernetes_namespace" "aiostreams" {
     name = "aiostreams"
     labels = {
       "istio-injection" : "disabled"
-      "keel.sh/enrolled" = "true"
       # The module's own tier, which its pods already carry; the namespace
       # lacked it, so Kyverno injected no priority class (found 2026-10-02).
       tier = var.tier
@@ -61,12 +60,6 @@ resource "kubernetes_deployment" "aiostreams" {
       app  = "aiostreams"
       tier = var.tier
     }
-    # Keel opt-out (annotation, per stacks/kyverno/.../keel-annotations.tf): this
-    # image is pinned in Terraform below, waiting for the Renovate migration
-    # (ADR-0030). Keel's policy=patch never moved it, and with Terraform owning
-    # the tag the two would fight. keel.sh/policy is deliberately NOT in
-    # ignore_changes, so this value is applied to the existing Deployment.
-    annotations = { "keel.sh/policy" = "never" }
   }
   spec {
     replicas = 1
@@ -167,12 +160,9 @@ resource "kubernetes_deployment" "aiostreams" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

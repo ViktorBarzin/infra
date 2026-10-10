@@ -224,6 +224,16 @@
       matchPackageNames: ["lscr.io/linuxserver/qbittorrent"],
       allowedVersions: "<14", // legacy 14.x and 20.04.x tags; current upstream is 5.x
     },
+    {
+      description: "listenarr publishes only canary-X.Y.Z tags (plus a floating canary). Docker versioning cannot read a non-numeric prefix, so canary-0.2.47 would never be offered a newer one (Keel cutover B07, 2026-10-10)",
+      matchPackageNames: ["ghcr.io/therobbiedavis/listenarr"],
+      versioning: "regex:^canary-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
+    },
+    {
+      description: "youtubedl-material publishes dated nightly-YYYY-MM-DD tags; read the date as the version (Keel cutover B07, 2026-10-10)",
+      matchPackageNames: ["tzahi12345/youtubedl-material", "docker.io/tzahi12345/youtubedl-material"],
+      versioning: "regex:^nightly-(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})$",
+    },
 
     // ---- Groups: versions that must move together ----
     {

@@ -11,7 +11,7 @@ variable "beadboard_image_tag" {
 }
 
 # Tracks claude-agent-service `:latest` (stacks/claude-agent-service/main.tf uses
-# image_tag "latest" + KEEL_IGNORE_IMAGE). Reused here because the dispatcher +
+# image_tag "latest" + CI_SETS_IMAGE). Reused here because the dispatcher +
 # reaper CronJobs only need bd, curl, and jq, which that image already ships.
 # Was pinned to SHA "2fd7670d", which Forgejo retention pruned → ImagePullBackOff
 # (fixed 2026-06-12); ":latest" stays in sync automatically and can't go stale.
@@ -47,8 +47,7 @@ resource "kubernetes_namespace" "beads" {
   metadata {
     name = "beads-server"
     labels = {
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.aux
     }
   }
   lifecycle {
@@ -121,15 +120,6 @@ resource "kubernetes_deployment" "dolt" {
     labels = {
       app  = "dolt"
       tier = local.tiers.aux
-    }
-    annotations = {
-      # Keel is namespace-enrolled (keel.sh/enrolled=true on the namespace),
-      # but this deployment opts OUT of auto-updates. Terraform owns the image
-      # tag in the container spec below. Codified here so TF state matches live.
-      "keel.sh/policy"       = "never"
-      "keel.sh/match-tag"    = "true"
-      "keel.sh/trigger"      = "poll"
-      "keel.sh/pollSchedule" = "@every 1h"
     }
   }
   spec {
@@ -229,8 +219,8 @@ resource "kubernetes_deployment" "dolt" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # The image is deliberately NOT ignored: Terraform owns the tag. Keel
-      # annotations are codified in metadata.annotations above (policy=never).
+      # The image is deliberately NOT ignored: Terraform owns the tag and
+      # Renovate proposes bumps.
     ]
   }
 }
@@ -593,8 +583,10 @@ resource "kubernetes_deployment" "workbench" {
           # Pinned 2026-05-26: Keel rolled :latest → :0.1.0 on 2026-05-17,
           # which speaks an old GraphQL schema (missing `type` arg on
           # addDatabaseConnection) → seed-config fails, UI can't add the
-          # connection. :0.3.73 was the last Keel-resolved good tag.
-          image = "dolthub/dolt-workbench:0.3.73"
+          # connection. :0.3.73 was the last Keel-resolved good tag; Keel then
+          # rolled this container to :0.3.75, which is what runs at the Renovate
+          # cutover (2026-10-10). Renovate proposes bumps from here.
+          image = "dolthub/dolt-workbench:0.3.75"
           command = ["sh", "-c", <<-EOT
             # Patch GraphQL server to listen on 0.0.0.0 (IPv4) — Node 18+ defaults to IPv6
             sed -i 's|app.listen(9002)|app.listen(9002,"0.0.0.0")|g' /app/graphql-server/dist/main.js
@@ -696,15 +688,9 @@ resource "kubernetes_deployment" "workbench" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].init_container[0].image,
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -885,7 +871,7 @@ resource "kubernetes_deployment" "beadboard" {
 
         init_container {
           name    = "seed-beads-config"
-          image   = "busybox:1.36"
+          image   = "busybox:1.36.1"
           command = ["sh", "-c", "cp /config/* /beads/ && mkdir -p /beads/templates /beads/archetypes"]
           volume_mount {
             name       = "beads-config"
@@ -980,15 +966,10 @@ resource "kubernetes_deployment" "beadboard" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].init_container[0].image,
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].container[0].image,                                          # CI_SETS_IMAGE: first-party image, deployed by its own CI
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

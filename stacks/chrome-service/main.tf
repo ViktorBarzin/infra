@@ -59,7 +59,6 @@ resource "kubernetes_namespace" "chrome_service" {
       "istio-injection"                       = "disabled"
       tier                                    = local.tiers.aux
       "chrome-service.viktorbarzin.me/server" = "true"
-      "keel.sh/enrolled"                      = "true"
       # Opt out of the Kyverno-generated tier-4-aux tier-quota (3Gi requests.memory
       # — far too small for the burst-6 worker pool). We define our own quota in
       # broker.tf (kubernetes_resource_quota.pool). The tier-4-aux LimitRange still
@@ -195,21 +194,10 @@ resource "kubernetes_deployment" "chrome_service" {
       # Deliberate pin: the neko image is digest-pinned (local.neko_image) and
       # the sidecars track local.python_image, so a neko upgrade is a reviewed
       # bump rather than an automatic roll — a display regression here takes the
-      # hand-login surface with it. The Keel opt-out is the annotation below.
+      # hand-login surface with it.
     })
     annotations = {
       "reloader.stakater.com/auto" = "true"
-      # Opt out of Keel. This was a LABEL in the merge above until 2026-08-17,
-      # when the inject-keel-annotations exclude moved off labels onto this
-      # annotation (a keel.sh/* label is drift — see
-      # stacks/kyverno/modules/kyverno/keel-annotations.tf).
-      #
-      # `ignore_changes` below covers this key, so declaring it here does not
-      # fight Kyverno on updates — but ignore_changes does not apply on CREATE,
-      # so a recreated Deployment still comes up opted out. That matters: the
-      # neko image is digest-pinned deliberately and an automatic roll would
-      # take the hand-login surface with it.
-      "keel.sh/policy" = "never"
     }
   }
   spec {
@@ -255,7 +243,7 @@ resource "kubernetes_deployment" "chrome_service" {
         # previous pod is gone before this one starts.
         init_container {
           name    = "fix-perms"
-          image   = "busybox:1.37"
+          image   = "busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
           command = ["sh", "-c", "chown -R 1000:1000 /profile && rm -f /profile/chromium-data/Singleton*"]
           security_context {
             run_as_user = 0
@@ -740,21 +728,13 @@ resource "kubernetes_deployment" "chrome_service" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      # Every container image here is TF-managed and digest- or minor-pinned
-      # (neko, and local.python_image for cdp-bridge + snapshot-server); none is
-      # KEEL_IGNORE'd, so a stray clobber gets reverted on the next apply. Keel
-      # is inert for this deployment anyway (keel.sh/policy=never) and no deploy
-      # step touches it. The one exception is the busybox fix-perms initContainer
-      # below, which Kyverno may restamp — init_container[0] is that one; keep it
-      # first in the file so this index keeps pointing at it.
-      spec[0].template[0].spec[0].init_container[0].image,
+      # Every container image here is Terraform-owned and pinned (neko by
+      # digest, local.python_image for cdp-bridge + snapshot-server, busybox
+      # for fix-perms); none is ignored, so a stray clobber gets reverted on
+      # the next apply. Renovate proposes the bumps.
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

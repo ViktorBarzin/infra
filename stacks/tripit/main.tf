@@ -19,7 +19,7 @@ locals {
   # Forgejo viktor/tripit push-mirrors -> private ViktorBarzin/tripit GitHub repo ->
   # GHA builds + pushes ghcr.io/viktorbarzin/tripit. Removes both the build IO and the
   # Forgejo/sdc registry push from the homelab. Running tag is set via `kubectl set
-  # image` (image is KEEL_IGNORE_IMAGE below); CronJobs track :latest.
+  # image` (image is CI_SETS_IMAGE below); CronJobs track :latest.
   image = "ghcr.io/viktorbarzin/tripit:${var.image_tag}"
   labels = {
     app = "tripit"
@@ -227,8 +227,6 @@ resource "kubernetes_namespace" "tripit" {
     labels = {
       tier              = local.tiers.aux
       "istio-injection" = "disabled"
-      # Opt into Keel auto-update (inject-keel-annotations ClusterPolicy).
-      "keel.sh/enrolled" = "true"
       # Admit this namespace through chrome-service's CDP NetworkPolicy
       # (chrome-service-ws-ingress) — the fare scrape (#18) drives the
       # shared browser on :9222.
@@ -522,7 +520,7 @@ resource "kubernetes_deployment" "tripit" {
         # export). The NFS vault handles its own perms and is left untouched.
         init_container {
           name    = "chown-personal-documents"
-          image   = "busybox:1.37"
+          image   = "busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
           command = ["sh", "-c", "chown -R 10001:999 /data/personal-documents"]
           security_context {
             run_as_user = 0
@@ -612,16 +610,12 @@ resource "kubernetes_deployment" "tripit" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].init_container[0].image,
+      spec[0].template[0].spec[0].dns_config,              # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,      # CI_SETS_IMAGE: first-party image, deployed by its own CI
+      spec[0].template[0].spec[0].init_container[0].image, # CI_SETS_IMAGE: alembic-migrate, set with the app image
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -739,15 +733,11 @@ resource "kubernetes_deployment" "mail_listener" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — deploy pipeline manages SHA
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

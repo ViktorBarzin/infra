@@ -21,8 +21,7 @@ resource "kubernetes_namespace" "paperless-ngx" {
   metadata {
     name = "paperless-ngx"
     labels = {
-      tier               = local.tiers.edge
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.edge
     }
     # labels = {
     #   "istio-injection" : "enabled"
@@ -153,14 +152,6 @@ resource "kubernetes_deployment" "paperless-ngx" {
       # The Postgres password rotates weekly and PAPERLESS_DBPASS is read once
       # at startup, so without this the app fails auth every seventh day.
       "secret.reloader.stakater.com/reload" = "paperless-ngx-db-creds"
-      # Semver-ORDERED major tracking, so Keel performs the 2.20.15 -> 3.x jump
-      # and can only ever move upward. Kyverno's inject-keel-annotations adds
-      # "patch" with +() (only-if-absent), so this explicit value wins, and it
-      # is deliberately absent from ignore_changes below so Terraform owns it.
-      #
-      # NEVER "force" here: force ignores semver ordering and rolled this exact
-      # deployment 2.20.15 -> 1.5.0 within minutes on 2026-07-14.
-      "keel.sh/policy" = "major"
     }
   }
   spec {
@@ -189,9 +180,9 @@ resource "kubernetes_deployment" "paperless-ngx" {
       }
       spec {
         container {
-          # Seed only. The live tag is Keel's (image is in ignore_changes
-          # below); this records the intended floor for a fresh apply.
-          image = "ghcr.io/paperless-ngx/paperless-ngx:3.1.3"
+          # Terraform owns the tag; Renovate proposes bumps. 3.3.0 is what
+          # Keel had rolled (as :3.3) when it was retired (2026-10-10).
+          image = "ghcr.io/paperless-ngx/paperless-ngx:3.3.0"
           name  = "paperless-ngx"
           env {
             name = "PAPERLESS_REDIS"
@@ -429,15 +420,9 @@ resource "kubernetes_deployment" "paperless-ngx" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # keel.sh/policy is NOT ignored: it is set to "major" above and Terraform
-      # owns it, so the patch->major flip actually reconciles.
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -494,7 +479,7 @@ resource "kubernetes_deployment" "gotenberg" {
       }
       spec {
         container {
-          image = "docker.io/gotenberg/gotenberg:8.25"
+          image = "gotenberg/gotenberg:8.25.1"
           name  = "gotenberg"
           # docker-compose `command:` == k8s `args` (overrides CMD, keeps the
           # image's tini ENTRYPOINT). Paperless's recommended hardening flags.
@@ -529,12 +514,8 @@ resource "kubernetes_deployment" "gotenberg" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
@@ -612,12 +593,8 @@ resource "kubernetes_deployment" "tika" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

@@ -1449,7 +1449,7 @@ resource "kubernetes_deployment" "openclaw" {
         # Sidecar: modelrelay — auto-routes to fastest healthy free model
         container {
           name  = "modelrelay"
-          image = "docker.io/library/node:22-alpine"
+          image = "docker.io/library/node:22.23.3-alpine"
           command = ["sh", "-c", <<-EOF
             if [ ! -f /tools/modelrelay/node_modules/.package-lock.json ]; then
               mkdir -p /tools/modelrelay
@@ -1548,11 +1548,8 @@ resource "kubernetes_deployment" "openclaw" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-      spec[0].template[0].spec[0].container[1].image,                     # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
-      # container[3] (modelrelay) runs the floating node:22-alpine; pinning it
-      # changes the pod template, so it waits for the floating-tag batch.
-      spec[0].template[0].spec[0].container[3].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].container[1].image,                                          # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -1732,7 +1729,7 @@ resource "kubernetes_deployment" "task_webhook" {
         service_account_name = kubernetes_service_account.task_webhook.metadata[0].name
         container {
           name    = "webhook"
-          image   = "python:3-alpine"
+          image   = "python:3.14.8-alpine"
           command = ["sh", "-c", "apk add --no-cache curl > /dev/null 2>&1 && curl -sfL https://dl.k8s.io/release/v1.34.2/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl && exec python3 -u /app/server.py"]
           port {
             container_port = 8080
@@ -1765,9 +1762,6 @@ resource "kubernetes_deployment" "task_webhook" {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
       spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
-      # webhook runs the floating python:3-alpine; pinning it changes the pod
-      # template, so it waits for the floating-tag batch.
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE
     ]
   }
 }

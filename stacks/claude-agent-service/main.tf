@@ -410,7 +410,7 @@ resource "kubernetes_deployment" "claude_agent" {
         # recursively and chmod the infra subdir for safety.
         init_container {
           name    = "fix-perms"
-          image   = "busybox:1.37"
+          image   = "busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
           command = ["sh", "-c", "mkdir -p /workspace/infra /persistent && chown -R 1000:1000 /workspace /persistent && chmod 0775 /workspace/infra /persistent"]
           security_context {
             run_as_user = 0
@@ -436,7 +436,7 @@ resource "kubernetes_deployment" "claude_agent" {
         # Copy Claude credentials to writable volume (CLI needs to refresh OAuth tokens)
         init_container {
           name    = "copy-claude-creds"
-          image   = "busybox:1.37"
+          image   = "busybox:1.37@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
           command = ["sh", "-c", "cp /secrets/claude/.credentials.json /home/agent/.claude/.credentials.json && chown 1000:1000 /home/agent/.claude/.credentials.json"]
           security_context {
             run_as_user = 0
@@ -825,7 +825,7 @@ resource "kubernetes_deployment" "claude_agent" {
         # auth" step, woodpecker vault-sync sidecar).
         container {
           name  = "vault-token-refresher"
-          image = "docker.io/curlimages/curl:8.11.0"
+          image = "curlimages/curl:8.11.1"
           # No `set -e`: a transient Vault blip must NOT kill the refresh loop
           # (the stale token keeps working until its 6d TTL). curlimages/curl
           # is Alpine/busybox — has `sed`, no `jq`, so parse client_token with
@@ -921,18 +921,15 @@ resource "kubernetes_deployment" "claude_agent" {
 
   lifecycle {
     ignore_changes = [spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].spec[0].container[1].image, # KEEL_IGNORE_IMAGE
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
       metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
-      # The CI deploy sets the image on the init containers too, so they
-      # drift from ":latest" exactly like the main containers do.
-      spec[0].template[0].spec[0].init_container[0].image,
-      spec[0].template[0].spec[0].init_container[1].image,
-    ] # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                     # CI_SETS_IMAGE: first-party image, deployed by its own CI
+      # The CI deploy (claude-agent-service/.woodpecker/deploy.yml) also sets
+      # the image on the git-init and seed-beads-agent init containers
+      # (init_container[2] and [3]; [0] and [1] are the pinned busybox ones).
+      spec[0].template[0].spec[0].init_container[2].image, # CI_SETS_IMAGE
+      spec[0].template[0].spec[0].init_container[3].image, # CI_SETS_IMAGE
+    ]                                                      # KYVERNO_LIFECYCLE_V1
   }
 }
 

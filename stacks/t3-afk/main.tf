@@ -30,7 +30,7 @@ locals {
   # Fully-qualified (docker.io/library/...) to satisfy the Kyverno
   # require-trusted-registries allowlist via `docker.io/*` — bare `node*` is NOT
   # on the bare-DockerHub-library list (alpine*/busybox*/python* are).
-  image = "docker.io/library/node:24"
+  image = "docker.io/library/node:24.21.0"
   # Pinned npm versions installed at startup (the reproducibility anchor for the
   # pilot until a digest-pinned image exists).
   t3_version         = "0.0.27"
@@ -174,7 +174,7 @@ resource "kubernetes_deployment" "t3_afk" {
         # NFS mounts land root-owned; make /data writable by uid 1000.
         init_container {
           name    = "fix-perms"
-          image   = "busybox:1.37"
+          image   = "busybox:1.37.0"
           command = ["sh", "-c", "mkdir -p /data && chown -R 1000:1000 /data && chmod 0775 /data"]
           security_context {
             run_as_user = 0
