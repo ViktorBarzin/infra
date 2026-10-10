@@ -128,7 +128,7 @@ graph TB
 
 | Component | Version/Config | Location | Purpose |
 |-----------|---------------|----------|---------|
-| **Proxmox CSI plugin** | Helm chart | Namespace: proxmox-csi | Block storage via LVM-thin hotplug |
+| **Proxmox CSI plugin** | Helm chart `proxmox-csi-plugin` 0.5.12, app v0.20.0 (csi-provisioner v6.3.0, csi-resizer v2.2.1, csi-attacher v4.12.0) since 2026-10-10 | Namespace: proxmox-csi | Block storage via LVM-thin hotplug |
 | **StorageClass `proxmox-lvm`** | RWO, WaitForFirstConsumer | Cluster-wide | Non-sensitive stateful apps |
 | **StorageClass `proxmox-lvm-encrypted`** | RWO, WaitForFirstConsumer, LUKS2 | Cluster-wide | **All sensitive data** (databases, auth, email, passwords, git) |
 | Proxmox NFS (HDD) | LV `pve/nfs-data`, 4TB ext4 | 192.168.1.127:/srv/nfs | Bulk NFS data for all services |
