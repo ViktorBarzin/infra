@@ -241,10 +241,11 @@ resource "helm_release" "nextcloud" {
   namespace = kubernetes_namespace.nextcloud.metadata[0].name
   name      = "nextcloud"
 
-  repository = "https://nextcloud.github.io/helm/"
-  chart      = "nextcloud"
-  atomic     = true
-  version    = "8.8.1"
+  repository      = "https://nextcloud.github.io/helm/"
+  chart           = "nextcloud"
+  atomic          = true
+  cleanup_on_fail = true
+  version         = "8.8.1"
 
   values     = [templatefile("${path.module}/chart_values.yaml", { tls_secret_name = var.tls_secret_name, mysql_host = var.mysql_host, image_tag = local.nextcloud_image_tag })]
   timeout    = 6000

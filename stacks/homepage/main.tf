@@ -30,9 +30,13 @@ resource "helm_release" "homepage" {
   create_namespace = false
   name             = "homepage"
   atomic           = true
+  cleanup_on_fail  = true
 
   repository = "http://jameswynn.github.io/helm-charts"
   chart      = "homepage"
+  # Pinned 2026-10-10 to the live chart (app v1.2.0) so Renovate owns the
+  # version (docs/plans/2026-10-09-software-currency-design.md).
+  version = "2.1.0"
 
   values = [file("${path.module}/values.yaml")]
 }

@@ -72,9 +72,10 @@ resource "helm_release" "authentik" {
   # version    = "2026.8.0"
   # version    = "2026.8.1"
   # version    = "2026.8.2"
-  version = "2026.8.3"
-  atomic  = true
-  timeout = 6000
+  version         = "2026.8.3"
+  atomic          = true
+  cleanup_on_fail = true
+  timeout         = 6000
 
   values = [templatefile("${path.module}/values.yaml", { postgres_password = var.postgres_password, secret_key = var.secret_key })]
 }

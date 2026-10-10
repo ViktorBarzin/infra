@@ -22,6 +22,9 @@ resource "helm_release" "metallb" {
   namespace  = kubernetes_namespace.metallb.metadata[0].name
   timeout    = 600
 
+  atomic          = true
+  cleanup_on_fail = true
+
   values = [yamlencode({
     controller = {
       image = {

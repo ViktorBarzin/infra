@@ -70,6 +70,10 @@ resource "helm_release" "prometheus" {
   # pushgateway PVC (added in rev 188, see commit e51c104), which is immutable.
   # Re-enable temporarily only when a StatefulSet volumeClaimTemplate change needs --force.
   force_update = false
+  # atomic stays off on purpose: Helm turns wait on whenever atomic is set,
+  # which would bring back the blocking upgrade that wait=false above avoids.
+  # cleanup_on_fail only removes resources a failed upgrade created.
+  cleanup_on_fail = true
 
   # Keep at most 10 release records (Helm's own CLI default). Every alert-rule
   # edit is a values change and so a new revision, and with no cap this release

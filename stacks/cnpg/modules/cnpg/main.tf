@@ -25,6 +25,7 @@ resource "helm_release" "cnpg" {
   create_namespace = false
   name             = "cnpg"
   atomic           = true
+  cleanup_on_fail  = true
   timeout          = 300
 
   repository = "https://cloudnative-pg.github.io/charts"
