@@ -155,8 +155,21 @@ graph TB
 | Assigned VM | VMID 201 (k8s-node1) — physical location only, no Terraform pin |
 | Node Label | `nvidia.com/gpu.present=true` (auto-applied by gpu-feature-discovery; also `feature.node.kubernetes.io/pci-10de.present=true` from NFD) |
 | Node Taint | `nvidia.com/gpu=true:PreferNoSchedule` (applied by `null_resource.gpu_node_config` to every NFD-tagged GPU node) |
-| Driver | NVIDIA GPU Operator |
+| Driver | NVIDIA GPU Operator, chart v26.7.1 (since 2026-10-10), driver 570.195.03 (`-ubuntu24.04` image) |
 | Resource Name | `nvidia.com/gpu` |
+
+**Driver pod restarts.** The driver DaemonSet is `OnDelete` with auto-upgrade
+off, so a chart change that alters its template takes effect only when the
+driver pod is deleted (or node1 reboots). On start, driver-manager turns off
+the operand labels, evicts every pod that requests `nvidia.com/gpu`, unloads
+the module, and the driver container recompiles it (about 21 minutes on
+node1). Two settings keep that eviction from failing, both added 2026-10-10
+after driver-manager v0.12.1 refused to proceed:
+`driver.manager.env DRAIN_DELETE_EMPTYDIR_DATA=true` in `values.yaml`
+(frigate, f1-stream and stremio use emptyDir), and a
+`nvidia.com/gpu.deploy.client: "true"` nodeSelector on any DaemonSet that
+requests `nvidia.com/gpu` (today only `gpu-pod-exporter`), so driver-manager
+moves it aside instead of counting it as a pod it cannot evict.
 
 ### Resource Management Stack
 
