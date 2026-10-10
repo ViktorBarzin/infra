@@ -8,6 +8,12 @@ data "vault_kv_secret_v2" "viktor" {
   name  = "viktor"
 }
 
+# CNPG superuser password, used only by the pg-cluster probe role bootstrap Job.
+data "vault_kv_secret_v2" "platform" {
+  mount = "secret"
+  name  = "platform"
+}
+
 locals {
   # Services that don't respond to standard HTTP health checks
   non_http_services = toset(["xray-vless", "xray-ws", "xray-grpc"])
@@ -696,6 +702,28 @@ locals {
       max_retries                 = 2
     },
     {
+      # CNPG primary, probed with a real login + SELECT 1 rather than a TCP
+      # check, so a full connection table or an auth failure also shows. Logs
+      # in as the no-privilege `uptime_kuma_probe` role created by
+      # kubernetes_job.pg_probe_role below. Postgres monitors take the password
+      # inside the connection string; the sync replaces `{password}` with the
+      # value from password_env, so the ConfigMap never holds it.
+      # (software-currency design, Groundwork)
+      name                        = "PostgreSQL pg-cluster (dbaas)"
+      type                        = "postgres"
+      database_connection_string  = "postgres://uptime_kuma_probe:{password}@pg-cluster-rw.dbaas.svc.cluster.local:5432/postgres"
+      database_password_vault_key = null
+      generated_credential        = "pg_probe"
+      hostname                    = null
+      port                        = null
+      url                         = null
+      accepted_statuscodes        = null
+      ignore_tls                  = null
+      interval                    = 60
+      retry_interval              = 60
+      max_retries                 = 2
+    },
+    {
       # HAProxy service in redis ns health-checks INFO replication and
       # only routes to the current Sentinel-elected master, so this
       # survives failover. Bitnami chart has auth disabled, so no
@@ -797,6 +825,138 @@ locals {
   ]
 }
 
+# pg-cluster probe role for the "PostgreSQL pg-cluster (dbaas)" monitor.
+#
+# A login with no privileges beyond CONNECT on the `postgres` database and a
+# connection limit of 3: enough for Kuma's `SELECT 1`, nothing else. The role
+# lives here rather than in the dbaas stack so the password never has to cross
+# stacks: this stack generates it, creates the role, and hands it to the sync.
+# Same bootstrap shape as stray_workload_db_init in stacks/monitoring. The Job
+# name carries a hash of the password and the SQL, so a change to either is a
+# new Job (Jobs are immutable and an unchanged one never re-runs); to rotate,
+# taint random_password.pg_probe.
+resource "random_password" "pg_probe" {
+  length  = 32
+  special = false
+}
+
+locals {
+  internal_monitor_generated_credentials = {
+    pg_probe = random_password.pg_probe.result
+  }
+  pg_probe_role_sql = <<-SQL
+    \set probe uptime_kuma_probe
+    SELECT format('%s ROLE %I WITH LOGIN PASSWORD %L CONNECTION LIMIT 3 NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
+                  CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'probe')
+                       THEN 'ALTER' ELSE 'CREATE' END,
+                  :'probe', :'probe_password')
+    \gexec
+    SELECT format('GRANT CONNECT ON DATABASE postgres TO %I', :'probe')
+    \gexec
+  SQL
+}
+
+resource "kubernetes_secret" "pg_probe_role" {
+  metadata {
+    name      = "pg-probe-role"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+  data = {
+    PROBE_PASSWORD = random_password.pg_probe.result
+    ROOT_PASSWORD  = data.vault_kv_secret_v2.platform.data["dbaas_postgresql_root_password"]
+    "role.sql"     = local.pg_probe_role_sql
+  }
+}
+
+resource "kubernetes_job" "pg_probe_role" {
+  metadata {
+    name      = "pg-probe-role-${substr(sha256("${random_password.pg_probe.result}${local.pg_probe_role_sql}"), 0, 8)}"
+    namespace = kubernetes_namespace.uptime-kuma.metadata[0].name
+  }
+  spec {
+    backoff_limit = 3
+    template {
+      metadata {}
+      spec {
+        restart_policy = "Never"
+        container {
+          name  = "role"
+          image = "docker.io/library/postgres:16-alpine"
+          # psql interpolates the password as a quoted literal (%L); it never
+          # appears in the Job spec.
+          command = ["sh", "-c",
+            "psql -v ON_ERROR_STOP=1 -v probe_password=\"$PROBE_PASSWORD\" -f /sql/role.sql && echo 'probe role ready'"
+          ]
+          env {
+            name  = "PGHOST"
+            value = "pg-cluster-rw.dbaas.svc.cluster.local"
+          }
+          env {
+            name  = "PGUSER"
+            value = "root"
+          }
+          env {
+            name  = "PGDATABASE"
+            value = "postgres"
+          }
+          env {
+            name = "PGPASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.pg_probe_role.metadata[0].name
+                key  = "ROOT_PASSWORD"
+              }
+            }
+          }
+          env {
+            name = "PROBE_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.pg_probe_role.metadata[0].name
+                key  = "PROBE_PASSWORD"
+              }
+            }
+          }
+          volume_mount {
+            name       = "sql"
+            mount_path = "/sql"
+            read_only  = true
+          }
+          resources {
+            requests = {
+              cpu    = "10m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "64Mi"
+            }
+          }
+        }
+        volume {
+          name = "sql"
+          secret {
+            secret_name = kubernetes_secret.pg_probe_role.metadata[0].name
+            items {
+              key  = "role.sql"
+              path = "role.sql"
+            }
+          }
+        }
+      }
+    }
+  }
+  # An apply while CNPG is unreachable fails here within 2 minutes, naming this
+  # Job, instead of leaving a monitor that can never log in.
+  wait_for_completion = true
+  timeouts {
+    create = "2m"
+  }
+  lifecycle {
+    # KYVERNO_LIFECYCLE_V1: Kyverno injects dns_config (ndots=2).
+    ignore_changes = [spec[0].template[0].spec[0].dns_config]
+  }
+}
+
 # Discovery needs to read Services cluster-wide. Separate SA/role from
 # external-monitor-sync so each job holds only the verbs it uses.
 resource "kubernetes_service_account_v1" "internal_monitor_sync" {
@@ -846,6 +1006,12 @@ resource "kubernetes_secret" "internal_monitor_sync" {
       data.vault_kv_secret_v2.viktor.data[m.database_password_vault_key]
       if m.database_password_vault_key != null
     },
+    {
+      for m in local.internal_monitors :
+      "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}" =>
+      local.internal_monitor_generated_credentials[m.generated_credential]
+      if try(m.generated_credential, null) != null
+    },
   )
 }
 
@@ -865,13 +1031,16 @@ resource "kubernetes_config_map_v1" "internal_monitor_targets" {
         url                        = m.url
         accepted_statuscodes       = m.accepted_statuscodes
         ignore_tls                 = m.ignore_tls
-        password_env               = m.database_password_vault_key != null ? "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}" : null
+        password_env               = m.database_password_vault_key != null || try(m.generated_credential, null) != null ? "DB_PASSWORD_${upper(replace(m.name, "/[^A-Za-z0-9]/", "_"))}" : null
         interval                   = m.interval
         retry_interval             = m.retry_interval
         max_retries                = m.max_retries
       }
     ])
   }
+  # The pg-cluster monitor logs in as a role this Job creates; publishing the
+  # target first would leave one sync run reporting it down.
+  depends_on = [kubernetes_job.pg_probe_role]
 }
 
 resource "kubernetes_cron_job_v1" "internal_monitor_sync" {
@@ -899,7 +1068,7 @@ resource "kubernetes_cron_job_v1" "internal_monitor_sync" {
               command = ["/bin/sh", "-c", <<-EOT
                 pip install --quiet --disable-pip-version-check uptime-kuma-api
                 python3 << 'PYEOF'
-import json, os, ssl, time, urllib.error, urllib.request
+import json, os, ssl, time, urllib.error, urllib.parse, urllib.request
 from uptime_kuma_api import UptimeKumaApi, MonitorType
 
 UPTIME_KUMA_URL = "http://uptime-kuma.uptime-kuma.svc.cluster.local"
@@ -1049,9 +1218,17 @@ for t in targets:
         desired["accepted_statuscodes"] = t["accepted_statuscodes"]
         desired["ignoreTls"] = bool(t["ignore_tls"])
     else:
-        desired["databaseConnectionString"] = t["database_connection_string"]
-        if t.get("password_env"):
-            desired["radiusPassword"] = os.environ[t["password_env"]]
+        conn = t["database_connection_string"]
+        if t.get("password_env") and "{password}" in conn:
+            # Postgres monitors carry the password inside the connection
+            # string; substitute it here so the ConfigMap only has the
+            # placeholder. The password is URL-safe (alphanumeric).
+            desired["databaseConnectionString"] = conn.replace(
+                "{password}", urllib.parse.quote(os.environ[t["password_env"]], safe=""))
+        else:
+            desired["databaseConnectionString"] = conn
+            if t.get("password_env"):
+                desired["radiusPassword"] = os.environ[t["password_env"]]
     if name not in existing:
         print(f"Creating monitor: {name}")
         api.add_monitor(**desired)
