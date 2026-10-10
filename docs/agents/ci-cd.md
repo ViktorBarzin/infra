@@ -82,6 +82,13 @@ container packages). Break-glass-only now; nothing pushes. `forgejo-cleanup`
 stays DRY_RUN. Pull-through caches on `10.0.20.10` are unchanged. Runbook:
 `docs/runbooks/forgejo-registry-breakglass.md`.
 
+**Verify scripts do not trigger applies** (2026-10-10): `default.yml` drops
+`stacks/<stack>/verify.sh` from the changed-file list before picking stacks to
+apply, because only `scripts/verify/run` reads those files. A commit that only
+edits verify scripts applies nothing. The runner itself runs in the infra-ci
+image with `KUBECONFIG=$PWD/config` (checked 2026-10-10); the Phase 3 rails
+will call it after each Renovate apply (`docs/runbooks/verify-jobs.md`).
+
 **Woodpecker now runs only:** per-app `deploy.yml` (manual, `kubectl set
 image`), `default.yml` (terragrunt apply), `renew-tls.yml` (certbot),
 maintenance crons (drift-detection, provision-user, registry-config-sync,

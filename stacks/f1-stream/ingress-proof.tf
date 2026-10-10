@@ -1,15 +1,16 @@
 # Proving that a request reached the app through Traefik.
 #
-# Two routes on f1.viktorbarzin.me read `X-authentik-username` and
-# `X-authentik-groups` and act on them: /admin/login, which exchanges them for
-# a session cookie, and /pair, which approves a television and mints it a
-# device token. Both sit behind the authentik-forward-auth middleware, whose
+# One route on f1.viktorbarzin.me reads `X-authentik-username` and
+# `X-authentik-groups` and acts on them: /admin/login, which exchanges them for
+# a session cookie. It sits behind the authentik-forward-auth middleware, whose
 # authResponseHeaders overwrite whatever a client sent, so no browser on the
-# public internet can forge an identity on either path.
+# public internet can forge an identity there. /pair read the same headers
+# until 2026-10-10; it now reads the Member session cookie the app signs
+# itself (members.tf, tv-pairing.tf) and no longer carries this middleware.
 #
 # What forward-auth cannot say is whether a request went through Traefik at
-# all. Anything that can open a connection to the Service reaches the same two
-# routes with the same handlers behind them. The f1-stream audit found this
+# all. Anything that can open a connection to the Service reaches the same
+# route with the same handler behind it. The f1-stream audit found this
 # while installing a build for an unrelated device test and recorded it as
 # item 15: a `kubectl port-forward -n f1-stream svc/f1` carrying those two
 # headers returned "Paired" and minted a device token. The write-up is

@@ -535,6 +535,9 @@ locals {
     "redis",
     "trading-bot",
     "uptime-kuma",
+    # verify, added 2026-10-10: the redis verify Job (stacks/redis/verify.sh,
+    # docs/runbooks/verify-jobs.md) writes, reads and deletes one key in db 15.
+    "verify",
     "website",
     "ytdlp",
   ]

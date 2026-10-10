@@ -397,6 +397,41 @@ resource "kubernetes_deployment" "f1-stream" {
               }
             }
           }
+          # Member sign-in and the membership check (f1-stream ADR-0025,
+          # ADR-0021; members.tf). The issuer and client id are public; the
+          # client secret and the Authentik API token come from the Secret
+          # members.tf writes. Unset, /login answers 503 and nothing else
+          # changes, so the image and this stack can land in either order.
+          env {
+            name  = "OIDC_ISSUER"
+            value = "https://authentik.viktorbarzin.me/application/o/${authentik_application.f1_stream.slug}/"
+          }
+          env {
+            name  = "OIDC_CLIENT_ID"
+            value = authentik_provider_oauth2.f1_stream.client_id
+          }
+          env {
+            name = "OIDC_CLIENT_SECRET"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.f1_members.metadata[0].name
+                key  = "oidc_client_secret"
+              }
+            }
+          }
+          env {
+            name  = "MEMBER_GROUP"
+            value = authentik_group.f1_users.name
+          }
+          env {
+            name = "AUTHENTIK_API_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.f1_members.metadata[0].name
+                key  = "authentik_api_token"
+              }
+            }
+          }
           env {
             name = "DISCORD_TOKEN"
             value_from {
@@ -434,6 +469,40 @@ resource "kubernetes_deployment" "f1-stream" {
               secret_key_ref {
                 name     = "f1-stream-secrets"
                 key      = "slack_f1_webhook_url"
+                optional = true
+              }
+            }
+          }
+          # Session notifications (app repo ADR-0020) sign Web Push with this
+          # VAPID identity, from the Vault "f1-stream" key through the same
+          # dataFrom.extract ExternalSecret. optional=true: with any of the
+          # three missing the app keeps notifications off and hides the bell.
+          env {
+            name = "PUSH_VAPID_PRIVATE_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "push_vapid_private_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "PUSH_VAPID_PUBLIC_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "push_vapid_public_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "PUSH_VAPID_SUBJECT"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "push_vapid_subject"
                 optional = true
               }
             }
@@ -885,6 +954,15 @@ module "anubis" {
       # answers 404, and an un-challenged 404 costs nothing.
       - name: f1-data-routes
         path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
+        action: ALLOW
+      # The installable-app files (ADR-0020 in the f1-stream repo, 2026-10-10).
+      # A browser fetches the manifest without cookies, and an iPhone's Home
+      # Screen app has its own cookie jar, so both would get the PoW page as
+      # HTML here: Android would not offer to install, and the service worker
+      # that receives session notifications would fail to register or update.
+      # Static files with no data in them; exact names only.
+      - name: f1-installable-app
+        path_regex: ^/(sw\.js|manifest\.webmanifest|icons/[A-Za-z0-9_-]+\.png|apple-touch-icon(-precomposed)?\.png)$
         action: ALLOW
       # NOTE: /metrics is deliberately NOT allow-listed here. The Prometheus
       # scrape reaches the app Service directly at

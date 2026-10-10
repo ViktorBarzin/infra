@@ -42,11 +42,17 @@ locals {
   #               strand that memory or make it Pending.
   #   stremio   — NVENC transcode server, measured zero VRAM.
   #   ytdlp     — yt-highlights, Sablier-parked at 0 replicas, measured zero VRAM.
+  #   verify    — the GPU verify probe (stacks/nvidia/verify.sh): one pod runs
+  #               nvidia-smi and the CUDA vectorAdd sample for a few seconds,
+  #               then exits. A seat would make it Pending whenever the card is
+  #               fully seated (52 MiB of 14200 unallocated on 2026-10-10), and
+  #               the check exists to prove a slot still works after an
+  #               upgrade. Added 2026-10-10 (software-currency verify Jobs).
   #
-  # These are the three the bead names as deliberate, plus the exporter. Adding
-  # a GPU workload to one of these namespaces escapes the check, same caveat as
-  # the base excluded set.
-  gpumem_excluded_namespaces = concat(local.excluded_namespaces, ["nvidia", "llama-cpp", "stremio", "ytdlp"])
+  # These are the three the bead names as deliberate, plus the exporter and the
+  # verify probe. Adding a GPU workload to one of these namespaces escapes the
+  # check, same caveat as the base excluded set.
+  gpumem_excluded_namespaces = concat(local.excluded_namespaces, ["nvidia", "llama-cpp", "stremio", "ytdlp", "verify"])
 }
 
 # -----------------------------------------------------------------------------
