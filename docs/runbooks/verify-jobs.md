@@ -68,7 +68,9 @@ It has no `pods/exec` anywhere. Database checks log in over the network:
 | `verify-db-creds` | ESO from `vault-database`: static roles `pg-verify-probe`, `mysql-verify-probe` (7-day rotation, ESO refresh 2 min) | pg-cluster and MySQL as `verify_probe`, which owns only its `verify_probe` scratch database (pg also has `pg_monitor` and CONNECT on `dawarich`, `claude_memory`) |
 | `verify-app-creds` | ESO from `vault-kv`: `secret/immich` `db_password`, `secret/rybbit` `clickhouse_password` | Immich Postgres and the rybbit ClickHouse, single-tenant servers; the probes write only to a scratch schema/database and drop it |
 
-Redis (no `requirepass`, risk-accepted in `stacks/redis`) and Dolt (`beads` user, empty password) need no secret.
+Redis (no `requirepass`, risk-accepted in `stacks/redis`) and Dolt (`beads` user, empty password) need no secret. Redis is fenced by a namespace allowlist, `local.redis_client_namespaces` in `stacks/redis`, which includes `verify`.
+
+The GPU probe pod requests one `nvidia.com/gpu` slot without a `viktorbarzin.me/gpumem` seat: `verify` is on the Kyverno `require-gpumem-declaration` exclude list (`local.gpumem_excluded_namespaces`, `stacks/kyverno`), because the card is fully seated and the probe holds a CUDA context for a few seconds.
 
 The Job pod gets both Secrets as environment variables. Probe pods that need a database client (`postgres:16.15-trixie`, `mysql:8.4.8`) get them through `run_pod ... secret=<name>`.
 
