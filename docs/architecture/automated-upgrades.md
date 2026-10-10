@@ -8,6 +8,8 @@ This doc covers three independent automation paths, plus a short section on Keel
 
 Since 2026-10-10 the Trivy Operator reports which running images have fixable Critical/High CVEs (`docs/architecture/trivy.md`). It does not trigger upgrades itself; the software-currency design (`docs/plans/2026-10-09-software-currency-design.md`) has Renovate pick up fixed versions, and rewrites this doc around Renovate when Phase 3 lands.
 
+Also since 2026-10-10, every chart, database and GPU stack has a `stacks/<stack>/verify.sh`, run as a Kubernetes Job by `scripts/verify/run` (`docs/runbooks/verify-jobs.md`). These are the checks the Phase 3 Woodpecker rails will run after a Renovate apply; until then they are run by hand after an upgrade.
+
 ## Overview
 
 OSS services are automatically upgraded via a pipeline that detects new container image versions, analyzes changelogs for breaking changes, backs up databases, applies version bumps through Terraform, and verifies health post-upgrade with automatic rollback on failure.

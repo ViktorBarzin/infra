@@ -95,6 +95,8 @@ flowchart TD
 
 An upgrade counts as landed only when the component's checks pass. Checks run as Kubernetes Jobs from a `verify` script kept next to each stack, so they can be run by the Woodpecker rails or by hand.
 
+As built (2026-10-10): `scripts/verify/run <stack>` starts a Job in the `verify` namespace that runs the floor (`scripts/verify/lib.sh`) and `stacks/<stack>/verify.sh`, streams the log, returns pass/fail and deletes the Job. All 30 stacks in the chart, database and GPU groups have a script and passed against the versions running that day; a stack in those groups without one exits 3. Database probes log in over the network as a `verify_probe` user (Vault static roles through ESO) rather than exec into database pods. Usage and the per-stack checks: `docs/runbooks/verify-jobs.md`.
+
 | Component | Checks |
 |---|---|
 | Floor (everything) | rollout complete within 10 minutes, ingress HTTP check where one exists, no new firing alerts in the component's namespaces for 10 minutes |
