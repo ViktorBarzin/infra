@@ -9,9 +9,8 @@ resource "kubernetes_namespace" "poison_fountain" {
   metadata {
     name = "poison-fountain"
     labels = {
-      "istio-injection"  = "disabled"
-      tier               = local.tiers.cluster
-      "keel.sh/enrolled" = "true"
+      "istio-injection" = "disabled"
+      tier              = local.tiers.cluster
     }
   }
   lifecycle {
@@ -27,11 +26,11 @@ module "tls_secret" {
 }
 
 module "nfs_data_host" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "poison-fountain-data-host"
-  namespace  = kubernetes_namespace.poison_fountain.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs/poison-fountain"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "poison-fountain-data-host"
+  namespace          = kubernetes_namespace.poison_fountain.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs/poison-fountain"
   storage_class_name = "nfs-pve"
 }
 
@@ -103,7 +102,7 @@ resource "kubernetes_deployment" "poison_fountain" {
         }
         container {
           name    = "poison-fountain"
-          image   = "python:3.12-slim"
+          image   = "library/python:3.12.15-slim"
           command = ["python", "/app/server.py"]
 
           port {
@@ -183,14 +182,9 @@ resource "kubernetes_deployment" "poison_fountain" {
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

@@ -12,7 +12,7 @@
 # `node:24` (the full image ships git + python3/make/g++ for node-pty) and an
 # init container installs PINNED npm packages (t3@0.0.27 + the Claude CLI) onto
 # the SSD PVC, cached across restarts. Formalize a digest-pinned built image
-# post-GO. T3 is version-pinned (npm) and NOT Keel-enrolled.
+# post-GO. T3 is version-pinned (npm).
 # =============================================================================
 
 # No plan-time Vault reads — every secret flows through the ExternalSecret below
@@ -122,12 +122,12 @@ resource "kubernetes_config_map" "dispatcher" {
 # server-signing-key (losing it invalidates every issued bearer), per-thread git
 # worktrees, the npm global install, and caches. ADR 0004.
 module "data" {
-  source     = "../../modules/kubernetes/nfs_volume"
-  name       = "t3-afk-data"
-  namespace  = kubernetes_namespace.t3_afk.metadata[0].name
-  nfs_server = "192.168.1.127"
-  nfs_path   = "/srv/nfs-ssd/t3-afk-data"
-  storage    = "30Gi"
+  source             = "../../modules/kubernetes/nfs_volume"
+  name               = "t3-afk-data"
+  namespace          = kubernetes_namespace.t3_afk.metadata[0].name
+  nfs_server         = "192.168.1.127"
+  nfs_path           = "/srv/nfs-ssd/t3-afk-data"
+  storage            = "30Gi"
   storage_class_name = "nfs-pve"
 }
 
@@ -142,16 +142,6 @@ resource "kubernetes_deployment" "t3_afk" {
     name      = "t3-afk"
     namespace = kubernetes_namespace.t3_afk.metadata[0].name
     labels    = local.labels
-    # keel.sh/policy=never must be a DEPLOYMENT-level annotation — that's where
-    # Keel reads it. (A pod-template label is ignored by Keel, which is why the
-    # earlier attempt failed.) The cluster's Kyverno inject-keel-annotations
-    # policy is opt-OUT: it stamps policy=patch on any workload that doesn't
-    # carry its own keel.sh/policy — and Keel then "patch"-downgraded
-    # node:24 -> node:24.0.2 (below t3@0.0.27's required node >=24.10), which
-    # crash-looped `t3 serve`. ADR 0003 (Keel-excluded).
-    annotations = {
-      "keel.sh/policy" = "never"
-    }
   }
 
   spec {
@@ -372,13 +362,8 @@ resource "kubernetes_deployment" "t3_afk" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      # Kyverno's inject-keel-annotations stamps pollSchedule/trigger alongside
-      # the policy; we own keel.sh/policy=never above, but ignore these two so
-      # they don't perpetually drift the plan.
-      metadata[0].annotations["keel.sh/pollSchedule"],
-      metadata[0].annotations["keel.sh/trigger"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                             # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
       metadata[0].labels["tier"],                                         # stamped by Kyverno sync-tier-label-from-namespace
     ]
   }
@@ -417,6 +402,6 @@ module "ingress" {
   tls_secret_name = var.tls_secret_name
   extra_annotations = {
     "gethomepage.dev/description" = "In-cluster T3 Code instance for the AFK pipeline"
-    "gethomepage.dev/icon" = "mdi-sleep"
+    "gethomepage.dev/icon"        = "mdi-sleep"
   }
 }

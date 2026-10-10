@@ -18,9 +18,8 @@ resource "kubernetes_namespace" "priority-pass" {
   metadata {
     name = "priority-pass"
     labels = {
-      "istio-injection"  = "disabled"
-      tier               = local.tiers.aux
-      "keel.sh/enrolled" = "true"
+      "istio-injection" = "disabled"
+      tier              = local.tiers.aux
     }
   }
   lifecycle {
@@ -142,16 +141,12 @@ resource "kubernetes_deployment" "priority-pass" {
   }
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
-      spec[0].template[0].spec[0].container[0].image, # KEEL_IGNORE_IMAGE — Keel manages tag updates
-      spec[0].template[0].spec[0].container[1].image,
+      spec[0].template[0].spec[0].dns_config,         # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
+      spec[0].template[0].spec[0].container[1].image, # CI_SETS_IMAGE: first-party image, deployed by its own CI
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }
