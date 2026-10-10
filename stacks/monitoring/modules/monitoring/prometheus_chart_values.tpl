@@ -7582,6 +7582,26 @@ serverFiles:
             annotations:
               summary: "f1-stream live quality ladder failed to start {{ $value | printf \"%.0f\" }} times in 30m"
               description: "Viewers who asked for 540p/360p are being sent back to the full-quality source. Read the reason off the encoder's stderr: `homelab logs query '{namespace=\"f1-stream\"} |~ \"transcode: .* (exited rc=|produced nothing)\"' --since 1h`. 'Invalid data found when processing input' usually means a provider changed how it disguises segments (see Disguised segment in f1-stream's CONTEXT.md); run ffprobe in the pod against the /proxy URL to see what ffmpeg thinks the segment is. reason=timeout with no exits points at the encoder or the GPU instead."
+          # Added 2026-10-10 with f1-stream's Member sign-in (ADR-0021). The
+          # app asks Authentik whether a signed-in Member is still in
+          # "F1 Users" each time the site loads in their browser and each time
+          # one of their TVs launches. When Authentik does not answer, the last
+          # known answer stands so nobody is locked out, which also means a
+          # person removed from the group keeps access until a check gets
+          # through. This rule is how that window gets noticed.
+          #
+          # Threshold: checks run only on a page load or a TV launch, a few
+          # dozen a day in this household, so three failures in half an hour
+          # is a pattern rather than one dropped request.
+          - alert: F1MembershipCheckUnreachable
+            expr: |
+              sum(increase(f1_membership_check_total{outcome="unreachable"}[30m])) >= 3
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "f1-stream could not reach Authentik for {{ $value | printf \"%.0f\" }} membership checks in 30m"
+              description: "Signed-in Members and their TVs are being admitted on their last known F1 Users membership. Find the reason with `homelab logs query '{namespace=\"f1-stream\"} |= \"membership\"' --since 1h`. A 401 or 403 from Authentik means the svc-f1-stream API token (infra stacks/f1-stream/members.tf) was revoked or lost its role; a timeout means Authentik itself is down."
           - alert: F1RelayUpstreamFailing
             # Added 2026-09-11, when AnubisChallengeStoreErrors was narrowed to
             # 500 and stopped reporting these. /relay and /proxy fetch segments
