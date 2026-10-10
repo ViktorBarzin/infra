@@ -1050,7 +1050,8 @@ resource "vault_database_secret_backend_connection" "mysql" {
   allowed_roles = [
     "mysql-speedtest", "mysql-wrongmove", "mysql-codimd",
     "mysql-nextcloud", "mysql-shlink", "mysql-grafana",
-    "mysql-technitium", "mysql-phpipam"
+    "mysql-technitium", "mysql-phpipam",
+    "mysql-verify-probe",
   ]
 
   mysql {
@@ -1081,6 +1082,7 @@ resource "vault_database_secret_backend_connection" "postgresql" {
     "pg-goodreads-sync",
     "pg-paperless-ngx",
     "pg-f1-stream",
+    "pg-verify-probe",
   ]
 
   postgresql {
@@ -1366,6 +1368,26 @@ resource "vault_database_secret_backend_static_role" "pg_f1_stream" {
   username          = "f1_stream"
   rotation_schedule = "0 10 * * TUE"
   rotation_window   = 3600
+}
+
+# verify_probe on pg-cluster and MySQL: the logins the verify Jobs use
+# (stacks/verify, docs/runbooks/verify-jobs.md). The users and their scratch
+# databases are created in stacks/dbaas; ESO hands the passwords to the
+# verify namespace (secret verify-db-creds).
+resource "vault_database_secret_backend_static_role" "pg_verify_probe" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.postgresql.name
+  name            = "pg-verify-probe"
+  username        = "verify_probe"
+  rotation_period = 604800
+}
+
+resource "vault_database_secret_backend_static_role" "mysql_verify_probe" {
+  backend         = vault_mount.database.path
+  db_name         = vault_database_secret_backend_connection.mysql.name
+  name            = "mysql-verify-probe"
+  username        = "verify_probe"
+  rotation_period = 604800
 }
 
 # =============================================================================
