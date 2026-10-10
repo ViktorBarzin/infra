@@ -25,8 +25,7 @@ resource "kubernetes_namespace" "headscale" {
   metadata {
     name = "headscale"
     labels = {
-      tier               = var.tier
-      "keel.sh/enrolled" = "true"
+      tier = var.tier
     }
   }
   lifecycle {
@@ -91,15 +90,6 @@ resource "kubernetes_deployment" "headscale" {
 
     annotations = {
       "reloader.stakater.com/search" = "true"
-
-      # Codified 2026-08-03 (was live-only drift that every apply wanted to
-      # strip). headscale tracks the upstream multi-tag juanfont/headscale repo,
-      # so the policy MUST stay `patch` — `force` deploys whatever tag a Keel
-      # poll happens to pick regardless of semver order (that is what rolled
-      # paperless-ngx 2.20.15 -> 1.5.0, memory #9838).
-      "keel.sh/policy"       = "patch"
-      "keel.sh/trigger"      = "poll"
-      "keel.sh/pollSchedule" = "@every 1h"
     }
   }
   spec {
@@ -125,7 +115,7 @@ resource "kubernetes_deployment" "headscale" {
       }
       spec {
         container {
-          image = "headscale/headscale:0.29.3"
+          image = "headscale/headscale:v0.29.4"
           # image   = "headscale/headscale:0.29.3-debug" # -debug is for debug images
           name    = "headscale"
           command = ["headscale", "serve"]
@@ -269,10 +259,9 @@ resource "kubernetes_deployment" "headscale" {
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
-      spec[0].template[0].spec[0].container[1].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].spec[0].container[1].image,                                          # DIGEST_PIN_DEFERRED: headscale-ui is a digest-only pin Renovate cannot bump
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 }

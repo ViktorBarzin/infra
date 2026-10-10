@@ -4,8 +4,7 @@ resource "kubernetes_namespace" "descheduler" {
   metadata {
     name = "descheduler"
     labels = {
-      tier               = local.tiers.cluster
-      "keel.sh/enrolled" = "true"
+      tier = local.tiers.cluster
     }
   }
   lifecycle {

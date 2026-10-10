@@ -20,13 +20,12 @@ locals {
 
 variable "immich_version" {
   type = string
-  # Record only — live image is Keel-managed (ignore_changes on the deployments).
-  # Keel auto-applies PATCH **and MINOR** releases hourly since 2026-08-12
-  # (keel.sh/policy = "minor" on immich-api / immich-worker /
-  # immich-machine-learning); this var just records the current floor. Only a
-  # MAJOR bump (v3.x -> v4.x) now needs a hand-landing: change this +
-  # `kubectl set image` live.
-  default = "v3.3.0"
+  # Terraform owns the Immich version; Renovate proposes bumps from the
+  # immich-server tags. One value drives immich-worker, immich-api,
+  # immich-machine-learning (with the -cuda suffix) and the
+  # thumbnail-reconcile CronJob, so they always move together.
+  # renovate: datasource=docker depName=ghcr.io/immich-app/immich-server
+  default = "v3.3.1"
 }
 variable "proxmox_host" { type = string }
 variable "redis_host" { type = string }
@@ -150,7 +149,6 @@ resource "kubernetes_namespace" "immich" {
       # so this stack can own the tier-quota with a higher memory cap.
       "resource-governance/custom-quota" = "true"
       tier                               = local.tiers.gpu
-      "keel.sh/enrolled"                 = "true"
     }
   }
   lifecycle {
@@ -226,27 +224,15 @@ resource "kubernetes_deployment" "immich_server" {
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
-      # Must track the same immich version as immich-api (see the note there);
-      # "minor" set explicitly + kept OUT of ignore_changes so it survives
-      # applies/recreates instead of falling back to Kyverno's "patch" default.
-      "keel.sh/policy" = "minor"
-      # Poll only tags pushed after the running tag (patched Keel, see
-      # stacks/keel/main.tf). Keel applies it only when every workload on the
-      # same image opts in, so it is set on immich-api and here together.
-      "keel.sh/pollTagsAfterCurrent" = "true"
     }
   }
 
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -463,36 +449,16 @@ resource "kubernetes_deployment" "immich_api" {
     }
     annotations = {
       "reloader.stakater.com/search" = "true"
-      # Keel keeps this tier on the same immich version as immich-worker
-      # (identical-digest requirement across replicas, plan §3.8).
-      #
-      # "minor" (was "patch", 2026-08-12): patch never crosses a minor, so the
-      # stack sat on v3.0.3 while v3.1.0 was out for two weeks. Set EXPLICITLY
-      # here and deliberately NOT in ignore_changes below, so it survives
-      # applies/recreates — Kyverno's inject-keel-annotations uses an
-      # add-if-absent anchor on policy, so an explicit value wins (same recipe
-      # as vaultwarden, commit 5d785b5a). trigger/pollSchedule stay
-      # Kyverno-injected and stay ignored.
-      "keel.sh/policy"       = "minor"
-      "keel.sh/trigger"      = "poll"
-      "keel.sh/pollSchedule" = "@every 1h"
-      # Poll only tags pushed after the running tag (patched Keel, see
-      # stacks/keel/main.tf). Keel applies it only when every workload on the
-      # same image opts in, so it is set on immich-worker and here together.
-      "keel.sh/pollTagsAfterCurrent" = "true"
+      # Runs the same image as immich-worker; both read var.immich_version.
     }
   }
 
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -780,12 +746,9 @@ resource "kubernetes_deployment" "immich-postgres" {
 
   lifecycle {
     ignore_changes = [
-      spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                                         # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].spec[0].container[0].image,                                          # KEEL_IGNORE_IMAGE
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].spec[0].dns_config,                                                  # KYVERNO_LIFECYCLE_V1
+      spec[0].template[0].spec[0].container[0].image,                                          # FLOATING_TAG_DEFERRED: no version tag matches the running digest; a tag@digest pin restarts the pod
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }
@@ -968,32 +931,17 @@ resource "kubernetes_deployment" "immich-machine-learning" {
     labels = {
       tier = local.tiers.gpu
     }
-    annotations = {
-      # Must track the same immich version as immich-api (see the note there);
-      # "minor" set explicitly + kept OUT of ignore_changes so it survives
-      # applies/recreates instead of falling back to Kyverno's "patch" default.
-      #
-      # This repo has 150k+ per-commit / per-accelerator / PR tags. Walking
-      # all of them got HTTP 429 from ghcr on every hourly poll (2026-08 to
-      # 2026-10), so releases could land on immich-api and be missed here.
-      # pollTagsAfterCurrent (patched Keel, see stacks/keel/main.tf) makes
-      # Keel list only the tags pushed after the running one: a few pages.
-      # If this lags immich-api again, check Loki for 429s on this image.
-      "keel.sh/policy"               = "minor"
-      "keel.sh/pollTagsAfterCurrent" = "true"
-    }
+    # The image follows var.immich_version with the -cuda suffix. Renovate
+    # reads the version from immich-server: this repo has 150k+ per-commit,
+    # per-accelerator and PR tags, and a registry lookup on it returns nothing.
   }
 
   lifecycle {
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config, # KYVERNO_LIFECYCLE_V1
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"], # KYVERNO_LIFECYCLE_V2
-      metadata[0].annotations["keel.sh/match-tag"],
       metadata[0].annotations["kubernetes.io/change-cause"],
       metadata[0].annotations["deployment.kubernetes.io/revision"],
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
     ]
   }
 

@@ -6,8 +6,7 @@ resource "kubernetes_namespace" "cloudflared" {
   metadata {
     name = "cloudflared"
     labels = {
-      tier               = var.tier
-      "keel.sh/enrolled" = "true"
+      tier = var.tier
     }
   }
   lifecycle {
@@ -64,7 +63,7 @@ resource "kubernetes_deployment" "cloudflared" {
         }
         container {
           # image = "wisdomsky/cloudflared-web:latest"
-          image = "cloudflare/cloudflared"
+          image = "cloudflare/cloudflared:2026.7.3"
           name  = "cloudflared"
           # --no-autoupdate: without it cloudflared self-updates in place and
           # exits (code 11) when CF ships a release, severing every WebSocket
@@ -100,18 +99,11 @@ resource "kubernetes_deployment" "cloudflared" {
   }
   lifecycle {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
-    # KEEL_IGNORE_IMAGE: Keel bumps the cloudflared tag in-cluster via pod
-    # rollout (image is the bare `cloudflare/cloudflared`, Keel-enrolled via the
-    # label above). Without this, every apply reverts Keel's live pin (observed
-    # 2026.7.1 -> bare/latest) and needlessly rolls the tunnel that fronts every
-    # proxied service.
+    # The image tag is Terraform-owned and Renovate proposes bumps. A bump
+    # rolls the tunnel that fronts every proxied service (3 replicas, PDB).
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      spec[0].template[0].spec[0].container[0].image,
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                                         # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # KEEL_LIFECYCLE_V1
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"],                      # LEGACY_TEMPLATE_ANNOTATIONS
       spec[0].template[0].metadata[0].annotations["reloader.stakater.com/last-reloaded-from"], # RELOADER_LIFECYCLE_V1
     ]
   }

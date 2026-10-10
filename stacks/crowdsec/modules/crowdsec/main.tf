@@ -39,7 +39,6 @@ resource "kubernetes_namespace" "crowdsec" {
     labels = {
       tier                               = var.tier
       "resource-governance/custom-quota" = "true"
-      "keel.sh/enrolled"                 = "true"
     }
   }
   lifecycle {
@@ -719,11 +718,8 @@ resource "kubernetes_deployment" "crowdsec-web" {
     # KYVERNO_LIFECYCLE_V1: Kyverno admission webhook mutates dns_config with ndots=2
     ignore_changes = [
       spec[0].template[0].spec[0].dns_config,
-      metadata[0].annotations["keel.sh/policy"],
-      metadata[0].annotations["keel.sh/trigger"],
-      metadata[0].annotations["keel.sh/pollSchedule"],                    # KYVERNO_LIFECYCLE_V2
-      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # KEEL_LIFECYCLE_V1
-      spec[0].template[0].spec[0].container[0].image,                     # KEEL_IGNORE_IMAGE
+      spec[0].template[0].metadata[0].annotations["keel.sh/update-time"], # LEGACY_TEMPLATE_ANNOTATIONS
+      spec[0].template[0].spec[0].container[0].image,                     # FIRST_PARTY_IMAGE: hand-built first-party image, outside Renovate
     ]
   }
 }
