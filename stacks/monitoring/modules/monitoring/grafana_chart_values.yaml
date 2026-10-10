@@ -4,6 +4,12 @@ deploymentStrategy:
     maxSurge: 0
     maxUnavailable: 1
 replicas: 1
+# Chart 13 defaults to the -distroless image, which has no curl or shell.
+# null_resource.grafana_admin_only_folder_acl kubectl-execs curl in this
+# container, so keep the alpine-based tag. {{ }} is left alone by templatefile
+# and rendered by the chart.
+image:
+  tag: "{{ .Chart.AppVersion }}"
 adminPassword: "${grafana_admin_password}"
 plugins:
   - netsage-sankey-panel
