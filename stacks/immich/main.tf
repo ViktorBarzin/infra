@@ -1514,7 +1514,10 @@ resource "kubernetes_cron_job_v1" "postgresql-backup" {
     failed_jobs_history_limit = 5
     schedule                  = "0 0 * * *"
     # schedule                      = "* * * * *"
-    starting_deadline_seconds     = 10
+    # 600s (was 10s), as on the dbaas backup CronJobs: a 10s deadline dropped
+    # the dbaas 00:00 run on 2026-06-13 when the CronJob controller was late
+    # at the midnight backup tick, and this job shares that window.
+    starting_deadline_seconds     = 600
     successful_jobs_history_limit = 10
     job_template {
       metadata {}
