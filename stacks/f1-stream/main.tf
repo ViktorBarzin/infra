@@ -473,6 +473,40 @@ resource "kubernetes_deployment" "f1-stream" {
               }
             }
           }
+          # Session notifications (app repo ADR-0020) sign Web Push with this
+          # VAPID identity, from the Vault "f1-stream" key through the same
+          # dataFrom.extract ExternalSecret. optional=true: with any of the
+          # three missing the app keeps notifications off and hides the bell.
+          env {
+            name = "PUSH_VAPID_PRIVATE_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "push_vapid_private_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "PUSH_VAPID_PUBLIC_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "push_vapid_public_key"
+                optional = true
+              }
+            }
+          }
+          env {
+            name = "PUSH_VAPID_SUBJECT"
+            value_from {
+              secret_key_ref {
+                name     = "f1-stream-secrets"
+                key      = "push_vapid_subject"
+                optional = true
+              }
+            }
+          }
           # Replays feature (app repo ADR-0002). optional=true so the pod still
           # starts before the Reddit app credentials exist; the app treats missing
           # creds as "replays off" (logs "Replays pipeline disabled"). The
@@ -920,6 +954,15 @@ module "anubis" {
       # answers 404, and an un-challenged 404 costs nothing.
       - name: f1-data-routes
         path_regex: ^/(admin/whoami|admin/logout|embed|embed-asset|extract|extractors|health|proxy|relay|replays/cache|replays/events|replays/library|replays/refresh|schedule|streams|transcode)(/|\?|$)
+        action: ALLOW
+      # The installable-app files (ADR-0020 in the f1-stream repo, 2026-10-10).
+      # A browser fetches the manifest without cookies, and an iPhone's Home
+      # Screen app has its own cookie jar, so both would get the PoW page as
+      # HTML here: Android would not offer to install, and the service worker
+      # that receives session notifications would fail to register or update.
+      # Static files with no data in them; exact names only.
+      - name: f1-installable-app
+        path_regex: ^/(sw\.js|manifest\.webmanifest|icons/[A-Za-z0-9_-]+\.png|apple-touch-icon(-precomposed)?\.png)$
         action: ALLOW
       # NOTE: /metrics is deliberately NOT allow-listed here. The Prometheus
       # scrape reaches the app Service directly at
