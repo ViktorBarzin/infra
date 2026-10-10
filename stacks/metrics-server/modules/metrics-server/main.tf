@@ -26,9 +26,11 @@ resource "helm_release" "metrics-server" {
   create_namespace = false
   name             = "metrics-server"
   atomic           = true
+  cleanup_on_fail  = true
 
   repository = "https://kubernetes-sigs.github.io/metrics-server/"
   chart      = "metrics-server"
+  version    = "3.14.0"
 
   values = [templatefile("${path.module}/values.yaml", {})]
 }
